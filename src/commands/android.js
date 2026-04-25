@@ -23,18 +23,9 @@ export default function androidCommand(program) {
       const bundleId = detectBundleId(root);
       const androidPackage = detectAndroidPackage(root);
       const isExpo = detectIsExpo(root);
-      if (!androidPackage) {
-        console.error(chalk.red('Could not detect Android package. v1 requires app.json with expo.android.package set.'));
-        process.exit(1);
-      }
 
+      upsertProject(root, { bundleId, androidPackage, isExpo });
       let proj = getProject(root);
-      if (!proj) {
-        upsertProject(root, { bundleId, androidPackage, isExpo });
-      } else {
-        upsertProject(root, { bundleId, androidPackage, isExpo });
-      }
-      proj = getProject(root);
 
       if (!proj.metroPort) {
         const port = await allocatePort(root);

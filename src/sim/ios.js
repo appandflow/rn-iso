@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { getExecutor } from '../exec.js';
 
 export function parseSimctlList(jsonOutput) {
@@ -47,8 +48,12 @@ export function selectIosDevice({ existingUdid, claimedUdids }) {
 
 export function bootIosSim(udid) {
   const exec = getExecutor();
-  // simctl errors if already booted; use runQuiet to swallow.
-  exec.runQuiet(`xcrun simctl boot ${udid}`);
+  try {
+    exec.run(`xcrun simctl boot ${udid}`);
+  } catch (e) {
+    // simctl errors with "Unable to boot device in current state: Booted" if already booted.
+    if (!String(e?.message || e).includes('Booted')) throw e;
+  }
   exec.runQuiet('open -a Simulator');
 }
 
@@ -67,7 +72,9 @@ export function listIosDeviceTypes() {
 }
 
 export function createIosSim(deviceTypeId, runtimeId) {
-  const out = getExecutor().run(`xcrun simctl create "rn-iso" "${deviceTypeId}" "${runtimeId}"`);
+  const suffix = randomBytes(3).toString('hex');
+  const name = `rn-iso-${suffix}`;
+  const out = getExecutor().run(`xcrun simctl create "${name}" "${deviceTypeId}" "${runtimeId}"`);
   return out.trim();
 }
 

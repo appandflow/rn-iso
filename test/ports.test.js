@@ -62,7 +62,7 @@ test('allocatePort reclaims dead ports and removes the dead project', async () =
   const probe = async () => false;
   const port = await allocatePort('/new', probe);
   assert.equal(port, 8082);
-  // Caller should have removed /a — verify via behavior
+  // Caller should have removed /a -- verify via behavior
   const { getProject } = await import('../src/config.js');
   assert.equal(getProject('/a'), null);
 });

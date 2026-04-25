@@ -1,8 +1,13 @@
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, realpathSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 
 export function findProjectRoot(startDir) {
-  let dir = resolve(startDir);
+  let dir;
+  try {
+    dir = realpathSync(resolve(startDir));
+  } catch {
+    dir = resolve(startDir);
+  }
   while (true) {
     if (existsSync(join(dir, 'package.json'))) return dir;
     const parent = dirname(dir);

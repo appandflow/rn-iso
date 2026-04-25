@@ -27,7 +27,7 @@ export function resolveSimNameByUdid(udid) {
   const sameName = sims.filter(s => s.name === target.name);
   if (sameName.length > 1) {
     throw new Error(
-      `Ambiguous: multiple simulators named "${target.name}" — bare RN takes a name, not UDID. ` +
+      `Ambiguous: multiple simulators named "${target.name}" -- bare RN takes a name, not UDID. ` +
       `Rename one in the Simulator app.`
     );
   }

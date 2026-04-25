@@ -26,19 +26,10 @@ export default function iosCommand(program) {
       const bundleId = detectBundleId(root);
       const androidPackage = detectAndroidPackage(root);
       const isExpo = detectIsExpo(root);
-      if (!bundleId) {
-        console.error(chalk.red('Could not detect iOS bundle identifier. v1 requires app.json with expo.ios.bundleIdentifier set.'));
-        process.exit(1);
-      }
 
       // Register or update the project entry.
+      upsertProject(root, { bundleId, androidPackage, isExpo });
       let proj = getProject(root);
-      if (!proj) {
-        upsertProject(root, { bundleId, androidPackage, isExpo });
-      } else {
-        upsertProject(root, { bundleId, androidPackage, isExpo });
-      }
-      proj = getProject(root);
 
       // Allocate Metro port if not yet assigned.
       if (!proj.metroPort) {
@@ -81,7 +72,7 @@ export default function iosCommand(program) {
         console.log(chalk.dim(`Metro already running on port ${proj.metroPort}`));
       } else {
         setMetro(root, proj.metroPort, metro.pid);
-        console.log(chalk.green(`Metro started (pid ${metro.pid}, port ${proj.metroPort}) — logs at ~/.rn-iso/logs/`));
+        console.log(chalk.green(`Metro started (pid ${metro.pid}, port ${proj.metroPort}) -- logs at ~/.rn-iso/logs/`));
       }
 
       // Build/install/launch unless --no-install.
@@ -97,7 +88,7 @@ export default function iosCommand(program) {
         });
       }
 
-      console.log(chalk.green(`\n✓ iOS ready on sim ${udid}, Metro port ${proj.metroPort}`));
+      console.log(chalk.green(`\nOK: iOS ready on sim ${udid}, Metro port ${proj.metroPort}`));
     });
 }
 
