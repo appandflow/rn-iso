@@ -1,0 +1,20 @@
+{
+  "name": "rn-iso",
+  "version": "0.1.0",
+  "description": "Isolated React Native dev environments per project/worktree",
+  "type": "module",
+  "bin": {
+    "rn-iso": "bin/cli.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "prompts": "^2.4.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
