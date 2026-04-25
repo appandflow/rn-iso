@@ -94,11 +94,22 @@ test('selectIosDevice allocates first booted-and-unclaimed sim', () => {
   assert.deepEqual(result, { kind: 'allocate', udid: 'UDID-C', state: 'Booted' });
 });
 
-test('selectIosDevice returns needsBoot when nothing booted+unclaimed', () => {
+test('selectIosDevice falls back to shutdown unclaimed sim when no booted available', () => {
+  // SIMCTL_OUTPUT: UDID-A booted, UDID-B shutdown, UDID-C booted.
+  // Claim both booted ones -> only UDID-B is unclaimed (shutdown).
   setExecutor({ run: () => SIMCTL_OUTPUT, runQuiet: () => null, spawn: () => null });
   const result = selectIosDevice({
     existingUdid: null,
     claimedUdids: ['UDID-A', 'UDID-C'],
+  });
+  assert.deepEqual(result, { kind: 'allocate', udid: 'UDID-B', state: 'Shutdown' });
+});
+
+test('selectIosDevice returns needsBoot only when ALL sims are claimed', () => {
+  setExecutor({ run: () => SIMCTL_OUTPUT, runQuiet: () => null, spawn: () => null });
+  const result = selectIosDevice({
+    existingUdid: null,
+    claimedUdids: ['UDID-A', 'UDID-B', 'UDID-C'],
   });
   assert.equal(result.kind, 'needsBoot');
 });

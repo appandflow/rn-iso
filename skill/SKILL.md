@@ -34,13 +34,13 @@ From the project root (or any subdirectory):
   - `adb -s emulator-5556 shell input tap 100 200`
 - **Don't call `release` or `shutdown`** unless the user explicitly asks. Other agents may be using neighboring sims; keep yours up so the user can come back to it.
 - **Don't manually start Metro on a different port.** `rn-iso start` (or `rn-iso ios/android`) already handles port assignment.
-- **For non-interactive / first-run scenarios**, pass `--auto` and optionally `--device-type "iPhone 15 Pro"`. Without these, `rn-iso ios` will prompt for a device type if no sims are booted.
+- **rn-iso never auto-creates simulators.** It reuses booted or shutdown sims that aren't claimed by another project. If none are available, it errors. To create a new one explicitly, pass `--device-type "iPhone 17 Pro" [--runtime 26.2]`.
 
 ## Typical agent workflow
 
 ```bash
 # Once per session — ensure the project's sim and Metro are up.
-rn-iso ios --auto
+rn-iso ios
 
 # Get the target.
 UDID=$(rn-iso device --platform ios)
@@ -55,7 +55,7 @@ xcrun simctl io "$UDID" screenshot /tmp/screen.png
 ## When things go wrong
 
 - **"No rn-iso assignment for project"** — run `rn-iso ios` (or android) first.
-- **"Could not detect bundle identifier"** — your project's `app.json` is missing `expo.ios.bundleIdentifier`. Fix the app config.
+- **"No unclaimed iOS simulator available"** — every existing sim is either booted or claimed by another project. Open a sim in Simulator.app, or run `rn-iso unreserve --all` if you have stale reservations, or pass `--device-type "iPhone 17 Pro"` to create a new one.
 - **Metro port collision** — `rn-iso ios` should reclaim dead ports automatically. If you see "port busy by non-Metro process," another tool is using that port; close it.
 - **Sim was deleted** — `rn-iso ios` will detect the stale assignment and re-allocate. If not, run `rn-iso prune` then `rn-iso ios`.
 

@@ -36,11 +36,13 @@ Both run side-by-side, no contention.
 
 | Command | Purpose |
 |---|---|
-| `rn-iso ios [--auto] [--device-type <name>] [--no-install]` | Ensure iOS sim + Metro + build/install |
+| `rn-iso ios [--device-type <name>] [--runtime <ver>] [--no-install]` | Ensure iOS sim + Metro + build/install |
 | `rn-iso android [--no-install]` | Same for Android |
 | `rn-iso start` | Just start Metro, no platform action |
 | `rn-iso device [--platform ios\|android] [--json]` | Print the assigned device target |
 | `rn-iso status` | Show all projects' state |
+| `rn-iso reserve [<platform> <id>] [--list]` | Mark a sim/emulator as in-use externally so rn-iso skips it |
+| `rn-iso unreserve [<platform> <id>] [--all]` | Release a reservation |
 | `rn-iso release [--platform <p>]` | Unbind device assignment(s) for current project |
 | `rn-iso shutdown [--platform <p>]` | Release and shut down sims for current project |
 | `rn-iso prune [--shutdown]` | GC dead entries machine-wide |
@@ -51,7 +53,7 @@ Both run side-by-side, no contention.
 
 - **Config** at `~/.rn-iso/config.json`, keyed by absolute project path. Worktrees produce different paths -> different entries.
 - **Port allocation:** assigns 8082, 8083, 8084 etc. Reclaims dead ports on assignment.
-- **Simulator pool:** prefers reusing your project's existing assignment; falls back to any booted-and-unclaimed sim; prompts to boot a new one if needed (`--auto` skips the prompt).
+- **Simulator pool:** prefers reusing your project's existing assignment; falls back to any booted unclaimed sim; falls back to any shutdown unclaimed sim (boots it). Never auto-creates new sims — use `--device-type "iPhone 17 Pro" [--runtime 26.2]` to opt in to creating one.
 - **No locking:** your sim is yours; other projects' sims are theirs. If you're on tight hardware and want one shared sim with a mutex, use [`react-native-worktree`](https://github.com/aleqsio/react-native-worktree) instead.
 
 ## Requirements

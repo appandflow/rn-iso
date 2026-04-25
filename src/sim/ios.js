@@ -38,9 +38,16 @@ export function selectIosDevice({ existingUdid, claimedUdids }) {
     }
   }
 
-  const candidate = sims.find(s => s.state === 'Booted' && !claimed.has(s.udid));
-  if (candidate) {
-    return { kind: 'allocate', udid: candidate.udid, state: candidate.state };
+  // Prefer booted unclaimed sims (no boot needed). Then fall back to shutdown
+  // unclaimed sims (boot rather than create new). Only create new when nothing
+  // unclaimed exists at all.
+  const booted = sims.find(s => s.state === 'Booted' && !claimed.has(s.udid));
+  if (booted) {
+    return { kind: 'allocate', udid: booted.udid, state: booted.state };
+  }
+  const shutdown = sims.find(s => s.state === 'Shutdown' && !claimed.has(s.udid));
+  if (shutdown) {
+    return { kind: 'allocate', udid: shutdown.udid, state: shutdown.state };
   }
 
   return { kind: 'needsBoot' };
@@ -83,5 +90,13 @@ export function listIosRuntimes() {
   const data = JSON.parse(out);
   return (data.runtimes || [])
     .filter(r => r.isAvailable && r.platform === 'iOS')
-    .map(r => ({ identifier: r.identifier, name: r.name, version: r.version }));
+    .map(r => ({
+      identifier: r.identifier,
+      name: r.name,
+      version: r.version,
+      supportedDeviceTypes: (r.supportedDeviceTypes || []).map(d => ({
+        identifier: d.identifier,
+        name: d.name,
+      })),
+    }));
 }

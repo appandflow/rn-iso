@@ -1,10 +1,9 @@
 // src/commands/ios.js
 import chalk from 'chalk';
-import prompts from 'prompts';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../project.js';
 import { getProject, upsertProject, setMetro, setDevice, allClaimedDevices } from '../config.js';
 import { allocatePort } from '../ports.js';
-import { selectIosDevice, bootIosSim, listIosDeviceTypes, listIosRuntimes, createIosSim } from '../sim/ios.js';
+import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim } from '../sim/ios.js';
 import { ensureMetro } from '../metro.js';
 import { buildIosCommand, resolveSimNameByUdid } from '../runner.js';
 import { getExecutor } from '../exec.js';
@@ -13,8 +12,8 @@ export default function iosCommand(program) {
   program
     .command('ios')
     .description('Ensure a dedicated iOS simulator + Metro server for the current project; build/install if needed')
-    .option('--device-type <name>', 'Device type identifier for new sim (e.g. "iPhone 15 Pro")')
-    .option('--auto', 'Non-interactive: boot a fresh sim if none available, no prompts')
+    .option('--device-type <name>', 'Explicit opt-in: create a NEW sim of this device type (e.g. "iPhone 17 Pro")')
+    .option('--runtime <version>', 'iOS runtime version when creating a new sim (e.g. "26.2"); defaults to latest')
     .option('--no-install', 'Skip the build/install step (assume app is already installed)')
     .action(async (opts) => {
       const root = findProjectRoot(process.cwd());
@@ -27,11 +26,9 @@ export default function iosCommand(program) {
       const androidPackage = detectAndroidPackage(root);
       const isExpo = detectIsExpo(root);
 
-      // Register or update the project entry.
       upsertProject(root, { bundleId, androidPackage, isExpo });
       let proj = getProject(root);
 
-      // Allocate Metro port if not yet assigned.
       if (!proj.metroPort) {
         const port = await allocatePort(root);
         setMetro(root, port, null);
@@ -39,7 +36,6 @@ export default function iosCommand(program) {
         console.log(chalk.dim(`Allocated Metro port: ${port}`));
       }
 
-      // Pick (or reuse) a simulator.
       const claimed = allClaimedDevices().iosUdids.filter(u => u !== proj.platforms?.ios?.deviceUdid);
       const selection = selectIosDevice({
         existingUdid: proj.platforms?.ios?.deviceUdid || null,
@@ -57,16 +53,30 @@ export default function iosCommand(program) {
         }
       } else if (selection.kind === 'allocate') {
         udid = selection.udid;
-        console.log(chalk.green(`Assigned booted sim ${udid}`));
+        if (selection.state !== 'Booted') {
+          console.log(chalk.dim(`Booting unclaimed sim ${udid}...`));
+          bootIosSim(udid);
+        } else {
+          console.log(chalk.green(`Assigned booted sim ${udid}`));
+        }
       } else {
-        // needsBoot: nothing booted+unclaimed.
-        udid = await bootNewSim({ auto: opts.auto, deviceType: opts.deviceType });
-        console.log(chalk.green(`Booted new sim ${udid}`));
+        // needsBoot: no unclaimed sim available.
+        if (opts.deviceType) {
+          udid = createNewSim({ deviceType: opts.deviceType, runtimeVersion: opts.runtime });
+          console.log(chalk.green(`Created and booted new sim ${udid}`));
+        } else {
+          console.error(chalk.red('No unclaimed iOS simulator available.'));
+          console.error(chalk.dim('Options:'));
+          console.error(chalk.dim('  - Open a sim in the Simulator app, then re-run'));
+          console.error(chalk.dim('  - `rn-iso unreserve --all` if you have stale reservations'));
+          console.error(chalk.dim('  - Free another rn-iso project (`rn-iso release` from there)'));
+          console.error(chalk.dim('  - Pass --device-type "iPhone 17 Pro" [--runtime 26.2] to create a new sim'));
+          process.exit(1);
+        }
       }
 
       setDevice(root, 'ios', { deviceUdid: udid });
 
-      // Ensure Metro is running.
       const metro = await ensureMetro({ projectPath: root, isExpo, port: proj.metroPort });
       if (metro.alreadyRunning) {
         console.log(chalk.dim(`Metro already running on port ${proj.metroPort}`));
@@ -75,12 +85,10 @@ export default function iosCommand(program) {
         console.log(chalk.green(`Metro started (pid ${metro.pid}, port ${proj.metroPort}) -- logs at ~/.rn-iso/logs/`));
       }
 
-      // Build/install/launch unless --no-install.
       if (opts.install !== false) {
         const simName = isExpo ? null : resolveSimNameByUdid(udid);
         const cmd = buildIosCommand({ isExpo, udid, port: proj.metroPort, simName });
         console.log(chalk.dim(`> ${cmd}`));
-        // Stream the build output via spawn-with-inherit-stdio.
         const exec = getExecutor();
         const child = exec.spawn('sh', ['-c', cmd], { cwd: root, stdio: 'inherit' });
         await new Promise((resolve, reject) => {
@@ -92,31 +100,38 @@ export default function iosCommand(program) {
     });
 }
 
-async function bootNewSim({ auto, deviceType }) {
-  const types = listIosDeviceTypes().filter(t => t.identifier.includes('iPhone'));
+function createNewSim({ deviceType, runtimeVersion }) {
   const runtimes = listIosRuntimes();
-  if (runtimes.length === 0) throw new Error('No iOS runtimes installed; install one via Xcode.');
-  const latestRuntime = runtimes.sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }))[0];
-
-  let chosenType;
-  if (deviceType) {
-    chosenType = types.find(t => t.name === deviceType || t.identifier === deviceType);
-    if (!chosenType) throw new Error(`Device type not found: ${deviceType}`);
-  } else if (auto) {
-    chosenType = types.find(t => t.name === 'iPhone 15 Pro') || types[0];
-  } else {
-    const choices = types.map(t => ({ title: t.name, value: t.identifier }));
-    const answer = await prompts({
-      type: 'select',
-      name: 'id',
-      message: 'No booted simulator available. Pick a device type to boot:',
-      choices,
-    });
-    if (!answer.id) throw new Error('Cancelled.');
-    chosenType = types.find(t => t.identifier === answer.id);
+  if (runtimes.length === 0) {
+    throw new Error('No iOS runtimes installed; install one via Xcode.');
   }
 
-  const udid = createIosSim(chosenType.identifier, latestRuntime.identifier);
+  // Pick the runtime: explicit version flag, else the latest.
+  let runtime;
+  if (runtimeVersion) {
+    runtime = runtimes.find(r => r.version === runtimeVersion || r.name === `iOS ${runtimeVersion}`);
+    if (!runtime) {
+      const available = runtimes.map(r => r.version).join(', ');
+      throw new Error(`Runtime "${runtimeVersion}" not installed. Available: ${available}`);
+    }
+  } else {
+    runtime = [...runtimes].sort(
+      (a, b) => b.version.localeCompare(a.version, undefined, { numeric: true })
+    )[0];
+  }
+
+  // Resolve the device type within the chosen runtime's compatible list.
+  const supported = runtime.supportedDeviceTypes || [];
+  const dt = supported.find(d => d.name === deviceType || d.identifier === deviceType);
+  if (!dt) {
+    const names = supported.map(d => d.name).slice(0, 8).join(', ');
+    throw new Error(
+      `Device type "${deviceType}" not compatible with runtime ${runtime.version}. ` +
+      `Compatible (sample): ${names}...`
+    );
+  }
+
+  const udid = createIosSim(dt.identifier, runtime.identifier);
   bootIosSim(udid);
   return udid;
 }
