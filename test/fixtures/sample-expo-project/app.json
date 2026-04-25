@@ -1,0 +1,6 @@
+{
+  "expo": {
+    "ios": { "bundleIdentifier": "com.example.sample" },
+    "android": { "package": "com.example.sample" }
+  }
+}
