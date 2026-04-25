@@ -94,3 +94,10 @@ export function shutdownAndroidEmulator(serial) {
 export function adbReverse(serial, port) {
   getExecutor().run(`adb -s ${serial} reverse tcp:${port} tcp:${port}`);
 }
+
+export function getAvdNameForSerial(serial) {
+  const out = getExecutor().runQuiet(`adb -s ${serial} emu avd name`);
+  if (!out) return null;
+  // `adb emu avd name` returns the AVD name on the first line, "OK" on the second.
+  return out.split('\n')[0].trim() || null;
+}

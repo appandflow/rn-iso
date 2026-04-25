@@ -10,6 +10,8 @@ import statusCommand from '../src/commands/status.js';
 import releaseCommand from '../src/commands/release.js';
 import shutdownCommand from '../src/commands/shutdown.js';
 import pruneCommand from '../src/commands/prune.js';
+import reserveCommand from '../src/commands/reserve.js';
+import unreserveCommand from '../src/commands/unreserve.js';
 
 const program = new Command();
 program
@@ -27,5 +29,7 @@ statusCommand(program);
 releaseCommand(program);
 shutdownCommand(program);
 pruneCommand(program);
+reserveCommand(program);
+unreserveCommand(program);
 
 program.parse();

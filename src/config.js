@@ -28,8 +28,14 @@ export function saveConfig(config) {
 
 export function ensureConfig() {
   const existing = loadConfig();
-  if (existing) return existing;
-  const fresh = { version: 1, projects: {} };
+  if (existing) {
+    if (!existing.reservations) {
+      existing.reservations = { ios: [], android: [] };
+      saveConfig(existing);
+    }
+    return existing;
+  }
+  const fresh = { version: 1, projects: {}, reservations: { ios: [], android: [] } };
   saveConfig(fresh);
   return fresh;
 }
@@ -99,13 +105,63 @@ export function allMetroPorts() {
 export function allClaimedDevices() {
   const cfg = loadConfig();
   const result = { iosUdids: [], androidAvds: [], androidConsolePorts: [] };
-  if (!cfg?.projects) return result;
-  for (const proj of Object.values(cfg.projects)) {
+  if (!cfg) return result;
+  for (const proj of Object.values(cfg.projects || {})) {
     const ios = proj.platforms?.ios;
     if (ios?.deviceUdid) result.iosUdids.push(ios.deviceUdid);
     const android = proj.platforms?.android;
     if (android?.avdName) result.androidAvds.push(android.avdName);
     if (typeof android?.consolePort === 'number') result.androidConsolePorts.push(android.consolePort);
   }
+  for (const r of cfg.reservations?.ios || []) {
+    if (r.udid) result.iosUdids.push(r.udid);
+  }
+  for (const r of cfg.reservations?.android || []) {
+    if (r.avdName) result.androidAvds.push(r.avdName);
+    if (typeof r.consolePort === 'number') result.androidConsolePorts.push(r.consolePort);
+  }
   return result;
+}
+
+export function listReservations() {
+  const cfg = loadConfig();
+  return cfg?.reservations || { ios: [], android: [] };
+}
+
+export function addReservation(platform, fields) {
+  if (platform !== 'ios' && platform !== 'android') {
+    throw new Error(`Unknown platform: ${platform}`);
+  }
+  const cfg = ensureConfig();
+  cfg.reservations = cfg.reservations || { ios: [], android: [] };
+  const list = cfg.reservations[platform];
+  const key = platform === 'ios' ? 'udid' : 'serial';
+  const existing = list.find(r => r[key] === fields[key]);
+  if (existing) {
+    Object.assign(existing, fields);
+  } else {
+    list.push(fields);
+  }
+  saveConfig(cfg);
+  return fields;
+}
+
+export function removeReservation(platform, identifier) {
+  if (platform !== 'ios' && platform !== 'android') {
+    throw new Error(`Unknown platform: ${platform}`);
+  }
+  const cfg = loadConfig();
+  if (!cfg?.reservations?.[platform]) return false;
+  const key = platform === 'ios' ? 'udid' : 'serial';
+  const before = cfg.reservations[platform].length;
+  cfg.reservations[platform] = cfg.reservations[platform].filter(r => r[key] !== identifier);
+  saveConfig(cfg);
+  return cfg.reservations[platform].length < before;
+}
+
+export function clearAllReservations() {
+  const cfg = loadConfig();
+  if (!cfg) return;
+  cfg.reservations = { ios: [], android: [] };
+  saveConfig(cfg);
 }
