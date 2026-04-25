@@ -1,9 +1,10 @@
 // src/commands/ios.js
 import chalk from 'chalk';
+import prompts from 'prompts';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../project.js';
 import { getProject, upsertProject, setMetro, setDevice, allClaimedDevices } from '../config.js';
 import { allocatePort } from '../ports.js';
-import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim } from '../sim/ios.js';
+import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion } from '../sim/ios.js';
 import { ensureMetro } from '../metro.js';
 import { buildIosCommand, resolveSimNameByUdid } from '../runner.js';
 import { getExecutor } from '../exec.js';
@@ -14,6 +15,7 @@ export default function iosCommand(program) {
     .description('Ensure a dedicated iOS simulator + Metro server for the current project; build/install if needed')
     .option('--device-type <name>', 'Explicit opt-in: create a NEW sim of this device type (e.g. "iPhone 17 Pro")')
     .option('--runtime <version>', 'iOS runtime version when creating a new sim (e.g. "26.2"); defaults to latest')
+    .option('--auto', 'Non-interactive: pick the first unclaimed sim without prompting')
     .option('--no-install', 'Skip the build/install step (assume app is already installed)')
     .action(async (opts) => {
       const root = findProjectRoot(process.cwd());
@@ -52,12 +54,15 @@ export default function iosCommand(program) {
           console.log(chalk.dim(`Reusing assigned sim ${udid} (already booted)`));
         }
       } else if (selection.kind === 'allocate') {
-        udid = selection.udid;
-        if (selection.state !== 'Booted') {
-          console.log(chalk.dim(`Booting unclaimed sim ${udid}...`));
+        const picked = (selection.candidates.length === 1 || opts.auto)
+          ? selection.candidates[0]
+          : await pickSim(selection.candidates);
+        udid = picked.udid;
+        if (picked.state !== 'Booted') {
+          console.log(chalk.dim(`Booting ${picked.name} (${udid})...`));
           bootIosSim(udid);
         } else {
-          console.log(chalk.green(`Assigned booted sim ${udid}`));
+          console.log(chalk.green(`Assigned ${picked.name} (${udid}, booted)`));
         }
       } else {
         // needsBoot: no unclaimed sim available.
@@ -98,6 +103,33 @@ export default function iosCommand(program) {
 
       console.log(chalk.green(`\nOK: iOS ready on sim ${udid}, Metro port ${proj.metroPort}`));
     });
+}
+
+async function pickSim(candidates) {
+  // Format like Xcode's run-destination picker: name on the left,
+  // iOS version right-aligned, "[booted]" tag for booted sims (shutdown blank).
+  const nameWidth = Math.max(...candidates.map(s => s.name.length), 18);
+  const choices = candidates.map(s => {
+    const version = parseRuntimeVersion(s.runtime);
+    const namePart = s.name.padEnd(nameWidth);
+    const versionPart = version.padStart(6);
+    const stateTag = s.state === 'Booted' ? chalk.green('  [booted]') : '';
+    return {
+      title: `${namePart}  ${chalk.dim(versionPart)}${stateTag}`,
+      value: s,
+    };
+  });
+  const answer = await prompts({
+    type: 'select',
+    name: 'sim',
+    message: 'Pick a simulator:',
+    choices,
+  });
+  if (!answer.sim) {
+    console.error(chalk.red('Cancelled.'));
+    process.exit(1);
+  }
+  return answer.sim;
 }
 
 function createNewSim({ deviceType, runtimeVersion }) {

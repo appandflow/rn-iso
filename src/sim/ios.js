@@ -38,19 +38,25 @@ export function selectIosDevice({ existingUdid, claimedUdids }) {
     }
   }
 
-  // Prefer booted unclaimed sims (no boot needed). Then fall back to shutdown
-  // unclaimed sims (boot rather than create new). Only create new when nothing
-  // unclaimed exists at all.
-  const booted = sims.find(s => s.state === 'Booted' && !claimed.has(s.udid));
-  if (booted) {
-    return { kind: 'allocate', udid: booted.udid, state: booted.state };
-  }
-  const shutdown = sims.find(s => s.state === 'Shutdown' && !claimed.has(s.udid));
-  if (shutdown) {
-    return { kind: 'allocate', udid: shutdown.udid, state: shutdown.state };
-  }
+  // Return all unclaimed sims sorted by usefulness so the caller can either
+  // auto-pick the first (no prompt, deterministic) or show a picker when
+  // multiple options exist.
+  const unclaimed = sims.filter(s => !claimed.has(s.udid));
+  if (unclaimed.length === 0) return { kind: 'needsBoot' };
 
-  return { kind: 'needsBoot' };
+  const sorted = [...unclaimed].sort((a, b) => {
+    if (a.state === 'Booted' && b.state !== 'Booted') return -1;
+    if (b.state === 'Booted' && a.state !== 'Booted') return 1;
+    return a.name.localeCompare(b.name);
+  });
+  return { kind: 'allocate', candidates: sorted };
+}
+
+export function parseRuntimeVersion(runtimeId) {
+  // e.g. com.apple.CoreSimulator.SimRuntime.iOS-26-2 -> "26.2"
+  const m = runtimeId.match(/iOS-(\d+)(?:-(\d+))?$/);
+  if (!m) return runtimeId;
+  return m[2] ? `${m[1]}.${m[2]}` : m[1];
 }
 
 export function bootIosSim(udid) {

@@ -83,26 +83,29 @@ test('selectIosDevice ignores existing assignment when sim no longer exists', ()
     claimedUdids: [],
   });
   assert.equal(result.kind, 'allocate');
+  assert.ok(Array.isArray(result.candidates));
 });
 
-test('selectIosDevice allocates first booted-and-unclaimed sim', () => {
+test('selectIosDevice returns all unclaimed sims, booted first', () => {
+  // SIMCTL_OUTPUT: UDID-A iPhone 15 booted, UDID-B iPhone 15 Pro shutdown, UDID-C iPhone 14 booted.
   setExecutor({ run: () => SIMCTL_OUTPUT, runQuiet: () => null, spawn: () => null });
   const result = selectIosDevice({
     existingUdid: null,
-    claimedUdids: ['UDID-A'],
+    claimedUdids: [],
   });
-  assert.deepEqual(result, { kind: 'allocate', udid: 'UDID-C', state: 'Booted' });
+  assert.equal(result.kind, 'allocate');
+  // Booted sims first (sorted by name within state), then shutdown sims.
+  assert.deepEqual(result.candidates.map(s => s.udid), ['UDID-C', 'UDID-A', 'UDID-B']);
 });
 
-test('selectIosDevice falls back to shutdown unclaimed sim when no booted available', () => {
-  // SIMCTL_OUTPUT: UDID-A booted, UDID-B shutdown, UDID-C booted.
-  // Claim both booted ones -> only UDID-B is unclaimed (shutdown).
+test('selectIosDevice excludes claimed sims from candidates', () => {
   setExecutor({ run: () => SIMCTL_OUTPUT, runQuiet: () => null, spawn: () => null });
   const result = selectIosDevice({
     existingUdid: null,
     claimedUdids: ['UDID-A', 'UDID-C'],
   });
-  assert.deepEqual(result, { kind: 'allocate', udid: 'UDID-B', state: 'Shutdown' });
+  assert.equal(result.kind, 'allocate');
+  assert.deepEqual(result.candidates.map(s => s.udid), ['UDID-B']);
 });
 
 test('selectIosDevice returns needsBoot only when ALL sims are claimed', () => {
@@ -112,4 +115,11 @@ test('selectIosDevice returns needsBoot only when ALL sims are claimed', () => {
     claimedUdids: ['UDID-A', 'UDID-B', 'UDID-C'],
   });
   assert.equal(result.kind, 'needsBoot');
+});
+
+test('parseRuntimeVersion extracts major.minor from runtime id', async () => {
+  const { parseRuntimeVersion } = await import('../src/sim/ios.js');
+  assert.equal(parseRuntimeVersion('com.apple.CoreSimulator.SimRuntime.iOS-26-2'), '26.2');
+  assert.equal(parseRuntimeVersion('com.apple.CoreSimulator.SimRuntime.iOS-18'), '18');
+  assert.equal(parseRuntimeVersion('weird-id'), 'weird-id');
 });
