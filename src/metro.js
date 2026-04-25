@@ -1,0 +1,73 @@
+import { createHash } from 'crypto';
+import { mkdirSync, existsSync, openSync, statSync } from 'fs';
+import { join } from 'path';
+import { getExecutor } from './exec.js';
+import { getConfigDir } from './config.js';
+import { isMetroRunning } from './ports.js';
+
+export function projectHash(projectPath) {
+  return createHash('sha256').update(projectPath).digest('hex').slice(0, 12);
+}
+
+export function logFileFor(projectPath) {
+  const dir = join(getConfigDir(), 'logs');
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return join(dir, `${projectHash(projectPath)}.log`);
+}
+
+export function buildMetroSpawnArgs({ isExpo, port }) {
+  return {
+    cmd: 'npx',
+    args: isExpo
+      ? ['expo', 'start', '--port', String(port)]
+      : ['react-native', 'start', '--port', String(port)],
+  };
+}
+
+export async function ensureMetro({ projectPath, isExpo, port, detach = true }) {
+  if (await isMetroRunning(port)) return { alreadyRunning: true, pid: null };
+
+  const log = logFileFor(projectPath);
+  const fd = openSync(log, 'a');
+
+  const { cmd, args } = buildMetroSpawnArgs({ isExpo, port });
+  const exec = getExecutor();
+  const child = exec.spawn(cmd, args, {
+    cwd: projectPath,
+    detached: detach,
+    stdio: ['ignore', fd, fd],
+    env: { ...process.env, RCT_METRO_PORT: String(port) },
+  });
+  if (detach) child.unref();
+  return { alreadyRunning: false, pid: child.pid };
+}
+
+export function killMetroByPid(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 'SIGTERM');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isPidAlive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function logFileExists(projectPath) {
+  const path = logFileFor(projectPath);
+  try {
+    statSync(path);
+    return path;
+  } catch {
+    return null;
+  }
+}
