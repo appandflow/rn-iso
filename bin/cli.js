@@ -3,6 +3,9 @@ import { Command } from 'commander';
 import deviceCommand from '../src/commands/device.js';
 import iosCommand from '../src/commands/ios.js';
 import androidCommand from '../src/commands/android.js';
+import startCommand from '../src/commands/start.js';
+import stopCommand from '../src/commands/stop.js';
+import logsCommand from '../src/commands/logs.js';
 
 const program = new Command();
 program
@@ -13,5 +16,8 @@ program
 deviceCommand(program);
 iosCommand(program);
 androidCommand(program);
+startCommand(program);
+stopCommand(program);
+logsCommand(program);
 
 program.parse();
