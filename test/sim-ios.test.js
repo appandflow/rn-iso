@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
-import { parseSimctlList, selectIosDevice, listAllIosSims, listBootedIosSims } from '../src/sim/ios.js';
+import { parseSimctlList, selectIosDevice, listAllIosSims, listBootedIosSims, sortSims, deviceFamilyRank } from '../src/sim/ios.js';
 
 let tmpHome;
 
@@ -122,4 +122,47 @@ test('parseRuntimeVersion extracts major.minor from runtime id', async () => {
   assert.equal(parseRuntimeVersion('com.apple.CoreSimulator.SimRuntime.iOS-26-2'), '26.2');
   assert.equal(parseRuntimeVersion('com.apple.CoreSimulator.SimRuntime.iOS-18'), '18');
   assert.equal(parseRuntimeVersion('weird-id'), 'weird-id');
+});
+
+test('parseSimctlList drops non-iOS runtimes (watchOS, tvOS, visionOS)', () => {
+  const out = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
+        { udid: 'IOS-1', name: 'iPhone 17', state: 'Booted', isAvailable: true },
+      ],
+      'com.apple.CoreSimulator.SimRuntime.watchOS-11-0': [
+        { udid: 'WATCH-1', name: 'Apple Watch S10', state: 'Booted', isAvailable: true },
+      ],
+      'com.apple.CoreSimulator.SimRuntime.tvOS-18-0': [
+        { udid: 'TV-1', name: 'Apple TV 4K', state: 'Booted', isAvailable: true },
+      ],
+      'com.apple.CoreSimulator.SimRuntime.xrOS-2-0': [
+        { udid: 'VISION-1', name: 'Apple Vision Pro', state: 'Booted', isAvailable: true },
+      ],
+    },
+  });
+  const sims = parseSimctlList(out);
+  assert.deepEqual(sims.map(s => s.udid), ['IOS-1']);
+});
+
+test('deviceFamilyRank ranks iPhone < iPad < other', () => {
+  assert.equal(deviceFamilyRank('iPhone 17 Pro'), 0);
+  assert.equal(deviceFamilyRank('iPad Pro 11-inch'), 1);
+  assert.equal(deviceFamilyRank('Apple TV'), 2);
+});
+
+test('sortSims orders by family, then state, then usage, then name', () => {
+  const sims = [
+    { udid: 'A', name: 'iPad Pro', state: 'Booted', runtime: 'r' },
+    { udid: 'B', name: 'iPhone 17 Pro', state: 'Shutdown', runtime: 'r' },
+    { udid: 'C', name: 'iPhone 16 Pro', state: 'Booted', runtime: 'r' },
+    { udid: 'D', name: 'iPhone 15 Pro', state: 'Booted', runtime: 'r' },
+  ];
+  // Without usage: iPhones first (booted before shutdown), then iPad.
+  // C and D are both iPhone+booted with usage 0 -> alpha sort: D ("15 Pro") before C ("16 Pro").
+  let sorted = sortSims(sims);
+  assert.deepEqual(sorted.map(s => s.udid), ['D', 'C', 'B', 'A']);
+  // With C used 5 times: C floats above D within iPhone+booted.
+  sorted = sortSims(sims, { C: 5 });
+  assert.deepEqual(sorted.map(s => s.udid), ['C', 'D', 'B', 'A']);
 });

@@ -2,9 +2,9 @@
 import chalk from 'chalk';
 import prompts from 'prompts';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../project.js';
-import { getProject, upsertProject, setMetro, setDevice, allClaimedDevices } from '../config.js';
+import { getProject, upsertProject, setMetro, setDevice, allClaimedDevices, recordSimUsage, getSimUsage } from '../config.js';
 import { allocatePort } from '../ports.js';
-import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion } from '../sim/ios.js';
+import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion, listAllIosSims, sortSims } from '../sim/ios.js';
 import { ensureMetro } from '../metro.js';
 import { buildIosCommand, resolveSimNameByUdid } from '../runner.js';
 import { getExecutor } from '../exec.js';
@@ -38,10 +38,14 @@ export default function iosCommand(program) {
         console.log(chalk.dim(`Allocated Metro port: ${port}`));
       }
 
-      const claimed = allClaimedDevices().iosUdids.filter(u => u !== proj.platforms?.ios?.deviceUdid);
+      const claimedDevices = allClaimedDevices();
+      const ownUdid = proj.platforms?.ios?.deviceUdid;
+      const claimed = claimedDevices.iosUdids.filter(u => u !== ownUdid);
+      const usage = getSimUsage().ios || {};
       const selection = selectIosDevice({
-        existingUdid: proj.platforms?.ios?.deviceUdid || null,
+        existingUdid: ownUdid || null,
         claimedUdids: claimed,
+        usage,
       });
 
       let udid;
@@ -56,7 +60,7 @@ export default function iosCommand(program) {
       } else if (selection.kind === 'allocate') {
         const picked = (selection.candidates.length === 1 || opts.auto)
           ? selection.candidates[0]
-          : await pickSim(selection.candidates);
+          : await pickSim(selection.candidates, claimedDevices.iosClaims, usage);
         udid = picked.udid;
         if (picked.state !== 'Booted') {
           console.log(chalk.dim(`Booting ${picked.name} (${udid})...`));
@@ -81,6 +85,7 @@ export default function iosCommand(program) {
       }
 
       setDevice(root, 'ios', { deviceUdid: udid });
+      recordSimUsage('ios', udid);
 
       const metro = await ensureMetro({ projectPath: root, isExpo, port: proj.metroPort });
       if (metro.alreadyRunning) {
@@ -105,15 +110,36 @@ export default function iosCommand(program) {
     });
 }
 
-async function pickSim(candidates) {
-  // Format like Xcode's run-destination picker: name on the left,
-  // iOS version right-aligned, "[booted]" tag for booted sims (shutdown blank).
-  const nameWidth = Math.max(...candidates.map(s => s.name.length), 18);
-  const choices = candidates.map(s => {
+async function pickSim(candidates, iosClaims = {}, usage = {}) {
+  // Show ALL sims (not just unclaimed) so the user can see why something
+  // they expected isn't selectable. Claimed sims are listed but disabled,
+  // labeled with the project/reservation that owns them.
+  const allSims = listAllIosSims();
+  const candidateUdids = new Set(candidates.map(s => s.udid));
+  const sorted = sortSims(allSims, usage);
+
+  const nameWidth = Math.max(...sorted.map(s => s.name.length), 18);
+  const choices = sorted.map(s => {
     const version = parseRuntimeVersion(s.runtime);
     const namePart = s.name.padEnd(nameWidth);
     const versionPart = version.padStart(6);
+    const claim = iosClaims[s.udid];
+    if (claim) {
+      const tag = claim.source === 'project'
+        ? `[claimed by ${claim.label}]`
+        : `[reserved: ${claim.label}]`;
+      return {
+        title: chalk.dim(`${namePart}  ${versionPart}  ${tag}`),
+        value: null,
+        disabled: true,
+      };
+    }
     const stateTag = s.state === 'Booted' ? chalk.green('  [booted]') : '';
+    const isCandidate = candidateUdids.has(s.udid);
+    if (!isCandidate) {
+      // Shouldn't happen with current selectIosDevice, but be safe.
+      return { title: chalk.dim(`${namePart}  ${versionPart}`), value: null, disabled: true };
+    }
     return {
       title: `${namePart}  ${chalk.dim(versionPart)}${stateTag}`,
       value: s,

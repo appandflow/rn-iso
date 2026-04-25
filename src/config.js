@@ -104,23 +104,54 @@ export function allMetroPorts() {
 
 export function allClaimedDevices() {
   const cfg = loadConfig();
-  const result = { iosUdids: [], androidAvds: [], androidConsolePorts: [] };
+  const result = {
+    iosUdids: [],
+    androidAvds: [],
+    androidConsolePorts: [],
+    // iosClaims: udid -> { source: 'project'|'reservation', label: string }
+    iosClaims: {},
+  };
   if (!cfg) return result;
-  for (const proj of Object.values(cfg.projects || {})) {
+  for (const [path, proj] of Object.entries(cfg.projects || {})) {
     const ios = proj.platforms?.ios;
-    if (ios?.deviceUdid) result.iosUdids.push(ios.deviceUdid);
+    if (ios?.deviceUdid) {
+      result.iosUdids.push(ios.deviceUdid);
+      result.iosClaims[ios.deviceUdid] = {
+        source: 'project',
+        label: path.split('/').pop() || path,
+      };
+    }
     const android = proj.platforms?.android;
     if (android?.avdName) result.androidAvds.push(android.avdName);
     if (typeof android?.consolePort === 'number') result.androidConsolePorts.push(android.consolePort);
   }
   for (const r of cfg.reservations?.ios || []) {
-    if (r.udid) result.iosUdids.push(r.udid);
+    if (r.udid) {
+      result.iosUdids.push(r.udid);
+      result.iosClaims[r.udid] = {
+        source: 'reservation',
+        label: r.label || 'reserved',
+      };
+    }
   }
   for (const r of cfg.reservations?.android || []) {
     if (r.avdName) result.androidAvds.push(r.avdName);
     if (typeof r.consolePort === 'number') result.androidConsolePorts.push(r.consolePort);
   }
   return result;
+}
+
+export function recordSimUsage(platform, identifier) {
+  if (platform !== 'ios' && platform !== 'android') return;
+  const cfg = ensureConfig();
+  cfg.simUsage = cfg.simUsage || { ios: {}, android: {} };
+  cfg.simUsage[platform][identifier] = (cfg.simUsage[platform][identifier] || 0) + 1;
+  saveConfig(cfg);
+}
+
+export function getSimUsage() {
+  const cfg = loadConfig();
+  return cfg?.simUsage || { ios: {}, android: {} };
 }
 
 export function listReservations() {

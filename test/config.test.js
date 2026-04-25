@@ -20,6 +20,8 @@ import {
   removeReservation,
   listReservations,
   clearAllReservations,
+  recordSimUsage,
+  getSimUsage,
 } from '../src/config.js';
 
 let tmpHome;
@@ -152,4 +154,24 @@ test('clearAllReservations empties both platforms', () => {
   clearAllReservations();
   const r = listReservations();
   assert.deepEqual(r, { ios: [], android: [] });
+});
+
+test('recordSimUsage increments and getSimUsage reads counts', () => {
+  recordSimUsage('ios', 'UDID-A');
+  recordSimUsage('ios', 'UDID-A');
+  recordSimUsage('ios', 'UDID-B');
+  recordSimUsage('android', 'Pixel_6');
+  const usage = getSimUsage();
+  assert.equal(usage.ios['UDID-A'], 2);
+  assert.equal(usage.ios['UDID-B'], 1);
+  assert.equal(usage.android['Pixel_6'], 1);
+});
+
+test('allClaimedDevices.iosClaims labels project vs reservation sources', () => {
+  upsertProject('/Users/janic/Developer/myapp', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: true });
+  setDevice('/Users/janic/Developer/myapp', 'ios', { deviceUdid: 'UDID-PROJ' });
+  addReservation('ios', { udid: 'UDID-EXT', label: 'agent-1' });
+  const claimed = allClaimedDevices();
+  assert.deepEqual(claimed.iosClaims['UDID-PROJ'], { source: 'project', label: 'myapp' });
+  assert.deepEqual(claimed.iosClaims['UDID-EXT'], { source: 'reservation', label: 'agent-1' });
 });

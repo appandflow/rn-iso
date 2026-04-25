@@ -5,6 +5,10 @@ export function parseSimctlList(jsonOutput) {
   const data = JSON.parse(jsonOutput);
   const sims = [];
   for (const [runtime, devices] of Object.entries(data.devices || {})) {
+    // Skip non-iOS runtimes (watchOS, tvOS, visionOS). iOS runtime IDs look
+    // like com.apple.CoreSimulator.SimRuntime.iOS-26-2 (the others have
+    // watchOS-, tvOS-, xrOS- in place of iOS-).
+    if (!/\.iOS-/.test(runtime)) continue;
     for (const dev of devices) {
       if (!dev.isAvailable) continue;
       sims.push({
@@ -27,7 +31,31 @@ export function listBootedIosSims() {
   return listAllIosSims().filter(s => s.state === 'Booted');
 }
 
-export function selectIosDevice({ existingUdid, claimedUdids }) {
+export function deviceFamilyRank(name) {
+  if (/^iPhone/i.test(name)) return 0;
+  if (/^iPad/i.test(name)) return 1;
+  return 2;
+}
+
+export function sortSims(sims, usage = {}) {
+  return [...sims].sort((a, b) => {
+    // 1. Family: iPhones before iPads before others.
+    const fa = deviceFamilyRank(a.name);
+    const fb = deviceFamilyRank(b.name);
+    if (fa !== fb) return fa - fb;
+    // 2. State: booted before shutdown (within the same family).
+    if (a.state === 'Booted' && b.state !== 'Booted') return -1;
+    if (b.state === 'Booted' && a.state !== 'Booted') return 1;
+    // 3. Usage count: descending (frequently picked sims float up).
+    const ua = usage[a.udid] || 0;
+    const ub = usage[b.udid] || 0;
+    if (ua !== ub) return ub - ua;
+    // 4. Name: stable alphabetical.
+    return a.name.localeCompare(b.name);
+  });
+}
+
+export function selectIosDevice({ existingUdid, claimedUdids, usage = {} }) {
   const sims = listAllIosSims();
   const claimed = new Set(claimedUdids);
 
@@ -38,18 +66,10 @@ export function selectIosDevice({ existingUdid, claimedUdids }) {
     }
   }
 
-  // Return all unclaimed sims sorted by usefulness so the caller can either
-  // auto-pick the first (no prompt, deterministic) or show a picker when
-  // multiple options exist.
   const unclaimed = sims.filter(s => !claimed.has(s.udid));
   if (unclaimed.length === 0) return { kind: 'needsBoot' };
 
-  const sorted = [...unclaimed].sort((a, b) => {
-    if (a.state === 'Booted' && b.state !== 'Booted') return -1;
-    if (b.state === 'Booted' && a.state !== 'Booted') return 1;
-    return a.name.localeCompare(b.name);
-  });
-  return { kind: 'allocate', candidates: sorted };
+  return { kind: 'allocate', candidates: sortSims(unclaimed, usage) };
 }
 
 export function parseRuntimeVersion(runtimeId) {

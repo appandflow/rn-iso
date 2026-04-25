@@ -34,7 +34,9 @@ test('resolveSimNameByUdid returns name from simctl JSON', () => {
   setExecutor({
     run: () => JSON.stringify({
       devices: {
-        'iOS-17': [{ udid: 'UDID-1', name: 'iPhone 15', state: 'Booted', isAvailable: true }],
+        'com.apple.CoreSimulator.SimRuntime.iOS-17-0': [
+          { udid: 'UDID-1', name: 'iPhone 15', state: 'Booted', isAvailable: true },
+        ],
       },
     }),
     runQuiet: () => null,
@@ -47,7 +49,7 @@ test('resolveSimNameByUdid throws when ambiguous', () => {
   setExecutor({
     run: () => JSON.stringify({
       devices: {
-        'iOS-17': [
+        'com.apple.CoreSimulator.SimRuntime.iOS-17-0': [
           { udid: 'UDID-1', name: 'iPhone 15', state: 'Booted', isAvailable: true },
           { udid: 'UDID-2', name: 'iPhone 15', state: 'Shutdown', isAvailable: true },
         ],
