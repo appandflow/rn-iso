@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import deviceCommand from '../src/commands/device.js';
 import iosCommand from '../src/commands/ios.js';
+import androidCommand from '../src/commands/android.js';
 
 const program = new Command();
 program
@@ -11,5 +12,6 @@ program
 
 deviceCommand(program);
 iosCommand(program);
+androidCommand(program);
 
 program.parse();
