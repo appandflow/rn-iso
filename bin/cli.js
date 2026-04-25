@@ -9,6 +9,7 @@ import logsCommand from '../src/commands/logs.js';
 import statusCommand from '../src/commands/status.js';
 import releaseCommand from '../src/commands/release.js';
 import shutdownCommand from '../src/commands/shutdown.js';
+import pruneCommand from '../src/commands/prune.js';
 
 const program = new Command();
 program
@@ -25,5 +26,6 @@ logsCommand(program);
 statusCommand(program);
 releaseCommand(program);
 shutdownCommand(program);
+pruneCommand(program);
 
 program.parse();
