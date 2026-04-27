@@ -6,7 +6,7 @@ import { getProject, upsertProject, setMetro, setDevice, allClaimedDevices, reco
 import { allocatePort } from '../ports.js';
 import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion, listAllIosSims, sortSims } from '../sim/ios.js';
 import { ensureMetro } from '../metro.js';
-import { buildIosCommand, resolveSimNameByUdid } from '../runner.js';
+import { buildIosCommand, detectPackageManager } from '../runner.js';
 import { getExecutor } from '../exec.js';
 
 export default function iosCommand(program) {
@@ -16,6 +16,9 @@ export default function iosCommand(program) {
     .option('--device-type <name>', 'Explicit opt-in: create a NEW sim of this device type (e.g. "iPhone 17 Pro")')
     .option('--runtime <version>', 'iOS runtime version when creating a new sim (e.g. "26.2"); defaults to latest')
     .option('--auto', 'Non-interactive: pick the first unclaimed sim without prompting')
+    .option('--script <name>', 'package.json script to invoke for build/install (default: ios)', 'ios')
+    .option('--no-script', 'Skip the package.json script lookup; run expo/react-native CLI directly')
+    .option('--pm <name>', 'Package manager: npm, yarn, pnpm, bun (default: detected from lockfile)')
     .option('--no-install', 'Skip the build/install step (assume app is already installed)')
     .action(async (opts) => {
       const root = findProjectRoot(process.cwd());
@@ -96,8 +99,18 @@ export default function iosCommand(program) {
       }
 
       if (opts.install !== false) {
-        const simName = isExpo ? null : resolveSimNameByUdid(udid);
-        const cmd = buildIosCommand({ isExpo, udid, port: proj.metroPort, simName });
+        const packageManager = opts.pm || detectPackageManager(root);
+        const useScript = opts.script !== false;
+        const scriptName = useScript ? (typeof opts.script === 'string' ? opts.script : 'ios') : null;
+        const cmd = buildIosCommand({
+          projectRoot: root,
+          packageManager,
+          scriptName,
+          isExpo,
+          udid,
+          port: proj.metroPort,
+          useScript,
+        });
         console.log(chalk.dim(`> ${cmd}`));
         const exec = getExecutor();
         const child = exec.spawn('sh', ['-c', cmd], { cwd: root, stdio: 'inherit' });

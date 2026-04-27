@@ -5,13 +5,16 @@ import { getProject, upsertProject, setMetro, setDevice, allClaimedDevices } fro
 import { allocatePort } from '../ports.js';
 import { selectAndroidDevice, bootAndroidEmulator, waitForBoot, adbReverse, listAdbDevices } from '../sim/android.js';
 import { ensureMetro } from '../metro.js';
-import { buildAndroidCommand } from '../runner.js';
+import { buildAndroidCommand, detectPackageManager } from '../runner.js';
 import { getExecutor } from '../exec.js';
 
 export default function androidCommand(program) {
   program
     .command('android')
     .description('Ensure a dedicated Android emulator + Metro for the current project; build/install if needed')
+    .option('--script <name>', 'package.json script to invoke for build/install (default: android)', 'android')
+    .option('--no-script', 'Skip the package.json script lookup; run expo/react-native CLI directly')
+    .option('--pm <name>', 'Package manager: npm, yarn, pnpm, bun (default: detected from lockfile)')
     .option('--no-install', 'Skip the build/install step')
     .action(async (opts) => {
       const root = findProjectRoot(process.cwd());
@@ -85,7 +88,18 @@ export default function androidCommand(program) {
       console.log(chalk.dim(`adb reverse tcp:${proj.metroPort} configured for ${serial}`));
 
       if (opts.install !== false) {
-        const cmd = buildAndroidCommand({ isExpo, serial, port: proj.metroPort });
+        const packageManager = opts.pm || detectPackageManager(root);
+        const useScript = opts.script !== false;
+        const scriptName = useScript ? (typeof opts.script === 'string' ? opts.script : 'android') : null;
+        const cmd = buildAndroidCommand({
+          projectRoot: root,
+          packageManager,
+          scriptName,
+          isExpo,
+          serial,
+          port: proj.metroPort,
+          useScript,
+        });
         console.log(chalk.dim(`> ${cmd}`));
         const exec = getExecutor();
         const child = exec.spawn('sh', ['-c', cmd], { cwd: root, stdio: 'inherit' });

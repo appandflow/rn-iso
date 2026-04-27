@@ -36,8 +36,8 @@ Both run side-by-side, no contention.
 
 | Command | Purpose |
 |---|---|
-| `rn-iso ios [--device-type <name>] [--runtime <ver>] [--no-install]` | Ensure iOS sim + Metro + build/install |
-| `rn-iso android [--no-install]` | Same for Android |
+| `rn-iso ios [--device-type <name>] [--runtime <ver>] [--script <name>] [--pm <name>] [--no-script] [--no-install]` | Ensure iOS sim + Metro + build/install |
+| `rn-iso android [--script <name>] [--pm <name>] [--no-script] [--no-install]` | Same for Android |
 | `rn-iso start` | Just start Metro, no platform action |
 | `rn-iso device [--platform ios\|android] [--json]` | Print the assigned device target |
 | `rn-iso status` | Show all projects' state |
@@ -55,6 +55,7 @@ Both run side-by-side, no contention.
 - **Port allocation:** assigns 8082, 8083, 8084 etc. Reclaims dead ports on assignment.
 - **Simulator pool:** prefers reusing your project's existing assignment; falls back to any booted unclaimed sim; falls back to any shutdown unclaimed sim (boots it). Never auto-creates new sims — use `--device-type "iPhone 17 Pro" [--runtime 26.2]` to opt in to creating one.
 - **No locking:** your sim is yours; other projects' sims are theirs. If you're on tight hardware and want one shared sim with a mutex, use [`react-native-worktree`](https://github.com/aleqsio/react-native-worktree) instead.
+- **Build via your project's `ios` / `android` script** when present — respects custom flags and the right CLI (Expo vs RN). Falls back to `npx expo run:ios` / `npx react-native run-ios --udid <UDID>` when no script exists. Override the script name with `--script <name>` or skip with `--no-script`. Package manager is detected from your lockfile (`yarn.lock` -> yarn, `pnpm-lock.yaml` -> pnpm, `bun.lock` -> bun, else npm); override with `--pm <name>`.
 
 ## Requirements
 

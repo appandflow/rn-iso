@@ -27,10 +27,25 @@ function readPackageJson(projectRoot) {
 }
 
 export function detectIsExpo(projectRoot) {
+  // The `expo` package can be in deps for prebuild / config / modules without
+  // the project actually using `expo run:ios`. The strongest signal is what the
+  // project's `ios` script invokes -- check that first.
+  const iosScript = readPackageJson(projectRoot)?.scripts?.ios;
+  if (typeof iosScript === 'string') {
+    if (/\bexpo\s+run:ios\b/.test(iosScript)) return true;
+    if (/\breact-native\s+run-ios\b/.test(iosScript)) return false;
+  }
+  // No conclusive script. Require `expo` in deps AND an expo config block to
+  // be reasonably sure expo run:ios is appropriate as a fallback.
   const pkg = readPackageJson(projectRoot);
   if (!pkg) return false;
   const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-  return 'expo' in deps;
+  if (!('expo' in deps)) return false;
+  const appJson = readAppJson(projectRoot);
+  if (appJson?.expo) return true;
+  const text = readAppConfigText(projectRoot);
+  if (text && /\b(?:from\s+['"]expo['"]|expo\/config|ExpoConfig)\b/.test(text)) return true;
+  return false;
 }
 
 function readAppJson(projectRoot) {
