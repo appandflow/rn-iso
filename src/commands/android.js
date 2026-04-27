@@ -2,7 +2,7 @@
 import chalk from 'chalk';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../project.js';
 import { getProject, upsertProject, setMetro, setDevice, allClaimedDevices } from '../config.js';
-import { allocatePort } from '../ports.js';
+import { allocatePort, isMetroRunning } from '../ports.js';
 import { selectAndroidDevice, bootAndroidEmulator, waitForBoot, adbReverse, listAdbDevices } from '../sim/android.js';
 import { buildAndroidCommand, detectPackageManager } from '../runner.js';
 import { getExecutor } from '../exec.js';
@@ -35,6 +35,11 @@ export default function androidCommand(program) {
         proj = getProject(root);
         console.log(chalk.dim(`Allocated Metro port: ${port}`));
       }
+      const metroAlreadyUp = await isMetroRunning(proj.metroPort);
+      console.log(chalk.dim(
+        `Metro port: ${proj.metroPort}` +
+        (metroAlreadyUp ? ' (already running)' : ' (will be started by build CLI)')
+      ));
 
       const claimed = allClaimedDevices();
       const myAvd = proj.platforms?.android?.avdName || null;

@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import prompts from 'prompts';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../project.js';
 import { getProject, upsertProject, setMetro, setDevice, allClaimedDevices, recordSimUsage, getSimUsage } from '../config.js';
-import { allocatePort } from '../ports.js';
+import { allocatePort, isMetroRunning } from '../ports.js';
 import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion, listAllIosSims, sortSims } from '../sim/ios.js';
 import { buildIosCommand, detectPackageManager } from '../runner.js';
 import { getExecutor } from '../exec.js';
@@ -39,6 +39,11 @@ export default function iosCommand(program) {
         proj = getProject(root);
         console.log(chalk.dim(`Allocated Metro port: ${port}`));
       }
+      const metroAlreadyUp = await isMetroRunning(proj.metroPort);
+      console.log(chalk.dim(
+        `Metro port: ${proj.metroPort}` +
+        (metroAlreadyUp ? ' (already running)' : ' (will be started by build CLI)')
+      ));
 
       const claimedDevices = allClaimedDevices();
       const ownUdid = proj.platforms?.ios?.deviceUdid;
