@@ -8,7 +8,6 @@ import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntim
 import { ensureMetro } from '../metro.js';
 import { buildIosCommand, resolveSimNameByUdid } from '../runner.js';
 import { getExecutor } from '../exec.js';
-import { findRecentAppByBundleId, installOnSim, launchOnSim } from '../install/ios.js';
 
 export default function iosCommand(program) {
   program
@@ -106,26 +105,6 @@ export default function iosCommand(program) {
           child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`Build failed (exit ${code})`)));
         });
 
-        // Defensive re-install: the underlying CLI sometimes installs on the
-        // wrong booted sim. We locate the freshly-built .app and install/launch
-        // on the exact UDID we assigned. No-op if the CLI got it right.
-        if (bundleId) {
-          const appPath = findRecentAppByBundleId(bundleId);
-          if (appPath) {
-            console.log(chalk.dim(`Verifying install on ${udid} (${appPath.split('/').pop()})...`));
-            try {
-              installOnSim(udid, appPath);
-              launchOnSim(udid, bundleId);
-              console.log(chalk.green(`Installed and launched on ${udid}`));
-            } catch (e) {
-              console.log(chalk.yellow(`Post-install verification failed: ${e.message}`));
-            }
-          } else {
-            console.log(chalk.dim(`(no recent .app for ${bundleId} found in DerivedData; skipping post-install verification)`));
-          }
-        } else {
-          console.log(chalk.dim('(no bundle ID detected; skipping post-install verification)'));
-        }
       }
 
       console.log(chalk.green(`\nOK: iOS ready on sim ${udid}, Metro port ${proj.metroPort}`));
