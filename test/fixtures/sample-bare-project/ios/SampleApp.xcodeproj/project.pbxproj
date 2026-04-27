@@ -1,0 +1,10 @@
+// Minimal pbxproj fixture mimicking a hybrid project layout: main app
+// bundle id appears in multiple build configs; an extension target adds a
+// suffix on its own id; macros are present too.
+				PRODUCT_BUNDLE_IDENTIFIER = me.sample;
+				PRODUCT_BUNDLE_IDENTIFIER = me.sample;
+				PRODUCT_BUNDLE_IDENTIFIER = me.sample;
+				PRODUCT_BUNDLE_IDENTIFIER = me.sample;
+				PRODUCT_BUNDLE_IDENTIFIER = me.sample.WidgetExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = me.sample.WidgetExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = $(SOMETHING);

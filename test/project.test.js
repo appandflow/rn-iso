@@ -28,10 +28,17 @@ test('detectBundleId reads ios.bundleIdentifier from app.json', () => {
   assert.equal(detectBundleId(EXPO_PROJ), 'com.example.sample');
 });
 
-test('detectBundleId returns null when app.json absent', () => {
-  assert.equal(detectBundleId(BARE_PROJ), null);
+test('detectBundleId falls back to pbxproj when app config has no bundle id', () => {
+  // BARE_PROJ has no app.json; the fixture pbxproj has main app id "me.sample"
+  // alongside an extension target with a longer suffix. Picks the most-common
+  // concrete value, tie-breaking by shortest length.
+  assert.equal(detectBundleId(BARE_PROJ), 'me.sample');
 });
 
 test('detectAndroidPackage reads android.package from app.json', () => {
   assert.equal(detectAndroidPackage(EXPO_PROJ), 'com.example.sample');
+});
+
+test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', () => {
+  assert.equal(detectAndroidPackage(BARE_PROJ), 'me.sample');
 });

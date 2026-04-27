@@ -1,0 +1,6 @@
+android {
+    namespace "me.sample"
+    defaultConfig {
+        applicationId "me.sample"
+    }
+}
