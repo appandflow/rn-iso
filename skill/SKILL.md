@@ -15,8 +15,7 @@ From the project root (or any subdirectory):
 1. **Ensure the platform is ready** — `rn-iso ios --auto` (or `rn-iso android`). This:
    - Allocates a Metro port for the project (or reuses the assigned one)
    - Picks a dedicated unclaimed sim (booting it if shutdown). With `--auto`, picks the first candidate without prompting.
-   - Starts Metro detached
-   - Builds and installs the app via the project's `ios` / `android` script if present, else `expo run:ios` / `react-native run-ios`. Detects the package manager from the lockfile (walks up for monorepos).
+   - Builds and installs the app via the project's `ios` / `android` script if present, else `expo run:ios` / `react-native run-ios`. The build CLI starts Metro itself on the assigned port; rn-iso doesn't spawn a separate Metro. Detects the package manager from the lockfile (walks up for monorepos).
 
 2. **Get the device target** — `rn-iso device --platform ios --json`:
    ```json
@@ -86,8 +85,9 @@ Reserved sims show grayed out as `[reserved]` in `rn-iso ios` pickers and won't 
 ## Other useful commands
 
 - `rn-iso status` — show all projects, their assignments, and Metro state. Reservations appear in their own section.
-- `rn-iso logs` — tail the Metro log for the current project.
-- `rn-iso stop` — kill the project's Metro (rare — usually leave it running).
+- `rn-iso start` — start Metro detached on the project's assigned port WITHOUT building/installing. Useful if you want logs (`rn-iso logs`) or to keep Metro alive across builds.
+- `rn-iso logs` — tail the Metro log file (only available if Metro was started via `rn-iso start`; the build CLI's Metro doesn't write to our log).
+- `rn-iso stop` — kill the project's Metro. Finds the process by port, so it works whether Metro was started by `rn-iso start` or by the build CLI.
 - `rn-iso prune` — GC dead entries machine-wide; safe to run periodically.
 
 ## Sort order in the picker

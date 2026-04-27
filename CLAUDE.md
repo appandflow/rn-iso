@@ -87,6 +87,18 @@ step caused double-launches and was removed. If you find yourself wanting
 to add it back, the upstream bug is the right place to fix things —
 `patch-package` for stuck users, not workaround code in `commands/ios.js`.
 
+### 3b. `rn-iso ios` / `android` do NOT spawn Metro
+
+The build CLI (`expo run:ios` / `react-native run-ios`) starts Metro
+itself on the `--port` we pass. We used to also pre-spawn a detached
+Metro before the build, which led to two Metros on the same port.
+Removed.
+
+`rn-iso start` is still around for the explicit "I just want Metro" case
+— it spawns Metro detached and tracks the PID + log file. The build
+commands rely on the build CLI's Metro; `rn-iso stop` looks up the PID
+by port (via `lsof`) so it works regardless of who started Metro.
+
 ### 4. Reservations are first-class claims
 
 `allClaimedDevices()` returns BOTH project-claimed AND reservation-claimed

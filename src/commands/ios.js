@@ -5,7 +5,6 @@ import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } f
 import { getProject, upsertProject, setMetro, setDevice, allClaimedDevices, recordSimUsage, getSimUsage } from '../config.js';
 import { allocatePort } from '../ports.js';
 import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion, listAllIosSims, sortSims } from '../sim/ios.js';
-import { ensureMetro } from '../metro.js';
 import { buildIosCommand, detectPackageManager } from '../runner.js';
 import { getExecutor } from '../exec.js';
 
@@ -90,13 +89,10 @@ export default function iosCommand(program) {
       setDevice(root, 'ios', { deviceUdid: udid });
       recordSimUsage('ios', udid);
 
-      const metro = await ensureMetro({ projectPath: root, isExpo, port: proj.metroPort });
-      if (metro.alreadyRunning) {
-        console.log(chalk.dim(`Metro already running on port ${proj.metroPort}`));
-      } else {
-        setMetro(root, proj.metroPort, metro.pid);
-        console.log(chalk.green(`Metro started (pid ${metro.pid}, port ${proj.metroPort}) -- logs at ~/.rn-iso/logs/`));
-      }
+      // Metro is started by the build CLI (`expo run:ios` / `react-native
+      // run-ios`) using the --port we pass below. We don't spawn a separate
+      // Metro -- that caused two Metros on the same port. For Metro-only
+      // (without build/install), use `rn-iso start`.
 
       if (opts.install !== false) {
         const packageManager = opts.pm || detectPackageManager(root);

@@ -4,7 +4,6 @@ import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } f
 import { getProject, upsertProject, setMetro, setDevice, allClaimedDevices } from '../config.js';
 import { allocatePort } from '../ports.js';
 import { selectAndroidDevice, bootAndroidEmulator, waitForBoot, adbReverse, listAdbDevices } from '../sim/android.js';
-import { ensureMetro } from '../metro.js';
 import { buildAndroidCommand, detectPackageManager } from '../runner.js';
 import { getExecutor } from '../exec.js';
 
@@ -76,13 +75,8 @@ export default function androidCommand(program) {
 
       setDevice(root, 'android', { avdName, consolePort });
 
-      const metro = await ensureMetro({ projectPath: root, isExpo, port: proj.metroPort });
-      if (metro.alreadyRunning) {
-        console.log(chalk.dim(`Metro already running on port ${proj.metroPort}`));
-      } else {
-        setMetro(root, proj.metroPort, metro.pid);
-        console.log(chalk.green(`Metro started (pid ${metro.pid}, port ${proj.metroPort})`));
-      }
+      // Metro is started by the build CLI; we don't spawn our own. For
+      // Metro-only (no build/install), use `rn-iso start`.
 
       adbReverse(serial, proj.metroPort);
       console.log(chalk.dim(`adb reverse tcp:${proj.metroPort} configured for ${serial}`));
