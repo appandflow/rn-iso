@@ -2,12 +2,15 @@ import { existsSync, readFileSync, readdirSync, realpathSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { loadConfig } from './config.js';
 
-// Resolve a project from one of three forms:
+// Resolve a project from one of two forms:
 //   - undefined / null  -> walk up from cwd (current behavior)
-//   - absolute / relative path that matches a registered project key
-//   - basename match (e.g. `agent-1` -> `/Users/janic/Developer/agent-1`)
+//   - absolute or relative path that matches a registered project key
 //
-// Returns { found, error } so callers can decide how to surface the failure.
+// Basename / fuzzy matching is intentionally NOT supported -- collisions
+// across worktrees with the same dir name make it ambiguous. Use full paths
+// or the reservation label (`--label` on `rn-iso reserve`) instead.
+//
+// Returns { found, error }.
 export function resolveRegisteredProject(arg) {
   const cfg = loadConfig();
   const projects = cfg?.projects || {};
@@ -19,25 +22,17 @@ export function resolveRegisteredProject(arg) {
     return { found: root };
   }
 
-  // Exact path match (absolute or relative-to-cwd).
+  // Exact path match. realpath() canonicalizes symlinks the same way
+  // findProjectRoot does, so the keys line up.
   let abs;
   try { abs = realpathSync(resolve(arg)); } catch { abs = resolve(arg); }
   if (projects[abs]) return { found: abs };
   if (projects[arg]) return { found: arg };
 
-  // Basename match: pick projects whose last path segment equals the arg.
-  const basenameMatches = Object.keys(projects).filter(
-    p => p === arg || p.split('/').pop() === arg || p.endsWith(`/${arg}`)
-  );
-  if (basenameMatches.length === 1) return { found: basenameMatches[0] };
-  if (basenameMatches.length > 1) {
-    return {
-      found: null,
-      error: `Multiple projects match "${arg}":\n${basenameMatches.map(m => '  ' + m).join('\n')}\nUse the full path to disambiguate.`,
-    };
-  }
-
-  return { found: null, error: `No registered project matches "${arg}". See \`rn-iso status\` for the list.` };
+  return {
+    found: null,
+    error: `No registered project at "${arg}". Pass an absolute path; see \`rn-iso status\` for the list.`,
+  };
 }
 
 export function findProjectRoot(startDir) {

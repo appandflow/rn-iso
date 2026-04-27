@@ -66,8 +66,10 @@ rn-iso reserve            # both platforms, multi-select picker
 rn-iso reserve ios        # iOS only
 rn-iso reserve --list     # show current reservations
 
-# Release when done:
-rn-iso unreserve ios <UDID>
+# Release when done -- by UDID/serial OR by the label:
+rn-iso unreserve <UDID>
+rn-iso unreserve agent-1     # by label
+rn-iso release agent-1       # `release` accepts the label too
 rn-iso unreserve --all
 ```
 
@@ -89,7 +91,11 @@ Reserved sims show grayed out as `[reserved]` in `rn-iso ios` pickers and won't 
 - `rn-iso logs` — tail the Metro log file (only available if Metro was started via `rn-iso start`; the build CLI's Metro doesn't write to our log).
 - `rn-iso stop` — kill the project's Metro. Finds the process by port, so it works whether Metro was started by `rn-iso start` or by the build CLI.
 - `rn-iso prune` — GC dead entries machine-wide; safe to run periodically.
-- `rn-iso release [project]` — unbind device assignment(s). `[project]` is the directory basename or absolute path; defaults to the current project. Lets you free up another project's sim from anywhere (e.g. `rn-iso release agent-1`).
+- `rn-iso release [target]` — free a project assignment OR a reservation. `[target]` is an absolute project path, the `--label` you set when reserving, or a UDID/serial. Defaults to the current project. Examples:
+  - `rn-iso release` -- current project
+  - `rn-iso release /Users/x/Developer/myapp` -- specific project by path
+  - `rn-iso release agent-1` -- reservation by label (works across iOS/Android)
+- `rn-iso unreserve <id|label>` — same as `rn-iso release` for reservations specifically. Accepts UDID, emulator serial, OR the `--label` from when you reserved. Pass `--platform ios|android` to restrict.
 
 ## Sort order in the picker
 

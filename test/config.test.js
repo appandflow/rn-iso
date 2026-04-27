@@ -20,6 +20,7 @@ import {
   removeReservation,
   listReservations,
   clearAllReservations,
+  findReservations,
   recordSimUsage,
   getSimUsage,
 } from '../src/config.js';
@@ -154,6 +155,36 @@ test('clearAllReservations empties both platforms', () => {
   clearAllReservations();
   const r = listReservations();
   assert.deepEqual(r, { ios: [], android: [] });
+});
+
+test('findReservations matches by id (UDID for iOS, serial for Android)', () => {
+  addReservation('ios', { udid: 'UDID-1', label: 'agent-2' });
+  addReservation('android', { serial: 'emulator-5554', consolePort: 5554, label: 'agent-1' });
+  const ios = findReservations('UDID-1');
+  assert.deepEqual(ios, [{ platform: 'ios', id: 'UDID-1', label: 'agent-2' }]);
+  const android = findReservations('emulator-5554');
+  assert.deepEqual(android, [{ platform: 'android', id: 'emulator-5554', label: 'agent-1' }]);
+});
+
+test('findReservations matches by label across platforms', () => {
+  addReservation('ios', { udid: 'UDID-1', label: 'shared-label' });
+  addReservation('android', { serial: 'emulator-5554', consolePort: 5554, label: 'shared-label' });
+  const matches = findReservations('shared-label');
+  assert.equal(matches.length, 2);
+  assert.deepEqual(matches.map(m => m.platform).sort(), ['android', 'ios']);
+});
+
+test('findReservations respects platform filter', () => {
+  addReservation('ios', { udid: 'UDID-1', label: 'shared' });
+  addReservation('android', { serial: 'emulator-5554', consolePort: 5554, label: 'shared' });
+  const matches = findReservations('shared', 'android');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].platform, 'android');
+});
+
+test('findReservations returns empty when nothing matches', () => {
+  addReservation('ios', { udid: 'UDID-1', label: 'agent-1' });
+  assert.deepEqual(findReservations('nope'), []);
 });
 
 test('recordSimUsage increments and getSimUsage reads counts', () => {

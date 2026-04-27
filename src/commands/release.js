@@ -1,17 +1,36 @@
 // src/commands/release.js
 import chalk from 'chalk';
 import { resolveRegisteredProject } from '../project.js';
-import { getProject, clearDevice } from '../config.js';
+import { getProject, clearDevice, findReservations, removeReservation } from '../config.js';
 
 export default function releaseCommand(program) {
   program
-    .command('release [project]')
-    .description('Unbind device assignment(s). [project] is the directory basename or absolute path; defaults to the current project.')
+    .command('release [target]')
+    .description('Free a project assignment OR a reservation. [target] is an absolute project path, a reservation label (set via `rn-iso reserve --label`), or a UDID/serial. Defaults to the current project.')
     .option('--platform <platform>', 'ios or android (default: both)')
-    .action((project, opts) => {
-      const { found, error } = resolveRegisteredProject(project);
+    .action((target, opts) => {
+      // 1. If a target was given, try it as a reservation label / id first.
+      if (target) {
+        const matches = findReservations(target, opts.platform);
+        if (matches.length > 0) {
+          for (const m of matches) {
+            removeReservation(m.platform, m.id);
+            console.log(chalk.green(
+              `Released ${m.platform} reservation ${m.id}` +
+              (m.label ? ` (${m.label})` : '')
+            ));
+          }
+          return;
+        }
+      }
+
+      // 2. Otherwise treat the target as a project path (or default to cwd).
+      const { found, error } = resolveRegisteredProject(target);
       if (!found) {
         console.error(chalk.red(error));
+        if (target) {
+          console.error(chalk.dim('(Also tried as reservation label/id; no match.)'));
+        }
         process.exit(1);
       }
       const proj = getProject(found);
@@ -23,9 +42,9 @@ export default function releaseCommand(program) {
       for (const p of platforms) {
         if (proj.platforms?.[p]) {
           clearDevice(found, p);
-          console.log(chalk.green(`Released ${p} assignment for ${found.split('/').pop()}.`));
+          console.log(chalk.green(`Released ${p} assignment for ${found}.`));
         } else {
-          console.log(chalk.dim(`No ${p} assignment to release for ${found.split('/').pop()}.`));
+          console.log(chalk.dim(`No ${p} assignment to release for ${found}.`));
         }
       }
     });

@@ -88,30 +88,22 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-test('resolveRegisteredProject finds a project by basename', () => {
-  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  upsertProject('/Users/x/Developer/agent-2', { bundleId: 'b', androidPackage: 'b', isExpo: false });
-  const r = resolveRegisteredProject('agent-1');
-  assert.equal(r.found, '/Users/x/Developer/agent-1');
-});
-
 test('resolveRegisteredProject finds a project by absolute path', () => {
   upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   const r = resolveRegisteredProject('/Users/x/Developer/agent-1');
   assert.equal(r.found, '/Users/x/Developer/agent-1');
 });
 
-test('resolveRegisteredProject errors on ambiguous basename', () => {
+test('resolveRegisteredProject does NOT do basename matching', () => {
   upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  upsertProject('/Users/x/Worktrees/agent-1', { bundleId: 'b', androidPackage: 'b', isExpo: false });
   const r = resolveRegisteredProject('agent-1');
   assert.equal(r.found, null);
-  assert.match(r.error, /Multiple projects/);
+  assert.match(r.error, /Pass an absolute path/);
 });
 
-test('resolveRegisteredProject errors when basename does not match anything', () => {
+test('resolveRegisteredProject errors when path does not match anything', () => {
   upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  const r = resolveRegisteredProject('nonexistent');
+  const r = resolveRegisteredProject('/no/such/path');
   assert.equal(r.found, null);
   assert.match(r.error, /No registered project/);
 });

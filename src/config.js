@@ -159,6 +159,29 @@ export function listReservations() {
   return cfg?.reservations || { ios: [], android: [] };
 }
 
+// Find reservations matching either an identifier (UDID for iOS, serial for
+// Android) or a label (the --label set via `rn-iso reserve`). Returns
+// `[{ platform, id, label }]`. Pass platform to restrict the search.
+export function findReservations(idOrLabel, platform = null) {
+  const r = listReservations();
+  const matches = [];
+  if (!platform || platform === 'ios') {
+    for (const e of r.ios || []) {
+      if (e.udid === idOrLabel || e.label === idOrLabel) {
+        matches.push({ platform: 'ios', id: e.udid, label: e.label });
+      }
+    }
+  }
+  if (!platform || platform === 'android') {
+    for (const e of r.android || []) {
+      if (e.serial === idOrLabel || e.label === idOrLabel) {
+        matches.push({ platform: 'android', id: e.serial, label: e.label });
+      }
+    }
+  }
+  return matches;
+}
+
 export function addReservation(platform, fields) {
   if (platform !== 'ios' && platform !== 'android') {
     throw new Error(`Unknown platform: ${platform}`);
