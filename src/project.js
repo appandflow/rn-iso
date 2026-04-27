@@ -1,5 +1,44 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'fs';
 import { join, dirname, resolve } from 'path';
+import { loadConfig } from './config.js';
+
+// Resolve a project from one of three forms:
+//   - undefined / null  -> walk up from cwd (current behavior)
+//   - absolute / relative path that matches a registered project key
+//   - basename match (e.g. `agent-1` -> `/Users/janic/Developer/agent-1`)
+//
+// Returns { found, error } so callers can decide how to surface the failure.
+export function resolveRegisteredProject(arg) {
+  const cfg = loadConfig();
+  const projects = cfg?.projects || {};
+
+  if (!arg) {
+    const root = findProjectRoot(process.cwd());
+    if (!root) return { found: null, error: 'Not in a React Native project (no package.json found).' };
+    if (!projects[root]) return { found: null, error: `No rn-iso entry for ${root}. Run \`rn-iso ios\` or \`rn-iso android\` first.` };
+    return { found: root };
+  }
+
+  // Exact path match (absolute or relative-to-cwd).
+  let abs;
+  try { abs = realpathSync(resolve(arg)); } catch { abs = resolve(arg); }
+  if (projects[abs]) return { found: abs };
+  if (projects[arg]) return { found: arg };
+
+  // Basename match: pick projects whose last path segment equals the arg.
+  const basenameMatches = Object.keys(projects).filter(
+    p => p === arg || p.split('/').pop() === arg || p.endsWith(`/${arg}`)
+  );
+  if (basenameMatches.length === 1) return { found: basenameMatches[0] };
+  if (basenameMatches.length > 1) {
+    return {
+      found: null,
+      error: `Multiple projects match "${arg}":\n${basenameMatches.map(m => '  ' + m).join('\n')}\nUse the full path to disambiguate.`,
+    };
+  }
+
+  return { found: null, error: `No registered project matches "${arg}". See \`rn-iso status\` for the list.` };
+}
 
 export function findProjectRoot(startDir) {
   let dir;

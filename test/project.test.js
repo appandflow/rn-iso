@@ -1,7 +1,10 @@
-import { test } from 'node:test';
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { resolve, join } from 'path';
-import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../src/project.js';
+import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage, resolveRegisteredProject } from '../src/project.js';
+import { upsertProject } from '../src/config.js';
 
 const FIXTURES = resolve(import.meta.dirname, 'fixtures');
 const EXPO_PROJ = join(FIXTURES, 'sample-expo-project');
@@ -72,4 +75,43 @@ test('detectAndroidPackage reads android.package from app.json', () => {
 
 test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', () => {
   assert.equal(detectAndroidPackage(BARE_PROJ), 'me.sample');
+});
+
+// resolveRegisteredProject -- needs an isolated config home.
+let tmpHome;
+beforeEach(() => {
+  tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-resolve-'));
+  process.env.RN_ISO_HOME = tmpHome;
+});
+afterEach(() => {
+  rmSync(tmpHome, { recursive: true, force: true });
+  delete process.env.RN_ISO_HOME;
+});
+
+test('resolveRegisteredProject finds a project by basename', () => {
+  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  upsertProject('/Users/x/Developer/agent-2', { bundleId: 'b', androidPackage: 'b', isExpo: false });
+  const r = resolveRegisteredProject('agent-1');
+  assert.equal(r.found, '/Users/x/Developer/agent-1');
+});
+
+test('resolveRegisteredProject finds a project by absolute path', () => {
+  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  const r = resolveRegisteredProject('/Users/x/Developer/agent-1');
+  assert.equal(r.found, '/Users/x/Developer/agent-1');
+});
+
+test('resolveRegisteredProject errors on ambiguous basename', () => {
+  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  upsertProject('/Users/x/Worktrees/agent-1', { bundleId: 'b', androidPackage: 'b', isExpo: false });
+  const r = resolveRegisteredProject('agent-1');
+  assert.equal(r.found, null);
+  assert.match(r.error, /Multiple projects/);
+});
+
+test('resolveRegisteredProject errors when basename does not match anything', () => {
+  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  const r = resolveRegisteredProject('nonexistent');
+  assert.equal(r.found, null);
+  assert.match(r.error, /No registered project/);
 });

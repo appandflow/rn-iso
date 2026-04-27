@@ -89,6 +89,7 @@ Reserved sims show grayed out as `[reserved]` in `rn-iso ios` pickers and won't 
 - `rn-iso logs` — tail the Metro log file (only available if Metro was started via `rn-iso start`; the build CLI's Metro doesn't write to our log).
 - `rn-iso stop` — kill the project's Metro. Finds the process by port, so it works whether Metro was started by `rn-iso start` or by the build CLI.
 - `rn-iso prune` — GC dead entries machine-wide; safe to run periodically.
+- `rn-iso release [project]` — unbind device assignment(s). `[project]` is the directory basename or absolute path; defaults to the current project. Lets you free up another project's sim from anywhere (e.g. `rn-iso release agent-1`).
 
 ## Sort order in the picker
 
