@@ -11,6 +11,7 @@ import {
   buildScriptCommand,
   detectPackageManager,
   detectScriptCli,
+  findLockfile,
   getProjectScript,
   resolveSimNameByUdid,
 } from '../src/runner.js';
@@ -122,6 +123,42 @@ test('detectPackageManager picks based on lockfile', () => {
 
   const noLock = makeProj({ 'package.json': '{}' });
   assert.equal(detectPackageManager(noLock), 'npm'); // default
+});
+
+test('detectPackageManager walks up to find lockfile in monorepo root', () => {
+  // Layout:
+  //   /tmp/.../    <-- yarn.lock here (workspace root)
+  //   /tmp/.../apps/mobile/  <-- our "project" (no lockfile of its own)
+  const root = makeProj({
+    'yarn.lock': '',
+    'package.json': JSON.stringify({ workspaces: ['apps/*'] }),
+    'apps/mobile/package.json': JSON.stringify({ name: 'mobile' }),
+  });
+  const projectRoot = join(root, 'apps/mobile');
+  assert.equal(detectPackageManager(projectRoot), 'yarn');
+});
+
+test('findLockfile returns the lockfile dir and pm', () => {
+  const root = makeProj({
+    'pnpm-lock.yaml': '',
+    'apps/mobile/package.json': '{}',
+  });
+  const found = findLockfile(join(root, 'apps/mobile'));
+  assert.equal(found.pm, 'pnpm');
+  assert.equal(found.dir, root);
+});
+
+test('findLockfile prefers nearest lockfile when nested ones exist', () => {
+  // Some monorepos intentionally have nested lockfiles per package; pick the
+  // closest one, not the workspace root's.
+  const root = makeProj({
+    'yarn.lock': '',
+    'apps/mobile/pnpm-lock.yaml': '',
+    'apps/mobile/package.json': '{}',
+  });
+  const found = findLockfile(join(root, 'apps/mobile'));
+  assert.equal(found.pm, 'pnpm');
+  assert.equal(found.dir, join(root, 'apps/mobile'));
 });
 
 test('detectScriptCli identifies expo, react-native, or unknown', () => {
