@@ -59,7 +59,7 @@ If `git status` isn't clean, commit / discard before tagging.
 
 ## After the release
 
-- Bump the local working tree's `package.json` to the next planned version + `-dev` suffix (or leave at the just-released version — we currently leave it). Decide once and document here when it's settled.
+- Leave `package.json` at the just-released version. The next release bumps it as part of its own pre-flight; we don't carry a `-dev` suffix between releases.
 - If a critical bug is discovered post-publish, ship a patch release rather than `npm unpublish`.
 
 ## Don't
