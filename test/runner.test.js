@@ -48,15 +48,15 @@ test('buildIosCommand bare fallback uses --udid (not --simulator)', () => {
   assert.equal(cmd, 'npx react-native run-ios --udid UDID-1 --port 8083');
 });
 
-test('buildAndroidCommand expo fallback uses --device serial', () => {
+test('buildAndroidCommand expo fallback uses --device <avdName>', () => {
   const root = makeProj({ 'package.json': '{}' });
-  const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'android', isExpo: true, serial: 'emulator-5554', port: 8083, useScript: false });
-  assert.equal(cmd, 'npx expo run:android --device emulator-5554 --port 8083');
+  const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'android', isExpo: true, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083, useScript: false });
+  assert.equal(cmd, 'npx expo run:android --device "Pixel_6_API_34" --port 8083');
 });
 
-test('buildAndroidCommand bare fallback uses --deviceId and RCT_METRO_PORT', () => {
+test('buildAndroidCommand bare fallback uses --deviceId <serial> and RCT_METRO_PORT', () => {
   const root = makeProj({ 'package.json': '{}' });
-  const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'android', isExpo: false, serial: 'emulator-5554', port: 8083, useScript: false });
+  const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'android', isExpo: false, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083, useScript: false });
   assert.equal(cmd, 'RCT_METRO_PORT=8083 npx react-native run-android --deviceId emulator-5554');
 });
 
@@ -98,8 +98,16 @@ test('buildAndroidCommand uses script via bun and --deviceId for RN script', () 
   const root = makeProj({
     'package.json': JSON.stringify({ scripts: { android: 'react-native run-android' } }),
   });
-  const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'bun', scriptName: 'android', isExpo: false, serial: 'emulator-5554', port: 8083 });
+  const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'bun', scriptName: 'android', isExpo: false, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083 });
   assert.equal(cmd, 'bun run android --deviceId emulator-5554 --port 8083');
+});
+
+test('buildAndroidCommand uses --device <avdName> for an expo script', () => {
+  const root = makeProj({
+    'package.json': JSON.stringify({ scripts: { android: 'expo run:android' } }),
+  });
+  const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'pnpm', scriptName: 'android', isExpo: true, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083 });
+  assert.equal(cmd, 'pnpm android --device "Pixel_6_API_34" --port 8083');
 });
 
 // ---- Helpers ----

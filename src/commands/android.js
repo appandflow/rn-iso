@@ -150,6 +150,7 @@ export default function androidCommand(program) {
           packageManager,
           scriptName,
           isExpo,
+          avdName,
           serial,
           port: proj.metroPort,
           useScript,

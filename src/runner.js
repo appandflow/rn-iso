@@ -64,9 +64,11 @@ export function buildScriptCommand(packageManager, scriptName, extraArgs = []) {
   }
 }
 
-// Decide which CLI a script invokes. Affects flag names: Expo CLI takes
-// --device <UDID>, bare RN CLI takes --udid <UDID> for iOS (--device there
-// means physical device by name) and --deviceId for Android.
+// Decide which CLI a script invokes. Affects flag names:
+//   iOS:     Expo `--device <UDID>`     | RN `--udid <UDID>`
+//   Android: Expo `--device <AVD-name>` | RN `--deviceId <serial>`
+// Expo's run:android resolves --device by name (not by serial), so we pass
+// the AVD name there even though we boot/track by serial.
 export function detectScriptCli(scriptBody) {
   if (typeof scriptBody !== 'string') return 'unknown';
   if (/\bexpo\s+(run:ios|run:android|start)\b/.test(scriptBody)) return 'expo';
@@ -96,13 +98,13 @@ export function buildIosCommand({ projectRoot, packageManager, scriptName, isExp
   return `npx react-native run-ios --udid ${udid} --port ${port}`;
 }
 
-export function buildAndroidCommand({ projectRoot, packageManager, scriptName, isExpo, serial, port, useScript = true }) {
+export function buildAndroidCommand({ projectRoot, packageManager, scriptName, isExpo, avdName, serial, port, useScript = true }) {
   if (useScript && scriptName) {
     const script = getProjectScript(projectRoot, scriptName);
     if (script) {
       const cli = detectScriptCli(script);
-      // Expo: --device <serial>; RN: --deviceId <serial>.
-      const deviceFlag = cli === 'expo' ? `--device ${serial}` : `--deviceId ${serial}`;
+      // Expo: --device <AVD name>; RN: --deviceId <serial>.
+      const deviceFlag = cli === 'expo' ? `--device "${avdName}"` : `--deviceId ${serial}`;
       return buildScriptCommand(packageManager, scriptName, [
         deviceFlag,
         `--port ${port}`,
@@ -110,7 +112,7 @@ export function buildAndroidCommand({ projectRoot, packageManager, scriptName, i
     }
   }
   if (isExpo) {
-    return `npx expo run:android --device ${serial} --port ${port}`;
+    return `npx expo run:android --device "${avdName}" --port ${port}`;
   }
   return `RCT_METRO_PORT=${port} npx react-native run-android --deviceId ${serial}`;
 }
