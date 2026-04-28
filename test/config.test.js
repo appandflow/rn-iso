@@ -203,6 +203,10 @@ test('allClaimedDevices.iosClaims labels project vs reservation sources', () => 
   setDevice('/Users/janic/Developer/myapp', 'ios', { deviceUdid: 'UDID-PROJ' });
   addReservation('ios', { udid: 'UDID-EXT', label: 'agent-1' });
   const claimed = allClaimedDevices();
-  assert.deepEqual(claimed.iosClaims['UDID-PROJ'], { source: 'project', label: 'myapp' });
+  assert.deepEqual(claimed.iosClaims['UDID-PROJ'], {
+    source: 'project',
+    label: 'myapp',
+    path: '/Users/janic/Developer/myapp',
+  });
   assert.deepEqual(claimed.iosClaims['UDID-EXT'], { source: 'reservation', label: 'agent-1' });
 });

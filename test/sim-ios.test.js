@@ -108,13 +108,22 @@ test('selectIosDevice excludes claimed sims from candidates', () => {
   assert.deepEqual(result.candidates.map(s => s.udid), ['UDID-B']);
 });
 
-test('selectIosDevice returns needsBoot only when ALL sims are claimed', () => {
+test('selectIosDevice returns allClaimed when sims exist but every one is claimed', () => {
   setExecutor({ run: () => SIMCTL_OUTPUT, runQuiet: () => null, spawn: () => null });
   const result = selectIosDevice({
     existingUdid: null,
     claimedUdids: ['UDID-A', 'UDID-B', 'UDID-C'],
   });
-  assert.equal(result.kind, 'needsBoot');
+  assert.equal(result.kind, 'allClaimed');
+  // candidates contains every sim, sorted, so the picker can offer to steal any.
+  assert.deepEqual(result.candidates.map(s => s.udid).sort(), ['UDID-A', 'UDID-B', 'UDID-C']);
+});
+
+test('selectIosDevice returns noSims when no iOS simulators exist at all', () => {
+  const empty = JSON.stringify({ devices: {} });
+  setExecutor({ run: () => empty, runQuiet: () => null, spawn: () => null });
+  const result = selectIosDevice({ existingUdid: null, claimedUdids: [] });
+  assert.equal(result.kind, 'noSims');
 });
 
 test('parseRuntimeVersion extracts major.minor from runtime id', async () => {

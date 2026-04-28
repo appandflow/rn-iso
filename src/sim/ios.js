@@ -66,8 +66,14 @@ export function selectIosDevice({ existingUdid, claimedUdids, usage = {} }) {
     }
   }
 
+  if (sims.length === 0) return { kind: 'noSims' };
+
   const unclaimed = sims.filter(s => !claimed.has(s.udid));
-  if (unclaimed.length === 0) return { kind: 'needsBoot' };
+  if (unclaimed.length === 0) {
+    // Sims exist but every one is claimed by another project or a
+    // reservation. The picker can offer to steal one; the caller decides.
+    return { kind: 'allClaimed', candidates: sortSims(sims, usage) };
+  }
 
   return { kind: 'allocate', candidates: sortSims(unclaimed, usage) };
 }

@@ -108,7 +108,10 @@ export function allClaimedDevices() {
     iosUdids: [],
     androidAvds: [],
     androidConsolePorts: [],
-    // iosClaims: udid -> { source: 'project'|'reservation', label: string }
+    // iosClaims: udid -> { source: 'project'|'reservation', label, path? }
+    // For 'project', `path` is the absolute project path (so callers can
+    // release the prior claim via clearDevice). For 'reservation', the udid
+    // itself is the key; pass to removeReservation to drop it.
     iosClaims: {},
   };
   if (!cfg) return result;
@@ -119,6 +122,7 @@ export function allClaimedDevices() {
       result.iosClaims[ios.deviceUdid] = {
         source: 'project',
         label: path.split('/').pop() || path,
+        path,
       };
     }
     const android = proj.platforms?.android;
