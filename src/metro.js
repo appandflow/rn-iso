@@ -52,6 +52,13 @@ export function killMetroByPid(pid) {
   }
 }
 
+export function findPidListeningOnPort(port) {
+  const out = getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`);
+  if (!out) return null;
+  const pid = parseInt(out.split('\n')[0], 10);
+  return Number.isFinite(pid) ? pid : null;
+}
+
 export function isPidAlive(pid) {
   if (!pid) return false;
   try {

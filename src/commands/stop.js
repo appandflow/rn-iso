@@ -2,8 +2,7 @@
 import chalk from 'chalk';
 import { resolveRegisteredProject } from '../project.js';
 import { getProject, setMetro, findProjectByMetroPort } from '../config.js';
-import { killMetroByPid } from '../metro.js';
-import { getExecutor } from '../exec.js';
+import { killMetroByPid, findPidListeningOnPort } from '../metro.js';
 
 export default function stopCommand(program) {
   program
@@ -72,9 +71,3 @@ function killByPort(port) {
   }
 }
 
-function findPidListeningOnPort(port) {
-  const out = getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`);
-  if (!out) return null;
-  const pid = parseInt(out.split('\n')[0], 10);
-  return Number.isFinite(pid) ? pid : null;
-}
