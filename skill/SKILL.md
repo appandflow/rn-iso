@@ -81,7 +81,7 @@ Reserve binds the sim to the current project the same way `ios` does, but skips 
 
 - `npx rn-iso status` — show all projects, their assignments, and Metro state.
 - `npx rn-iso start` — start Metro detached on the project's assigned port WITHOUT building/installing. Useful to keep Metro alive across builds.
-- `npx rn-iso stop` — kill the project's Metro. Finds the process by port, so it works whether Metro was started by `npx rn-iso start` or by the build CLI.
+- `npx rn-iso stop [<port>|<basename>|<path>]` — kill Metro. No arg = current project. Passing a port (e.g. `8083`) kills whatever is on it; a unique project basename or absolute path targets that project. Finds the process by port, so it works whether Metro was started by `npx rn-iso start` or by the build CLI.
 - `npx rn-iso release [project] [--platform <p>] [--shutdown]` — free a project's sim assignment. Defaults to the current project. `--shutdown` also stops the sim/emulator.
 
 ## Sort order in the picker

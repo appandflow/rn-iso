@@ -42,7 +42,7 @@ All commands below take the same `npx rn-iso` prefix.
 | `ios [--auto] [--device-type <name>] [--runtime <ver>] [--script <name>] [--pm <name>] [--no-script] [--no-install]` | Ensure iOS sim + Metro + build/install |
 | `android [--auto] [--script <name>] [--pm <name>] [--no-script] [--no-install]` | Same for Android |
 | `start` | Start Metro detached, no platform action |
-| `stop` | Kill Metro for current project |
+| `stop [<port>\|<basename>\|<path>]` | Kill Metro. No arg = current project; pass a port (e.g. 8083), a unique project basename, or an absolute path. |
 | `device [--platform ios\|android] [--json]` | Print the assigned device target |
 | `status` | Show all projects' state |
 | `reserve [ios\|android]` | Lock a manually-started sim/emulator to the current project (no build) |
