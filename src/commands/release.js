@@ -4,7 +4,7 @@ import prompts from 'prompts';
 import { resolveRegisteredProject } from '../project.js';
 import { getProject, clearDevice, findProjectByMetroPort } from '../config.js';
 import { findPidListeningOnPort } from '../metro.js';
-import { shutdownIosSim } from '../sim/ios.js';
+import { shutdownIosSim, formatIosLabel } from '../sim/ios.js';
 import { shutdownAndroidEmulator } from '../sim/android.js';
 
 export default function releaseCommand(program) {
@@ -45,10 +45,10 @@ export default function releaseCommand(program) {
         if (opts.shutdown) {
           if (p === 'ios') {
             shutdownIosSim(entry.deviceUdid);
-            console.log(chalk.green(`Shut down iOS sim ${entry.deviceUdid}`));
+            console.log(chalk.green(`Shut down iOS sim ${formatIosLabel(entry.deviceUdid)}`));
           } else {
             shutdownAndroidEmulator(`emulator-${entry.consolePort}`);
-            console.log(chalk.green(`Shut down emulator-${entry.consolePort}`));
+            console.log(chalk.green(`Shut down ${entry.avdName} (emulator-${entry.consolePort})`));
           }
         }
         clearDevice(found, p);

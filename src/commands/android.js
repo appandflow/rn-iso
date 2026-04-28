@@ -77,9 +77,9 @@ export default function androidCommand(program) {
       if (selection.kind === 'reuse') {
         ({ avdName, consolePort, isRunning } = selection);
         if (isRunning) {
-          console.log(chalk.dim(`Reusing running emulator emulator-${consolePort} (${avdName})`));
+          console.log(chalk.dim(`Reusing running ${avdName} (emulator-${consolePort})`));
         } else {
-          console.log(chalk.dim(`Booting assigned AVD ${avdName} on port ${consolePort}...`));
+          console.log(chalk.dim(`Booting assigned ${avdName} (emulator-${consolePort})...`));
         }
       } else if (selection.kind === 'allocate') {
         const picked = (selection.candidates.length === 1 || auto)
@@ -94,8 +94,8 @@ export default function androidCommand(program) {
           consolePort = nextConsolePort(claimedPorts);
         }
         console.log(isRunning
-          ? chalk.green(`Picked ${avdName} (running on emulator-${consolePort})`)
-          : chalk.dim(`Booting ${avdName} on port ${consolePort}...`));
+          ? chalk.green(`Picked ${avdName} (emulator-${consolePort}, running)`)
+          : chalk.dim(`Booting ${avdName} (emulator-${consolePort})...`));
       } else if (selection.kind === 'allClaimed') {
         if (auto) {
           console.error(chalk.red('All Android AVDs are claimed by other rn-iso projects.'));
@@ -115,8 +115,8 @@ export default function androidCommand(program) {
           consolePort = nextConsolePort(fresh);
         }
         console.log(isRunning
-          ? chalk.green(`Took over ${avdName} (running on emulator-${consolePort})`)
-          : chalk.dim(`Booting ${avdName} on port ${consolePort}...`));
+          ? chalk.green(`Took over ${avdName} (emulator-${consolePort}, running)`)
+          : chalk.dim(`Booting ${avdName} (emulator-${consolePort})...`));
       } else {
         console.error(chalk.red(
           'No AVDs available. Create one via Android Studio (Tools -> Device Manager).'
@@ -161,7 +161,7 @@ export default function androidCommand(program) {
         });
       }
 
-      console.log(chalk.green(`\nAndroid ready on ${serial}, Metro port ${proj.metroPort}`));
+      console.log(chalk.green(`\nAndroid ready on ${avdName} (${serial}), Metro port ${proj.metroPort}`));
     });
 }
 

@@ -73,7 +73,7 @@ test('selectIosDevice prefers existing assignment when sim still exists', () => 
     existingUdid: 'UDID-B',
     claimedUdids: [],
   });
-  assert.deepEqual(result, { kind: 'reuse', udid: 'UDID-B', state: 'Shutdown' });
+  assert.deepEqual(result, { kind: 'reuse', udid: 'UDID-B', name: 'iPhone 15 Pro', state: 'Shutdown' });
 });
 
 test('selectIosDevice ignores existing assignment when sim no longer exists', () => {

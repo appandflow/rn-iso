@@ -31,6 +31,16 @@ export function listBootedIosSims() {
   return listAllIosSims().filter(s => s.state === 'Booted');
 }
 
+// "iPhone 16 Pro (ABC-123-...)" if simctl knows about the UDID; the bare
+// UDID otherwise (deleted sim, or simctl unavailable).
+export function formatIosLabel(udid) {
+  try {
+    const sim = listAllIosSims().find(s => s.udid === udid);
+    if (sim) return `${sim.name} (${udid})`;
+  } catch { /* simctl not available */ }
+  return udid;
+}
+
 export function deviceFamilyRank(name) {
   if (/^iPhone/i.test(name)) return 0;
   if (/^iPad/i.test(name)) return 1;
@@ -62,7 +72,7 @@ export function selectIosDevice({ existingUdid, claimedUdids, usage = {} }) {
   if (existingUdid) {
     const found = sims.find(s => s.udid === existingUdid);
     if (found) {
-      return { kind: 'reuse', udid: found.udid, state: found.state };
+      return { kind: 'reuse', udid: found.udid, name: found.name, state: found.state };
     }
   }
 

@@ -4,7 +4,7 @@ import prompts from 'prompts';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../project.js';
 import { getProject, upsertProject, setMetro, setDevice, clearDevice, allClaimedDevices, recordSimUsage, getSimUsage } from '../config.js';
 import { allocatePort, isMetroRunning } from '../ports.js';
-import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion, listAllIosSims, sortSims } from '../sim/ios.js';
+import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion, listAllIosSims, sortSims, formatIosLabel } from '../sim/ios.js';
 import { buildIosCommand, detectPackageManager } from '../runner.js';
 import { getExecutor } from '../exec.js';
 import { resolveLabel } from '../labels.js';
@@ -70,11 +70,12 @@ export default function iosCommand(program) {
       let udid;
       if (selection.kind === 'reuse') {
         udid = selection.udid;
+        const label = `${selection.name} (${udid})`;
         if (selection.state !== 'Booted') {
-          console.log(chalk.dim(`Booting assigned sim ${udid}...`));
+          console.log(chalk.dim(`Booting assigned sim ${label}...`));
           bootIosSim(udid);
         } else {
-          console.log(chalk.dim(`Reusing assigned sim ${udid} (already booted)`));
+          console.log(chalk.dim(`Reusing assigned sim ${label} (already booted)`));
         }
       } else if (selection.kind === 'allocate') {
         const picked = (selection.candidates.length === 1 || auto)
@@ -99,7 +100,7 @@ export default function iosCommand(program) {
         if (auto) {
           if (opts.deviceType) {
             udid = createNewSim({ deviceType: opts.deviceType, runtimeVersion: opts.runtime });
-            console.log(chalk.green(`Created and booted new sim ${udid}`));
+            console.log(chalk.green(`Created and booted new sim ${formatIosLabel(udid)}`));
           } else {
             console.error(chalk.red('All iOS simulators are claimed by other rn-iso projects.'));
             console.error(chalk.dim('Re-run without --auto to confirm taking one over, or pass --device-type to create a new sim.'));
@@ -164,7 +165,7 @@ export default function iosCommand(program) {
 
       }
 
-      console.log(chalk.green(`\nOK: iOS ready on sim ${udid}, Metro port ${proj.metroPort}`));
+      console.log(chalk.green(`\nOK: iOS ready on sim ${formatIosLabel(udid)}, Metro port ${proj.metroPort}`));
     });
 }
 
