@@ -7,6 +7,7 @@ import { allocatePort, isMetroRunning } from '../ports.js';
 import {
   selectAndroidDevice,
   sortAndroidCandidates,
+  enumerateAndroidCandidates,
   bootAndroidEmulator,
   waitForBoot,
   adbReverse,
@@ -86,7 +87,7 @@ export default function androidCommand(program) {
           ? { c: selection.candidates[0], prevClaim: null }
           : await pickAvd({
               candidates: selection.candidates,
-              androidClaims: claimed.androidClaims,
+              androidClaimsByAvd: claimed.androidClaimsByAvd,
             });
         await releasePriorClaim(picked.prevClaim);
         ({ avdName, isRunning, consolePort } = picked.c);
@@ -104,7 +105,7 @@ export default function androidCommand(program) {
         }
         const picked = await pickAvd({
           candidates: selection.candidates,
-          androidClaims: claimed.androidClaims,
+          androidClaimsByAvd: claimed.androidClaimsByAvd,
           allClaimed: true,
         });
         await releasePriorClaim(picked.prevClaim);
@@ -165,16 +166,30 @@ export default function androidCommand(program) {
     });
 }
 
-async function pickAvd({ candidates, androidClaims = {}, allClaimed = false }) {
-  const sorted = sortAndroidCandidates(candidates);
+async function pickAvd({ candidates, androidClaimsByAvd = {}, allClaimed = false }) {
+  // Show every AVD on disk (parallel to the iOS picker), so the user can
+  // see what's claimed and optionally take it over. `candidates` is the
+  // unclaimed set passed in by selectAndroidDevice; AVDs outside it are
+  // claimed and will require a confirm prompt on selection.
+  const allAvds = enumerateAndroidCandidates();
+  const candidateAvds = new Set(candidates.map(c => c.avdName));
+  const sorted = sortAndroidCandidates(allAvds);
+
   const nameWidth = Math.max(...sorted.map(c => c.avdName.length), 18);
   const choices = sorted.map(c => {
-    const claim = androidClaims[c.consolePort];
-    const claimTag = claim ? chalk.yellow(`  [claimed by ${claim.label}]`) : '';
-    const runTag = c.isRunning ? chalk.green(`  [running on emulator-${c.consolePort}]`) : '';
+    const claim = androidClaimsByAvd[c.avdName];
+    const isCandidate = candidateAvds.has(c.avdName);
+    const runTag = c.isRunning ? chalk.green(` [emulator-${c.consolePort}, running]`) : '';
+    if (claim || !isCandidate) {
+      const tag = claim ? chalk.yellow(` [claimed by ${claim.label}]`) : '';
+      return {
+        title: chalk.yellow(`${c.avdName.padEnd(nameWidth)}${tag}${runTag}`),
+        value: { c, claim: claim || null },
+      };
+    }
     return {
-      title: `${c.avdName.padEnd(nameWidth)}${runTag}${claimTag}`,
-      value: { c, claim: claim || null },
+      title: `${c.avdName.padEnd(nameWidth)}${runTag}`,
+      value: { c, claim: null },
     };
   });
   const message = allClaimed

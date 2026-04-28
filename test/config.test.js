@@ -137,3 +137,14 @@ test('allClaimedDevices.androidClaims maps console port to owning project', () =
     avdName: 'Pixel_6',
   });
 });
+
+test('allClaimedDevices.androidClaimsByAvd maps avdName to owning project', () => {
+  upsertProject('/Users/janic/Developer/myapp', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
+  setDevice('/Users/janic/Developer/myapp', 'android', { avdName: 'Pixel_6', consolePort: 5554 });
+  const claimed = allClaimedDevices();
+  assert.deepEqual(claimed.androidClaimsByAvd['Pixel_6'], {
+    label: 'myapp',
+    path: '/Users/janic/Developer/myapp',
+    consolePort: 5554,
+  });
+});

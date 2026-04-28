@@ -35,37 +35,45 @@ export function nextConsolePort(claimedPorts) {
   return max + 2; // emulator console ports are even
 }
 
-export function selectAndroidDevice({ existingAvd, existingConsolePort, claimedAvds, claimedConsolePorts }) {
+// Build the full candidate list: every AVD on disk, paired with whether it
+// currently has a running emulator and (if so) on which console port.
+// Emulators that fail to respond to `adb emu avd name` are dropped from
+// the running map. Returns [] when no AVDs are installed.
+export function enumerateAndroidCandidates() {
   const avds = listAvds();
-  if (avds.length === 0) return { kind: 'noAvd' };
+  if (avds.length === 0) return [];
 
   const adbDevices = listAdbDevices();
-  // Resolve which AVD each running emulator is. Emulators that don't respond
-  // to `adb emu avd name` are dropped from the running map.
   const runningByAvd = {};
   for (const e of adbDevices.emulators) {
     const avdName = getAvdNameForSerial(e.serial);
     if (avdName) runningByAvd[avdName] = e.consolePort;
   }
 
-  const buildCandidate = (avdName) => ({
+  return avds.map(avdName => ({
     avdName,
     isRunning: avdName in runningByAvd,
     consolePort: runningByAvd[avdName] ?? null,
-  });
+  }));
+}
 
-  if (existingAvd && avds.includes(existingAvd)) {
-    const runningPort = runningByAvd[existingAvd];
-    return {
-      kind: 'reuse',
-      avdName: existingAvd,
-      consolePort: runningPort ?? existingConsolePort ?? nextConsolePort(claimedConsolePorts),
-      isRunning: runningPort != null,
-    };
+export function selectAndroidDevice({ existingAvd, existingConsolePort, claimedAvds, claimedConsolePorts }) {
+  const all = enumerateAndroidCandidates();
+  if (all.length === 0) return { kind: 'noAvd' };
+
+  if (existingAvd) {
+    const found = all.find(c => c.avdName === existingAvd);
+    if (found) {
+      return {
+        kind: 'reuse',
+        avdName: existingAvd,
+        consolePort: found.consolePort ?? existingConsolePort ?? nextConsolePort(claimedConsolePorts),
+        isRunning: found.isRunning,
+      };
+    }
   }
 
   const claimedAvdSet = new Set(claimedAvds);
-  const all = avds.map(buildCandidate);
   const unclaimed = all.filter(c => !claimedAvdSet.has(c.avdName));
 
   if (unclaimed.length === 0) {

@@ -111,10 +111,12 @@ export function allClaimedDevices() {
     androidAvds: [],
     androidConsolePorts: [],
     // iosClaims: udid -> { label, path }. androidClaims: consolePort ->
-    // { label, path, avdName }. `path` is the absolute project path so
-    // take-over flows can call clearDevice on the owning project.
+    // { label, path, avdName }. androidClaimsByAvd: avdName -> { label,
+    // path, consolePort }. `path` is the absolute project path so take-
+    // over flows can call clearDevice on the owning project.
     iosClaims: {},
     androidClaims: {},
+    androidClaimsByAvd: {},
   };
   if (!cfg) return result;
   for (const [path, proj] of Object.entries(cfg.projects || {})) {
@@ -125,7 +127,14 @@ export function allClaimedDevices() {
       result.iosClaims[ios.deviceUdid] = { label, path };
     }
     const android = proj.platforms?.android;
-    if (android?.avdName) result.androidAvds.push(android.avdName);
+    if (android?.avdName) {
+      result.androidAvds.push(android.avdName);
+      result.androidClaimsByAvd[android.avdName] = {
+        label,
+        path,
+        consolePort: android.consolePort,
+      };
+    }
     if (typeof android?.consolePort === 'number') {
       result.androidConsolePorts.push(android.consolePort);
       result.androidClaims[android.consolePort] = {
