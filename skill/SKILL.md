@@ -29,8 +29,8 @@ From the project root (or any subdirectory):
 
 ## CRITICAL rules
 
-- **Always pass `--auto` for non-interactive iOS use.** Without it, `npx rn-iso ios` will prompt with an arrow-key picker if multiple unclaimed sims exist. Agents must use `--auto` to skip.
-- **`--auto` will NOT take over a claimed sim.** If every sim is claimed by other rn-iso projects, `--auto` errors. To take one over, run `npx rn-iso ios` (no `--auto`) and confirm at the prompt — only do this if the user explicitly asks.
+- **Pass `--auto` for non-interactive use** of `ios` or `android`. Without it, the command will prompt with an arrow-key picker if multiple unclaimed sims/AVDs exist. `--auto` is also implied automatically when stdin isn't a TTY (e.g., when an agent pipes the command), so under most agent harnesses you don't have to remember the flag — but passing it explicitly is harmless and clearer.
+- **`--auto` will NOT take over a claimed sim/AVD.** If every device is claimed by other rn-iso projects, `--auto` errors. To take one over, run the command interactively (no `--auto`, with a real TTY) and confirm at the prompt — only do this if the user explicitly asks.
 - **Always use `npx rn-iso device` to discover your target.** Never assume `booted` is your sim — another project's simulator might be booted too.
 - **Always pass the UDID/serial explicitly** to `xcrun simctl` and `adb -s`. Examples:
   - `xcrun simctl io <UDID> screenshot out.png`
@@ -70,7 +70,8 @@ Reserve binds the sim to the current project the same way `ios` does, but skips 
 ## When things go wrong
 
 - **"No rn-iso assignment for project"** — run `npx rn-iso ios` (or android) first.
-- **"All iOS simulators are claimed by other rn-iso projects"** (under `--auto`) — every existing sim is held by another project. Options: free another project (`npx rn-iso release` from there), pass `--device-type "iPhone 17 Pro"` to create a new sim, or re-run without `--auto` and ask the user before confirming the take-over prompt.
+- **"All iOS simulators are claimed by other rn-iso projects"** (under `--auto`) — every existing sim is held by another project. Options: free another project (`npx rn-iso release` from there), pass `--device-type "iPhone 17 Pro"` to create a new sim, or re-run without `--auto` (in a real TTY) and ask the user before confirming the take-over prompt.
+- **"All Android AVDs are claimed by other rn-iso projects"** — same situation on Android. Free another project or re-run interactively to take one over.
 - **Wrong sim got the app** — older `@expo/cli` (< 54.0.24) had a bug where the launch ignored `--device`. Bump expo to 54.0.34+ if on SDK 54.
 - **Metro port collision** — `npx rn-iso ios` reclaims dead ports automatically. If you see "port busy by non-Metro process," another tool is using that port; close it.
 - **Sim was deleted** — `npx rn-iso ios` detects the stale assignment and re-allocates.
@@ -91,7 +92,9 @@ When the iOS picker fires, sims are sorted by:
 3. Usage count (most-used floats up; tracked per UDID across all projects)
 4. Name (alphabetical, stable tiebreak)
 
-Sims claimed by other rn-iso projects show in yellow with a `[claimed by ...]` tag. They're selectable but require a confirm prompt before being taken over.
+When the Android picker fires, AVDs are sorted by running state (running emulators first), then alphabetically.
+
+Sims/AVDs claimed by other rn-iso projects show in yellow with a `[claimed by ...]` tag. They're selectable but require a confirm prompt before being taken over.
 
 ## Differences from `react-native-worktree`
 

@@ -1,9 +1,17 @@
 // src/commands/android.js
 import chalk from 'chalk';
+import prompts from 'prompts';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../project.js';
-import { getProject, upsertProject, setMetro, setDevice, allClaimedDevices } from '../config.js';
+import { getProject, upsertProject, setMetro, setDevice, clearDevice, allClaimedDevices } from '../config.js';
 import { allocatePort, isMetroRunning } from '../ports.js';
-import { selectAndroidDevice, bootAndroidEmulator, waitForBoot, adbReverse } from '../sim/android.js';
+import {
+  selectAndroidDevice,
+  sortAndroidCandidates,
+  bootAndroidEmulator,
+  waitForBoot,
+  adbReverse,
+  nextConsolePort,
+} from '../sim/android.js';
 import { buildAndroidCommand, detectPackageManager } from '../runner.js';
 import { getExecutor } from '../exec.js';
 
@@ -11,6 +19,7 @@ export default function androidCommand(program) {
   program
     .command('android')
     .description('Ensure a dedicated Android emulator + Metro for the current project; build/install if needed')
+    .option('--auto', 'Non-interactive: pick the first unclaimed AVD without prompting (also implied when stdin is not a TTY)')
     .option('--script <name>', 'package.json script to invoke for build/install (default: android)', 'android')
     .option('--no-script', 'Skip the package.json script lookup; run expo/react-native CLI directly')
     .option('--pm <name>', 'Package manager: npm, yarn, pnpm, bun (default: detected from lockfile)')
@@ -41,6 +50,7 @@ export default function androidCommand(program) {
         (metroAlreadyUp ? ' (already running)' : ' (will be started by build CLI)')
       ));
 
+      const auto = isAuto(opts);
       const claimed = allClaimedDevices();
       const myAvd = proj.platforms?.android?.avdName || null;
       const myPort = proj.platforms?.android?.consolePort || null;
@@ -54,19 +64,59 @@ export default function androidCommand(program) {
         claimedConsolePorts: claimedPorts,
       });
 
-      if (selection.kind === 'noAvd') {
+      let avdName, consolePort, isRunning;
+      if (selection.kind === 'reuse') {
+        ({ avdName, consolePort, isRunning } = selection);
+        if (isRunning) {
+          console.log(chalk.dim(`Reusing running emulator emulator-${consolePort} (${avdName})`));
+        } else {
+          console.log(chalk.dim(`Booting assigned AVD ${avdName} on port ${consolePort}...`));
+        }
+      } else if (selection.kind === 'allocate') {
+        const picked = (selection.candidates.length === 1 || auto)
+          ? { c: selection.candidates[0], prevClaim: null }
+          : await pickAvd({
+              candidates: selection.candidates,
+              androidClaims: claimed.androidClaims,
+            });
+        await releasePriorClaim(picked.prevClaim);
+        ({ avdName, isRunning, consolePort } = picked.c);
+        if (!isRunning) {
+          consolePort = nextConsolePort(claimedPorts);
+        }
+        console.log(isRunning
+          ? chalk.green(`Picked ${avdName} (running on emulator-${consolePort})`)
+          : chalk.dim(`Booting ${avdName} on port ${consolePort}...`));
+      } else if (selection.kind === 'allClaimed') {
+        if (auto) {
+          console.error(chalk.red('All Android AVDs are claimed by other rn-iso projects.'));
+          console.error(chalk.dim('Re-run without --auto to confirm taking one over, or create a new AVD via Android Studio.'));
+          process.exit(1);
+        }
+        const picked = await pickAvd({
+          candidates: selection.candidates,
+          androidClaims: claimed.androidClaims,
+          allClaimed: true,
+        });
+        await releasePriorClaim(picked.prevClaim);
+        ({ avdName, isRunning, consolePort } = picked.c);
+        if (!isRunning) {
+          // Prior owner's port is freed by releasePriorClaim, but compute fresh.
+          const fresh = allClaimedDevices().androidConsolePorts.filter(p => p !== myPort);
+          consolePort = nextConsolePort(fresh);
+        }
+        console.log(isRunning
+          ? chalk.green(`Took over ${avdName} (running on emulator-${consolePort})`)
+          : chalk.dim(`Booting ${avdName} on port ${consolePort}...`));
+      } else {
         console.error(chalk.red(
-          'No AVDs available (or all are claimed by other projects). ' +
-          'Create one via Android Studio (Tools -> Device Manager).'
+          'No AVDs available. Create one via Android Studio (Tools -> Device Manager).'
         ));
         process.exit(1);
       }
 
-      const { avdName, consolePort, isRunning } = selection;
       const serial = `emulator-${consolePort}`;
-
       if (!isRunning) {
-        console.log(chalk.dim(`Booting emulator ${avdName} on port ${consolePort}...`));
         bootAndroidEmulator(avdName, consolePort);
         console.log(chalk.dim('Waiting for boot to complete (this can take 10-30s)...'));
         const ok = await waitForBoot(serial, 120000);
@@ -74,14 +124,9 @@ export default function androidCommand(program) {
           console.error(chalk.red(`Emulator ${serial} did not finish booting within 2 minutes.`));
           process.exit(1);
         }
-      } else {
-        console.log(chalk.dim(`Reusing running emulator ${serial}`));
       }
 
       setDevice(root, 'android', { avdName, consolePort });
-
-      // Metro is started by the build CLI; we don't spawn our own. For
-      // Metro-only (no build/install), use `rn-iso start`.
 
       adbReverse(serial, proj.metroPort);
       console.log(chalk.dim(`adb reverse tcp:${proj.metroPort} configured for ${serial}`));
@@ -109,4 +154,56 @@ export default function androidCommand(program) {
 
       console.log(chalk.green(`\nAndroid ready on ${serial}, Metro port ${proj.metroPort}`));
     });
+}
+
+async function pickAvd({ candidates, androidClaims = {}, allClaimed = false }) {
+  const sorted = sortAndroidCandidates(candidates);
+  const nameWidth = Math.max(...sorted.map(c => c.avdName.length), 18);
+  const choices = sorted.map(c => {
+    const claim = androidClaims[c.consolePort];
+    const claimTag = claim ? chalk.yellow(`  [claimed by ${claim.label}]`) : '';
+    const runTag = c.isRunning ? chalk.green(`  [running on emulator-${c.consolePort}]`) : '';
+    return {
+      title: `${c.avdName.padEnd(nameWidth)}${runTag}${claimTag}`,
+      value: { c, claim: claim || null },
+    };
+  });
+  const message = allClaimed
+    ? 'All AVDs are claimed. Pick one to take over:'
+    : 'Pick an AVD (claimed AVDs will prompt to confirm):';
+  const answer = await prompts({
+    type: 'select',
+    name: 'pick',
+    message,
+    choices,
+  });
+  if (!answer.pick) {
+    console.error(chalk.red('Cancelled.'));
+    process.exit(1);
+  }
+  const { c, claim } = answer.pick;
+  if (claim) {
+    const ok = await prompts({
+      type: 'confirm',
+      name: 'ok',
+      message: `${c.avdName} is currently held by project "${claim.label}". Take it over?`,
+      initial: false,
+    });
+    if (!ok.ok) {
+      console.error(chalk.red('Cancelled.'));
+      process.exit(1);
+    }
+    return { c, prevClaim: claim };
+  }
+  return { c, prevClaim: null };
+}
+
+async function releasePriorClaim(prevClaim) {
+  if (!prevClaim?.path) return;
+  clearDevice(prevClaim.path, 'android');
+  console.log(chalk.dim(`Released prior assignment from "${prevClaim.label}"`));
+}
+
+function isAuto(opts) {
+  return opts.auto || !process.stdin.isTTY;
 }

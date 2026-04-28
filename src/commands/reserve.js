@@ -53,11 +53,12 @@ async function reserveIos(root, proj) {
     process.exit(1);
   }
 
+  const auto = !process.stdin.isTTY;
   const claims = allClaimedDevices().iosClaims;
   const sorted = sortSims(booted);
 
   let pick;
-  if (sorted.length === 1) {
+  if (sorted.length === 1 || auto) {
     pick = sorted[0];
   } else {
     const nameWidth = Math.max(...sorted.map(s => s.name.length), 18);
@@ -84,6 +85,10 @@ async function reserveIos(root, proj) {
 
   const claim = claims[pick.udid];
   if (claim && claim.path !== root) {
+    if (auto) {
+      console.error(chalk.red(`${pick.name} is held by project "${claim.label}". Re-run interactively to confirm taking it over.`));
+      process.exit(1);
+    }
     const ok = await prompts({
       type: 'confirm',
       name: 'ok',
@@ -110,10 +115,11 @@ async function reserveAndroid(root, proj) {
     process.exit(1);
   }
 
+  const auto = !process.stdin.isTTY;
   const claims = allClaimedDevices().androidClaims;
 
   let pick;
-  if (running.length === 1) {
+  if (running.length === 1 || auto) {
     pick = running[0];
   } else {
     const choices = running.map(e => {
@@ -138,6 +144,10 @@ async function reserveAndroid(root, proj) {
 
   const claim = claims[pick.consolePort];
   if (claim && claim.path !== root) {
+    if (auto) {
+      console.error(chalk.red(`${pick.serial} is held by project "${claim.label}". Re-run interactively to confirm taking it over.`));
+      process.exit(1);
+    }
     const ok = await prompts({
       type: 'confirm',
       name: 'ok',

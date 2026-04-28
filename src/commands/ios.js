@@ -14,7 +14,7 @@ export default function iosCommand(program) {
     .description('Ensure a dedicated iOS simulator + Metro server for the current project; build/install if needed')
     .option('--device-type <name>', 'Explicit opt-in: create a NEW sim of this device type (e.g. "iPhone 17 Pro")')
     .option('--runtime <version>', 'iOS runtime version when creating a new sim (e.g. "26.2"); defaults to latest')
-    .option('--auto', 'Non-interactive: pick the first unclaimed sim without prompting')
+    .option('--auto', 'Non-interactive: pick the first unclaimed sim without prompting (also implied when stdin is not a TTY)')
     .option('--script <name>', 'package.json script to invoke for build/install (default: ios)', 'ios')
     .option('--no-script', 'Skip the package.json script lookup; run expo/react-native CLI directly')
     .option('--pm <name>', 'Package manager: npm, yarn, pnpm, bun (default: detected from lockfile)')
@@ -25,6 +25,9 @@ export default function iosCommand(program) {
         console.error(chalk.red('Not in a React Native project (no package.json found).'));
         process.exit(1);
       }
+
+      // Treat non-TTY environments (agents, CI) as if --auto was passed.
+      const auto = opts.auto || !process.stdin.isTTY;
 
       const bundleId = detectBundleId(root);
       const androidPackage = detectAndroidPackage(root);
@@ -65,7 +68,7 @@ export default function iosCommand(program) {
           console.log(chalk.dim(`Reusing assigned sim ${udid} (already booted)`));
         }
       } else if (selection.kind === 'allocate') {
-        const picked = (selection.candidates.length === 1 || opts.auto)
+        const picked = (selection.candidates.length === 1 || auto)
           ? { sim: selection.candidates[0], prevClaim: null }
           : await pickSim({
               candidates: selection.candidates,
@@ -84,7 +87,7 @@ export default function iosCommand(program) {
         // Sims exist but every one is claimed by another project. With
         // --auto, refuse rather than silently stealing. Interactive: show
         // picker so the user can confirm-steal one.
-        if (opts.auto) {
+        if (auto) {
           if (opts.deviceType) {
             udid = createNewSim({ deviceType: opts.deviceType, runtimeVersion: opts.runtime });
             console.log(chalk.green(`Created and booted new sim ${udid}`));

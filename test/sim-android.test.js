@@ -8,6 +8,7 @@ import {
   parseAvdList,
   parseAdbDevices,
   selectAndroidDevice,
+  sortAndroidCandidates,
   nextConsolePort,
 } from '../src/sim/android.js';
 
@@ -23,6 +24,31 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
   resetExecutor();
 });
+
+// Mocks `emulator -list-avds`, `adb devices`, and `adb -s ... emu avd name`
+// (used to map serial -> AVD name). avdByPort = { 5554: 'Pixel_6_API_34' }.
+function mockExecutor({ avds, avdByPort = {} }) {
+  setExecutor({
+    run: (cmd) => {
+      if (cmd.includes('list-avds')) return avds.join('\n') + '\n';
+      if (cmd === 'adb devices') {
+        const lines = ['List of devices attached'];
+        for (const port of Object.keys(avdByPort)) lines.push(`emulator-${port}\tdevice`);
+        return lines.join('\n') + '\n';
+      }
+      throw new Error('unexpected run: ' + cmd);
+    },
+    runQuiet: (cmd) => {
+      const m = cmd.match(/adb -s emulator-(\d+) emu avd name/);
+      if (m) {
+        const name = avdByPort[m[1]];
+        return name ? `${name}\nOK\n` : null;
+      }
+      return null;
+    },
+    spawn: () => null,
+  });
+}
 
 test('parseAvdList strips header and blanks', () => {
   const out = `INFO    | Storing AVDs in...\nPixel_6_API_34\nPixel_7_API_33\n`;
@@ -54,15 +80,7 @@ test('nextConsolePort returns next even port above max claimed', () => {
 });
 
 test('selectAndroidDevice prefers existing assignment when AVD still exists', () => {
-  setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('list-avds')) return 'Pixel_6_API_34\n';
-      if (cmd.includes('adb devices')) return 'List of devices attached\n';
-      throw new Error('unexpected: ' + cmd);
-    },
-    runQuiet: () => null,
-    spawn: () => null,
-  });
+  mockExecutor({ avds: ['Pixel_6_API_34'], avdByPort: {} });
   const result = selectAndroidDevice({
     existingAvd: 'Pixel_6_API_34',
     existingConsolePort: 5554,
@@ -77,59 +95,66 @@ test('selectAndroidDevice prefers existing assignment when AVD still exists', ()
   });
 });
 
-test('selectAndroidDevice marks running when serial present in adb devices', () => {
-  setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('list-avds')) return 'Pixel_6_API_34\n';
-      if (cmd.includes('adb devices')) return 'List of devices attached\nemulator-5554\tdevice\n';
-      throw new Error('unexpected');
-    },
-    runQuiet: () => null,
-    spawn: () => null,
-  });
+test('selectAndroidDevice marks running and uses live port when AVD is running', () => {
+  mockExecutor({ avds: ['Pixel_6_API_34'], avdByPort: { 5556: 'Pixel_6_API_34' } });
   const result = selectAndroidDevice({
     existingAvd: 'Pixel_6_API_34',
-    existingConsolePort: 5554,
+    existingConsolePort: 5554, // stale; the AVD is actually running on 5556
     claimedAvds: [],
     claimedConsolePorts: [],
   });
   assert.equal(result.isRunning, true);
+  assert.equal(result.consolePort, 5556);
 });
 
-test('selectAndroidDevice allocates first unclaimed AVD with next console port', () => {
-  setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('list-avds')) return 'Pixel_6_API_34\nPixel_7_API_33\n';
-      if (cmd.includes('adb devices')) return 'List of devices attached\n';
-      throw new Error('unexpected');
-    },
-    runQuiet: () => null,
-    spawn: () => null,
+test('selectAndroidDevice returns allocate with sorted unclaimed candidates', () => {
+  mockExecutor({
+    avds: ['Pixel_7_API_33', 'Pixel_6_API_34', 'Pixel_Tablet'],
+    avdByPort: { 5556: 'Pixel_6_API_34' },
   });
   const result = selectAndroidDevice({
     existingAvd: null,
     existingConsolePort: null,
-    claimedAvds: ['Pixel_6_API_34'],
+    claimedAvds: [],
+    claimedConsolePorts: [],
+  });
+  assert.equal(result.kind, 'allocate');
+  // Running AVD floats up; rest are alphabetical.
+  assert.deepEqual(result.candidates.map(c => c.avdName), [
+    'Pixel_6_API_34',
+    'Pixel_7_API_33',
+    'Pixel_Tablet',
+  ]);
+  assert.deepEqual(result.candidates.map(c => c.isRunning), [true, false, false]);
+  assert.equal(result.candidates[0].consolePort, 5556);
+});
+
+test('selectAndroidDevice excludes claimed AVDs from candidates', () => {
+  mockExecutor({ avds: ['Pixel_6', 'Pixel_7'], avdByPort: {} });
+  const result = selectAndroidDevice({
+    existingAvd: null,
+    existingConsolePort: null,
+    claimedAvds: ['Pixel_6'],
     claimedConsolePorts: [5554],
   });
-  assert.deepEqual(result, {
-    kind: 'allocate',
-    avdName: 'Pixel_7_API_33',
-    consolePort: 5556,
-    isRunning: false,
+  assert.equal(result.kind, 'allocate');
+  assert.deepEqual(result.candidates.map(c => c.avdName), ['Pixel_7']);
+});
+
+test('selectAndroidDevice returns allClaimed when AVDs exist but every one is claimed', () => {
+  mockExecutor({ avds: ['Pixel_6', 'Pixel_7'], avdByPort: {} });
+  const result = selectAndroidDevice({
+    existingAvd: null,
+    existingConsolePort: null,
+    claimedAvds: ['Pixel_6', 'Pixel_7'],
+    claimedConsolePorts: [5554, 5556],
   });
+  assert.equal(result.kind, 'allClaimed');
+  assert.deepEqual(result.candidates.map(c => c.avdName).sort(), ['Pixel_6', 'Pixel_7']);
 });
 
 test('selectAndroidDevice returns noAvd when no AVDs exist', () => {
-  setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('list-avds')) return '';
-      if (cmd.includes('adb devices')) return 'List of devices attached\n';
-      throw new Error('unexpected');
-    },
-    runQuiet: () => null,
-    spawn: () => null,
-  });
+  mockExecutor({ avds: [], avdByPort: {} });
   const result = selectAndroidDevice({
     existingAvd: null,
     existingConsolePort: null,
@@ -137,4 +162,13 @@ test('selectAndroidDevice returns noAvd when no AVDs exist', () => {
     claimedConsolePorts: [],
   });
   assert.equal(result.kind, 'noAvd');
+});
+
+test('sortAndroidCandidates puts running AVDs first, then alphabetical', () => {
+  const sorted = sortAndroidCandidates([
+    { avdName: 'Z_Tablet', isRunning: false, consolePort: null },
+    { avdName: 'A_Phone', isRunning: false, consolePort: null },
+    { avdName: 'M_Phone', isRunning: true, consolePort: 5554 },
+  ]);
+  assert.deepEqual(sorted.map(c => c.avdName), ['M_Phone', 'A_Phone', 'Z_Tablet']);
 });

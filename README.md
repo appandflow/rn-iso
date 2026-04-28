@@ -21,7 +21,7 @@ In a different worktree of the same app:
 npx rn-iso ios       # gets a different sim and Metro port
 ```
 
-Both run side by side. For non-interactive / agent use, pass `--auto` to skip the picker:
+Both run side by side. For non-interactive / agent use, pass `--auto` to skip the picker (this is also implied automatically when stdin isn't a TTY):
 
 ```bash
 npx rn-iso ios --auto
@@ -40,7 +40,7 @@ All commands below take the same `npx rn-iso` prefix.
 | Command | Purpose |
 |---|---|
 | `ios [--auto] [--device-type <name>] [--runtime <ver>] [--script <name>] [--pm <name>] [--no-script] [--no-install]` | Ensure iOS sim + Metro + build/install |
-| `android [--script <name>] [--pm <name>] [--no-script] [--no-install]` | Same for Android |
+| `android [--auto] [--script <name>] [--pm <name>] [--no-script] [--no-install]` | Same for Android |
 | `start` | Start Metro detached, no platform action |
 | `stop` | Kill Metro for current project |
 | `device [--platform ios\|android] [--json]` | Print the assigned device target |
@@ -53,7 +53,7 @@ All commands below take the same `npx rn-iso` prefix.
 
 - **Config** at `~/.rn-iso/config.json`, keyed by absolute project path. Symlinked worktrees collapse via `realpath`.
 - **Port allocation:** assigns 8082, 8083, 8084 etc., reclaiming dead ports on the way.
-- **Simulator pool:** prefers the project's existing assignment; otherwise picks any unclaimed booted sim, then any unclaimed shutdown sim (booting it). Does not auto-create new sims — pass `--device-type "iPhone 17 Pro" [--runtime 26.2]` to opt in. The interactive picker also lets you take over a sim claimed by another project after a confirm prompt.
+- **Simulator / AVD pool:** prefers the project's existing assignment; otherwise picks an unclaimed device — running ones first, shutdown ones next (booting them). On iOS, does not auto-create new sims — pass `--device-type "iPhone 17 Pro" [--runtime 26.2]` to opt in. The interactive picker (iOS or Android) also lets you take over a device claimed by another project after a confirm prompt.
 - **Build via your project's `ios` / `android` script** when present. Falls back to `npx expo run:ios` / `npx react-native run-ios --udid <UDID>` when no script exists. Override with `--script <name>` or skip with `--no-script`. Package manager is detected from your lockfile (walks up for monorepos); override with `--pm <npm|yarn|pnpm|bun>`.
 - **Metro is started by the build CLI** on the assigned port, not by rn-iso. `npx rn-iso start` is the standalone "I just want Metro" path. `npx rn-iso stop` finds Metro by port via `lsof`, so it works regardless of who started it.
 

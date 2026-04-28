@@ -37,35 +37,48 @@ export function nextConsolePort(claimedPorts) {
 
 export function selectAndroidDevice({ existingAvd, existingConsolePort, claimedAvds, claimedConsolePorts }) {
   const avds = listAvds();
+  if (avds.length === 0) return { kind: 'noAvd' };
+
   const adbDevices = listAdbDevices();
-  const runningPorts = new Set(adbDevices.emulators.map(e => e.consolePort));
+  // Resolve which AVD each running emulator is. Emulators that don't respond
+  // to `adb emu avd name` are dropped from the running map.
+  const runningByAvd = {};
+  for (const e of adbDevices.emulators) {
+    const avdName = getAvdNameForSerial(e.serial);
+    if (avdName) runningByAvd[avdName] = e.consolePort;
+  }
+
+  const buildCandidate = (avdName) => ({
+    avdName,
+    isRunning: avdName in runningByAvd,
+    consolePort: runningByAvd[avdName] ?? null,
+  });
 
   if (existingAvd && avds.includes(existingAvd)) {
-    const port = existingConsolePort ?? nextConsolePort(claimedConsolePorts);
+    const runningPort = runningByAvd[existingAvd];
     return {
       kind: 'reuse',
       avdName: existingAvd,
-      consolePort: port,
-      isRunning: runningPorts.has(port),
+      consolePort: runningPort ?? existingConsolePort ?? nextConsolePort(claimedConsolePorts),
+      isRunning: runningPort != null,
     };
   }
 
-  if (avds.length === 0) {
-    return { kind: 'noAvd' };
-  }
-
   const claimedAvdSet = new Set(claimedAvds);
-  const candidate = avds.find(a => !claimedAvdSet.has(a));
-  if (!candidate) {
-    return { kind: 'noAvd' };
+  const all = avds.map(buildCandidate);
+  const unclaimed = all.filter(c => !claimedAvdSet.has(c.avdName));
+
+  if (unclaimed.length === 0) {
+    return { kind: 'allClaimed', candidates: sortAndroidCandidates(all) };
   }
-  const consolePort = nextConsolePort(claimedConsolePorts);
-  return {
-    kind: 'allocate',
-    avdName: candidate,
-    consolePort,
-    isRunning: runningPorts.has(consolePort),
-  };
+  return { kind: 'allocate', candidates: sortAndroidCandidates(unclaimed) };
+}
+
+export function sortAndroidCandidates(list) {
+  return [...list].sort((a, b) => {
+    if (a.isRunning !== b.isRunning) return a.isRunning ? -1 : 1;
+    return a.avdName.localeCompare(b.avdName);
+  });
 }
 
 export function bootAndroidEmulator(avdName, consolePort) {
