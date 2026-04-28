@@ -3,7 +3,8 @@ import chalk from 'chalk';
 import { loadConfig } from '../config.js';
 import { isMetroRunning } from '../ports.js';
 import { isPidAlive } from '../metro.js';
-import { findProjectRoot } from '../project.js';
+import { findProjectRoot, projectShortcut } from '../project.js';
+import { listAllIosSims } from '../sim/ios.js';
 
 export default function statusCommand(program) {
   program
@@ -19,11 +20,20 @@ export default function statusCommand(program) {
 
       const cwdRoot = findProjectRoot(process.cwd());
 
+      // Build a UDID -> sim name map so we can show "iPhone 16 Pro (UDID)"
+      // rather than a raw UDID. Tolerate missing simctl (Linux dev box, etc.).
+      let iosNameByUdid = {};
+      try {
+        for (const sim of listAllIosSims()) iosNameByUdid[sim.udid] = sim.name;
+      } catch { /* no simctl available; we'll just print the udid */ }
+
       for (const [path, proj] of Object.entries(cfg?.projects || {})) {
         const isCurrent = path === cwdRoot;
-        const header = isCurrent ? chalk.bold.cyan(`* ${path}`) : path;
+        const shortcut = projectShortcut(path, proj);
+        const headerText = `${shortcut} ${chalk.dim(`(${path})`)}`;
+        const header = isCurrent ? chalk.bold.cyan(`* ${shortcut}`) + ' ' + chalk.dim(`(${path})`) : headerText;
         console.log('\n' + header);
-        console.log(chalk.dim(`  app: ${proj.bundleId} (${proj.isExpo ? 'expo' : 'bare'})`));
+        console.log(chalk.dim(`  app: ${proj.bundleId ?? '?'} (${proj.isExpo ? 'expo' : 'bare'})`));
 
         if (proj.metroPort) {
           const running = await isMetroRunning(proj.metroPort);
@@ -37,9 +47,14 @@ export default function statusCommand(program) {
         }
 
         const ios = proj.platforms?.ios;
-        if (ios) console.log(`  ios: ${chalk.cyan(ios.deviceUdid)}`);
+        if (ios) {
+          const name = iosNameByUdid[ios.deviceUdid] || chalk.dim('(unknown sim)');
+          console.log(`  ios: ${chalk.cyan(name)} ${chalk.dim(`(${ios.deviceUdid})`)}`);
+        }
         const android = proj.platforms?.android;
-        if (android) console.log(`  android: ${chalk.cyan(android.avdName)} on emulator-${android.consolePort}`);
+        if (android) {
+          console.log(`  android: ${chalk.cyan(android.avdName)} ${chalk.dim(`(emulator-${android.consolePort})`)}`);
+        }
       }
       console.log('');
     });
