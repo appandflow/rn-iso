@@ -156,6 +156,12 @@ npm link            # symlink rn-iso onto your PATH for live testing
 After `npm link`, edits to `src/` are picked up immediately by the linked
 `rn-iso` command.
 
+## Releases
+
+See [`RELEASE.md`](./RELEASE.md) for the version-bump / tag / GitHub-release /
+`npm publish` workflow. Follow it as written — the steps are ordered so a
+failure mid-flow leaves the repo recoverable.
+
 ## Commit conventions
 
 - GPG signing is enabled globally — commits sign automatically. Don't pass
