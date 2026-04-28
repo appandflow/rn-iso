@@ -96,6 +96,14 @@ export function allMetroPorts() {
     .filter(p => typeof p === 'number');
 }
 
+export function findProjectByMetroPort(port) {
+  const cfg = loadConfig();
+  for (const [path, proj] of Object.entries(cfg?.projects || {})) {
+    if (proj.metroPort === port) return path;
+  }
+  return null;
+}
+
 export function allClaimedDevices() {
   const cfg = loadConfig();
   const result = {

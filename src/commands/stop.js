@@ -1,7 +1,7 @@
 // src/commands/stop.js
 import chalk from 'chalk';
 import { resolveRegisteredProject } from '../project.js';
-import { loadConfig, getProject, setMetro } from '../config.js';
+import { getProject, setMetro, findProjectByMetroPort } from '../config.js';
 import { killMetroByPid } from '../metro.js';
 import { getExecutor } from '../exec.js';
 
@@ -65,13 +65,10 @@ function killByPort(port) {
   console.log(chalk.green(`Killed pid ${pid} on port ${port}`));
 
   // If a project owned this port, clear its recorded pid so `status` reflects.
-  const cfg = loadConfig();
-  for (const [path, proj] of Object.entries(cfg?.projects || {})) {
-    if (proj.metroPort === port) {
-      setMetro(path, port, null);
-      console.log(chalk.dim(`Cleared metroPid for ${path}`));
-      break;
-    }
+  const owner = findProjectByMetroPort(port);
+  if (owner) {
+    setMetro(owner, port, null);
+    console.log(chalk.dim(`Cleared metroPid for ${owner}`));
   }
 }
 

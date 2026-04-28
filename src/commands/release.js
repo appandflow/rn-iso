@@ -1,21 +1,32 @@
 // src/commands/release.js
 import chalk from 'chalk';
 import { resolveRegisteredProject } from '../project.js';
-import { getProject, clearDevice } from '../config.js';
+import { getProject, clearDevice, findProjectByMetroPort } from '../config.js';
 import { shutdownIosSim } from '../sim/ios.js';
 import { shutdownAndroidEmulator } from '../sim/android.js';
 
 export default function releaseCommand(program) {
   program
     .command('release [target]')
-    .description('Free a project assignment. [target] is an absolute project path; defaults to the current project.')
+    .description('Free a project assignment. [target] is a Metro port (e.g. 8083), a project shortcut (label or unique basename), or an absolute path. Defaults to the current project.')
     .option('--platform <platform>', 'ios or android (default: both)')
     .option('--shutdown', 'Also shut down the simulator/emulator after releasing')
     .action((target, opts) => {
-      const { found, error } = resolveRegisteredProject(target);
-      if (!found) {
-        console.error(chalk.red(error));
-        process.exit(1);
+      let found;
+      if (target && /^\d+$/.test(target)) {
+        const port = parseInt(target, 10);
+        found = findProjectByMetroPort(port);
+        if (!found) {
+          console.error(chalk.red(`No registered project has Metro port ${port}.`));
+          process.exit(1);
+        }
+      } else {
+        const result = resolveRegisteredProject(target);
+        if (!result.found) {
+          console.error(chalk.red(result.error));
+          process.exit(1);
+        }
+        found = result.found;
       }
       const proj = getProject(found);
       if (!proj) {
