@@ -14,12 +14,14 @@ import {
 } from '../sim/android.js';
 import { buildAndroidCommand, detectPackageManager } from '../runner.js';
 import { getExecutor } from '../exec.js';
+import { resolveLabel } from '../labels.js';
 
 export default function androidCommand(program) {
   program
     .command('android')
     .description('Ensure a dedicated Android emulator + Metro for the current project; build/install if needed')
     .option('--auto', 'Non-interactive: pick the first unclaimed AVD without prompting (also implied when stdin is not a TTY)')
+    .option('--label <name>', 'Optional shortcut name; refer to the project as <name> in stop / release / etc.')
     .option('--script <name>', 'package.json script to invoke for build/install (default: android)', 'android')
     .option('--no-script', 'Skip the package.json script lookup; run expo/react-native CLI directly')
     .option('--pm <name>', 'Package manager: npm, yarn, pnpm, bun (default: detected from lockfile)')
@@ -35,7 +37,14 @@ export default function androidCommand(program) {
       const androidPackage = detectAndroidPackage(root);
       const isExpo = detectIsExpo(root);
 
-      upsertProject(root, { bundleId, androidPackage, isExpo });
+      const existing = getProject(root);
+      const label = await resolveLabel({ root, existingProject: existing, optsLabel: opts.label });
+      upsertProject(root, {
+        bundleId,
+        androidPackage,
+        isExpo,
+        ...(label ? { label } : {}),
+      });
       let proj = getProject(root);
 
       if (!proj.metroPort) {

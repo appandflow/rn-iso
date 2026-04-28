@@ -42,12 +42,12 @@ All commands below take the same `npx rn-iso` prefix.
 | `ios [--auto] [--device-type <name>] [--runtime <ver>] [--script <name>] [--pm <name>] [--no-script] [--no-install]` | Ensure iOS sim + Metro + build/install |
 | `android [--auto] [--script <name>] [--pm <name>] [--no-script] [--no-install]` | Same for Android |
 | `start` | Start Metro detached, no platform action |
-| `stop [<port>\|<basename>\|<path>]` | Kill Metro. No arg = current project; pass a port (e.g. 8083), a unique project basename, or an absolute path. |
+| `stop [<port>\|<shortcut>\|<path>]` | Kill Metro. No arg = current project; pass a port (e.g. 8083), a project shortcut (label or unique basename), or an absolute path. |
 | `device [--platform ios\|android] [--json]` | Print the assigned device target |
 | `status` | Show all projects' state |
 | `reserve [ios\|android]` | Lock a manually-started sim/emulator to the current project (no build) |
 | `unreserve [ios\|android]` | Drop the current project's lock without shutting the sim down |
-| `release [<project>] [--platform <p>] [--shutdown]` | Free a project's assignment; `--shutdown` also stops the sim |
+| `release [<shortcut>\|<path>] [--platform <p>] [--shutdown]` | Free a project's assignment; `--shutdown` also stops the sim |
 
 ## How it works
 
@@ -64,12 +64,24 @@ If you need a single shared sim with a mutex instead of one-per-project, see [`r
 If you booted a simulator yourself (Xcode, Simulator.app, `xcrun simctl boot`, or a manual `expo run:ios`) and want rn-iso to know that sim belongs to the current project — so other rn-iso projects skip it:
 
 ```bash
-npx rn-iso reserve            # picks from booted iOS sims
-npx rn-iso reserve android    # picks from running emulators
-npx rn-iso unreserve          # drop the lock without shutting the sim down
+npx rn-iso reserve --label agent-1     # picks from booted iOS sims
+npx rn-iso reserve android             # picks from running emulators
+npx rn-iso unreserve                   # drop the lock without shutting the sim down
 ```
 
 Reserve binds the sim to the current project the same way `ios` / `android` would, but without running a build. If the sim is already held by another project, the picker prompts you to take it over.
+
+## Project shortcuts (--label)
+
+Each registered project has a "shortcut" you can pass to `stop` / `release` instead of the full path. The first time you run `ios`, `android`, or `reserve` interactively you'll be prompted for one (the directory basename is the default — hit enter to accept). Override any time with `--label <name>`:
+
+```bash
+npx rn-iso ios --label agent-1
+npx rn-iso stop agent-1            # later, from anywhere
+npx rn-iso release agent-1 --shutdown
+```
+
+Under `--auto` (or any non-TTY invocation) the prompt is skipped — the project's basename serves as its shortcut by default. Shortcut collisions (two projects sharing the same basename, or two labels colliding) error out and list the candidates so you can disambiguate with the absolute path.
 
 ## Requirements
 

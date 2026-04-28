@@ -1,6 +1,6 @@
 // src/commands/stop.js
 import chalk from 'chalk';
-import { findProjectRoot, resolveRegisteredProject } from '../project.js';
+import { resolveRegisteredProject } from '../project.js';
 import { loadConfig, getProject, setMetro } from '../config.js';
 import { killMetroByPid } from '../metro.js';
 import { getExecutor } from '../exec.js';
@@ -8,67 +8,25 @@ import { getExecutor } from '../exec.js';
 export default function stopCommand(program) {
   program
     .command('stop [target]')
-    .description('Kill Metro. With no arg, stops the current project. Pass a port number (e.g. 8083), a project basename (must be unique), or an absolute project path.')
+    .description('Kill Metro. With no arg, stops the current project. Pass a port (e.g. 8083), a project shortcut (label or unique basename), or an absolute path.')
     .action((target) => {
-      if (!target) {
-        const root = findProjectRoot(process.cwd());
-        if (!root) {
-          console.error(chalk.red('Not in a React Native project.'));
-          process.exit(1);
-        }
-        const proj = getProject(root);
-        if (!proj?.metroPort) {
-          console.log(chalk.dim('No Metro port assigned to this project.'));
-          return;
-        }
-        return killForProject(root, proj);
-      }
-
-      // Numeric -> port.
-      if (/^\d+$/.test(target)) {
+      // Numeric -> kill whatever's on that port.
+      if (target && /^\d+$/.test(target)) {
         return killByPort(parseInt(target, 10));
       }
 
-      // Path (or basename, if no "/").
-      const found = target.includes('/')
-        ? resolveByPath(target)
-        : resolveByBasename(target);
-      if (!found) return; // resolver already printed the error
+      const { found, error } = resolveRegisteredProject(target);
+      if (!found) {
+        console.error(chalk.red(error));
+        process.exit(1);
+      }
       const proj = getProject(found);
       if (!proj?.metroPort) {
         console.log(chalk.dim(`No Metro port assigned to ${found}.`));
         return;
       }
-      return killForProject(found, proj);
+      killForProject(found, proj);
     });
-}
-
-function resolveByPath(arg) {
-  const { found, error } = resolveRegisteredProject(arg);
-  if (!found) {
-    console.error(chalk.red(error));
-    process.exit(1);
-  }
-  return found;
-}
-
-function resolveByBasename(name) {
-  const cfg = loadConfig();
-  const matches = Object.keys(cfg?.projects || {}).filter(p => {
-    const base = p.split('/').pop();
-    return base === name;
-  });
-  if (matches.length === 0) {
-    console.error(chalk.red(`No registered project matches "${name}". See \`rn-iso status\` for the list.`));
-    process.exit(1);
-  }
-  if (matches.length > 1) {
-    console.error(chalk.red(`Multiple projects share the basename "${name}":`));
-    for (const m of matches) console.error(chalk.dim(`  ${m}`));
-    console.error(chalk.dim('Pass the absolute path to disambiguate.'));
-    process.exit(1);
-  }
-  return matches[0];
 }
 
 function killForProject(root, proj) {

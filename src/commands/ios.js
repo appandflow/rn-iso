@@ -7,6 +7,7 @@ import { allocatePort, isMetroRunning } from '../ports.js';
 import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion, listAllIosSims, sortSims } from '../sim/ios.js';
 import { buildIosCommand, detectPackageManager } from '../runner.js';
 import { getExecutor } from '../exec.js';
+import { resolveLabel } from '../labels.js';
 
 export default function iosCommand(program) {
   program
@@ -15,6 +16,7 @@ export default function iosCommand(program) {
     .option('--device-type <name>', 'Explicit opt-in: create a NEW sim of this device type (e.g. "iPhone 17 Pro")')
     .option('--runtime <version>', 'iOS runtime version when creating a new sim (e.g. "26.2"); defaults to latest')
     .option('--auto', 'Non-interactive: pick the first unclaimed sim without prompting (also implied when stdin is not a TTY)')
+    .option('--label <name>', 'Optional shortcut name; refer to the project as <name> in stop / release / etc.')
     .option('--script <name>', 'package.json script to invoke for build/install (default: ios)', 'ios')
     .option('--no-script', 'Skip the package.json script lookup; run expo/react-native CLI directly')
     .option('--pm <name>', 'Package manager: npm, yarn, pnpm, bun (default: detected from lockfile)')
@@ -33,7 +35,14 @@ export default function iosCommand(program) {
       const androidPackage = detectAndroidPackage(root);
       const isExpo = detectIsExpo(root);
 
-      upsertProject(root, { bundleId, androidPackage, isExpo });
+      const existing = getProject(root);
+      const label = await resolveLabel({ root, existingProject: existing, optsLabel: opts.label });
+      upsertProject(root, {
+        bundleId,
+        androidPackage,
+        isExpo,
+        ...(label ? { label } : {}),
+      });
       let proj = getProject(root);
 
       if (!proj.metroPort) {

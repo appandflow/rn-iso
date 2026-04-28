@@ -94,11 +94,44 @@ test('resolveRegisteredProject finds a project by absolute path', () => {
   assert.equal(r.found, '/Users/x/Developer/agent-1');
 });
 
-test('resolveRegisteredProject does NOT do basename matching', () => {
+test('resolveRegisteredProject matches by basename when unambiguous', () => {
   upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   const r = resolveRegisteredProject('agent-1');
+  assert.equal(r.found, '/Users/x/Developer/agent-1');
+});
+
+test('resolveRegisteredProject matches by an explicit --label', () => {
+  upsertProject('/Users/x/Developer/anything', { bundleId: 'a', androidPackage: 'a', isExpo: false, label: 'agent-2' });
+  const r = resolveRegisteredProject('agent-2');
+  assert.equal(r.found, '/Users/x/Developer/anything');
+});
+
+test('resolveRegisteredProject prefers a project label over a colliding basename', () => {
+  // /a/agent-x has basename agent-x; /b/other has explicit label agent-x.
+  // Only `other` (with the explicit label) matches the shortcut "agent-x"
+  // when the basename isn't a label, because projectShortcut returns label
+  // if set and otherwise falls back to basename — both projects' shortcuts
+  // resolve to "agent-x", which is a collision.
+  upsertProject('/a/agent-x', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  upsertProject('/b/other', { bundleId: 'b', androidPackage: 'b', isExpo: false, label: 'agent-x' });
+  const r = resolveRegisteredProject('agent-x');
   assert.equal(r.found, null);
-  assert.match(r.error, /Pass an absolute path/);
+  assert.match(r.error, /Multiple projects/);
+});
+
+test('resolveRegisteredProject errors with collision when two basenames match', () => {
+  upsertProject('/a/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  upsertProject('/b/agent-1', { bundleId: 'b', androidPackage: 'b', isExpo: false });
+  const r = resolveRegisteredProject('agent-1');
+  assert.equal(r.found, null);
+  assert.match(r.error, /Multiple projects/);
+});
+
+test('resolveRegisteredProject errors when shortcut does not match anything', () => {
+  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  const r = resolveRegisteredProject('nope');
+  assert.equal(r.found, null);
+  assert.match(r.error, /No registered project/);
 });
 
 test('resolveRegisteredProject errors when path does not match anything', () => {

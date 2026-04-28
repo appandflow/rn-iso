@@ -81,8 +81,17 @@ Reserve binds the sim to the current project the same way `ios` does, but skips 
 
 - `npx rn-iso status` — show all projects, their assignments, and Metro state.
 - `npx rn-iso start` — start Metro detached on the project's assigned port WITHOUT building/installing. Useful to keep Metro alive across builds.
-- `npx rn-iso stop [<port>|<basename>|<path>]` — kill Metro. No arg = current project. Passing a port (e.g. `8083`) kills whatever is on it; a unique project basename or absolute path targets that project. Finds the process by port, so it works whether Metro was started by `npx rn-iso start` or by the build CLI.
-- `npx rn-iso release [project] [--platform <p>] [--shutdown]` — free a project's sim assignment. Defaults to the current project. `--shutdown` also stops the sim/emulator.
+- `npx rn-iso stop [<port>|<shortcut>|<path>]` — kill Metro. No arg = current project. Passing a port (e.g. `8083`) kills whatever is on it; a project shortcut (label or unique basename) or absolute path targets that project. Finds the process by port, so it works whether Metro was started by `npx rn-iso start` or by the build CLI.
+- `npx rn-iso release [<shortcut>|<path>] [--platform <p>] [--shutdown]` — free a project's sim assignment. Defaults to the current project. `--shutdown` also stops the sim/emulator.
+
+### Project shortcuts (--label)
+
+Every project has a "shortcut" you can pass to `stop` / `release` instead of the full path. The first interactive run of `ios` / `android` / `reserve` prompts for one (default: directory basename); under `--auto` / non-TTY the prompt is skipped and the basename is used implicitly. To set or override explicitly, pass `--label <name>`:
+
+```bash
+npx rn-iso ios --auto --label agent-1
+npx rn-iso stop agent-1
+```
 
 ## Sort order in the picker
 

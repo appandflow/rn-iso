@@ -6,12 +6,14 @@ import { getProject, upsertProject, setMetro, setDevice, clearDevice, allClaimed
 import { allocatePort } from '../ports.js';
 import { listBootedIosSims, parseRuntimeVersion, sortSims } from '../sim/ios.js';
 import { listAdbDevices, getAvdNameForSerial } from '../sim/android.js';
+import { resolveLabel } from '../labels.js';
 
 export default function reserveCommand(program) {
   program
     .command('reserve [platform]')
     .description('Lock a manually-started sim/emulator to the current project (registers without building).')
-    .action(async (platform) => {
+    .option('--label <name>', 'Optional shortcut name; refer to the project as <name> in stop / release / etc.')
+    .action(async (platform, opts) => {
       const plat = platform || 'ios';
       if (plat !== 'ios' && plat !== 'android') {
         console.error(chalk.red(`Unknown platform: ${plat}. Use ios or android.`));
@@ -24,10 +26,13 @@ export default function reserveCommand(program) {
         process.exit(1);
       }
 
+      const existing = getProject(root);
+      const label = await resolveLabel({ root, existingProject: existing, optsLabel: opts.label });
       upsertProject(root, {
         bundleId: detectBundleId(root),
         androidPackage: detectAndroidPackage(root),
         isExpo: detectIsExpo(root),
+        ...(label ? { label } : {}),
       });
       let proj = getProject(root);
       if (!proj.metroPort) {

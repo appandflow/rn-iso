@@ -2,13 +2,21 @@ import { existsSync, readFileSync, readdirSync, realpathSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { loadConfig } from './config.js';
 
-// Resolve a project from one of two forms:
-//   - undefined / null  -> walk up from cwd (current behavior)
-//   - absolute or relative path that matches a registered project key
+// A project's "shortcut": its `label` field if set, else the path basename.
+// This is the user-facing handle for `stop`, `release`, etc.
+export function projectShortcut(path, proj) {
+  if (proj?.label) return proj.label;
+  return path.split('/').pop() || path;
+}
+
+// Resolve a project from one of three forms:
+//   - undefined / null  -> walk up from cwd
+//   - absolute / relative path matching a registered project key
+//   - a shortcut (label or path basename) that uniquely identifies a project
 //
-// Basename / fuzzy matching is intentionally NOT supported -- collisions
-// across worktrees with the same dir name make it ambiguous. Use full paths
-// or the reservation label (`--label` on `rn-iso reserve`) instead.
+// Basename matching errors out on collision (multiple projects share the
+// basename) — set a `--label` on one of them via `rn-iso reserve` / `ios` /
+// `android` to disambiguate.
 //
 // Returns { found, error }.
 export function resolveRegisteredProject(arg) {
@@ -29,9 +37,19 @@ export function resolveRegisteredProject(arg) {
   if (projects[abs]) return { found: abs };
   if (projects[arg]) return { found: arg };
 
+  // Shortcut match (label or basename).
+  const matches = Object.keys(projects).filter(p => projectShortcut(p, projects[p]) === arg);
+  if (matches.length === 1) return { found: matches[0] };
+  if (matches.length > 1) {
+    return {
+      found: null,
+      error: `Multiple projects share the shortcut "${arg}": ${matches.join(', ')}. Pass the absolute path or set a unique --label.`,
+    };
+  }
+
   return {
     found: null,
-    error: `No registered project at "${arg}". Pass an absolute path; see \`rn-iso status\` for the list.`,
+    error: `No registered project matches "${arg}". See \`rn-iso status\` for the list.`,
   };
 }
 
