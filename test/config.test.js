@@ -18,6 +18,10 @@ import {
   allClaimedDevices,
   recordSimUsage,
   getSimUsage,
+  getProjectSettings,
+  getProjectSetting,
+  setProjectSetting,
+  unsetProjectSetting,
 } from '../src/config.js';
 
 let tmpHome;
@@ -147,4 +151,49 @@ test('allClaimedDevices.androidClaimsByAvd maps avdName to owning project', () =
     path: '/Users/janic/Developer/myapp',
     consolePort: 5554,
   });
+});
+
+// --- Per-project settings ---
+
+test('setProjectSetting writes a top-level key', () => {
+  upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  setProjectSetting('/p', 'packageManager', 'bun');
+  assert.equal(getProjectSetting('/p', 'packageManager'), 'bun');
+  assert.deepEqual(getProjectSettings('/p'), { packageManager: 'bun' });
+});
+
+test('setProjectSetting writes a dotted key, creating intermediate objects', () => {
+  upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  setProjectSetting('/p', 'ios.script', 'dev:ios');
+  setProjectSetting('/p', 'android.script', 'dev:android');
+  assert.deepEqual(getProjectSettings('/p'), {
+    ios: { script: 'dev:ios' },
+    android: { script: 'dev:android' },
+  });
+  assert.equal(getProjectSetting('/p', 'ios.script'), 'dev:ios');
+});
+
+test('setProjectSetting overwrites an existing key', () => {
+  upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  setProjectSetting('/p', 'packageManager', 'bun');
+  setProjectSetting('/p', 'packageManager', 'pnpm');
+  assert.equal(getProjectSetting('/p', 'packageManager'), 'pnpm');
+});
+
+test('unsetProjectSetting removes a key and reports whether it existed', () => {
+  upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  setProjectSetting('/p', 'ios.script', 'dev:ios');
+  assert.equal(unsetProjectSetting('/p', 'ios.script'), true);
+  assert.equal(getProjectSetting('/p', 'ios.script'), undefined);
+  assert.equal(unsetProjectSetting('/p', 'ios.script'), false);
+});
+
+test('getProjectSetting returns undefined for unknown projects / keys', () => {
+  assert.equal(getProjectSetting('/missing', 'packageManager'), undefined);
+  upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  assert.equal(getProjectSetting('/p', 'packageManager'), undefined);
+});
+
+test('setProjectSetting throws when the project is not registered', () => {
+  assert.throws(() => setProjectSetting('/missing', 'packageManager', 'bun'), /not registered/);
 });

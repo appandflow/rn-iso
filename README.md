@@ -48,6 +48,7 @@ All commands below take the same `npx rn-iso` prefix.
 | `reserve [ios\|android]` | Lock a manually-started sim/emulator to the current project (no build) |
 | `unreserve [ios\|android]` | Drop the current project's lock without shutting the sim down |
 | `release [<port>\|<shortcut>\|<path>] [--platform <p>] [--shutdown]` | Free a project's assignment. Target can be a Metro port (`8083`), a shortcut (label or unique basename), or an absolute path. `--shutdown` also stops the sim. |
+| `config [<key> [<value>]] [--unset] [--project <target>]` | Get / set a per-project setting (`packageManager`, `ios.script`, `android.script`). |
 
 ## How it works
 
@@ -70,6 +71,25 @@ npx rn-iso unreserve                   # drop the lock without shutting the sim 
 ```
 
 Reserve binds the sim to the current project the same way `ios` / `android` would, but without running a build. If the sim is already held by another project, the picker prompts you to take it over.
+
+## Per-project settings (`rn-iso config`)
+
+A few options can be persisted per project so you don't have to repeat the same flags every run. Resolution order:
+
+1. CLI flag (`--script`, `--pm`)
+2. Stored project setting (this section)
+3. Default inferred from the project (`ios` / `android` script if present, package manager from lockfile)
+
+```bash
+npx rn-iso config packageManager bun
+npx rn-iso config ios.script dev:ios
+npx rn-iso config android.script "dev:android --variant=debug"
+npx rn-iso config                 # list current project's settings
+npx rn-iso config ios.script      # print one
+npx rn-iso config ios.script --unset
+```
+
+Allowed keys today: `packageManager` (one of `npm|yarn|pnpm|bun`), `ios.script`, `android.script`. Settings live in `~/.rn-iso/config.json` under the project's entry.
 
 ## Project shortcuts (--label)
 

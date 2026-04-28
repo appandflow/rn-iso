@@ -17,9 +17,9 @@ export default function iosCommand(program) {
     .option('--runtime <version>', 'iOS runtime version when creating a new sim (e.g. "26.2"); defaults to latest')
     .option('--auto', 'Non-interactive: pick the first unclaimed sim without prompting (also implied when stdin is not a TTY)')
     .option('--label <name>', 'Optional shortcut name; refer to the project as <name> in stop / release / etc.')
-    .option('--script <name>', 'package.json script to invoke for build/install (default: ios)', 'ios')
+    .option('--script <name>', 'package.json script to invoke for build/install (default: project setting `ios.script`, else `ios`)')
     .option('--no-script', 'Skip the package.json script lookup; run expo/react-native CLI directly')
-    .option('--pm <name>', 'Package manager: npm, yarn, pnpm, bun (default: detected from lockfile)')
+    .option('--pm <name>', 'Package manager: npm, yarn, pnpm, bun (default: project setting `packageManager`, else detected from lockfile)')
     .option('--no-install', 'Skip the build/install step (assume app is already installed)')
     .action(async (opts) => {
       const root = findProjectRoot(process.cwd());
@@ -144,9 +144,12 @@ export default function iosCommand(program) {
       // (without build/install), use `rn-iso start`.
 
       if (opts.install !== false) {
-        const packageManager = opts.pm || detectPackageManager(root);
+        const settings = proj.settings || {};
+        const packageManager = opts.pm ?? settings.packageManager ?? detectPackageManager(root);
         const useScript = opts.script !== false;
-        const scriptName = useScript ? (typeof opts.script === 'string' ? opts.script : 'ios') : null;
+        const scriptName = useScript
+          ? (typeof opts.script === 'string' ? opts.script : (settings.ios?.script ?? 'ios'))
+          : null;
         const cmd = buildIosCommand({
           projectRoot: root,
           packageManager,

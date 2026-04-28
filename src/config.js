@@ -88,6 +88,70 @@ export function clearDevice(projectPath, platform) {
   saveConfig(cfg);
 }
 
+// --- Per-project settings (scripts, package manager, ...) ---
+
+export function getProjectSettings(projectPath) {
+  return getProject(projectPath)?.settings || {};
+}
+
+export function getProjectSetting(projectPath, dottedKey) {
+  return readNested(getProjectSettings(projectPath), dottedKey);
+}
+
+export function setProjectSetting(projectPath, dottedKey, value) {
+  const cfg = ensureConfig();
+  const proj = cfg.projects[projectPath];
+  if (!proj) throw new Error(`Project not registered: ${projectPath}`);
+  proj.settings = proj.settings || {};
+  writeNested(proj.settings, dottedKey, value);
+  saveConfig(cfg);
+}
+
+export function unsetProjectSetting(projectPath, dottedKey) {
+  const cfg = loadConfig();
+  const proj = cfg?.projects?.[projectPath];
+  if (!proj?.settings) return false;
+  const removed = deleteNested(proj.settings, dottedKey);
+  if (removed) saveConfig(cfg);
+  return removed;
+}
+
+function readNested(obj, dottedKey) {
+  if (!obj) return undefined;
+  const keys = dottedKey.split('.');
+  let cur = obj;
+  for (const k of keys) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = cur[k];
+  }
+  return cur;
+}
+
+function writeNested(obj, dottedKey, value) {
+  const keys = dottedKey.split('.');
+  let cur = obj;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (typeof cur[keys[i]] !== 'object' || cur[keys[i]] === null) {
+      cur[keys[i]] = {};
+    }
+    cur = cur[keys[i]];
+  }
+  cur[keys[keys.length - 1]] = value;
+}
+
+function deleteNested(obj, dottedKey) {
+  const keys = dottedKey.split('.');
+  let cur = obj;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (cur[keys[i]] == null || typeof cur[keys[i]] !== 'object') return false;
+    cur = cur[keys[i]];
+  }
+  const leaf = keys[keys.length - 1];
+  if (!(leaf in cur)) return false;
+  delete cur[leaf];
+  return true;
+}
+
 export function allMetroPorts() {
   const cfg = loadConfig();
   if (!cfg?.projects) return [];

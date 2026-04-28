@@ -10,6 +10,7 @@ import statusCommand from '../src/commands/status.js';
 import releaseCommand from '../src/commands/release.js';
 import reserveCommand from '../src/commands/reserve.js';
 import unreserveCommand from '../src/commands/unreserve.js';
+import configCommand from '../src/commands/config.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 
@@ -28,5 +29,6 @@ statusCommand(program);
 releaseCommand(program);
 reserveCommand(program);
 unreserveCommand(program);
+configCommand(program);
 
 program.parse();
