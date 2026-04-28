@@ -1,6 +1,6 @@
 {
   "name": "rn-iso",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Isolated React Native dev environments per project/worktree",
   "type": "module",
   "bin": {
