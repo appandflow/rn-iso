@@ -20,14 +20,15 @@ import { resolveLabel } from '../labels.js';
 export default function androidCommand(program) {
   program
     .command('android')
-    .description('Ensure a dedicated Android emulator + Metro for the current project; build/install if needed')
+    .description('Ensure a dedicated Android emulator + Metro for the current project; build/install if needed. Pass extra flags to the build CLI after `--`, e.g. `rn-iso android -- --mode=diaRelease`.')
+    .argument('[extras...]', 'Flags forwarded as-is to the underlying build command (after `--`)')
     .option('--auto', 'Non-interactive: pick the first unclaimed AVD without prompting (also implied when stdin is not a TTY)')
     .option('--label <name>', 'Optional shortcut name; refer to the project as <name> in stop / release / etc.')
     .option('--script <name>', 'package.json script to invoke for build/install (default: project setting `android.script`, else `android`)')
     .option('--no-script', 'Skip the package.json script lookup; run expo/react-native CLI directly')
     .option('--pm <name>', 'Package manager: npm, yarn, pnpm, bun (default: project setting `packageManager`, else detected from lockfile)')
     .option('--no-install', 'Skip the build/install step')
-    .action(async (opts) => {
+    .action(async (extras, opts) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
         console.error(chalk.red('Not in a React Native project (no package.json found).'));
@@ -157,6 +158,7 @@ export default function androidCommand(program) {
           serial,
           port: proj.metroPort,
           useScript,
+          extras,
         });
         console.log(chalk.dim(`> ${cmd}`));
         const exec = getExecutor();

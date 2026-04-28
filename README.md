@@ -27,6 +27,13 @@ Both run side by side. For non-interactive / agent use, pass `--auto` to skip th
 npx rn-iso ios --auto
 ```
 
+Forward extra flags to the underlying build command with `--`:
+
+```bash
+npx rn-iso ios -- --variant=release
+npx rn-iso android -- --mode=diaRelease --terminal=Ghostty
+```
+
 For AI coding agents, install the skill so the agent knows how to drive the CLI:
 
 ```bash
@@ -39,8 +46,8 @@ All commands below take the same `npx rn-iso` prefix.
 
 | Command | Purpose |
 |---|---|
-| `ios [--auto] [--device-type <name>] [--runtime <ver>] [--script <name>] [--pm <name>] [--no-script] [--no-install]` | Ensure iOS sim + Metro + build/install |
-| `android [--auto] [--script <name>] [--pm <name>] [--no-script] [--no-install]` | Same for Android |
+| `ios [--auto] [--device-type <name>] [--runtime <ver>] [--script <name>] [--pm <name>] [--no-script] [--no-install] [-- <extras...>]` | Ensure iOS sim + Metro + build/install. Extras after `--` are forwarded to the build command. |
+| `android [--auto] [--script <name>] [--pm <name>] [--no-script] [--no-install] [-- <extras...>]` | Same for Android. |
 | `start` | Start Metro detached, no platform action |
 | `stop [<port>\|<shortcut>\|<path>]` | Kill Metro. No arg = current project; pass a port (e.g. 8083), a project shortcut (label or unique basename), or an absolute path. |
 | `device [--platform ios\|android] [--json]` | Print the assigned device target |

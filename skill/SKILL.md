@@ -30,6 +30,7 @@ From the project root (or any subdirectory):
 ## CRITICAL rules
 
 - **Pass `--auto` for non-interactive use** of `ios` or `android`. Without it, the command will prompt with an arrow-key picker if multiple unclaimed sims/AVDs exist. `--auto` is also implied automatically when stdin isn't a TTY (e.g., when an agent pipes the command), so under most agent harnesses you don't have to remember the flag — but passing it explicitly is harmless and clearer.
+- **Forward extra flags to the build CLI with `--`.** `npx rn-iso ios -- --variant=release` (or `android -- --mode=diaRelease`) appends those flags to the underlying `react-native run-*` / `expo run:*` invocation. Useful for release-mode builds, custom terminals, etc. Last-wins semantics, so extras can override defaults rn-iso set earlier in the command.
 - **`--auto` will NOT take over a claimed sim/AVD.** If every device is claimed by other rn-iso projects, `--auto` errors. To take one over, run the command interactively (no `--auto`, with a real TTY) and confirm at the prompt — only do this if the user explicitly asks.
 - **Always use `npx rn-iso device` to discover your target.** Never assume `booted` is your sim — another project's simulator might be booted too.
 - **Always pass the UDID/serial explicitly** to `xcrun simctl` and `adb -s`. Examples:

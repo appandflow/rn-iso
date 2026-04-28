@@ -79,7 +79,10 @@ export function detectScriptCli(scriptBody) {
 // iOS run command. Prefers the project's `ios` script if present (the most
 // reliable: respects user customization, picks the right CLI). Falls back to
 // expo run:ios / react-native run-ios when no script exists or --no-script.
-export function buildIosCommand({ projectRoot, packageManager, scriptName, isExpo, udid, port, useScript = true }) {
+// Any `extras` are appended last so they can override earlier flags (CLIs
+// using commander/yargs are last-wins on repeated options).
+export function buildIosCommand({ projectRoot, packageManager, scriptName, isExpo, udid, port, useScript = true, extras = [] }) {
+  const tail = (extras || []).map(shQuote);
   if (useScript && scriptName) {
     const script = getProjectScript(projectRoot, scriptName);
     if (script) {
@@ -89,16 +92,19 @@ export function buildIosCommand({ projectRoot, packageManager, scriptName, isExp
       return buildScriptCommand(packageManager, scriptName, [
         deviceFlag,
         `--port ${port}`,
+        ...tail,
       ]);
     }
   }
+  const tailStr = tail.length ? ' ' + tail.join(' ') : '';
   if (isExpo) {
-    return `npx expo run:ios --device ${udid} --port ${port}`;
+    return `npx expo run:ios --device ${udid} --port ${port}${tailStr}`;
   }
-  return `npx react-native run-ios --udid ${udid} --port ${port}`;
+  return `npx react-native run-ios --udid ${udid} --port ${port}${tailStr}`;
 }
 
-export function buildAndroidCommand({ projectRoot, packageManager, scriptName, isExpo, avdName, serial, port, useScript = true }) {
+export function buildAndroidCommand({ projectRoot, packageManager, scriptName, isExpo, avdName, serial, port, useScript = true, extras = [] }) {
+  const tail = (extras || []).map(shQuote);
   if (useScript && scriptName) {
     const script = getProjectScript(projectRoot, scriptName);
     if (script) {
@@ -108,13 +114,24 @@ export function buildAndroidCommand({ projectRoot, packageManager, scriptName, i
       return buildScriptCommand(packageManager, scriptName, [
         deviceFlag,
         `--port ${port}`,
+        ...tail,
       ]);
     }
   }
+  const tailStr = tail.length ? ' ' + tail.join(' ') : '';
   if (isExpo) {
-    return `npx expo run:android --device "${avdName}" --port ${port}`;
+    return `npx expo run:android --device "${avdName}" --port ${port}${tailStr}`;
   }
-  return `npx react-native run-android --deviceId ${serial} --port ${port}`;
+  return `npx react-native run-android --deviceId ${serial} --port ${port}${tailStr}`;
+}
+
+// POSIX-safe single-quote shell escape. Leaves "safe" tokens (alnum and a
+// few harmless punctuation marks like `=`, `.`, `,`, `:`, `/`, `-`, `@`,
+// `+`, `_`, `%`) alone, single-quotes everything else.
+export function shQuote(s) {
+  if (s === '') return "''";
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s)) return s;
+  return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
 export function buildMetroCommand({ isExpo, port }) {

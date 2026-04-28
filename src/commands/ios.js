@@ -12,7 +12,8 @@ import { resolveLabel } from '../labels.js';
 export default function iosCommand(program) {
   program
     .command('ios')
-    .description('Ensure a dedicated iOS simulator + Metro server for the current project; build/install if needed')
+    .description('Ensure a dedicated iOS simulator + Metro server for the current project; build/install if needed. Pass extra flags to the build CLI after `--`, e.g. `rn-iso ios -- --variant=release`.')
+    .argument('[extras...]', 'Flags forwarded as-is to the underlying build command (after `--`)')
     .option('--device-type <name>', 'Explicit opt-in: create a NEW sim of this device type (e.g. "iPhone 17 Pro")')
     .option('--runtime <version>', 'iOS runtime version when creating a new sim (e.g. "26.2"); defaults to latest')
     .option('--auto', 'Non-interactive: pick the first unclaimed sim without prompting (also implied when stdin is not a TTY)')
@@ -21,7 +22,7 @@ export default function iosCommand(program) {
     .option('--no-script', 'Skip the package.json script lookup; run expo/react-native CLI directly')
     .option('--pm <name>', 'Package manager: npm, yarn, pnpm, bun (default: project setting `packageManager`, else detected from lockfile)')
     .option('--no-install', 'Skip the build/install step (assume app is already installed)')
-    .action(async (opts) => {
+    .action(async (extras, opts) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
         console.error(chalk.red('Not in a React Native project (no package.json found).'));
@@ -158,6 +159,7 @@ export default function iosCommand(program) {
           udid,
           port: proj.metroPort,
           useScript,
+          extras,
         });
         console.log(chalk.dim(`> ${cmd}`));
         const exec = getExecutor();

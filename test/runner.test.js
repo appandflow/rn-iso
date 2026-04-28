@@ -110,6 +110,55 @@ test('buildAndroidCommand uses --device <avdName> for an expo script', () => {
   assert.equal(cmd, 'pnpm android --device "Pixel_6_API_34" --port 8083');
 });
 
+// ---- Extras passthrough ----
+
+test('buildIosCommand appends extras at the tail in fallback path', () => {
+  const root = makeProj({ 'package.json': '{}' });
+  const cmd = buildIosCommand({
+    projectRoot: root, packageManager: 'npm', scriptName: 'ios', isExpo: true,
+    udid: 'UDID-1', port: 8083, useScript: false,
+    extras: ['--variant=release', '--terminal=Ghostty'],
+  });
+  assert.equal(cmd, 'npx expo run:ios --device UDID-1 --port 8083 --variant=release --terminal=Ghostty');
+});
+
+test('buildIosCommand appends extras at the tail in script path', () => {
+  const root = makeProj({
+    'package.json': JSON.stringify({ scripts: { ios: 'react-native run-ios' } }),
+  });
+  const cmd = buildIosCommand({
+    projectRoot: root, packageManager: 'yarn', scriptName: 'ios', isExpo: false,
+    udid: 'UDID-1', port: 8083,
+    extras: ['--variant=release'],
+  });
+  assert.equal(cmd, 'yarn ios --udid UDID-1 --port 8083 --variant=release');
+});
+
+test('buildAndroidCommand appends extras at the tail (script path)', () => {
+  const root = makeProj({
+    'package.json': JSON.stringify({ scripts: { android: 'react-native run-android' } }),
+  });
+  const cmd = buildAndroidCommand({
+    projectRoot: root, packageManager: 'npm', scriptName: 'android', isExpo: false,
+    avdName: 'Pixel_6', serial: 'emulator-5554', port: 8083,
+    extras: ['--mode=release', '--variant=production'],
+  });
+  assert.equal(cmd, 'npm run android -- --deviceId emulator-5554 --port 8083 --mode=release --variant=production');
+});
+
+test('buildIosCommand shell-quotes extras containing spaces or shell metacharacters', () => {
+  const root = makeProj({ 'package.json': '{}' });
+  const cmd = buildIosCommand({
+    projectRoot: root, packageManager: 'npm', scriptName: 'ios', isExpo: false,
+    udid: 'UDID-1', port: 8083, useScript: false,
+    extras: ['--scheme', 'My Scheme', "--xcconfig=O'Reilly.xcconfig"],
+  });
+  assert.equal(
+    cmd,
+    `npx react-native run-ios --udid UDID-1 --port 8083 --scheme 'My Scheme' '--xcconfig=O'\\''Reilly.xcconfig'`
+  );
+});
+
 // ---- Helpers ----
 
 test('detectPackageManager picks based on lockfile', () => {
