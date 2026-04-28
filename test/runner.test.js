@@ -54,10 +54,10 @@ test('buildAndroidCommand expo fallback uses --device <avdName>', () => {
   assert.equal(cmd, 'npx expo run:android --device "Pixel_6_API_34" --port 8083');
 });
 
-test('buildAndroidCommand bare fallback uses --deviceId <serial> and --port', () => {
+test('buildAndroidCommand bare fallback uses --deviceId and RCT_METRO_PORT prefix', () => {
   const root = makeProj({ 'package.json': '{}' });
   const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'android', isExpo: false, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083, useScript: false });
-  assert.equal(cmd, 'npx react-native run-android --deviceId emulator-5554 --port 8083');
+  assert.equal(cmd, 'RCT_METRO_PORT=8083 npx react-native run-android --deviceId emulator-5554');
 });
 
 // ---- Script-based path ----

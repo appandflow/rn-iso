@@ -122,7 +122,7 @@ export function buildAndroidCommand({ projectRoot, packageManager, scriptName, i
   if (isExpo) {
     return `npx expo run:android --device "${avdName}" --port ${port}${tailStr}`;
   }
-  return `npx react-native run-android --deviceId ${serial} --port ${port}${tailStr}`;
+  return `RCT_METRO_PORT=${port} npx react-native run-android --deviceId ${serial}${tailStr}`;
 }
 
 // POSIX-safe single-quote shell escape. Leaves "safe" tokens (alnum and a

@@ -162,19 +162,7 @@ export default function androidCommand(program) {
         });
         console.log(chalk.dim(`> ${cmd}`));
         const exec = getExecutor();
-        // Export ANDROID_SERIAL + RCT_METRO_PORT so the build picks the right
-        // device and port even when the project's script chain swallows
-        // --deviceId / --port (npm 10+ eats unknown CLI flags through `npm
-        // run`, and many scripts don't forward $@).
-        const child = exec.spawn('sh', ['-c', cmd], {
-          cwd: root,
-          stdio: 'inherit',
-          env: {
-            ...process.env,
-            ANDROID_SERIAL: serial,
-            RCT_METRO_PORT: String(proj.metroPort),
-          },
-        });
+        const child = exec.spawn('sh', ['-c', cmd], { cwd: root, stdio: 'inherit' });
         await new Promise((resolve, reject) => {
           child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`Build failed (exit ${code})`)));
         });
