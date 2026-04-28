@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 import deviceCommand from '../src/commands/device.js';
 import iosCommand from '../src/commands/ios.js';
@@ -10,11 +11,13 @@ import releaseCommand from '../src/commands/release.js';
 import reserveCommand from '../src/commands/reserve.js';
 import unreserveCommand from '../src/commands/unreserve.js';
 
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+
 const program = new Command();
 program
   .name('rn-iso')
   .description('Isolated React Native dev environments per project/worktree')
-  .version('0.1.0');
+  .version(pkg.version);
 
 deviceCommand(program);
 iosCommand(program);

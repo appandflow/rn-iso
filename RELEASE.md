@@ -19,6 +19,7 @@ Run from `main`, fully up to date with `origin/main`:
 ```bash
 npm test                                        # all tests pass
 node bin/cli.js --help                          # CLI loads cleanly
+node bin/cli.js --version                       # matches package.json (0.2.0 shipped with 0.1.0 once)
 git status --short                              # working tree clean
 git log "$(git describe --tags --abbrev=0)..HEAD" --oneline   # changes since last tag
 ```
