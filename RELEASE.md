@@ -4,31 +4,50 @@ How to cut a new version of `rn-iso` to npm and GitHub. Keep this in sync with
 what we actually do — when something changes, update both this file and the
 real workflow at the same time.
 
-## Versioning
+## 1. Decide the version
 
-- Semver. `MAJOR.MINOR.PATCH`.
-  - Patch: bug fixes, doc-only changes, internal refactors with no user-visible effect.
-  - Minor: new commands, new flags, additions to existing commands.
-  - Major: removing commands/flags, on-disk config shape changes that aren't auto-migrated, anything that would break someone running the previous version against the same `~/.rn-iso/config.json`.
-- Pre-1.0, breaking changes can ship in a minor (e.g. 0.1 → 0.2 was a major surface trim). Call them out clearly under "Removed (breaking)" in the release notes.
-
-## Pre-flight
-
-Run from `main`, fully up to date with `origin/main`:
+The source of truth for "what was last released" is the npm registry, not
+local git tags — a publish can fail after the tag is pushed, leaving the tag
+ahead of what's actually on npm. Pull the published version and list commits
+since the matching tag:
 
 ```bash
-npm test                                        # all tests pass
-node bin/cli.js --help                          # CLI loads cleanly
-node bin/cli.js --version                       # matches package.json (0.2.0 shipped with 0.1.0 once)
-git status --short                              # working tree clean
-git log "$(git describe --tags --abbrev=0)..HEAD" --oneline   # changes since last tag
+git fetch --tags
+last=$(npm view rn-iso version)
+echo "Last published: v$last"
+git log "v$last..HEAD" --oneline
+```
+
+If `git describe --tags --abbrev=0` is *higher* than `v$last`, a previous
+release got tagged but never landed on npm. **Retry that publish before
+bumping again** (re-run step 6 with the existing version) rather than
+incrementing past it.
+
+Look at every commit in the list and decide:
+
+- **Patch** (`0.2.0 -> 0.2.1`) — bug fixes, doc-only changes, internal refactors with no user-visible effect.
+- **Minor** (`0.2.0 -> 0.3.0`) — new commands, new flags, additions to existing commands. **Pre-1.0, breaking changes also go here** (e.g. 0.1 -> 0.2 was a major surface trim that landed as a minor). On 0.x a breaking change does *not* force a major — bumping to a new major is reserved for 1.0 stabilization or a deliberate grouped-breaking-changes cut.
+- **Major** (`0.x -> 1.0`, `1.x -> 2.0`) — only post-1.0, or when intentionally cutting a 1.0.
+
+If anything in the list is breaking, plan to call it out under "Removed
+(breaking)" / "Migration notes" in the release notes (step 5 below).
+
+## 2. Pre-flight
+
+From `main`, fully up to date with `origin/main`:
+
+```bash
+npm test                          # all tests pass
+node bin/cli.js --help            # CLI loads cleanly
+node bin/cli.js --version         # matches package.json (0.2.0 shipped with 0.1.0 once)
+git status --short                # working tree clean
 ```
 
 If `git status` isn't clean, commit / discard before tagging.
 
-## Cut the release
+## 3. Cut the release
 
-1. **Bump the version** in `package.json`. No other version files to update.
+1. **Bump the version** in `package.json` to the value chosen in step 1. No other version files to update — `bin/cli.js` reads from `package.json`.
 2. **Verify the npm tarball** ships only what should ship:
    ```bash
    npm pack --dry-run
@@ -57,9 +76,9 @@ If `git status` isn't clean, commit / discard before tagging.
    cd /tmp && npx rn-iso@latest --version
    ```
 
-## After the release
+## 4. After the release
 
-- Leave `package.json` at the just-released version. The next release bumps it as part of its own pre-flight; we don't carry a `-dev` suffix between releases.
+- Leave `package.json` at the just-released version. The next release bumps it as part of its own step 3; we don't carry a `-dev` suffix between releases.
 
 ## Don't
 
