@@ -60,10 +60,8 @@ If `git status` isn't clean, commit / discard before tagging.
 ## After the release
 
 - Leave `package.json` at the just-released version. The next release bumps it as part of its own pre-flight; we don't carry a `-dev` suffix between releases.
-- If a critical bug is discovered post-publish, ship a patch release rather than `npm unpublish`.
 
 ## Don't
 
-- `npm unpublish` after the 72-hour window unless you're cleaning up a literal mistake. Cut a patch instead.
 - Force-push tags. Cut a new version.
 - Skip the `npm pack --dry-run` step. Untracked files have shipped before.
