@@ -161,7 +161,18 @@ export default function iosCommand(program) {
         });
         console.log(chalk.dim(`> ${cmd}`));
         const exec = getExecutor();
-        const child = exec.spawn('sh', ['-c', cmd], { cwd: root, stdio: 'inherit' });
+        // Export RCT_METRO_PORT so Metro/react-native pick up the right port
+        // even when the project's script chain swallows --port (npm 10+ eats
+        // unknown CLI flags through `npm run`, and many scripts don't
+        // forward $@).
+        const child = exec.spawn('sh', ['-c', cmd], {
+          cwd: root,
+          stdio: 'inherit',
+          env: {
+            ...process.env,
+            RCT_METRO_PORT: String(proj.metroPort),
+          },
+        });
         await new Promise((resolve, reject) => {
           child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`Build failed (exit ${code})`)));
         });

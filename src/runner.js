@@ -114,7 +114,7 @@ export function buildAndroidCommand({ projectRoot, packageManager, scriptName, i
   if (isExpo) {
     return `npx expo run:android --device "${avdName}" --port ${port}`;
   }
-  return `RCT_METRO_PORT=${port} npx react-native run-android --deviceId ${serial}`;
+  return `npx react-native run-android --deviceId ${serial} --port ${port}`;
 }
 
 export function buildMetroCommand({ isExpo, port }) {
