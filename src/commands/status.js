@@ -12,10 +12,7 @@ export default function statusCommand(program) {
     .action(async () => {
       const cfg = loadConfig();
       const hasProjects = cfg && Object.keys(cfg.projects || {}).length > 0;
-      const reservations = cfg?.reservations || { ios: [], android: [] };
-      const hasReservations = (reservations.ios?.length || 0) + (reservations.android?.length || 0) > 0;
-
-      if (!hasProjects && !hasReservations) {
+      if (!hasProjects) {
         console.log(chalk.dim('No projects registered.'));
         return;
       }
@@ -43,17 +40,6 @@ export default function statusCommand(program) {
         if (ios) console.log(`  ios: ${chalk.cyan(ios.deviceUdid)}`);
         const android = proj.platforms?.android;
         if (android) console.log(`  android: ${chalk.cyan(android.avdName)} on emulator-${android.consolePort}`);
-      }
-
-      if (hasReservations) {
-        console.log('\n' + chalk.bold('Reservations (external):'));
-        for (const r of reservations.ios || []) {
-          console.log(`  ios: ${chalk.cyan(r.udid)}${r.label ? chalk.dim(` (${r.label})`) : ''}`);
-        }
-        for (const r of reservations.android || []) {
-          const tag = r.avdName ? `${r.avdName} on ${r.serial}` : r.serial;
-          console.log(`  android: ${chalk.cyan(tag)}${r.label ? chalk.dim(` (${r.label})`) : ''}`);
-        }
       }
       console.log('');
     });

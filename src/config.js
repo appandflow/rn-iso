@@ -28,14 +28,8 @@ export function saveConfig(config) {
 
 export function ensureConfig() {
   const existing = loadConfig();
-  if (existing) {
-    if (!existing.reservations) {
-      existing.reservations = { ios: [], android: [] };
-      saveConfig(existing);
-    }
-    return existing;
-  }
-  const fresh = { version: 1, projects: {}, reservations: { ios: [], android: [] } };
+  if (existing) return existing;
+  const fresh = { version: 1, projects: {} };
   saveConfig(fresh);
   return fresh;
 }
@@ -108,39 +102,30 @@ export function allClaimedDevices() {
     iosUdids: [],
     androidAvds: [],
     androidConsolePorts: [],
-    // iosClaims: udid -> { source: 'project'|'reservation', label, path? }
-    // For 'project', `path` is the absolute project path (so callers can
-    // release the prior claim via clearDevice). For 'reservation', the udid
-    // itself is the key; pass to removeReservation to drop it.
+    // iosClaims: udid -> { label, path }. androidClaims: consolePort ->
+    // { label, path, avdName }. `path` is the absolute project path so
+    // take-over flows can call clearDevice on the owning project.
     iosClaims: {},
+    androidClaims: {},
   };
   if (!cfg) return result;
   for (const [path, proj] of Object.entries(cfg.projects || {})) {
+    const label = path.split('/').pop() || path;
     const ios = proj.platforms?.ios;
     if (ios?.deviceUdid) {
       result.iosUdids.push(ios.deviceUdid);
-      result.iosClaims[ios.deviceUdid] = {
-        source: 'project',
-        label: path.split('/').pop() || path,
-        path,
-      };
+      result.iosClaims[ios.deviceUdid] = { label, path };
     }
     const android = proj.platforms?.android;
     if (android?.avdName) result.androidAvds.push(android.avdName);
-    if (typeof android?.consolePort === 'number') result.androidConsolePorts.push(android.consolePort);
-  }
-  for (const r of cfg.reservations?.ios || []) {
-    if (r.udid) {
-      result.iosUdids.push(r.udid);
-      result.iosClaims[r.udid] = {
-        source: 'reservation',
-        label: r.label || 'reserved',
+    if (typeof android?.consolePort === 'number') {
+      result.androidConsolePorts.push(android.consolePort);
+      result.androidClaims[android.consolePort] = {
+        label,
+        path,
+        avdName: android.avdName,
       };
     }
-  }
-  for (const r of cfg.reservations?.android || []) {
-    if (r.avdName) result.androidAvds.push(r.avdName);
-    if (typeof r.consolePort === 'number') result.androidConsolePorts.push(r.consolePort);
   }
   return result;
 }
@@ -156,70 +141,4 @@ export function recordSimUsage(platform, identifier) {
 export function getSimUsage() {
   const cfg = loadConfig();
   return cfg?.simUsage || { ios: {}, android: {} };
-}
-
-export function listReservations() {
-  const cfg = loadConfig();
-  return cfg?.reservations || { ios: [], android: [] };
-}
-
-// Find reservations matching either an identifier (UDID for iOS, serial for
-// Android) or a label (the --label set via `rn-iso reserve`). Returns
-// `[{ platform, id, label }]`. Pass platform to restrict the search.
-export function findReservations(idOrLabel, platform = null) {
-  const r = listReservations();
-  const matches = [];
-  if (!platform || platform === 'ios') {
-    for (const e of r.ios || []) {
-      if (e.udid === idOrLabel || e.label === idOrLabel) {
-        matches.push({ platform: 'ios', id: e.udid, label: e.label });
-      }
-    }
-  }
-  if (!platform || platform === 'android') {
-    for (const e of r.android || []) {
-      if (e.serial === idOrLabel || e.label === idOrLabel) {
-        matches.push({ platform: 'android', id: e.serial, label: e.label });
-      }
-    }
-  }
-  return matches;
-}
-
-export function addReservation(platform, fields) {
-  if (platform !== 'ios' && platform !== 'android') {
-    throw new Error(`Unknown platform: ${platform}`);
-  }
-  const cfg = ensureConfig();
-  cfg.reservations = cfg.reservations || { ios: [], android: [] };
-  const list = cfg.reservations[platform];
-  const key = platform === 'ios' ? 'udid' : 'serial';
-  const existing = list.find(r => r[key] === fields[key]);
-  if (existing) {
-    Object.assign(existing, fields);
-  } else {
-    list.push(fields);
-  }
-  saveConfig(cfg);
-  return fields;
-}
-
-export function removeReservation(platform, identifier) {
-  if (platform !== 'ios' && platform !== 'android') {
-    throw new Error(`Unknown platform: ${platform}`);
-  }
-  const cfg = loadConfig();
-  if (!cfg?.reservations?.[platform]) return false;
-  const key = platform === 'ios' ? 'udid' : 'serial';
-  const before = cfg.reservations[platform].length;
-  cfg.reservations[platform] = cfg.reservations[platform].filter(r => r[key] !== identifier);
-  saveConfig(cfg);
-  return cfg.reservations[platform].length < before;
-}
-
-export function clearAllReservations() {
-  const cfg = loadConfig();
-  if (!cfg) return;
-  cfg.reservations = { ios: [], android: [] };
-  saveConfig(cfg);
 }

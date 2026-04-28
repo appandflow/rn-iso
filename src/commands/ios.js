@@ -2,7 +2,7 @@
 import chalk from 'chalk';
 import prompts from 'prompts';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../project.js';
-import { getProject, upsertProject, setMetro, setDevice, clearDevice, removeReservation, allClaimedDevices, recordSimUsage, getSimUsage } from '../config.js';
+import { getProject, upsertProject, setMetro, setDevice, clearDevice, allClaimedDevices, recordSimUsage, getSimUsage } from '../config.js';
 import { allocatePort, isMetroRunning } from '../ports.js';
 import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion, listAllIosSims, sortSims } from '../sim/ios.js';
 import { buildIosCommand, detectPackageManager } from '../runner.js';
@@ -73,7 +73,7 @@ export default function iosCommand(program) {
               usage,
             });
         udid = picked.sim.udid;
-        releasePriorClaim(picked.prevClaim, udid);
+        releasePriorClaim(picked.prevClaim);
         if (picked.sim.state !== 'Booted') {
           console.log(chalk.dim(`Booting ${picked.sim.name} (${udid})...`));
           bootIosSim(udid);
@@ -81,16 +81,16 @@ export default function iosCommand(program) {
           console.log(chalk.green(`Assigned ${picked.sim.name} (${udid}, booted)`));
         }
       } else if (selection.kind === 'allClaimed') {
-        // Sims exist but every one is claimed. With --auto, refuse rather
-        // than silently stealing. Interactive: show picker so the user can
-        // confirm-steal one.
+        // Sims exist but every one is claimed by another project. With
+        // --auto, refuse rather than silently stealing. Interactive: show
+        // picker so the user can confirm-steal one.
         if (opts.auto) {
           if (opts.deviceType) {
             udid = createNewSim({ deviceType: opts.deviceType, runtimeVersion: opts.runtime });
             console.log(chalk.green(`Created and booted new sim ${udid}`));
           } else {
-            console.error(chalk.red('All iOS simulators are claimed by other projects or reservations.'));
-            console.error(chalk.dim('Re-run without --auto to confirm stealing one, or pass --device-type to create a new sim.'));
+            console.error(chalk.red('All iOS simulators are claimed by other rn-iso projects.'));
+            console.error(chalk.dim('Re-run without --auto to confirm taking one over, or pass --device-type to create a new sim.'));
             process.exit(1);
           }
         } else {
@@ -101,7 +101,7 @@ export default function iosCommand(program) {
             allClaimed: true,
           });
           udid = picked.sim.udid;
-          releasePriorClaim(picked.prevClaim, udid);
+          releasePriorClaim(picked.prevClaim);
           if (picked.sim.state !== 'Booted') {
             console.log(chalk.dim(`Booting ${picked.sim.name} (${udid})...`));
             bootIosSim(udid);
@@ -171,12 +171,9 @@ async function pickSim({ candidates, iosClaims = {}, usage = {}, allClaimed = fa
     const versionPart = version.padStart(6);
     const claim = iosClaims[s.udid];
     if (claim) {
-      const tag = claim.source === 'project'
-        ? `[claimed by ${claim.label}]`
-        : `[reserved: ${claim.label}]`;
       const stateTag = s.state === 'Booted' ? chalk.green(' [booted]') : '';
       return {
-        title: chalk.yellow(`${namePart}  ${versionPart}  ${tag}${stateTag}`),
+        title: chalk.yellow(`${namePart}  ${versionPart}  [claimed by ${claim.label}]${stateTag}`),
         value: { sim: s, claim },
       };
     }
@@ -205,13 +202,10 @@ async function pickSim({ candidates, iosClaims = {}, usage = {}, allClaimed = fa
   }
   const { sim, claim } = answer.pick;
   if (claim) {
-    const owner = claim.source === 'project'
-      ? `project "${claim.label}"`
-      : `reservation "${claim.label}"`;
     const confirm = await prompts({
       type: 'confirm',
       name: 'ok',
-      message: `${sim.name} is currently held by ${owner}. Take it over?`,
+      message: `${sim.name} is currently held by project "${claim.label}". Take it over?`,
       initial: false,
     });
     if (!confirm.ok) {
@@ -223,15 +217,10 @@ async function pickSim({ candidates, iosClaims = {}, usage = {}, allClaimed = fa
   return { sim, prevClaim: null };
 }
 
-function releasePriorClaim(prevClaim, udid) {
-  if (!prevClaim) return;
-  if (prevClaim.source === 'project' && prevClaim.path) {
-    clearDevice(prevClaim.path, 'ios');
-    console.log(chalk.dim(`Released prior assignment from "${prevClaim.label}"`));
-  } else if (prevClaim.source === 'reservation') {
-    removeReservation('ios', udid);
-    console.log(chalk.dim(`Removed reservation "${prevClaim.label}"`));
-  }
+function releasePriorClaim(prevClaim) {
+  if (!prevClaim?.path) return;
+  clearDevice(prevClaim.path, 'ios');
+  console.log(chalk.dim(`Released prior assignment from "${prevClaim.label}"`));
 }
 
 function createNewSim({ deviceType, runtimeVersion }) {

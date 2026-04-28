@@ -5,11 +5,8 @@ import iosCommand from '../src/commands/ios.js';
 import androidCommand from '../src/commands/android.js';
 import startCommand from '../src/commands/start.js';
 import stopCommand from '../src/commands/stop.js';
-import logsCommand from '../src/commands/logs.js';
 import statusCommand from '../src/commands/status.js';
 import releaseCommand from '../src/commands/release.js';
-import shutdownCommand from '../src/commands/shutdown.js';
-import pruneCommand from '../src/commands/prune.js';
 import reserveCommand from '../src/commands/reserve.js';
 import unreserveCommand from '../src/commands/unreserve.js';
 
@@ -24,11 +21,8 @@ iosCommand(program);
 androidCommand(program);
 startCommand(program);
 stopCommand(program);
-logsCommand(program);
 statusCommand(program);
 releaseCommand(program);
-shutdownCommand(program);
-pruneCommand(program);
 reserveCommand(program);
 unreserveCommand(program);
 

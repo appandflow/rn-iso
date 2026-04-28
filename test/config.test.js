@@ -16,11 +16,6 @@ import {
   clearDevice,
   allMetroPorts,
   allClaimedDevices,
-  addReservation,
-  removeReservation,
-  listReservations,
-  clearAllReservations,
-  findReservations,
   recordSimUsage,
   getSimUsage,
 } from '../src/config.js';
@@ -47,7 +42,7 @@ test('loadConfig returns null when no file exists', () => {
 
 test('ensureConfig creates and returns empty config', () => {
   const cfg = ensureConfig();
-  assert.deepEqual(cfg, { version: 1, projects: {}, reservations: { ios: [], android: [] } });
+  assert.deepEqual(cfg, { version: 1, projects: {} });
   assert.ok(existsSync(join(tmpHome, 'config.json')));
 });
 
@@ -111,82 +106,6 @@ test('removeProject deletes entry', () => {
   assert.equal(getProject('/p'), null);
 });
 
-test('addReservation appends an iOS reservation and idempotently updates by UDID', () => {
-  addReservation('ios', { udid: 'UDID-X', label: 'agent-1' });
-  addReservation('ios', { udid: 'UDID-Y' });
-  let r = listReservations();
-  assert.equal(r.ios.length, 2);
-  // Re-add with same UDID -> updated, not duplicated
-  addReservation('ios', { udid: 'UDID-X', label: 'agent-1-renamed' });
-  r = listReservations();
-  assert.equal(r.ios.length, 2);
-  assert.equal(r.ios.find(e => e.udid === 'UDID-X').label, 'agent-1-renamed');
-});
-
-test('addReservation works for android keyed by serial', () => {
-  addReservation('android', { serial: 'emulator-5554', consolePort: 5554, avdName: 'Pixel_6' });
-  const r = listReservations();
-  assert.equal(r.android.length, 1);
-  assert.equal(r.android[0].avdName, 'Pixel_6');
-});
-
-test('removeReservation drops the matching entry', () => {
-  addReservation('ios', { udid: 'UDID-1' });
-  addReservation('ios', { udid: 'UDID-2' });
-  const removed = removeReservation('ios', 'UDID-1');
-  assert.equal(removed, true);
-  assert.deepEqual(listReservations().ios.map(e => e.udid), ['UDID-2']);
-});
-
-test('allClaimedDevices includes reservations alongside project assignments', () => {
-  upsertProject('/p', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  setDevice('/p', 'ios', { deviceUdid: 'UDID-PROJECT' });
-  addReservation('ios', { udid: 'UDID-EXTERNAL', label: 'agent-1' });
-  addReservation('android', { serial: 'emulator-5554', consolePort: 5554, avdName: 'Pixel_6' });
-  const claimed = allClaimedDevices();
-  assert.deepEqual(claimed.iosUdids.sort(), ['UDID-EXTERNAL', 'UDID-PROJECT']);
-  assert.deepEqual(claimed.androidAvds, ['Pixel_6']);
-  assert.deepEqual(claimed.androidConsolePorts, [5554]);
-});
-
-test('clearAllReservations empties both platforms', () => {
-  addReservation('ios', { udid: 'UDID-1' });
-  addReservation('android', { serial: 'emulator-5554', consolePort: 5554 });
-  clearAllReservations();
-  const r = listReservations();
-  assert.deepEqual(r, { ios: [], android: [] });
-});
-
-test('findReservations matches by id (UDID for iOS, serial for Android)', () => {
-  addReservation('ios', { udid: 'UDID-1', label: 'agent-2' });
-  addReservation('android', { serial: 'emulator-5554', consolePort: 5554, label: 'agent-1' });
-  const ios = findReservations('UDID-1');
-  assert.deepEqual(ios, [{ platform: 'ios', id: 'UDID-1', label: 'agent-2' }]);
-  const android = findReservations('emulator-5554');
-  assert.deepEqual(android, [{ platform: 'android', id: 'emulator-5554', label: 'agent-1' }]);
-});
-
-test('findReservations matches by label across platforms', () => {
-  addReservation('ios', { udid: 'UDID-1', label: 'shared-label' });
-  addReservation('android', { serial: 'emulator-5554', consolePort: 5554, label: 'shared-label' });
-  const matches = findReservations('shared-label');
-  assert.equal(matches.length, 2);
-  assert.deepEqual(matches.map(m => m.platform).sort(), ['android', 'ios']);
-});
-
-test('findReservations respects platform filter', () => {
-  addReservation('ios', { udid: 'UDID-1', label: 'shared' });
-  addReservation('android', { serial: 'emulator-5554', consolePort: 5554, label: 'shared' });
-  const matches = findReservations('shared', 'android');
-  assert.equal(matches.length, 1);
-  assert.equal(matches[0].platform, 'android');
-});
-
-test('findReservations returns empty when nothing matches', () => {
-  addReservation('ios', { udid: 'UDID-1', label: 'agent-1' });
-  assert.deepEqual(findReservations('nope'), []);
-});
-
 test('recordSimUsage increments and getSimUsage reads counts', () => {
   recordSimUsage('ios', 'UDID-A');
   recordSimUsage('ios', 'UDID-A');
@@ -198,15 +117,23 @@ test('recordSimUsage increments and getSimUsage reads counts', () => {
   assert.equal(usage.android['Pixel_6'], 1);
 });
 
-test('allClaimedDevices.iosClaims labels project vs reservation sources', () => {
+test('allClaimedDevices.iosClaims maps udid to owning project label/path', () => {
   upsertProject('/Users/janic/Developer/myapp', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: true });
   setDevice('/Users/janic/Developer/myapp', 'ios', { deviceUdid: 'UDID-PROJ' });
-  addReservation('ios', { udid: 'UDID-EXT', label: 'agent-1' });
   const claimed = allClaimedDevices();
   assert.deepEqual(claimed.iosClaims['UDID-PROJ'], {
-    source: 'project',
     label: 'myapp',
     path: '/Users/janic/Developer/myapp',
   });
-  assert.deepEqual(claimed.iosClaims['UDID-EXT'], { source: 'reservation', label: 'agent-1' });
+});
+
+test('allClaimedDevices.androidClaims maps console port to owning project', () => {
+  upsertProject('/Users/janic/Developer/myapp', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
+  setDevice('/Users/janic/Developer/myapp', 'android', { avdName: 'Pixel_6', consolePort: 5554 });
+  const claimed = allClaimedDevices();
+  assert.deepEqual(claimed.androidClaims[5554], {
+    label: 'myapp',
+    path: '/Users/janic/Developer/myapp',
+    avdName: 'Pixel_6',
+  });
 });

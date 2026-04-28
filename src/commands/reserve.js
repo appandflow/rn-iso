@@ -1,176 +1,158 @@
 // src/commands/reserve.js
 import chalk from 'chalk';
 import prompts from 'prompts';
-import { addReservation, listReservations, allClaimedDevices } from '../config.js';
-import { listBootedIosSims } from '../sim/ios.js';
+import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../project.js';
+import { getProject, upsertProject, setMetro, setDevice, clearDevice, allClaimedDevices } from '../config.js';
+import { allocatePort } from '../ports.js';
+import { listBootedIosSims, parseRuntimeVersion, sortSims } from '../sim/ios.js';
 import { listAdbDevices, getAvdNameForSerial } from '../sim/android.js';
 
 export default function reserveCommand(program) {
   program
-    .command('reserve [platform] [identifier]')
-    .description('Mark a sim/emulator as in-use by an external process so rn-iso skips it during allocation')
-    .option('--label <text>', 'Optional label (e.g. "agent-1") for clarity in `rn-iso status`')
-    .option('--list', 'List current reservations and exit')
-    .action(async (platform, identifier, opts) => {
-      if (opts.list) {
-        printReservations();
-        return;
-      }
-
-      // Direct path: both platform and identifier provided.
-      if (platform && identifier) {
-        addOne(platform, identifier, opts.label);
-        return;
-      }
-
-      // Interactive path: list running devices and multi-select.
-      if (platform && platform !== 'ios' && platform !== 'android') {
-        console.error(chalk.red(`Unknown platform: ${platform}. Use ios or android.`));
+    .command('reserve [platform]')
+    .description('Lock a manually-started sim/emulator to the current project (registers without building).')
+    .action(async (platform) => {
+      const plat = platform || 'ios';
+      if (plat !== 'ios' && plat !== 'android') {
+        console.error(chalk.red(`Unknown platform: ${plat}. Use ios or android.`));
         process.exit(1);
       }
 
-      const showIos = !platform || platform === 'ios';
-      const showAndroid = !platform || platform === 'android';
-      const claimed = allClaimedDevices();
-      const claimedIos = new Set(claimed.iosUdids);
-      const claimedAndroidPorts = new Set(claimed.androidConsolePorts);
-
-      const choices = [];
-
-      if (showIos) {
-        let iosSims = [];
-        try {
-          iosSims = listBootedIosSims();
-        } catch (e) {
-          console.error(chalk.dim(`(could not list iOS sims: ${e.message})`));
-        }
-        for (const sim of iosSims) {
-          const taken = claimedIos.has(sim.udid);
-          choices.push({
-            title: `${chalk.bold('ios')}  ${sim.name.padEnd(22)} ${chalk.dim(sim.udid)}${taken ? chalk.yellow(' [reserved]') : ''}`,
-            value: { kind: 'ios', udid: sim.udid, name: sim.name },
-            disabled: taken,
-          });
-        }
-      }
-
-      if (showAndroid) {
-        let emulators = [];
-        try {
-          emulators = listAdbDevices().emulators;
-        } catch (e) {
-          console.error(chalk.dim(`(could not list Android emulators: ${e.message})`));
-        }
-        for (const e of emulators) {
-          const taken = claimedAndroidPorts.has(e.consolePort);
-          const avdName = taken ? null : getAvdNameForSerial(e.serial);
-          const label = avdName ? `${avdName} on ${e.serial}` : e.serial;
-          choices.push({
-            title: `${chalk.bold('and')}  ${label}${taken ? chalk.yellow(' [reserved]') : ''}`,
-            value: { kind: 'android', serial: e.serial, consolePort: e.consolePort, avdName },
-            disabled: taken,
-          });
-        }
-      }
-
-      if (choices.length === 0) {
-        const what = !platform ? 'booted iOS sims or running Android emulators'
-          : platform === 'ios' ? 'booted iOS sims'
-          : 'running Android emulators';
-        console.error(chalk.red(`No ${what} found.`));
+      const root = findProjectRoot(process.cwd());
+      if (!root) {
+        console.error(chalk.red('Not in a React Native project (no package.json found).'));
         process.exit(1);
       }
 
-      const answer = await prompts({
-        type: 'multiselect',
-        name: 'selected',
-        message: 'Pick devices to reserve (space to toggle, enter to confirm)',
-        choices,
-        instructions: false,
-        hint: '- space to select, enter to confirm',
+      upsertProject(root, {
+        bundleId: detectBundleId(root),
+        androidPackage: detectAndroidPackage(root),
+        isExpo: detectIsExpo(root),
       });
-
-      if (!answer.selected || answer.selected.length === 0) {
-        console.log(chalk.dim('Nothing selected.'));
-        return;
+      let proj = getProject(root);
+      if (!proj.metroPort) {
+        const port = await allocatePort(root);
+        setMetro(root, port, null);
+        proj = getProject(root);
+        console.log(chalk.dim(`Allocated Metro port: ${port}`));
       }
 
-      let label = opts.label;
-      if (!label) {
-        const labelAnswer = await prompts({
-          type: 'text',
-          name: 'label',
-          message: 'Label (optional, e.g. "agent-1"):',
-        });
-        label = labelAnswer.label || undefined;
-      }
-
-      for (const sel of answer.selected) {
-        if (sel.kind === 'ios') {
-          addReservation('ios', { udid: sel.udid, label });
-          console.log(chalk.green(`Reserved iOS ${sel.name} (${sel.udid})${label ? ` (${label})` : ''}`));
-        } else {
-          addReservation('android', {
-            serial: sel.serial,
-            consolePort: sel.consolePort,
-            avdName: sel.avdName,
-            label,
-          });
-          console.log(chalk.green(
-            `Reserved emulator ${sel.serial}` +
-            (sel.avdName ? ` (AVD: ${sel.avdName})` : '') +
-            (label ? ` (${label})` : '')
-          ));
-        }
+      if (plat === 'ios') {
+        await reserveIos(root, proj);
+      } else {
+        await reserveAndroid(root, proj);
       }
     });
 }
 
-function addOne(platform, identifier, label) {
-  if (platform === 'ios') {
-    addReservation('ios', { udid: identifier, label });
-    console.log(chalk.green(`Reserved iOS sim ${identifier}${label ? ` (${label})` : ''}`));
-    return;
+async function reserveIos(root, proj) {
+  const booted = listBootedIosSims();
+  if (booted.length === 0) {
+    console.error(chalk.red('No booted iOS simulators found.'));
+    console.error(chalk.dim('Boot one (Simulator.app, Xcode, or `xcrun simctl boot`) and re-run.'));
+    process.exit(1);
   }
-  if (platform === 'android') {
-    const m = identifier.match(/^emulator-(\d+)$/);
-    if (!m) {
-      console.error(chalk.red('Android identifier must look like emulator-5554'));
+
+  const claims = allClaimedDevices().iosClaims;
+  const sorted = sortSims(booted);
+
+  let pick;
+  if (sorted.length === 1) {
+    pick = sorted[0];
+  } else {
+    const nameWidth = Math.max(...sorted.map(s => s.name.length), 18);
+    const choices = sorted.map(s => {
+      const claim = claims[s.udid];
+      const tag = !claim ? ''
+        : claim.path === root ? chalk.dim(' [already yours]')
+        : chalk.yellow(` [claimed by ${claim.label}]`);
+      const title = `${s.name.padEnd(nameWidth)}  ${chalk.dim(parseRuntimeVersion(s.runtime).padStart(6))}${tag}`;
+      return { title, value: s };
+    });
+    const answer = await prompts({
+      type: 'select',
+      name: 'sim',
+      message: 'Pick a booted simulator to lock to this project:',
+      choices,
+    });
+    if (!answer.sim) {
+      console.error(chalk.red('Cancelled.'));
       process.exit(1);
     }
-    const consolePort = parseInt(m[1], 10);
-    const avdName = getAvdNameForSerial(identifier);
-    addReservation('android', { serial: identifier, consolePort, avdName, label });
-    console.log(chalk.green(
-      `Reserved emulator ${identifier}` +
-      (avdName ? ` (AVD: ${avdName})` : '') +
-      (label ? ` (${label})` : '')
-    ));
-    return;
+    pick = answer.sim;
   }
-  console.error(chalk.red(`Unknown platform: ${platform}. Use ios or android.`));
-  process.exit(1);
+
+  const claim = claims[pick.udid];
+  if (claim && claim.path !== root) {
+    const ok = await prompts({
+      type: 'confirm',
+      name: 'ok',
+      message: `${pick.name} is currently held by project "${claim.label}". Take it over?`,
+      initial: false,
+    });
+    if (!ok.ok) {
+      console.error(chalk.red('Cancelled.'));
+      process.exit(1);
+    }
+    clearDevice(claim.path, 'ios');
+    console.log(chalk.dim(`Released prior assignment from "${claim.label}"`));
+  }
+
+  setDevice(root, 'ios', { deviceUdid: pick.udid });
+  console.log(chalk.green(`Locked iOS sim ${pick.name} (${pick.udid}) to ${root}`));
 }
 
-function printReservations() {
-  const r = listReservations();
-  const ios = r.ios || [];
-  const android = r.android || [];
-  if (ios.length === 0 && android.length === 0) {
-    console.log(chalk.dim('No reservations.'));
-    return;
+async function reserveAndroid(root, proj) {
+  const running = listAdbDevices().emulators;
+  if (running.length === 0) {
+    console.error(chalk.red('No running Android emulators found.'));
+    console.error(chalk.dim('Start one (Android Studio or `emulator -avd ...`) and re-run.'));
+    process.exit(1);
   }
-  if (ios.length > 0) {
-    console.log(chalk.bold('iOS:'));
-    for (const e of ios) {
-      console.log(`  ${chalk.cyan(e.udid)}${e.label ? chalk.dim(` (${e.label})`) : ''}`);
+
+  const claims = allClaimedDevices().androidClaims;
+
+  let pick;
+  if (running.length === 1) {
+    pick = running[0];
+  } else {
+    const choices = running.map(e => {
+      const claim = claims[e.consolePort];
+      const tag = !claim ? ''
+        : claim.path === root ? chalk.dim(' [already yours]')
+        : chalk.yellow(` [claimed by ${claim.label}]`);
+      return { title: `${e.serial}${tag}`, value: e };
+    });
+    const answer = await prompts({
+      type: 'select',
+      name: 'emu',
+      message: 'Pick a running emulator to lock to this project:',
+      choices,
+    });
+    if (!answer.emu) {
+      console.error(chalk.red('Cancelled.'));
+      process.exit(1);
     }
+    pick = answer.emu;
   }
-  if (android.length > 0) {
-    console.log(chalk.bold('Android:'));
-    for (const e of android) {
-      const tag = e.avdName ? `${e.avdName} on ${e.serial}` : e.serial;
-      console.log(`  ${chalk.cyan(tag)}${e.label ? chalk.dim(` (${e.label})`) : ''}`);
+
+  const claim = claims[pick.consolePort];
+  if (claim && claim.path !== root) {
+    const ok = await prompts({
+      type: 'confirm',
+      name: 'ok',
+      message: `${pick.serial} is held by project "${claim.label}". Take it over?`,
+      initial: false,
+    });
+    if (!ok.ok) {
+      console.error(chalk.red('Cancelled.'));
+      process.exit(1);
     }
+    clearDevice(claim.path, 'android');
+    console.log(chalk.dim(`Released prior assignment from "${claim.label}"`));
   }
+
+  const avdName = getAvdNameForSerial(pick.serial) || `emulator-${pick.consolePort}`;
+  setDevice(root, 'android', { avdName, consolePort: pick.consolePort });
+  console.log(chalk.green(`Locked emulator ${pick.serial} (AVD: ${avdName}) to ${root}`));
 }
