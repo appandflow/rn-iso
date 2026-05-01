@@ -136,3 +136,65 @@ test('shutdown is a no-op when nothing is tracked', async () => {
   assert.equal(killedPids.length, 0);
   assert.equal(execCalls.length, 0);
 });
+
+test('shutdown <target> scopes to a single project (by label) and leaves the others alone', async () => {
+  saveConfig({
+    version: 1,
+    projects: {
+      '/proj/a': {
+        label: 'agent-1',
+        metroPort: 8083,
+        metroPid: 11111,
+        platforms: { ios: { deviceUdid: 'UDID-ABC' } },
+      },
+      '/proj/b': {
+        label: 'agent-2',
+        metroPort: 8084,
+        metroPid: 22222,
+        platforms: { android: { avdName: 'Pixel_6_API_34', consolePort: 5556 } },
+      },
+    },
+  });
+
+  await runShutdown(['agent-1', '--yes']);
+
+  // Only proj/a's Metro pid was signalled.
+  const sigtermPids = killedPids.filter(k => k.sig === 'SIGTERM').map(k => k.pid);
+  assert.deepEqual(sigtermPids, [11111]);
+
+  // Only the iOS shutdown ran; android was untouched.
+  assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 1);
+  assert.equal(execCalls.filter(c => c.cmd.includes('emu kill')).length, 0);
+
+  // proj/a is cleaned; proj/b is intact.
+  const cfg = loadConfig();
+  assert.equal(cfg.projects['/proj/a'].metroPid, null);
+  assert.equal(cfg.projects['/proj/a'].platforms.ios, undefined);
+  assert.equal(cfg.projects['/proj/b'].metroPid, 22222);
+  assert.deepEqual(cfg.projects['/proj/b'].platforms.android, {
+    avdName: 'Pixel_6_API_34',
+    consolePort: 5556,
+  });
+});
+
+test('shutdown <unknown-target> errors and exits without touching anything', async () => {
+  saveConfig({
+    version: 1,
+    projects: {
+      '/proj/a': { metroPort: 8083, metroPid: 11111, platforms: {} },
+    },
+  });
+  const originalExit = process.exit;
+  let exitCode = null;
+  process.exit = (c) => { exitCode = c; throw new Error('process.exit called'); };
+  try {
+    await runShutdown(['no-such-project', '--yes']);
+  } catch (e) {
+    if (!/process\.exit/.test(e.message)) throw e;
+  } finally {
+    process.exit = originalExit;
+  }
+  assert.equal(exitCode, 1);
+  assert.equal(killedPids.length, 0);
+  assert.equal(execCalls.length, 0);
+});

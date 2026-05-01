@@ -1,6 +1,7 @@
 // src/commands/shutdown.js
 import chalk from 'chalk';
 import prompts from 'prompts';
+import { resolveRegisteredProject } from '../project.js';
 import { loadConfig, setMetro, clearDevice } from '../config.js';
 import { killMetroByPid, findPidListeningOnPort } from '../metro.js';
 import { shutdownIosSim, formatIosLabel } from '../sim/ios.js';
@@ -8,16 +9,29 @@ import { shutdownAndroidEmulator } from '../sim/android.js';
 
 export default function shutdownCommand(program) {
   program
-    .command('shutdown')
-    .description('Stop all Metro instances and shut down all simulators/emulators claimed by any rn-iso project; clears device assignments.')
+    .command('shutdown [target]')
+    .description('Stop Metro and shut down sims/emulators across rn-iso projects, then clear their device assignments. With no arg, targets every registered project; pass a project shortcut (label or unique basename) or absolute path to scope to one.')
     .option('-y, --yes', 'Skip the confirmation prompt (also implied when stdin is not a TTY)')
     .option('--keep-sims', "Don't shut down simulators/emulators; only kill Metro and clear assignments")
-    .action(async (opts) => {
+    .action(async (target, opts) => {
       const cfg = loadConfig();
-      const projects = cfg ? Object.entries(cfg.projects || {}) : [];
+      let projects = cfg ? Object.entries(cfg.projects || {}) : [];
       if (projects.length === 0) {
         console.log(chalk.dim('No projects registered.'));
         return;
+      }
+
+      // Optional [target] narrows the scope to a single project. We
+      // intentionally do NOT default to the current project when no arg is
+      // given — `shutdown` is the explicit "tear everything down" command,
+      // so omitting the target means "all projects".
+      if (target) {
+        const { found, error } = resolveRegisteredProject(target);
+        if (!found) {
+          console.error(chalk.red(error));
+          process.exit(1);
+        }
+        projects = projects.filter(([path]) => path === found);
       }
 
       // Build the work plan up front so the prompt can show counts and so we
