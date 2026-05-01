@@ -55,6 +55,7 @@ All commands below take the same `npx rn-iso` prefix.
 | `reserve [ios\|android]` | Lock a manually-started sim/emulator to the current project (no build) |
 | `unreserve [ios\|android]` | Drop the current project's lock without shutting the sim down |
 | `release [<port>\|<shortcut>\|<path>] [--platform <p>] [--shutdown]` | Free a project's assignment. Target can be a Metro port (`8083`), a shortcut (label or unique basename), or an absolute path. `--shutdown` also stops the sim. |
+| `shutdown [-y] [--keep-sims]` | Kill **all** Metros, shut down **all** sims/emulators claimed by any rn-iso project, and clear every device assignment. End-of-day reset. |
 | `config [<key> [<value>]] [--unset] [--project <target>]` | Get / set a per-project setting (`packageManager`, `ios.script`, `android.script`). |
 
 ## How it works
