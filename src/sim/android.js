@@ -10,15 +10,20 @@ export function parseAvdList(text) {
 export function parseAdbDevices(text) {
   const lines = text.split('\n').slice(1); // skip "List of devices attached"
   const emulators = [];
+  const unhealthy = []; // serials adb sees but can't talk to (unauthorized/offline)
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     const [serial, status] = trimmed.split(/\s+/);
-    if (status !== 'device') continue;
     const m = serial.match(/^emulator-(\d+)$/);
-    if (m) emulators.push({ serial, consolePort: parseInt(m[1], 10) });
+    if (!m) continue;
+    if (status === 'device') {
+      emulators.push({ serial, consolePort: parseInt(m[1], 10) });
+    } else {
+      unhealthy.push({ serial, consolePort: parseInt(m[1], 10), status });
+    }
   }
-  return { emulators };
+  return { emulators, unhealthy };
 }
 
 export function listAvds() {
@@ -101,11 +106,26 @@ export async function waitForBoot(serial, timeoutMs = 60000) {
   const exec = getExecutor();
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const out = exec.runQuiet(`adb -s ${serial} shell getprop sys.boot_completed`);
-    if (out && out.trim() === '1') return true;
+    // sys.boot_completed is the canonical "system fully up" signal; some
+    // older AVD images set dev.bootcomplete sooner. Either is fine.
+    const sysBoot = exec.runQuiet(`adb -s ${serial} shell getprop sys.boot_completed`).trim();
+    if (sysBoot === '1') return { ok: true };
+    const devBoot = exec.runQuiet(`adb -s ${serial} shell getprop dev.bootcomplete`).trim();
+    if (devBoot === '1') return { ok: true };
     await new Promise(r => setTimeout(r, 1000));
   }
-  return false;
+  // Diagnostic snapshot for the timeout error: shows the user exactly
+  // what adb sees and why the polling never resolved.
+  const devices = exec.runQuiet('adb devices').trim();
+  return {
+    ok: false,
+    diagnostic: {
+      devices,
+      sysBoot: exec.runQuiet(`adb -s ${serial} shell getprop sys.boot_completed`).trim(),
+      devBoot: exec.runQuiet(`adb -s ${serial} shell getprop dev.bootcomplete`).trim(),
+      bootAnim: exec.runQuiet(`adb -s ${serial} shell getprop init.svc.bootanim`).trim(),
+    },
+  };
 }
 
 export function shutdownAndroidEmulator(serial) {

@@ -65,10 +65,18 @@ test('parseAdbDevices extracts running emulator console ports', () => {
   ]);
 });
 
-test('parseAdbDevices ignores offline emulators', () => {
+test('parseAdbDevices ignores offline emulators but reports them in unhealthy', () => {
   const out = `List of devices attached\nemulator-5554\toffline\nemulator-5556\tdevice\n`;
   const result = parseAdbDevices(out);
   assert.deepEqual(result.emulators, [{ serial: 'emulator-5556', consolePort: 5556 }]);
+  assert.deepEqual(result.unhealthy, [{ serial: 'emulator-5554', consolePort: 5554, status: 'offline' }]);
+});
+
+test('parseAdbDevices surfaces unauthorized emulators in unhealthy', () => {
+  const out = `List of devices attached\nemulator-5554\tunauthorized\n`;
+  const result = parseAdbDevices(out);
+  assert.deepEqual(result.emulators, []);
+  assert.deepEqual(result.unhealthy, [{ serial: 'emulator-5554', consolePort: 5554, status: 'unauthorized' }]);
 });
 
 test('nextConsolePort returns 5554 when none claimed', () => {

@@ -128,11 +128,42 @@ export default function androidCommand(program) {
 
       const serial = `emulator-${consolePort}`;
       if (!isRunning) {
+        // Pre-spawn sanity check: an emulator may already be attached on
+        // this console port but in `unauthorized` / `offline` state, in
+        // which case enumerateAndroidCandidates marked isRunning=false.
+        // Spawning a second emulator on the same port would silently
+        // collide and the boot wait would poll forever.
+        const adb = listAdbDevices();
+        const stuck = adb.unhealthy.find(u => u.consolePort === consolePort);
+        if (stuck) {
+          console.error(chalk.red(
+            `adb sees ${stuck.serial} but its status is "${stuck.status}". rn-iso can't drive it in this state.`
+          ));
+          if (stuck.status === 'unauthorized') {
+            console.error(chalk.dim('Likely cause: the emulator and your ~/.android/adbkey.pub are out of sync.'));
+            console.error(chalk.dim('Try: `adb kill-server && adb start-server` first; if it stays unauthorized,'));
+            console.error(chalk.dim('cold-boot the AVD from Android Studio Device Manager.'));
+          } else {
+            console.error(chalk.dim('Try: `adb kill-server && adb start-server`, then re-run.'));
+          }
+          process.exit(1);
+        }
         bootAndroidEmulator(avdName, consolePort);
         console.log(chalk.dim('Waiting for boot to complete (this can take 10-30s)...'));
-        const ok = await waitForBoot(serial, 120000);
-        if (!ok) {
+        const result = await waitForBoot(serial, 120000);
+        if (!result.ok) {
           console.error(chalk.red(`Emulator ${serial} did not finish booting within 2 minutes.`));
+          const d = result.diagnostic;
+          console.error(chalk.dim('adb devices ->'));
+          console.error(chalk.dim((d.devices || '<no output>').split('\n').map(l => '  ' + l).join('\n')));
+          console.error(chalk.dim(
+            `getprop sys.boot_completed=${d.sysBoot || '<empty>'} ` +
+            `dev.bootcomplete=${d.devBoot || '<empty>'} ` +
+            `init.svc.bootanim=${d.bootAnim || '<empty>'}`
+          ));
+          if (!d.devices.includes(serial)) {
+            console.error(chalk.dim(`Hint: ${serial} is not in adb's device list. Try \`adb kill-server && adb start-server\`.`));
+          }
           process.exit(1);
         }
       }
