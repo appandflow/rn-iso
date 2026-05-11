@@ -53,7 +53,11 @@ export default function statusCommand(program) {
         }
         const android = proj.platforms?.android;
         if (android) {
-          console.log(`  android: ${chalk.cyan(android.avdName)} ${chalk.dim(`(emulator-${android.consolePort})`)}`);
+          if (android.serial && !android.avdName) {
+            console.log(`  android: ${chalk.cyan(android.serial)} ${chalk.dim('(physical)')}`);
+          } else {
+            console.log(`  android: ${chalk.cyan(android.avdName)} ${chalk.dim(`(emulator-${android.consolePort})`)}`);
+          }
         }
       }
       console.log('');

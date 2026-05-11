@@ -46,9 +46,11 @@ export default function releaseCommand(program) {
           if (p === 'ios') {
             shutdownIosSim(entry.deviceUdid);
             console.log(chalk.green(`Shut down iOS sim ${formatIosLabel(entry.deviceUdid)}`));
-          } else {
+          } else if (entry.avdName && typeof entry.consolePort === 'number') {
             shutdownAndroidEmulator(`emulator-${entry.consolePort}`);
             console.log(chalk.green(`Shut down ${entry.avdName} (emulator-${entry.consolePort})`));
+          } else if (entry.serial) {
+            console.log(chalk.dim(`Skipping shutdown for physical device ${entry.serial}`));
           }
         }
         clearDevice(found, p);

@@ -105,12 +105,16 @@ export function buildIosCommand({ projectRoot, packageManager, scriptName, isExp
 
 export function buildAndroidCommand({ projectRoot, packageManager, scriptName, isExpo, avdName, serial, port, useScript = true, extras = [] }) {
   const tail = (extras || []).map(shQuote);
+  // Expo `--device <id>` accepts either an AVD name (emulators) or a
+  // hardware serial (physical devices). When no AVD name is available
+  // (physical), fall back to the serial.
+  const expoDeviceArg = avdName ?? serial;
   if (useScript && scriptName) {
     const script = getProjectScript(projectRoot, scriptName);
     if (script) {
       const cli = detectScriptCli(script);
-      // Expo: --device <AVD name>; RN: --deviceId <serial>.
-      const deviceFlag = cli === 'expo' ? `--device "${avdName}"` : `--deviceId ${serial}`;
+      // Expo: --device <AVD name | serial>; RN: --deviceId <serial>.
+      const deviceFlag = cli === 'expo' ? `--device "${expoDeviceArg}"` : `--deviceId ${serial}`;
       return buildScriptCommand(packageManager, scriptName, [
         deviceFlag,
         `--port ${port}`,
@@ -120,7 +124,7 @@ export function buildAndroidCommand({ projectRoot, packageManager, scriptName, i
   }
   const tailStr = tail.length ? ' ' + tail.join(' ') : '';
   if (isExpo) {
-    return `npx expo run:android --device "${avdName}" --port ${port}${tailStr}`;
+    return `npx expo run:android --device "${expoDeviceArg}" --port ${port}${tailStr}`;
   }
   return `RCT_METRO_PORT=${port} npx react-native run-android --deviceId ${serial}${tailStr}`;
 }

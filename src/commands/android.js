@@ -65,69 +65,100 @@ export default function androidCommand(program) {
       const claimed = allClaimedDevices();
       const myAvd = proj.platforms?.android?.avdName || null;
       const myPort = proj.platforms?.android?.consolePort || null;
+      const mySerial = proj.platforms?.android?.serial || null;
       const claimedAvds = claimed.androidAvds.filter(a => a !== myAvd);
       const claimedPorts = claimed.androidConsolePorts.filter(p => p !== myPort);
+      const claimedSerials = claimed.androidPhysicalSerials.filter(s => s !== mySerial);
 
       const selection = selectAndroidDevice({
         existingAvd: myAvd,
+        existingSerial: mySerial,
         existingConsolePort: myPort,
         claimedAvds,
+        claimedSerials,
         claimedConsolePorts: claimedPorts,
       });
 
-      let avdName, consolePort, isRunning;
+      let avdName = null;
+      let consolePort = null;
+      let serial = null;
+      let isRunning = false;
+      let isPhysical = false;
       if (selection.kind === 'reuse') {
-        ({ avdName, consolePort, isRunning } = selection);
-        if (isRunning) {
-          console.log(chalk.dim(`Reusing running ${avdName} (emulator-${consolePort})`));
+        if (selection.deviceKind === 'physical') {
+          isPhysical = true;
+          serial = selection.serial;
+          isRunning = true;
+          console.log(chalk.dim(`Reusing physical device ${serial}`));
         } else {
-          console.log(chalk.dim(`Booting assigned ${avdName} (emulator-${consolePort})...`));
+          ({ avdName, consolePort, isRunning } = selection);
+          if (isRunning) {
+            console.log(chalk.dim(`Reusing running ${avdName} (emulator-${consolePort})`));
+          } else {
+            console.log(chalk.dim(`Booting assigned ${avdName} (emulator-${consolePort})...`));
+          }
         }
       } else if (selection.kind === 'allocate') {
         const picked = (selection.candidates.length === 1 || auto)
           ? { c: selection.candidates[0], prevClaim: null }
-          : await pickAvd({
+          : await pickAndroidDevice({
               candidates: selection.candidates,
               androidClaimsByAvd: claimed.androidClaimsByAvd,
+              androidPhysicalClaimsBySerial: claimed.androidPhysicalClaimsBySerial,
             });
         await releasePriorClaim(picked.prevClaim);
-        ({ avdName, isRunning, consolePort } = picked.c);
-        if (!isRunning) {
-          consolePort = nextConsolePort(claimedPorts);
+        if (picked.c.kind === 'physical') {
+          isPhysical = true;
+          serial = picked.c.serial;
+          isRunning = true;
+          console.log(chalk.green(`Picked physical device ${serial}`));
+        } else {
+          ({ avdName, isRunning, consolePort } = picked.c);
+          if (!isRunning) {
+            consolePort = nextConsolePort(claimedPorts);
+          }
+          console.log(isRunning
+            ? chalk.green(`Picked ${avdName} (emulator-${consolePort}, running)`)
+            : chalk.dim(`Booting ${avdName} (emulator-${consolePort})...`));
         }
-        console.log(isRunning
-          ? chalk.green(`Picked ${avdName} (emulator-${consolePort}, running)`)
-          : chalk.dim(`Booting ${avdName} (emulator-${consolePort})...`));
       } else if (selection.kind === 'allClaimed') {
         if (auto) {
-          console.error(chalk.red('All Android AVDs are claimed by other rn-iso projects.'));
+          console.error(chalk.red('All Android devices are claimed by other rn-iso projects.'));
           console.error(chalk.dim('Re-run without --auto to confirm taking one over, or create a new AVD via Android Studio.'));
           process.exit(1);
         }
-        const picked = await pickAvd({
+        const picked = await pickAndroidDevice({
           candidates: selection.candidates,
           androidClaimsByAvd: claimed.androidClaimsByAvd,
+          androidPhysicalClaimsBySerial: claimed.androidPhysicalClaimsBySerial,
           allClaimed: true,
         });
         await releasePriorClaim(picked.prevClaim);
-        ({ avdName, isRunning, consolePort } = picked.c);
-        if (!isRunning) {
-          // Prior owner's port is freed by releasePriorClaim, but compute fresh.
-          const fresh = allClaimedDevices().androidConsolePorts.filter(p => p !== myPort);
-          consolePort = nextConsolePort(fresh);
+        if (picked.c.kind === 'physical') {
+          isPhysical = true;
+          serial = picked.c.serial;
+          isRunning = true;
+          console.log(chalk.green(`Took over physical device ${serial}`));
+        } else {
+          ({ avdName, isRunning, consolePort } = picked.c);
+          if (!isRunning) {
+            // Prior owner's port is freed by releasePriorClaim, but compute fresh.
+            const fresh = allClaimedDevices().androidConsolePorts.filter(p => p !== myPort);
+            consolePort = nextConsolePort(fresh);
+          }
+          console.log(isRunning
+            ? chalk.green(`Took over ${avdName} (emulator-${consolePort}, running)`)
+            : chalk.dim(`Booting ${avdName} (emulator-${consolePort})...`));
         }
-        console.log(isRunning
-          ? chalk.green(`Took over ${avdName} (emulator-${consolePort}, running)`)
-          : chalk.dim(`Booting ${avdName} (emulator-${consolePort})...`));
       } else {
         console.error(chalk.red(
-          'No AVDs available. Create one via Android Studio (Tools -> Device Manager).'
+          'No AVDs or physical devices available. Create an AVD via Android Studio (Tools -> Device Manager), or plug in a device with USB debugging enabled.'
         ));
         process.exit(1);
       }
 
-      const serial = `emulator-${consolePort}`;
-      if (!isRunning) {
+      if (!isPhysical) serial = `emulator-${consolePort}`;
+      if (!isPhysical && !isRunning) {
         // Pre-spawn sanity check: an emulator may already be attached on
         // this console port but in `unauthorized` / `offline` state, in
         // which case enumerateAndroidCandidates marked isRunning=false.
@@ -168,7 +199,11 @@ export default function androidCommand(program) {
         }
       }
 
-      setDevice(root, 'android', { avdName, consolePort });
+      if (isPhysical) {
+        setDevice(root, 'android', { serial });
+      } else {
+        setDevice(root, 'android', { avdName, consolePort });
+      }
 
       adbReverse(serial, proj.metroPort);
       console.log(chalk.dim(`adb reverse tcp:${proj.metroPort} configured for ${serial}`));
@@ -199,39 +234,46 @@ export default function androidCommand(program) {
         });
       }
 
-      console.log(chalk.green(`\nAndroid ready on ${avdName} (${serial}), Metro port ${proj.metroPort}`));
+      const readyLabel = isPhysical ? `physical device ${serial}` : `${avdName} (${serial})`;
+      console.log(chalk.green(`\nAndroid ready on ${readyLabel}, Metro port ${proj.metroPort}`));
     });
 }
 
-async function pickAvd({ candidates, androidClaimsByAvd = {}, allClaimed = false }) {
-  // Show every AVD on disk (parallel to the iOS picker), so the user can
-  // see what's claimed and optionally take it over. `candidates` is the
-  // unclaimed set passed in by selectAndroidDevice; AVDs outside it are
-  // claimed and will require a confirm prompt on selection.
-  const allAvds = enumerateAndroidCandidates();
-  const candidateAvds = new Set(candidates.map(c => c.avdName));
-  const sorted = sortAndroidCandidates(allAvds);
+async function pickAndroidDevice({ candidates, androidClaimsByAvd = {}, androidPhysicalClaimsBySerial = {}, allClaimed = false }) {
+  // Show every AVD on disk plus every physical device adb sees (parallel
+  // to the iOS picker), so the user can see what's claimed and optionally
+  // take it over. `candidates` is the unclaimed set passed in by
+  // selectAndroidDevice; devices outside it are claimed and require a
+  // confirm prompt on selection.
+  const all = enumerateAndroidCandidates();
+  const candidateKeys = new Set(candidates.map(c => candidateKey(c)));
+  const sorted = sortAndroidCandidates(all);
 
-  const nameWidth = Math.max(...sorted.map(c => c.avdName.length), 18);
+  const nameWidth = Math.max(...sorted.map(c => candidateDisplayName(c).length), 18);
   const choices = sorted.map(c => {
-    const claim = androidClaimsByAvd[c.avdName];
-    const isCandidate = candidateAvds.has(c.avdName);
-    const runTag = c.isRunning ? chalk.green(` [emulator-${c.consolePort}, running]`) : '';
+    const claim = c.kind === 'physical'
+      ? androidPhysicalClaimsBySerial[c.serial]
+      : androidClaimsByAvd[c.avdName];
+    const isCandidate = candidateKeys.has(candidateKey(c));
+    const runTag = c.kind === 'physical'
+      ? chalk.green(' [physical]')
+      : (c.isRunning ? chalk.green(` [emulator-${c.consolePort}, running]`) : '');
+    const name = candidateDisplayName(c);
     if (claim || !isCandidate) {
       const tag = claim ? chalk.yellow(` [claimed by ${claim.label}]`) : '';
       return {
-        title: chalk.yellow(`${c.avdName.padEnd(nameWidth)}${tag}${runTag}`),
+        title: chalk.yellow(`${name.padEnd(nameWidth)}${tag}${runTag}`),
         value: { c, claim: claim || null },
       };
     }
     return {
-      title: `${c.avdName.padEnd(nameWidth)}${runTag}`,
+      title: `${name.padEnd(nameWidth)}${runTag}`,
       value: { c, claim: null },
     };
   });
   const message = allClaimed
-    ? 'All AVDs are claimed. Pick one to take over:'
-    : 'Pick an AVD (claimed AVDs will prompt to confirm):';
+    ? 'All Android devices are claimed. Pick one to take over:'
+    : 'Pick an Android device (claimed devices will prompt to confirm):';
   const answer = await prompts({
     type: 'select',
     name: 'pick',
@@ -247,7 +289,7 @@ async function pickAvd({ candidates, androidClaimsByAvd = {}, allClaimed = false
     const ok = await prompts({
       type: 'confirm',
       name: 'ok',
-      message: `${c.avdName} is currently held by project "${claim.label}". Take it over?`,
+      message: `${candidateDisplayName(c)} is currently held by project "${claim.label}". Take it over?`,
       initial: false,
     });
     if (!ok.ok) {
@@ -257,6 +299,14 @@ async function pickAvd({ candidates, androidClaimsByAvd = {}, allClaimed = false
     return { c, prevClaim: claim };
   }
   return { c, prevClaim: null };
+}
+
+function candidateKey(c) {
+  return c.kind === 'physical' ? `p:${c.serial}` : `a:${c.avdName}`;
+}
+
+function candidateDisplayName(c) {
+  return c.kind === 'physical' ? c.serial : c.avdName;
 }
 
 async function releasePriorClaim(prevClaim) {

@@ -23,7 +23,7 @@ From the project root (or any subdirectory):
    ```json
    {"platform":"ios","udid":"ABC-...","metroPort":8083}
    ```
-   Use the UDID for `agent-device` / `xcrun simctl` / `idb`. For Android, the `serial` field gives you `emulator-<port>` to use with `adb -s`.
+   Use the UDID for `agent-device` / `xcrun simctl` / `idb`. For Android, the `serial` field gives you `emulator-<port>` (or the hardware serial for a physical device) to use with `adb -s`. The Android JSON payload also includes `kind: "emulator" | "physical"`.
 
 3. **Interact with the device** — pass the UDID/serial to your UI tools. Never call `simctl <verb>` without `<UDID>` — `booted` could be the wrong sim.
 
@@ -38,7 +38,7 @@ From the project root (or any subdirectory):
   - `adb -s emulator-5556 shell input tap 100 200`
 - **Don't call `release` or `release --shutdown`** unless the user explicitly asks. Other agents may be using neighboring sims; keep yours up so the user can come back to it.
 - **Don't manually start Metro on a different port.** `npx rn-iso start` (or `npx rn-iso ios/android`) already handles port assignment.
-- **rn-iso never auto-creates simulators.** It reuses existing unclaimed sims (booted or shutdown). If none are available, it errors. To create a new one explicitly, pass `--device-type "iPhone 17 Pro" [--runtime 26.2]`.
+- **rn-iso never auto-creates simulators.** It reuses existing unclaimed sims (booted or shutdown) and, on Android, also surfaces any physical device adb can see. If nothing is available, it errors. To create a new iOS sim explicitly, pass `--device-type "iPhone 17 Pro" [--runtime 26.2]`.
 
 ## Typical agent workflow
 
@@ -104,7 +104,7 @@ When the iOS picker fires, sims are sorted by:
 3. Usage count (most-used floats up; tracked per UDID across all projects)
 4. Name (alphabetical, stable tiebreak)
 
-When the Android picker fires, AVDs are sorted by running state (running emulators first), then alphabetically.
+When the Android picker fires, candidates include both AVDs on disk and physical devices currently visible to `adb`. They are sorted by running state (running emulators and connected physical devices first), then physical above AVDs within the same running group, then alphabetically. Physical devices show with a `[physical]` tag. Once selected, a physical device is claimed by serial just like an AVD; `release` clears the claim but never shuts the device down.
 
 Sims/AVDs claimed by other rn-iso projects show in yellow with a `[claimed by ...]` tag. They're selectable but require a confirm prompt before being taken over.
 

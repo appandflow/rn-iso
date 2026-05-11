@@ -10,20 +10,28 @@ export function parseAvdList(text) {
 export function parseAdbDevices(text) {
   const lines = text.split('\n').slice(1); // skip "List of devices attached"
   const emulators = [];
+  const physical = []; // USB or adb-over-TCP serials (e.g. R5CR70XXX, 192.168.1.5:5555)
   const unhealthy = []; // serials adb sees but can't talk to (unauthorized/offline)
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     const [serial, status] = trimmed.split(/\s+/);
     const m = serial.match(/^emulator-(\d+)$/);
-    if (!m) continue;
-    if (status === 'device') {
-      emulators.push({ serial, consolePort: parseInt(m[1], 10) });
+    if (m) {
+      if (status === 'device') {
+        emulators.push({ serial, consolePort: parseInt(m[1], 10) });
+      } else {
+        unhealthy.push({ serial, kind: 'emulator', consolePort: parseInt(m[1], 10), status });
+      }
     } else {
-      unhealthy.push({ serial, consolePort: parseInt(m[1], 10), status });
+      if (status === 'device') {
+        physical.push({ serial });
+      } else {
+        unhealthy.push({ serial, kind: 'physical', status });
+      }
     }
   }
-  return { emulators, unhealthy };
+  return { emulators, physical, unhealthy };
 }
 
 export function listAvds() {
@@ -40,37 +48,66 @@ export function nextConsolePort(claimedPorts) {
   return max + 2; // emulator console ports are even
 }
 
-// Build the full candidate list: every AVD on disk, paired with whether it
-// currently has a running emulator and (if so) on which console port.
-// Emulators that fail to respond to `adb emu avd name` are dropped from
-// the running map. Returns [] when no AVDs are installed.
+// Build the full candidate list: every AVD on disk plus every physical
+// device adb currently sees. AVDs are paired with whether they have a
+// running emulator (and on which console port); physical devices are
+// always treated as running. Returns [] when neither exist.
 export function enumerateAndroidCandidates() {
   const avds = listAvds();
-  if (avds.length === 0) return [];
-
   const adbDevices = listAdbDevices();
+
   const runningByAvd = {};
   for (const e of adbDevices.emulators) {
     const avdName = getAvdNameForSerial(e.serial);
     if (avdName) runningByAvd[avdName] = e.consolePort;
   }
 
-  return avds.map(avdName => ({
+  const avdCandidates = avds.map(avdName => ({
+    kind: 'avd',
     avdName,
     isRunning: avdName in runningByAvd,
     consolePort: runningByAvd[avdName] ?? null,
   }));
+
+  const physicalCandidates = adbDevices.physical.map(p => ({
+    kind: 'physical',
+    serial: p.serial,
+    isRunning: true,
+    consolePort: null,
+  }));
+
+  return [...avdCandidates, ...physicalCandidates];
 }
 
-export function selectAndroidDevice({ existingAvd, existingConsolePort, claimedAvds, claimedConsolePorts }) {
+export function selectAndroidDevice({
+  existingAvd,
+  existingSerial,
+  existingConsolePort,
+  claimedAvds,
+  claimedSerials,
+  claimedConsolePorts,
+}) {
   const all = enumerateAndroidCandidates();
   if (all.length === 0) return { kind: 'noAvd' };
 
-  if (existingAvd) {
-    const found = all.find(c => c.avdName === existingAvd);
+  if (existingSerial) {
+    const found = all.find(c => c.kind === 'physical' && c.serial === existingSerial);
     if (found) {
       return {
         kind: 'reuse',
+        deviceKind: 'physical',
+        serial: existingSerial,
+        isRunning: true,
+      };
+    }
+  }
+
+  if (existingAvd) {
+    const found = all.find(c => c.kind === 'avd' && c.avdName === existingAvd);
+    if (found) {
+      return {
+        kind: 'reuse',
+        deviceKind: 'avd',
         avdName: existingAvd,
         consolePort: found.consolePort ?? existingConsolePort ?? nextConsolePort(claimedConsolePorts),
         isRunning: found.isRunning,
@@ -79,7 +116,10 @@ export function selectAndroidDevice({ existingAvd, existingConsolePort, claimedA
   }
 
   const claimedAvdSet = new Set(claimedAvds);
-  const unclaimed = all.filter(c => !claimedAvdSet.has(c.avdName));
+  const claimedSerialSet = new Set(claimedSerials || []);
+  const unclaimed = all.filter(c => c.kind === 'avd'
+    ? !claimedAvdSet.has(c.avdName)
+    : !claimedSerialSet.has(c.serial));
 
   if (unclaimed.length === 0) {
     return { kind: 'allClaimed', candidates: sortAndroidCandidates(all) };
@@ -90,7 +130,11 @@ export function selectAndroidDevice({ existingAvd, existingConsolePort, claimedA
 export function sortAndroidCandidates(list) {
   return [...list].sort((a, b) => {
     if (a.isRunning !== b.isRunning) return a.isRunning ? -1 : 1;
-    return a.avdName.localeCompare(b.avdName);
+    // Mixed lists: physical devices float above AVDs within the same running state.
+    if (a.kind !== b.kind) return a.kind === 'physical' ? -1 : 1;
+    const an = a.kind === 'physical' ? a.serial : a.avdName;
+    const bn = b.kind === 'physical' ? b.serial : b.avdName;
+    return an.localeCompare(bn);
   });
 }
 

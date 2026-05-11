@@ -27,15 +27,36 @@ export default function deviceCommand(program) {
       }
 
       if (opts.json) {
-        const payload = opts.platform === 'ios'
-          ? { platform: 'ios', udid: platformEntry.deviceUdid, metroPort: proj.metroPort }
-          : { platform: 'android', serial: `emulator-${platformEntry.consolePort}`, avdName: platformEntry.avdName, consolePort: platformEntry.consolePort, metroPort: proj.metroPort };
+        let payload;
+        if (opts.platform === 'ios') {
+          payload = { platform: 'ios', udid: platformEntry.deviceUdid, metroPort: proj.metroPort };
+        } else if (platformEntry.serial && !platformEntry.avdName) {
+          payload = {
+            platform: 'android',
+            kind: 'physical',
+            serial: platformEntry.serial,
+            avdName: null,
+            consolePort: null,
+            metroPort: proj.metroPort,
+          };
+        } else {
+          payload = {
+            platform: 'android',
+            kind: 'emulator',
+            serial: `emulator-${platformEntry.consolePort}`,
+            avdName: platformEntry.avdName,
+            consolePort: platformEntry.consolePort,
+            metroPort: proj.metroPort,
+          };
+        }
         console.log(JSON.stringify(payload));
         return;
       }
 
       if (opts.platform === 'ios') {
         console.log(platformEntry.deviceUdid);
+      } else if (platformEntry.serial && !platformEntry.avdName) {
+        console.log(platformEntry.serial);
       } else {
         console.log(`emulator-${platformEntry.consolePort}`);
       }

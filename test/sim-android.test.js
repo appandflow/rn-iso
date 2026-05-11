@@ -27,13 +27,15 @@ afterEach(() => {
 
 // Mocks `emulator -list-avds`, `adb devices`, and `adb -s ... emu avd name`
 // (used to map serial -> AVD name). avdByPort = { 5554: 'Pixel_6_API_34' }.
-function mockExecutor({ avds, avdByPort = {} }) {
+// physicalSerials = ['R5CR70XXXXX'] surface as connected hardware devices.
+function mockExecutor({ avds, avdByPort = {}, physicalSerials = [] }) {
   setExecutor({
     run: (cmd) => {
       if (cmd.includes('list-avds')) return avds.join('\n') + '\n';
       if (cmd === 'adb devices') {
         const lines = ['List of devices attached'];
         for (const port of Object.keys(avdByPort)) lines.push(`emulator-${port}\tdevice`);
+        for (const s of physicalSerials) lines.push(`${s}\tdevice`);
         return lines.join('\n') + '\n';
       }
       throw new Error('unexpected run: ' + cmd);
@@ -56,27 +58,42 @@ test('parseAvdList strips header and blanks', () => {
   assert.deepEqual(avds, ['Pixel_6_API_34', 'Pixel_7_API_33']);
 });
 
-test('parseAdbDevices extracts running emulator console ports', () => {
+test('parseAdbDevices extracts running emulator console ports and physical devices', () => {
   const out = `List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n0123456789ABCDEF\tdevice\n`;
   const result = parseAdbDevices(out);
   assert.deepEqual(result.emulators.sort((a, b) => a.consolePort - b.consolePort), [
     { serial: 'emulator-5554', consolePort: 5554 },
     { serial: 'emulator-5556', consolePort: 5556 },
   ]);
+  assert.deepEqual(result.physical, [{ serial: '0123456789ABCDEF' }]);
+});
+
+test('parseAdbDevices recognizes adb-over-TCP physical devices', () => {
+  const out = `List of devices attached\n192.168.1.5:5555\tdevice\n`;
+  const result = parseAdbDevices(out);
+  assert.deepEqual(result.physical, [{ serial: '192.168.1.5:5555' }]);
+  assert.deepEqual(result.emulators, []);
 });
 
 test('parseAdbDevices ignores offline emulators but reports them in unhealthy', () => {
   const out = `List of devices attached\nemulator-5554\toffline\nemulator-5556\tdevice\n`;
   const result = parseAdbDevices(out);
   assert.deepEqual(result.emulators, [{ serial: 'emulator-5556', consolePort: 5556 }]);
-  assert.deepEqual(result.unhealthy, [{ serial: 'emulator-5554', consolePort: 5554, status: 'offline' }]);
+  assert.deepEqual(result.unhealthy, [{ serial: 'emulator-5554', kind: 'emulator', consolePort: 5554, status: 'offline' }]);
 });
 
 test('parseAdbDevices surfaces unauthorized emulators in unhealthy', () => {
   const out = `List of devices attached\nemulator-5554\tunauthorized\n`;
   const result = parseAdbDevices(out);
   assert.deepEqual(result.emulators, []);
-  assert.deepEqual(result.unhealthy, [{ serial: 'emulator-5554', consolePort: 5554, status: 'unauthorized' }]);
+  assert.deepEqual(result.unhealthy, [{ serial: 'emulator-5554', kind: 'emulator', consolePort: 5554, status: 'unauthorized' }]);
+});
+
+test('parseAdbDevices surfaces unauthorized physical devices in unhealthy', () => {
+  const out = `List of devices attached\nR5CR70ABCDE\tunauthorized\n`;
+  const result = parseAdbDevices(out);
+  assert.deepEqual(result.physical, []);
+  assert.deepEqual(result.unhealthy, [{ serial: 'R5CR70ABCDE', kind: 'physical', status: 'unauthorized' }]);
 });
 
 test('nextConsolePort returns 5554 when none claimed', () => {
@@ -91,12 +108,15 @@ test('selectAndroidDevice prefers existing assignment when AVD still exists', ()
   mockExecutor({ avds: ['Pixel_6_API_34'], avdByPort: {} });
   const result = selectAndroidDevice({
     existingAvd: 'Pixel_6_API_34',
+    existingSerial: null,
     existingConsolePort: 5554,
     claimedAvds: [],
+    claimedSerials: [],
     claimedConsolePorts: [],
   });
   assert.deepEqual(result, {
     kind: 'reuse',
+    deviceKind: 'avd',
     avdName: 'Pixel_6_API_34',
     consolePort: 5554,
     isRunning: false,
@@ -107,10 +127,13 @@ test('selectAndroidDevice marks running and uses live port when AVD is running',
   mockExecutor({ avds: ['Pixel_6_API_34'], avdByPort: { 5556: 'Pixel_6_API_34' } });
   const result = selectAndroidDevice({
     existingAvd: 'Pixel_6_API_34',
+    existingSerial: null,
     existingConsolePort: 5554, // stale; the AVD is actually running on 5556
     claimedAvds: [],
+    claimedSerials: [],
     claimedConsolePorts: [],
   });
+  assert.equal(result.deviceKind, 'avd');
   assert.equal(result.isRunning, true);
   assert.equal(result.consolePort, 5556);
 });
@@ -122,8 +145,10 @@ test('selectAndroidDevice returns allocate with sorted unclaimed candidates', ()
   });
   const result = selectAndroidDevice({
     existingAvd: null,
+    existingSerial: null,
     existingConsolePort: null,
     claimedAvds: [],
+    claimedSerials: [],
     claimedConsolePorts: [],
   });
   assert.equal(result.kind, 'allocate');
@@ -141,8 +166,10 @@ test('selectAndroidDevice excludes claimed AVDs from candidates', () => {
   mockExecutor({ avds: ['Pixel_6', 'Pixel_7'], avdByPort: {} });
   const result = selectAndroidDevice({
     existingAvd: null,
+    existingSerial: null,
     existingConsolePort: null,
     claimedAvds: ['Pixel_6'],
+    claimedSerials: [],
     claimedConsolePorts: [5554],
   });
   assert.equal(result.kind, 'allocate');
@@ -153,30 +180,129 @@ test('selectAndroidDevice returns allClaimed when AVDs exist but every one is cl
   mockExecutor({ avds: ['Pixel_6', 'Pixel_7'], avdByPort: {} });
   const result = selectAndroidDevice({
     existingAvd: null,
+    existingSerial: null,
     existingConsolePort: null,
     claimedAvds: ['Pixel_6', 'Pixel_7'],
+    claimedSerials: [],
     claimedConsolePorts: [5554, 5556],
   });
   assert.equal(result.kind, 'allClaimed');
   assert.deepEqual(result.candidates.map(c => c.avdName).sort(), ['Pixel_6', 'Pixel_7']);
 });
 
-test('selectAndroidDevice returns noAvd when no AVDs exist', () => {
+test('selectAndroidDevice returns noAvd when no AVDs and no physical devices exist', () => {
   mockExecutor({ avds: [], avdByPort: {} });
   const result = selectAndroidDevice({
     existingAvd: null,
+    existingSerial: null,
     existingConsolePort: null,
     claimedAvds: [],
+    claimedSerials: [],
     claimedConsolePorts: [],
   });
   assert.equal(result.kind, 'noAvd');
 });
 
+test('selectAndroidDevice includes physical devices in candidates', () => {
+  mockExecutor({
+    avds: ['Pixel_6'],
+    avdByPort: {},
+    physicalSerials: ['R5CR70XXXXX'],
+  });
+  const result = selectAndroidDevice({
+    existingAvd: null,
+    existingSerial: null,
+    existingConsolePort: null,
+    claimedAvds: [],
+    claimedSerials: [],
+    claimedConsolePorts: [],
+  });
+  assert.equal(result.kind, 'allocate');
+  // Physical (always running) floats above the shutdown AVD.
+  assert.deepEqual(result.candidates.map(c => c.kind), ['physical', 'avd']);
+  assert.equal(result.candidates[0].serial, 'R5CR70XXXXX');
+  assert.equal(result.candidates[1].avdName, 'Pixel_6');
+});
+
+test('selectAndroidDevice surfaces physical devices even when no AVDs exist', () => {
+  mockExecutor({
+    avds: [],
+    avdByPort: {},
+    physicalSerials: ['R5CR70XXXXX'],
+  });
+  const result = selectAndroidDevice({
+    existingAvd: null,
+    existingSerial: null,
+    existingConsolePort: null,
+    claimedAvds: [],
+    claimedSerials: [],
+    claimedConsolePorts: [],
+  });
+  assert.equal(result.kind, 'allocate');
+  assert.deepEqual(result.candidates.map(c => c.kind), ['physical']);
+  assert.equal(result.candidates[0].serial, 'R5CR70XXXXX');
+});
+
+test('selectAndroidDevice reuses existing physical-device assignment', () => {
+  mockExecutor({
+    avds: [],
+    avdByPort: {},
+    physicalSerials: ['R5CR70XXXXX'],
+  });
+  const result = selectAndroidDevice({
+    existingAvd: null,
+    existingSerial: 'R5CR70XXXXX',
+    existingConsolePort: null,
+    claimedAvds: [],
+    claimedSerials: [],
+    claimedConsolePorts: [],
+  });
+  assert.deepEqual(result, {
+    kind: 'reuse',
+    deviceKind: 'physical',
+    serial: 'R5CR70XXXXX',
+    isRunning: true,
+  });
+});
+
+test('selectAndroidDevice excludes claimed physical serials from candidates', () => {
+  mockExecutor({
+    avds: [],
+    avdByPort: {},
+    physicalSerials: ['R5CR70AAA', 'R5CR70BBB'],
+  });
+  const result = selectAndroidDevice({
+    existingAvd: null,
+    existingSerial: null,
+    existingConsolePort: null,
+    claimedAvds: [],
+    claimedSerials: ['R5CR70AAA'],
+    claimedConsolePorts: [],
+  });
+  assert.equal(result.kind, 'allocate');
+  assert.deepEqual(result.candidates.map(c => c.serial), ['R5CR70BBB']);
+});
+
 test('sortAndroidCandidates puts running AVDs first, then alphabetical', () => {
   const sorted = sortAndroidCandidates([
-    { avdName: 'Z_Tablet', isRunning: false, consolePort: null },
-    { avdName: 'A_Phone', isRunning: false, consolePort: null },
-    { avdName: 'M_Phone', isRunning: true, consolePort: 5554 },
+    { kind: 'avd', avdName: 'Z_Tablet', isRunning: false, consolePort: null },
+    { kind: 'avd', avdName: 'A_Phone', isRunning: false, consolePort: null },
+    { kind: 'avd', avdName: 'M_Phone', isRunning: true, consolePort: 5554 },
   ]);
   assert.deepEqual(sorted.map(c => c.avdName), ['M_Phone', 'A_Phone', 'Z_Tablet']);
+});
+
+test('sortAndroidCandidates floats physical devices above non-running AVDs', () => {
+  const sorted = sortAndroidCandidates([
+    { kind: 'avd', avdName: 'Pixel_6', isRunning: false, consolePort: null },
+    { kind: 'physical', serial: 'R5CR70XXX', isRunning: true, consolePort: null },
+    { kind: 'avd', avdName: 'Pixel_7_running', isRunning: true, consolePort: 5554 },
+  ]);
+  // Running first (physical and running AVD), shutdown AVDs last. Physical
+  // floats above running AVDs within the running group.
+  assert.deepEqual(sorted.map(c => c.kind === 'physical' ? c.serial : c.avdName), [
+    'R5CR70XXX',
+    'Pixel_7_running',
+    'Pixel_6',
+  ]);
 });
