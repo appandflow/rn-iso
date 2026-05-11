@@ -32,3 +32,10 @@ test('buildMetroSpawnArgs returns correct argv for bare', () => {
   assert.equal(cmd, 'npx');
   assert.deepEqual(args, ['react-native', 'start', '--port', '8083']);
 });
+
+test('buildMetroSpawnArgs appends extras after base args', () => {
+  const expo = buildMetroSpawnArgs({ isExpo: true, port: 8083, extras: ['--reset-cache'] });
+  assert.deepEqual(expo.args, ['expo', 'start', '--port', '8083', '--reset-cache']);
+  const bare = buildMetroSpawnArgs({ isExpo: false, port: 8083, extras: ['--reset-cache', '--verbose'] });
+  assert.deepEqual(bare.args, ['react-native', 'start', '--port', '8083', '--reset-cache', '--verbose']);
+});

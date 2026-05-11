@@ -8,8 +8,9 @@ import { ensureMetro } from '../metro.js';
 export default function startCommand(program) {
   program
     .command('start')
-    .description('Ensure Metro is running for the current project (no platform action)')
-    .action(async () => {
+    .description('Ensure Metro is running for the current project (no platform action). Pass extra flags to `expo start` / `react-native start` after `--`, e.g. `rn-iso start -- --reset-cache`.')
+    .argument('[extras...]', 'Flags forwarded as-is to expo/react-native start (after `--`)')
+    .action(async (extras) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
         console.error(chalk.red('Not in a React Native project (no package.json found).'));
@@ -32,9 +33,16 @@ export default function startCommand(program) {
         proj = getProject(root);
       }
 
-      const metro = await ensureMetro({ projectPath: root, isExpo, port: proj.metroPort });
+      const metro = await ensureMetro({ projectPath: root, isExpo, port: proj.metroPort, extras });
       if (metro.alreadyRunning) {
-        console.log(chalk.dim(`Metro already running on port ${proj.metroPort}`));
+        if (extras?.length) {
+          console.log(chalk.yellow(
+            `Metro already running on port ${proj.metroPort}; extras (${extras.join(' ')}) were not applied. ` +
+            `Run \`rn-iso stop\` first and re-run to apply them.`
+          ));
+        } else {
+          console.log(chalk.dim(`Metro already running on port ${proj.metroPort}`));
+        }
       } else {
         setMetro(root, proj.metroPort, metro.pid);
         console.log(chalk.green(`Metro started (pid ${metro.pid}, port ${proj.metroPort})`));

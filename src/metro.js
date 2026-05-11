@@ -15,22 +15,23 @@ export function logFileFor(projectPath) {
   return join(dir, `${projectHash(projectPath)}.log`);
 }
 
-export function buildMetroSpawnArgs({ isExpo, port }) {
+export function buildMetroSpawnArgs({ isExpo, port, extras = [] }) {
+  const base = isExpo
+    ? ['expo', 'start', '--port', String(port)]
+    : ['react-native', 'start', '--port', String(port)];
   return {
     cmd: 'npx',
-    args: isExpo
-      ? ['expo', 'start', '--port', String(port)]
-      : ['react-native', 'start', '--port', String(port)],
+    args: [...base, ...extras],
   };
 }
 
-export async function ensureMetro({ projectPath, isExpo, port, detach = true }) {
+export async function ensureMetro({ projectPath, isExpo, port, extras = [], detach = true }) {
   if (await isMetroRunning(port)) return { alreadyRunning: true, pid: null };
 
   const log = logFileFor(projectPath);
   const fd = openSync(log, 'a');
 
-  const { cmd, args } = buildMetroSpawnArgs({ isExpo, port });
+  const { cmd, args } = buildMetroSpawnArgs({ isExpo, port, extras });
   const exec = getExecutor();
   const child = exec.spawn(cmd, args, {
     cwd: projectPath,
