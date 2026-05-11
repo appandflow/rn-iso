@@ -12,6 +12,7 @@ import {
   waitForBoot,
   adbReverse,
   nextConsolePort,
+  listAdbDevices,
 } from '../sim/android.js';
 import { buildAndroidCommand, detectPackageManager } from '../runner.js';
 import { getExecutor } from '../exec.js';
