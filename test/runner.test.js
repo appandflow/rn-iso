@@ -54,10 +54,10 @@ test('buildAndroidCommand expo fallback uses --device <avdName>', () => {
   assert.equal(cmd, 'npx expo run:android --device "Pixel_6_API_34" --port 8083');
 });
 
-test('buildAndroidCommand bare fallback uses --deviceId and RCT_METRO_PORT prefix', () => {
+test('buildAndroidCommand bare fallback uses --device and RCT_METRO_PORT prefix', () => {
   const root = makeProj({ 'package.json': '{}' });
   const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'android', isExpo: false, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083, useScript: false });
-  assert.equal(cmd, 'RCT_METRO_PORT=8083 npx react-native run-android --deviceId emulator-5554');
+  assert.equal(cmd, 'RCT_METRO_PORT=8083 npx react-native run-android --device emulator-5554');
 });
 
 // ---- Script-based path ----
@@ -94,12 +94,12 @@ test('buildIosCommand falls back to direct CLI when script does not exist', () =
   assert.equal(cmd, 'npx react-native run-ios --udid UDID-1 --port 8083');
 });
 
-test('buildAndroidCommand uses script via bun and --deviceId for RN script', () => {
+test('buildAndroidCommand uses script via bun and --device for RN script', () => {
   const root = makeProj({
     'package.json': JSON.stringify({ scripts: { android: 'react-native run-android' } }),
   });
   const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'bun', scriptName: 'android', isExpo: false, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083 });
-  assert.equal(cmd, 'bun run android --deviceId emulator-5554 --port 8083');
+  assert.equal(cmd, 'bun run android --device emulator-5554 --port 8083');
 });
 
 test('buildAndroidCommand uses --device <avdName> for an expo script', () => {
@@ -143,7 +143,7 @@ test('buildAndroidCommand appends extras at the tail (script path)', () => {
     avdName: 'Pixel_6', serial: 'emulator-5554', port: 8083,
     extras: ['--mode=release', '--variant=production'],
   });
-  assert.equal(cmd, 'npm run android -- --deviceId emulator-5554 --port 8083 --mode=release --variant=production');
+  assert.equal(cmd, 'npm run android -- --device emulator-5554 --port 8083 --mode=release --variant=production');
 });
 
 test('buildIosCommand shell-quotes extras containing spaces or shell metacharacters', () => {

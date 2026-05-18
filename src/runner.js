@@ -66,7 +66,7 @@ export function buildScriptCommand(packageManager, scriptName, extraArgs = []) {
 
 // Decide which CLI a script invokes. Affects flag names:
 //   iOS:     Expo `--device <UDID>`     | RN `--udid <UDID>`
-//   Android: Expo `--device <AVD-name>` | RN `--deviceId <serial>`
+//   Android: Expo `--device <AVD-name>` | RN `--device <serial>`
 // Expo's run:android resolves --device by name (not by serial), so we pass
 // the AVD name there even though we boot/track by serial.
 export function detectScriptCli(scriptBody) {
@@ -113,8 +113,8 @@ export function buildAndroidCommand({ projectRoot, packageManager, scriptName, i
     const script = getProjectScript(projectRoot, scriptName);
     if (script) {
       const cli = detectScriptCli(script);
-      // Expo: --device <AVD name | serial>; RN: --deviceId <serial>.
-      const deviceFlag = cli === 'expo' ? `--device "${expoDeviceArg}"` : `--deviceId ${serial}`;
+      // Expo: --device <AVD name | serial>; RN: --device <serial>.
+      const deviceFlag = cli === 'expo' ? `--device "${expoDeviceArg}"` : `--device ${serial}`;
       return buildScriptCommand(packageManager, scriptName, [
         deviceFlag,
         `--port ${port}`,
@@ -126,7 +126,7 @@ export function buildAndroidCommand({ projectRoot, packageManager, scriptName, i
   if (isExpo) {
     return `npx expo run:android --device "${expoDeviceArg}" --port ${port}${tailStr}`;
   }
-  return `RCT_METRO_PORT=${port} npx react-native run-android --deviceId ${serial}${tailStr}`;
+  return `RCT_METRO_PORT=${port} npx react-native run-android --device ${serial}${tailStr}`;
 }
 
 // POSIX-safe single-quote shell escape. Leaves "safe" tokens (alnum and a
