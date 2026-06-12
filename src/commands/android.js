@@ -3,7 +3,8 @@ import chalk from 'chalk';
 import prompts from 'prompts';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../project.js';
 import { getProject, upsertProject, setMetro, setDevice, clearDevice, allClaimedDevices } from '../config.js';
-import { allocatePort, isMetroRunning } from '../ports.js';
+import { allocatePort } from '../ports.js';
+import { ensureMetro, logFileFor } from '../metro.js';
 import {
   selectAndroidDevice,
   sortAndroidCandidates,
@@ -56,11 +57,18 @@ export default function androidCommand(program) {
         proj = getProject(root);
         console.log(chalk.dim(`Allocated Metro port: ${port}`));
       }
-      const metroAlreadyUp = await isMetroRunning(proj.metroPort);
-      console.log(chalk.dim(
-        `Metro port: ${proj.metroPort}` +
-        (metroAlreadyUp ? ' (already running)' : ' (will be started by build CLI)')
-      ));
+      // rn-iso owns Metro: detached so it survives the invoking shell (agents
+      // run builds from finite shells), output to the per-project log file.
+      // The build CLI gets --no-packager / --no-bundler below so it cannot
+      // start a second Metro on the same port.
+      const metro = await ensureMetro({ projectPath: root, isExpo, port: proj.metroPort });
+      if (metro.alreadyRunning) {
+        console.log(chalk.dim(`Metro port: ${proj.metroPort} (already running)`));
+      } else {
+        setMetro(root, proj.metroPort, metro.pid);
+        console.log(chalk.dim(`Metro started detached (pid ${metro.pid}, port ${proj.metroPort})`));
+        console.log(chalk.dim(`Metro log: ${logFileFor(root)}`));
+      }
 
       const auto = isAuto(opts);
       const claimed = allClaimedDevices();
@@ -225,6 +233,7 @@ export default function androidCommand(program) {
           serial,
           port: proj.metroPort,
           useScript,
+          noPackager: true,
           extras,
         });
         console.log(chalk.dim(`> ${cmd}`));

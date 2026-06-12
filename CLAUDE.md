@@ -87,17 +87,28 @@ step caused double-launches and was removed. If you find yourself wanting
 to add it back, the upstream bug is the right place to fix things —
 `patch-package` for stuck users, not workaround code in `commands/ios.js`.
 
-### 3b. `rn-iso ios` / `android` do NOT spawn Metro
+### 3b. `rn-iso ios` / `android` spawn Metro themselves (managed Metro)
 
-The build CLI (`expo run:ios` / `react-native run-ios`) starts Metro
-itself on the `--port` we pass. We used to also pre-spawn a detached
-Metro before the build, which led to two Metros on the same port.
-Removed.
+The build commands start Metro through `ensureMetro` — detached, PID
+tracked, output to the per-project log file — and pass `--no-packager`
+(RN CLI) / `--no-bundler` (Expo) to the build CLI so it does not start a
+second one. The flag is chosen from `detectScriptCli`, not `isExpo`,
+because a project can have `expo` in deps while its script uses the RN
+CLI.
 
-`rn-iso start` is still around for the explicit "I just want Metro" case
-— it spawns Metro detached and tracks the PID + log file. The build
-commands rely on the build CLI's Metro; `rn-iso stop` looks up the PID
-by port (via `lsof`) so it works regardless of who started Metro.
+History, because this reverses an earlier decision: the build CLI used to
+own Metro, and a previous attempt at pre-spawning was removed for causing
+two Metros on one port. That bug came from pre-spawning WITHOUT
+suppressing the build CLI's packager — the suppression flag is the
+load-bearing part, and `ensureMetro` additionally no-ops when the port is
+already serving. Build-CLI ownership had its own failure mode: Metro's
+lifetime was tied to the invoking shell, so agent-run builds (finite,
+often backgrounded shells) killed Metro the moment the command returned,
+leaving the app installed but unable to load a bundle.
+
+`rn-iso start` remains the explicit "just Metro" command and shares the
+same spawn path; `rn-iso stop` looks up the PID by port (via `lsof`) so
+it works regardless of who started Metro.
 
 ### 4. Reservations are first-class claims
 
