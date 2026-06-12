@@ -51,6 +51,7 @@ All commands below take the same `npx rn-iso` prefix.
 | `start` | Start Metro detached, no platform action |
 | `stop [<port>\|<shortcut>\|<path>]` | Kill Metro. No arg = current project; pass a port (e.g. 8083), a project shortcut (label or unique basename), or an absolute path. |
 | `logs [<port>\|<shortcut>\|<path>] [-n <lines>] [--follow]` | Print the managed Metro log (bundle progress, resolution errors, client logs). |
+| `prune` | Remove entries for deleted project directories, freeing their devices and ports. |
 | `device [--platform ios\|android] [--json]` | Print the assigned device target |
 | `status` | Show all projects' state |
 | `reserve [ios\|android]` | Lock a manually-started sim/emulator to the current project (no build) |
