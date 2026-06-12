@@ -14,9 +14,9 @@ Invoke the CLI via `npx`: `npx rn-iso <command>`. Don't `npm install -g`; `npx` 
 
 From the project root (or any subdirectory):
 
-1. **Ensure the platform is ready** — `npx rn-iso ios --auto` (or `npx rn-iso android`). This:
+1. **Ensure the platform is ready** — `npx rn-iso ios --auto --managed-metro` (or `npx rn-iso android --auto --managed-metro`). This:
    - Allocates a Metro port for the project (or reuses the assigned one)
-   - **Starts Metro itself, detached, logging to a per-project file.** Metro survives the shell that ran the command — you do NOT need to keep the command running or restart Metro after a build. The build CLI is passed `--no-packager` / `--no-bundler` so it never spawns a competing Metro.
+   - With `--managed-metro`: **starts Metro detached, logging to a per-project file.** Metro survives the shell that ran the command — you do NOT need to keep the command running or restart Metro after a build. The build CLI is passed `--no-packager` / `--no-bundler` so it never spawns a competing Metro.
    - Picks a dedicated unclaimed sim (booting it if shutdown). With `--auto`, picks the first candidate without prompting.
    - Builds and installs the app via the project's `ios` / `android` script if present, else `expo run:ios` / `react-native run-ios`. Detects the package manager from the lockfile (walks up for monorepos).
 
@@ -30,6 +30,7 @@ From the project root (or any subdirectory):
 
 ## CRITICAL rules
 
+- **ALWAYS pass `--managed-metro`** to `ios` / `android`. Without it, the build CLI starts Metro as a child of YOUR shell — when your shell command exits, Metro dies with it and the app is left showing a blank screen. The flag is off by default because humans want the interactive bundler; agents never do.
 - **Pass `--auto` for non-interactive use** of `ios` or `android`. Without it, the command will prompt with an arrow-key picker if multiple unclaimed sims/AVDs exist. `--auto` is also implied automatically when stdin isn't a TTY (e.g., when an agent pipes the command), so under most agent harnesses you don't have to remember the flag — but passing it explicitly is harmless and clearer.
 - **Forward extra flags to the build CLI with `--`.** `npx rn-iso ios -- --variant=release` (or `android -- --mode=diaRelease`) appends those flags to the underlying `react-native run-*` / `expo run:*` invocation. Useful for release-mode builds, custom terminals, etc. Last-wins semantics, so extras can override defaults rn-iso set earlier in the command. `start` accepts the same `--` extras and forwards them to `expo start` / `react-native start`. For a cache-cleared restart use the first-class flag `npx rn-iso start --reset-cache` (the bare `--` form does not survive `npx`, which swallows the separator). If Metro is already running, extras are not applied (run `rn-iso stop` first and re-run).
 - **`--auto` will NOT take over a claimed sim/AVD.** If every device is claimed by other rn-iso projects, `--auto` errors. To take one over, run the command interactively (no `--auto`, with a real TTY) and confirm at the prompt — only do this if the user explicitly asks.
@@ -45,7 +46,8 @@ From the project root (or any subdirectory):
 
 ```bash
 # Once per session -- ensure the project's sim and Metro are up.
-npx rn-iso ios --auto
+# --managed-metro keeps Metro alive after this command exits (see CRITICAL rules).
+npx rn-iso ios --auto --managed-metro
 
 # Get the target.
 UDID=$(npx rn-iso device --platform ios)
@@ -78,7 +80,7 @@ Reserve binds the sim to the current project the same way `ios` does, but skips 
 - **"All iOS simulators are claimed by other rn-iso projects"** (under `--auto`) — every existing sim is held by another project. Options: free another project (`npx rn-iso release` from there), pass `--device-type "iPhone 17 Pro"` to create a new sim, or re-run without `--auto` (in a real TTY) and ask the user before confirming the take-over prompt.
 - **"All Android AVDs are claimed by other rn-iso projects"** — same situation on Android. Free another project or re-run interactively to take one over.
 - **Wrong sim got the app** — older `@expo/cli` (< 54.0.24) had a bug where the launch ignored `--device`. Bump expo to 54.0.34+ if on SDK 54.
-- **Blank screen / app installed but nothing renders** — check `npx rn-iso status`: Metro should be `running` (rn-iso daemonizes it; it survives the shell that ran the build). If it shows `stopped`, that's a bug worth reporting — recover with `npx rn-iso start`, then relaunch the app (`xcrun simctl launch <UDID> <bundleId>`). If Metro IS running, read `npx rn-iso logs -n 50` for bundle/resolution errors (a stale `node_modules` after a branch switch is a classic — reinstall deps, then `npx rn-iso stop` + `start`).
+- **Blank screen / app installed but nothing renders** — check `npx rn-iso status`. Metro `stopped` almost always means the build ran WITHOUT `--managed-metro`, so Metro died with the shell that ran it: recover with `npx rn-iso start`, then relaunch the app (`xcrun simctl launch <UDID> <bundleId>`), and pass the flag next time. If Metro IS running, read `npx rn-iso logs -n 50` for bundle/resolution errors (a stale `node_modules` after a branch switch is a classic — reinstall deps, then `npx rn-iso stop` + `start`).
 - **Metro port collision** — `npx rn-iso ios` reclaims dead ports automatically. If you see "port busy by non-Metro process," another tool is using that port; close it.
 - **Sim was deleted** — `npx rn-iso ios` detects the stale assignment and re-allocates.
 - **Detection picked the wrong CLI** (e.g. project has `expo` in deps but uses `react-native run-ios`) — rn-iso prefers your `ios` / `android` script and detects the CLI from its body. Override with `--script <name>` or skip with `--no-script` to force the direct CLI fallback. Override package manager with `--pm <npm|yarn|pnpm|bun>`.
