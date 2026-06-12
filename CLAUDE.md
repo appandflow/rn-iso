@@ -87,24 +87,28 @@ step caused double-launches and was removed. If you find yourself wanting
 to add it back, the upstream bug is the right place to fix things —
 `patch-package` for stuck users, not workaround code in `commands/ios.js`.
 
-### 3b. `rn-iso ios` / `android` spawn Metro themselves (managed Metro)
+### 3b. Metro ownership: build CLI by default, rn-iso with `--managed-metro`
 
-The build commands start Metro through `ensureMetro` — detached, PID
-tracked, output to the per-project log file — and pass `--no-packager`
-(RN CLI) / `--no-bundler` (Expo) to the build CLI so it does not start a
-second one. The flag is chosen from `detectScriptCli`, not `isExpo`,
-because a project can have `expo` in deps while its script uses the RN
-CLI.
+By default the build CLI (`expo run:ios` / `react-native run-ios`) starts
+Metro on the `--port` we pass — this preserves the interactive bundler UX
+humans expect (Expo's keyboard shortcuts, the RN Metro terminal window).
 
-History, because this reverses an earlier decision: the build CLI used to
-own Metro, and a previous attempt at pre-spawning was removed for causing
-two Metros on one port. That bug came from pre-spawning WITHOUT
-suppressing the build CLI's packager — the suppression flag is the
-load-bearing part, and `ensureMetro` additionally no-ops when the port is
-already serving. Build-CLI ownership had its own failure mode: Metro's
-lifetime was tied to the invoking shell, so agent-run builds (finite,
-often backgrounded shells) killed Metro the moment the command returned,
-leaving the app installed but unable to load a bundle.
+With `--managed-metro`, the build commands start Metro through
+`ensureMetro` — detached, PID tracked, output to the per-project log
+file — and pass `--no-packager` (RN CLI) / `--no-bundler` (Expo) to the
+build CLI so it does not start a second one. The suppression flag is
+chosen from `detectScriptCli`, not `isExpo`, because a project can have
+`expo` in deps while its script uses the RN CLI. This mode exists for
+agents and CI: build-CLI-owned Metro is a child of the invoking shell,
+so a finite (often backgrounded) agent shell kills Metro the moment the
+command returns, leaving the app installed but unable to load a bundle.
+The skill tells agents to always pass the flag.
+
+A historical note on the double-Metro bug: an early pre-spawn attempt was
+removed for causing two Metros on one port. That came from pre-spawning
+WITHOUT suppressing the build CLI's packager — the suppression flag is
+the load-bearing part, and `ensureMetro` additionally no-ops when the
+port is already serving. Don't reintroduce pre-spawning without it.
 
 `rn-iso start` remains the explicit "just Metro" command and shares the
 same spawn path; `rn-iso stop` looks up the PID by port (via `lsof`) so

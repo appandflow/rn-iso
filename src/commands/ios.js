@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import prompts from 'prompts';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../project.js';
 import { getProject, upsertProject, setMetro, setDevice, clearDevice, allClaimedDevices, recordSimUsage, getSimUsage } from '../config.js';
-import { allocatePort } from '../ports.js';
+import { allocatePort, isMetroRunning } from '../ports.js';
 import { ensureMetro, logFileFor } from '../metro.js';
 import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion, listAllIosSims, sortSims, formatIosLabel } from '../sim/ios.js';
 import { buildIosCommand, detectPackageManager } from '../runner.js';
@@ -18,6 +18,7 @@ export default function iosCommand(program) {
     .option('--device-type <name>', 'Explicit opt-in: create a NEW sim of this device type (e.g. "iPhone 17 Pro")')
     .option('--runtime <version>', 'iOS runtime version when creating a new sim (e.g. "26.2"); defaults to latest')
     .option('--auto', 'Non-interactive: pick the first unclaimed sim without prompting (also implied when stdin is not a TTY)')
+    .option('--managed-metro', 'rn-iso starts Metro itself: detached (survives the invoking shell), logged to the per-project file; the build CLI is passed --no-packager / --no-bundler. Recommended for agents and CI; without it the build CLI owns Metro as usual.')
     .option('--label <name>', 'Optional shortcut name; refer to the project as <name> in stop / release / etc.')
     .option('--script <name>', 'package.json script to invoke for build/install (default: project setting `ios.script`, else `ios`)')
     .option('--no-script', 'Skip the package.json script lookup; run expo/react-native CLI directly')
@@ -53,17 +54,27 @@ export default function iosCommand(program) {
         proj = getProject(root);
         console.log(chalk.dim(`Allocated Metro port: ${port}`));
       }
-      // rn-iso owns Metro: detached so it survives the invoking shell (agents
-      // run builds from finite shells), output to the per-project log file.
-      // The build CLI gets --no-packager / --no-bundler below so it cannot
-      // start a second Metro on the same port.
-      const metro = await ensureMetro({ projectPath: root, isExpo, port: proj.metroPort });
-      if (metro.alreadyRunning) {
-        console.log(chalk.dim(`Metro port: ${proj.metroPort} (already running)`));
+      // With --managed-metro, rn-iso owns Metro: detached so it survives the
+      // invoking shell (agents run builds from finite shells), output to the
+      // per-project log file, and the build CLI gets --no-packager /
+      // --no-bundler so it cannot start a second Metro on the same port.
+      // Without the flag, the build CLI owns Metro as usual (interactive
+      // bundler UX for humans).
+      if (opts.managedMetro) {
+        const metro = await ensureMetro({ projectPath: root, isExpo, port: proj.metroPort });
+        if (metro.alreadyRunning) {
+          console.log(chalk.dim(`Metro port: ${proj.metroPort} (already running)`));
+        } else {
+          setMetro(root, proj.metroPort, metro.pid);
+          console.log(chalk.dim(`Metro started detached (pid ${metro.pid}, port ${proj.metroPort})`));
+          console.log(chalk.dim(`Metro log: ${logFileFor(root)}`));
+        }
       } else {
-        setMetro(root, proj.metroPort, metro.pid);
-        console.log(chalk.dim(`Metro started detached (pid ${metro.pid}, port ${proj.metroPort})`));
-        console.log(chalk.dim(`Metro log: ${logFileFor(root)}`));
+        const metroAlreadyUp = await isMetroRunning(proj.metroPort);
+        console.log(chalk.dim(
+          `Metro port: ${proj.metroPort}` +
+          (metroAlreadyUp ? ' (already running)' : ' (will be started by build CLI)')
+        ));
       }
 
       const claimedDevices = allClaimedDevices();
@@ -162,7 +173,7 @@ export default function iosCommand(program) {
           udid,
           port: proj.metroPort,
           useScript,
-          noPackager: true,
+          noPackager: Boolean(opts.managedMetro),
           extras,
         });
         console.log(chalk.dim(`> ${cmd}`));
