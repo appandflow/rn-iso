@@ -122,6 +122,14 @@ extend `allClaimedDevices` AND `iosClaims` so the picker greys it out with a
 useful label. Don't filter at any one call site — keep the policy in
 `config.js`.
 
+Claims from project paths that no longer exist on disk are filtered out
+there too: a deleted worktree can never run again, so its devices count as
+free and its Metro port is reclaimable (`findReclaimablePort` only ever
+reclaims dead-path projects — removing a live project's entry would drop
+its device claim). `prune` deletes the dead entries outright. Caveat: a
+project on an unmounted network volume looks "dead" by this test; local
+worktrees are the supported case.
+
 ### 5. Package-manager / script detection
 
 `runner.js` prefers the project's `ios` / `android` script over a direct
