@@ -55,6 +55,9 @@ xcrun simctl io "$UDID" screenshot /tmp/screen.png
 
 # When you change app code, Metro hot-reloads automatically. No restart needed.
 # Only re-run `npx rn-iso ios` after native code changes or new native modules.
+
+# Something looks wrong (blank screen, red box)? Read the Metro log first.
+npx rn-iso logs -n 50
 ```
 
 ## Locking a manually-started sim
@@ -82,6 +85,7 @@ Reserve binds the sim to the current project the same way `ios` does, but skips 
 ## Other useful commands
 
 - `npx rn-iso status` — show all projects, their assignments, and Metro state.
+- `npx rn-iso logs [<port>|<shortcut>|<path>] [-n <lines>] [--follow]` — print the managed Metro log (default: last 50 lines of the current project's). This is where bundle progress, module-resolution errors, and client console logs land. **Check this first on a blank screen or red box** — it's faster than screenshots.
 - `npx rn-iso start [-- <extras...>]` — start Metro detached on the project's assigned port WITHOUT building/installing. Useful to keep Metro alive across builds. Extras after `--` are forwarded to `expo start` / `react-native start` (e.g. `--reset-cache`).
 - `npx rn-iso stop [<port>|<shortcut>|<path>]` — kill Metro. No arg = current project. Passing a port (e.g. `8083`) kills whatever is on it; a project shortcut (label or unique basename) or absolute path targets that project. Finds the process by port, so it works whether Metro was started by `npx rn-iso start` or by the build CLI.
 - `npx rn-iso release [<port>|<shortcut>|<path>] [--platform <p>] [--shutdown]` — free a project's sim assignment. Defaults to the current project. Target can also be a Metro port (`8083`) or a shortcut (label / unique basename). `--shutdown` also stops the sim/emulator.
