@@ -22,9 +22,9 @@ From the project root (or any subdirectory):
 
 2. **Get the device target** — `npx rn-iso device --platform ios --json`:
    ```json
-   {"platform":"ios","udid":"ABC-...","metroPort":8083}
+   {"platform":"ios","udid":"ABC-...","metroPort":8083,"metroPid":12345,"metroHealthy":true,"metroLog":"~/.rn-iso/logs/<hash>.log"}
    ```
-   Use the UDID for `agent-device` / `xcrun simctl` / `idb`. For Android, the `serial` field gives you `emulator-<port>` (or the hardware serial for a physical device) to use with `adb -s`. The Android JSON payload also includes `kind: "emulator" | "physical"`.
+   `metroHealthy` is a live ping of Metro's /status endpoint — if it's `false` after a build, something is wrong (see "When things go wrong"). `metroLog` is the managed Metro log file (also via `rn-iso logs`). Use the UDID for `agent-device` / `xcrun simctl` / `idb`. For Android, the `serial` field gives you `emulator-<port>` (or the hardware serial for a physical device) to use with `adb -s`. The Android JSON payload also includes `kind: "emulator" | "physical"`.
 
 3. **Interact with the device** — pass the UDID/serial to your UI tools. Never call `simctl <verb>` without `<UDID>` — `booted` could be the wrong sim.
 

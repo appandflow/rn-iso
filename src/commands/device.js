@@ -2,6 +2,8 @@
 import chalk from 'chalk';
 import { findProjectRoot } from '../project.js';
 import { getProject } from '../config.js';
+import { isMetroRunning } from '../ports.js';
+import { logFileFor } from '../metro.js';
 
 export default function deviceCommand(program) {
   program
@@ -9,7 +11,7 @@ export default function deviceCommand(program) {
     .description('Print the assigned device UDID/serial for the current project')
     .option('--platform <platform>', 'ios or android', 'ios')
     .option('--json', 'Emit JSON with full assignment info')
-    .action((opts) => {
+    .action(async (opts) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
         console.error(chalk.red('Not in a React Native project (no package.json found).'));
@@ -27,9 +29,17 @@ export default function deviceCommand(program) {
       }
 
       if (opts.json) {
+        // Metro fields let agents verify the bundler is actually serving
+        // (metroHealthy pings /status) and find the log without guessing paths.
+        const metro = {
+          metroPort: proj.metroPort,
+          metroPid: proj.metroPid ?? null,
+          metroHealthy: proj.metroPort ? await isMetroRunning(proj.metroPort) : false,
+          metroLog: logFileFor(root),
+        };
         let payload;
         if (opts.platform === 'ios') {
-          payload = { platform: 'ios', udid: platformEntry.deviceUdid, metroPort: proj.metroPort };
+          payload = { platform: 'ios', udid: platformEntry.deviceUdid, ...metro };
         } else if (platformEntry.serial && !platformEntry.avdName) {
           payload = {
             platform: 'android',
@@ -37,7 +47,7 @@ export default function deviceCommand(program) {
             serial: platformEntry.serial,
             avdName: null,
             consolePort: null,
-            metroPort: proj.metroPort,
+            ...metro,
           };
         } else {
           payload = {
@@ -46,7 +56,7 @@ export default function deviceCommand(program) {
             serial: `emulator-${platformEntry.consolePort}`,
             avdName: platformEntry.avdName,
             consolePort: platformEntry.consolePort,
-            metroPort: proj.metroPort,
+            ...metro,
           };
         }
         console.log(JSON.stringify(payload));
