@@ -8,9 +8,10 @@ import { ensureMetro } from '../metro.js';
 export default function startCommand(program) {
   program
     .command('start')
-    .description('Ensure Metro is running for the current project (no platform action). Pass extra flags to `expo start` / `react-native start` after `--`, e.g. `rn-iso start -- --reset-cache`.')
+    .description('Ensure Metro is running for the current project (no platform action). Pass extra flags to `expo start` / `react-native start` after `--`.')
     .argument('[extras...]', 'Flags forwarded as-is to expo/react-native start (after `--`)')
-    .action(async (extras) => {
+    .option('--reset-cache', 'Start Metro with a cleared transform cache (first-class flag: `npx` swallows the `--` separator, so `rn-iso start -- --reset-cache` does not survive an npx invocation)')
+    .action(async (extras, opts) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
         console.error(chalk.red('Not in a React Native project (no package.json found).'));
@@ -33,7 +34,8 @@ export default function startCommand(program) {
         proj = getProject(root);
       }
 
-      const metro = await ensureMetro({ projectPath: root, isExpo, port: proj.metroPort, extras });
+      const allExtras = [...(extras || []), ...(opts.resetCache ? ['--reset-cache'] : [])];
+      const metro = await ensureMetro({ projectPath: root, isExpo, port: proj.metroPort, extras: allExtras });
       if (metro.alreadyRunning) {
         if (extras?.length) {
           console.log(chalk.yellow(
