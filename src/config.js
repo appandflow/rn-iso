@@ -187,6 +187,10 @@ export function allClaimedDevices() {
   };
   if (!cfg) return result;
   for (const [path, proj] of Object.entries(cfg.projects || {})) {
+    // Claims from project paths that no longer exist on disk are orphaned --
+    // nothing can ever run from a deleted worktree again -- so pickers treat
+    // those devices as free. `prune` removes the dead entries themselves.
+    if (!existsSync(path)) continue;
     const label = path.split('/').pop() || path;
     const ios = proj.platforms?.ios;
     if (ios?.deviceUdid) {
@@ -216,6 +220,22 @@ export function allClaimedDevices() {
     }
   }
   return result;
+}
+
+// Remove project entries whose path no longer exists on disk (deleted
+// worktrees). Returns the removed entries so callers can report what was
+// freed and clean up any process still bound to their Metro ports.
+export function pruneDeadProjects() {
+  const cfg = loadConfig();
+  if (!cfg?.projects) return [];
+  const removed = [];
+  for (const [path, proj] of Object.entries(cfg.projects)) {
+    if (existsSync(path)) continue;
+    removed.push({ path, project: proj });
+    delete cfg.projects[path];
+  }
+  if (removed.length) saveConfig(cfg);
+  return removed;
 }
 
 export function recordSimUsage(platform, identifier) {
