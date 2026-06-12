@@ -76,12 +76,19 @@ export function detectScriptCli(scriptBody) {
   return 'unknown';
 }
 
+// Flag that stops the build CLI from spawning its own packager. rn-iso owns
+// Metro (detached, log file, pid tracked), so the build must not start a
+// second one on the same port.
+function skipPackagerFlag(cli) {
+  return cli === 'expo' ? '--no-bundler' : '--no-packager';
+}
+
 // iOS run command. Prefers the project's `ios` script if present (the most
 // reliable: respects user customization, picks the right CLI). Falls back to
 // expo run:ios / react-native run-ios when no script exists or --no-script.
 // Any `extras` are appended last so they can override earlier flags (CLIs
 // using commander/yargs are last-wins on repeated options).
-export function buildIosCommand({ projectRoot, packageManager, scriptName, isExpo, udid, port, useScript = true, extras = [] }) {
+export function buildIosCommand({ projectRoot, packageManager, scriptName, isExpo, udid, port, useScript = true, noPackager = false, extras = [] }) {
   const tail = (extras || []).map(shQuote);
   if (useScript && scriptName) {
     const script = getProjectScript(projectRoot, scriptName);
@@ -92,18 +99,21 @@ export function buildIosCommand({ projectRoot, packageManager, scriptName, isExp
       return buildScriptCommand(packageManager, scriptName, [
         deviceFlag,
         `--port ${port}`,
+        ...(noPackager ? [skipPackagerFlag(cli)] : []),
         ...tail,
       ]);
     }
   }
   const tailStr = tail.length ? ' ' + tail.join(' ') : '';
   if (isExpo) {
-    return `npx expo run:ios --device ${udid} --port ${port}${tailStr}`;
+    const skip = noPackager ? ' --no-bundler' : '';
+    return `npx expo run:ios --device ${udid} --port ${port}${skip}${tailStr}`;
   }
-  return `npx react-native run-ios --udid ${udid} --port ${port}${tailStr}`;
+  const skip = noPackager ? ' --no-packager' : '';
+  return `npx react-native run-ios --udid ${udid} --port ${port}${skip}${tailStr}`;
 }
 
-export function buildAndroidCommand({ projectRoot, packageManager, scriptName, isExpo, avdName, serial, port, useScript = true, extras = [] }) {
+export function buildAndroidCommand({ projectRoot, packageManager, scriptName, isExpo, avdName, serial, port, useScript = true, noPackager = false, extras = [] }) {
   const tail = (extras || []).map(shQuote);
   // Expo `--device <id>` accepts either an AVD name (emulators) or a
   // hardware serial (physical devices). When no AVD name is available
@@ -118,15 +128,18 @@ export function buildAndroidCommand({ projectRoot, packageManager, scriptName, i
       return buildScriptCommand(packageManager, scriptName, [
         deviceFlag,
         `--port ${port}`,
+        ...(noPackager ? [skipPackagerFlag(cli)] : []),
         ...tail,
       ]);
     }
   }
   const tailStr = tail.length ? ' ' + tail.join(' ') : '';
   if (isExpo) {
-    return `npx expo run:android --device "${expoDeviceArg}" --port ${port}${tailStr}`;
+    const skip = noPackager ? ' --no-bundler' : '';
+    return `npx expo run:android --device "${expoDeviceArg}" --port ${port}${skip}${tailStr}`;
   }
-  return `RCT_METRO_PORT=${port} npx react-native run-android --device ${serial}${tailStr}`;
+  const skip = noPackager ? ' --no-packager' : '';
+  return `RCT_METRO_PORT=${port} npx react-native run-android --device ${serial}${skip}${tailStr}`;
 }
 
 // POSIX-safe single-quote shell escape. Leaves "safe" tokens (alnum and a

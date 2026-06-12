@@ -16,8 +16,9 @@ From the project root (or any subdirectory):
 
 1. **Ensure the platform is ready** — `npx rn-iso ios --auto` (or `npx rn-iso android`). This:
    - Allocates a Metro port for the project (or reuses the assigned one)
+   - **Starts Metro itself, detached, logging to a per-project file.** Metro survives the shell that ran the command — you do NOT need to keep the command running or restart Metro after a build. The build CLI is passed `--no-packager` / `--no-bundler` so it never spawns a competing Metro.
    - Picks a dedicated unclaimed sim (booting it if shutdown). With `--auto`, picks the first candidate without prompting.
-   - Builds and installs the app via the project's `ios` / `android` script if present, else `expo run:ios` / `react-native run-ios`. The build CLI starts Metro itself on the assigned port; rn-iso doesn't spawn a separate Metro. Detects the package manager from the lockfile (walks up for monorepos).
+   - Builds and installs the app via the project's `ios` / `android` script if present, else `expo run:ios` / `react-native run-ios`. Detects the package manager from the lockfile (walks up for monorepos).
 
 2. **Get the device target** — `npx rn-iso device --platform ios --json`:
    ```json

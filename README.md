@@ -64,7 +64,7 @@ All commands below take the same `npx rn-iso` prefix.
 - **Port allocation:** assigns 8082, 8083, 8084 etc., reclaiming dead ports on the way.
 - **Simulator / AVD pool:** prefers the project's existing assignment; otherwise picks an unclaimed device — running ones first, shutdown ones next (booting them). On iOS, does not auto-create new sims — pass `--device-type "iPhone 17 Pro" [--runtime 26.2]` to opt in. The interactive picker (iOS or Android) also lets you take over a device claimed by another project after a confirm prompt.
 - **Build via your project's `ios` / `android` script** when present. Falls back to `npx expo run:ios` / `npx react-native run-ios --udid <UDID>` when no script exists. Override with `--script <name>` or skip with `--no-script`. Package manager is detected from your lockfile (walks up for monorepos); override with `--pm <npm|yarn|pnpm|bun>`.
-- **Metro is started by the build CLI** on the assigned port, not by rn-iso. `npx rn-iso start` is the standalone "I just want Metro" path. `npx rn-iso stop` finds Metro by port via `lsof`, so it works regardless of who started it.
+- **Metro is started by rn-iso itself** — detached, PID-tracked, output captured in a per-project log file under `~/.rn-iso/logs/`. The build CLI gets `--no-packager` / `--no-bundler` so it never spawns a second Metro, and Metro survives the shell that ran the build (important for coding agents, whose shells are finite). `npx rn-iso start` is the standalone "I just want Metro" path. `npx rn-iso stop` finds Metro by port via `lsof`, so it works regardless of who started it.
 
 If you need a single shared sim with a mutex instead of one-per-project, see [`react-native-worktree`](https://github.com/aleqsio/react-native-worktree).
 

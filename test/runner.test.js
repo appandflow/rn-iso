@@ -264,3 +264,60 @@ test('resolveSimNameByUdid returns name from simctl JSON', () => {
   });
   assert.equal(resolveSimNameByUdid('UDID-1'), 'iPhone 15');
 });
+
+// ---- noPackager (managed Metro) ----
+
+test('buildIosCommand noPackager adds --no-packager to bare fallback', () => {
+  const root = makeProj({ 'package.json': '{}' });
+  const cmd = buildIosCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'ios', isExpo: false, udid: 'UDID-1', port: 8083, useScript: false, noPackager: true });
+  assert.equal(cmd, 'npx react-native run-ios --udid UDID-1 --port 8083 --no-packager');
+});
+
+test('buildIosCommand noPackager adds --no-bundler to expo fallback', () => {
+  const root = makeProj({ 'package.json': '{}' });
+  const cmd = buildIosCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'ios', isExpo: true, udid: 'UDID-1', port: 8083, useScript: false, noPackager: true });
+  assert.equal(cmd, 'npx expo run:ios --device UDID-1 --port 8083 --no-bundler');
+});
+
+test('buildIosCommand noPackager picks the flag from the script CLI, not isExpo', () => {
+  const root = makeProj({
+    'package.json': JSON.stringify({ scripts: { ios: 'react-native run-ios' } }),
+  });
+  // isExpo true (expo in deps) but the script uses the RN CLI: flag must be --no-packager.
+  const cmd = buildIosCommand({ projectRoot: root, packageManager: 'yarn', scriptName: 'ios', isExpo: true, udid: 'UDID-1', port: 8083, noPackager: true });
+  assert.equal(cmd, 'yarn ios --udid UDID-1 --port 8083 --no-packager');
+});
+
+test('buildIosCommand noPackager uses --no-bundler for expo script', () => {
+  const root = makeProj({
+    'package.json': JSON.stringify({ scripts: { ios: 'expo run:ios' } }),
+  });
+  const cmd = buildIosCommand({ projectRoot: root, packageManager: 'pnpm', scriptName: 'ios', isExpo: true, udid: 'UDID-1', port: 8083, noPackager: true });
+  assert.equal(cmd, 'pnpm ios --device UDID-1 --port 8083 --no-bundler');
+});
+
+test('buildIosCommand noPackager keeps extras last so they can override', () => {
+  const root = makeProj({ 'package.json': '{}' });
+  const cmd = buildIosCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'ios', isExpo: false, udid: 'UDID-1', port: 8083, useScript: false, noPackager: true, extras: ['--verbose'] });
+  assert.equal(cmd, 'npx react-native run-ios --udid UDID-1 --port 8083 --no-packager --verbose');
+});
+
+test('buildAndroidCommand noPackager adds --no-packager to bare fallback', () => {
+  const root = makeProj({ 'package.json': '{}' });
+  const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'android', isExpo: false, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083, useScript: false, noPackager: true });
+  assert.equal(cmd, 'RCT_METRO_PORT=8083 npx react-native run-android --device emulator-5554 --no-packager');
+});
+
+test('buildAndroidCommand noPackager adds --no-bundler to expo fallback', () => {
+  const root = makeProj({ 'package.json': '{}' });
+  const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'android', isExpo: true, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083, useScript: false, noPackager: true });
+  assert.equal(cmd, 'npx expo run:android --device "Pixel_6_API_34" --port 8083 --no-bundler');
+});
+
+test('buildAndroidCommand noPackager adds the script-CLI flag on the script path', () => {
+  const root = makeProj({
+    'package.json': JSON.stringify({ scripts: { android: 'react-native run-android' } }),
+  });
+  const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'android', isExpo: false, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083, noPackager: true });
+  assert.equal(cmd, 'npm run android -- --device emulator-5554 --port 8083 --no-packager');
+});
