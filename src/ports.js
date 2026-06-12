@@ -1,4 +1,5 @@
 import { request } from 'http';
+import { existsSync } from 'fs';
 import { loadConfig, allMetroPorts, removeProject } from './config.js';
 
 export function isMetroRunning(port) {
@@ -29,6 +30,10 @@ export async function findReclaimablePort(excludeProjectPath, probe = isMetroRun
   const candidates = [];
   for (const [path, proj] of Object.entries(cfg.projects)) {
     if (path === excludeProjectPath) continue;
+    // Only projects whose path no longer exists are reclaimable: reclaiming
+    // removes the whole entry, and doing that to a live project would also
+    // drop its device claim out from under it.
+    if (existsSync(path)) continue;
     if (typeof proj.metroPort === 'number') {
       candidates.push({ port: proj.metroPort, ownerPath: path });
     }

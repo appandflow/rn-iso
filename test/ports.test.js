@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { resetExecutor } from '../src/exec.js';
@@ -65,6 +65,17 @@ test('allocatePort reclaims dead ports and removes the dead project', async () =
   // Caller should have removed /a -- verify via behavior
   const { getProject } = await import('../src/config.js');
   assert.equal(getProject('/a'), null);
+});
+
+test('findReclaimablePort does not reclaim live-path projects even with dead Metro', async () => {
+  const liveDir = join(tmpHome, 'live-project');
+  mkdirSync(liveDir, { recursive: true });
+  upsertProject(liveDir, { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  setMetro(liveDir, 8082, null);
+  // Metro is dead, but the project directory exists: its entry (and device
+  // claim) must survive.
+  const r = await findReclaimablePort('/new', async () => false);
+  assert.equal(r, null);
 });
 
 test('allocatePort assigns a fresh port when nothing is reclaimable', async () => {

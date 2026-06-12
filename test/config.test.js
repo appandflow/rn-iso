@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -22,9 +22,18 @@ import {
   getProjectSetting,
   setProjectSetting,
   unsetProjectSetting,
+  pruneDeadProjects,
 } from '../src/config.js';
 
 let tmpHome;
+
+// Claims from nonexistent paths are filtered, so tests that want a claim to
+// be visible must register a directory that actually exists.
+function liveProjectDir(name) {
+  const dir = join(tmpHome, name);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -94,10 +103,12 @@ test('allMetroPorts collects ports from all projects', () => {
 });
 
 test('allClaimedDevices returns udids and avd names across projects', () => {
-  upsertProject('/a', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  upsertProject('/b', { bundleId: 'com.b', androidPackage: 'com.b', isExpo: false });
-  setDevice('/a', 'ios', { deviceUdid: 'UDID-1' });
-  setDevice('/b', 'android', { avdName: 'Pixel_6', consolePort: 5554 });
+  const a = liveProjectDir('a');
+  const b = liveProjectDir('b');
+  upsertProject(a, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
+  upsertProject(b, { bundleId: 'com.b', androidPackage: 'com.b', isExpo: false });
+  setDevice(a, 'ios', { deviceUdid: 'UDID-1' });
+  setDevice(b, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
   const claimed = allClaimedDevices();
   assert.deepEqual(claimed.iosUdids, ['UDID-1']);
   assert.deepEqual(claimed.androidAvds, ['Pixel_6']);
@@ -122,33 +133,67 @@ test('recordSimUsage increments and getSimUsage reads counts', () => {
 });
 
 test('allClaimedDevices.iosClaims maps udid to owning project label/path', () => {
-  upsertProject('/Users/janic/Developer/myapp', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: true });
-  setDevice('/Users/janic/Developer/myapp', 'ios', { deviceUdid: 'UDID-PROJ' });
+  const myapp = liveProjectDir('myapp');
+  upsertProject(myapp, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: true });
+  setDevice(myapp, 'ios', { deviceUdid: 'UDID-PROJ' });
   const claimed = allClaimedDevices();
   assert.deepEqual(claimed.iosClaims['UDID-PROJ'], {
     label: 'myapp',
-    path: '/Users/janic/Developer/myapp',
+    path: myapp,
   });
 });
 
+test('allClaimedDevices ignores claims from project paths that no longer exist', () => {
+  const live = liveProjectDir('live');
+  upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
+  setDevice(live, 'ios', { deviceUdid: 'UDID-LIVE' });
+  upsertProject('/definitely/gone/worktree', { bundleId: 'com.dead', androidPackage: 'com.dead', isExpo: false });
+  setDevice('/definitely/gone/worktree', 'ios', { deviceUdid: 'UDID-DEAD' });
+  const claimed = allClaimedDevices();
+  assert.deepEqual(claimed.iosUdids, ['UDID-LIVE']);
+  assert.equal(claimed.iosClaims['UDID-DEAD'], undefined);
+});
+
+test('pruneDeadProjects removes dead-path entries and keeps live ones', () => {
+  const live = liveProjectDir('live');
+  upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
+  upsertProject('/definitely/gone/worktree', { bundleId: 'com.dead', androidPackage: 'com.dead', isExpo: false });
+  setMetro('/definitely/gone/worktree', 8099, null);
+  const removed = pruneDeadProjects();
+  assert.equal(removed.length, 1);
+  assert.equal(removed[0].path, '/definitely/gone/worktree');
+  assert.equal(removed[0].project.metroPort, 8099);
+  assert.equal(getProject('/definitely/gone/worktree'), null);
+  assert.notEqual(getProject(live), null);
+});
+
+test('pruneDeadProjects returns empty list when nothing is dead', () => {
+  const live = liveProjectDir('live');
+  upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
+  assert.deepEqual(pruneDeadProjects(), []);
+  assert.notEqual(getProject(live), null);
+});
+
 test('allClaimedDevices.androidClaims maps console port to owning project', () => {
-  upsertProject('/Users/janic/Developer/myapp', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  setDevice('/Users/janic/Developer/myapp', 'android', { avdName: 'Pixel_6', consolePort: 5554 });
+  const myapp = liveProjectDir('myapp');
+  upsertProject(myapp, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
+  setDevice(myapp, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
   const claimed = allClaimedDevices();
   assert.deepEqual(claimed.androidClaims[5554], {
     label: 'myapp',
-    path: '/Users/janic/Developer/myapp',
+    path: myapp,
     avdName: 'Pixel_6',
   });
 });
 
 test('allClaimedDevices.androidClaimsByAvd maps avdName to owning project', () => {
-  upsertProject('/Users/janic/Developer/myapp', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  setDevice('/Users/janic/Developer/myapp', 'android', { avdName: 'Pixel_6', consolePort: 5554 });
+  const myapp = liveProjectDir('myapp');
+  upsertProject(myapp, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
+  setDevice(myapp, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
   const claimed = allClaimedDevices();
   assert.deepEqual(claimed.androidClaimsByAvd['Pixel_6'], {
     label: 'myapp',
-    path: '/Users/janic/Developer/myapp',
+    path: myapp,
     consolePort: 5554,
   });
 });
