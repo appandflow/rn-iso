@@ -60,10 +60,11 @@ export default function androidCommand(program) {
       }
       // With --managed-metro, rn-iso owns Metro: detached so it survives the
       // invoking shell (agents run builds from finite shells), output to the
-      // per-project log file, and the build CLI gets --no-packager /
-      // --no-bundler so it cannot start a second Metro on the same port.
-      // Without the flag, the build CLI owns Metro as usual (interactive
-      // bundler UX for humans).
+      // per-project log file. The build CLI is then kept from starting its own:
+      // bare RN gets --no-packager; expo gets --port and reuses the Metro
+      // already listening on that port. ensureMetro waits for /status so the
+      // port is bound before the build's reuse check runs. Without the flag,
+      // the build CLI owns Metro as usual (interactive bundler UX for humans).
       if (opts.managedMetro) {
         const metro = await ensureMetro({ projectPath: root, isExpo, port: proj.metroPort });
         if (metro.alreadyRunning) {
@@ -72,6 +73,9 @@ export default function androidCommand(program) {
           setMetro(root, proj.metroPort, metro.pid);
           console.log(chalk.dim(`Metro started detached (pid ${metro.pid}, port ${proj.metroPort})`));
           console.log(chalk.dim(`Metro log: ${logFileFor(root)}`));
+          if (!metro.ready) {
+            console.log(chalk.yellow(`Warning: Metro on port ${proj.metroPort} did not report ready; the build may start its own.`));
+          }
         }
       } else {
         const metroAlreadyUp = await isMetroRunning(proj.metroPort);

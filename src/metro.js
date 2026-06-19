@@ -25,8 +25,8 @@ export function buildMetroSpawnArgs({ isExpo, port, extras = [] }) {
   };
 }
 
-export async function ensureMetro({ projectPath, isExpo, port, extras = [], detach = true }) {
-  if (await isMetroRunning(port)) return { alreadyRunning: true, pid: null };
+export async function ensureMetro({ projectPath, isExpo, port, extras = [], detach = true, readyTimeoutMs = 30000 }) {
+  if (await isMetroRunning(port)) return { alreadyRunning: true, pid: null, ready: true };
 
   const log = logFileFor(projectPath);
   const fd = openSync(log, 'a');
@@ -40,7 +40,22 @@ export async function ensureMetro({ projectPath, isExpo, port, extras = [], deta
     env: { ...process.env, RCT_METRO_PORT: String(port) },
   });
   if (detach) child.unref();
-  return { alreadyRunning: false, pid: child.pid };
+
+  // Wait until the dev server answers /status. The build CLI's "a Metro is
+  // already on this port, reuse it" detection only fires once the port is
+  // bound, so returning before that races the build into spawning a second
+  // Metro. readyTimeoutMs <= 0 skips the wait.
+  const ready = readyTimeoutMs > 0 ? await waitForMetroReady(port, readyTimeoutMs) : false;
+  return { alreadyRunning: false, pid: child.pid, ready };
+}
+
+export async function waitForMetroReady(port, timeoutMs = 30000, intervalMs = 500) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isMetroRunning(port)) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
 }
 
 export function killMetroByPid(pid) {

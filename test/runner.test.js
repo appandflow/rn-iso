@@ -273,10 +273,12 @@ test('buildIosCommand noPackager adds --no-packager to bare fallback', () => {
   assert.equal(cmd, 'npx react-native run-ios --udid UDID-1 --port 8083 --no-packager');
 });
 
-test('buildIosCommand noPackager adds --no-bundler to expo fallback', () => {
+test('buildIosCommand noPackager omits --no-bundler for expo fallback (reuses Metro via --port)', () => {
+  // expo run rejects --port with --no-bundler and --no-bundler pins the dev
+  // server to 8081; instead pass --port and let expo reuse the managed Metro.
   const root = makeProj({ 'package.json': '{}' });
   const cmd = buildIosCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'ios', isExpo: true, udid: 'UDID-1', port: 8083, useScript: false, noPackager: true });
-  assert.equal(cmd, 'npx expo run:ios --device UDID-1 --port 8083 --no-bundler');
+  assert.equal(cmd, 'npx expo run:ios --device UDID-1 --port 8083');
 });
 
 test('buildIosCommand noPackager picks the flag from the script CLI, not isExpo', () => {
@@ -288,12 +290,12 @@ test('buildIosCommand noPackager picks the flag from the script CLI, not isExpo'
   assert.equal(cmd, 'yarn ios --udid UDID-1 --port 8083 --no-packager');
 });
 
-test('buildIosCommand noPackager uses --no-bundler for expo script', () => {
+test('buildIosCommand noPackager omits --no-bundler for expo script (reuses Metro via --port)', () => {
   const root = makeProj({
     'package.json': JSON.stringify({ scripts: { ios: 'expo run:ios' } }),
   });
   const cmd = buildIosCommand({ projectRoot: root, packageManager: 'pnpm', scriptName: 'ios', isExpo: true, udid: 'UDID-1', port: 8083, noPackager: true });
-  assert.equal(cmd, 'pnpm ios --device UDID-1 --port 8083 --no-bundler');
+  assert.equal(cmd, 'pnpm ios --device UDID-1 --port 8083');
 });
 
 test('buildIosCommand noPackager keeps extras last so they can override', () => {
@@ -308,10 +310,10 @@ test('buildAndroidCommand noPackager adds --no-packager to bare fallback', () =>
   assert.equal(cmd, 'RCT_METRO_PORT=8083 npx react-native run-android --device emulator-5554 --no-packager');
 });
 
-test('buildAndroidCommand noPackager adds --no-bundler to expo fallback', () => {
+test('buildAndroidCommand noPackager omits --no-bundler for expo fallback (reuses Metro via --port)', () => {
   const root = makeProj({ 'package.json': '{}' });
   const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'android', isExpo: true, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083, useScript: false, noPackager: true });
-  assert.equal(cmd, 'npx expo run:android --device "Pixel_6_API_34" --port 8083 --no-bundler');
+  assert.equal(cmd, 'npx expo run:android --device "Pixel_6_API_34" --port 8083');
 });
 
 test('buildAndroidCommand noPackager adds the script-CLI flag on the script path', () => {
@@ -320,4 +322,12 @@ test('buildAndroidCommand noPackager adds the script-CLI flag on the script path
   });
   const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'npm', scriptName: 'android', isExpo: false, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083, noPackager: true });
   assert.equal(cmd, 'npm run android -- --device emulator-5554 --port 8083 --no-packager');
+});
+
+test('buildAndroidCommand noPackager omits --no-bundler for expo script (reuses Metro via --port)', () => {
+  const root = makeProj({
+    'package.json': JSON.stringify({ scripts: { android: 'expo run:android' } }),
+  });
+  const cmd = buildAndroidCommand({ projectRoot: root, packageManager: 'pnpm', scriptName: 'android', isExpo: true, avdName: 'Pixel_6_API_34', serial: 'emulator-5554', port: 8083, noPackager: true });
+  assert.equal(cmd, 'pnpm android --device "Pixel_6_API_34" --port 8083');
 });

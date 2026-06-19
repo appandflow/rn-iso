@@ -76,11 +76,17 @@ export function detectScriptCli(scriptBody) {
   return 'unknown';
 }
 
-// Flag that stops the build CLI from spawning its own packager. rn-iso owns
-// Metro (detached, log file, pid tracked), so the build must not start a
-// second one on the same port.
-function skipPackagerFlag(cli) {
-  return cli === 'expo' ? '--no-bundler' : '--no-packager';
+// Flags that stop the build CLI from spawning its own packager when rn-iso owns
+// Metro (detached, log file, pid tracked). Bare RN takes --no-packager. Expo
+// gets NO flag: `expo run` rejects --port together with --no-bundler, and
+// --no-bundler also pins the dev server to 8081 with no override. Instead we
+// pass --port <managed port> and rely on `expo run` detecting the Metro already
+// listening on that port and reusing it (reuseExistingPort) rather than
+// spawning its own. Callers must have the managed Metro listening before the
+// build runs (ensureMetro waits for /status).
+function noPackagerFlags(cli, noPackager) {
+  if (!noPackager) return [];
+  return cli === 'expo' ? [] : ['--no-packager'];
 }
 
 // iOS run command. Prefers the project's `ios` script if present (the most
@@ -99,15 +105,14 @@ export function buildIosCommand({ projectRoot, packageManager, scriptName, isExp
       return buildScriptCommand(packageManager, scriptName, [
         deviceFlag,
         `--port ${port}`,
-        ...(noPackager ? [skipPackagerFlag(cli)] : []),
+        ...noPackagerFlags(cli, noPackager),
         ...tail,
       ]);
     }
   }
   const tailStr = tail.length ? ' ' + tail.join(' ') : '';
   if (isExpo) {
-    const skip = noPackager ? ' --no-bundler' : '';
-    return `npx expo run:ios --device ${udid} --port ${port}${skip}${tailStr}`;
+    return `npx expo run:ios --device ${udid} --port ${port}${tailStr}`;
   }
   const skip = noPackager ? ' --no-packager' : '';
   return `npx react-native run-ios --udid ${udid} --port ${port}${skip}${tailStr}`;
@@ -128,15 +133,14 @@ export function buildAndroidCommand({ projectRoot, packageManager, scriptName, i
       return buildScriptCommand(packageManager, scriptName, [
         deviceFlag,
         `--port ${port}`,
-        ...(noPackager ? [skipPackagerFlag(cli)] : []),
+        ...noPackagerFlags(cli, noPackager),
         ...tail,
       ]);
     }
   }
   const tailStr = tail.length ? ' ' + tail.join(' ') : '';
   if (isExpo) {
-    const skip = noPackager ? ' --no-bundler' : '';
-    return `npx expo run:android --device "${expoDeviceArg}" --port ${port}${skip}${tailStr}`;
+    return `npx expo run:android --device "${expoDeviceArg}" --port ${port}${tailStr}`;
   }
   const skip = noPackager ? ' --no-packager' : '';
   return `RCT_METRO_PORT=${port} npx react-native run-android --device ${serial}${skip}${tailStr}`;
