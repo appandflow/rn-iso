@@ -53,14 +53,20 @@ export function sortSims(sims, usage = {}) {
     const fa = deviceFamilyRank(a.name);
     const fb = deviceFamilyRank(b.name);
     if (fa !== fb) return fa - fb;
-    // 2. State: booted before shutdown (within the same family).
+    // 2. State: booted before shutdown (within the same family), so an
+    // already-running sim is reused instead of booting another.
     if (a.state === 'Booted' && b.state !== 'Booted') return -1;
     if (b.state === 'Booted' && a.state !== 'Booted') return 1;
-    // 3. Usage count: descending (frequently picked sims float up).
+    // 3. Runtime version: newest iOS runtime first, so --auto and agent
+    // selection prefer the latest installed runtime over older ones.
+    const va = parseRuntimeVersion(a.runtime);
+    const vb = parseRuntimeVersion(b.runtime);
+    if (va !== vb) return vb.localeCompare(va, undefined, { numeric: true });
+    // 4. Usage count: descending (frequently picked sims float up).
     const ua = usage[a.udid] || 0;
     const ub = usage[b.udid] || 0;
     if (ua !== ub) return ub - ua;
-    // 4. Name: stable alphabetical.
+    // 5. Name: stable alphabetical.
     return a.name.localeCompare(b.name);
   });
 }

@@ -109,9 +109,10 @@ npx rn-iso stop agent-1
 
 When the iOS picker fires, sims are sorted by:
 1. Family (iPhone before iPad before others)
-2. State (booted before shutdown within family)
-3. Usage count (most-used floats up; tracked per UDID across all projects)
-4. Name (alphabetical, stable tiebreak)
+2. State (booted before shutdown within family, so an already-running sim is reused rather than booting another)
+3. Runtime version (newest installed iOS runtime first, so `--auto`/agent runs prefer the latest runtime over older ones within the same state)
+4. Usage count (most-used floats up; tracked per UDID across all projects)
+5. Name (alphabetical, stable tiebreak)
 
 When the Android picker fires, candidates include both AVDs on disk and physical devices currently visible to `adb`. They are sorted by running state (running emulators and connected physical devices first), then physical above AVDs within the same running group, then alphabetically. Physical devices show with a `[physical]` tag. Once selected, a physical device is claimed by serial just like an AVD; `release` clears the claim but never shuts the device down.
 

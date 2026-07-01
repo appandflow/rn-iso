@@ -175,3 +175,35 @@ test('sortSims orders by family, then state, then usage, then name', () => {
   sorted = sortSims(sims, { C: 5 });
   assert.deepEqual(sorted.map(s => s.udid), ['C', 'D', 'B', 'A']);
 });
+
+test('sortSims keeps a booted sim ahead of a shutdown newer-runtime one', () => {
+  const rNew = 'com.apple.CoreSimulator.SimRuntime.iOS-26-5';
+  const rOld = 'com.apple.CoreSimulator.SimRuntime.iOS-17-5';
+  const sims = [
+    { udid: 'OLD-BOOTED', name: 'iPhone 15', state: 'Booted', runtime: rOld },
+    { udid: 'NEW-SHUTDOWN', name: 'iPhone 17 Pro', state: 'Shutdown', runtime: rNew },
+  ];
+  // Booted state outranks runtime: reuse the running sim rather than boot another.
+  const sorted = sortSims(sims);
+  assert.deepEqual(sorted.map(s => s.udid), ['OLD-BOOTED', 'NEW-SHUTDOWN']);
+});
+
+test('sortSims prefers newest runtime among sims in the same state', () => {
+  const rNew = 'com.apple.CoreSimulator.SimRuntime.iOS-26-5';
+  const rOld = 'com.apple.CoreSimulator.SimRuntime.iOS-17-5';
+  const sims = [
+    { udid: 'OLD', name: 'iPhone 15', state: 'Shutdown', runtime: rOld },
+    { udid: 'NEW', name: 'iPhone 17 Pro', state: 'Shutdown', runtime: rNew },
+  ];
+  const sorted = sortSims(sims);
+  assert.deepEqual(sorted.map(s => s.udid), ['NEW', 'OLD']);
+});
+
+test('sortSims uses numeric runtime compare (26.10 newer than 26.5)', () => {
+  const sims = [
+    { udid: 'V5', name: 'iPhone 17', state: 'Shutdown', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5' },
+    { udid: 'V10', name: 'iPhone 17', state: 'Shutdown', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-10' },
+  ];
+  const sorted = sortSims(sims);
+  assert.deepEqual(sorted.map(s => s.udid), ['V10', 'V5']);
+});
