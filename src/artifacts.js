@@ -32,9 +32,28 @@ export function volumeRootFor(path) {
 
 export function listMountedVolumes() {
   const roots = ['/'];
+  let rootDev;
+  try {
+    rootDev = statSync('/').dev;
+  } catch {
+    // Can't stat the boot volume at all; nothing else can be verified either.
+    return roots;
+  }
   try {
     for (const name of readdirSync('/Volumes')) {
-      roots.push(join('/Volumes', name));
+      const path = join('/Volumes', name);
+      let st;
+      try {
+        st = statSync(path);
+      } catch {
+        // Stale directory left behind by an unclean unplug: not a real mount.
+        continue;
+      }
+      // A distinct st_dev proves a genuine mount. Same dev as / means the
+      // entry is just a symlink to the boot volume (e.g. "Macintosh HD").
+      if (st.dev !== rootDev) {
+        roots.push(path);
+      }
     }
   } catch {
     // No /Volumes (or unreadable). The boot volume is still mounted.
@@ -80,6 +99,9 @@ export function listDerivedDataEntries(root = derivedDataRoot()) {
 // `skipped`, never in `orphaned`.
 export function classifyDerivedData(entries, { mountedVolumes, now, olderThanDays } = {}) {
   const mounted = new Set(mountedVolumes || []);
+  const olderThanDaysIsSet = olderThanDays != null;
+  const olderThanDaysValid =
+    !olderThanDaysIsSet || (typeof olderThanDays === 'number' && Number.isFinite(olderThanDays));
   const orphaned = [];
   const live = [];
   const skipped = [];
@@ -89,8 +111,14 @@ export function classifyDerivedData(entries, { mountedVolumes, now, olderThanDay
       skipped.push({ ...entry, reason: 'unreadable info.plist' });
       continue;
     }
-    if (entry.exists) {
+    if (entry.exists === true) {
       live.push(entry);
+      continue;
+    }
+    if (entry.exists !== false) {
+      // Existence was never checked (undefined), not confirmed gone (false).
+      // Failing open here would delete live build output.
+      skipped.push({ ...entry, reason: 'workspace existence was not checked' });
       continue;
     }
     const volume = volumeRootFor(entry.workspacePath);
@@ -100,7 +128,11 @@ export function classifyDerivedData(entries, { mountedVolumes, now, olderThanDay
       skipped.push({ ...entry, reason: `volume ${volume} is not mounted` });
       continue;
     }
-    if (olderThanDays != null) {
+    if (olderThanDaysIsSet) {
+      if (!olderThanDaysValid) {
+        skipped.push({ ...entry, reason: 'olderThanDays must be a finite number' });
+        continue;
+      }
       if (!entry.lastAccessed) {
         skipped.push({ ...entry, reason: 'no LastAccessedDate to age-filter on' });
         continue;
