@@ -89,9 +89,16 @@ export function carryOverFiles({ root, target, patterns }) {
   return { copied, failed };
 }
 
+// Returns null (indeterminate) when `runQuiet` could not get an answer from
+// git at all -- e.g. index.lock held by a concurrent process, a permission
+// error, or `dir` not being a git worktree -- as distinct from `false`
+// (git answered, and the answer is "clean"). A destructive caller like
+// `worktree remove` must be able to tell "clean" from "unknown" and treat
+// the latter as a blocker, not as clean.
 export function hasUncommittedWork(dir) {
   const out = getExecutor().runQuiet(`git -C "${dir}" status --porcelain`);
-  return Boolean(out && out.trim().length > 0);
+  if (out === null) return null;
+  return out.trim().length > 0;
 }
 
 // Commits reachable from HEAD but from no remote ref. Removing the worktree
@@ -102,11 +109,16 @@ export function hasUncommittedWork(dir) {
 // back to HEAD on its own, so `git log --oneline --not --remotes` silently
 // returns nothing even when there are unpushed commits. Verified against a
 // real repo (see task-8-report.md).
+//
+// Returns null (indeterminate), not [], when `runQuiet` could not get an
+// answer from git -- see hasUncommittedWork above for why that distinction
+// matters here.
 export function unpushedCommits(dir) {
   const out = getExecutor().runQuiet(
     `git -C "${dir}" log --oneline HEAD --not --remotes`
   );
-  return out ? out.split('\n').map(l => l.trim()).filter(Boolean) : [];
+  if (out === null) return null;
+  return out.split('\n').map(l => l.trim()).filter(Boolean);
 }
 
 // Whether the repo at `dir` has any remote configured at all. Used to make

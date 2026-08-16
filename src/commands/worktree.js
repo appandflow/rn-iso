@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from 'fs';
+import { existsSync, realpathSync, rmSync } from 'fs';
 import { resolve } from 'path';
 import chalk from 'chalk';
 import { detectPackageManager } from '../runner.js';
@@ -167,8 +167,16 @@ export function registerCreate(worktree) {
 // --force` silently discards uncommitted changes and any commits that exist
 // on no remote -- this is the only check standing between that and lost
 // work, so it must be right and it must be tested without touching git.
+// `dirty` / `unpushed` are `null` (not `false` / `[]`) when the caller could
+// not get an answer from git at all -- see hasUncommittedWork/unpushedCommits
+// in worktree.js. For a destructive command the unknown case must fail
+// CLOSED: treat "could not determine" as a blocker in its own right, rather
+// than defaulting to "clean" the way a falsy check would.
 export function removalBlockers({ dirty, unpushed }) {
   const blockers = [];
+  if (dirty === null || unpushed === null) {
+    blockers.push('could not determine git status; re-run with --force to override');
+  }
   if (dirty) blockers.push('uncommitted changes or untracked files');
   if (unpushed && unpushed.length) {
     blockers.push(`${unpushed.length} commit(s) not on any remote`);
@@ -182,7 +190,19 @@ export function registerRemove(worktree) {
     .description('Remove a worktree and reclaim its build artifacts, sim claim, and Metro port.')
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work')
     .action((target, opts) => {
-      const path = resolve(target);
+      // Canonicalize with realpath, matching how config keys are
+      // canonicalized (CLAUDE.md item 7). A plain resolve() misses a
+      // symlinked target (/tmp vs /private/tmp on macOS, or a home dir
+      // symlinked onto an external volume): getProject(path) inside
+      // reclaimProject would then miss, freeing no sim claim, killing no
+      // Metro, and leaving a stale config entry. Fall back to resolve() if
+      // realpath fails (e.g. the path does not exist -- handled below).
+      let path;
+      try {
+        path = realpathSync(resolve(target));
+      } catch {
+        path = resolve(target);
+      }
       if (!existsSync(path)) {
         console.error(chalk.red(`No such worktree: ${path}`));
         process.exitCode = 1;
@@ -195,13 +215,39 @@ export function registerRemove(worktree) {
       if (blockers.length && !opts.force) {
         console.error(chalk.red(`Refusing to remove ${path}:`));
         for (const b of blockers) console.error(chalk.red(`  - ${b}`));
-        if (unpushed.length && !hasRemote(path)) {
+        if (unpushed && unpushed.length && !hasRemote(path)) {
           // Every commit reaches this branch when no remote is configured at
           // all -- that is the safe direction (refuse), but a bare count
           // reads like a bug rather than a missing remote. Say so.
           console.error(chalk.dim('  (no remote is configured for this worktree, so every commit counts as unpushed)'));
         }
-        console.error(chalk.dim('Push the branch, or re-run with --force to discard this work.'));
+        // Committed work is not actually at risk here: the branch ref
+        // survives `git worktree remove --force`. Only uncommitted changes
+        // (and untracked files) are discarded by --force; say so plainly
+        // rather than implying --force throws away commits too.
+        console.error(chalk.dim('Push the branch, or re-run with --force. --force discards uncommitted changes and untracked files; committed work stays on the branch.'));
+        process.exitCode = 1;
+        return;
+      }
+
+      // Confirm the target actually is a linked worktree of this repo --
+      // not the main checkout, and not some unrelated path -- before doing
+      // anything that mutates state. Without this, `worktree remove` run
+      // against the main checkout (clean, pushed -- the blockers check above
+      // passes) would SIGTERM its Metro and drop its sim/AVD claim via
+      // reclaimProject below, and only then fail at `git worktree remove`
+      // with "is a main working tree" -- silently de-registering a running
+      // project that the command never actually removed.
+      const entries = listWorktrees(path);
+      const entryIndex = entries.findIndex(e => e.path === path);
+      if (entryIndex === -1) {
+        console.error(chalk.red(`Refusing to remove ${path}: it does not match any worktree root known to git.`));
+        console.error(chalk.dim('  Pass the worktree root path, e.g. as printed by `rn-iso worktree list`.'));
+        process.exitCode = 1;
+        return;
+      }
+      if (entryIndex === 0) {
+        console.error(chalk.red(`Refusing to remove ${path}: it is the main checkout, not a linked worktree.`));
         process.exitCode = 1;
         return;
       }
@@ -219,9 +265,14 @@ export function registerRemove(worktree) {
         // per the ordering requirement above -- but the directory and its
         // git worktree registration are untouched, since `git worktree
         // remove` failed before deleting anything. Say so plainly rather
-        // than crash with a raw stack trace.
+        // than crash with a raw stack trace, and report exactly what was
+        // already released (the same two lines the success path prints
+        // below) so the user knows which sim was freed and whether their
+        // bundler is gone, instead of just "tracking was cleared".
         console.error(chalk.red(`git worktree remove failed: ${String(e?.message || e)}`));
         console.error(chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`));
+        if (result.freed.length) console.error(chalk.dim(`  freed: ${result.freed.join(', ')}`));
+        if (result.killedPid) console.error(chalk.dim(`  killed Metro pid ${result.killedPid}`));
         console.error(chalk.dim('Common cause: this command must be run with the shell inside the target repo (any of its worktrees).'));
         process.exitCode = 1;
         return;
@@ -236,8 +287,16 @@ export function registerRemove(worktree) {
       // only report a total when it is actually positive.
       let bytes = 0;
       for (const artifact of result.artifacts) {
-        rmSync(artifact.dir, { recursive: true, force: true });
-        bytes += artifact.bytes;
+        // force:true only suppresses ENOENT. EACCES/EPERM/EBUSY still throw,
+        // and by this point the worktree itself is already gone -- a
+        // failure to delete one leftover artifact dir must not crash an
+        // otherwise-successful removal with a raw stack trace.
+        try {
+          rmSync(artifact.dir, { recursive: true, force: true });
+          bytes += artifact.bytes;
+        } catch (e) {
+          console.error(chalk.yellow(`  could not remove ${artifact.dir}: ${String(e?.message || e)}`));
+        }
       }
       if (bytes > 0) {
         console.log(chalk.dim(`  reclaimed ${formatBytes(bytes)} of build artifacts`));
@@ -253,7 +312,14 @@ export function registerList(worktree) {
     .description("List this repository's worktrees with their setup status.")
     .action(() => {
       const entries = listWorktrees(process.cwd());
-      if (entries.length <= 1) {
+      if (entries.length === 0) {
+        // listWorktrees also returns [] outside any git repo -- distinguish
+        // that from "this repo just has no linked worktrees" so the message
+        // does not imply a main checkout exists when there isn't one.
+        console.log(chalk.dim('Not a git repository.'));
+        return;
+      }
+      if (entries.length === 1) {
         console.log(chalk.dim('No worktrees besides the main checkout.'));
         return;
       }
