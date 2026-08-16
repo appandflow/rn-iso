@@ -28,14 +28,22 @@ export function worktreePath({ worktreeDir, name }) {
 // A `*` requires at least one character, so e.g. `*.env` does not match the
 // bare dotfile `.env` (that is what the literal `.env` pattern is for) -
 // this keeps a wildcard pattern from silently absorbing a more specific one.
+// A leading `/` is a root anchor (standard gitignore idiom): `/config/x`
+// matches only `config/x` at the repo root, never a nested `a/config/x`.
+// `git ls-files` output never has a leading slash, so without stripping it
+// a root-anchored pattern could never match anything.
 export function matchesInclude(path, patterns) {
   for (const pattern of patterns || []) {
-    const escaped = pattern
-      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    const rooted = pattern.startsWith('/');
+    const body = rooted ? pattern.slice(1) : pattern;
+    const escaped = body
+      .replace(/[.+^${}()|[\]\\?]/g, '\\$&')
       .replace(/\*\*\//g, '::GLOBSTAR::')
       .replace(/\*/g, '[^/]+')
-      .replace(/::GLOBSTAR::/g, '(?:.*/)?');
-    const re = new RegExp(`(^|/)${escaped}$`);
+      .replace(/::GLOBSTAR::/g, '(?:.*/)?')
+      .replace(/\\\?/g, '[^/]');
+    const anchor = rooted ? '^' : '(^|/)';
+    const re = new RegExp(`${anchor}${escaped}$`);
     if (re.test(path)) return true;
   }
   return false;
@@ -125,6 +133,10 @@ export function listWorktrees(cwd) {
   return entries;
 }
 
+// `baseRef` here is one of the sentinel strings callers pass ('fresh' or
+// 'head'), not a git ref itself. 'head' means "branch from the current
+// HEAD"; anything else (in practice always 'fresh') means "branch from the
+// repository's default branch on the remote", resolved via origin/HEAD.
 export function resolveBaseRef(cwd, baseRef) {
   if (baseRef === 'head') return 'HEAD';
   const head = getExecutor().runQuiet(`git -C "${cwd}" rev-parse --abbrev-ref origin/HEAD`);
