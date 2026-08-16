@@ -66,10 +66,14 @@ export function listGitignoredFiles(root) {
 }
 
 // Only files that are BOTH matched by a pattern AND gitignored are copied, so
-// tracked files are never duplicated into the worktree.
+// tracked files are never duplicated into the worktree. Per-file failures are
+// collected rather than thrown -- a single unreadable file must not abort
+// worktree creation -- but they are returned (not swallowed) so the caller
+// can warn about them.
 export function carryOverFiles({ root, target, patterns }) {
-  if (!patterns || patterns.length === 0) return [];
+  if (!patterns || patterns.length === 0) return { copied: [], failed: [] };
   const copied = [];
+  const failed = [];
   for (const rel of listGitignoredFiles(root)) {
     if (!matchesInclude(rel, patterns)) continue;
     const from = join(root, rel);
@@ -78,11 +82,11 @@ export function carryOverFiles({ root, target, patterns }) {
       mkdirSync(dirname(to), { recursive: true });
       copyFileSync(from, to);
       copied.push(rel);
-    } catch {
-      // A single unreadable file must not abort worktree creation.
+    } catch (e) {
+      failed.push({ file: rel, error: String(e?.message || e) });
     }
   }
-  return copied;
+  return { copied, failed };
 }
 
 export function hasUncommittedWork(dir) {

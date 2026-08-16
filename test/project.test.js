@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve, join } from 'path';
-import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage, resolveRegisteredProject } from '../src/project.js';
-import { upsertProject } from '../src/config.js';
+import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage, resolveRegisteredProject, projectShortcut } from '../src/project.js';
+import { upsertProject, getProject } from '../src/config.js';
 
 const FIXTURES = resolve(import.meta.dirname, 'fixtures');
 const EXPO_PROJ = join(FIXTURES, 'sample-expo-project');
@@ -139,4 +139,40 @@ test('resolveRegisteredProject errors when path does not match anything', () => 
   const r = resolveRegisteredProject('/no/such/path');
   assert.equal(r.found, null);
   assert.match(r.error, /No registered project/);
+});
+
+// projectShortcut inheriting the enclosing worktree's label: without this,
+// two worktrees of the same monorepo each have an app dir with the same
+// basename (e.g. "tlon-mobile"), so their shortcuts would collide.
+test('projectShortcut inherits the enclosing worktree label so same-basename app dirs stay unique', () => {
+  upsertProject('/repo-worktrees/feat-a', { label: 'feat-a', worktreeRoot: true });
+  upsertProject('/repo-worktrees/feat-b', { label: 'feat-b', worktreeRoot: true });
+
+  const appDirA = '/repo-worktrees/feat-a/apps/tlon-mobile';
+  const appDirB = '/repo-worktrees/feat-b/apps/tlon-mobile';
+  upsertProject(appDirA, {});
+  upsertProject(appDirB, {});
+
+  const shortcutA = projectShortcut(appDirA, getProject(appDirA));
+  const shortcutB = projectShortcut(appDirB, getProject(appDirB));
+
+  assert.equal(shortcutA, 'feat-a/tlon-mobile');
+  assert.equal(shortcutB, 'feat-b/tlon-mobile');
+  assert.notEqual(shortcutA, shortcutB);
+});
+
+test('projectShortcut returns the worktree label itself for the worktree root', () => {
+  upsertProject('/repo-worktrees/feat-a', { label: 'feat-a', worktreeRoot: true });
+  assert.equal(projectShortcut('/repo-worktrees/feat-a', getProject('/repo-worktrees/feat-a')), 'feat-a');
+});
+
+test('projectShortcut prefers an explicit label over worktree inheritance', () => {
+  upsertProject('/repo-worktrees/feat-a', { label: 'feat-a', worktreeRoot: true });
+  const appDir = '/repo-worktrees/feat-a/apps/tlon-mobile';
+  upsertProject(appDir, { label: 'custom' });
+  assert.equal(projectShortcut(appDir, getProject(appDir)), 'custom');
+});
+
+test('projectShortcut falls back to the basename when not inside any registered worktree', () => {
+  assert.equal(projectShortcut('/Users/x/Developer/standalone', null), 'standalone');
 });

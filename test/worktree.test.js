@@ -118,14 +118,43 @@ test('carryOverFiles copies only files that are both gitignored and pattern-matc
       spawn: () => {},
     });
 
-    const copied = carryOverFiles({ root, target, patterns: ['.env'] });
+    const { copied, failed } = carryOverFiles({ root, target, patterns: ['.env'] });
 
     assert.deepEqual(copied, ['apps/mobile/.env']);
+    assert.deepEqual(failed, []);
     assert.equal(existsSync(join(target, 'apps/mobile/.env')), true);
     assert.equal(readFileSync(join(target, 'apps/mobile/.env'), 'utf-8'), 'SECRET=1');
     assert.equal(existsSync(join(target, 'dist/build.log')), false);
     assert.match(capturedCmd, /--others/);
     assert.match(capturedCmd, /--ignored/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test('carryOverFiles reports per-file failures instead of swallowing them', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
+  const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
+  try {
+    mkdirSync(join(root, 'apps/mobile'), { recursive: true });
+    writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
+    // Listed as gitignored+matched by the mocked `git ls-files` output, but
+    // never actually created on disk -- copyFileSync must fail on this one.
+    setExecutor({
+      run: (cmd) => {
+        throw new Error(`unexpected run: ${cmd}`);
+      },
+      runQuiet: () => 'apps/mobile/.env\napps/missing/.env',
+      spawn: () => {},
+    });
+
+    const { copied, failed } = carryOverFiles({ root, target, patterns: ['.env'] });
+
+    assert.deepEqual(copied, ['apps/mobile/.env']);
+    assert.equal(failed.length, 1);
+    assert.equal(failed[0].file, 'apps/missing/.env');
+    assert.match(failed[0].error, /ENOENT|no such file/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
@@ -161,9 +190,10 @@ test('carryOverFiles against a real git repo copies only the gitignored+matched 
     mkdirSync(join(root, 'dist'), { recursive: true });
     writeFileSync(join(root, 'dist/build.log'), 'log output');
 
-    const copied = carryOverFiles({ root, target, patterns: ['.env', 'secrets.json'] });
+    const { copied, failed } = carryOverFiles({ root, target, patterns: ['.env', 'secrets.json'] });
 
     assert.deepEqual(copied, ['apps/mobile/.env']);
+    assert.deepEqual(failed, []);
     assert.equal(existsSync(join(target, 'apps/mobile/.env')), true);
     assert.equal(readFileSync(join(target, 'apps/mobile/.env'), 'utf-8'), 'SECRET=1');
     assert.equal(existsSync(join(target, 'dist/build.log')), false);

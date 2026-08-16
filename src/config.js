@@ -214,8 +214,38 @@ export function setSetupStatus(projectPath, status) {
   saveConfig(cfg);
 }
 
+// True path-segment prefix, not a bare startsWith: "/a/foo-worktrees/x" must
+// not match "/a/foo-worktrees/xy" just because the strings share a prefix.
+function isPathPrefix(prefix, path) {
+  if (prefix === path) return true;
+  const withSlash = prefix.endsWith('/') ? prefix : `${prefix}/`;
+  return path.startsWith(withSlash);
+}
+
+// Given any project path, find the enclosing worktree-root entry: the
+// longest registered key with `worktreeRoot: true` that is a path-segment
+// prefix of the given path. A monorepo has several app dirs (tlon-mobile,
+// tlon-web, tlon-desktop) registered under the same worktree, so this walks
+// up by matching against every registered key rather than guessing one app
+// dir at `worktree create` time. Returns the registered key, or null.
+export function findEnclosingWorktreeRoot(projectPath) {
+  const cfg = loadConfig();
+  if (!cfg?.projects) return null;
+  let best = null;
+  for (const [path, proj] of Object.entries(cfg.projects)) {
+    if (!proj?.worktreeRoot) continue;
+    if (!isPathPrefix(path, projectPath)) continue;
+    if (!best || path.length > best.length) best = path;
+  }
+  return best;
+}
+
 export function getSetupStatus(projectPath) {
-  return getProject(projectPath)?.setup || null;
+  const own = getProject(projectPath)?.setup;
+  if (own) return own;
+  const rootPath = findEnclosingWorktreeRoot(projectPath);
+  if (!rootPath || rootPath === projectPath) return null;
+  return getProject(rootPath)?.setup || null;
 }
 
 export function allMetroPorts() {

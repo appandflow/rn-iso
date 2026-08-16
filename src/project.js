@@ -1,11 +1,24 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'fs';
 import { join, dirname, resolve } from 'path';
-import { loadConfig } from './config.js';
+import { loadConfig, findEnclosingWorktreeRoot, getProject } from './config.js';
 
-// A project's "shortcut": its `label` field if set, else the path basename.
-// This is the user-facing handle for `stop`, `release`, etc.
+// A project's "shortcut": its `label` field if set, else derived from the
+// enclosing worktree's label (if this path lives inside a registered
+// worktree), else the path basename.
+//
+// The worktree-inherited form matters because every worktree of a monorepo
+// has app dirs sharing the same basename (every worktree's mobile app is
+// "tlon-mobile"), so a bare basename shortcut would collide across
+// worktrees. Deriving from the worktree label instead keeps shortcuts
+// unique: "<worktreeLabel>/<basename>".
 export function projectShortcut(path, proj) {
   if (proj?.label) return proj.label;
+  const rootPath = findEnclosingWorktreeRoot(path);
+  if (rootPath && rootPath !== path) {
+    const rootLabel = projectShortcut(rootPath, getProject(rootPath));
+    const base = path.split('/').pop() || path;
+    return `${rootLabel}/${base}`;
+  }
   return path.split('/').pop() || path;
 }
 
