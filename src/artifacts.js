@@ -1,6 +1,6 @@
-import { existsSync, readdirSync, statSync } from 'fs';
+import { existsSync, lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { dirname, join, normalize } from 'path';
 import { getExecutor } from './exec.js';
 
 export function derivedDataRoot() {
@@ -25,16 +25,82 @@ export function parseDerivedDataInfo(plistJson) {
 }
 
 // "/Volumes/Foo/bar" -> "/Volumes/Foo"; anything else is on the boot volume.
+// Case-insensitive on the "/Volumes/" segment and normalized first so
+// "/volumes/Foo", "//Volumes/Foo", and "/Volumes/./Foo" all resolve to the
+// same canonical root as "/Volumes/Foo" and compare equal to what
+// listMountedVolumes() produces.
 export function volumeRootFor(path) {
-  const m = String(path).match(/^(\/Volumes\/[^/]+)/);
-  return m ? m[1] : '/';
+  const normalized = normalize(String(path));
+  const m = normalized.match(/^\/volumes\/([^/]+)/i);
+  return m ? `/Volumes/${m[1]}` : '/';
 }
 
-export function listMountedVolumes() {
+// Impure. Walks the ancestors of `workspacePath`, following any symlinks it
+// finds via readlinkSync (never realpathSync/statSync on the target: the
+// whole point is to work when the target volume is unmounted and would make
+// those calls fail). Returns the normalized, symlink-resolved path, or null
+// if an ancestor is a symlink whose target could not be determined (a real
+// error, not just a missing target) -- callers must not guess in that case.
+function resolveWorkspaceRealish(workspacePath) {
+  let current = String(workspacePath);
+  const MAX_HOPS = 40; // guard against symlink cycles
+  for (let hops = 0; hops < MAX_HOPS; hops++) {
+    const normalized = normalize(current);
+    const segments = normalized.split('/').filter(Boolean);
+    let prefix = '';
+    let followedSymlink = false;
+    for (const segment of segments) {
+      prefix += `/${segment}`;
+      let st;
+      try {
+        st = lstatSync(prefix);
+      } catch (err) {
+        if (err && err.code === 'ENOENT') {
+          // This ancestor simply does not exist (a deleted project, or a
+          // path beyond an unmounted volume's mount point). Nothing further
+          // to resolve; use the path as-is from here.
+          return normalized;
+        }
+        // Some other error (permission denied, IO error, ...): we cannot
+        // tell whether this ancestor is a symlink. Don't guess.
+        return null;
+      }
+      if (st.isSymbolicLink()) {
+        let target;
+        try {
+          target = readlinkSync(prefix);
+        } catch {
+          return null;
+        }
+        const resolvedTarget = target.startsWith('/')
+          ? target
+          : normalize(join(dirname(prefix), target));
+        const rest = normalized.slice(prefix.length);
+        current = `${resolvedTarget}${rest}`;
+        followedSymlink = true;
+        break;
+      }
+    }
+    if (!followedSymlink) {
+      return normalized;
+    }
+  }
+  // Too many hops (symlink cycle); refuse to guess.
+  return null;
+}
+
+// Pure. A distinct st_dev proves a genuine mount. Same dev as / means the
+// entry is just a symlink to the boot volume (e.g. "Macintosh HD"), or the
+// stat failed outright (a stale directory left behind by an unclean unplug).
+export function isRealMount(entryDev, rootDev) {
+  return entryDev != null && rootDev != null && entryDev !== rootDev;
+}
+
+export function listMountedVolumes({ statFn = statSync } = {}) {
   const roots = ['/'];
   let rootDev;
   try {
-    rootDev = statSync('/').dev;
+    rootDev = statFn('/').dev;
   } catch {
     // Can't stat the boot volume at all; nothing else can be verified either.
     return roots;
@@ -42,16 +108,14 @@ export function listMountedVolumes() {
   try {
     for (const name of readdirSync('/Volumes')) {
       const path = join('/Volumes', name);
-      let st;
+      let entryDev;
       try {
-        st = statSync(path);
+        entryDev = statFn(path).dev;
       } catch {
         // Stale directory left behind by an unclean unplug: not a real mount.
         continue;
       }
-      // A distinct st_dev proves a genuine mount. Same dev as / means the
-      // entry is just a symlink to the boot volume (e.g. "Macintosh HD").
-      if (st.dev !== rootDev) {
+      if (isRealMount(entryDev, rootDev)) {
         roots.push(path);
       }
     }
@@ -60,6 +124,12 @@ export function listMountedVolumes() {
   }
   return roots;
 }
+
+// Inside double quotes in a /bin/sh -c string, `$(...)` and backticks still
+// expand and `\` still escapes. A directory name carrying any of these is
+// never shelled out to -- skipping is always the safe direction, since an
+// unmeasured directory is never deleted.
+const SHELL_METACHARS = /[`$"\\]/;
 
 export function listDerivedDataEntries(root = derivedDataRoot()) {
   const exec = getExecutor();
@@ -83,13 +153,31 @@ export function listDerivedDataEntries(root = derivedDataRoot()) {
       // to no project and must never be classified.
       continue;
     }
+    if (SHELL_METACHARS.test(dir) || SHELL_METACHARS.test(plist)) {
+      entries.push({
+        dir,
+        workspacePath: null,
+        lastAccessed: null,
+        exists: false,
+        volumeRoot: null,
+        reason: 'directory name contains shell metacharacters',
+      });
+      continue;
+    }
     const out = exec.runQuiet(`plutil -convert json -o - "${plist}"`);
     const info = out ? parseDerivedDataInfo(out) : null;
+    const workspacePath = info?.workspacePath || null;
+    let volumeRoot;
+    if (workspacePath) {
+      const realish = resolveWorkspaceRealish(workspacePath);
+      volumeRoot = realish === null ? null : volumeRootFor(realish);
+    }
     entries.push({
       dir,
-      workspacePath: info?.workspacePath || null,
+      workspacePath,
       lastAccessed: info?.lastAccessed || null,
-      exists: info?.workspacePath ? existsSync(info.workspacePath) : false,
+      exists: workspacePath ? existsSync(workspacePath) : false,
+      volumeRoot,
     });
   }
   return entries;
@@ -108,7 +196,7 @@ export function classifyDerivedData(entries, { mountedVolumes, now, olderThanDay
 
   for (const entry of entries) {
     if (!entry.workspacePath) {
-      skipped.push({ ...entry, reason: 'unreadable info.plist' });
+      skipped.push({ ...entry, reason: entry.reason || 'unreadable info.plist' });
       continue;
     }
     if (entry.exists === true) {
@@ -121,7 +209,15 @@ export function classifyDerivedData(entries, { mountedVolumes, now, olderThanDay
       skipped.push({ ...entry, reason: 'workspace existence was not checked' });
       continue;
     }
-    const volume = volumeRootFor(entry.workspacePath);
+    // A symlinked ancestor (e.g. a home-folder path that is itself a symlink
+    // onto an external volume) can only be resolved by the impure producer.
+    // entry.volumeRoot === null means it tried and could not resolve one of
+    // those ancestors -- don't fall back to a textual guess.
+    if (entry.volumeRoot === null) {
+      skipped.push({ ...entry, reason: 'could not resolve a symlinked ancestor of the workspace path' });
+      continue;
+    }
+    const volume = entry.volumeRoot != null ? entry.volumeRoot : volumeRootFor(entry.workspacePath);
     if (!mounted.has(volume)) {
       // The workspace looks gone only because its disk is not attached.
       // Deleting here would destroy live build output.
@@ -138,6 +234,13 @@ export function classifyDerivedData(entries, { mountedVolumes, now, olderThanDay
         continue;
       }
       const ageDays = ((now || new Date()) - entry.lastAccessed) / 86400000;
+      if (!Number.isFinite(ageDays)) {
+        // An Invalid Date on either side of the subtraction yields NaN,
+        // which makes every "< olderThanDays" comparison false. Failing
+        // open here would silently disable the age filter.
+        skipped.push({ ...entry, reason: 'lastAccessed or now is not a valid date' });
+        continue;
+      }
       if (ageDays < olderThanDays) {
         live.push(entry);
         continue;
@@ -165,6 +268,7 @@ export function findOrphanedDerivedData({ olderThanDays } = {}) {
 }
 
 export function directorySize(dir) {
+  if (SHELL_METACHARS.test(dir)) return 0;
   const out = getExecutor().runQuiet(`du -sk "${dir}"`);
   if (!out) return 0;
   const kb = parseInt(out.split(/\s+/)[0], 10);
