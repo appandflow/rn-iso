@@ -13,6 +13,7 @@ import {
   hasUncommittedWork,
   listWorktrees,
   carryOverFiles,
+  listGitignoredFiles,
   addWorktree,
   removeWorktree,
 } from '../src/worktree.js';
@@ -198,6 +199,68 @@ test('carryOverFiles against a real git repo copies only the gitignored+matched 
     assert.equal(readFileSync(join(target, 'apps/mobile/.env'), 'utf-8'), 'SECRET=1');
     assert.equal(existsSync(join(target, 'dist/build.log')), false);
     assert.equal(existsSync(join(target, 'config/secrets.json')), false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// Regression for the bug where `git ls-files --others --ignored
+// --exclude-standard` output past execSync's default 1MB maxBuffer made
+// listGitignoredFiles (and therefore carryOverFiles) silently return
+// nothing -- `copied` and `failed` both empty, so `worktree create` never
+// even warned. A mocked executor cannot catch this class of bug (the whole
+// failure is inside execSync's real buffering), so this drives real git
+// over a real, oversized ignored-file set. The bloat files sit at the repo
+// root next to a tracked README so the directory can never collapse to a
+// single `--directory` entry -- this is what keeps raw ls-files output
+// large even after the node_modules-scoping fix, so the test still
+// exercises the maxBuffer path it exists to guard.
+test('listGitignoredFiles and carryOverFiles still find the target file when raw ls-files output exceeds 1MB', () => {
+  const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-bigignore-'));
+  const root = join(base, 'repo');
+  const target = join(base, 'target');
+  try {
+    mkdirSync(root, { recursive: true });
+    mkdirSync(target, { recursive: true });
+    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+
+    writeFileSync(join(root, 'README.md'), 'hello');
+    writeFileSync(join(root, '.gitignore'), '*.ignoreme\n.env\n');
+    git('git add README.md .gitignore');
+    git('git commit -q -m init');
+
+    // ~1.3MB of untracked, ignored, irrelevant filenames -- stands in for
+    // the real-world case (a multi-GB node_modules), just scattered instead
+    // of collapsible into one directory entry.
+    const padding = 'x'.repeat(200);
+    for (let i = 0; i < 6000; i++) {
+      writeFileSync(join(root, `bloat-${i}-${padding}.ignoreme`), '');
+    }
+
+    // The actual file carry-over exists to find, buried in the same
+    // oversized, ignored listing.
+    mkdirSync(join(root, 'apps/mobile'), { recursive: true });
+    writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
+
+    const rawBytes = parseInt(
+      execSync(`git -C "${root}" ls-files --others --ignored --exclude-standard | wc -c`, { encoding: 'utf-8' }).trim(),
+      10
+    );
+    assert.ok(rawBytes > 1024 * 1024, `test setup must exceed 1MB of raw ls-files output (got ${rawBytes})`);
+
+    const ignored = listGitignoredFiles(root);
+    assert.ok(
+      ignored.includes('apps/mobile/.env'),
+      'the target file must still be found past the old 1MB maxBuffer ceiling'
+    );
+
+    const { copied, failed } = carryOverFiles({ root, target, patterns: ['.env'] });
+    assert.deepEqual(copied, ['apps/mobile/.env']);
+    assert.deepEqual(failed, []);
+    assert.equal(existsSync(join(target, 'apps/mobile/.env')), true);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

@@ -39,26 +39,64 @@ export function resolveInstallPipeline(settings, packageManager) {
   return [`${pm} install`];
 }
 
-function runPipeline(commands, cwd) {
-  const exec = getExecutor();
-  const results = [];
-  for (const command of commands) {
-    // stderr, so stdout stays reserved for the worktree path (hook contract).
+// Streams one pipeline command via spawn rather than buffering it through
+// exec.run/execSync. Two reasons:
+//   1. A chatty `pnpm install` on a large monorepo can run 40s+ and print
+//      well past execSync's maxBuffer; buffering also means the user sees
+//      nothing until the whole command finishes (or gets killed).
+//   2. The stdout contract for `worktree create` is absolute: stdout carries
+//      ONLY the worktree path, so the child's stdout is piped to OUR stderr,
+//      never to our stdout. Its stderr goes to our stderr too.
+function runOne(command, cwd) {
+  return new Promise((resolvePromise) => {
     console.error(chalk.dim(`> ${command}`));
+    const exec = getExecutor();
+    let child;
     try {
-      exec.run(`cd "${cwd}" && ${command}`);
-      results.push({ command, ok: true });
+      child = exec.spawn('sh', ['-c', command], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
       const message = String(e?.message || e).slice(0, 500);
-      results.push({ command, ok: false, error: message });
       console.error(chalk.yellow(`  failed: ${command}`));
-      // Print the captured reason too: the motivating failure cascade was
-      // only found after multi-minute builds, and "failed: <command>" alone
-      // gives no clue why.
       console.error(chalk.yellow(`  ${message}`));
-      // Keep going: later commands may still be useful, and the recorded
-      // status tells the next `rn-iso ios` exactly what to re-run.
+      resolvePromise({ command, ok: false, error: message });
+      return;
     }
+    // Keep a bounded tail of combined output for the failure message --
+    // "failed: <command>" alone gives no clue why, but we must not hold the
+    // whole (potentially huge) output in memory just to report 500 chars.
+    let tail = '';
+    const onData = (chunk) => {
+      process.stderr.write(chunk);
+      tail = (tail + chunk.toString()).slice(-2000);
+    };
+    child.stdout?.on('data', onData);
+    child.stderr?.on('data', onData);
+    child.on('error', (err) => {
+      const message = String(err?.message || err).slice(0, 500);
+      console.error(chalk.yellow(`  failed: ${command}`));
+      console.error(chalk.yellow(`  ${message}`));
+      resolvePromise({ command, ok: false, error: message });
+    });
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolvePromise({ command, ok: true });
+        return;
+      }
+      const message = `exit ${code}${tail.trim() ? `: ${tail.trim().slice(-500)}` : ''}`;
+      console.error(chalk.yellow(`  failed: ${command}`));
+      console.error(chalk.yellow(`  ${message}`));
+      // Keep going (handled by the caller's loop): later commands may still
+      // be useful, and the recorded status tells the next `rn-iso ios`
+      // exactly what to re-run.
+      resolvePromise({ command, ok: false, error: message });
+    });
+  });
+}
+
+async function runPipeline(commands, cwd) {
+  const results = [];
+  for (const command of commands) {
+    results.push(await runOne(command, cwd));
   }
   return results;
 }
@@ -70,11 +108,11 @@ export function registerCreate(worktree) {
     .option('--base <ref>', 'base ref: "fresh" (origin/HEAD, default) or "head"')
     .option('--no-install', 'skip the setup pipeline')
     .option('--label <label>', 'rn-iso shortcut for the worktree (defaults to the worktree name)')
-    .action((name, opts) => {
+    .action(async (name, opts) => {
       // `name` comes from a hook (session text), not a hand-typed argument,
-      // and flows unescaped into a shell command (`-b "worktree-${name}"`,
-      // and later `cd "${cwd}" && ...`) and into a filesystem join. Reject
-      // anything outside a safe charset before creating anything.
+      // and flows unescaped into a shell command (`-b "worktree-${name}"`)
+      // and into a filesystem join. Reject anything outside a safe charset
+      // before creating anything.
       if (!/^[A-Za-z0-9._-]+$/.test(name)) {
         console.error(chalk.red(`Invalid worktree name: "${name}". Use only letters, numbers, dots, dashes, and underscores.`));
         process.exitCode = 1;
@@ -123,7 +161,7 @@ export function registerCreate(worktree) {
       let results = [];
       let skipped = false;
       if (opts.install !== false) {
-        results = runPipeline(resolveInstallPipeline(settings, detectPackageManager(target)), target);
+        results = await runPipeline(resolveInstallPipeline(settings, detectPackageManager(target)), target);
       } else {
         skipped = true;
       }

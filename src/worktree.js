@@ -58,11 +58,28 @@ export function readWorktreeInclude(root) {
     .filter(l => l && !l.startsWith('#'));
 }
 
+// `--directory` is the load-bearing flag here: when an entire directory is
+// ignored (e.g. node_modules), git prints just that directory name with a
+// trailing slash instead of recursing into it and listing every file
+// inside. On a real monorepo node_modules is a multi-GB, multi-hundred-
+// thousand-file tree; without `--directory` this call alone takes several
+// seconds and its stdout can run into tens of MB (used to silently blow
+// execSync's default maxBuffer -- see src/exec.js -- and make carry-over a
+// silent no-op). The pathspec exclude is redundant defense for the case
+// where node_modules is only PARTIALLY ignored (e.g. a repo that un-ignores
+// one file inside it), where `--directory` alone would still recurse.
+// Verified against a real 3+ GB node_modules monorepo: ~6s -> ~0.03s, and
+// apps/tlon-mobile/.env (a genuinely single ignored file, not part of a
+// wholly-ignored directory) still comes back.
 export function listGitignoredFiles(root) {
   const out = getExecutor().runQuiet(
-    `git -C "${root}" ls-files --others --ignored --exclude-standard`
+    `git -C "${root}" ls-files --others --ignored --exclude-standard --directory -- . ":(exclude,glob)**/node_modules/**"`
   );
-  return out ? out.split('\n').filter(Boolean) : [];
+  if (!out) return [];
+  // A collapsed directory entry (trailing slash) is not a file
+  // carryOverFiles can copy; drop it here rather than make every caller
+  // re-filter.
+  return out.split('\n').filter(Boolean).filter(f => !f.endsWith('/'));
 }
 
 // Only files that are BOTH matched by a pattern AND gitignored are copied, so
