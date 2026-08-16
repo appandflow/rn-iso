@@ -6,6 +6,7 @@ import {
   directorySize,
   findOrphanedDerivedData,
   formatBytes,
+  isOnMountedVolume,
   listMountedVolumes,
   volumeRootFor,
 } from '../artifacts.js';
@@ -94,14 +95,19 @@ export default function gcCommand(program) {
       // label, metroPort allocation, and device claims for good. Only prune
       // entries whose volume is confirmed mounted; route the rest into
       // skipped, same as the artifact half of this command already does.
-      const mountedVolumes = new Set(listMountedVolumes());
+      // isOnMountedVolume resolves symlinked ancestors first (the same way
+      // the artifact sweep above does) rather than checking the raw path
+      // text -- a config key recorded under a symlinked path (e.g. a home
+      // folder symlinked onto an external volume) must not be misread as
+      // always-mounted just because it textually starts under "/".
+      const mountedVolumes = listMountedVolumes();
       const cfg = loadConfig();
       const deadProjects = [];
       const allSkipped = [...skipped];
       for (const path of Object.keys(cfg?.projects || {})) {
         if (existsSync(path)) continue;
-        const volume = volumeRootFor(path);
-        if (!mountedVolumes.has(volume)) {
+        if (!isOnMountedVolume(path, mountedVolumes)) {
+          const volume = volumeRootFor(path);
           allSkipped.push({ dir: path, reason: `volume ${volume} is not mounted` });
         } else {
           deadProjects.push(path);

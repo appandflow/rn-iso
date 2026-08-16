@@ -132,6 +132,35 @@ export function listMountedVolumes({ statFn = statSync } = {}) {
   return roots;
 }
 
+// Resolves symlinked ancestors of `path` the same way the DerivedData
+// producer below does (see resolveWorkspaceRealish) and returns the
+// mounted-volume root for the result, or null if an ancestor symlink could
+// not be resolved.
+function resolveVolumeRoot(path) {
+  const realish = resolveWorkspaceRealish(path);
+  return realish === null ? null : volumeRootFor(realish);
+}
+
+// Impure. True only when `path`'s volume is confirmed mounted right now.
+// A bare volumeRootFor(path) is a TEXTUAL classification: a path reached
+// through a symlink (e.g. a home-folder symlink onto an external volume --
+// `/Users/x/Developer` -> `/Volumes/ExternalSSD/Developer` on this machine)
+// resolves to "/" and looks like it is always on the boot volume, even when
+// it is not. That is the exact bug CLAUDE.md #9 documents for the artifact
+// sweep, and listDerivedDataEntries below already resolves symlinks before
+// classifying -- this extracts that same logic so any OTHER caller that
+// gates a destructive action on "is this project's volume mounted" (prune,
+// gc's project sweep) goes through the same resolution instead of
+// re-introducing the textual-only bug in a second place. Ambiguity (an
+// unresolvable symlinked ancestor) returns false, the safe direction: an
+// unconfirmed volume must never be treated as mounted.
+export function isOnMountedVolume(path, mountedVolumes) {
+  const mounted = new Set(mountedVolumes || listMountedVolumes());
+  const volume = resolveVolumeRoot(path);
+  if (volume === null) return false;
+  return mounted.has(volume);
+}
+
 // Inside double quotes in a /bin/sh -c string, `$(...)` and backticks still
 // expand and `\` still escapes. A directory name carrying any of these is
 // never shelled out to -- skipping is always the safe direction, since an
@@ -198,14 +227,11 @@ export function listDerivedDataEntries(root = derivedDataRoot()) {
     let volumeRoot;
     let unresolvedReason;
     if (workspacePath) {
-      const realish = resolveWorkspaceRealish(workspacePath);
-      if (realish === null) {
-        volumeRoot = null;
+      volumeRoot = resolveVolumeRoot(workspacePath);
+      if (volumeRoot === null) {
         unresolvedReason = workspacePath.startsWith('/')
           ? 'could not resolve a symlinked ancestor of the workspace path'
           : 'workspace path in info.plist is not absolute';
-      } else {
-        volumeRoot = volumeRootFor(realish);
       }
     }
     entries.push({
