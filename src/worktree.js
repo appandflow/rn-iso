@@ -109,6 +109,16 @@ export function unpushedCommits(dir) {
   return out ? out.split('\n').map(l => l.trim()).filter(Boolean) : [];
 }
 
+// Whether the repo at `dir` has any remote configured at all. Used to make
+// the "not on any remote" removal blocker read sensibly: a repo with no
+// remote makes unpushedCommits() return every commit reachable from HEAD,
+// which is the safe direction (refuse), but the count alone can look like a
+// bug rather than an unconfigured remote.
+export function hasRemote(dir) {
+  const out = getExecutor().runQuiet(`git -C "${dir}" remote`);
+  return Boolean(out && out.trim().length > 0);
+}
+
 export function addWorktree({ path, branch, baseRef }) {
   mkdirSync(dirname(path), { recursive: true });
   getExecutor().run(`git worktree add "${path}" -b "${branch}" "${baseRef}"`);

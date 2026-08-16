@@ -1,17 +1,25 @@
-import { existsSync } from 'fs';
+import { existsSync, rmSync } from 'fs';
+import { resolve } from 'path';
 import chalk from 'chalk';
 import { detectPackageManager } from '../runner.js';
 import { resolveSettings } from '../settings.js';
-import { setSetupStatus, upsertProject } from '../config.js';
+import { getSetupStatus, setSetupStatus, upsertProject } from '../config.js';
 import { getExecutor } from '../exec.js';
+import { formatBytes } from '../artifacts.js';
+import { reclaimProject } from '../reclaim.js';
 import {
   addWorktree,
   carryOverFiles,
   defaultWorktreeDir,
   gitCommonDir,
+  hasRemote,
+  hasUncommittedWork,
+  listWorktrees,
   readWorktreeInclude,
+  removeWorktree,
   repoRoot,
   resolveBaseRef,
+  unpushedCommits,
   worktreePath,
 } from '../worktree.js';
 
@@ -153,7 +161,117 @@ export function registerCreate(worktree) {
     });
 }
 
+// Pure: takes the already-computed dirty/unpushed facts and turns them into
+// human-readable reasons to refuse removal. `worktree remove` is called
+// unattended (agents, phone-driven sessions) and `git worktree remove
+// --force` silently discards uncommitted changes and any commits that exist
+// on no remote -- this is the only check standing between that and lost
+// work, so it must be right and it must be tested without touching git.
+export function removalBlockers({ dirty, unpushed }) {
+  const blockers = [];
+  if (dirty) blockers.push('uncommitted changes or untracked files');
+  if (unpushed && unpushed.length) {
+    blockers.push(`${unpushed.length} commit(s) not on any remote`);
+  }
+  return blockers;
+}
+
+export function registerRemove(worktree) {
+  worktree
+    .command('remove <target>')
+    .description('Remove a worktree and reclaim its build artifacts, sim claim, and Metro port.')
+    .option('--force', 'remove even when the worktree holds uncommitted or unpushed work')
+    .action((target, opts) => {
+      const path = resolve(target);
+      if (!existsSync(path)) {
+        console.error(chalk.red(`No such worktree: ${path}`));
+        process.exitCode = 1;
+        return;
+      }
+
+      const dirty = hasUncommittedWork(path);
+      const unpushed = unpushedCommits(path);
+      const blockers = removalBlockers({ dirty, unpushed });
+      if (blockers.length && !opts.force) {
+        console.error(chalk.red(`Refusing to remove ${path}:`));
+        for (const b of blockers) console.error(chalk.red(`  - ${b}`));
+        if (unpushed.length && !hasRemote(path)) {
+          // Every commit reaches this branch when no remote is configured at
+          // all -- that is the safe direction (refuse), but a bare count
+          // reads like a bug rather than a missing remote. Say so.
+          console.error(chalk.dim('  (no remote is configured for this worktree, so every commit counts as unpushed)'));
+        }
+        console.error(chalk.dim('Push the branch, or re-run with --force to discard this work.'));
+        process.exitCode = 1;
+        return;
+      }
+
+      // Find artifacts before the directory disappears; findDerivedDataFor
+      // (inside reclaimProject) matches on WorkspacePath prefixes that only
+      // resolve while the path still exists on disk.
+      const result = reclaimProject(path, { deleteArtifacts: false });
+
+      try {
+        removeWorktree(path, { force: opts.force });
+      } catch (e) {
+        // reclaimProject already dropped rn-iso's own tracking for this
+        // project (and may have killed its Metro process) before this ran,
+        // per the ordering requirement above -- but the directory and its
+        // git worktree registration are untouched, since `git worktree
+        // remove` failed before deleting anything. Say so plainly rather
+        // than crash with a raw stack trace.
+        console.error(chalk.red(`git worktree remove failed: ${String(e?.message || e)}`));
+        console.error(chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`));
+        console.error(chalk.dim('Common cause: this command must be run with the shell inside the target repo (any of its worktrees).'));
+        process.exitCode = 1;
+        return;
+      }
+      console.log(chalk.green(`Removed worktree ${path}`));
+      if (result.freed.length) console.log(chalk.dim(`  freed: ${result.freed.join(', ')}`));
+      if (result.killedPid) console.log(chalk.dim(`  killed Metro pid ${result.killedPid}`));
+
+      // directorySize (behind result.artifacts[].bytes) returns 0 both for a
+      // genuinely empty directory and for one it could not measure, so a
+      // per-artifact 0 is not safe to print as "0K reclaimed". Sum first and
+      // only report a total when it is actually positive.
+      let bytes = 0;
+      for (const artifact of result.artifacts) {
+        rmSync(artifact.dir, { recursive: true, force: true });
+        bytes += artifact.bytes;
+      }
+      if (bytes > 0) {
+        console.log(chalk.dim(`  reclaimed ${formatBytes(bytes)} of build artifacts`));
+      } else if (result.artifacts.length > 0) {
+        console.log(chalk.dim(`  removed ${result.artifacts.length} build artifact dir(s) (size unknown)`));
+      }
+    });
+}
+
+export function registerList(worktree) {
+  worktree
+    .command('list')
+    .description("List this repository's worktrees with their setup status.")
+    .action(() => {
+      const entries = listWorktrees(process.cwd());
+      if (entries.length <= 1) {
+        console.log(chalk.dim('No worktrees besides the main checkout.'));
+        return;
+      }
+      for (const entry of entries.slice(1)) {
+        const status = getSetupStatus(entry.path);
+        const label = status
+          ? status.complete
+            ? chalk.green('setup ok')
+            : chalk.yellow('setup incomplete')
+          : chalk.dim('unmanaged');
+        console.log(`${entry.path}  [${entry.branch || 'detached'}]  ${label}`);
+      }
+    });
+}
+
 export default function worktreeCommand(program) {
   const worktree = program.command('worktree').description('Create and remove isolated worktrees');
   registerCreate(worktree);
+  registerRemove(worktree);
+  registerList(worktree);
 }

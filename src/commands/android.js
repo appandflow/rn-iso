@@ -2,7 +2,7 @@
 import chalk from 'chalk';
 import prompts from 'prompts';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } from '../project.js';
-import { getProject, upsertProject, setMetro, setDevice, clearDevice, allClaimedDevices } from '../config.js';
+import { getProject, upsertProject, setMetro, setDevice, clearDevice, allClaimedDevices, getSetupStatus } from '../config.js';
 import { allocatePort, isMetroRunning } from '../ports.js';
 import { ensureMetro, logFileFor } from '../metro.js';
 import {
@@ -36,6 +36,17 @@ export default function androidCommand(program) {
       if (!root) {
         console.error(chalk.red('Not in a React Native project (no package.json found).'));
         process.exit(1);
+      }
+
+      const setup = getSetupStatus(root);
+      if (setup && !setup.complete) {
+        if (setup.skipped) {
+          console.log(chalk.yellow('Warning: worktree setup pipeline was skipped (--no-install).'));
+        } else {
+          const failed = setup.commands.filter(c => !c.ok).map(c => c.command);
+          console.log(chalk.yellow(`Warning: worktree setup is incomplete. Failed: ${failed.join(', ')}`));
+        }
+        console.log(chalk.dim('The build may fail until these succeed.'));
       }
 
       const bundleId = detectBundleId(root);
