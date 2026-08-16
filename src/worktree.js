@@ -1,0 +1,132 @@
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
+import { basename, dirname, join } from 'path';
+import { getExecutor } from './exec.js';
+
+export function gitCommonDir(cwd) {
+  const out = getExecutor().runQuiet(`git -C "${cwd}" rev-parse --path-format=absolute --git-common-dir`);
+  return out ? out.trim() : null;
+}
+
+export function repoRoot(cwd) {
+  const out = getExecutor().runQuiet(`git -C "${cwd}" rev-parse --show-toplevel`);
+  return out ? out.trim() : null;
+}
+
+// Sibling of the repo, on the same volume. Not inside the repo: a worktree
+// under the repo root puts a second copy of every package.json inside Metro's
+// watch root, which causes jest-haste-map naming collisions.
+export function defaultWorktreeDir(root) {
+  return join(dirname(root), `${basename(root)}-worktrees`);
+}
+
+export function worktreePath({ worktreeDir, name }) {
+  return join(worktreeDir, name);
+}
+
+// gitignore-style matching, limited to the subset a carry-over list needs:
+// a bare name matches that exact path segment chain, `**/` matches any depth.
+// A `*` requires at least one character, so e.g. `*.env` does not match the
+// bare dotfile `.env` (that is what the literal `.env` pattern is for) -
+// this keeps a wildcard pattern from silently absorbing a more specific one.
+export function matchesInclude(path, patterns) {
+  for (const pattern of patterns || []) {
+    const escaped = pattern
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*\*\//g, '::GLOBSTAR::')
+      .replace(/\*/g, '[^/]+')
+      .replace(/::GLOBSTAR::/g, '(?:.*/)?');
+    const re = new RegExp(`(^|/)${escaped}$`);
+    if (re.test(path)) return true;
+  }
+  return false;
+}
+
+export function readWorktreeInclude(root) {
+  const p = join(root, '.worktreeinclude');
+  if (!existsSync(p)) return null;
+  return readFileSync(p, 'utf-8')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('#'));
+}
+
+export function listGitignoredFiles(root) {
+  const out = getExecutor().runQuiet(
+    `git -C "${root}" ls-files --others --ignored --exclude-standard`
+  );
+  return out ? out.split('\n').filter(Boolean) : [];
+}
+
+// Only files that are BOTH matched by a pattern AND gitignored are copied, so
+// tracked files are never duplicated into the worktree.
+export function carryOverFiles({ root, target, patterns }) {
+  if (!patterns || patterns.length === 0) return [];
+  const copied = [];
+  for (const rel of listGitignoredFiles(root)) {
+    if (!matchesInclude(rel, patterns)) continue;
+    const from = join(root, rel);
+    const to = join(target, rel);
+    try {
+      mkdirSync(dirname(to), { recursive: true });
+      copyFileSync(from, to);
+      copied.push(rel);
+    } catch {
+      // A single unreadable file must not abort worktree creation.
+    }
+  }
+  return copied;
+}
+
+export function hasUncommittedWork(dir) {
+  const out = getExecutor().runQuiet(`git -C "${dir}" status --porcelain`);
+  return Boolean(out && out.trim().length > 0);
+}
+
+// Commits reachable from HEAD but from no remote ref. Removing the worktree
+// would destroy these.
+//
+// HEAD must be passed explicitly: once any revision argument (including a
+// negated one like --not --remotes) is present, `git log` no longer falls
+// back to HEAD on its own, so `git log --oneline --not --remotes` silently
+// returns nothing even when there are unpushed commits. Verified against a
+// real repo (see task-8-report.md).
+export function unpushedCommits(dir) {
+  const out = getExecutor().runQuiet(
+    `git -C "${dir}" log --oneline HEAD --not --remotes`
+  );
+  return out ? out.split('\n').map(l => l.trim()).filter(Boolean) : [];
+}
+
+export function addWorktree({ path, branch, baseRef }) {
+  mkdirSync(dirname(path), { recursive: true });
+  getExecutor().run(`git worktree add "${path}" -b "${branch}" "${baseRef}"`);
+  return path;
+}
+
+export function removeWorktree(path, { force = false } = {}) {
+  const flag = force ? ' --force' : '';
+  getExecutor().run(`git worktree remove${flag} "${path}"`);
+}
+
+export function listWorktrees(cwd) {
+  const out = getExecutor().runQuiet(`git -C "${cwd}" worktree list --porcelain`);
+  if (!out) return [];
+  const entries = [];
+  let current = {};
+  for (const line of out.split('\n')) {
+    if (line.startsWith('worktree ')) {
+      if (current.path) entries.push(current);
+      current = { path: line.slice('worktree '.length) };
+    } else if (line.startsWith('branch ')) {
+      current.branch = line.slice('branch '.length).replace('refs/heads/', '');
+    }
+  }
+  if (current.path) entries.push(current);
+  return entries;
+}
+
+export function resolveBaseRef(cwd, baseRef) {
+  if (baseRef === 'head') return 'HEAD';
+  const head = getExecutor().runQuiet(`git -C "${cwd}" rev-parse --abbrev-ref origin/HEAD`);
+  return head ? head.trim() : 'HEAD';
+}
