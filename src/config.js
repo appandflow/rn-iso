@@ -205,6 +205,19 @@ function deleteNested(obj, dottedKey) {
   return true;
 }
 
+export function setSetupStatus(projectPath, status) {
+  const cfg = ensureConfig();
+  if (!cfg.projects[projectPath]) {
+    cfg.projects[projectPath] = { metroPort: null, metroPid: null, platforms: {} };
+  }
+  cfg.projects[projectPath].setup = status;
+  saveConfig(cfg);
+}
+
+export function getSetupStatus(projectPath) {
+  return getProject(projectPath)?.setup || null;
+}
+
 export function allMetroPorts() {
   const cfg = loadConfig();
   if (!cfg?.projects) return [];

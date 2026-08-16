@@ -15,6 +15,7 @@ import reserveCommand from '../src/commands/reserve.js';
 import unreserveCommand from '../src/commands/unreserve.js';
 import shutdownCommand from '../src/commands/shutdown.js';
 import configCommand from '../src/commands/config.js';
+import worktreeCommand from '../src/commands/worktree.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 
@@ -38,5 +39,6 @@ reserveCommand(program);
 unreserveCommand(program);
 shutdownCommand(program);
 configCommand(program);
+worktreeCommand(program);
 
 program.parse();
