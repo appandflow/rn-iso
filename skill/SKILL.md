@@ -41,6 +41,9 @@ From the project root (or any subdirectory):
 - **Don't call `release` or `release --shutdown`** unless the user explicitly asks. Other agents may be using neighboring sims; keep yours up so the user can come back to it.
 - **Don't manually start Metro on a different port.** `npx rn-iso start` (or `npx rn-iso ios/android`) already handles port assignment.
 - **rn-iso never auto-creates simulators.** It reuses existing unclaimed sims (booted or shutdown) and, on Android, also surfaces any physical device adb can see. If nothing is available, it errors. To create a new iOS sim explicitly, pass `--device-type "iPhone 17 Pro" [--runtime 26.2]`.
+- **Never run `rn-iso gc --delete` without asking the user.** It is the only destructive command in the tool and can erase tens of gigabytes of build output. A bare `rn-iso gc` (no flag) is always safe — it only reports what it would delete.
+- **Never pass `--force` to `rn-iso worktree remove` without asking the user.** A refusal to remove means the worktree holds uncommitted changes, untracked files, or commits that exist on no remote. `--force` discards the uncommitted/untracked state permanently. Push the branch instead, or confirm with the user first.
+- **If `rn-iso worktree list` shows "setup incomplete"**, or `rn-iso ios` / `rn-iso android` warns `worktree setup is incomplete`, the worktree's setup pipeline (e.g. `npm install`) failed when the worktree was created. Read the recorded failing command from that warning and re-run it directly rather than guessing why the build breaks.
 
 ## Typical agent workflow
 
@@ -74,6 +77,31 @@ npx rn-iso unreserve          # drop the project's lock (without shutting down)
 
 Reserve binds the sim to the current project the same way `ios` does, but skips the build/install step. After reserving, `npx rn-iso device` will return that sim's UDID. Other rn-iso projects will see it as claimed.
 
+## Worktrees
+
+**Prefer `npx rn-iso worktree create` over a raw `git worktree add`.** `create` is what performs carry-over of gitignored files (like `.env`), runs the project's setup pipeline (install, etc.), and sets the label that stops monorepo shortcut collisions (every worktree of a monorepo shares the same app-dir basename, e.g. `tlon-mobile`, so without the label their `rn-iso` shortcuts collide). A raw `git worktree add` skips all three, leaving a worktree that looks fine but has no `node_modules`, no `.env`, and a shortcut that fights its siblings.
+
+```bash
+npx rn-iso worktree create <name> [--base fresh|head] [--no-install] [--label <label>]
+npx rn-iso worktree remove <path> [--force]
+npx rn-iso worktree list
+```
+
+- **`create <name>`** — makes a sibling worktree (next to the repo, not inside it — see the README for why), branches it as `worktree-<name>` from `origin/HEAD` (`--base fresh`, the default) or the current `HEAD` (`--base head`), carries over any gitignored files matched by `.worktreeinclude` (or the `worktree.include` setting), then runs the install pipeline (`--no-install` skips it). **Prints only the worktree's absolute path to stdout** — everything else (progress, warnings, failures) goes to stderr, and the command exits 0 even if setup failed, so it's safe to wire into automation (see the README's `WorktreeCreate` hook example). If setup fails or is skipped, the worktree is still created and usable; `rn-iso ios` / `rn-iso android` will warn about it later.
+- **`remove <path>`** — reclaims the worktree's build artifacts, sim/emulator claim, and Metro port, then removes the git worktree. Refuses (exit 1) if the worktree has uncommitted changes, untracked files, or commits not on any remote — see "Refusing to remove" below. Also refuses if `<path>` is the main checkout or not a worktree of the current repo at all.
+- **`list`** — lists this repo's worktrees with a per-worktree setup status: `setup ok`, `setup incomplete`, or `unmanaged` (created outside `rn-iso worktree create`, e.g. by raw `git worktree add`).
+
+## gc — reclaiming disk space
+
+`npx rn-iso gc [--delete] [--older-than <days>]` finds Xcode DerivedData directories left behind by deleted worktrees (matched by the workspace path recorded in each DerivedData entry, not by rn-iso's own config) plus dead `rn-iso` project entries, and reports how much disk space reclaiming them would free.
+
+**`gc` with no flag only reports — it never deletes anything.** Pass `--delete` to actually remove the reported directories and entries; this is the only destructive command in the tool (see the CRITICAL rule above — always ask before running it with `--delete`). `--older-than <days>` narrows the report to artifacts not accessed recently.
+
+The report has three buckets:
+- **Orphaned build artifacts** — DerivedData whose workspace path no longer exists. Deleted (with sizes) under `--delete`.
+- **Dead project entries** — `rn-iso` config entries whose project directory no longer exists. Pruned under `--delete` (same as `rn-iso prune`).
+- **Skipped** — entries `gc` could NOT prove are dead (see "gc reporting entries as skipped" below). Never deleted, even under `--delete`.
+
 ## When things go wrong
 
 - **"No rn-iso assignment for project"** — run `npx rn-iso ios` (or android) first.
@@ -84,13 +112,17 @@ Reserve binds the sim to the current project the same way `ios` does, but skips 
 - **Metro port collision** — `npx rn-iso ios` reclaims dead ports automatically. If you see "port busy by non-Metro process," another tool is using that port; close it.
 - **Sim was deleted** — `npx rn-iso ios` detects the stale assignment and re-allocates.
 - **Detection picked the wrong CLI** (e.g. project has `expo` in deps but uses `react-native run-ios`) — rn-iso prefers your `ios` / `android` script and detects the CLI from its body. Override with `--script <name>` or skip with `--no-script` to force the direct CLI fallback. Override package manager with `--pm <npm|yarn|pnpm|bun>`.
+- **"Refusing to remove `<path>`"** — `rn-iso worktree remove` found uncommitted changes, untracked files, or commits not on any remote in that worktree, and refused rather than risk losing work. Push the branch to fix the "unpushed commits" case. Do not re-run with `--force` without asking the user first — `--force` permanently discards uncommitted changes and untracked files (committed work on the branch is safe either way, since the branch ref survives).
+- **A sim shows `[in use]`** in the iOS picker — a foreign tool (usually a UI-test runner, e.g. XCTest) is actively driving that sim; this is different from `[claimed by ...]`, which means another rn-iso project owns it. `--auto` automatically skips `[in use]` sims. Do not take one over interactively without asking the user first.
+- **`gc` reports entries as "skipped"** — these are directories `gc` could NOT prove are dead: the workspace path lives on an unmounted volume, or its DerivedData metadata (`info.plist`) could not be read. Skipped is a safety outcome, not an error — `gc` fails closed rather than guessing. In particular, since this machine's repos live on an external volume, unplugging that volume makes everything on it show as skipped (never deleted) instead of orphaned.
 
 ## Other useful commands
 
 - `npx rn-iso status` — show all projects, their assignments, and Metro state.
 - `npx rn-iso logs [<port>|<shortcut>|<path>] [-n <lines>] [--follow]` — print the managed Metro log (default: last 50 lines of the current project's). This is where bundle progress, module-resolution errors, and client console logs land. **Check this first on a blank screen or red box** — it's faster than screenshots.
 - `npx rn-iso prune` — remove entries for projects whose directory no longer exists (deleted worktrees), freeing their sims/emulators and ports, and killing any orphaned Metro. Live projects are never touched. Claims from deleted worktrees are also ignored automatically during device selection, so prune is housekeeping, not a prerequisite.
-- `npx rn-iso gc [--delete] [--older-than <days>]` — report Xcode DerivedData left behind by deleted worktrees (matched by workspace path, not by config) plus dead project entries, and how much disk space reclaiming them would free. Reports only by default; **nothing is deleted unless you pass `--delete`**. This is the only destructive command in the tool. `--older-than <days>` limits it to artifacts not accessed recently. Entries the classifier cannot prove are dead (e.g. a volume that is not currently mounted) are listed separately as skipped, never deleted.
+- `npx rn-iso worktree create|remove|list` — create/remove isolated git worktrees with carry-over and setup, or list them. See "Worktrees" above.
+- `npx rn-iso gc [--delete] [--older-than <days>]` — report or reclaim disk space from orphaned build artifacts and dead project entries. See "gc" above.
 - `npx rn-iso start [--reset-cache] [-- <extras...>]` — start Metro detached on the project's assigned port WITHOUT building/installing. `--reset-cache` clears Metro's transform cache. Other extras after `--` are forwarded to `expo start` / `react-native start`.
 - `npx rn-iso stop [<port>|<shortcut>|<path>]` — kill Metro. No arg = current project. Passing a port (e.g. `8083`) kills whatever is on it; a project shortcut (label or unique basename) or absolute path targets that project. Finds the process by port, so it works whether Metro was started by `npx rn-iso start` or by the build CLI.
 - `npx rn-iso release [<port>|<shortcut>|<path>] [--platform <p>] [--shutdown] [--force]` — free a project's sim assignment. Defaults to the current project. Target can also be a Metro port (`8083`) or a shortcut (label / unique basename). `--shutdown` also stops the sim/emulator, but withholds the shutdown (while still releasing the rn-iso claim) if a UI-test runner is actively driving the iOS sim; pass `--force` to shut it down anyway.

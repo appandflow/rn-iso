@@ -31,11 +31,15 @@ State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
 bin/cli.js              # commander entry, registers each command module
 src/
   exec.js               # mockable child_process wrapper
-  config.js             # config CRUD, reservations, sim-usage tracking
+  config.js             # config CRUD, reservations, sim-usage tracking, setup status
+  settings.js           # layered settings resolution (project > repo > committed .rn-iso.json)
   project.js            # project root walk, bundle-id detection (incl. native fallbacks)
   ports.js              # Metro port allocation + reclamation
   runner.js             # script-vs-CLI dispatch, package-manager detection (walks up for monorepos)
   metro.js              # detached Metro spawn, PID + log lifecycle
+  worktree.js           # git worktree add/remove/list, base-ref resolution, carry-over
+  artifacts.js          # Xcode DerivedData discovery/classification, mounted-volume detection
+  reclaim.js            # shared reclaim-a-project logic (used by prune, gc, worktree remove)
   sim/
     ios.js              # simctl wrappers, sim selection, sortSims, parseRuntimeVersion
     android.js          # adb/emulator wrappers, AVD selection
@@ -46,6 +50,8 @@ src/
     device.js           # `rn-iso device --json` -> agent-device target
     release.js shutdown.js prune.js
     reserve.js unreserve.js
+    worktree.js          # worktree create/remove/list
+    gc.js                 # report/reclaim orphaned build artifacts + dead project entries
 test/
   *.test.js             # `node --test` (no framework)
 skill/SKILL.md          # the agent-facing skill
@@ -168,6 +174,34 @@ So symlinked worktrees collapse to the same canonical key as the
 non-symlinked path. Don't add code that compares paths without
 canonicalizing first.
 
+### 8. `worktree create`'s stdout contract
+
+Claude Code's `WorktreeCreate` hook uses whatever the hook command writes to
+stdout as the directory for the new session — and only that. So
+`registerCreate` in `src/commands/worktree.js` prints the worktree's
+absolute path to stdout and NOTHING else: every status line, carry-over
+notice, and setup-pipeline failure goes to `console.error` (stderr)
+instead. It also exits 0 even when the setup pipeline fails — a non-zero
+exit here would make the hook treat worktree creation itself as failed and
+abort the session, when really the worktree exists and is usable, just
+maybe not buildable yet (the failure is recorded via `setSetupStatus` and
+surfaced later by `worktree list` / `ios` / `android`). If you touch this
+command, keep every new `console.log` off the success path and never turn
+a setup failure into a non-zero exit.
+
+### 9. The unmounted-volume guard always fails closed
+
+`classifyDerivedData` (`src/artifacts.js`) and the dead-project sweep in
+`src/commands/gc.js` both resolve ambiguity toward NOT deleting. A
+DerivedData entry whose `WorkspacePath` no longer exists on disk looks
+orphaned — but if it lives on a volume that simply is not mounted right
+now (this machine's repos live on an external SSD that gets unplugged), it
+is not actually gone, and deleting it would destroy live build output. Any
+point where the classifier cannot get a definite answer — an unmounted
+volume, an unreadable `info.plist`, an unresolvable symlinked ancestor —
+routes the entry into `skipped`, never `orphaned`. Preserve that direction
+if you touch this code: on doubt, skip, don't delete.
+
 ## Local development
 
 ```bash
@@ -187,9 +221,10 @@ failure mid-flow leaves the repo recoverable.
 
 ## Commit conventions
 
-- GPG signing is enabled globally — commits sign automatically. Don't pass
-  `--no-gpg-sign`. If you need to re-sign an existing commit (e.g.,
-  someone forgot signing), `git commit --amend --no-edit -S` works.
+- GPG signing is NOT configured on this machine — there is no signing key
+  set up, so a plain `git commit` produces an unsigned commit, and that is
+  correct. Don't pass `--no-gpg-sign` (there is nothing to suppress) and
+  don't try to force signing (`-S`) — it fails with no key configured.
 - Conventional-style prefixes are used (`feat:`, `fix:`, `docs:`,
   `chore:`, `revert:`). Keep titles under ~70 chars; details in the body.
 - One commit per logical change. The post-install removal and the
