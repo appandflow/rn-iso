@@ -23,6 +23,9 @@ import {
   setProjectSetting,
   unsetProjectSetting,
   pruneDeadProjects,
+  getRepoSettings,
+  setRepoSetting,
+  unsetRepoSetting,
 } from '../src/config.js';
 
 let tmpHome;
@@ -55,7 +58,7 @@ test('loadConfig returns null when no file exists', () => {
 
 test('ensureConfig creates and returns empty config', () => {
   const cfg = ensureConfig();
-  assert.deepEqual(cfg, { version: 1, projects: {} });
+  assert.deepEqual(cfg, { version: 2, projects: {}, repos: {} });
   assert.ok(existsSync(join(tmpHome, 'config.json')));
 });
 
@@ -241,4 +244,41 @@ test('getProjectSetting returns undefined for unknown projects / keys', () => {
 
 test('setProjectSetting throws when the project is not registered', () => {
   assert.throws(() => setProjectSetting('/missing', 'packageManager', 'bun'), /not registered/);
+});
+
+// --- Config schema v2 / repo settings ---
+
+test('ensureConfig creates a v2 config with a repos section', () => {
+  const cfg = ensureConfig();
+  assert.equal(cfg.version, 2);
+  assert.deepEqual(cfg.repos, {});
+});
+
+test('migrates a v1 config without touching projects', () => {
+  saveConfig({
+    version: 1,
+    projects: { '/a': { metroPort: 8082, platforms: { ios: { deviceUdid: 'U1' } } } },
+  });
+  const cfg = ensureConfig();
+  assert.equal(cfg.version, 2);
+  assert.deepEqual(cfg.repos, {});
+  assert.deepEqual(cfg.projects['/a'], {
+    metroPort: 8082,
+    platforms: { ios: { deviceUdid: 'U1' } },
+  });
+});
+
+test('repo settings round-trip by git common dir', () => {
+  setRepoSetting('/repo/.git', 'worktreeDir', '/wt');
+  setRepoSetting('/repo/.git', 'worktree.baseRef', 'head');
+  assert.deepEqual(getRepoSettings('/repo/.git'), {
+    worktreeDir: '/wt',
+    worktree: { baseRef: 'head' },
+  });
+  assert.equal(unsetRepoSetting('/repo/.git', 'worktree.baseRef'), true);
+  assert.deepEqual(getRepoSettings('/repo/.git'), { worktreeDir: '/wt' });
+});
+
+test('getRepoSettings returns an empty object for an unknown repo', () => {
+  assert.deepEqual(getRepoSettings('/nope/.git'), {});
 });

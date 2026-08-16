@@ -26,10 +26,26 @@ export function saveConfig(config) {
   writeFileSync(getConfigPath(), JSON.stringify(config, null, 2) + '\n');
 }
 
+const CONFIG_VERSION = 2;
+
 export function ensureConfig() {
   const existing = loadConfig();
-  if (existing) return existing;
-  const fresh = { version: 1, projects: {} };
+  if (existing) {
+    // Migration is additive: add `repos` and bump the version, never rewrite
+    // `projects`. A v1 config carries live device claims we must not lose.
+    let changed = false;
+    if (!existing.repos) {
+      existing.repos = {};
+      changed = true;
+    }
+    if (existing.version !== CONFIG_VERSION) {
+      existing.version = CONFIG_VERSION;
+      changed = true;
+    }
+    if (changed) saveConfig(existing);
+    return existing;
+  }
+  const fresh = { version: CONFIG_VERSION, projects: {}, repos: {} };
   saveConfig(fresh);
   return fresh;
 }
@@ -116,6 +132,30 @@ export function unsetProjectSetting(projectPath, dottedKey) {
   return removed;
 }
 
+// --- Per-repo settings (keyed by git common dir, shared across worktrees) ---
+
+export function getRepoSettings(gitCommonDir) {
+  const cfg = loadConfig();
+  return cfg?.repos?.[gitCommonDir]?.settings || {};
+}
+
+export function setRepoSetting(gitCommonDir, dottedKey, value) {
+  const cfg = ensureConfig();
+  cfg.repos[gitCommonDir] = cfg.repos[gitCommonDir] || {};
+  cfg.repos[gitCommonDir].settings = cfg.repos[gitCommonDir].settings || {};
+  writeNested(cfg.repos[gitCommonDir].settings, dottedKey, value);
+  saveConfig(cfg);
+}
+
+export function unsetRepoSetting(gitCommonDir, dottedKey) {
+  const cfg = loadConfig();
+  const settings = cfg?.repos?.[gitCommonDir]?.settings;
+  if (!settings) return false;
+  const removed = deleteNested(settings, dottedKey);
+  if (removed) saveConfig(cfg);
+  return removed;
+}
+
 function readNested(obj, dottedKey) {
   if (!obj) return undefined;
   const keys = dottedKey.split('.');
@@ -141,14 +181,27 @@ function writeNested(obj, dottedKey, value) {
 
 function deleteNested(obj, dottedKey) {
   const keys = dottedKey.split('.');
+  const chain = [obj];
   let cur = obj;
   for (let i = 0; i < keys.length - 1; i++) {
     if (cur[keys[i]] == null || typeof cur[keys[i]] !== 'object') return false;
     cur = cur[keys[i]];
+    chain.push(cur);
   }
   const leaf = keys[keys.length - 1];
   if (!(leaf in cur)) return false;
   delete cur[leaf];
+  // Prune any intermediate objects left empty by the deletion, so e.g.
+  // removing the only key under `worktree.baseRef` also drops `worktree`.
+  for (let i = chain.length - 2; i >= 0; i--) {
+    const parent = chain[i];
+    const key = keys[i];
+    if (Object.keys(chain[i + 1]).length === 0) {
+      delete parent[key];
+    } else {
+      break;
+    }
+  }
   return true;
 }
 
