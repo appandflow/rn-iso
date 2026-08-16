@@ -193,3 +193,26 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
   assert.equal(getProject(wtDir), null);
   assert.ok(exec.calls.run.some(c => /git worktree remove/.test(c)));
 });
+
+// Regression: in a monorepo, `rn-iso ios` registers a nested app dir (e.g.
+// `<worktree>/apps/mobile`) as its own config key -- a different key from
+// the worktree root that `worktree create` registers. That nested key is
+// where metroPort and the device claim actually live. Reclaiming only the
+// exact `path` argument (the old behaviour) leaves the nested entry, its
+// Metro process, and its port claim to leak until `prune` runs.
+test('action: reclaims a nested monorepo app-dir project registered under the worktree root, not just the root itself', () => {
+  const nestedDir = join(wtDir, 'apps', 'mobile');
+  upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
+  upsertProject(nestedDir, { metroPort: 8085, platforms: { ios: { deviceUdid: 'UDID-1' } } });
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  run(wtDir, {});
+
+  assert.notEqual(process.exitCode, 1);
+  assert.equal(getProject(wtDir), null);
+  assert.equal(getProject(nestedDir), null);
+});

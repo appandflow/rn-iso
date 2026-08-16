@@ -216,7 +216,7 @@ export function setSetupStatus(projectPath, status) {
 
 // True path-segment prefix, not a bare startsWith: "/a/foo-worktrees/x" must
 // not match "/a/foo-worktrees/xy" just because the strings share a prefix.
-function isPathPrefix(prefix, path) {
+export function isPathPrefix(prefix, path) {
   if (prefix === path) return true;
   const withSlash = prefix.endsWith('/') ? prefix : `${prefix}/`;
   return path.startsWith(withSlash);

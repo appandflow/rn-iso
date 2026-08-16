@@ -3,7 +3,7 @@ import { resolve } from 'path';
 import chalk from 'chalk';
 import { detectPackageManager } from '../runner.js';
 import { resolveSettings } from '../settings.js';
-import { getSetupStatus, setSetupStatus, upsertProject } from '../config.js';
+import { getSetupStatus, isPathPrefix, loadConfig, setSetupStatus, upsertProject } from '../config.js';
 import { getExecutor } from '../exec.js';
 import { formatBytes } from '../artifacts.js';
 import { reclaimProject } from '../reclaim.js';
@@ -222,6 +222,41 @@ export function removalBlockers({ dirty, unpushed }) {
   return blockers;
 }
 
+// A monorepo worktree registers more than one config key: `worktree create`
+// registers the worktree root itself, but `rn-iso ios`/`android` run from a
+// nested app dir (e.g. `<worktree>/apps/tlon-mobile`) register THAT path --
+// a different key, since every worktree of a monorepo shares the same app
+// dir basename and needs its own label. That nested key is where
+// `metroPort` and the device claim actually live; the worktree-root entry
+// has `platforms: {}` and `metroPort: null`. Reclaiming only the root key
+// (the old behaviour) frees nothing and leaves the Metro process and its
+// port claim to leak until someone runs `prune`.
+//
+// Reclaims `rootPath` itself plus every registered key that is a
+// path-segment prefix match under it (reusing isPathPrefix from config.js,
+// the same helper findEnclosingWorktreeRoot uses for the inverse lookup),
+// and aggregates the freed devices, killed pids, and artifacts across all
+// of them.
+function reclaimAll(rootPath) {
+  const cfg = loadConfig();
+  const keys = new Set([rootPath]);
+  if (cfg?.projects) {
+    for (const key of Object.keys(cfg.projects)) {
+      if (isPathPrefix(rootPath, key)) keys.add(key);
+    }
+  }
+  const freed = [];
+  const killedPids = [];
+  const artifacts = [];
+  for (const key of keys) {
+    const r = reclaimProject(key, { deleteArtifacts: false });
+    freed.push(...r.freed);
+    if (r.killedPid) killedPids.push(r.killedPid);
+    artifacts.push(...r.artifacts);
+  }
+  return { freed, killedPids, artifacts };
+}
+
 export function registerRemove(worktree) {
   worktree
     .command('remove <target>')
@@ -292,8 +327,11 @@ export function registerRemove(worktree) {
 
       // Find artifacts before the directory disappears; findDerivedDataFor
       // (inside reclaimProject) matches on WorkspacePath prefixes that only
-      // resolve while the path still exists on disk.
-      const result = reclaimProject(path, { deleteArtifacts: false });
+      // resolve while the path still exists on disk. Reclaims the worktree
+      // root AND every nested registered project under it (see reclaimAll
+      // above) so a monorepo's Metro/device claim -- registered under a
+      // nested app dir, not the root -- is not left leaking.
+      const result = reclaimAll(path);
 
       try {
         removeWorktree(path, { force: opts.force });
@@ -310,14 +348,14 @@ export function registerRemove(worktree) {
         console.error(chalk.red(`git worktree remove failed: ${String(e?.message || e)}`));
         console.error(chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`));
         if (result.freed.length) console.error(chalk.dim(`  freed: ${result.freed.join(', ')}`));
-        if (result.killedPid) console.error(chalk.dim(`  killed Metro pid ${result.killedPid}`));
+        for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
         console.error(chalk.dim('Common cause: this command must be run with the shell inside the target repo (any of its worktrees).'));
         process.exitCode = 1;
         return;
       }
       console.log(chalk.green(`Removed worktree ${path}`));
       if (result.freed.length) console.log(chalk.dim(`  freed: ${result.freed.join(', ')}`));
-      if (result.killedPid) console.log(chalk.dim(`  killed Metro pid ${result.killedPid}`));
+      for (const pid of result.killedPids) console.log(chalk.dim(`  killed Metro pid ${pid}`));
 
       // directorySize (behind result.artifacts[].bytes) returns 0 both for a
       // genuinely empty directory and for one it could not measure, so a
