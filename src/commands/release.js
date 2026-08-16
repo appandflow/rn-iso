@@ -4,8 +4,18 @@ import prompts from 'prompts';
 import { resolveRegisteredProject } from '../project.js';
 import { getProject, clearDevice, findProjectByMetroPort } from '../config.js';
 import { findPidListeningOnPort } from '../metro.js';
-import { shutdownIosSim, formatIosLabel } from '../sim/ios.js';
+import { isSimOccupied, shutdownIosSim, formatIosLabel } from '../sim/ios.js';
 import { shutdownAndroidEmulator } from '../sim/android.js';
+
+export function shouldShutdown({ occupied, force }) {
+  if (occupied && !force) {
+    return {
+      shutdown: false,
+      reason: 'simulator is in use by another tool (a UI-test runner is attached)',
+    };
+  }
+  return { shutdown: true, reason: null };
+}
 
 export default function releaseCommand(program) {
   program
@@ -13,6 +23,7 @@ export default function releaseCommand(program) {
     .description('Free a project assignment. [target] is a Metro port (e.g. 8083), a project shortcut (label or unique basename), or an absolute path. Defaults to the current project.')
     .option('--platform <platform>', 'ios or android (default: both)')
     .option('--shutdown', 'Also shut down the simulator/emulator after releasing')
+    .option('--force', 'shut down even if the simulator is in use by another tool')
     .action(async (target, opts) => {
       let found;
       if (target && /^\d+$/.test(target)) {
@@ -44,8 +55,14 @@ export default function releaseCommand(program) {
         }
         if (opts.shutdown) {
           if (p === 'ios') {
-            shutdownIosSim(entry.deviceUdid);
-            console.log(chalk.green(`Shut down iOS sim ${formatIosLabel(entry.deviceUdid)}`));
+            const decision = shouldShutdown({ occupied: isSimOccupied(entry.deviceUdid), force: opts.force });
+            if (decision.shutdown) {
+              shutdownIosSim(entry.deviceUdid);
+              console.log(chalk.green(`Shut down iOS sim ${formatIosLabel(entry.deviceUdid)}`));
+            } else {
+              console.log(chalk.yellow(`Did not shut down ${formatIosLabel(entry.deviceUdid)}: ${decision.reason}.`));
+              console.log(chalk.dim('The rn-iso claim was released. Pass --force to shut it down anyway.'));
+            }
           } else if (entry.avdName && typeof entry.consolePort === 'number') {
             shutdownAndroidEmulator(`emulator-${entry.consolePort}`);
             console.log(chalk.green(`Shut down ${entry.avdName} (emulator-${entry.consolePort})`));
