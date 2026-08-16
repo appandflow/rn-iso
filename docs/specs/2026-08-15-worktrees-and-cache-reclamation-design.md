@@ -81,6 +81,17 @@ src/
     gc.js         # machine-wide orphan sweep
 ```
 
+Existing modules that change:
+
+```
+src/config.js       # v2 migration, `repos` section, shared reclaimProject()
+src/sim/ios.js      # occupancy detection in selectIosDevice
+src/commands/prune.js    # delegate to reclaimProject()
+src/commands/release.js  # withhold shutdown for occupied simulators
+src/commands/ios.js      # warn when setup status is incomplete
+src/commands/android.js  # same
+```
+
 Existing conventions apply: ESM only, all `child_process` through
 `src/exec.js`, pure parsing separated from I/O, ASCII in `src/`, `bin/`,
 `test/`.
@@ -243,7 +254,19 @@ registers as `tlon-mobile` and collides. Confirmed in testing:
 
 ### `worktree remove <name|path>`
 
-`git worktree remove` (with `--force` when dirty), then reclaim:
+Refuses, before touching anything, when the worktree holds work that removal
+would destroy:
+
+- uncommitted changes or untracked files
+- **commits on its branch that are not on any remote**
+
+`--force` overrides. The refusal names what was found and how to keep it
+(push the branch, or re-run with `--force`). This mirrors Claude Code, which
+prompts rather than discarding, and it matters more here than for a plain
+`git worktree remove` because the whole point of the command is that agents
+and phone-spawned sessions call it unattended.
+
+Then `git worktree remove`, then reclaim:
 
 - DerivedData directories whose `WorkspacePath` is under the worktree
 - the rn-iso project entry and its device claims
@@ -262,15 +285,50 @@ identically.
 
 ### `gc`
 
-Machine-wide sweep for DerivedData whose `WorkspacePath` no longer exists.
+Machine-wide sweep for everything left behind by worktrees that no longer
+exist, in one command:
 
-**Reports by default. Deletes only with `--delete`.** This is a different risk
-profile from `prune`, which touches a config entry and a stale PID; `gc`
-deletes tens of gigabytes. `--older-than <days>` filters on `LastAccessedDate`.
+- DerivedData directories whose `WorkspacePath` no longer exists
+- dead rn-iso config entries, their device claims and Metro ports (the same
+  work `prune` does)
+
+**Reports by default. Acts only with `--delete`.** `--older-than <days>`
+filters on `LastAccessedDate`.
+
+`prune` remains as the narrow, always-safe command: config entries only, never
+disk, no flag required. `gc` is the "I am out of disk" button and is the only
+destructive command in the tool. Both call the same `reclaimProject(path)`, so
+`gc` is a superset rather than a reimplementation.
 
 Because `gc` works from `WorkspacePath` alone, it also cleans up after
 worktrees created by Claude Code's built-in `--spawn=worktree` without rn-iso
 ever being involved.
+
+## Device occupancy beyond rn-iso claims
+
+`allClaimedDevices()` only knows about rn-iso's own claims, so a simulator
+another tool is actively driving looks free. During testing rn-iso selected a
+booted simulator that an `agent-device` XCUITest runner was driving, installed
+onto it, and later `release --shutdown` killed it out from under that session.
+
+`selectIosDevice` gains a third state alongside free and claimed:
+**occupied** — booted, unclaimed by rn-iso, but with a foreign runner process
+attached. Detection is a booted simulator with a running
+`*.xctrunner` (or otherwise non-project) app in `launchctl list`.
+
+Behavior:
+
+- `--auto` skips occupied simulators, as it does claimed ones.
+- The interactive picker shows them greyed with an `[in use]` tag and requires
+  the same confirm prompt as a take-over.
+- `release --shutdown` refuses to shut down a simulator that is occupied by a
+  foreign runner, and says so, unless `--force` is passed. Releasing the
+  rn-iso claim still happens; only the shutdown is withheld.
+
+Detection is a heuristic and must fail open: if the probe errors or returns
+nothing parseable, treat the device as free rather than blocking selection.
+The pure classifier over `launchctl list` output is unit-tested; the probe
+around it is thin.
 
 ## Reclamation mechanism
 
@@ -332,11 +390,17 @@ Pure and unit-tested:
 - carry-over matching (gitignore syntax, and the "matched AND gitignored" rule)
 - worktree path computation
 - orphan classification, **including the unmounted-volume case**
+- occupancy classification over `launchctl list` output, including the
+  fail-open path when the probe returns nothing parseable
 
 Exec-mocked:
 
 - `git worktree add` / `remove`, `git rev-parse --git-common-dir`
 - setup pipeline invocation and per-command status recording
+- unpushed-commit detection, and that `worktree remove` refuses without
+  `--force` and proceeds with it
+- that `release --shutdown` withholds shutdown for an occupied simulator but
+  still clears the rn-iso claim
 
 Config:
 
@@ -378,19 +442,23 @@ membership rather than a second login. Where two identities are genuinely
 needed, `EXPO_TOKEN` scoped per repository overrides the stored session — and
 being a secret, it belongs in a carried-over `.env`, never in `.rn-iso.json`.
 
+## Review decisions
+
+Three questions were left open in the first draft and resolved on review
+(2026-08-16). All three are folded into the sections above:
+
+1. **Detect non-rn-iso device occupancy — yes.** See "Device occupancy beyond
+   rn-iso claims". Scoped into this work rather than deferred, because
+   `worktree remove` and `release --shutdown` are exactly the unattended paths
+   that caused the problem.
+
+2. **`worktree remove` refuses on unpushed commits — yes.** See
+   "`worktree remove`". `--force` overrides.
+
+3. **`gc` also handles dead config entries — yes.** See "`gc`". It is a
+   superset of `prune` sharing `reclaimProject`; `prune` stays as the narrow
+   always-safe command.
+
 ## Open questions
 
-1. **Should `selectIosDevice` detect non-rn-iso occupancy?** During testing
-   rn-iso claimed a booted simulator that an `agent-device` XCUITest runner was
-   actively driving, then `release --shutdown` killed it out from under that
-   session. rn-iso only knows about its own claims. A heuristic ("booted with
-   an `xctrunner` process attached" counts as occupied) would help, but this is
-   arguably a separate change from worktree management and is not scoped here.
-
-2. **Should `worktree remove` refuse when the branch has unpushed commits?**
-   `git worktree remove --force` currently discards them. Claude Code prompts
-   in this situation. Leaning toward refusing without `--force` and saying why.
-
-3. **Does `gc` also prune dead config entries**, or stay purely disk-focused
-   and leave that to `prune`? Leaning toward keeping them separate and having
-   `gc` suggest `prune` when it notices dead entries.
+None outstanding.
