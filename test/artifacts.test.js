@@ -289,3 +289,71 @@ test('a workspace path under a symlinked ancestor pointing at an unmounted volum
     rmSync(homeDir, { recursive: true, force: true });
   }
 });
+
+test('a relative WorkspacePath is skipped, not orphaned, even though it looks gone', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-dd-'));
+  try {
+    mkdirSync(join(root, 'App-abcdef'));
+    writeFileSync(join(root, 'App-abcdef', 'info.plist'), 'not a real plist, just needs to exist');
+
+    setExecutor({
+      run: () => {
+        throw new Error('run should not be called by listDerivedDataEntries');
+      },
+      runQuiet: () => JSON.stringify({ WorkspacePath: 'Developer/app/ios/App.xcworkspace' }),
+      spawn: () => {
+        throw new Error('spawn should not be called by listDerivedDataEntries');
+      },
+    });
+
+    const entries = listDerivedDataEntries(root);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].workspacePath, 'Developer/app/ios/App.xcworkspace');
+    assert.equal(entries[0].volumeRoot, null);
+
+    // A naive resolver would prepend "/" to each fabricated ancestor, find
+    // nothing there, and treat the literal string as living on the boot
+    // volume (which is always mounted) -- that must never happen.
+    const result = classifyDerivedData(entries, { mountedVolumes: ['/'] });
+    assert.equal(result.orphaned.length, 0);
+    assert.equal(result.skipped.length, 1);
+    assert.match(result.skipped[0].reason, /not absolute/);
+  } finally {
+    resetExecutor();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a "~"-prefixed WorkspacePath is skipped, not orphaned, even though it looks gone', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-dd-'));
+  try {
+    mkdirSync(join(root, 'App-abcdef'));
+    writeFileSync(join(root, 'App-abcdef', 'info.plist'), 'not a real plist, just needs to exist');
+
+    setExecutor({
+      run: () => {
+        throw new Error('run should not be called by listDerivedDataEntries');
+      },
+      runQuiet: () => JSON.stringify({ WorkspacePath: '~/Developer/app/ios/App.xcworkspace' }),
+      spawn: () => {
+        throw new Error('spawn should not be called by listDerivedDataEntries');
+      },
+    });
+
+    const entries = listDerivedDataEntries(root);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].workspacePath, '~/Developer/app/ios/App.xcworkspace');
+    assert.equal(entries[0].volumeRoot, null);
+
+    // normalize() leaves a leading "~" alone, so lstatSync('/~') throws
+    // ENOENT and a naive resolver would return the literal "~/..." string,
+    // which volumeRootFor then calls the boot volume (always mounted).
+    const result = classifyDerivedData(entries, { mountedVolumes: ['/'] });
+    assert.equal(result.orphaned.length, 0);
+    assert.equal(result.skipped.length, 1);
+    assert.match(result.skipped[0].reason, /not absolute/);
+  } finally {
+    resetExecutor();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -41,8 +41,15 @@ export function volumeRootFor(path) {
 // those calls fail). Returns the normalized, symlink-resolved path, or null
 // if an ancestor is a symlink whose target could not be determined (a real
 // error, not just a missing target) -- callers must not guess in that case.
+// Also returns null for a non-absolute workspacePath (a relative path, or
+// one starting with "~"): the segment walk below only ever lstats fabricated
+// absolute prefixes built by prepending "/", so a relative input would be
+// checked against paths that have nothing to do with it, and volumeRootFor
+// would then misclassify the literal string as living on the boot volume.
 function resolveWorkspaceRealish(workspacePath) {
-  let current = String(workspacePath);
+  const raw = String(workspacePath);
+  if (!raw.startsWith('/')) return null;
+  let current = raw;
   const MAX_HOPS = 40; // guard against symlink cycles
   for (let hops = 0; hops < MAX_HOPS; hops++) {
     const normalized = normalize(current);
@@ -168,9 +175,17 @@ export function listDerivedDataEntries(root = derivedDataRoot()) {
     const info = out ? parseDerivedDataInfo(out) : null;
     const workspacePath = info?.workspacePath || null;
     let volumeRoot;
+    let unresolvedReason;
     if (workspacePath) {
       const realish = resolveWorkspaceRealish(workspacePath);
-      volumeRoot = realish === null ? null : volumeRootFor(realish);
+      if (realish === null) {
+        volumeRoot = null;
+        unresolvedReason = workspacePath.startsWith('/')
+          ? 'could not resolve a symlinked ancestor of the workspace path'
+          : 'workspace path in info.plist is not absolute';
+      } else {
+        volumeRoot = volumeRootFor(realish);
+      }
     }
     entries.push({
       dir,
@@ -178,6 +193,7 @@ export function listDerivedDataEntries(root = derivedDataRoot()) {
       lastAccessed: info?.lastAccessed || null,
       exists: workspacePath ? existsSync(workspacePath) : false,
       volumeRoot,
+      ...(unresolvedReason ? { unresolvedReason } : {}),
     });
   }
   return entries;
@@ -211,10 +227,15 @@ export function classifyDerivedData(entries, { mountedVolumes, now, olderThanDay
     }
     // A symlinked ancestor (e.g. a home-folder path that is itself a symlink
     // onto an external volume) can only be resolved by the impure producer.
-    // entry.volumeRoot === null means it tried and could not resolve one of
-    // those ancestors -- don't fall back to a textual guess.
+    // entry.volumeRoot === null means either it tried and could not resolve
+    // one of those ancestors, or workspacePath was not absolute to begin
+    // with (relative, or "~"-prefixed) -- don't fall back to a textual guess
+    // in either case.
     if (entry.volumeRoot === null) {
-      skipped.push({ ...entry, reason: 'could not resolve a symlinked ancestor of the workspace path' });
+      skipped.push({
+        ...entry,
+        reason: entry.unresolvedReason || 'could not resolve a symlinked ancestor of the workspace path',
+      });
       continue;
     }
     const volume = entry.volumeRoot != null ? entry.volumeRoot : volumeRootFor(entry.workspacePath);
