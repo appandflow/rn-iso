@@ -140,7 +140,7 @@ export function registerCreate(worktree) {
 
       const baseRef = resolveBaseRef(root, opts.base || settings?.worktree?.baseRef || 'fresh');
       try {
-        addWorktree({ path: target, branch: `worktree-${name}`, baseRef });
+        addWorktree({ path: target, branch: `worktree-${name}`, baseRef, cwd: root });
       } catch (e) {
         console.error(String(e?.message || e));
         process.exitCode = 1;

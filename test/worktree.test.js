@@ -290,6 +290,57 @@ test('addWorktree builds the correct command for a path containing a space', () 
   }
 });
 
+// Regression for `create -> remove -> create` with the same name: `git
+// worktree remove` deletes the worktree directory but never the branch, so
+// a second create with the same name used to hit git's "branch already
+// exists" error on `-b`. addWorktree must detect that and attach instead.
+test('addWorktree attaches to an existing branch instead of erroring on -b', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'rn-iso-test-add-reuse-'));
+  try {
+    const path = join(tmp, 'repo2');
+    const calls = [];
+    setExecutor({
+      run: (cmd) => {
+        calls.push(cmd);
+        return '';
+      },
+      // Simulate the branch already existing (left behind by an earlier
+      // `worktree remove`): rev-parse --verify succeeds and prints a sha.
+      runQuiet: (cmd) => (/rev-parse --verify --quiet/.test(cmd) ? 'deadbeef' : ''),
+      spawn: () => {},
+    });
+
+    const result = addWorktree({ path, branch: 'worktree-fix-login', baseRef: 'origin/main', cwd: tmp });
+
+    assert.equal(result, path);
+    assert.deepEqual(calls, [`git worktree add "${path}" "worktree-fix-login"`]);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('addWorktree uses -b for a genuinely new branch name', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'rn-iso-test-add-fresh-'));
+  try {
+    const path = join(tmp, 'repo3');
+    const calls = [];
+    setExecutor({
+      run: (cmd) => {
+        calls.push(cmd);
+        return '';
+      },
+      runQuiet: () => null, // branch does not exist
+      spawn: () => {},
+    });
+
+    addWorktree({ path, branch: 'worktree-new-thing', baseRef: 'origin/main', cwd: tmp });
+
+    assert.deepEqual(calls, [`git worktree add "${path}" -b "worktree-new-thing" "origin/main"`]);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('removeWorktree includes --force only when asked, for a path containing a space', () => {
   const path = '/tmp/my worktree/repo';
   const calls = [];

@@ -148,9 +148,29 @@ export function hasRemote(dir) {
   return Boolean(out && out.trim().length > 0);
 }
 
-export function addWorktree({ path, branch, baseRef }) {
+// True when `branch` already exists in the repo at `cwd`. Used by
+// addWorktree so a `create -> remove -> create` cycle with the same name
+// does not fail: `git worktree remove` deletes the worktree directory but
+// never the branch, so a second `-b worktree-<name>` collides with the
+// branch left behind by the first.
+export function branchExists(cwd, branch) {
+  const out = getExecutor().runQuiet(`git -C "${cwd}" rev-parse --verify --quiet "refs/heads/${branch}"`);
+  return Boolean(out);
+}
+
+export function addWorktree({ path, branch, baseRef, cwd }) {
   mkdirSync(dirname(path), { recursive: true });
-  getExecutor().run(`git worktree add "${path}" -b "${branch}" "${baseRef}"`);
+  // Name reuse is likely from phone/agent-spawned sessions ("fix-login",
+  // "bugfix"): if the branch this worktree would use already exists (left
+  // behind by an earlier `remove`), attach to it instead of erroring on
+  // `-b` for a branch that is already taken. `baseRef` is meaningless once
+  // attaching to an existing branch, so it is only used on the fresh-branch
+  // path.
+  if (branchExists(cwd || dirname(path), branch)) {
+    getExecutor().run(`git worktree add "${path}" "${branch}"`);
+  } else {
+    getExecutor().run(`git worktree add "${path}" -b "${branch}" "${baseRef}"`);
+  }
   return path;
 }
 
