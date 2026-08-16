@@ -88,7 +88,7 @@ function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees 
     calls: { run: runCalls, runQuiet: runQuietCalls },
     run(cmd) {
       runCalls.push(cmd);
-      if (/git worktree remove/.test(cmd)) return '';
+      if (/worktree remove/.test(cmd)) return '';
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet(cmd) {
@@ -133,7 +133,7 @@ test('action: refuses on the main checkout, leaving config untouched and never c
 
   assert.equal(process.exitCode, 1);
   assert.deepEqual(getProject(mainDir), before);
-  assert.ok(!exec.calls.run.some(c => /git worktree remove/.test(c)));
+  assert.ok(!exec.calls.run.some(c => /worktree remove/.test(c)));
 });
 
 test('action: --force does not bypass the main-checkout refusal', () => {
@@ -147,7 +147,7 @@ test('action: --force does not bypass the main-checkout refusal', () => {
 
   assert.equal(process.exitCode, 1);
   assert.deepEqual(getProject(mainDir), before);
-  assert.ok(!exec.calls.run.some(c => /git worktree remove/.test(c)));
+  assert.ok(!exec.calls.run.some(c => /worktree remove/.test(c)));
 });
 
 test('action: refuses when git cannot answer the status check, leaving config untouched', () => {
@@ -164,7 +164,7 @@ test('action: refuses when git cannot answer the status check, leaving config un
 
   assert.equal(process.exitCode, 1);
   assert.deepEqual(getProject(wtDir), before);
-  assert.ok(!exec.calls.run.some(c => /git worktree remove/.test(c)));
+  assert.ok(!exec.calls.run.some(c => /worktree remove/.test(c)));
 });
 
 test('action: on success, reclaimProject clears rn-iso tracking before removeWorktree runs', () => {
@@ -179,7 +179,7 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
   // every pure removalBlockers test above would still pass unchanged.
   const originalRun = exec.run.bind(exec);
   exec.run = (cmd) => {
-    if (/git worktree remove/.test(cmd)) {
+    if (/worktree remove/.test(cmd)) {
       assert.equal(getProject(wtDir), null, 'reclaimProject must run before removeWorktree');
     }
     return originalRun(cmd);
@@ -191,7 +191,7 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
 
   assert.notEqual(process.exitCode, 1);
   assert.equal(getProject(wtDir), null);
-  assert.ok(exec.calls.run.some(c => /git worktree remove/.test(c)));
+  assert.ok(exec.calls.run.some(c => /worktree remove/.test(c)));
 });
 
 // Regression: in a monorepo, `rn-iso ios` registers a nested app dir (e.g.

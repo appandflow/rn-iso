@@ -349,7 +349,6 @@ export function registerRemove(worktree) {
         console.error(chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`));
         if (result.freed.length) console.error(chalk.dim(`  freed: ${result.freed.join(', ')}`));
         for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
-        console.error(chalk.dim('Common cause: this command must be run with the shell inside the target repo (any of its worktrees).'));
         process.exitCode = 1;
         return;
       }

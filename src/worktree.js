@@ -156,7 +156,12 @@ export function addWorktree({ path, branch, baseRef }) {
 
 export function removeWorktree(path, { force = false } = {}) {
   const flag = force ? ' --force' : '';
-  getExecutor().run(`git worktree remove${flag} "${path}"`);
+  // `-C`-scoped, not a bare `git worktree remove`: the bare form depends on
+  // process.cwd() being inside the repo, which is not guaranteed for an
+  // unattended agent/phone-spawned invocation (the primary use case here).
+  // Validation just above (in registerRemove) already uses `git -C
+  // "${path}" worktree list`; this matches that.
+  getExecutor().run(`git -C "${path}" worktree remove${flag} "${path}"`);
 }
 
 export function listWorktrees(cwd) {

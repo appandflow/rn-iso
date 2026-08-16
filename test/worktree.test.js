@@ -306,7 +306,7 @@ test('removeWorktree includes --force only when asked, for a path containing a s
   removeWorktree(path, { force: true });
 
   assert.deepEqual(calls, [
-    `git worktree remove "${path}"`,
-    `git worktree remove --force "${path}"`,
+    `git -C "${path}" worktree remove "${path}"`,
+    `git -C "${path}" worktree remove --force "${path}"`,
   ]);
 });
