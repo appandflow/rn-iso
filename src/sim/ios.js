@@ -71,9 +71,45 @@ export function sortSims(sims, usage = {}) {
   });
 }
 
-export function selectIosDevice({ existingUdid, claimedUdids, usage = {} }) {
+// launchctl lines look like:
+//   082a\t0\tUIKitApplication:com.example.app[082a][rb-legacy]
+// A foreign UI-test runner holding the sim is the case we care about. Apple's
+// own system apps are always present and mean nothing.
+export function parseOccupyingApps(launchctlOutput) {
+  if (typeof launchctlOutput !== 'string' || launchctlOutput.length === 0) return [];
+  const ids = [];
+  for (const line of launchctlOutput.split('\n')) {
+    const m = line.match(/UIKitApplication:([^[\s]+)/);
+    if (!m) continue;
+    const bundleId = m[1];
+    if (bundleId.startsWith('com.apple.')) continue;
+    if (!/\.xctrunner$/.test(bundleId)) continue;
+    ids.push(bundleId);
+  }
+  return ids;
+}
+
+// Heuristic, and deliberately fails open: if the probe errors we report "not
+// occupied" so a bad probe can never block device selection entirely.
+export function isSimOccupied(udid) {
+  const out = getExecutor().runQuiet(`xcrun simctl spawn ${udid} launchctl list`);
+  return parseOccupyingApps(out).length > 0;
+}
+
+export function findOccupiedSims(udids) {
+  return udids.filter(udid => {
+    try {
+      return isSimOccupied(udid);
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function selectIosDevice({ existingUdid, claimedUdids, occupiedUdids = [], usage = {} }) {
   const sims = listAllIosSims();
   const claimed = new Set(claimedUdids);
+  const occupied = new Set(occupiedUdids);
 
   if (existingUdid) {
     const found = sims.find(s => s.udid === existingUdid);
@@ -84,14 +120,16 @@ export function selectIosDevice({ existingUdid, claimedUdids, usage = {} }) {
 
   if (sims.length === 0) return { kind: 'noSims' };
 
-  const unclaimed = sims.filter(s => !claimed.has(s.udid));
-  if (unclaimed.length === 0) {
-    // Sims exist but every one is claimed by another project or a
-    // reservation. The picker can offer to steal one; the caller decides.
-    return { kind: 'allClaimed', candidates: sortSims(sims, usage) };
+  const annotate = list => list.map(s => ({ ...s, occupied: occupied.has(s.udid) }));
+
+  const available = sims.filter(s => !claimed.has(s.udid) && !occupied.has(s.udid));
+  if (available.length === 0) {
+    // Every sim is claimed by another project, held by a reservation, or busy
+    // with a foreign runner. The picker can offer to take one over.
+    return { kind: 'allClaimed', candidates: annotate(sortSims(sims, usage)) };
   }
 
-  return { kind: 'allocate', candidates: sortSims(unclaimed, usage) };
+  return { kind: 'allocate', candidates: annotate(sortSims(available, usage)) };
 }
 
 export function parseRuntimeVersion(runtimeId) {

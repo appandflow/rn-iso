@@ -5,7 +5,7 @@ import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage } f
 import { getProject, upsertProject, setMetro, setDevice, clearDevice, allClaimedDevices, recordSimUsage, getSimUsage } from '../config.js';
 import { allocatePort, isMetroRunning } from '../ports.js';
 import { ensureMetro, logFileFor } from '../metro.js';
-import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion, listAllIosSims, sortSims, formatIosLabel } from '../sim/ios.js';
+import { selectIosDevice, bootIosSim, listIosRuntimes, createIosSim, parseRuntimeVersion, listAllIosSims, sortSims, formatIosLabel, findOccupiedSims, listBootedIosSims } from '../sim/ios.js';
 import { buildIosCommand, detectPackageManager } from '../runner.js';
 import { getExecutor } from '../exec.js';
 import { resolveLabel } from '../labels.js';
@@ -85,9 +85,14 @@ export default function iosCommand(program) {
       const ownUdid = proj.platforms?.ios?.deviceUdid;
       const claimed = claimedDevices.iosUdids.filter(u => u !== ownUdid);
       const usage = getSimUsage().ios || {};
+      // Only booted sims can be occupied by a foreign runner, and only ones
+      // we have not already claimed ourselves are worth probing.
+      const bootedUdids = listBootedIosSims().map(s => s.udid);
+      const occupiedUdids = findOccupiedSims(bootedUdids.filter(u => !claimed.includes(u)));
       const selection = selectIosDevice({
         existingUdid: ownUdid || null,
         claimedUdids: claimed,
+        occupiedUdids,
         usage,
       });
 
@@ -107,6 +112,7 @@ export default function iosCommand(program) {
           : await pickSim({
               candidates: selection.candidates,
               iosClaims: claimedDevices.iosClaims,
+              occupiedUdids,
               usage,
             });
         udid = picked.sim.udid;
@@ -134,6 +140,7 @@ export default function iosCommand(program) {
           const picked = await pickSim({
             candidates: [],
             iosClaims: claimedDevices.iosClaims,
+            occupiedUdids,
             usage,
             allClaimed: true,
           });
@@ -193,12 +200,13 @@ export default function iosCommand(program) {
     });
 }
 
-async function pickSim({ candidates, iosClaims = {}, usage = {}, allClaimed = false }) {
+async function pickSim({ candidates, iosClaims = {}, occupiedUdids = [], usage = {}, allClaimed = false }) {
   // Show ALL sims so the user has full context. Unclaimed candidates pick
-  // immediately; claimed sims are selectable too but require a confirm
-  // prompt so the steal is intentional.
+  // immediately; claimed and occupied sims are selectable too but require a
+  // confirm prompt so the steal is intentional.
   const allSims = listAllIosSims();
   const candidateUdids = new Set(candidates.map(s => s.udid));
+  const occupied = new Set(occupiedUdids);
   const sorted = sortSims(allSims, usage);
 
   const nameWidth = Math.max(...sorted.map(s => s.name.length), 18);
@@ -211,7 +219,14 @@ async function pickSim({ candidates, iosClaims = {}, usage = {}, allClaimed = fa
       const stateTag = s.state === 'Booted' ? chalk.green(' [booted]') : '';
       return {
         title: chalk.yellow(`${namePart}  ${versionPart}  [claimed by ${claim.label}]${stateTag}`),
-        value: { sim: s, claim },
+        value: { sim: s, claim, occupied: false },
+      };
+    }
+    if (occupied.has(s.udid)) {
+      const stateTag = s.state === 'Booted' ? chalk.green(' [booted]') : '';
+      return {
+        title: chalk.yellow(`${namePart}  ${versionPart}  [in use]${stateTag}`),
+        value: { sim: s, claim: null, occupied: true },
       };
     }
     const stateTag = s.state === 'Booted' ? chalk.green('  [booted]') : '';
@@ -221,12 +236,12 @@ async function pickSim({ candidates, iosClaims = {}, usage = {}, allClaimed = fa
     }
     return {
       title: `${namePart}  ${chalk.dim(versionPart)}${stateTag}`,
-      value: { sim: s, claim: null },
+      value: { sim: s, claim: null, occupied: false },
     };
   });
   const message = allClaimed
-    ? 'All sims are claimed. Pick one to take over:'
-    : 'Pick a simulator (claimed sims will prompt to confirm):';
+    ? 'All sims are claimed or in use. Pick one to take over:'
+    : 'Pick a simulator (claimed/in-use sims will prompt to confirm):';
   const answer = await prompts({
     type: 'select',
     name: 'pick',
@@ -237,7 +252,7 @@ async function pickSim({ candidates, iosClaims = {}, usage = {}, allClaimed = fa
     console.error(chalk.red('Cancelled.'));
     process.exit(1);
   }
-  const { sim, claim } = answer.pick;
+  const { sim, claim, occupied: isOccupied } = answer.pick;
   if (claim) {
     const confirm = await prompts({
       type: 'confirm',
@@ -250,6 +265,18 @@ async function pickSim({ candidates, iosClaims = {}, usage = {}, allClaimed = fa
       process.exit(1);
     }
     return { sim, prevClaim: claim };
+  }
+  if (isOccupied) {
+    const confirm = await prompts({
+      type: 'confirm',
+      name: 'ok',
+      message: `${sim.name} appears to be in use by another process (e.g. a UI test runner). Take it over anyway?`,
+      initial: false,
+    });
+    if (!confirm.ok) {
+      console.error(chalk.red('Cancelled.'));
+      process.exit(1);
+    }
   }
   return { sim, prevClaim: null };
 }

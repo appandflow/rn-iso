@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
-import { parseSimctlList, selectIosDevice, listAllIosSims, listBootedIosSims, sortSims, deviceFamilyRank } from '../src/sim/ios.js';
+import { parseSimctlList, selectIosDevice, listAllIosSims, listBootedIosSims, sortSims, deviceFamilyRank, parseOccupyingApps } from '../src/sim/ios.js';
 
 let tmpHome;
 
@@ -206,4 +206,57 @@ test('sortSims uses numeric runtime compare (26.10 newer than 26.5)', () => {
   ];
   const sorted = sortSims(sims);
   assert.deepEqual(sorted.map(s => s.udid), ['V10', 'V5']);
+});
+
+test('parseOccupyingApps finds xctrunner bundles', () => {
+  const out = [
+    '507e\t0\tUIKitApplication:com.apple.Spotlight[507e][rb-legacy]',
+    '082a\t0\tUIKitApplication:com.callstack.agentdevice.runner.uitests.xctrunner[082a][rb-legacy]',
+  ].join('\n');
+  assert.deepEqual(parseOccupyingApps(out), ['com.callstack.agentdevice.runner.uitests.xctrunner']);
+});
+
+test('parseOccupyingApps ignores apple system apps', () => {
+  const out = '507e\t0\tUIKitApplication:com.apple.Spotlight[507e][rb-legacy]';
+  assert.deepEqual(parseOccupyingApps(out), []);
+});
+
+test('parseOccupyingApps fails open on unparseable output', () => {
+  assert.deepEqual(parseOccupyingApps(''), []);
+  assert.deepEqual(parseOccupyingApps(null), []);
+});
+
+test('selectIosDevice excludes occupied sims from allocation', () => {
+  setExecutor({
+    run: () => JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+          { udid: 'FREE', name: 'iPhone 17', state: 'Shutdown', isAvailable: true },
+          { udid: 'BUSY', name: 'iPhone 17 Pro', state: 'Booted', isAvailable: true },
+        ],
+      },
+    }),
+    runQuiet: () => null,
+    spawn: () => {},
+  });
+  const result = selectIosDevice({ claimedUdids: [], occupiedUdids: ['BUSY'] });
+  assert.equal(result.kind, 'allocate');
+  assert.deepEqual(result.candidates.map(c => c.udid), ['FREE']);
+});
+
+test('selectIosDevice reports allClaimed when every sim is claimed or occupied', () => {
+  setExecutor({
+    run: () => JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+          { udid: 'BUSY', name: 'iPhone 17 Pro', state: 'Booted', isAvailable: true },
+        ],
+      },
+    }),
+    runQuiet: () => null,
+    spawn: () => {},
+  });
+  const result = selectIosDevice({ claimedUdids: [], occupiedUdids: ['BUSY'] });
+  assert.equal(result.kind, 'allClaimed');
+  assert.equal(result.candidates[0].occupied, true);
 });
