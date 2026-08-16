@@ -138,6 +138,19 @@ export function listMountedVolumes({ statFn = statSync } = {}) {
 // unmeasured directory is never deleted.
 const SHELL_METACHARS = /[`$"\\]/;
 
+// Impure. `plutil -convert json` fails outright on a real Xcode info.plist
+// because LastAccessedDate is stored as a plist <date>, which JSON cannot
+// represent. Per-key -extract does not have that problem, so this pulls just
+// the two keys we need. Note: `plutil -extract <key>` on a missing key does
+// NOT fail cleanly -- it prints an error string like "<path>: Could not
+// extract value, error: No value at that key path or invalid key path:
+// NoSuchKey" and still exits with output on stdout, so callers must validate
+// the returned value rather than trust that a non-null return means success.
+function extractPlistValue(exec, plist, key) {
+  const out = exec.runQuiet(`plutil -extract ${key} raw -o - "${plist}"`);
+  return typeof out === 'string' ? out : null;
+}
+
 export function listDerivedDataEntries(root = derivedDataRoot()) {
   const exec = getExecutor();
   let names;
@@ -171,8 +184,16 @@ export function listDerivedDataEntries(root = derivedDataRoot()) {
       });
       continue;
     }
-    const out = exec.runQuiet(`plutil -convert json -o - "${plist}"`);
-    const info = out ? parseDerivedDataInfo(out) : null;
+    // The error string plutil prints for a missing key never starts with
+    // "/", so this doubles as the "did extraction actually succeed" check.
+    const rawWorkspacePath = extractPlistValue(exec, plist, 'WorkspacePath');
+    const workspacePathValid = typeof rawWorkspacePath === 'string' && rawWorkspacePath.startsWith('/');
+    const rawLastAccessed = extractPlistValue(exec, plist, 'LastAccessedDate');
+    const plistJson = JSON.stringify({
+      WorkspacePath: workspacePathValid ? rawWorkspacePath : undefined,
+      LastAccessedDate: rawLastAccessed || undefined,
+    });
+    const info = parseDerivedDataInfo(plistJson);
     const workspacePath = info?.workspacePath || null;
     let volumeRoot;
     let unresolvedReason;

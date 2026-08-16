@@ -99,10 +99,7 @@ function installExecutor(entries) {
   const sizes = {};
   for (const e of entries) {
     if (e.workspacePath !== undefined) {
-      plists[e.plistPath] = JSON.stringify({
-        WorkspacePath: e.workspacePath,
-        LastAccessedDate: '2026-01-01T00:00:00Z',
-      });
+      plists[e.plistPath] = { workspacePath: e.workspacePath, lastAccessed: '2026-01-01T00:00:00Z' };
     }
     if (e.kb !== undefined) sizes[e.dir] = e.kb;
   }
@@ -111,10 +108,18 @@ function installExecutor(entries) {
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet(cmd) {
-      const plutilMatch = cmd.match(/^plutil -convert json -o - "(.+)"$/);
-      if (plutilMatch) {
-        const v = plists[plutilMatch[1]];
-        return v !== undefined ? v : null;
+      // Mirrors the real plutil binary's per-key -extract, which
+      // listDerivedDataEntries uses instead of a whole-file -convert json
+      // (that fails on a real info.plist because LastAccessedDate is a
+      // plist <date>, which JSON cannot represent).
+      const extractMatch = cmd.match(/^plutil -extract (\w+) raw -o - "(.+)"$/);
+      if (extractMatch) {
+        const [, key, path] = extractMatch;
+        const entry = plists[path];
+        if (!entry) return null;
+        if (key === 'WorkspacePath') return entry.workspacePath;
+        if (key === 'LastAccessedDate') return entry.lastAccessed;
+        return null;
       }
       const duMatch = cmd.match(/^du -sk "(.+)"$/);
       if (duMatch) {

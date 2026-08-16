@@ -12,6 +12,27 @@ import {
 } from '../src/artifacts.js';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 
+// listDerivedDataEntries reads WorkspacePath and LastAccessedDate via two
+// separate `plutil -extract <key> raw -o -` calls (see artifacts.js for why
+// a single `plutil -convert json` call cannot be used). This builds a mock
+// executor that answers those two calls from fixed values, the way the real
+// plutil binary would once its output has already been extracted.
+function mockPlutilExtractExecutor({ workspacePath = null, lastAccessed = null } = {}) {
+  return {
+    run: () => {
+      throw new Error('run should not be called by listDerivedDataEntries');
+    },
+    runQuiet: cmd => {
+      if (cmd.includes('-extract WorkspacePath')) return workspacePath;
+      if (cmd.includes('-extract LastAccessedDate')) return lastAccessed;
+      throw new Error(`unexpected command passed to runQuiet: ${cmd}`);
+    },
+    spawn: () => {
+      throw new Error('spawn should not be called by listDerivedDataEntries');
+    },
+  };
+}
+
 test('parses WorkspacePath and LastAccessedDate from plutil json', () => {
   const json = JSON.stringify({
     WorkspacePath: '/Volumes/ExternalSSD/Developer/app/ios/App.xcworkspace',
@@ -193,15 +214,7 @@ test('listDerivedDataEntries skips shared caches that have no info.plist', () =>
     mkdirSync(join(root, 'App-abcdef'));
     writeFileSync(join(root, 'App-abcdef', 'info.plist'), 'not a real plist, just needs to exist');
 
-    setExecutor({
-      run: () => {
-        throw new Error('run should not be called by listDerivedDataEntries');
-      },
-      runQuiet: () => JSON.stringify({ WorkspacePath: '/Users/j/Developer/App/App.xcworkspace' }),
-      spawn: () => {
-        throw new Error('spawn should not be called by listDerivedDataEntries');
-      },
-    });
+    setExecutor(mockPlutilExtractExecutor({ workspacePath: '/Users/j/Developer/App/App.xcworkspace' }));
 
     const entries = listDerivedDataEntries(root);
     assert.deepEqual(entries.map(e => e.dir), [join(root, 'App-abcdef')]);
@@ -259,15 +272,7 @@ test('a workspace path under a symlinked ancestor pointing at an unmounted volum
     symlinkSync('/Volumes/UnmountedTestVolume/Developer', symlinkedAncestor);
     const workspacePath = join(symlinkedAncestor, 'app/ios/App.xcworkspace');
 
-    setExecutor({
-      run: () => {
-        throw new Error('run should not be called by listDerivedDataEntries');
-      },
-      runQuiet: () => JSON.stringify({ WorkspacePath: workspacePath }),
-      spawn: () => {
-        throw new Error('spawn should not be called by listDerivedDataEntries');
-      },
-    });
+    setExecutor(mockPlutilExtractExecutor({ workspacePath }));
 
     const entries = listDerivedDataEntries(root);
     assert.equal(entries.length, 1);
@@ -296,20 +301,17 @@ test('a relative WorkspacePath is skipped, not orphaned, even though it looks go
     mkdirSync(join(root, 'App-abcdef'));
     writeFileSync(join(root, 'App-abcdef', 'info.plist'), 'not a real plist, just needs to exist');
 
-    setExecutor({
-      run: () => {
-        throw new Error('run should not be called by listDerivedDataEntries');
-      },
-      runQuiet: () => JSON.stringify({ WorkspacePath: 'Developer/app/ios/App.xcworkspace' }),
-      spawn: () => {
-        throw new Error('spawn should not be called by listDerivedDataEntries');
-      },
-    });
+    // A real `plutil -extract WorkspacePath raw` on a genuine Xcode plist
+    // never returns a relative path, but the extraction is validated
+    // (non-empty, starts with "/") before it is trusted, so a relative
+    // value is treated the same as a failed extraction -- unreadable, not
+    // a workspace path to reason about further.
+    setExecutor(mockPlutilExtractExecutor({ workspacePath: 'Developer/app/ios/App.xcworkspace' }));
 
     const entries = listDerivedDataEntries(root);
     assert.equal(entries.length, 1);
-    assert.equal(entries[0].workspacePath, 'Developer/app/ios/App.xcworkspace');
-    assert.equal(entries[0].volumeRoot, null);
+    assert.equal(entries[0].workspacePath, null);
+    assert.equal(entries[0].volumeRoot, undefined);
 
     // A naive resolver would prepend "/" to each fabricated ancestor, find
     // nothing there, and treat the literal string as living on the boot
@@ -317,7 +319,7 @@ test('a relative WorkspacePath is skipped, not orphaned, even though it looks go
     const result = classifyDerivedData(entries, { mountedVolumes: ['/'] });
     assert.equal(result.orphaned.length, 0);
     assert.equal(result.skipped.length, 1);
-    assert.match(result.skipped[0].reason, /not absolute/);
+    assert.match(result.skipped[0].reason, /unreadable/);
   } finally {
     resetExecutor();
     rmSync(root, { recursive: true, force: true });
@@ -330,30 +332,61 @@ test('a "~"-prefixed WorkspacePath is skipped, not orphaned, even though it look
     mkdirSync(join(root, 'App-abcdef'));
     writeFileSync(join(root, 'App-abcdef', 'info.plist'), 'not a real plist, just needs to exist');
 
-    setExecutor({
-      run: () => {
-        throw new Error('run should not be called by listDerivedDataEntries');
-      },
-      runQuiet: () => JSON.stringify({ WorkspacePath: '~/Developer/app/ios/App.xcworkspace' }),
-      spawn: () => {
-        throw new Error('spawn should not be called by listDerivedDataEntries');
-      },
-    });
+    // Same reasoning as the relative-path case above: a "~"-prefixed value
+    // is not an absolute path either, so it never gets far enough to reach
+    // the symlink resolver -- it is unreadable at the extraction-validation
+    // stage.
+    setExecutor(mockPlutilExtractExecutor({ workspacePath: '~/Developer/app/ios/App.xcworkspace' }));
 
     const entries = listDerivedDataEntries(root);
     assert.equal(entries.length, 1);
-    assert.equal(entries[0].workspacePath, '~/Developer/app/ios/App.xcworkspace');
-    assert.equal(entries[0].volumeRoot, null);
+    assert.equal(entries[0].workspacePath, null);
+    assert.equal(entries[0].volumeRoot, undefined);
 
-    // normalize() leaves a leading "~" alone, so lstatSync('/~') throws
-    // ENOENT and a naive resolver would return the literal "~/..." string,
-    // which volumeRootFor then calls the boot volume (always mounted).
     const result = classifyDerivedData(entries, { mountedVolumes: ['/'] });
     assert.equal(result.orphaned.length, 0);
     assert.equal(result.skipped.length, 1);
-    assert.match(result.skipped[0].reason, /not absolute/);
+    assert.match(result.skipped[0].reason, /unreadable/);
   } finally {
     resetExecutor();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('listDerivedDataEntries reads a real Xcode-style info.plist with the real plutil binary', () => {
+  // Regression test for the bug that shipped: `plutil -convert json` fails
+  // outright on a real Xcode info.plist because LastAccessedDate is a
+  // plist <date>, which JSON cannot represent -- so runQuiet returned null
+  // and every real DerivedData directory came back "unreadable". This test
+  // deliberately does NOT call setExecutor: it exercises the real plutil
+  // binary against a genuine XML plist containing a WorkspacePath string
+  // and a LastAccessedDate date, the same shape as a real info.plist. It
+  // must fail against the old whole-file `-convert json` implementation
+  // and pass against the per-key `-extract` fix.
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-dd-'));
+  try {
+    const entryDir = join(root, 'App-abcdef');
+    mkdirSync(entryDir);
+    const workspacePath = '/Users/j/Developer/App/ios/App.xcworkspace';
+    const plistXml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>WorkspacePath</key>
+	<string>${workspacePath}</string>
+	<key>LastAccessedDate</key>
+	<date>2026-08-03T21:38:12Z</date>
+</dict>
+</plist>
+`;
+    writeFileSync(join(entryDir, 'info.plist'), plistXml);
+
+    const entries = listDerivedDataEntries(root);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].workspacePath, workspacePath);
+    assert.equal(entries[0].lastAccessed instanceof Date, true);
+    assert.equal(isNaN(entries[0].lastAccessed.getTime()), false);
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
