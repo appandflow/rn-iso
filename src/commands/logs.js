@@ -32,7 +32,7 @@ export default function logsCommand(program) {
       const path = logFileFor(root);
       if (!existsSync(path)) {
         console.error(chalk.red(`No Metro log for ${root}.`));
-        console.error(chalk.dim('The log is created when rn-iso starts Metro (rn-iso ios / android / start).'));
+        console.error(chalk.dim('The log is created when rn-iso starts Metro (rn-iso up ios / up android / start).'));
         process.exit(1);
       }
 

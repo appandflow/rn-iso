@@ -39,7 +39,7 @@ export function resolveRegisteredProject(arg) {
   if (!arg) {
     const root = findProjectRoot(process.cwd());
     if (!root) return { found: null, error: 'Not in a React Native project (no package.json found).' };
-    if (!projects[root]) return { found: null, error: `No rn-iso entry for ${root}. Run \`rn-iso ios\` or \`rn-iso android\` first.` };
+    if (!projects[root]) return { found: null, error: `No rn-iso entry for ${root}. Run \`rn-iso up ios\` or \`rn-iso up android\` first.` };
     return { found: root };
   }
 
