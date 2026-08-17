@@ -226,25 +226,38 @@ export default function gcCommand(program) {
       // would be indistinguishable from a clean sweep) -- it is recorded in
       // deviceSweepNotices and surfaced in the report, never silently.
       const deviceSweepNotices = [];
-      let sims = [];
-      try {
-        sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-      } catch {
-        deviceSweepNotices.push(
-          `ios device sweep skipped: simulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
-        );
-      }
-      let avds = [];
-      try {
-        avds = listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-      } catch {
-        deviceSweepNotices.push(
-          `android device sweep skipped: emulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
-        );
-      }
+      let orphanedDevices = [];
+      if (cfg === null) {
+        // No config file at all means rn-iso has never registered a
+        // project on this machine (or RN_ISO_HOME points somewhere empty).
+        // findOrphanedDevices' reference map would come back empty in this
+        // case, which classifies EVERY rn-iso-* sim/AVD on the machine as
+        // orphaned -- including devices belonging to another rn-iso HOME,
+        // or ones a config read glitch merely failed to surface. Skip the
+        // sweep entirely rather than risk `--delete` destroying every live
+        // environment on the machine.
+        deviceSweepNotices.push('no rn-iso config found; device sweep skipped');
+      } else {
+        let sims = [];
+        try {
+          sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+        } catch {
+          deviceSweepNotices.push(
+            `ios device sweep skipped: simulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
+          );
+        }
+        let avds = [];
+        try {
+          avds = listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+        } catch {
+          deviceSweepNotices.push(
+            `android device sweep skipped: emulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
+          );
+        }
 
-      const isMounted = path => isOnMountedVolume(path, mountedVolumes);
-      const { orphaned: orphanedDevices } = findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects });
+        const isMounted = path => isOnMountedVolume(path, mountedVolumes);
+        orphanedDevices = findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects }).orphaned;
+      }
 
       for (const line of formatGcReport({ orphaned: sized, skipped: allSkipped, deadProjects, totalBytes, orphanedDevices, deviceSweepNotices })) {
         console.log(line);

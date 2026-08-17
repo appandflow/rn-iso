@@ -399,6 +399,35 @@ test('--delete reaps a dead project\'s owned orphan device in the same run it pr
   assert.ok(execCalls.some(c => c.startsWith('xcrun simctl delete UDID-DEAD')), 'expected the owned device to be deleted in this same run');
 });
 
+// I7: no config file at all (a fresh RN_ISO_HOME, or one that has simply
+// never registered a project) must not be read as "every project's
+// reference is absent" -- that classified EVERY rn-iso-* device on the
+// machine as orphaned, and --delete would have destroyed every live
+// environment. No saveConfig() call here at all, so loadConfig() returns
+// null, not {projects: {}}.
+test('gc with no config file at all skips the device sweep instead of orphaning every rn-iso-* device', async () => {
+  const execCalls = [];
+  installDeviceExecutor({
+    devices: [{ udid: 'UDID-LIVE', name: 'rn-iso-someones-live-env', state: 'Booted' }],
+    execCalls,
+  });
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+  try {
+    await runGc(['--delete']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const output = logs.join('\n');
+  assert.doesNotMatch(output, /rn-iso-someones-live-env/, 'must not report a device as orphaned when there is no config to check it against');
+  assert.match(output, /no rn-iso config found/i);
+  assert.equal(execCalls.some(c => c.startsWith('xcrun simctl shutdown')), false);
+  assert.equal(execCalls.some(c => c.startsWith('xcrun simctl delete')), false);
+});
+
 test('rejects a non-numeric --older-than instead of silently skipping every entry', async () => {
   const program = new Command();
   program.exitOverride();
