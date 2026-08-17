@@ -49,6 +49,7 @@ export default function shutdownCommand(program) {
       const skippedLegacy = [];   // { path, platform, label }
       const skippedOccupied = []; // { path, platform, label }
       const skippedFailed = [];   // { path, platform, label, reason } -- teardown threw or the live sim no longer matches the record
+      const alreadyGoneNotices = []; // messages for devices found already gone during classification
       let hasDeviceAssignments = false;
       for (const [path, proj] of projects) {
         if (typeof proj.metroPort === 'number') {
@@ -60,10 +61,33 @@ export default function shutdownCommand(program) {
           if (!opts.keepSims) {
             if (!ios.owned) {
               skippedLegacy.push({ path, platform: 'ios', label: ios.deviceUdid });
-            } else if (isSimOccupied(ios.deviceUdid)) {
-              skippedOccupied.push({ path, platform: 'ios', label: formatIosLabel(ios.deviceUdid) });
             } else {
-              iosSims.push({ path, udid: ios.deviceUdid });
+              // Verify ownership by name against the live sim list BEFORE
+              // probing occupancy -- isSimOccupied shells at the udid too,
+              // so probing it first on a renamed/stale record would still
+              // land on whatever real simulator that udid now resolves to,
+              // and (if occupied) would misreport the skip reason as "in
+              // use" instead of "not rn-iso-owned". Phase 2 re-verifies
+              // again immediately before shutdownIosSim itself, since state
+              // can change between this classification pass and execution.
+              let resolved;
+              try {
+                resolved = resolveOwnedIosSim(ios.deviceUdid);
+              } catch (probeErr) {
+                skippedFailed.push({ path, platform: 'ios', label: ios.deviceUdid, reason: `ownership could not be verified: ${String(probeErr?.message || probeErr).slice(0, 120)}` });
+                resolved = null;
+              }
+              if (resolved?.notOwned) {
+                skippedFailed.push({ path, platform: 'ios', label: `${resolved.notOwned} (${ios.deviceUdid})`, reason: 'not rn-iso-owned by name (renamed or stale record)' });
+              } else if (resolved?.missing) {
+                alreadyGoneNotices.push(chalk.dim(`iOS sim ${ios.deviceUdid} is already gone, nothing to shut down ${chalk.dim(`(${path})`)}`));
+              } else if (resolved?.sim) {
+                if (isSimOccupied(ios.deviceUdid)) {
+                  skippedOccupied.push({ path, platform: 'ios', label: formatIosLabel(ios.deviceUdid) });
+                } else {
+                  iosSims.push({ path, udid: ios.deviceUdid });
+                }
+              }
             }
           }
         }
@@ -132,6 +156,7 @@ export default function shutdownCommand(program) {
       // rest of the loop or leave later projects' assignments uncleared by
       // Phase 3.
       if (!opts.keepSims) {
+        for (const msg of alreadyGoneNotices) console.log(msg);
         for (const s of iosSims) {
           try {
             // Best-effort re-check against the live sim list right before

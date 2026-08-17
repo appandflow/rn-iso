@@ -252,11 +252,25 @@ test('shutdown skips an occupied owned iOS sim and reports it, without issuing s
   });
 
   // A foreign .xctrunner UI-test runner is attached -- isSimOccupied must
-  // report true, and shutdown must leave the sim alone.
+  // report true, and shutdown must leave the sim alone. The ownership
+  // check (resolveOwnedIosSim) now runs before occupancy is probed, so the
+  // live listing must answer here too, naming UDID-OCC as rn-iso-owned.
+  const occListJson = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+        { udid: 'UDID-OCC', name: 'rn-iso-occ', state: 'Booted', isAvailable: true },
+      ],
+    },
+  });
   setExecutor({
-    run(cmd) { execCalls.push({ kind: 'run', cmd }); return ''; },
+    run(cmd) {
+      execCalls.push({ kind: 'run', cmd });
+      if (cmd.includes('simctl list devices --json')) return occListJson;
+      return '';
+    },
     runQuiet(cmd) {
       execCalls.push({ kind: 'runQuiet', cmd });
+      if (cmd.includes('simctl list devices --json')) return occListJson;
       if (/simctl spawn UDID-OCC launchctl list/.test(cmd)) {
         return '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]';
       }
@@ -276,6 +290,12 @@ test('shutdown skips an occupied owned iOS sim and reports it, without issuing s
 
   assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 0);
   assert.ok(logs.some(l => /Skipped ios device/.test(l) && /in use/i.test(l)));
+
+  // Ordering: ownership (the live listing) must be verified BEFORE the
+  // occupancy probe shells at the udid.
+  const listIndex = execCalls.findIndex(c => c.cmd.includes('simctl list devices --json'));
+  const occupancyIndex = execCalls.findIndex(c => c.cmd.includes('launchctl list'));
+  assert.ok(listIndex !== -1 && occupancyIndex !== -1 && listIndex < occupancyIndex);
 
   // Owned assignment stays recorded -- the sim was left running (occupied),
   // so the record must still point at it.
