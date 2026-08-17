@@ -36,12 +36,17 @@ export function isMeasured(dir, bytes) {
 
 // Pure. Finds rn-iso-owned simulators/AVDs that no live config entry
 // references. A device counts as "referenced" the moment ANY project in
-// `config` has an owned platform record naming it -- regardless of whether
-// that project's path currently exists on disk. This is the same
-// fail-closed direction as the artifact sweep (CLAUDE.md item 9): a project
-// entry whose directory looks gone only because its volume is unplugged
-// right now must not cause its device to be swept out from under it, so a
-// reference is honored unconditionally rather than gated on existence.
+// `config` has ANY platform record naming it -- owned or not, and
+// regardless of whether that project's path currently exists on disk. Not
+// gating on `owned` matters because a device can be named in a non-owned
+// record too (e.g. a stale/mid-transition record, or one written before an
+// `owned` flag update lands) -- treating only owned records as references
+// would let this sweep propose deleting a device an unowned record still
+// points at. This is the same fail-closed direction as the artifact sweep
+// (CLAUDE.md item 9): a project entry whose directory looks gone only
+// because its volume is unplugged right now must not cause its device to
+// be swept out from under it, so a reference is honored unconditionally
+// rather than gated on existence.
 // `isMounted(path)` only shapes the human-readable reason attached to a
 // kept device (so a device kept because its owner's volume is not mounted
 // reads differently than one kept because its owner is a normal, present
@@ -64,11 +69,11 @@ export function findOrphanedDevices({ sims = [], avds = [], config, isMounted, d
     if (dead.has(path)) continue;
     const mounted = isMounted ? isMounted(path) : true;
     const ios = proj?.platforms?.ios;
-    if (ios?.owned && ios.deviceUdid) {
+    if (ios?.deviceUdid) {
       referenced.set(ios.deviceUdid, { path, mounted });
     }
     const android = proj?.platforms?.android;
-    if (android?.owned && android.avdName) {
+    if (android?.avdName) {
       referenced.set(android.avdName, { path, mounted });
     }
   }

@@ -102,6 +102,28 @@ test('devices referenced by a project on an unmounted volume are kept', () => {
   assert.match(result.kept[0].reason, /not mounted/);
 });
 
+test('a device named by a non-owned (legacy/stale) record is still counted as referenced, not orphaned', () => {
+  const result = findOrphanedDevices({
+    sims: [{ udid: 'U1', name: 'rn-iso-stale-record' }],
+    avds: ['rn-iso-stale-avd'],
+    config: {
+      projects: {
+        '/p': {
+          platforms: {
+            // No `owned: true` on either record -- a stale/mid-transition
+            // record must still count as a reference, or this sweep would
+            // propose deleting a device an unowned record still points at.
+            ios: { deviceUdid: 'U1' },
+            android: { avdName: 'rn-iso-stale-avd' },
+          },
+        },
+      },
+    },
+    isMounted: () => true,
+  });
+  assert.equal(result.orphaned.length, 0);
+});
+
 // I3: a dead project's config entry hasn't been removed yet by the time the
 // device sweep runs in the SAME gc invocation -- it must not count as a
 // live reference, or the device only gets reaped on a second run.
