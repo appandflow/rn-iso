@@ -27,6 +27,7 @@ import {
   adbReverse,
   nextConsolePort,
   listAdbDevices,
+  sanitizeAvdLabel,
 } from '../sim/android.js';
 
 export default function upCommand(program) {
@@ -143,7 +144,8 @@ export function registerUp(program) {
       };
       const setup = getSetupStatus(root);
 
-      const facts = buildFacts({ platform, device, port, metro, bundleId, setup });
+      const payloadBundleId = platform === 'android' ? androidPackage : bundleId;
+      const facts = buildFacts({ platform, device, port, metro, bundleId: payloadBundleId, setup });
 
       if (json) {
         console.log(JSON.stringify(facts));
@@ -199,9 +201,12 @@ function ensureOwnedIosDevice({ record, projectPath, label, settings, flags, not
     runtime: flags.runtime || settings.ios?.runtime,
   });
   out(chalk.dim(`Created owned sim ${created.name} (${created.udid})`));
-  bootIosSim(created.udid);
+  // Record ownership BEFORE booting: if boot throws (timeout, etc.) the
+  // record must already exist so a retry reuses this sim instead of
+  // creating another one.
   const newRecord = { deviceUdid: created.udid, owned: true, deviceName: created.name };
   setDevice(projectPath, 'ios', newRecord);
+  bootIosSim(created.udid);
   return newRecord;
 }
 
@@ -216,9 +221,9 @@ async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, 
           out(chalk.dim(`Booting owned ${record.avdName} (emulator-${record.consolePort})...`));
           bootAndroidEmulator(record.avdName, record.consolePort);
           const serial = `emulator-${record.consolePort}`;
-          const result = await waitForBoot(serial);
+          const result = await waitForBoot(serial, 120000);
           if (!result.ok) {
-            throw new Error(`Emulator ${serial} did not finish booting.`);
+            throw new Error(`Emulator ${serial} did not finish booting. Diagnostic: ${JSON.stringify(result.diagnostic)}`);
           }
         }
         const updated = {
@@ -249,19 +254,49 @@ async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, 
     return record;
   }
 
-  const created = createOwnedAvd(label, { systemImage: flags.systemImage || settings.android?.systemImage });
-  const claimedPorts = allClaimedDevices().androidConsolePorts;
+  let created;
+  try {
+    created = createOwnedAvd(label, { systemImage: flags.systemImage || settings.android?.systemImage });
+  } catch (e) {
+    // A prior run may have created the AVD and then thrown before recording
+    // it (e.g. a boot timeout, back when the record was written after
+    // boot) -- avdmanager then refuses every subsequent create with
+    // "already exists", permanently wedging this project. Since the AVD is
+    // ours by name, adopt it instead of failing forever.
+    const message = String(e?.message || e);
+    const avdName = `rn-iso-${sanitizeAvdLabel(label)}`;
+    if (message.includes('already exists') && listAvds().includes(avdName)) {
+      created = { avdName };
+      out(chalk.dim(`Recovered existing owned AVD ${avdName} (unrecorded from a prior run)`));
+    } else {
+      throw e;
+    }
+  }
+  // Union config-recorded console ports with ports adb currently sees in
+  // use (live emulators, plus unhealthy entries that still carry a
+  // console port) -- a foreign emulator (e.g. Android Studio's default on
+  // 5554) has no rn-iso config entry, so config-only allocation would spawn
+  // straight onto it.
+  const adbLive = listAdbDevices();
+  const livePorts = [
+    ...adbLive.emulators.map(e => e.consolePort),
+    ...adbLive.unhealthy.filter(u => u.consolePort != null).map(u => u.consolePort),
+  ];
+  const claimedPorts = [...allClaimedDevices().androidConsolePorts, ...livePorts];
   const consolePort = nextConsolePort(claimedPorts);
   out(chalk.dim(`Created owned AVD ${created.avdName}`));
+  // Record ownership BEFORE booting: if boot throws (timeout, etc.) the
+  // record must already exist so a retry reuses/boots this AVD instead of
+  // hitting avdmanager's "already exists" wedge on re-creation.
+  const newRecord = { avdName: created.avdName, consolePort, owned: true, deviceName: created.avdName };
+  setDevice(projectPath, 'android', newRecord);
   bootAndroidEmulator(created.avdName, consolePort);
   const serial = `emulator-${consolePort}`;
   out(chalk.dim(`Waiting for ${serial} to finish booting...`));
-  const result = await waitForBoot(serial);
+  const result = await waitForBoot(serial, 120000);
   if (!result.ok) {
-    throw new Error(`Emulator ${serial} did not finish booting.`);
+    throw new Error(`Emulator ${serial} did not finish booting. Diagnostic: ${JSON.stringify(result.diagnostic)}`);
   }
-  const newRecord = { avdName: created.avdName, consolePort, owned: true, deviceName: created.avdName };
-  setDevice(projectPath, 'android', newRecord);
   return newRecord;
 }
 
@@ -282,7 +317,7 @@ export function buildFacts({ platform, device, port, metro, bundleId, setup }) {
     return { ...base, udid: device.deviceUdid, deviceName: device.deviceName ?? null };
   }
   if (device.avdName) {
-    return { ...base, kind: 'emulator', avdName: device.avdName, serial: `emulator-${device.consolePort}` };
+    return { ...base, kind: 'emulator', avdName: device.avdName, serial: `emulator-${device.consolePort}`, consolePort: device.consolePort };
   }
   return { ...base, kind: 'physical', serial: device.serial };
 }
