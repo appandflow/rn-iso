@@ -132,7 +132,16 @@ export function createOwnedIosSim(label, { deviceType, runtime } = {}) {
   return { udid, name };
 }
 
+// Defense in depth: deletion must only ever reach a sim rn-iso created
+// itself. A future caller bug (wrong record, stale udid) must not be able
+// to delete a user's real simulator. Idempotent: a udid that is already
+// gone is a no-op, not an error.
 export function deleteIosSim(udid) {
+  const sim = listAllIosSims().find(s => s.udid === udid);
+  if (!sim) return;
+  if (!sim.name?.startsWith('rn-iso-')) {
+    throw new Error(`Refusing to delete simulator "${sim.name}" (${udid}): not an rn-iso-owned sim (name must start with "rn-iso-").`);
+  }
   getExecutor().runQuiet(`xcrun simctl delete ${udid}`);
 }
 

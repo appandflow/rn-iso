@@ -4,17 +4,17 @@ import prompts from 'prompts';
 import { resolveRegisteredProject } from '../project.js';
 import { getProject, clearDevice, findProjectByMetroPort } from '../config.js';
 import { findPidListeningOnPort } from '../metro.js';
-import { isSimOccupied, shutdownIosSim, formatIosLabel } from '../sim/ios.js';
-import { shutdownAndroidEmulator } from '../sim/android.js';
+import { isSimOccupied, shutdownIosSim, deleteIosSim, formatIosLabel } from '../sim/ios.js';
+import { shutdownAndroidEmulator, deleteAvd } from '../sim/android.js';
 
-export function shouldShutdown({ occupied, force }) {
+// Owned devices are rn-iso's to destroy; releasing one deletes it. Anything
+// rn-iso did not create is only ever unassigned.
+export function releaseAction({ record, occupied, force }) {
+  if (!record?.owned) return { action: 'clear', reason: null };
   if (occupied && !force) {
-    return {
-      shutdown: false,
-      reason: 'simulator is in use by another tool (a UI-test runner is attached)',
-    };
+    return { action: 'clear', reason: 'device is in use by another tool; claim cleared, device kept. Pass --force to delete it anyway' };
   }
-  return { shutdown: true, reason: null };
+  return { action: 'delete', reason: null };
 }
 
 export default function releaseCommand(program) {
@@ -22,8 +22,7 @@ export default function releaseCommand(program) {
     .command('release [target]')
     .description('Free a project assignment. [target] is a Metro port (e.g. 8083), a project shortcut (label or unique basename), or an absolute path. Defaults to the current project.')
     .option('--platform <platform>', 'ios or android (default: both)')
-    .option('--shutdown', 'Also shut down the simulator/emulator after releasing')
-    .option('--force', 'shut down even if the simulator is in use by another tool')
+    .option('--force', 'delete an owned device even if it is in use by another tool')
     .action(async (target, opts) => {
       let found;
       if (target && /^\d+$/.test(target)) {
@@ -53,22 +52,24 @@ export default function releaseCommand(program) {
           console.log(chalk.dim(`No ${p} assignment to release for ${found}.`));
           continue;
         }
-        if (opts.shutdown) {
+        // Occupancy only matters for owned devices (it decides delete vs.
+        // clear); skip the simctl probe entirely for legacy/physical
+        // assignments, which are always just cleared.
+        const occupied = entry.owned && p === 'ios' ? isSimOccupied(entry.deviceUdid) : false;
+        const decision = releaseAction({ record: entry, occupied, force: opts.force });
+        if (decision.action === 'delete') {
           if (p === 'ios') {
-            const decision = shouldShutdown({ occupied: isSimOccupied(entry.deviceUdid), force: opts.force });
-            if (decision.shutdown) {
-              shutdownIosSim(entry.deviceUdid);
-              console.log(chalk.green(`Shut down iOS sim ${formatIosLabel(entry.deviceUdid)}`));
-            } else {
-              console.log(chalk.yellow(`Did not shut down ${formatIosLabel(entry.deviceUdid)}: ${decision.reason}.`));
-              console.log(chalk.dim('The rn-iso claim was released. Pass --force to shut it down anyway.'));
-            }
+            const label = formatIosLabel(entry.deviceUdid);
+            shutdownIosSim(entry.deviceUdid);
+            deleteIosSim(entry.deviceUdid);
+            console.log(chalk.green(`Deleted owned iOS sim ${label}`));
           } else if (entry.avdName && typeof entry.consolePort === 'number') {
             shutdownAndroidEmulator(`emulator-${entry.consolePort}`);
-            console.log(chalk.green(`Shut down ${entry.avdName} (emulator-${entry.consolePort})`));
-          } else if (entry.serial) {
-            console.log(chalk.dim(`Skipping shutdown for physical device ${entry.serial}`));
+            deleteAvd(entry.avdName);
+            console.log(chalk.green(`Deleted owned AVD ${entry.avdName} (emulator-${entry.consolePort})`));
           }
+        } else if (decision.reason) {
+          console.log(chalk.yellow(`Did not delete the device: ${decision.reason}.`));
         }
         clearDevice(found, p);
         console.log(chalk.green(`Released ${p} assignment for ${found}.`));

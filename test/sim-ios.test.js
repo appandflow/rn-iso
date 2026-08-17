@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
-import { parseSimctlList, listAllIosSims, listBootedIosSims, parseOccupyingApps, pickDefaultIosCreation, sanitizeDeviceLabel } from '../src/sim/ios.js';
+import { parseSimctlList, listAllIosSims, listBootedIosSims, parseOccupyingApps, pickDefaultIosCreation, sanitizeDeviceLabel, deleteIosSim } from '../src/sim/ios.js';
 
 let tmpHome;
 
@@ -151,4 +151,47 @@ test('pickDefaultIosCreation returns null when nothing matches', () => {
 test('sanitizeDeviceLabel strips characters simctl names should not carry', () => {
   assert.equal(sanitizeDeviceLabel('feat-a/tlon-mobile'), 'feat-a-tlon-mobile');
   assert.equal(sanitizeDeviceLabel('x  y"z`$'), 'x-y-z');
+});
+
+test('deleteIosSim refuses to delete a sim not owned by rn-iso', () => {
+  setExecutor({
+    run: () => JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
+          { udid: 'UDID-A', name: 'iPhone 15', state: 'Shutdown', isAvailable: true },
+        ],
+      },
+    }),
+    runQuiet: () => { throw new Error('should not be called'); },
+    spawn: () => null,
+  });
+  assert.throws(() => deleteIosSim('UDID-A'), /rn-iso/);
+});
+
+test('deleteIosSim deletes an rn-iso-owned sim', () => {
+  let ran = null;
+  setExecutor({
+    run: () => JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
+          { udid: 'UDID-B', name: 'rn-iso-my-project', state: 'Shutdown', isAvailable: true },
+        ],
+      },
+    }),
+    runQuiet: (cmd) => { ran = cmd; return null; },
+    spawn: () => null,
+  });
+  deleteIosSim('UDID-B');
+  assert.match(ran, /xcrun simctl delete UDID-B/);
+});
+
+test('deleteIosSim no-ops quietly when the udid is already gone', () => {
+  let ranQuiet = false;
+  setExecutor({
+    run: () => JSON.stringify({ devices: {} }),
+    runQuiet: () => { ranQuiet = true; return null; },
+    spawn: () => null,
+  });
+  assert.doesNotThrow(() => deleteIosSim('UDID-GONE'));
+  assert.equal(ranQuiet, false);
 });

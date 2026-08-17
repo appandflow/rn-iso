@@ -9,6 +9,7 @@ import {
   parseAdbDevices,
   nextConsolePort,
   pickDefaultSystemImage,
+  deleteAvd,
 } from '../src/sim/android.js';
 
 let tmpHome;
@@ -91,4 +92,24 @@ test('pickDefaultSystemImage honors an explicit package and returns null on no m
   assert.equal(pickDefaultSystemImage(images, { systemImage: images[0].pkg }).pkg, images[0].pkg);
   assert.equal(pickDefaultSystemImage([], {}), null);
   assert.equal(pickDefaultSystemImage(images, { systemImage: 'system-images;android-99;x;y' }), null);
+});
+
+test('deleteAvd refuses to delete an AVD not owned by rn-iso', () => {
+  setExecutor({
+    run: () => { throw new Error('should not be called'); },
+    runQuiet: () => { throw new Error('should not be called'); },
+    spawn: () => null,
+  });
+  assert.throws(() => deleteAvd('Pixel_6_API_34'), /rn-iso/);
+});
+
+test('deleteAvd deletes an rn-iso-owned AVD', () => {
+  let ran = null;
+  setExecutor({
+    run: () => null,
+    runQuiet: (cmd) => { ran = cmd; return null; },
+    spawn: () => null,
+  });
+  deleteAvd('rn-iso-my-project');
+  assert.match(ran, /delete avd -n "rn-iso-my-project"/);
 });

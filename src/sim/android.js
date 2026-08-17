@@ -58,7 +58,13 @@ export function sanitizeAvdLabel(label) {
   return String(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
+// Defense in depth: deletion must only ever reach an AVD rn-iso created
+// itself. A future caller bug (wrong record, stale name) must not be able
+// to delete a user's real AVD.
 export function deleteAvd(avdName) {
+  if (!avdName?.startsWith('rn-iso-')) {
+    throw new Error(`Refusing to delete AVD "${avdName}": not an rn-iso-owned AVD (name must start with "rn-iso-").`);
+  }
   getExecutor().runQuiet(`"${avdmanagerPath()}" delete avd -n "${avdName}"`);
 }
 

@@ -56,7 +56,7 @@ All commands below take the same `npx rn-iso` prefix.
 | `status` | Show all projects' state |
 | `reserve [ios\|android]` | Lock a manually-started sim/emulator to the current project (no build) |
 | `unreserve [ios\|android]` | Drop the current project's lock without shutting the sim down |
-| `release [<port>\|<shortcut>\|<path>] [--platform <p>] [--shutdown]` | Free a project's assignment. Target can be a Metro port (`8083`), a shortcut (label or unique basename), or an absolute path. `--shutdown` also stops the sim. |
+| `release [<port>\|<shortcut>\|<path>] [--platform <p>] [--force]` | Free a project's assignment. Target can be a Metro port (`8083`), a shortcut (label or unique basename), or an absolute path. If the device is one rn-iso created, it is shut down and deleted; a legacy or physical device assignment is only cleared. `--force` deletes even if the device is in use by another tool. |
 | `shutdown [<shortcut>\|<path>] [-y] [--keep-sims]` | Kill Metro, shut down sims/emulators, and clear device assignments. No arg = every registered project (end-of-day reset). Pass a shortcut or path to scope to one. |
 | `config [<key> [<value>]] [--unset] [--project <target>]` | Get / set a per-project setting (`packageManager`, `ios.script`, `android.script`). |
 | `worktree create <name> [--base fresh\|head] [--no-install] [--label <name>]` | Create an isolated git worktree: carries over gitignored files, runs the setup pipeline, prints the worktree path. |
@@ -112,7 +112,7 @@ Each registered project has a "shortcut" you can pass to `stop` / `release` inst
 ```bash
 npx rn-iso ios --label agent-1
 npx rn-iso stop agent-1            # later, from anywhere
-npx rn-iso release agent-1 --shutdown
+npx rn-iso release agent-1
 ```
 
 Under `--auto` (or any non-TTY invocation) the prompt is skipped — the project's basename serves as its shortcut by default. Shortcut collisions (two projects sharing the same basename, or two labels colliding) error out and list the candidates so you can disambiguate with the absolute path.
