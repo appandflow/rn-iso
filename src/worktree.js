@@ -208,5 +208,12 @@ export function listWorktrees(cwd) {
 export function resolveBaseRef(cwd, baseRef) {
   if (baseRef === 'head') return 'HEAD';
   const head = getExecutor().runQuiet(`git -C "${cwd}" rev-parse --abbrev-ref origin/HEAD`);
-  return head ? head.trim() : 'HEAD';
+  if (head) return head.trim();
+  // Falls back silently otherwise -- a repo with no `origin` remote (or one
+  // where `origin/HEAD` was never set, e.g. a fresh bare-remote clone) makes
+  // every "fresh" worktree branch from local HEAD instead of the intended
+  // default branch. That is a silent behavior change worth a stderr note,
+  // not a hard failure -- HEAD is still a reasonable fallback.
+  console.error('warning: origin/HEAD not found; falling back to HEAD as the base ref.');
+  return 'HEAD';
 }

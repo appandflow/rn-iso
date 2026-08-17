@@ -16,6 +16,7 @@ import {
   listGitignoredFiles,
   addWorktree,
   removeWorktree,
+  resolveBaseRef,
 } from '../src/worktree.js';
 
 afterEach(() => resetExecutor());
@@ -70,6 +71,83 @@ test('unpushedCommits lists commits missing from every remote', () => {
 test('unpushedCommits returns empty when git reports nothing', () => {
   setExecutor({ run: () => '', runQuiet: () => '', spawn: () => {} });
   assert.deepEqual(unpushedCommits('/wt'), []);
+});
+
+// A mocked test cannot protect this: the naive command form (`git log
+// --oneline --not --remotes`, no explicit HEAD) silently returns empty
+// output even when unpushed commits exist, once any revision argument is
+// present git stops defaulting to HEAD on its own. Only a real git process
+// against a real repo + real remote catches that. Drives the real executor
+// (resetExecutor) over a scratch repo with a bare "remote" on disk.
+test('unpushedCommits against a real repo: empty right after push, reports a commit made only locally', () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-unpushed-'));
+  const bareRemote = join(base, 'remote.git');
+  const repo = join(base, 'repo');
+  try {
+    mkdirSync(bareRemote, { recursive: true });
+    execSync(`git init -q --bare "${bareRemote}"`);
+    mkdirSync(repo, { recursive: true });
+    const git = (cmd) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    git(`git remote add origin "${bareRemote}"`);
+    writeFileSync(join(repo, 'README.md'), 'hello');
+    git('git add README.md');
+    git('git commit -q -m init');
+    git('git push -q -u origin HEAD');
+
+    assert.deepEqual(unpushedCommits(repo), []);
+
+    writeFileSync(join(repo, 'local.txt'), 'local only');
+    git('git add local.txt');
+    git('git commit -q -m "local-only commit"');
+
+    const unpushed = unpushedCommits(repo);
+    assert.equal(unpushed.length, 1);
+    assert.match(unpushed[0], /local-only commit/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('resolveBaseRef("head") returns HEAD and never touches origin/HEAD', () => {
+  const calls = [];
+  setExecutor({ run: () => '', runQuiet: (cmd) => { calls.push(cmd); return ''; }, spawn: () => {} });
+  assert.equal(resolveBaseRef('/repo', 'head'), 'HEAD');
+  assert.deepEqual(calls, []);
+});
+
+test('resolveBaseRef("fresh") returns origin/HEAD\'s branch when it resolves, no warning', () => {
+  setExecutor({ run: () => '', runQuiet: () => 'origin/main', spawn: () => {} });
+  const errs = [];
+  const originalError = console.error;
+  console.error = (msg) => errs.push(msg);
+  try {
+    assert.equal(resolveBaseRef('/repo', 'fresh'), 'origin/main');
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(errs, []);
+});
+
+// Silent before this task: a repo with no `origin` remote (or one where
+// `origin/HEAD` was never set) made every "fresh" worktree branch from
+// local HEAD with no indication anything had fallen back.
+test('resolveBaseRef("fresh") falls back to HEAD and warns on stderr when origin/HEAD is missing', () => {
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  const errs = [];
+  const originalError = console.error;
+  console.error = (msg) => errs.push(msg);
+  try {
+    assert.equal(resolveBaseRef('/repo', 'fresh'), 'HEAD');
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /origin\/HEAD/);
+  assert.match(errs[0], /HEAD/);
 });
 
 test('listWorktrees parses a detached-HEAD entry without dropping neighbours', () => {

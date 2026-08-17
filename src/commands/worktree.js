@@ -128,6 +128,18 @@ export function registerCreate(worktree) {
       const common = gitCommonDir(process.cwd());
       const settings = resolveSettings({ gitCommonDir: common, repoRoot: root });
 
+      // `--base` reaches here as a raw string -- commander does not
+      // validate `.option()` values against an enum. resolveBaseRef treats
+      // anything other than the 'head' sentinel as 'fresh', so a typo like
+      // `--base=orign/HEAD` used to resolve silently instead of erroring.
+      // Nothing has been created yet, so exit 1 here is correct.
+      const base = opts.base || settings?.worktree?.baseRef || 'fresh';
+      if (base !== 'fresh' && base !== 'head') {
+        console.error(chalk.red(`Invalid --base: "${base}". Use "fresh" or "head".`));
+        process.exitCode = 1;
+        return;
+      }
+
       const dir = settings.worktreeDir || defaultWorktreeDir(root);
       const target = worktreePath({ worktreeDir: dir, name });
 
@@ -138,7 +150,7 @@ export function registerCreate(worktree) {
         return;
       }
 
-      const baseRef = resolveBaseRef(root, opts.base || settings?.worktree?.baseRef || 'fresh');
+      const baseRef = resolveBaseRef(root, base);
       try {
         addWorktree({ path: target, branch: `worktree-${name}`, baseRef, cwd: root });
       } catch (e) {
