@@ -23,6 +23,7 @@ program
   .version(pkg.version);
 
 deviceCommand(program);
+upCommand(program);
 startCommand(program);
 stopCommand(program);
 logsCommand(program);
@@ -33,6 +34,9 @@ releaseCommand(program);
 shutdownCommand(program);
 configCommand(program);
 worktreeCommand(program);
-upCommand(program);
 
-program.parse();
+// parseAsync (not parse): several command actions (up, release, shutdown,
+// worktree) are async, and commander only awaits/propagates their errors
+// correctly through parseAsync. Top-level await is fine here -- this file
+// is ESM ("type": "module" in package.json).
+await program.parseAsync();
