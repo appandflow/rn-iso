@@ -14,21 +14,49 @@ import {
   getProjectSetting,
   setProjectSetting,
   unsetProjectSetting,
+  getRepoSettings,
+  setRepoSetting,
+  unsetRepoSetting,
 } from '../config.js';
+import { gitCommonDir } from '../worktree.js';
 
-const ALLOWED_KEYS = ['packageManager', 'ios.script', 'android.script'];
+// `.script` keys died with the `ios`/`android` build wrappers; `up` creates
+// owned devices instead, so device-shape settings replace them.
+const ALLOWED_KEYS = ['packageManager', 'ios.deviceType', 'ios.runtime', 'android.systemImage'];
 const PM_VALUES = ['npm', 'yarn', 'pnpm', 'bun'];
+
+// Repo-layer settings additionally accept `worktreeDir` and any `worktree.*`
+// key (baseRef, install, include, ...) -- the set that `worktree create`
+// resolves via resolveSettings.
+function isAllowedRepoKey(key) {
+  return ALLOWED_KEYS.includes(key) || key === 'worktreeDir' || key.startsWith('worktree.');
+}
+
+function readNestedValue(obj, dottedKey) {
+  let cur = obj;
+  for (const k of dottedKey.split('.')) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = cur[k];
+  }
+  return cur;
+}
 
 export default function configCommand(program) {
   program
     .command('config [key] [value]')
     .description(
       'Get or set a per-project setting. Allowed keys: ' + ALLOWED_KEYS.join(', ') +
-      '. With no args, lists current settings.'
+      '. With no args, lists current settings. Pass --repo to operate on the repo-shared layer instead.'
     )
     .option('--unset', 'Remove the value for <key>')
     .option('--project <target>', 'Run against another project (label / unique basename / absolute path) instead of cwd')
+    .option('--repo', 'Operate on the repo-shared settings layer (keyed by git common dir of cwd) instead of the project layer')
     .action((key, value, opts) => {
+      if (opts.repo) {
+        runRepo(key, value, opts);
+        return;
+      }
+
       const found = resolveTarget(opts.project);
 
       if (!key) {
@@ -72,6 +100,55 @@ export default function configCommand(program) {
       setProjectSetting(found, key, value);
       console.log(chalk.green(`Set ${key} = ${value} for ${found}.`));
     });
+}
+
+function runRepo(key, value, opts) {
+  const dir = gitCommonDir(process.cwd());
+  if (!dir) {
+    console.error(chalk.red('Not inside a git repository.'));
+    process.exit(1);
+    return;
+  }
+
+  if (!key) {
+    const settings = getRepoSettings(dir);
+    if (Object.keys(settings).length === 0) {
+      console.log(chalk.dim(`No repo settings for ${dir}.`));
+      return;
+    }
+    console.log(dir);
+    console.log(JSON.stringify(settings, null, 2));
+    return;
+  }
+
+  if (!isAllowedRepoKey(key)) {
+    console.error(chalk.red(`Unknown key "${key}". Allowed: ${ALLOWED_KEYS.join(', ')}, worktreeDir, worktree.*.`));
+    process.exit(1);
+    return;
+  }
+
+  if (opts.unset) {
+    const removed = unsetRepoSetting(dir, key);
+    if (removed) console.log(chalk.green(`Unset ${key} for repo ${dir}.`));
+    else console.log(chalk.dim(`${key} was already unset.`));
+    return;
+  }
+
+  if (value === undefined) {
+    const cur = readNestedValue(getRepoSettings(dir), key);
+    if (cur === undefined) console.log(chalk.dim('(unset)'));
+    else console.log(typeof cur === 'object' ? JSON.stringify(cur) : cur);
+    return;
+  }
+
+  if (key === 'packageManager' && !PM_VALUES.includes(value)) {
+    console.error(chalk.red(`Invalid packageManager "${value}". Must be one of: ${PM_VALUES.join(', ')}.`));
+    process.exit(1);
+    return;
+  }
+
+  setRepoSetting(dir, key, value);
+  console.log(chalk.green(`Set ${key} = ${value} for repo ${dir}.`));
 }
 
 // `--project` targets an existing registered project; without it we fall
