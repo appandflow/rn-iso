@@ -48,10 +48,20 @@ export function isMeasured(dir, bytes) {
 // project) -- it never flips a referenced device into `orphaned`.
 // Devices whose name does not start with "rn-iso-" are ignored entirely:
 // rn-iso never created them and must never propose touching them.
-export function findOrphanedDevices({ sims = [], avds = [], config, isMounted } = {}) {
+// `deadProjects` are paths already proven mounted-and-gone by the caller's
+// dead-project sweep (gc.js's own check, run just before this). They must
+// be excluded from the reference map here, not just pruned from config
+// afterward: without this, a dead project's owned device reads as
+// "referenced" on this same run (its config entry hasn't been removed
+// yet), so the device survives one full `gc --delete` and is only reaped
+// on the NEXT run. Excluding them here means dead-project pruning and its
+// device sweep land in the same run.
+export function findOrphanedDevices({ sims = [], avds = [], config, isMounted, deadProjects = [] } = {}) {
+  const dead = new Set(deadProjects);
   const referenced = new Map(); // device id -> { path, mounted }
 
   for (const [path, proj] of Object.entries(config?.projects || {})) {
+    if (dead.has(path)) continue;
     const mounted = isMounted ? isMounted(path) : true;
     const ios = proj?.platforms?.ios;
     if (ios?.owned && ios.deviceUdid) {
@@ -234,7 +244,7 @@ export default function gcCommand(program) {
       }
 
       const isMounted = path => isOnMountedVolume(path, mountedVolumes);
-      const { orphaned: orphanedDevices } = findOrphanedDevices({ sims, avds, config: cfg, isMounted });
+      const { orphaned: orphanedDevices } = findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects });
 
       for (const line of formatGcReport({ orphaned: sized, skipped: allSkipped, deadProjects, totalBytes, orphanedDevices, deviceSweepNotices })) {
         console.log(line);

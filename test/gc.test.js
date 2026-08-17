@@ -102,6 +102,20 @@ test('devices referenced by a project on an unmounted volume are kept', () => {
   assert.match(result.kept[0].reason, /not mounted/);
 });
 
+// I3: a dead project's config entry hasn't been removed yet by the time the
+// device sweep runs in the SAME gc invocation -- it must not count as a
+// live reference, or the device only gets reaped on a second run.
+test('a device owned only by a dead project is orphaned when that project is passed as deadProjects', () => {
+  const result = findOrphanedDevices({
+    sims: [{ udid: 'U1', name: 'rn-iso-dead' }],
+    avds: [],
+    config: { projects: { '/gone/p': { platforms: { ios: { deviceUdid: 'U1', owned: true } } } } },
+    isMounted: () => true,
+    deadProjects: ['/gone/p'],
+  });
+  assert.deepEqual(result.orphaned.map(o => o.id), ['U1']);
+});
+
 // --- Action-level tests -----------------------------------------------
 //
 // The tests above only exercise the pure formatter. Nothing above pins the
@@ -352,6 +366,37 @@ test('report-mode gc lists a seeded orphaned ios sim but issues no shutdown or d
   assert.match(logs.join('\n'), /rn-iso-report-orphan/);
   assert.equal(execCalls.some(c => c.startsWith('xcrun simctl shutdown')), false);
   assert.equal(execCalls.some(c => c.startsWith('xcrun simctl delete')), false);
+});
+
+// I3: before the fix, findOrphanedDevices was computed from the
+// pre-prune config, so a dead project's owned device still counted as
+// "referenced" on the run that prunes it -- it only got swept on a SECOND
+// `gc --delete`. One run must now both prune the dead entry and reap its
+// device.
+test('--delete reaps a dead project\'s owned orphan device in the same run it prunes the entry', async () => {
+  const localDeadPath = join(fakeHome, 'no-longer-here');
+  saveConfig({
+    version: 2,
+    projects: {
+      [localDeadPath]: {
+        metroPort: 8100,
+        platforms: { ios: { deviceUdid: 'UDID-DEAD', owned: true } },
+      },
+    },
+    repos: {},
+  });
+  const execCalls = [];
+  installDeviceExecutor({
+    devices: [{ udid: 'UDID-DEAD', name: 'rn-iso-dead-owner' }],
+    execCalls,
+  });
+
+  await runGc(['--delete']);
+
+  const cfg = loadConfig();
+  assert.equal(cfg.projects[localDeadPath], undefined, 'the dead project entry must be pruned');
+  assert.ok(execCalls.some(c => c.startsWith('xcrun simctl shutdown UDID-DEAD')), 'expected the owned device to be shut down in this same run');
+  assert.ok(execCalls.some(c => c.startsWith('xcrun simctl delete UDID-DEAD')), 'expected the owned device to be deleted in this same run');
 });
 
 test('rejects a non-numeric --older-than instead of silently skipping every entry', async () => {
