@@ -10,6 +10,7 @@ import {
   selectAndroidDevice,
   sortAndroidCandidates,
   nextConsolePort,
+  pickDefaultSystemImage,
 } from '../src/sim/android.js';
 
 let tmpHome;
@@ -305,4 +306,21 @@ test('sortAndroidCandidates floats physical devices above non-running AVDs', () 
     'Pixel_7_running',
     'Pixel_6',
   ]);
+});
+
+test('pickDefaultSystemImage prefers highest api, then google_apis, arm64 only', () => {
+  const images = [
+    { api: 35, tag: 'default', arch: 'arm64-v8a', pkg: 'system-images;android-35;default;arm64-v8a' },
+    { api: 36, tag: 'default', arch: 'arm64-v8a', pkg: 'system-images;android-36;default;arm64-v8a' },
+    { api: 36, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-36;google_apis;arm64-v8a' },
+    { api: 36, tag: 'google_apis', arch: 'x86_64', pkg: 'system-images;android-36;google_apis;x86_64' },
+  ];
+  assert.equal(pickDefaultSystemImage(images, {}).pkg, 'system-images;android-36;google_apis;arm64-v8a');
+});
+
+test('pickDefaultSystemImage honors an explicit package and returns null on no match', () => {
+  const images = [{ api: 36, tag: 'default', arch: 'arm64-v8a', pkg: 'system-images;android-36;default;arm64-v8a' }];
+  assert.equal(pickDefaultSystemImage(images, { systemImage: images[0].pkg }).pkg, images[0].pkg);
+  assert.equal(pickDefaultSystemImage([], {}), null);
+  assert.equal(pickDefaultSystemImage(images, { systemImage: 'system-images;android-99;x;y' }), null);
 });

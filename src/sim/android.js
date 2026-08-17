@@ -1,4 +1,66 @@
+import { existsSync, readdirSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import { getExecutor } from '../exec.js';
+
+export function androidHome() {
+  return process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || join(homedir(), 'Library', 'Android', 'sdk');
+}
+
+function avdmanagerPath() {
+  return join(androidHome(), 'cmdline-tools', 'latest', 'bin', 'avdmanager');
+}
+
+// system-images/<android-XX>/<tag>/<arch>/ on disk.
+export function listInstalledSystemImages() {
+  const root = join(androidHome(), 'system-images');
+  const images = [];
+  if (!existsSync(root)) return images;
+  for (const apiDir of readdirSync(root)) {
+    const m = apiDir.match(/^android-(\d+)$/);
+    if (!m) continue;
+    const apiPath = join(root, apiDir);
+    for (const tag of safeList(apiPath)) {
+      for (const arch of safeList(join(apiPath, tag))) {
+        images.push({ api: Number(m[1]), tag, arch, pkg: `system-images;${apiDir};${tag};${arch}` });
+      }
+    }
+  }
+  return images;
+}
+
+function safeList(dir) {
+  try { return readdirSync(dir); } catch { return []; }
+}
+
+// Highest API first; google_apis over other tags; Apple Silicon needs arm64.
+export function pickDefaultSystemImage(images, { systemImage } = {}) {
+  if (systemImage) return images.find(i => i.pkg === systemImage) || null;
+  const arm = images.filter(i => i.arch === 'arm64-v8a');
+  if (arm.length === 0) return null;
+  return [...arm].sort((a, b) =>
+    b.api - a.api || (b.tag === 'google_apis' ? 1 : 0) - (a.tag === 'google_apis' ? 1 : 0))[0];
+}
+
+export function createOwnedAvd(label, { systemImage } = {}) {
+  const pick = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage });
+  if (!pick) {
+    throw new Error('No arm64 Android system image is installed. Install one, e.g.: sdkmanager "system-images;android-36;google_apis;arm64-v8a"');
+  }
+  const avdName = `rn-iso-${sanitizeAvdLabel(label)}`;
+  // avdmanager prompts "Do you wish to create a custom hardware profile?";
+  // piping "no" answers it non-interactively.
+  getExecutor().run(`echo no | "${avdmanagerPath()}" create avd -n "${avdName}" -k "${pick.pkg}"`);
+  return { avdName };
+}
+
+export function sanitizeAvdLabel(label) {
+  return String(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+export function deleteAvd(avdName) {
+  getExecutor().runQuiet(`"${avdmanagerPath()}" delete avd -n "${avdName}"`);
+}
 
 export function parseAvdList(text) {
   return text
