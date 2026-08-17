@@ -44,7 +44,7 @@ npx rn-iso worktree remove <path>
 - Never assume `booted` is your sim, and never call a device verb without an explicit UDID/serial -- another project's simulator may also be booted.
 - `metroHealthy` in the JSON is a live ping of Metro's `/status` endpoint. If it's `false` right after `up`, something is wrong -- check `metroLog` / run `rn-iso logs`.
 - Android's JSON payload uses `serial` / `avdName` / `consolePort` / `kind` (`"emulator"` or `"physical"`) instead of `udid`. Android's `bundleId` field in the facts is the **Android package name**, not the iOS bundle id.
-- `rn-iso device --platform <ios|android> --json` is a read-only version of the same facts (no ensure/create side effects) -- use it when you just need to re-check the current assignment without touching devices or Metro.
+- `rn-iso device --platform <ios|android> --json` is a read-only, no-ensure/no-create re-check of the current assignment plus Metro state -- use it when you just need to confirm what's already assigned without touching devices or Metro. Its payload is a subset of `up --json`'s: it omits `owned`, `bundleId`, and `setup`, so use `up --json` (or `status`) when you need those fields.
 
 ## Common setups reference
 
@@ -112,7 +112,7 @@ npx rn-iso worktree list
 
 `npx rn-iso gc [--delete] [--older-than <days>]` finds Xcode DerivedData directories left behind by deleted worktrees, dead `rn-iso` project entries, AND orphaned `rn-iso-*` devices (sims/AVDs not referenced by any live config entry), and reports what reclaiming them would free.
 
-**`gc` with no flag only reports -- it never deletes anything.** Pass `--delete` to actually remove the reported directories, entries, and devices; this is the only destructive command in the tool (see the destructive-command rule above -- always ask before running it with `--delete`). `--older-than <days>` narrows the artifact report to directories not accessed recently.
+**`gc` with no flag only reports -- it never deletes anything.** Pass `--delete` to actually remove the reported directories, entries, and devices (see the destructive-command rule above -- always ask before running it with `--delete`). It isn't the only destructive command in the tool -- `release` (deletes owned devices) and `worktree remove --force` (discards uncommitted/untracked work) are destructive too; see the destructive-command rules above for all three. `--older-than <days>` narrows the artifact report to directories not accessed recently.
 
 The report has four buckets:
 - **Orphaned build artifacts** -- DerivedData whose workspace path no longer exists. Deleted (with sizes) under `--delete`.

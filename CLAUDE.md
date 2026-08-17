@@ -84,8 +84,8 @@ checklist:
 - Behavior change (e.g., a new `up --json` field, a new destructive
   side effect)? Update both the relevant section and "When things go wrong".
 
-The skill is shipped to users via the curl line in the README; staleness
-breaks agent guidance.
+The skill is shipped to users via the `npx skills add janicduplessis/rn-iso`
+line in the README; staleness breaks agent guidance.
 
 ### 2. The ownership rule
 
