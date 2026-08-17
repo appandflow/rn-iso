@@ -17,6 +17,63 @@ export function releaseAction({ record, occupied, force }) {
   return { action: 'delete', reason: null };
 }
 
+// Legacy/physical assignments are only ever cleared by the caller, never
+// touched here -- releaseAction already returns `clear` for them, and
+// resolveOwnedIosSim would (correctly) refuse to shut down a sim it doesn't
+// own, so there is nothing to do for a non-owned record.
+function releaseIosDevice(entry, force) {
+  if (!entry.owned) return;
+  // Verify ownership by name against the LIVE sim list BEFORE probing
+  // occupancy or issuing shutdownIosSim -- isSimOccupied shells at the udid
+  // too, so probing it first would still land on whatever real simulator a
+  // renamed/stale record's udid now resolves to.
+  const resolved = resolveOwnedIosSim(entry.deviceUdid);
+  if (resolved.notOwned) {
+    console.log(chalk.yellow(`Did not delete the device: sim is now named "${resolved.notOwned}", not rn-iso-owned by name -- leaving it running.`));
+    return;
+  }
+  if (resolved.missing) {
+    console.log(chalk.dim(`iOS sim ${entry.deviceUdid} is already gone; nothing to delete.`));
+    return;
+  }
+  const occupied = isSimOccupied(entry.deviceUdid);
+  const decision = releaseAction({ record: entry, occupied, force });
+  if (decision.action === 'delete') {
+    const label = formatIosLabel(entry.deviceUdid);
+    shutdownIosSim(entry.deviceUdid);
+    deleteIosSim(entry.deviceUdid);
+    console.log(chalk.green(`Deleted owned iOS sim ${label}`));
+  } else if (decision.reason) {
+    console.log(chalk.yellow(`Did not delete the device: ${decision.reason}.`));
+  }
+}
+
+function releaseAndroidDevice(entry, force) {
+  if (!entry.owned || !entry.avdName) return;
+  // Verify identity against the LIVE adb list before shutting anything
+  // down: the recorded consolePort is a slot, not an identity, and may now
+  // be held by a foreign emulator.
+  const resolved = resolveOwnedAvdSerial(entry.avdName, entry.consolePort);
+  if (resolved.notOwned) {
+    console.log(chalk.yellow(`Did not delete the device: AVD ${entry.avdName} is not rn-iso-owned by name -- leaving it running.`));
+    return;
+  }
+  if (resolved.missing) {
+    console.log(chalk.dim(`Android AVD ${entry.avdName} is already gone; nothing to delete.`));
+    return;
+  }
+  // Android has no occupancy probe (see CLAUDE.md item 4), so an owned,
+  // identity-verified AVD is always eligible for deletion here.
+  const decision = releaseAction({ record: entry, occupied: false, force });
+  if (decision.action === 'delete') {
+    if (resolved.serial) shutdownAndroidEmulator(resolved.serial);
+    deleteAvd(entry.avdName);
+    console.log(chalk.green(`Deleted owned AVD ${entry.avdName}${resolved.serial ? ` (${resolved.serial})` : ''}`));
+  } else if (decision.reason) {
+    console.log(chalk.yellow(`Did not delete the device: ${decision.reason}.`));
+  }
+}
+
 export default function releaseCommand(program) {
   program
     .command('release [target]')
@@ -52,46 +109,18 @@ export default function releaseCommand(program) {
           console.log(chalk.dim(`No ${p} assignment to release for ${found}.`));
           continue;
         }
-        // Occupancy only matters for owned devices (it decides delete vs.
-        // clear); skip the simctl probe entirely for legacy/physical
-        // assignments, which are always just cleared.
-        const occupied = entry.owned && p === 'ios' ? isSimOccupied(entry.deviceUdid) : false;
-        const decision = releaseAction({ record: entry, occupied, force: opts.force });
-        if (decision.action === 'delete') {
+        // Each platform's device teardown is contained in its own
+        // try/catch: a throwing probe (e.g. a wedged simctl daemon) must
+        // not crash the command before clearDevice runs, and must not stop
+        // the other platform from being processed.
+        try {
           if (p === 'ios') {
-            // Verify ownership by name against the live sim list BEFORE
-            // issuing shutdownIosSim -- deleteIosSim's own name guard runs
-            // too late to matter here: by the time it throws, shutdown has
-            // already been fired at whatever real simulator this udid
-            // resolves to (a renamed sim, or a stale/mistyped record).
-            const resolved = resolveOwnedIosSim(entry.deviceUdid);
-            if (resolved.notOwned) {
-              console.log(chalk.yellow(`Did not delete the device: sim is now named "${resolved.notOwned}", not rn-iso-owned by name -- leaving it running.`));
-            } else if (resolved.missing) {
-              console.log(chalk.dim(`iOS sim ${entry.deviceUdid} is already gone; nothing to delete.`));
-            } else {
-              const label = formatIosLabel(entry.deviceUdid);
-              shutdownIosSim(entry.deviceUdid);
-              deleteIosSim(entry.deviceUdid);
-              console.log(chalk.green(`Deleted owned iOS sim ${label}`));
-            }
-          } else if (entry.avdName) {
-            // Verify identity against the LIVE adb list before shutting
-            // anything down: the recorded consolePort is a slot, not an
-            // identity, and may now be held by a foreign emulator.
-            const resolved = resolveOwnedAvdSerial(entry.avdName, entry.consolePort);
-            if (resolved.notOwned) {
-              console.log(chalk.yellow(`Did not delete the device: AVD ${entry.avdName} is not rn-iso-owned by name -- leaving it running.`));
-            } else if (resolved.missing) {
-              console.log(chalk.dim(`Android AVD ${entry.avdName} is already gone; nothing to delete.`));
-            } else {
-              if (resolved.serial) shutdownAndroidEmulator(resolved.serial);
-              deleteAvd(entry.avdName);
-              console.log(chalk.green(`Deleted owned AVD ${entry.avdName}${resolved.serial ? ` (${resolved.serial})` : ''}`));
-            }
+            releaseIosDevice(entry, opts.force);
+          } else {
+            releaseAndroidDevice(entry, opts.force);
           }
-        } else if (decision.reason) {
-          console.log(chalk.yellow(`Did not delete the device: ${decision.reason}.`));
+        } catch (e) {
+          console.log(chalk.yellow(`Could not tear down the ${p} device: ${String(e?.message || e)}. Clearing the assignment anyway.`));
         }
         clearDevice(found, p);
         console.log(chalk.green(`Released ${p} assignment for ${found}.`));
