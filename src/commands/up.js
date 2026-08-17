@@ -15,6 +15,7 @@ import {
   setDevice,
   getSetupStatus,
   allConsolePortsAndSerials,
+  loadConfig,
 } from '../config.js';
 import { allocatePort } from '../ports.js';
 import { ensureMetro, logFileFor, findPidListeningOnPort } from '../metro.js';
@@ -225,6 +226,19 @@ function ensureOwnedIosDevice({ record, projectPath, label, settings, flags, not
   return newRecord;
 }
 
+// True if some OTHER registered project's android record already names
+// avdName. Used by the avdmanager "already exists" recovery path to tell a
+// genuine same-project retry (safe to adopt) apart from a label collision
+// with a different project (must error, not silently hijack).
+function findOtherProjectOwningAvd(avdName, projectPath) {
+  const cfg = loadConfig();
+  for (const [path, proj] of Object.entries(cfg?.projects || {})) {
+    if (path === projectPath) continue;
+    if (proj?.platforms?.android?.avdName === avdName) return path;
+  }
+  return null;
+}
+
 async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, flags, note, out }) {
   if (record?.avdName) {
     if (record.owned) {
@@ -295,6 +309,15 @@ async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, 
     const message = String(e?.message || e);
     const avdName = `rn-iso-${sanitizeAvdLabel(label)}`;
     if (message.includes('already exists') && listAvds().includes(avdName)) {
+      // Guard against hijacking another project's device: the "already
+      // exists" recovery above exists for THIS project's own abandoned AVD
+      // from a prior run, not for adopting a different project's AVD just
+      // because its label sanitized to the same name (e.g. two monorepo
+      // app-dir projects with no distinguishing --label).
+      const owner = findOtherProjectOwningAvd(avdName, projectPath);
+      if (owner) {
+        throw new Error(`AVD ${avdName} already exists and is owned by another project (${owner}). Pass a distinct --label to avoid the collision instead of hijacking it.`);
+      }
       created = { avdName };
       out(chalk.dim(`Recovered existing owned AVD ${avdName} (unrecorded from a prior run)`));
     } else {

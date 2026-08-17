@@ -206,6 +206,9 @@ function mockAndroidExecutor({
   // exercised (including a serial that answers with a DIFFERENT AVD name
   // than the caller expects -- the foreign-emulator regression case).
   emuAvdNames = {},
+  // If set, `avdmanager create avd` throws this message instead of
+  // succeeding -- used to exercise the "already exists" recovery path.
+  createAvdError = null,
 } = {}) {
   const runCalls = [];
   const spawnCalls = [];
@@ -217,7 +220,10 @@ function mockAndroidExecutor({
       runCalls.push(cmd);
       if (/git .*rev-parse/.test(cmd)) throw new Error('not a git repo');
       if (cmd === 'emulator -list-avds') return avds.length ? avds.join('\n') + '\n' : '';
-      if (/create avd/.test(cmd)) return '';
+      if (/create avd/.test(cmd)) {
+        if (createAvdError) throw new Error(createAvdError);
+        return '';
+      }
       if (cmd === 'adb devices') {
         return booted && adbDevicesAfterBoot != null ? adbDevicesAfterBoot : adbDevicesBeforeBoot;
       }
@@ -653,4 +659,58 @@ test('action: recorded port held by a foreign emulator is treated as not running
   assert.equal(facts.avdName, 'rn-iso-app');
   assert.equal(facts.serial, 'emulator-5556');
   assert.equal(facts.consolePort, 5556);
+});
+
+// Label-collision guard: avdmanager's "already exists" recovery path exists
+// for a project's own abandoned AVD from a prior run, not for silently
+// adopting a DIFFERENT project's AVD just because an unset --label
+// sanitized to the same name.
+test('action: creating an AVD that already exists AND is owned by another project errors instead of hijacking it', async () => {
+  const root = makeAndroidProjectDir();
+  const androidHome = makeAndroidHome();
+  const prevAndroidHome = process.env.ANDROID_HOME;
+  process.env.ANDROID_HOME = androidHome;
+
+  upsertProject(root, { label: 'shared', bundleId: null, androidPackage: 'com.example.scratch', isExpo: false });
+  upsertProject('/other/proj', { label: 'other', platforms: { android: { avdName: 'rn-iso-shared', consolePort: 5554, owned: true } } });
+
+  const servers = [];
+  const exec = mockAndroidExecutor({
+    avds: ['rn-iso-shared'],
+    createAvdError: 'Error: AVD name "rn-iso-shared" already exists.',
+    spawnServers: servers,
+  });
+  setExecutor(exec);
+
+  const errs = [];
+  const origErr = console.error, origExit = process.exit;
+  console.error = (line) => errs.push(line);
+  let exitCode = null;
+  process.exit = (code) => { exitCode = code; throw new Error('exit'); };
+
+  try {
+    const run = captureAction(registerUp);
+    const cwd = process.cwd();
+    process.chdir(root);
+    try {
+      await run('android', { json: true });
+    } catch (e) {
+      if (!/exit/.test(e.message)) throw e;
+    } finally {
+      process.chdir(cwd);
+    }
+  } finally {
+    console.error = origErr;
+    process.exit = origExit;
+    for (const s of servers) s.close();
+    rmSync(root, { recursive: true, force: true });
+    rmSync(androidHome, { recursive: true, force: true });
+    if (prevAndroidHome === undefined) delete process.env.ANDROID_HOME;
+    else process.env.ANDROID_HOME = prevAndroidHome;
+  }
+
+  assert.equal(exitCode, 1);
+  assert.ok(errs.some(e => /already exists and is owned by another project/i.test(String(e)) && /--label/.test(String(e))));
+  // The AVD was never adopted for this project.
+  assert.equal(getProject(root)?.platforms?.android, undefined);
 });
