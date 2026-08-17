@@ -28,6 +28,7 @@ import {
   nextConsolePort,
   listAdbDevices,
   sanitizeAvdLabel,
+  resolveOwnedAvdSerial,
 } from '../sim/android.js';
 
 export default function upCommand(program) {
@@ -226,37 +227,51 @@ function ensureOwnedIosDevice({ record, projectPath, label, settings, flags, not
 
 async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, flags, note, out }) {
   if (record?.avdName) {
-    const avdExists = listAvds().includes(record.avdName);
-    if (avdExists) {
-      const adb = listAdbDevices();
-      const running = adb.emulators.some(e => e.consolePort === record.consolePort);
-      if (record.owned) {
-        if (!running) {
-          out(chalk.dim(`Booting owned ${record.avdName} (emulator-${record.consolePort})...`));
-          bootAndroidEmulator(record.avdName, record.consolePort);
-          const serial = `emulator-${record.consolePort}`;
-          const result = await waitForBoot(serial, 120000);
-          if (!result.ok) {
-            throw new Error(`Emulator ${serial} did not finish booting. Diagnostic: ${JSON.stringify(result.diagnostic)}`);
-          }
-        }
+    if (record.owned) {
+      // Verify identity against the LIVE adb list before deciding "ours is
+      // running" -- the recorded consolePort is a slot, not an identity,
+      // and may now be held by a foreign emulator (e.g. Android Studio's
+      // own default on 5554). Deciding liveness from the port alone would
+      // adb-reverse onto, and report the facts of, someone else's emulator.
+      const resolved = resolveOwnedAvdSerial(record.avdName, record.consolePort);
+      if (resolved.notOwned) {
+        note(chalk.yellow(`Note: recorded AVD ${record.avdName} is not rn-iso-owned by name -- creating a fresh owned AVD instead of reusing it.`));
+        // Fall through to creation below.
+      } else if (resolved.serial) {
+        // Ours is genuinely running at this serial: reuse it as recorded.
+        const consolePort = Number(resolved.serial.replace(/^emulator-/, ''));
         const updated = {
           avdName: record.avdName,
-          consolePort: record.consolePort,
+          consolePort,
           owned: true,
           deviceName: record.deviceName ?? record.avdName,
         };
         setDevice(projectPath, 'android', updated);
         return updated;
+      } else if (!resolved.missing) {
+        // notRunning: the recorded port is either idle or held by a
+        // foreign emulator. Boot OUR avd on a newly allocated port instead
+        // of trusting the recorded one -- the union port-picking logic
+        // below already avoids ports currently in use.
+        out(chalk.dim(`Recorded port for owned AVD ${record.avdName} is not currently ours; booting it on a freshly allocated port...`));
+        return await bootOwnedAvdOnFreshPort({ avdName: record.avdName, projectPath, deviceName: record.deviceName, out });
       }
+      // resolved.missing: AVD was deleted out from under the record --
+      // fall through to creation below.
+    } else {
       // Legacy: reuse only if already running; never boot it ourselves.
-      if (!running) {
-        note(chalk.yellow(`Note: assigned AVD ${record.avdName} (emulator-${record.consolePort}) is shut down and is not owned by rn-iso, so it will not be booted automatically.`));
-        note(chalk.dim('Boot it yourself, or run `rn-iso release` to switch this project to an owned device.'));
+      const avdExists = listAvds().includes(record.avdName);
+      if (avdExists) {
+        const adb = listAdbDevices();
+        const running = adb.emulators.some(e => e.consolePort === record.consolePort);
+        if (!running) {
+          note(chalk.yellow(`Note: assigned AVD ${record.avdName} (emulator-${record.consolePort}) is shut down and is not owned by rn-iso, so it will not be booted automatically.`));
+          note(chalk.dim('Boot it yourself, or run `rn-iso release` to switch this project to an owned device.'));
+        }
+        return record;
       }
-      return record;
+      // AVD was deleted out from under the record: fall through to creation.
     }
-    // AVD was deleted out from under the record: fall through to creation.
   } else if (record?.serial) {
     // Legacy physical-device assignment: always reused as-is, never created
     // or booted (we cannot boot hardware).
@@ -286,6 +301,16 @@ async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, 
       throw e;
     }
   }
+  out(chalk.dim(`Created owned AVD ${created.avdName}`));
+  return bootOwnedAvdOnFreshPort({ avdName: created.avdName, projectPath, deviceName: created.avdName, out });
+}
+
+// Boots avdName on a freshly allocated console port and records ownership
+// BEFORE booting: if boot throws (timeout, etc.) the record must already
+// exist so a retry reuses/boots this AVD instead of hitting avdmanager's
+// "already exists" wedge on re-creation. Shared by fresh-AVD creation and
+// by the owned-reuse path's "recorded port isn't ours" fallback (I6).
+async function bootOwnedAvdOnFreshPort({ avdName, projectPath, deviceName, out }) {
   // Union config-recorded console ports with ports adb currently sees in
   // use (live emulators, plus unhealthy entries that still carry a
   // console port) -- a foreign emulator (e.g. Android Studio's default on
@@ -298,13 +323,9 @@ async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, 
   ];
   const claimedPorts = [...allConsolePortsAndSerials().androidConsolePorts, ...livePorts];
   const consolePort = nextConsolePort(claimedPorts);
-  out(chalk.dim(`Created owned AVD ${created.avdName}`));
-  // Record ownership BEFORE booting: if boot throws (timeout, etc.) the
-  // record must already exist so a retry reuses/boots this AVD instead of
-  // hitting avdmanager's "already exists" wedge on re-creation.
-  const newRecord = { avdName: created.avdName, consolePort, owned: true, deviceName: created.avdName };
+  const newRecord = { avdName, consolePort, owned: true, deviceName: deviceName ?? avdName };
   setDevice(projectPath, 'android', newRecord);
-  bootAndroidEmulator(created.avdName, consolePort);
+  bootAndroidEmulator(avdName, consolePort);
   const serial = `emulator-${consolePort}`;
   out(chalk.dim(`Waiting for ${serial} to finish booting...`));
   const result = await waitForBoot(serial, 120000);

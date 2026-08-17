@@ -201,6 +201,11 @@ function mockAndroidExecutor({
   adbDevicesAfterBoot = null,
   spawnServers = [],
   onBootCheck = () => {},
+  // Maps serial (e.g. "emulator-5554") -> the AVD name `adb emu avd name`
+  // should report for it, so resolveOwnedAvdSerial's identity check can be
+  // exercised (including a serial that answers with a DIFFERENT AVD name
+  // than the caller expects -- the foreign-emulator regression case).
+  emuAvdNames = {},
 } = {}) {
   const runCalls = [];
   const spawnCalls = [];
@@ -215,6 +220,11 @@ function mockAndroidExecutor({
       if (/create avd/.test(cmd)) return '';
       if (cmd === 'adb devices') {
         return booted && adbDevicesAfterBoot != null ? adbDevicesAfterBoot : adbDevicesBeforeBoot;
+      }
+      const emuAvdNameMatch = cmd.match(/^adb -s (\S+) emu avd name$/);
+      if (emuAvdNameMatch) {
+        const name = emuAvdNames[emuAvdNameMatch[1]];
+        return name ? `${name}\nOK` : '';
       }
       if (/shell getprop sys\.boot_completed/.test(cmd)) {
         if (!booted) {
@@ -523,4 +533,124 @@ test('action: fresh project creates and records an owned AVD before boot, then r
   assert.match(facts.avdName, /^rn-iso-/);
   assert.equal(facts.bundleId, 'com.example.scratch');
   assert.equal(facts.metroHealthy, true);
+});
+
+// I6: an owned Android record must be reused by verifying the running
+// emulator's IDENTITY (adb emu avd name), not just by trusting the
+// recorded console port.
+
+test('action: an owned AVD genuinely running at the recorded port is reused by identity, without rebooting', async () => {
+  const root = makeAndroidProjectDir();
+  upsertProject(root, { bundleId: null, androidPackage: 'com.example.scratch', isExpo: false });
+  setDevice(root, 'android', { avdName: 'rn-iso-app', consolePort: 5554, owned: true, deviceName: 'rn-iso-app' });
+
+  const servers = [];
+  const exec = mockAndroidExecutor({
+    avds: ['rn-iso-app'],
+    adbDevicesBeforeBoot: 'List of devices attached\nemulator-5554\tdevice\n',
+    emuAvdNames: { 'emulator-5554': 'rn-iso-app' },
+    spawnServers: servers,
+  });
+  setExecutor(exec);
+
+  const logs = [];
+  const origLog = console.log, origExit = process.exit;
+  console.log = (line) => logs.push(line);
+  let exitCode = null;
+  process.exit = (code) => { exitCode = code; throw new Error('exit'); };
+
+  try {
+    const run = captureAction(registerUp);
+    const cwd = process.cwd();
+    process.chdir(root);
+    try {
+      await run('android', { json: true });
+    } finally {
+      process.chdir(cwd);
+    }
+  } finally {
+    console.log = origLog;
+    process.exit = origExit;
+    for (const s of servers) s.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  assert.equal(exitCode, null);
+  assert.ok(!exec.calls.spawn.some(c => c.cmd === 'emulator'), 'must not boot an already-running owned emulator');
+  assert.equal(logs.length, 1);
+  const facts = JSON.parse(logs[0]);
+  assert.equal(facts.owned, true);
+  assert.equal(facts.avdName, 'rn-iso-app');
+  assert.equal(facts.serial, 'emulator-5554');
+  assert.equal(facts.consolePort, 5554);
+});
+
+test('action: recorded port held by a foreign emulator is treated as not running; ours boots on a freshly allocated port', async () => {
+  const root = makeAndroidProjectDir();
+  upsertProject(root, { bundleId: null, androidPackage: 'com.example.scratch', isExpo: false });
+  setDevice(root, 'android', { avdName: 'rn-iso-app', consolePort: 5554, owned: true, deviceName: 'rn-iso-app' });
+
+  const servers = [];
+  let recordAtBootCheck;
+  const exec = mockAndroidExecutor({
+    avds: ['rn-iso-app'],
+    // The recorded port (5554) is occupied, but by a FOREIGN emulator --
+    // its identity does not match our owned AVD name.
+    adbDevicesBeforeBoot: 'List of devices attached\nemulator-5554\tdevice\n',
+    adbDevicesAfterBoot: 'List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n',
+    emuAvdNames: { 'emulator-5554': 'Android_Studio_Default', 'emulator-5556': 'rn-iso-app' },
+    spawnServers: servers,
+    onBootCheck: () => {
+      recordAtBootCheck = getProject(root)?.platforms?.android ?? null;
+    },
+  });
+  setExecutor(exec);
+
+  const logs = [];
+  const errs = [];
+  const origLog = console.log, origErr = console.error, origExit = process.exit;
+  console.log = (line) => logs.push(line);
+  console.error = (line) => errs.push(line);
+  let exitCode = null;
+  process.exit = (code) => { exitCode = code; throw new Error('exit'); };
+
+  try {
+    const run = captureAction(registerUp);
+    const cwd = process.cwd();
+    process.chdir(root);
+    try {
+      await run('android', { json: true });
+    } finally {
+      process.chdir(cwd);
+    }
+  } finally {
+    console.log = origLog;
+    console.error = origErr;
+    process.exit = origExit;
+    for (const s of servers) s.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  assert.equal(exitCode, null);
+  // Never told to boot on the recorded (foreign-held) port.
+  assert.ok(
+    !exec.calls.spawn.some(c => c.cmd === 'emulator' && c.args.includes('5554')),
+    'must never boot our AVD onto a port a foreign emulator holds'
+  );
+  // Booted on a freshly allocated port instead (5556, the next free one
+  // given 5554 is already live).
+  assert.ok(
+    exec.calls.spawn.some(c => c.cmd === 'emulator' && c.args.includes('5556')),
+    'expected our AVD to boot on a freshly allocated port'
+  );
+  assert.ok(recordAtBootCheck, 'expected an ownership record to exist by the time boot is first polled');
+  assert.equal(recordAtBootCheck.avdName, 'rn-iso-app');
+  assert.equal(recordAtBootCheck.consolePort, 5556);
+
+  assert.equal(logs.length, 1);
+  const facts = JSON.parse(logs[0]);
+  assert.equal(facts.owned, true);
+  assert.equal(facts.avdName, 'rn-iso-app');
+  assert.equal(facts.serial, 'emulator-5556');
+  assert.equal(facts.consolePort, 5556);
 });
