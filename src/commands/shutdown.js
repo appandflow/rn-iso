@@ -209,11 +209,20 @@ export default function shutdownCommand(program) {
         }
       }
 
-      // Phase 3: clear device assignments so subsequent `rn-iso ios/android`
-      // calls re-pick instead of trying to reuse a now-shutdown device.
+      // Phase 3: clear legacy and physical device assignments so a
+      // subsequent `rn-iso up` re-picks instead of trying to reuse a
+      // now-shutdown legacy device. Owned records are left in place:
+      // shutdown never deletes, so the device still exists and is still
+      // ours -- clearing its record here would orphan it (nothing left
+      // referencing it, so the next `gc --delete` would destroy it, and
+      // the next `up` would build a brand-new device from scratch instead
+      // of just booting this one back up). `up`'s owned-device reuse path
+      // boots a shut-down owned record back up.
       for (const [path, proj] of projects) {
-        if (proj.platforms?.ios) clearDevice(path, 'ios');
-        if (proj.platforms?.android) clearDevice(path, 'android');
+        const ios = proj.platforms?.ios;
+        if (ios && !ios.owned) clearDevice(path, 'ios');
+        const android = proj.platforms?.android;
+        if (android && !android.owned) clearDevice(path, 'android');
       }
     });
 }

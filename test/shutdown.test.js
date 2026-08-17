@@ -119,18 +119,20 @@ test('shutdown kills Metros, shuts down sims/emulators, clears assignments', asy
   assert.equal(adbCalls.length, 1);
   assert.match(adbCalls[0].cmd, /emulator-5556/);
 
-  // Config: metroPid cleared, platforms emptied. Project entries themselves
-  // remain so labels / metroPort allocations survive a restart.
+  // Config: metroPid cleared. Owned device records are LEFT IN PLACE --
+  // shutdown never deletes, so the device still exists and is still ours;
+  // clearing the record would orphan it for the next gc --delete and force
+  // `up` to build a brand-new device instead of reusing this one.
   const cfg = loadConfig();
   assert.equal(cfg.projects['/proj/a'].metroPid, null);
   assert.equal(cfg.projects['/proj/a'].metroPort, 8083);
-  assert.equal(cfg.projects['/proj/a'].platforms.ios, undefined);
+  assert.deepEqual(cfg.projects['/proj/a'].platforms.ios, { deviceUdid: 'UDID-ABC', owned: true });
   assert.equal(cfg.projects['/proj/b'].metroPid, null);
   assert.equal(cfg.projects['/proj/b'].metroPort, 8084);
-  assert.equal(cfg.projects['/proj/b'].platforms.android, undefined);
+  assert.deepEqual(cfg.projects['/proj/b'].platforms.android, { avdName: 'rn-iso-projB', consolePort: 5556, owned: true });
 });
 
-test('shutdown --keep-sims kills Metros but leaves sims booted (still clears assignments)', async () => {
+test('shutdown --keep-sims kills Metros, leaves sims booted, and does not clear the owned assignment', async () => {
   saveConfig({
     version: 1,
     projects: {
@@ -152,9 +154,9 @@ test('shutdown --keep-sims kills Metros but leaves sims booted (still clears ass
   assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 0);
   assert.equal(execCalls.filter(c => c.cmd.includes('emu kill')).length, 0);
 
-  // Assignments still cleared.
+  // Owned assignment stays recorded (never cleared by shutdown).
   const cfg = loadConfig();
-  assert.equal(cfg.projects['/proj/a'].platforms.ios, undefined);
+  assert.deepEqual(cfg.projects['/proj/a'].platforms.ios, { deviceUdid: 'UDID-ABC', owned: true });
 });
 
 test('shutdown is a no-op when nothing is tracked', async () => {
@@ -193,10 +195,11 @@ test('shutdown <target> scopes to a single project (by label) and leaves the oth
   assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 1);
   assert.equal(execCalls.filter(c => c.cmd.includes('emu kill')).length, 0);
 
-  // proj/a is cleaned; proj/b is intact.
+  // proj/a's Metro is cleaned but its owned record stays (shutdown never
+  // deletes); proj/b is untouched entirely.
   const cfg = loadConfig();
   assert.equal(cfg.projects['/proj/a'].metroPid, null);
-  assert.equal(cfg.projects['/proj/a'].platforms.ios, undefined);
+  assert.deepEqual(cfg.projects['/proj/a'].platforms.ios, { deviceUdid: 'UDID-ABC', owned: true });
   assert.equal(cfg.projects['/proj/b'].metroPid, 22222);
   assert.deepEqual(cfg.projects['/proj/b'].platforms.android, {
     avdName: 'Pixel_6_API_34',
@@ -274,9 +277,10 @@ test('shutdown skips an occupied owned iOS sim and reports it, without issuing s
   assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 0);
   assert.ok(logs.some(l => /Skipped ios device/.test(l) && /in use/i.test(l)));
 
-  // Assignment is still cleared even though the device itself was left running.
+  // Owned assignment stays recorded -- the sim was left running (occupied),
+  // so the record must still point at it.
   const cfg = loadConfig();
-  assert.equal(cfg.projects['/proj/a'].platforms.ios, undefined);
+  assert.deepEqual(cfg.projects['/proj/a'].platforms.ios, { deviceUdid: 'UDID-OCC', owned: true });
 });
 
 test('shutdown <unknown-target> errors and exits without touching anything', async () => {
@@ -374,7 +378,7 @@ test('shutdown skips an owned android record whose recorded port is held by a fo
   assert.equal(execCalls.filter(c => c.cmd.includes('emu kill')).length, 0);
   assert.ok(logs.some(l => /rn-iso-mine/.test(l) && /not currently running/i.test(l)));
 
-  // Assignment is still cleared even though the device itself was left alone.
+  // Owned assignment stays recorded -- the device itself was left alone.
   const cfg = loadConfig();
-  assert.equal(cfg.projects['/proj/a'].platforms.android, undefined);
+  assert.deepEqual(cfg.projects['/proj/a'].platforms.android, { avdName: 'rn-iso-mine', consolePort: 5554, owned: true });
 });

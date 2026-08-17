@@ -64,7 +64,7 @@ All commands below take the same `npx rn-iso` prefix.
 | `logs [<port>\|<shortcut>\|<path>] [-n <lines>] [--follow]` | Print the managed Metro log (bundle progress, resolution errors, client logs). |
 | `status` | Show all projects' device assignments (owned/legacy), setup status, and Metro state. |
 | `release [<port>\|<shortcut>\|<path>] [--platform <p>] [--force]` | Free a project's device assignment. Deletes it if owned (see above); clears it if legacy/physical. `--force` deletes even if in use by another tool (iOS only). |
-| `shutdown [<shortcut>\|<path>] [-y] [--keep-sims]` | Kill Metro, shut down (never delete) owned sims/emulators, clear assignments. No arg = every registered project. |
+| `shutdown [<shortcut>\|<path>] [-y] [--keep-sims]` | Kill Metro, shut down (never delete) owned sims/emulators. Owned device records stay recorded so `up` can reuse them; legacy/physical assignments are cleared. No arg = every registered project. |
 | `prune` | Remove entries for deleted project directories, freeing their ports (not devices -- see `gc`). |
 | `gc [--delete] [--older-than <days>]` | Report (or, with `--delete`, reclaim) orphaned Xcode DerivedData, dead project entries, and orphaned `rn-iso-*` devices. Reports only by default. |
 | `config [<key> [<value>]] [--unset] [--project <target>] [--repo]` | Get / set a per-project (or, with `--repo`, repo-shared) setting. |
