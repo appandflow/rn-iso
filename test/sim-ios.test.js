@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
-import { parseSimctlList, selectIosDevice, listAllIosSims, listBootedIosSims, sortSims, deviceFamilyRank, parseOccupyingApps } from '../src/sim/ios.js';
+import { parseSimctlList, selectIosDevice, listAllIosSims, listBootedIosSims, sortSims, deviceFamilyRank, parseOccupyingApps, pickDefaultIosCreation, sanitizeDeviceLabel } from '../src/sim/ios.js';
 
 let tmpHome;
 
@@ -259,4 +259,44 @@ test('selectIosDevice reports allClaimed when every sim is claimed or occupied',
   const result = selectIosDevice({ claimedUdids: [], occupiedUdids: ['BUSY'] });
   assert.equal(result.kind, 'allClaimed');
   assert.equal(result.candidates[0].occupied, true);
+});
+
+test('pickDefaultIosCreation picks the newest iPhone on the newest runtime', () => {
+  const deviceTypes = [
+    { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPad-Pro', name: 'iPad Pro' },
+    { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16', name: 'iPhone 16' },
+    { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', name: 'iPhone 17 Pro' },
+  ];
+  const runtimes = [
+    { identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2', name: 'iOS 26.2', version: '26.2',
+      supportedDeviceTypes: deviceTypes },
+    { identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5', name: 'iOS 26.5', version: '26.5',
+      supportedDeviceTypes: deviceTypes },
+  ];
+  const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
+  assert.equal(pick.runtimeId, 'com.apple.CoreSimulator.SimRuntime.iOS-26-5');
+  assert.equal(pick.deviceTypeId, 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro');
+});
+
+test('pickDefaultIosCreation honors explicit deviceType and runtime by name', () => {
+  const deviceTypes = [{ identifier: 'dt.iphone16', name: 'iPhone 16' }];
+  const runtimes = [
+    { identifier: 'rt.26-2', name: 'iOS 26.2', version: '26.2', supportedDeviceTypes: deviceTypes },
+    { identifier: 'rt.26-5', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
+  ];
+  const pick = pickDefaultIosCreation(deviceTypes, runtimes, { deviceType: 'iPhone 16', runtime: '26.2' });
+  assert.equal(pick.deviceTypeId, 'dt.iphone16');
+  assert.equal(pick.runtimeId, 'rt.26-2');
+});
+
+test('pickDefaultIosCreation returns null when nothing matches', () => {
+  assert.equal(pickDefaultIosCreation([], [], {}), null);
+  const deviceTypes = [{ identifier: 'dt', name: 'iPhone 17' }];
+  const runtimes = [{ identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
+  assert.equal(pickDefaultIosCreation(deviceTypes, runtimes, { deviceType: 'iPhone 99' }), null);
+});
+
+test('sanitizeDeviceLabel strips characters simctl names should not carry', () => {
+  assert.equal(sanitizeDeviceLabel('feat-a/tlon-mobile'), 'feat-a-tlon-mobile');
+  assert.equal(sanitizeDeviceLabel('x  y"z`$'), 'x-y-z');
 });

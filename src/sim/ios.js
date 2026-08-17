@@ -171,6 +171,45 @@ export function createIosSim(deviceTypeId, runtimeId) {
   return out.trim();
 }
 
+// Newest iPhone device type on the newest installed runtime, unless the
+// caller pinned either by name. Pure: takes the listings as data.
+export function pickDefaultIosCreation(deviceTypes, runtimes, { deviceType, runtime } = {}) {
+  const rts = [...runtimes].sort((a, b) =>
+    String(b.version).localeCompare(String(a.version), undefined, { numeric: true }));
+  const wantedRts = runtime
+    ? rts.filter(r => r.version === runtime || r.name.endsWith(runtime))
+    : rts;
+  for (const rt of wantedRts) {
+    const supported = (rt.supportedDeviceTypes || []).filter(d =>
+      deviceType ? d.name === deviceType : /^iPhone/i.test(d.name));
+    if (supported.length === 0) continue;
+    const best = [...supported].sort((a, b) =>
+      b.name.localeCompare(a.name, undefined, { numeric: true }))[0];
+    return { deviceTypeId: best.identifier, runtimeId: rt.identifier };
+  }
+  return null;
+}
+
+export function sanitizeDeviceLabel(label) {
+  return String(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+export function createOwnedIosSim(label, { deviceType, runtime } = {}) {
+  const pick = pickDefaultIosCreation(listIosDeviceTypes(), listIosRuntimes(), { deviceType, runtime });
+  if (!pick) {
+    throw new Error('No matching simulator device type / runtime is installed. Install one via Xcode, or pass --device-type / --runtime.');
+  }
+  const name = `rn-iso-${sanitizeDeviceLabel(label)}`;
+  const udid = getExecutor()
+    .run(`xcrun simctl create "${name}" "${pick.deviceTypeId}" "${pick.runtimeId}"`)
+    .trim();
+  return { udid, name };
+}
+
+export function deleteIosSim(udid) {
+  getExecutor().runQuiet(`xcrun simctl delete ${udid}`);
+}
+
 export function listIosRuntimes() {
   const out = getExecutor().run('xcrun simctl list runtimes --json');
   const data = JSON.parse(out);
