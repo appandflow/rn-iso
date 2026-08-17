@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { saveConfig, loadConfig } from '../src/config.js';
-import gcCommand, { formatGcReport } from '../src/commands/gc.js';
+import gcCommand, { findOrphanedDevices, formatGcReport } from '../src/commands/gc.js';
 
 test('reports orphans with sizes and a total', () => {
   const lines = formatGcReport({
@@ -70,6 +70,36 @@ test('headline does not claim "nothing to reclaim" without flagging unchecked en
   const headline = lines.split('\n')[0];
   assert.doesNotMatch(headline, /^Nothing to reclaim\.$/);
   assert.match(headline, /could not be checked/i);
+});
+
+// --- findOrphanedDevices (pure) ----------------------------------------
+
+test('findOrphanedDevices proposes only rn-iso devices absent from config', () => {
+  const result = findOrphanedDevices({
+    sims: [
+      { udid: 'U1', name: 'rn-iso-gone' },
+      { udid: 'U2', name: 'rn-iso-live' },
+      { udid: 'U3', name: 'iPhone 17 Pro' },
+    ],
+    avds: ['rn-iso-old', 'Pixel_7'],
+    config: { projects: { '/p': { platforms: {
+      ios: { deviceUdid: 'U2', owned: true },
+      android: { avdName: 'rn-iso-kept', owned: true },
+    } } } },
+    isMounted: () => true,
+  });
+  assert.deepEqual(result.orphaned.map(o => o.id).sort(), ['U1', 'rn-iso-old']);
+});
+
+test('devices referenced by a project on an unmounted volume are kept', () => {
+  const result = findOrphanedDevices({
+    sims: [{ udid: 'U1', name: 'rn-iso-ext' }],
+    avds: [],
+    config: { projects: { '/Volumes/Ext/p': { platforms: { ios: { deviceUdid: 'U1', owned: true } } } } },
+    isMounted: () => false,
+  });
+  assert.equal(result.orphaned.length, 0);
+  assert.match(result.kept[0].reason, /not mounted/);
 });
 
 // --- Action-level tests -----------------------------------------------

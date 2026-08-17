@@ -1,6 +1,6 @@
 // src/commands/status.js
 import chalk from 'chalk';
-import { loadConfig } from '../config.js';
+import { getSetupStatus, loadConfig } from '../config.js';
 import { isMetroRunning } from '../ports.js';
 import { isPidAlive, logFileExists } from '../metro.js';
 import { findProjectRoot, projectShortcut } from '../project.js';
@@ -51,14 +51,26 @@ export default function statusCommand(program) {
         const ios = proj.platforms?.ios;
         if (ios) {
           const name = iosNameByUdid[ios.deviceUdid] || chalk.dim('(unknown sim)');
-          console.log(`  ios: ${chalk.cyan(name)} ${chalk.dim(`(${ios.deviceUdid})`)}`);
+          const owned = ios.owned ? chalk.dim(' (owned)') : '';
+          console.log(`  ios: ${chalk.cyan(name)} ${chalk.dim(`(${ios.deviceUdid})`)}${owned}`);
         }
         const android = proj.platforms?.android;
         if (android) {
+          const owned = android.owned ? chalk.dim(' (owned)') : '';
           if (android.serial && !android.avdName) {
-            console.log(`  android: ${chalk.cyan(android.serial)} ${chalk.dim('(physical)')}`);
+            console.log(`  android: ${chalk.cyan(android.serial)} ${chalk.dim('(physical)')}${owned}`);
           } else {
-            console.log(`  android: ${chalk.cyan(android.avdName)} ${chalk.dim(`(emulator-${android.consolePort})`)}`);
+            console.log(`  android: ${chalk.cyan(android.avdName)} ${chalk.dim(`(emulator-${android.consolePort})`)}${owned}`);
+          }
+        }
+
+        const setup = getSetupStatus(path);
+        if (setup && !setup.complete) {
+          if (setup.skipped) {
+            console.log(chalk.yellow('  setup incomplete: skipped (--no-install)'));
+          } else {
+            const failedCommands = (setup.commands || []).filter(r => !r.ok).map(r => r.command);
+            console.log(chalk.yellow(`  setup incomplete: ${failedCommands.join(', ')}`));
           }
         }
       }
