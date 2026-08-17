@@ -4,9 +4,14 @@ Quick orientation for AI assistants working in this repo.
 
 ## What this is
 
-A Node.js CLI that gives each React Native / Expo project (or git worktree)
-its own Metro server and dedicated simulator/emulator, so multiple agents can
-work on different projects in parallel without device or port collisions.
+A Node.js CLI that acts as an environment broker for React Native / Expo:
+`rn-iso up <platform>` creates (or reuses) an **owned** simulator/emulator and
+a managed Metro server for the current project (or git worktree), then prints
+the facts — UDID/serial, port, bundle id — so an agent can run the project's
+own build against them. rn-iso itself never builds or installs anything. The
+lifecycle is `worktree create` -> `up <platform> --json` -> agent runs the
+project's build -> work -> `worktree remove` (which reaps the owned
+device(s) along with the worktree).
 
 State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
 `RN_ISO_HOME` env var redirects this for tests.
@@ -18,9 +23,11 @@ State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
 - **Single exec wrapper.** All `child_process` calls go through
   `src/exec.js` (`getExecutor()`). Tests inject a mock via `setExecutor()`.
   Anywhere outside `exec.js` that imports `child_process` directly is a bug.
-- **Pure parsing separate from invocation.** Functions like `parseSimctlList`,
-  `parseAdbDevices`, `selectIosDevice`, `sortSims` are pure and unit-tested;
-  the I/O wrappers around them are thin.
+- **Pure parsing/decision logic separate from invocation.** Functions like
+  `parseSimctlList`, `parseAdbDevices`, `pickDefaultIosCreation`,
+  `pickDefaultSystemImage`, `releaseAction`, `findOrphanedDevices`, and
+  `buildFacts` are pure and unit-tested; the I/O wrappers around them (the
+  actual `simctl`/`avdmanager`/`adb` calls) are thin.
 - **ASCII in source files.** No em dashes, smart quotes, or check marks in
   `src/`, `bin/`, `test/`. Markdown files (README, SKILL, this file) may use
   them. The hooks have flagged this before.
@@ -31,27 +38,30 @@ State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
 bin/cli.js              # commander entry, registers each command module
 src/
   exec.js               # mockable child_process wrapper
-  config.js             # config CRUD, reservations, sim-usage tracking, setup status
+  config.js             # config CRUD, device records, setup status
   settings.js           # layered settings resolution (project > repo > committed .rn-iso.json)
-  project.js            # project root walk, bundle-id detection (incl. native fallbacks)
+  project.js            # project root walk, bundle-id detection (incl. native fallbacks), shortcut resolution
   ports.js              # Metro port allocation + reclamation
-  runner.js             # script-vs-CLI dispatch, package-manager detection (walks up for monorepos)
+  runner.js             # package-manager detection (walks up for monorepos); survives solely
+                         # as the worktree install-pipeline default now that build dispatch is gone
   metro.js              # detached Metro spawn, PID + log lifecycle
   worktree.js           # git worktree add/remove/list, base-ref resolution, carry-over
   artifacts.js          # Xcode DerivedData discovery/classification, mounted-volume detection
-  reclaim.js            # shared reclaim-a-project logic (used by prune, gc, worktree remove)
+  reclaim.js            # shared reclaim-a-project logic (used by prune, gc, worktree remove,
+                         # release, shutdown): frees Metro/port, and -- with
+                         # deleteOwnedDevices -- shuts down + deletes owned devices
   sim/
-    ios.js              # simctl wrappers, sim selection, sortSims, parseRuntimeVersion
-    android.js          # adb/emulator wrappers, AVD selection
+    ios.js              # simctl wrappers, owned-sim creation/selection, ownership verification
+    android.js          # adb/emulator/avdmanager wrappers, owned-AVD creation/selection
   commands/
-    ios.js android.js   # the main user-facing commands
+    up.js                 # the broker command: ensure owned device + Metro + port, print facts
+    device.js              # read-only facts query, no ensure side effects
     start.js stop.js logs.js
     status.js
-    device.js           # `rn-iso device --json` -> agent-device target
     release.js shutdown.js prune.js
-    reserve.js unreserve.js
     worktree.js          # worktree create/remove/list
-    gc.js                 # report/reclaim orphaned build artifacts + dead project entries
+    gc.js                 # report/reclaim orphaned build artifacts, dead project entries, orphaned devices
+    config.js              # per-project / repo settings CRUD
 test/
   *.test.js             # `node --test` (no framework)
 skill/SKILL.md          # the agent-facing skill
@@ -67,90 +77,89 @@ you add a command, change a flag, change picker UX, or alter defaults — open
 checklist:
 
 - New command? Add it under "Other useful commands" or its own section if
-  meaty (like `reserve`).
-- New / changed flag on `ios` or `android`? Update "Core workflow" and
-  "Critical rules" if the flag matters for non-interactive agent use.
-- Behavior change (e.g., picker now does X)? Update both the
-  description and the "When things go wrong" section.
+  meaty (like `worktree` or `gc`).
+- New / changed flag on `up`? Update "The env lifecycle" and the facts
+  contract / common-setups table if the flag matters for non-interactive
+  agent use.
+- Behavior change (e.g., a new `up --json` field, a new destructive
+  side effect)? Update both the relevant section and "When things go wrong".
 
 The skill is shipped to users via the curl line in the README; staleness
 breaks agent guidance.
 
-### 2. Don't auto-create simulators
+### 2. The ownership rule
 
-`selectIosDevice` returns `needsBoot` only when no unclaimed sim exists at
-all. `commands/ios.js` then errors unless `--device-type` is passed. We do
-NOT prompt and create on the user's behalf — that was the original UX and
-was removed because it accumulated junk sims. The picker only chooses among
-EXISTING sims (booted or shutdown). When you change device-selection logic,
-preserve this invariant.
+Every simulator or emulator rn-iso uses is one **rn-iso created**, named
+`rn-iso-<label>`, recorded with `owned: true` in config. rn-iso never
+allocates, boots, or destroys a device it did not create. Teardown of the
+owning project (`release`, `worktree remove`, or `gc` sweeping an orphan)
+destroys the device it owns, not just a claim on it. The one exception is
+physical devices: hardware cannot be spawned, so a physical Android device
+is still assigned by serial and never booted/shut down/deleted by rn-iso.
 
-### 3. The post-install verification step is intentionally absent
+History: this replaces an earlier invariant, "never auto-create
+simulators," which existed because early auto-creation accumulated junk
+sims. That was really a symptom of creation *without* a reaper — there was
+no command that ever destroyed a device rn-iso had booted for you. The
+reaper now exists (`release`, `worktree remove`, `gc`'s orphan sweep), so
+creating a device and guaranteeing its eventual destruction is no longer
+the same hazard. Ownership is also stronger than the old claim model: it's
+provable (name prefix + config record), where claims and occupancy probes
+were heuristics about other people's processes. When you touch
+device-selection or device-teardown logic, preserve this rule: create only
+`rn-iso-<label>`-named devices, verify that prefix before any destructive
+command, and never touch a device rn-iso didn't create.
 
-Earlier versions ran `xcrun simctl install/launch` after the build CLI to
-work around a wrong-sim bug in `@expo/cli` (since fixed in 54.0.24). That
-step caused double-launches and was removed. If you find yourself wanting
-to add it back, the upstream bug is the right place to fix things —
-`patch-package` for stuck users, not workaround code in `commands/ios.js`.
+### 3. `up` is a broker, never a build wrapper
 
-### 3b. Metro ownership: build CLI by default, rn-iso with `--managed-metro`
+`commands/up.js` ensures an owned device, a Metro port, and managed Metro,
+then prints the facts (`buildFacts`) and stops. It never runs `expo
+run:ios` / `react-native run-android` or any equivalent, never installs an
+app, and never launches one. That judgment — which script, which CLI,
+which flags a given project needs — used to live in rn-iso (`runner.js`'s
+build dispatch, deleted) and was a maintenance burden that kept getting
+project idiosyncrasies wrong; a coding agent has that judgment natively
+from reading the repo, so the build step was handed to the caller
+entirely. If you're tempted to add install/launch/verification logic to
+`up` (e.g. a post-install `xcrun simctl launch` to work around some build
+CLI's rough edge), don't — that belongs in the agent's own build
+invocation or upstream in the build CLI, not in the broker. `up`'s only
+job is: device ready, Metro ready, facts printed.
 
-By default the build CLI (`expo run:ios` / `react-native run-ios`) starts
-Metro on the `--port` we pass — this preserves the interactive bundler UX
-humans expect (Expo's keyboard shortcuts, the RN Metro terminal window).
+### 4. Owned-device teardown is centralized and ownership-verified
 
-With `--managed-metro`, the build commands start Metro through
-`ensureMetro` — detached, PID tracked, output to the per-project log
-file — and pass `--no-packager` (RN CLI) / `--no-bundler` (Expo) to the
-build CLI so it does not start a second one. The suppression flag is
-chosen from `detectScriptCli`, not `isExpo`, because a project can have
-`expo` in deps while its script uses the RN CLI. This mode exists for
-agents and CI: build-CLI-owned Metro is a child of the invoking shell,
-so a finite (often backgrounded) agent shell kills Metro the moment the
-command returns, leaving the app installed but unable to load a bundle.
-The skill tells agents to always pass the flag.
+`reclaim.js`'s `reclaimOwnedDevices` (invoked via `reclaimProject(path, {
+deleteOwnedDevices: true })`) is the one place that shuts down and deletes
+owned devices; `release.js`, `shutdown.js`, and `gc.js` each re-implement
+the same three-step pattern inline for their own call sites, and all three
+must stay consistent with it. The pattern, in order: (1) re-resolve the
+device against the *live* sim/AVD list immediately before issuing any
+command at it (`resolveOwnedIosSim`) — a udid whose sim was renamed away
+from the `rn-iso-` prefix, or already deleted, must never be shut down,
+only reported as a skip; issuing shutdown first and only catching the
+mismatch at delete time would already have hit whatever real simulator
+that udid resolves to. (2) Check occupancy (`isSimOccupied`, iOS only —
+Android has no probe) — a foreign UI-test runner may still be attached to
+an owned sim, so an occupied one is left running and reported as skipped;
+`release --force` is the only override across these call sites (`gc` and
+`shutdown` have none, and simply leave it for a later `gc` run). (3) Only then shut down and
+delete. Each device's teardown is wrapped in its own try/catch so one bad
+record or exec throw can't abort a batch operation (`worktree remove`
+reaping several nested projects, `gc` sweeping many orphans). If you add a
+new device-deleting call site, follow this same order — don't skip the
+live re-resolve step because "the record should still be accurate."
 
-A historical note on the double-Metro bug: an early pre-spawn attempt was
-removed for causing two Metros on one port. That came from pre-spawning
-WITHOUT suppressing the build CLI's packager — the suppression flag is
-the load-bearing part, and `ensureMetro` additionally no-ops when the
-port is already serving. Don't reintroduce pre-spawning without it.
+Project paths that no longer exist on disk are handled by `prune`/`gc`,
+not by device selection: a deleted worktree's Metro port is reclaimable
+(`findReclaimablePort` in `ports.js` only ever reclaims dead-path
+projects — removing a live project's entry would drop its device claim)
+and its owned devices are swept by `gc`'s orphan-device check
+(`findOrphanedDevices`) once nothing references them. Caveat carried over
+from the old claim model: a project on an unmounted volume looks "dead" by
+a plain existence check; local worktrees are the supported case, and both
+`gc` and `prune` fail closed on an unmounted volume (see item 8).
 
-`rn-iso start` remains the explicit "just Metro" command and shares the
-same spawn path; `rn-iso stop` looks up the PID by port (via `lsof`) so
-it works regardless of who started Metro.
-
-### 4. Reservations are first-class claims
-
-`allClaimedDevices()` returns BOTH project-claimed AND reservation-claimed
-devices. If you add a new claim source (e.g., a new section in config.json),
-extend `allClaimedDevices` AND `iosClaims` so the picker greys it out with a
-useful label. Don't filter at any one call site — keep the policy in
-`config.js`.
-
-Claims from project paths that no longer exist on disk are filtered out
-there too: a deleted worktree can never run again, so its devices count as
-free and its Metro port is reclaimable (`findReclaimablePort` only ever
-reclaims dead-path projects — removing a live project's entry would drop
-its device claim). `prune` deletes the dead entries outright. Caveat: a
-project on an unmounted network volume looks "dead" by this test; local
-worktrees are the supported case.
-
-### 5. Package-manager / script detection
-
-`runner.js` prefers the project's `ios` / `android` script over a direct
-`expo run:ios` / `react-native run-ios` invocation. Reasons: respects user
-flags, picks the right CLI, works with non-standard setups (rainbow has
-`expo` in deps but uses `react-native run-ios`).
-
-`detectScriptCli` regex-matches the script body to decide flag names
-(`--device <UDID>` for Expo, `--udid <UDID>` for RN). If you ever need a
-new flag, update both the script-path branch and the direct fallback.
-
-`detectPackageManager` walks up from the project root looking for a
-lockfile (monorepo support). Don't single-directory-check.
-
-### 6. `RN_ISO_HOME` is the test redirect
+### 5. `RN_ISO_HOME` is the test redirect
 
 All config + log paths derive from `getConfigDir()`, which respects
 `RN_ISO_HOME`. Every config-touching test does:
@@ -168,13 +177,13 @@ afterEach(() => {
 
 If you add new state-touching code, follow this pattern.
 
-### 7. `findProjectRoot` uses `realpath`
+### 6. `findProjectRoot` uses `realpath`
 
 So symlinked worktrees collapse to the same canonical key as the
 non-symlinked path. Don't add code that compares paths without
 canonicalizing first.
 
-### 8. `worktree create`'s stdout contract
+### 7. `worktree create`'s stdout contract
 
 Claude Code's `WorktreeCreate` hook uses whatever the hook command writes to
 stdout as the directory for the new session — and only that. So
@@ -185,11 +194,11 @@ instead. It also exits 0 even when the setup pipeline fails — a non-zero
 exit here would make the hook treat worktree creation itself as failed and
 abort the session, when really the worktree exists and is usable, just
 maybe not buildable yet (the failure is recorded via `setSetupStatus` and
-surfaced later by `worktree list` / `ios` / `android`). If you touch this
+surfaced later by `worktree list` and in `up --json`'s `setup` field). If you touch this
 command, keep every new `console.log` off the success path and never turn
 a setup failure into a non-zero exit.
 
-### 9. The unmounted-volume guard always fails closed
+### 8. The unmounted-volume guard always fails closed
 
 `classifyDerivedData` (`src/artifacts.js`) and the dead-project sweep in
 `src/commands/gc.js` both resolve ambiguity toward NOT deleting. A
@@ -201,6 +210,28 @@ point where the classifier cannot get a definite answer — an unmounted
 volume, an unreadable `info.plist`, an unresolvable symlinked ancestor —
 routes the entry into `skipped`, never `orphaned`. Preserve that direction
 if you touch this code: on doubt, skip, don't delete.
+
+### 9. Live-verify anything that touches a real dev-tool artifact
+
+A mocked `exec` proves your code called the right function with the right
+arguments; it cannot prove those arguments form a command `simctl`,
+`avdmanager`, or `git` actually accepts. Three separate bugs shipped on the
+worktree/gc branch this way — wrong shell command, right-shaped mock — and
+the fix each time was the same: run the real command once. Standing
+convention: any command whose input is a real Xcode, git, or Android
+artifact (a `simctl create`/`delete`, an `avdmanager create avd`, a `git
+worktree add`, an `adb reverse`) must be exercised at least once against
+the real tool, either as a `node --test` case that shells out for real
+(see the `unpushedCommits`/`carryOverFiles`/`addWorktree` "against a real
+repo" tests for the pattern) or as a manual verification recorded in the
+change's report. Mocked-executor tests remain the bulk of the suite and
+are still required for the logic around the real call — this item is
+about not treating them as sufficient on their own for anything that
+shells out to a real toolchain. Exception: `xcrun simctl` itself must NOT
+be run from an agent session on this machine — the daemon is currently
+wedged and a call hangs the whole session; verify iOS-side commands by
+other means (reading recorded output, asking the user to run it) until
+that's resolved.
 
 ## Local development
 
