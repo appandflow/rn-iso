@@ -39,11 +39,30 @@ beforeEach(() => {
     return true;
   };
 
-  // Capture exec invocations.
+  // Capture exec invocations. The list command answers with a device set
+  // naming the owned fixtures rn-iso-* so the ownership probe verifies
+  // them; the probe fails CLOSED on an unanswerable list, so a bare ''
+  // here would silently skip every shutdown.
   execCalls = [];
+  const listJson = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+        { udid: 'UDID-ABC', name: 'rn-iso-projA', state: 'Booted', isAvailable: true },
+        { udid: 'UDID-OCC', name: 'rn-iso-occ', state: 'Booted', isAvailable: true },
+      ],
+    },
+  });
   setExecutor({
-    run(cmd) { execCalls.push({ kind: 'run', cmd }); return ''; },
-    runQuiet(cmd) { execCalls.push({ kind: 'runQuiet', cmd }); return null; },
+    run(cmd) {
+      execCalls.push({ kind: 'run', cmd });
+      if (cmd.includes('simctl list devices --json')) return listJson;
+      return '';
+    },
+    runQuiet(cmd) {
+      execCalls.push({ kind: 'runQuiet', cmd });
+      if (cmd.includes('simctl list devices --json')) return listJson;
+      return null;
+    },
     spawn() { throw new Error('spawn should not be called from shutdown'); },
   });
 });
@@ -272,4 +291,33 @@ test('shutdown <unknown-target> errors and exits without touching anything', asy
   assert.equal(exitCode, 1);
   assert.equal(killedPids.length, 0);
   assert.equal(execCalls.length, 0);
+});
+
+test('shutdown fails closed when ownership cannot be verified: no simctl shutdown issued', async () => {
+  saveConfig({
+    version: 2,
+    projects: {
+      '/proj/a': { metroPort: 8083, metroPid: null, platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } },
+    },
+  });
+  // Break the ownership probe: the list command now returns garbage, so
+  // resolveOwnedIosSim throws. The probe is the only guard on this path
+  // (no deleteIosSim backstop), so shutdown must SKIP, not proceed.
+  setExecutor({
+    run(cmd) { execCalls.push({ kind: 'run', cmd }); return 'not json'; },
+    runQuiet(cmd) { execCalls.push({ kind: 'runQuiet', cmd }); return 'not json'; },
+    spawn() { throw new Error('spawn should not be called from shutdown'); },
+  });
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(msg);
+  try {
+    await runShutdown(['--yes']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(execCalls.filter(c => c.cmd.includes('simctl shutdown')).length, 0);
+  assert.ok(logs.some(l => /Skipped ios device/.test(l) && /could not be verified/i.test(l)));
 });

@@ -139,12 +139,17 @@ export default function shutdownCommand(program) {
             // udid no longer names an rn-iso-owned sim (renamed, or a
             // stale/mistyped record) must be reported as a skip, not shut
             // down. If the check itself can't be answered (simctl
-            // unavailable), fail open and proceed as before rather than
-            // block a shutdown on a probe that isn't the actual guard.
-            let resolved = null;
+            // unavailable), fail CLOSED: skip rather than issue a command
+            // at a device whose ownership could not be verified. Unlike
+            // release/reclaim there is no deleteIosSim guard downstream,
+            // so this probe is the only protection on this path.
+            let resolved;
             try {
               resolved = resolveOwnedIosSim(s.udid);
-            } catch { /* could not determine; proceed as before */ }
+            } catch (probeErr) {
+              skippedFailed.push({ path: s.path, platform: 'ios', label: s.udid, reason: `ownership could not be verified: ${String(probeErr?.message || probeErr).slice(0, 120)}` });
+              continue;
+            }
             if (resolved?.notOwned) {
               skippedFailed.push({ path: s.path, platform: 'ios', label: `${resolved.notOwned} (${s.udid})`, reason: 'not rn-iso-owned by name (renamed or stale record)' });
               continue;
