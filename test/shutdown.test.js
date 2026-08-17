@@ -52,15 +52,23 @@ beforeEach(() => {
       ],
     },
   });
+  // Android identity fixture: a live emulator on port 5556 that genuinely
+  // identifies (via `adb emu avd name`) as rn-iso-projB -- the owned AVD
+  // used by the default test fixtures below.
   setExecutor({
     run(cmd) {
       execCalls.push({ kind: 'run', cmd });
       if (cmd.includes('simctl list devices --json')) return listJson;
+      if (cmd === 'emulator -list-avds') return 'rn-iso-projB\n';
+      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\tdevice\n';
       return '';
     },
     runQuiet(cmd) {
       execCalls.push({ kind: 'runQuiet', cmd });
       if (cmd.includes('simctl list devices --json')) return listJson;
+      if (cmd === 'emulator -list-avds') return 'rn-iso-projB\n';
+      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\tdevice\n';
+      if (/adb -s emulator-5556 emu avd name/.test(cmd)) return 'rn-iso-projB\nOK';
       return null;
     },
     spawn() { throw new Error('spawn should not be called from shutdown'); },
@@ -92,7 +100,7 @@ test('shutdown kills Metros, shuts down sims/emulators, clears assignments', asy
       '/proj/b': {
         metroPort: 8084,
         metroPid: 22222,
-        platforms: { android: { avdName: 'Pixel_6_API_34', consolePort: 5556, owned: true } },
+        platforms: { android: { avdName: 'rn-iso-projB', consolePort: 5556, owned: true } },
       },
     },
   });
@@ -320,4 +328,53 @@ test('shutdown fails closed when ownership cannot be verified: no simctl shutdow
 
   assert.equal(execCalls.filter(c => c.cmd.includes('simctl shutdown')).length, 0);
   assert.ok(logs.some(l => /Skipped ios device/.test(l) && /could not be verified/i.test(l)));
+});
+
+// C1 regression: a console port is a slot, not an identity. If the user's
+// own emulator has taken the recorded port (Android Studio also defaults to
+// 5554, the same first-free-even rule rn-iso uses), shutdown must not kill
+// it just because the port number matches our record.
+test('shutdown skips an owned android record whose recorded port is held by a foreign emulator, without issuing emu kill', async () => {
+  saveConfig({
+    version: 2,
+    projects: {
+      '/proj/a': {
+        metroPort: 8083,
+        metroPid: 11111,
+        platforms: { android: { avdName: 'rn-iso-mine', consolePort: 5554, owned: true } },
+      },
+    },
+  });
+  setExecutor({
+    run(cmd) {
+      execCalls.push({ kind: 'run', cmd });
+      if (cmd === 'emulator -list-avds') return 'rn-iso-mine\n';
+      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
+      return '';
+    },
+    runQuiet(cmd) {
+      execCalls.push({ kind: 'runQuiet', cmd });
+      // The live emulator on the recorded port identifies as a DIFFERENT
+      // AVD -- the user's own emulator took the slot rn-iso remembers.
+      if (/adb -s emulator-5554 emu avd name/.test(cmd)) return 'Android_Studio_Default\nOK';
+      return null;
+    },
+    spawn() { throw new Error('spawn should not be called from shutdown'); },
+  });
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(msg);
+  try {
+    await runShutdown(['--yes']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(execCalls.filter(c => c.cmd.includes('emu kill')).length, 0);
+  assert.ok(logs.some(l => /rn-iso-mine/.test(l) && /not currently running/i.test(l)));
+
+  // Assignment is still cleared even though the device itself was left alone.
+  const cfg = loadConfig();
+  assert.equal(cfg.projects['/proj/a'].platforms.android, undefined);
 });

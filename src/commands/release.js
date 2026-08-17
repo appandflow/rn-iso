@@ -5,7 +5,7 @@ import { resolveRegisteredProject } from '../project.js';
 import { getProject, clearDevice, findProjectByMetroPort } from '../config.js';
 import { findPidListeningOnPort } from '../metro.js';
 import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, deleteIosSim, formatIosLabel } from '../sim/ios.js';
-import { shutdownAndroidEmulator, deleteAvd } from '../sim/android.js';
+import { resolveOwnedAvdSerial, shutdownAndroidEmulator, deleteAvd } from '../sim/android.js';
 
 // Owned devices are rn-iso's to destroy; releasing one deletes it. Anything
 // rn-iso did not create is only ever unassigned.
@@ -75,10 +75,20 @@ export default function releaseCommand(program) {
               deleteIosSim(entry.deviceUdid);
               console.log(chalk.green(`Deleted owned iOS sim ${label}`));
             }
-          } else if (entry.avdName && typeof entry.consolePort === 'number') {
-            shutdownAndroidEmulator(`emulator-${entry.consolePort}`);
-            deleteAvd(entry.avdName);
-            console.log(chalk.green(`Deleted owned AVD ${entry.avdName} (emulator-${entry.consolePort})`));
+          } else if (entry.avdName) {
+            // Verify identity against the LIVE adb list before shutting
+            // anything down: the recorded consolePort is a slot, not an
+            // identity, and may now be held by a foreign emulator.
+            const resolved = resolveOwnedAvdSerial(entry.avdName, entry.consolePort);
+            if (resolved.notOwned) {
+              console.log(chalk.yellow(`Did not delete the device: AVD ${entry.avdName} is not rn-iso-owned by name -- leaving it running.`));
+            } else if (resolved.missing) {
+              console.log(chalk.dim(`Android AVD ${entry.avdName} is already gone; nothing to delete.`));
+            } else {
+              if (resolved.serial) shutdownAndroidEmulator(resolved.serial);
+              deleteAvd(entry.avdName);
+              console.log(chalk.green(`Deleted owned AVD ${entry.avdName}${resolved.serial ? ` (${resolved.serial})` : ''}`));
+            }
           }
         } else if (decision.reason) {
           console.log(chalk.yellow(`Did not delete the device: ${decision.reason}.`));

@@ -12,7 +12,7 @@ import {
 } from '../artifacts.js';
 import { reclaimProject } from '../reclaim.js';
 import { deleteIosSim, isSimOccupied, listAllIosSims, resolveOwnedIosSim, shutdownIosSim } from '../sim/ios.js';
-import { deleteAvd, getAvdNameForSerial, listAdbDevices, listAvds, shutdownAndroidEmulator } from '../sim/android.js';
+import { deleteAvd, listAvds, resolveOwnedAvdSerial, shutdownAndroidEmulator } from '../sim/android.js';
 
 // Bounds each device listing so a wedged simctl/emulator daemon can't hang
 // `gc` forever -- see the comment above the listAllIosSims/listAvds calls
@@ -310,13 +310,16 @@ export default function gcCommand(program) {
             deleteIosSim(d.id);
             console.log(chalk.green(`Deleted ios sim ${d.name} (${d.id})`));
           } else if (d.kind === 'android') {
-            let serial = null;
-            try {
-              const adb = listAdbDevices();
-              const running = adb.emulators.find(e => getAvdNameForSerial(e.serial) === d.name);
-              if (running) serial = running.serial;
-            } catch { /* adb unavailable; treat as not running */ }
-            if (serial) shutdownAndroidEmulator(serial);
+            const resolved = resolveOwnedAvdSerial(d.name, d.consolePort);
+            if (resolved.notOwned) {
+              console.log(chalk.yellow(`Skipped android avd ${d.name}: not rn-iso-owned by name -- not touched`));
+              continue;
+            }
+            if (resolved.missing) {
+              console.log(chalk.dim(`Android avd ${d.name} is already gone; nothing to delete.`));
+              continue;
+            }
+            if (resolved.serial) shutdownAndroidEmulator(resolved.serial);
             deleteAvd(d.name);
             console.log(chalk.green(`Deleted android avd ${d.name}`));
           }

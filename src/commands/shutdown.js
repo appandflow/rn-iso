@@ -5,7 +5,7 @@ import { resolveRegisteredProject } from '../project.js';
 import { loadConfig, setMetro, clearDevice } from '../config.js';
 import { killMetroByPid, findPidListeningOnPort } from '../metro.js';
 import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, formatIosLabel } from '../sim/ios.js';
-import { shutdownAndroidEmulator } from '../sim/android.js';
+import { resolveOwnedAvdSerial, shutdownAndroidEmulator } from '../sim/android.js';
 
 export default function shutdownCommand(program) {
   program
@@ -165,12 +165,37 @@ export default function shutdownCommand(program) {
           }
         }
         for (const a of androidEmus) {
-          const serial = `emulator-${a.consolePort}`;
+          const fallbackLabel = a.avdName ?? `emulator-${a.consolePort}`;
           try {
-            shutdownAndroidEmulator(serial);
-            console.log(chalk.green(`Shut down ${a.avdName ?? serial} (${serial}) ${chalk.dim(`(${a.path})`)}`));
+            // Re-verify identity against the LIVE adb list right before the
+            // only command this phase issues at it -- the recorded
+            // consolePort is a slot, not an identity, and may now be held
+            // by a foreign emulator (e.g. Android Studio's own default on
+            // 5554). If the check itself can't be answered, fail CLOSED:
+            // skip rather than issue a command at an unverified device.
+            let resolved;
+            try {
+              resolved = resolveOwnedAvdSerial(a.avdName, a.consolePort);
+            } catch (probeErr) {
+              skippedFailed.push({ path: a.path, platform: 'android', label: fallbackLabel, reason: `ownership could not be verified: ${String(probeErr?.message || probeErr).slice(0, 120)}` });
+              continue;
+            }
+            if (resolved?.notOwned) {
+              skippedFailed.push({ path: a.path, platform: 'android', label: fallbackLabel, reason: 'not rn-iso-owned by name (renamed or stale record)' });
+              continue;
+            }
+            if (resolved?.missing) {
+              console.log(chalk.dim(`Android AVD ${fallbackLabel} is already gone, nothing to shut down ${chalk.dim(`(${a.path})`)}`));
+              continue;
+            }
+            if (resolved?.notRunning) {
+              console.log(chalk.dim(`Android AVD ${fallbackLabel} is not currently running, nothing to shut down ${chalk.dim(`(${a.path})`)}`));
+              continue;
+            }
+            shutdownAndroidEmulator(resolved.serial);
+            console.log(chalk.green(`Shut down ${fallbackLabel} (${resolved.serial}) ${chalk.dim(`(${a.path})`)}`));
           } catch (e) {
-            skippedFailed.push({ path: a.path, platform: 'android', label: a.avdName ?? serial, reason: String(e?.message || e) });
+            skippedFailed.push({ path: a.path, platform: 'android', label: fallbackLabel, reason: String(e?.message || e) });
           }
         }
         for (const sk of skippedOccupied) {

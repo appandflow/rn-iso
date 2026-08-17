@@ -10,6 +10,7 @@ import {
   nextConsolePort,
   pickDefaultSystemImage,
   deleteAvd,
+  resolveOwnedAvdSerial,
 } from '../src/sim/android.js';
 
 let tmpHome;
@@ -112,4 +113,63 @@ test('deleteAvd deletes an rn-iso-owned AVD', () => {
   });
   deleteAvd('rn-iso-my-project');
   assert.match(ran, /delete avd -n "rn-iso-my-project"/);
+});
+
+// --- resolveOwnedAvdSerial: identity verification, not port trust --------
+
+test('resolveOwnedAvdSerial reports missing when the AVD does not exist at all', () => {
+  setExecutor({
+    run: (cmd) => (cmd === 'emulator -list-avds' ? '' : ''),
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+  assert.deepEqual(resolveOwnedAvdSerial('rn-iso-gone', 5554), { missing: true });
+});
+
+test('resolveOwnedAvdSerial reports notOwned for a non-rn-iso AVD name', () => {
+  setExecutor({
+    run: (cmd) => (cmd === 'emulator -list-avds' ? 'Pixel_6_API_34\n' : ''),
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+  assert.deepEqual(resolveOwnedAvdSerial('Pixel_6_API_34', 5554), { notOwned: true });
+});
+
+test('resolveOwnedAvdSerial resolves the live serial by AVD identity, not by port', () => {
+  setExecutor({
+    run: (cmd) => {
+      if (cmd === 'emulator -list-avds') return 'rn-iso-mine\n';
+      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
+      return '';
+    },
+    runQuiet: (cmd) => {
+      if (/adb -s emulator-5554 emu avd name/.test(cmd)) return 'rn-iso-mine\nOK';
+      return null;
+    },
+    spawn: () => null,
+  });
+  assert.deepEqual(resolveOwnedAvdSerial('rn-iso-mine', 5554), { serial: 'emulator-5554' });
+});
+
+// The regression this fix exists for: the recorded consolePort is held by a
+// FOREIGN emulator (a different AVD name answers on it), and our own AVD is
+// not running anywhere else. Must report notRunning, never the foreign
+// serial -- a caller that shuts down "whatever answers on the recorded
+// port" would kill the user's own emulator.
+test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by a foreign emulator', () => {
+  setExecutor({
+    run: (cmd) => {
+      if (cmd === 'emulator -list-avds') return 'rn-iso-mine\n';
+      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
+      return '';
+    },
+    runQuiet: (cmd) => {
+      // The device on the recorded port identifies as a DIFFERENT AVD --
+      // the user's own emulator took the slot.
+      if (/adb -s emulator-5554 emu avd name/.test(cmd)) return 'Android_Studio_Default\nOK';
+      return null;
+    },
+    spawn: () => null,
+  });
+  assert.deepEqual(resolveOwnedAvdSerial('rn-iso-mine', 5554), { notRunning: true });
 });

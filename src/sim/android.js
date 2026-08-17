@@ -164,3 +164,33 @@ export function getAvdNameForSerial(serial) {
   // `adb emu avd name` returns the AVD name on the first line, "OK" on the second.
   return out.split('\n')[0].trim() || null;
 }
+
+// Resolves an owned AVD name against the LIVE adb device list, verifying
+// identity before any destructive command (shutdown or delete) is issued at
+// a serial. A console port is a slot, not an identity: Android Studio's
+// default emulator also starts at 5554, the same first-free-even rule rn-iso
+// uses, so a recorded consolePort can end up occupied by a foreign emulator.
+// Blindly shutting down `emulator-<consolePort>` in that case kills the
+// user's own emulator, not ours -- the identity check here (matching
+// avdName against `adb emu avd name` for every live emulator, the same
+// pattern gc.js already used) is what prevents that.
+// Four outcomes:
+//   { missing: true }    no AVD named avdName exists at all (deleted, or a
+//                        stale/mistyped record) -- the honest already-gone
+//                        path, not an error.
+//   { notOwned: true }   avdName does not start with "rn-iso-" (a stale or
+//                        wrong record) -- must be reported as a skip, never
+//                        shut down or deleted.
+//   { serial }           a live emulator whose AVD identity matches avdName
+//                        was found: safe to shut down at this serial.
+//   { notRunning: true } the AVD exists and is owned, but no live emulator
+//                        currently identifies as it -- skip shutdown,
+//                        proceed to deleteAvd where applicable.
+export function resolveOwnedAvdSerial(avdName, consolePort) {
+  if (!listAvds().includes(avdName)) return { missing: true };
+  if (!avdName?.startsWith('rn-iso-')) return { notOwned: true };
+  const adb = listAdbDevices();
+  const match = adb.emulators.find(e => getAvdNameForSerial(e.serial) === avdName);
+  if (match) return { serial: match.serial };
+  return { notRunning: true };
+}

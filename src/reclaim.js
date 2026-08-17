@@ -3,7 +3,7 @@ import { getProject, removeProject } from './config.js';
 import { findPidListeningOnPort } from './metro.js';
 import { directorySize, findDerivedDataFor } from './artifacts.js';
 import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, deleteIosSim } from './sim/ios.js';
-import { listAvds, shutdownAndroidEmulator, deleteAvd } from './sim/android.js';
+import { resolveOwnedAvdSerial, shutdownAndroidEmulator, deleteAvd } from './sim/android.js';
 
 export function describeFreed(project) {
   const freed = [];
@@ -69,12 +69,23 @@ function reclaimOwnedDevices(project) {
   const android = project?.platforms?.android;
   if (android?.owned && android.avdName) {
     try {
-      const existed = listAvds().includes(android.avdName);
-      if (typeof android.consolePort === 'number') {
-        shutdownAndroidEmulator(`emulator-${android.consolePort}`);
+      // Verify identity against the LIVE adb list before shutting anything
+      // down: the recorded consolePort is a slot, not an identity, and may
+      // now be held by a foreign emulator (see resolveOwnedAvdSerial).
+      const resolved = resolveOwnedAvdSerial(android.avdName, android.consolePort);
+      if (resolved.notOwned) {
+        skippedDevices.push({
+          platform: 'android',
+          name: android.avdName,
+          reason: 'AVD name is not rn-iso-owned by name -- not touched',
+        });
+      } else if (resolved.missing) {
+        // Already gone: nothing to shut down or delete, and not a failure.
+      } else {
+        if (resolved.serial) shutdownAndroidEmulator(resolved.serial);
+        deleteAvd(android.avdName);
+        deletedDevices.push(android.avdName);
       }
-      deleteAvd(android.avdName);
-      if (existed) deletedDevices.push(android.avdName);
     } catch (e) {
       skippedDevices.push({ platform: 'android', name: android.avdName, reason: `teardown failed: ${String(e?.message || e)}` });
     }
