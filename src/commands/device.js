@@ -19,12 +19,12 @@ export default function deviceCommand(program) {
       }
       const proj = getProject(root);
       if (!proj) {
-        console.error(chalk.red(`No rn-iso assignment for project ${root}. Run \`rn-iso ${opts.platform}\` first.`));
+        console.error(chalk.red(`No rn-iso assignment for project ${root}. Run \`rn-iso up ${opts.platform}\` first.`));
         process.exit(1);
       }
       const platformEntry = proj.platforms?.[opts.platform];
       if (!platformEntry) {
-        console.error(chalk.red(`No ${opts.platform} device assigned. Run \`rn-iso ${opts.platform}\` first.`));
+        console.error(chalk.red(`No ${opts.platform} device assigned. Run \`rn-iso up ${opts.platform}\` first.`));
         process.exit(1);
       }
 
