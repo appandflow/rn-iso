@@ -85,7 +85,10 @@ function porcelain(entries) {
 // looks a udid up there before it will delete it (the rn-iso- name-prefix
 // guard), so any test that expects an owned iOS device to actually be
 // deleted must list it here.
-function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees = '', simctlList = '{"devices":{}}' } = {}) {
+// `occupied` maps udid -> true to simulate a foreign .xctrunner UI-test
+// runner still attached (isSimOccupied's `xcrun simctl spawn <udid>
+// launchctl list` probe -- see parseOccupyingApps in src/sim/ios.js).
+function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees = '', simctlList = '{"devices":{}}', occupied = {} } = {}) {
   const runCalls = [];
   const runQuietCalls = [];
   const exec = {
@@ -102,6 +105,13 @@ function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees 
       if (/log --oneline HEAD --not --remotes/.test(cmd)) return unpushed;
       if (/worktree list --porcelain/.test(cmd)) return worktrees;
       if (/remote$/.test(cmd)) return remote;
+      const spawnMatch = cmd.match(/simctl spawn (\S+) launchctl list/);
+      if (spawnMatch) {
+        const udid = spawnMatch[1];
+        return occupied[udid]
+          ? '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]'
+          : '';
+      }
       return null;
     },
     spawn() {},
@@ -266,6 +276,99 @@ test('action: does not delete a legacy (non-owned) iOS device', () => {
   run(wtDir, {});
 
   assert.notEqual(process.exitCode, 1);
-  assert.ok(!exec.calls.runQuiet.some(c => /xcrun simctl delete U2/.test(c)));
+  // Stronger than checking for the absence of a delete: U2 must never be
+  // named in ANY issued command (no shutdown, no occupancy probe, no
+  // delete) -- a legacy record is not rn-iso's to touch at all.
+  assert.ok(![...exec.calls.run, ...exec.calls.runQuiet].some(c => c.includes('U2')));
   assert.equal(getProject(wtDir), null);
+});
+
+// The environment dies whole even in a monorepo: two nested app-dir keys
+// under one worktree root, each with their own owned sim, must both be
+// reaped by a single `worktree remove` -- not just the first one found.
+test('action: reaps owned sims under two nested monorepo app-dir keys, both of them', () => {
+  const nestedDir1 = join(wtDir, 'apps', 'mobile1');
+  const nestedDir2 = join(wtDir, 'apps', 'mobile2');
+  upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
+  upsertProject(nestedDir1, {
+    metroPort: 8092,
+    platforms: { ios: { deviceUdid: 'U3', owned: true, deviceName: 'rn-iso-a' } },
+  });
+  upsertProject(nestedDir2, {
+    metroPort: 8093,
+    platforms: { ios: { deviceUdid: 'U4', owned: true, deviceName: 'rn-iso-b' } },
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    simctlList: simctlJson([
+      { udid: 'U3', name: 'rn-iso-a', state: 'Shutdown', isAvailable: true },
+      { udid: 'U4', name: 'rn-iso-b', state: 'Shutdown', isAvailable: true },
+    ]),
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  run(wtDir, {});
+
+  assert.notEqual(process.exitCode, 1);
+  assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U3/.test(c)));
+  assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U4/.test(c)));
+  assert.equal(getProject(nestedDir1), null);
+  assert.equal(getProject(nestedDir2), null);
+});
+
+// An occupied owned sim (a foreign UI-test runner still attached) must not
+// block anything else: the worktree removal still proceeds, the OTHER
+// nested project's owned sim is still reaped, and the occupied one comes
+// back as a skip rather than aborting the whole command.
+test('action: an occupied owned sim is skipped, without blocking worktree removal or the other device\'s reclamation', () => {
+  const nestedDir1 = join(wtDir, 'apps', 'mobile1');
+  const nestedDir2 = join(wtDir, 'apps', 'mobile2');
+  upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
+  upsertProject(nestedDir1, {
+    metroPort: 8094,
+    platforms: { ios: { deviceUdid: 'U5', owned: true, deviceName: 'rn-iso-c' } },
+  });
+  upsertProject(nestedDir2, {
+    metroPort: 8095,
+    platforms: { ios: { deviceUdid: 'U6', owned: true, deviceName: 'rn-iso-d' } },
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    simctlList: simctlJson([
+      { udid: 'U5', name: 'rn-iso-c', state: 'Booted', isAvailable: true },
+      { udid: 'U6', name: 'rn-iso-d', state: 'Shutdown', isAvailable: true },
+    ]),
+    occupied: { U5: true },
+  });
+  setExecutor(exec);
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(msg);
+  const run = captureAction(registerRemove);
+  try {
+    run(wtDir, {});
+  } finally {
+    console.log = originalLog;
+  }
+
+  // The worktree itself was still removed.
+  assert.notEqual(process.exitCode, 1);
+  assert.ok(exec.calls.run.some(c => /worktree remove/.test(c)));
+
+  // The occupied sim was never shut down or deleted, but the other one was.
+  assert.ok(!exec.calls.runQuiet.some(c => /xcrun simctl shutdown U5/.test(c)));
+  assert.ok(!exec.calls.runQuiet.some(c => /xcrun simctl delete U5/.test(c)));
+  assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U6/.test(c)));
+
+  // Both config entries are cleared either way -- reclaiming rn-iso's own
+  // tracking does not depend on whether the device itself could be torn
+  // down.
+  assert.equal(getProject(nestedDir1), null);
+  assert.equal(getProject(nestedDir2), null);
+
+  // The skip is reported, naming the same device the (absent) freed line
+  // would have -- rn-iso-c (U5), not a bare udid or bare name.
+  assert.ok(logs.some(l => /kept rn-iso-c \(U5\)/.test(l) && /in use/i.test(l)));
 });

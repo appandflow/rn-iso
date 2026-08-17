@@ -4,7 +4,7 @@ import prompts from 'prompts';
 import { resolveRegisteredProject } from '../project.js';
 import { getProject, clearDevice, findProjectByMetroPort } from '../config.js';
 import { findPidListeningOnPort } from '../metro.js';
-import { isSimOccupied, shutdownIosSim, deleteIosSim, formatIosLabel } from '../sim/ios.js';
+import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, deleteIosSim, formatIosLabel } from '../sim/ios.js';
 import { shutdownAndroidEmulator, deleteAvd } from '../sim/android.js';
 
 // Owned devices are rn-iso's to destroy; releasing one deletes it. Anything
@@ -59,10 +59,22 @@ export default function releaseCommand(program) {
         const decision = releaseAction({ record: entry, occupied, force: opts.force });
         if (decision.action === 'delete') {
           if (p === 'ios') {
-            const label = formatIosLabel(entry.deviceUdid);
-            shutdownIosSim(entry.deviceUdid);
-            deleteIosSim(entry.deviceUdid);
-            console.log(chalk.green(`Deleted owned iOS sim ${label}`));
+            // Verify ownership by name against the live sim list BEFORE
+            // issuing shutdownIosSim -- deleteIosSim's own name guard runs
+            // too late to matter here: by the time it throws, shutdown has
+            // already been fired at whatever real simulator this udid
+            // resolves to (a renamed sim, or a stale/mistyped record).
+            const resolved = resolveOwnedIosSim(entry.deviceUdid);
+            if (resolved.notOwned) {
+              console.log(chalk.yellow(`Did not delete the device: sim is now named "${resolved.notOwned}", not rn-iso-owned by name -- leaving it running.`));
+            } else if (resolved.missing) {
+              console.log(chalk.dim(`iOS sim ${entry.deviceUdid} is already gone; nothing to delete.`));
+            } else {
+              const label = formatIosLabel(entry.deviceUdid);
+              shutdownIosSim(entry.deviceUdid);
+              deleteIosSim(entry.deviceUdid);
+              console.log(chalk.green(`Deleted owned iOS sim ${label}`));
+            }
           } else if (entry.avdName && typeof entry.consolePort === 'number') {
             shutdownAndroidEmulator(`emulator-${entry.consolePort}`);
             deleteAvd(entry.avdName);

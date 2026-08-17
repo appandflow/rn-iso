@@ -4,7 +4,7 @@ import prompts from 'prompts';
 import { resolveRegisteredProject } from '../project.js';
 import { loadConfig, setMetro, clearDevice } from '../config.js';
 import { killMetroByPid, findPidListeningOnPort } from '../metro.js';
-import { isSimOccupied, shutdownIosSim, formatIosLabel } from '../sim/ios.js';
+import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, formatIosLabel } from '../sim/ios.js';
 import { shutdownAndroidEmulator } from '../sim/android.js';
 
 export default function shutdownCommand(program) {
@@ -48,6 +48,7 @@ export default function shutdownCommand(program) {
       const androidEmus = []; // { path, avdName, consolePort }
       const skippedLegacy = [];   // { path, platform, label }
       const skippedOccupied = []; // { path, platform, label }
+      const skippedFailed = [];   // { path, platform, label, reason } -- teardown threw or the live sim no longer matches the record
       let hasDeviceAssignments = false;
       for (const [path, proj] of projects) {
         if (typeof proj.metroPort === 'number') {
@@ -125,22 +126,56 @@ export default function shutdownCommand(program) {
 
       // Phase 2: shut down sims / emulators. shutdownIosSim and
       // shutdownAndroidEmulator both go through runQuiet so failures (e.g.
-      // sim already shut down, adb missing) don't throw.
+      // sim already shut down, adb missing) don't throw -- but resolving
+      // ownership (below) and deleteAvd's name guard can, so each device's
+      // teardown is wrapped individually: one bad record must not abort the
+      // rest of the loop or leave later projects' assignments uncleared by
+      // Phase 3.
       if (!opts.keepSims) {
         for (const s of iosSims) {
-          shutdownIosSim(s.udid);
-          console.log(chalk.green(`Shut down iOS sim ${formatIosLabel(s.udid)} ${chalk.dim(`(${s.path})`)}`));
+          try {
+            // Best-effort re-check against the live sim list right before
+            // the only command this phase issues at it. A record whose
+            // udid no longer names an rn-iso-owned sim (renamed, or a
+            // stale/mistyped record) must be reported as a skip, not shut
+            // down. If the check itself can't be answered (simctl
+            // unavailable), fail open and proceed as before rather than
+            // block a shutdown on a probe that isn't the actual guard.
+            let resolved = null;
+            try {
+              resolved = resolveOwnedIosSim(s.udid);
+            } catch { /* could not determine; proceed as before */ }
+            if (resolved?.notOwned) {
+              skippedFailed.push({ path: s.path, platform: 'ios', label: `${resolved.notOwned} (${s.udid})`, reason: 'not rn-iso-owned by name (renamed or stale record)' });
+              continue;
+            }
+            if (resolved?.missing) {
+              console.log(chalk.dim(`iOS sim ${s.udid} is already gone, nothing to shut down ${chalk.dim(`(${s.path})`)}`));
+              continue;
+            }
+            shutdownIosSim(s.udid);
+            console.log(chalk.green(`Shut down iOS sim ${formatIosLabel(s.udid)} ${chalk.dim(`(${s.path})`)}`));
+          } catch (e) {
+            skippedFailed.push({ path: s.path, platform: 'ios', label: s.udid, reason: String(e?.message || e) });
+          }
         }
         for (const a of androidEmus) {
           const serial = `emulator-${a.consolePort}`;
-          shutdownAndroidEmulator(serial);
-          console.log(chalk.green(`Shut down ${a.avdName ?? serial} (${serial}) ${chalk.dim(`(${a.path})`)}`));
+          try {
+            shutdownAndroidEmulator(serial);
+            console.log(chalk.green(`Shut down ${a.avdName ?? serial} (${serial}) ${chalk.dim(`(${a.path})`)}`));
+          } catch (e) {
+            skippedFailed.push({ path: a.path, platform: 'android', label: a.avdName ?? serial, reason: String(e?.message || e) });
+          }
         }
         for (const sk of skippedOccupied) {
           console.log(chalk.yellow(`Skipped ${sk.platform} device ${sk.label}: in use by another process ${chalk.dim(`(${sk.path})`)}`));
         }
         for (const sk of skippedLegacy) {
           console.log(chalk.dim(`Skipped ${sk.platform} device ${sk.label}: not rn-iso-owned, leaving it running ${chalk.dim(`(${sk.path})`)}`));
+        }
+        for (const sk of skippedFailed) {
+          console.log(chalk.yellow(`Skipped ${sk.platform} device ${sk.label}: ${sk.reason} ${chalk.dim(`(${sk.path})`)}`));
         }
       }
 

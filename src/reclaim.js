@@ -2,7 +2,7 @@ import { rmSync } from 'fs';
 import { getProject, removeProject } from './config.js';
 import { findPidListeningOnPort } from './metro.js';
 import { directorySize, findDerivedDataFor } from './artifacts.js';
-import { isSimOccupied, listAllIosSims, shutdownIosSim, deleteIosSim } from './sim/ios.js';
+import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, deleteIosSim } from './sim/ios.js';
 import { listAvds, shutdownAndroidEmulator, deleteAvd } from './sim/android.js';
 
 export function describeFreed(project) {
@@ -17,12 +17,25 @@ export function describeFreed(project) {
 
 // Shut down + delete a project's owned devices. Only records with
 // `owned: true` are touched -- the device-level name-prefix guards inside
-// deleteIosSim/deleteAvd are a backstop, not the primary gate. iOS gets an
-// occupancy check first (a foreign UI-test runner may still be attached);
-// there is no equivalent Android probe, so owned AVDs are always reclaimed.
-// An occupied owned sim is left alone -- its deletion is deferred to `gc`
-// once whatever is using it lets go -- and reported back as skipped rather
-// than deleted.
+// deleteIosSim/deleteAvd are a backstop, not the primary gate. iOS is
+// resolved against the live sim list BEFORE any command is issued at it
+// (resolveOwnedIosSim): a udid that no longer names an rn-iso-owned sim
+// (renamed by the user, or a stale/mistyped record) must never be shut
+// down, only reported as a skip -- shutting it down first and only
+// catching the mismatch at delete time would already have hit whatever
+// real simulator that udid resolves to. iOS also gets an occupancy check
+// (a foreign UI-test runner may still be attached); there is no equivalent
+// Android probe, so owned AVDs are always reclaimed. An occupied owned sim
+// is left alone -- its deletion is deferred to `gc` once whatever is using
+// it lets go -- and reported back as skipped rather than deleted.
+//
+// Each device's teardown is wrapped in its own try/catch: an exec throw
+// (emulator not on PATH so listAvds() throws, or a guard throwing) must
+// never propagate out of here. A propagated throw would abort the whole
+// reclaim before the caller's removal step (e.g. `git worktree remove`)
+// ever runs, and re-running would hit the same throw forever. A failed
+// teardown is recorded as a skip with its reason instead, and the loop
+// (and the caller's removal) always proceeds.
 function reclaimOwnedDevices(project) {
   const deletedDevices = [];
   const skippedDevices = [];
@@ -30,27 +43,41 @@ function reclaimOwnedDevices(project) {
   const ios = project?.platforms?.ios;
   if (ios?.owned && ios.deviceUdid) {
     const label = ios.deviceName || ios.deviceUdid;
-    if (isSimOccupied(ios.deviceUdid)) {
-      skippedDevices.push({ platform: 'ios', name: label, reason: 'in use by another process (occupied)' });
-    } else {
-      // Check existence before the (idempotent, no-op-on-missing) delete so
-      // the report is honest: a sim that is already gone was not "deleted"
-      // just now.
-      const existed = listAllIosSims().some(s => s.udid === ios.deviceUdid);
-      shutdownIosSim(ios.deviceUdid);
-      deleteIosSim(ios.deviceUdid);
-      if (existed) deletedDevices.push(label);
+    try {
+      const resolved = resolveOwnedIosSim(ios.deviceUdid);
+      if (resolved.notOwned) {
+        skippedDevices.push({
+          platform: 'ios',
+          name: label,
+          udid: ios.deviceUdid,
+          reason: `sim is now named "${resolved.notOwned}", not rn-iso-owned -- not touched`,
+        });
+      } else if (resolved.missing) {
+        // Already gone: nothing to shut down or delete, and not a failure.
+      } else if (isSimOccupied(ios.deviceUdid)) {
+        skippedDevices.push({ platform: 'ios', name: label, udid: ios.deviceUdid, reason: 'in use by another process (occupied)' });
+      } else {
+        shutdownIosSim(ios.deviceUdid);
+        deleteIosSim(ios.deviceUdid);
+        deletedDevices.push(label);
+      }
+    } catch (e) {
+      skippedDevices.push({ platform: 'ios', name: label, udid: ios.deviceUdid, reason: `teardown failed: ${String(e?.message || e)}` });
     }
   }
 
   const android = project?.platforms?.android;
   if (android?.owned && android.avdName) {
-    const existed = listAvds().includes(android.avdName);
-    if (typeof android.consolePort === 'number') {
-      shutdownAndroidEmulator(`emulator-${android.consolePort}`);
+    try {
+      const existed = listAvds().includes(android.avdName);
+      if (typeof android.consolePort === 'number') {
+        shutdownAndroidEmulator(`emulator-${android.consolePort}`);
+      }
+      deleteAvd(android.avdName);
+      if (existed) deletedDevices.push(android.avdName);
+    } catch (e) {
+      skippedDevices.push({ platform: 'android', name: android.avdName, reason: `teardown failed: ${String(e?.message || e)}` });
     }
-    deleteAvd(android.avdName);
-    if (existed) deletedDevices.push(android.avdName);
   }
 
   return { deletedDevices, skippedDevices };

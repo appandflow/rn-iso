@@ -241,6 +241,19 @@ export function removalBlockers({ dirty, unpushed }) {
 // worktree (including nested monorepo app-dir keys) is reaped along with it.
 // An occupied owned sim is left running (see reclaimOwnedDevices in
 // reclaim.js) and comes back in `skippedDevices` instead of `deletedDevices`.
+// The `freed:` line identifies an iOS device by udid (describeFreed uses
+// `ios.deviceUdid`, never deviceName). A `kept ...` line built from
+// `s.name` alone (deviceName-or-udid) can show a different string for the
+// same device -- e.g. "freed: ios sim U1" next to "kept rn-iso-x: ..." --
+// leaving a reader unable to tell the two lines are about the same
+// simulator. Include the udid alongside the name whenever they differ so
+// the two lines are visibly the same device; android skips have no
+// separate udid (their `name` already is the freed identifier, the AVD
+// name), so this is a no-op for them.
+function describeKeptDevice(s) {
+  return s.udid && s.udid !== s.name ? `${s.name} (${s.udid})` : s.name;
+}
+
 function reclaimAll(rootPath) {
   const cfg = loadConfig();
   const keys = new Set([rootPath]);
@@ -358,7 +371,7 @@ export function registerRemove(worktree) {
         if (result.freed.length) console.error(chalk.dim(`  freed: ${result.freed.join(', ')}`));
         for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
         if (result.deletedDevices.length) console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
-        for (const s of result.skippedDevices) console.error(chalk.dim(`  kept ${s.name}: ${s.reason}`));
+        for (const s of result.skippedDevices) console.error(chalk.dim(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
         process.exitCode = 1;
         return;
       }
@@ -367,7 +380,7 @@ export function registerRemove(worktree) {
       for (const pid of result.killedPids) console.log(chalk.dim(`  killed Metro pid ${pid}`));
       if (result.deletedDevices.length) console.log(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
       for (const s of result.skippedDevices) {
-        console.log(chalk.yellow(`  kept ${s.name}: ${s.reason} (left for gc)`));
+        console.log(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason} (left for gc)`));
       }
 
       // directorySize (behind result.artifacts[].bytes) returns 0 both for a

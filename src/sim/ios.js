@@ -132,15 +132,37 @@ export function createOwnedIosSim(label, { deviceType, runtime } = {}) {
   return { udid, name };
 }
 
+// Resolves a udid against the live sim list ONCE, before any destructive
+// command (shutdown or delete) is issued at it. Ownership is decided purely
+// by the "rn-iso-" name prefix -- the same rule deleteIosSim enforces -- so
+// a caller can verify ownership up front instead of discovering it only
+// after shutdownIosSim has already been fired at someone's real simulator.
+// Three outcomes:
+//   { sim }             found, and named like an rn-iso sim: safe to touch.
+//   { missing: true }   no sim with this udid exists (already gone, or a
+//                       stale/mistyped record) -- the honest already-gone
+//                       path, not an error.
+//   { notOwned: name }  found, but not rn-iso-owned by name (user renamed
+//                       it, or the record is stale/wrong) -- must be
+//                       reported as a skip, never shut down or deleted.
+export function resolveOwnedIosSim(udid) {
+  const sim = listAllIosSims().find(s => s.udid === udid);
+  if (!sim) return { missing: true };
+  if (!sim.name?.startsWith('rn-iso-')) return { notOwned: sim.name };
+  return { sim };
+}
+
 // Defense in depth: deletion must only ever reach a sim rn-iso created
 // itself. A future caller bug (wrong record, stale udid) must not be able
 // to delete a user's real simulator. Idempotent: a udid that is already
-// gone is a no-op, not an error.
+// gone is a no-op, not an error. This is the backstop -- callers that shut
+// a sim down first should verify ownership via resolveOwnedIosSim before
+// that shutdown, not rely on this guard alone.
 export function deleteIosSim(udid) {
-  const sim = listAllIosSims().find(s => s.udid === udid);
-  if (!sim) return;
-  if (!sim.name?.startsWith('rn-iso-')) {
-    throw new Error(`Refusing to delete simulator "${sim.name}" (${udid}): not an rn-iso-owned sim (name must start with "rn-iso-").`);
+  const result = resolveOwnedIosSim(udid);
+  if (result.missing) return;
+  if (result.notOwned) {
+    throw new Error(`Refusing to delete simulator "${result.notOwned}" (${udid}): not an rn-iso-owned sim (name must start with "rn-iso-").`);
   }
   getExecutor().runQuiet(`xcrun simctl delete ${udid}`);
 }
