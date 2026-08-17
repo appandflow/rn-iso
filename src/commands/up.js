@@ -18,7 +18,7 @@ import {
 } from '../config.js';
 import { allocatePort } from '../ports.js';
 import { ensureMetro, logFileFor, findPidListeningOnPort } from '../metro.js';
-import { createOwnedIosSim, bootIosSim, listAllIosSims } from '../sim/ios.js';
+import { createOwnedIosSim, bootIosSim, listAllIosSims, resolveOwnedIosSim } from '../sim/ios.js';
 import {
   createOwnedAvd,
   listAvds,
@@ -175,9 +175,19 @@ export async function ensureOwnedDevice({ platform, project, projectPath, label,
 
 function ensureOwnedIosDevice({ record, projectPath, label, settings, flags, note, out }) {
   if (record?.deviceUdid) {
-    const sim = listAllIosSims().find(s => s.udid === record.deviceUdid);
-    if (sim) {
-      if (record.owned) {
+    if (record.owned) {
+      // Re-verify identity against the LIVE sim list by name BEFORE
+      // booting -- a raw udid lookup would boot whatever simulator that
+      // udid now resolves to, even if it has since been renamed away from
+      // rn-iso- ownership (or the record is stale/mistyped).
+      const resolved = resolveOwnedIosSim(record.deviceUdid);
+      if (resolved.notOwned) {
+        note(chalk.yellow(`Note: recorded sim is now named "${resolved.notOwned}", not rn-iso-owned by name -- creating a fresh owned sim instead of booting it.`));
+        // Fall through to creation below; do NOT boot a sim we don't own.
+      } else if (resolved.missing) {
+        // Sim was deleted out from under the record: fall through to creation.
+      } else {
+        const sim = resolved.sim;
         if (sim.state !== 'Booted') {
           out(chalk.dim(`Booting owned sim ${sim.name} (${sim.udid})...`));
           bootIosSim(sim.udid);
@@ -186,14 +196,18 @@ function ensureOwnedIosDevice({ record, projectPath, label, settings, flags, not
         setDevice(projectPath, 'ios', updated);
         return updated;
       }
+    } else {
       // Legacy: reuse only if already live; never boot it ourselves.
-      if (sim.state !== 'Booted') {
-        note(chalk.yellow(`Note: assigned sim ${sim.name} (${sim.udid}) is shut down and is not owned by rn-iso, so it will not be booted automatically.`));
-        note(chalk.dim('Boot it yourself, or run `rn-iso release` to switch this project to an owned device.'));
+      const sim = listAllIosSims().find(s => s.udid === record.deviceUdid);
+      if (sim) {
+        if (sim.state !== 'Booted') {
+          note(chalk.yellow(`Note: assigned sim ${sim.name} (${sim.udid}) is shut down and is not owned by rn-iso, so it will not be booted automatically.`));
+          note(chalk.dim('Boot it yourself, or run `rn-iso release` to switch this project to an owned device.'));
+        }
+        return record;
       }
-      return record;
+      // Sim was deleted out from under the record: fall through to creation.
     }
-    // Sim was deleted out from under the record: fall through to creation.
   }
 
   const created = createOwnedIosSim(label, {

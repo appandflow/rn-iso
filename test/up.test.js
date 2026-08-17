@@ -282,6 +282,67 @@ test('action: --json prints exactly one parseable stdout line matching buildFact
   assert.ok(exec.calls.run.some(c => /simctl boot/.test(c)));
 });
 
+// I5 regression: an owned record's udid must be re-verified by NAME
+// against the live sim list before booting -- a raw udid lookup would boot
+// whatever simulator that udid now resolves to, even a foreign one the
+// user renamed away from rn-iso- ownership.
+test('action: an owned record renamed away from rn-iso- ownership is not booted; a fresh owned sim is created instead', async () => {
+  const root = makeProjectDir();
+  upsertProject(root, { bundleId: null, androidPackage: null, isExpo: false });
+  setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'rn-iso-old' });
+
+  const simctlList = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
+        // U1 is now named something the user renamed it to -- no longer
+        // rn-iso-owned by name, even though the record says owned: true.
+        { udid: 'U1', name: 'Renamed-By-User', state: 'Booted', isAvailable: true },
+      ],
+    },
+  });
+  const servers = [];
+  const exec = mockExecutor({ simctlList, spawnServers: servers });
+  setExecutor(exec);
+
+  const logs = [];
+  const errs = [];
+  const origLog = console.log, origErr = console.error, origExit = process.exit;
+  console.log = (line) => logs.push(line);
+  console.error = (line) => errs.push(line);
+  let exitCode = null;
+  process.exit = (code) => { exitCode = code; throw new Error('exit'); };
+
+  try {
+    const run = captureAction(registerUp);
+    const cwd = process.cwd();
+    process.chdir(root);
+    try {
+      await run('ios', { json: true });
+    } finally {
+      process.chdir(cwd);
+    }
+  } finally {
+    console.log = origLog;
+    console.error = origErr;
+    process.exit = origExit;
+    for (const s of servers) s.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  assert.equal(exitCode, null);
+  // U1 (the renamed sim) must never be booted.
+  assert.equal(exec.calls.run.some(c => c === 'xcrun simctl boot U1'), false, 'must never boot a sim no longer rn-iso-owned by name');
+  // A fresh owned sim is created and booted instead.
+  assert.ok(exec.calls.run.some(c => /simctl create/.test(c)));
+  assert.ok(exec.calls.run.some(c => c === 'xcrun simctl boot NEW-UDID'));
+  assert.ok(errs.some(e => /not rn-iso-owned by name/i.test(String(e))));
+
+  assert.equal(logs.length, 1);
+  const facts = JSON.parse(logs[0]);
+  assert.equal(facts.udid, 'NEW-UDID');
+  assert.equal(facts.owned, true);
+});
+
 test('action: a legacy shut-down device is not booted, but Metro is still ensured', async () => {
   const root = makeProjectDir();
   upsertProject(root, { bundleId: null, androidPackage: null, isExpo: false });
