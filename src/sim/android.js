@@ -102,8 +102,8 @@ export function parseAdbDevices(text) {
   return { emulators, physical, unhealthy };
 }
 
-export function listAvds() {
-  return parseAvdList(getExecutor().run('emulator -list-avds'));
+export function listAvds({ timeoutMs } = {}) {
+  return parseAvdList(getExecutor().run('emulator -list-avds', { timeoutMs }));
 }
 
 export function listAdbDevices() {

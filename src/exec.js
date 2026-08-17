@@ -11,12 +11,21 @@ import { execSync, spawn } from 'child_process';
 const MAX_BUFFER = 64 * 1024 * 1024;
 
 const defaultExecutor = {
-  run(cmd) {
-    return execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: MAX_BUFFER }).trim();
+  // {timeoutMs} is optional and defaults to no timeout, so every existing
+  // caller (which passes nothing) is unaffected. When set, it maps to
+  // execSync's own `timeout` option: past it, execSync SIGTERMs the child
+  // and throws ETIMEDOUT, same as any other command failure. This exists so
+  // a caller that must never hang (e.g. `gc`'s report-mode device sweep,
+  // which has to return even when the simulator daemon is wedged) can bound
+  // the wait instead of blocking forever.
+  run(cmd, { timeoutMs } = {}) {
+    const opts = { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: MAX_BUFFER };
+    if (timeoutMs) opts.timeout = timeoutMs;
+    return execSync(cmd, opts).trim();
   },
-  runQuiet(cmd) {
+  runQuiet(cmd, opts) {
     try {
-      return this.run(cmd);
+      return this.run(cmd, opts);
     } catch {
       return null;
     }

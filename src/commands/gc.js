@@ -11,8 +11,13 @@ import {
   volumeRootFor,
 } from '../artifacts.js';
 import { reclaimProject } from '../reclaim.js';
-import { deleteIosSim, isSimOccupied, listAllIosSims, shutdownIosSim } from '../sim/ios.js';
+import { deleteIosSim, isSimOccupied, listAllIosSims, resolveOwnedIosSim, shutdownIosSim } from '../sim/ios.js';
 import { deleteAvd, getAvdNameForSerial, listAdbDevices, listAvds, shutdownAndroidEmulator } from '../sim/android.js';
+
+// Bounds each device listing so a wedged simctl/emulator daemon can't hang
+// `gc` forever -- see the comment above the listAllIosSims/listAvds calls
+// in the action below.
+const DEVICE_LIST_TIMEOUT_MS = 10000;
 
 // directorySize() returns 0 both for a genuinely empty directory and for one
 // it could not measure (the du shellout failed, or the directory vanished
@@ -90,14 +95,26 @@ export function findOrphanedDevices({ sims = [], avds = [], config, isMounted } 
   return { orphaned, kept };
 }
 
-export function formatGcReport({ orphaned, skipped, deadProjects, totalBytes, orphanedDevices = [] }) {
+export function formatGcReport({
+  orphaned,
+  skipped,
+  deadProjects,
+  totalBytes,
+  orphanedDevices = [],
+  deviceSweepNotices = [],
+}) {
   const lines = [];
 
   if (orphaned.length === 0 && deadProjects.length === 0 && orphanedDevices.length === 0) {
+    const reasons = [];
     if (skipped.length > 0) {
-      lines.push(
-        `Nothing to reclaim (${skipped.length} director${skipped.length === 1 ? 'y' : 'ies'} could not be checked; see below).`
-      );
+      reasons.push(`${skipped.length} director${skipped.length === 1 ? 'y' : 'ies'} could not be checked`);
+    }
+    if (deviceSweepNotices.length > 0) {
+      reasons.push('device sweep incomplete');
+    }
+    if (reasons.length > 0) {
+      lines.push(`Nothing to reclaim (${reasons.join('; ')}; see below).`);
     } else {
       lines.push('Nothing to reclaim.');
     }
@@ -126,6 +143,11 @@ export function formatGcReport({ orphaned, skipped, deadProjects, totalBytes, or
   if (orphanedDevices.length) {
     lines.push(`Orphaned devices (${orphanedDevices.length}):`);
     for (const d of orphanedDevices) lines.push(`  ${d.kind} ${d.name} (${d.id})`);
+  }
+
+  if (deviceSweepNotices.length) {
+    lines.push(`Device sweep notices (${deviceSweepNotices.length}):`);
+    for (const notice of deviceSweepNotices) lines.push(`  ${notice}`);
   }
 
   if (skipped.length) {
@@ -182,22 +204,39 @@ export default function gcCommand(program) {
         }
       }
 
-      // Tolerate a missing simctl/emulator toolchain (Linux dev box, no
-      // Android SDK installed) the same way `status` does: an unreadable
-      // device list means "nothing to report", not a crashed command.
+      // Tolerate a missing/unresponsive simctl/emulator toolchain (Linux dev
+      // box with no Android SDK, or -- as happened on this machine -- a
+      // wedged simctl daemon that never answers) the same way `status`
+      // does: an unreadable device list means "skip the device sweep for
+      // this platform", not a crashed command. `gc` is advertised as the
+      // always-safe command for unattended agents, so it must always
+      // return promptly; DEVICE_LIST_TIMEOUT_MS bounds each listing so a
+      // wedged daemon can't hang it forever (bare execSync has no timeout
+      // by default). A skip is never treated as "no devices exist" (which
+      // would be indistinguishable from a clean sweep) -- it is recorded in
+      // deviceSweepNotices and surfaced in the report, never silently.
+      const deviceSweepNotices = [];
       let sims = [];
       try {
-        sims = listAllIosSims();
-      } catch { /* simctl unavailable */ }
+        sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+      } catch {
+        deviceSweepNotices.push(
+          `ios device sweep skipped: simulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
+        );
+      }
       let avds = [];
       try {
-        avds = listAvds();
-      } catch { /* emulator/avdmanager unavailable */ }
+        avds = listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+      } catch {
+        deviceSweepNotices.push(
+          `android device sweep skipped: emulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
+        );
+      }
 
       const isMounted = path => isOnMountedVolume(path, mountedVolumes);
       const { orphaned: orphanedDevices } = findOrphanedDevices({ sims, avds, config: cfg, isMounted });
 
-      for (const line of formatGcReport({ orphaned: sized, skipped: allSkipped, deadProjects, totalBytes, orphanedDevices })) {
+      for (const line of formatGcReport({ orphaned: sized, skipped: allSkipped, deadProjects, totalBytes, orphanedDevices, deviceSweepNotices })) {
         console.log(line);
       }
 
@@ -235,13 +274,34 @@ export default function gcCommand(program) {
       }
       // Each device's teardown is wrapped in its own try/catch (the pattern
       // reclaim.js uses): one bad record or exec throw must not abort the
-      // rest of the sweep. iOS is occupancy-checked first -- a foreign
-      // process still attached to an otherwise-orphaned sim means it is not
-      // safe to touch, so it is reported and left for a later `gc` run
-      // rather than shut down out from under whatever is using it.
+      // rest of the sweep. iOS is re-verified against the live sim list
+      // right before shutdown, the same way reclaim.js/release.js/
+      // shutdown.js all do: the udid came from the listing taken earlier in
+      // this run, and shutting down first on the strength of that snapshot
+      // "would already have hit whatever real simulator that udid resolves
+      // to" if it has since been renamed away from rn-iso ownership or
+      // deleted. A stale/renamed record is reported and left alone
+      // (notOwned), an already-gone one is reported as such without being
+      // treated as a failure (missing), and a probe that itself throws
+      // fails CLOSED -- caught below, reported, and left untouched, same as
+      // any other teardown failure. Only then is occupancy checked -- a
+      // foreign process still attached to an otherwise-orphaned sim means
+      // it is not safe to touch, so it is reported and left for a later
+      // `gc` run rather than shut down out from under whatever is using it.
       for (const d of orphanedDevices) {
         try {
           if (d.kind === 'ios') {
+            const resolved = resolveOwnedIosSim(d.id);
+            if (resolved.notOwned) {
+              console.log(
+                chalk.yellow(`Skipped ios sim ${d.name} (${d.id}): now named "${resolved.notOwned}", not rn-iso-owned by name -- not touched`)
+              );
+              continue;
+            }
+            if (resolved.missing) {
+              console.log(chalk.dim(`iOS sim ${d.name} (${d.id}) is already gone; nothing to delete.`));
+              continue;
+            }
             if (isSimOccupied(d.id)) {
               console.log(chalk.yellow(`Skipped ios sim ${d.name} (${d.id}): occupied, left for a later gc`));
               continue;
@@ -261,6 +321,7 @@ export default function gcCommand(program) {
             console.log(chalk.green(`Deleted android avd ${d.name}`));
           }
         } catch (e) {
+          deleteFailures++;
           console.log(chalk.red(`Failed to delete ${d.kind} device ${d.name}: ${String(e?.message || e)}`));
         }
       }

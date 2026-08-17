@@ -21,8 +21,8 @@ export function parseSimctlList(jsonOutput) {
   return sims;
 }
 
-export function listAllIosSims() {
-  const out = getExecutor().run('xcrun simctl list devices --json');
+export function listAllIosSims({ timeoutMs } = {}) {
+  const out = getExecutor().run('xcrun simctl list devices --json', { timeoutMs });
   return parseSimctlList(out);
 }
 

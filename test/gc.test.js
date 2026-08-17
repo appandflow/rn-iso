@@ -259,6 +259,101 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
   assert.equal(cfg.projects[localDeadPath], undefined);
 });
 
+// --- Device-delete integration -----------------------------------------
+//
+// The action tests above never exercise the device-delete path: the
+// artifact-focused installExecutor() throws on any `run` it doesn't
+// recognize, so listAllIosSims() always throws and orphanedDevices is
+// always []. These seed a live simctl listing so a real rn-iso-* sim goes
+// through resolveOwnedIosSim -> occupancy -> shutdown -> delete.
+
+function iosListJson(devices) {
+  return JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-17-4': devices.map(d => ({
+        udid: d.udid,
+        name: d.name,
+        state: d.state || 'Shutdown',
+        isAvailable: true,
+      })),
+    },
+  });
+}
+
+function installDeviceExecutor({ devices, execCalls, throwOnShutdownFor = new Set() }) {
+  setExecutor({
+    run(cmd) {
+      execCalls.push(cmd);
+      if (cmd.includes('simctl list devices --json')) return iosListJson(devices);
+      throw new Error(`unexpected run: ${cmd}`);
+    },
+    runQuiet(cmd) {
+      execCalls.push(cmd);
+      if (cmd.includes('simctl list devices --json')) return iosListJson(devices);
+      const shutdownMatch = cmd.match(/^xcrun simctl shutdown (.+)$/);
+      if (shutdownMatch && throwOnShutdownFor.has(shutdownMatch[1])) {
+        throw new Error(`simulated shutdown failure for ${shutdownMatch[1]}`);
+      }
+      return '';
+    },
+    spawn(cmd) {
+      throw new Error(`unexpected spawn: ${cmd}`);
+    },
+  });
+}
+
+test('--delete re-verifies ownership before shutdown, shuts down before delete, and contains a per-device teardown throw', async () => {
+  const execCalls = [];
+  installDeviceExecutor({
+    devices: [
+      { udid: 'UDID-1', name: 'rn-iso-orphan-1' },
+      { udid: 'UDID-2', name: 'rn-iso-orphan-2' },
+    ],
+    execCalls,
+    throwOnShutdownFor: new Set(['UDID-1']),
+  });
+  // Config references neither device: both are orphaned.
+  saveConfig({ version: 2, projects: {}, repos: {} });
+
+  await runGc(['--delete']);
+
+  const firstListIndex = execCalls.findIndex(c => c.includes('simctl list devices --json'));
+  const shutdown1Index = execCalls.findIndex(c => c.startsWith('xcrun simctl shutdown UDID-1'));
+  const shutdown2Index = execCalls.findIndex(c => c.startsWith('xcrun simctl shutdown UDID-2'));
+  const delete2Index = execCalls.findIndex(c => c.startsWith('xcrun simctl delete UDID-2'));
+
+  assert.ok(firstListIndex !== -1, 'ownership must be re-checked via a live listing');
+  assert.ok(firstListIndex < shutdown1Index, 'the live listing (resolveOwnedIosSim) must run before shutdown');
+  assert.ok(shutdown2Index !== -1 && delete2Index !== -1, 'the second device must still be processed');
+  assert.ok(shutdown2Index < delete2Index, 'shutdown must precede delete');
+  // The first device's shutdown threw, so its delete must never have been issued
+  // -- containment: one bad device must not abort the rest of the sweep, and a
+  // failed teardown must not still proceed to delete.
+  assert.equal(execCalls.some(c => c.startsWith('xcrun simctl delete UDID-1')), false);
+});
+
+test('report-mode gc lists a seeded orphaned ios sim but issues no shutdown or delete command', async () => {
+  const execCalls = [];
+  installDeviceExecutor({
+    devices: [{ udid: 'UDID-9', name: 'rn-iso-report-orphan' }],
+    execCalls,
+  });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+  try {
+    await runGc();
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.match(logs.join('\n'), /rn-iso-report-orphan/);
+  assert.equal(execCalls.some(c => c.startsWith('xcrun simctl shutdown')), false);
+  assert.equal(execCalls.some(c => c.startsWith('xcrun simctl delete')), false);
+});
+
 test('rejects a non-numeric --older-than instead of silently skipping every entry', async () => {
   const program = new Command();
   program.exitOverride();
