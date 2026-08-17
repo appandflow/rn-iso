@@ -235,8 +235,12 @@ export function removalBlockers({ dirty, unpushed }) {
 // Reclaims `rootPath` itself plus every registered key that is a
 // path-segment prefix match under it (reusing isPathPrefix from config.js,
 // the same helper findEnclosingWorktreeRoot uses for the inverse lookup),
-// and aggregates the freed devices, killed pids, and artifacts across all
-// of them.
+// and aggregates the freed devices, killed pids, artifacts, and owned-device
+// deletions across all of them. The environment dies whole: `deleteOwnedDevices`
+// is always on here, so every owned iOS sim / AVD registered under the
+// worktree (including nested monorepo app-dir keys) is reaped along with it.
+// An occupied owned sim is left running (see reclaimOwnedDevices in
+// reclaim.js) and comes back in `skippedDevices` instead of `deletedDevices`.
 function reclaimAll(rootPath) {
   const cfg = loadConfig();
   const keys = new Set([rootPath]);
@@ -248,13 +252,17 @@ function reclaimAll(rootPath) {
   const freed = [];
   const killedPids = [];
   const artifacts = [];
+  const deletedDevices = [];
+  const skippedDevices = [];
   for (const key of keys) {
-    const r = reclaimProject(key, { deleteArtifacts: false });
+    const r = reclaimProject(key, { deleteArtifacts: false, deleteOwnedDevices: true });
     freed.push(...r.freed);
     if (r.killedPid) killedPids.push(r.killedPid);
     artifacts.push(...r.artifacts);
+    deletedDevices.push(...r.deletedDevices);
+    skippedDevices.push(...r.skippedDevices);
   }
-  return { freed, killedPids, artifacts };
+  return { freed, killedPids, artifacts, deletedDevices, skippedDevices };
 }
 
 export function registerRemove(worktree) {
@@ -349,12 +357,18 @@ export function registerRemove(worktree) {
         console.error(chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`));
         if (result.freed.length) console.error(chalk.dim(`  freed: ${result.freed.join(', ')}`));
         for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
+        if (result.deletedDevices.length) console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+        for (const s of result.skippedDevices) console.error(chalk.dim(`  kept ${s.name}: ${s.reason}`));
         process.exitCode = 1;
         return;
       }
       console.log(chalk.green(`Removed worktree ${path}`));
       if (result.freed.length) console.log(chalk.dim(`  freed: ${result.freed.join(', ')}`));
       for (const pid of result.killedPids) console.log(chalk.dim(`  killed Metro pid ${pid}`));
+      if (result.deletedDevices.length) console.log(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+      for (const s of result.skippedDevices) {
+        console.log(chalk.yellow(`  kept ${s.name}: ${s.reason} (left for gc)`));
+      }
 
       // directorySize (behind result.artifacts[].bytes) returns 0 both for a
       // genuinely empty directory and for one it could not measure, so a

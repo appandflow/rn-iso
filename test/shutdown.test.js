@@ -68,12 +68,12 @@ test('shutdown kills Metros, shuts down sims/emulators, clears assignments', asy
       '/proj/a': {
         metroPort: 8083,
         metroPid: 11111,
-        platforms: { ios: { deviceUdid: 'UDID-ABC' } },
+        platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
       },
       '/proj/b': {
         metroPort: 8084,
         metroPid: 22222,
-        platforms: { android: { avdName: 'Pixel_6_API_34', consolePort: 5556 } },
+        platforms: { android: { avdName: 'Pixel_6_API_34', consolePort: 5556, owned: true } },
       },
     },
   });
@@ -110,7 +110,7 @@ test('shutdown --keep-sims kills Metros but leaves sims booted (still clears ass
       '/proj/a': {
         metroPort: 8083,
         metroPid: 11111,
-        platforms: { ios: { deviceUdid: 'UDID-ABC' } },
+        platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
       },
     },
   });
@@ -145,13 +145,13 @@ test('shutdown <target> scopes to a single project (by label) and leaves the oth
         label: 'agent-1',
         metroPort: 8083,
         metroPid: 11111,
-        platforms: { ios: { deviceUdid: 'UDID-ABC' } },
+        platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
       },
       '/proj/b': {
         label: 'agent-2',
         metroPort: 8084,
         metroPid: 22222,
-        platforms: { android: { avdName: 'Pixel_6_API_34', consolePort: 5556 } },
+        platforms: { android: { avdName: 'Pixel_6_API_34', consolePort: 5556, owned: true } },
       },
     },
   });
@@ -174,7 +174,82 @@ test('shutdown <target> scopes to a single project (by label) and leaves the oth
   assert.deepEqual(cfg.projects['/proj/b'].platforms.android, {
     avdName: 'Pixel_6_API_34',
     consolePort: 5556,
+    owned: true,
   });
+});
+
+test('shutdown skips a legacy (non-owned) device and reports it, without issuing simctl shutdown', async () => {
+  saveConfig({
+    version: 1,
+    projects: {
+      '/proj/a': {
+        metroPort: 8083,
+        metroPid: 11111,
+        // owned absent -- rn-iso did not create this sim and must never
+        // shut it down, even though a claim for it is recorded.
+        platforms: { ios: { deviceUdid: 'UDID-LEGACY' } },
+      },
+    },
+  });
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(msg);
+  try {
+    await runShutdown(['--yes']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 0);
+  assert.ok(logs.some(l => /Skipped ios device UDID-LEGACY/.test(l)));
+
+  // Assignment is still cleared even though the device itself was untouched.
+  const cfg = loadConfig();
+  assert.equal(cfg.projects['/proj/a'].platforms.ios, undefined);
+});
+
+test('shutdown skips an occupied owned iOS sim and reports it, without issuing simctl shutdown', async () => {
+  saveConfig({
+    version: 1,
+    projects: {
+      '/proj/a': {
+        metroPort: 8083,
+        metroPid: 11111,
+        platforms: { ios: { deviceUdid: 'UDID-OCC', owned: true } },
+      },
+    },
+  });
+
+  // A foreign .xctrunner UI-test runner is attached -- isSimOccupied must
+  // report true, and shutdown must leave the sim alone.
+  setExecutor({
+    run(cmd) { execCalls.push({ kind: 'run', cmd }); return ''; },
+    runQuiet(cmd) {
+      execCalls.push({ kind: 'runQuiet', cmd });
+      if (/simctl spawn UDID-OCC launchctl list/.test(cmd)) {
+        return '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]';
+      }
+      return null;
+    },
+    spawn() { throw new Error('spawn should not be called from shutdown'); },
+  });
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(msg);
+  try {
+    await runShutdown(['--yes']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 0);
+  assert.ok(logs.some(l => /Skipped ios device/.test(l) && /in use/i.test(l)));
+
+  // Assignment is still cleared even though the device itself was left running.
+  const cfg = loadConfig();
+  assert.equal(cfg.projects['/proj/a'].platforms.ios, undefined);
 });
 
 test('shutdown <unknown-target> errors and exits without touching anything', async () => {

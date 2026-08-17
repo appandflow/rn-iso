@@ -4,7 +4,7 @@ import prompts from 'prompts';
 import { resolveRegisteredProject } from '../project.js';
 import { loadConfig, setMetro, clearDevice } from '../config.js';
 import { killMetroByPid, findPidListeningOnPort } from '../metro.js';
-import { shutdownIosSim, formatIosLabel } from '../sim/ios.js';
+import { isSimOccupied, shutdownIosSim, formatIosLabel } from '../sim/ios.js';
 import { shutdownAndroidEmulator } from '../sim/android.js';
 
 export default function shutdownCommand(program) {
@@ -35,23 +35,51 @@ export default function shutdownCommand(program) {
       }
 
       // Build the work plan up front so the prompt can show counts and so we
-      // do all the I/O in clearly separated phases.
+      // do all the I/O in clearly separated phases. Only `owned: true`
+      // records are ever shut down -- a device rn-iso did not create is not
+      // rn-iso's to stop, even if a claim for it is recorded. iOS additionally
+      // gets an occupancy check: a foreign UI-test runner may still be
+      // attached to an owned sim, and shutting it out from under that would
+      // break whatever is using it. Skips of both kinds are collected
+      // separately so they can be reported distinctly rather than silently
+      // folded into "nothing to do".
       const metros = [];      // { path, port, pid }
       const iosSims = [];     // { path, udid }
       const androidEmus = []; // { path, avdName, consolePort }
+      const skippedLegacy = [];   // { path, platform, label }
+      const skippedOccupied = []; // { path, platform, label }
+      let hasDeviceAssignments = false;
       for (const [path, proj] of projects) {
         if (typeof proj.metroPort === 'number') {
           metros.push({ path, port: proj.metroPort, pid: proj.metroPid });
         }
         const ios = proj.platforms?.ios;
-        if (ios?.deviceUdid) iosSims.push({ path, udid: ios.deviceUdid });
+        if (ios?.deviceUdid) {
+          hasDeviceAssignments = true;
+          if (!opts.keepSims) {
+            if (!ios.owned) {
+              skippedLegacy.push({ path, platform: 'ios', label: ios.deviceUdid });
+            } else if (isSimOccupied(ios.deviceUdid)) {
+              skippedOccupied.push({ path, platform: 'ios', label: formatIosLabel(ios.deviceUdid) });
+            } else {
+              iosSims.push({ path, udid: ios.deviceUdid });
+            }
+          }
+        }
         const android = proj.platforms?.android;
         if (android?.avdName || typeof android?.consolePort === 'number') {
-          androidEmus.push({ path, avdName: android.avdName, consolePort: android.consolePort });
+          hasDeviceAssignments = true;
+          if (!opts.keepSims) {
+            const label = android.avdName || `emulator-${android.consolePort}`;
+            if (!android.owned) {
+              skippedLegacy.push({ path, platform: 'android', label });
+            } else {
+              androidEmus.push({ path, avdName: android.avdName, consolePort: android.consolePort });
+            }
+          }
         }
       }
 
-      const hasDeviceAssignments = iosSims.length > 0 || androidEmus.length > 0;
       if (metros.length === 0 && !hasDeviceAssignments) {
         console.log(chalk.dim('Nothing to do (no Metro / device assignments tracked).'));
         return;
@@ -107,6 +135,12 @@ export default function shutdownCommand(program) {
           const serial = `emulator-${a.consolePort}`;
           shutdownAndroidEmulator(serial);
           console.log(chalk.green(`Shut down ${a.avdName ?? serial} (${serial}) ${chalk.dim(`(${a.path})`)}`));
+        }
+        for (const sk of skippedOccupied) {
+          console.log(chalk.yellow(`Skipped ${sk.platform} device ${sk.label}: in use by another process ${chalk.dim(`(${sk.path})`)}`));
+        }
+        for (const sk of skippedLegacy) {
+          console.log(chalk.dim(`Skipped ${sk.platform} device ${sk.label}: not rn-iso-owned, leaving it running ${chalk.dim(`(${sk.path})`)}`));
         }
       }
 

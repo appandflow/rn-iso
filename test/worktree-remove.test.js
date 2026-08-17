@@ -81,7 +81,11 @@ function porcelain(entries) {
 
 // `dirty`/`unpushed`/`worktrees` are the raw runQuiet return values (a
 // string, or null to simulate the underlying git call failing outright).
-function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees = '' } = {}) {
+// `simctlList` backs `xcrun simctl list devices --json` -- deleteIosSim
+// looks a udid up there before it will delete it (the rn-iso- name-prefix
+// guard), so any test that expects an owned iOS device to actually be
+// deleted must list it here.
+function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees = '', simctlList = '{"devices":{}}' } = {}) {
   const runCalls = [];
   const runQuietCalls = [];
   const exec = {
@@ -89,6 +93,7 @@ function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees 
     run(cmd) {
       runCalls.push(cmd);
       if (/worktree remove/.test(cmd)) return '';
+      if (/simctl list devices --json/.test(cmd)) return simctlList;
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet(cmd) {
@@ -102,6 +107,12 @@ function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees 
     spawn() {},
   };
   return exec;
+}
+
+// One iOS runtime bucket with the given sims, matching parseSimctlList's
+// expected shape (src/sim/ios.js).
+function simctlJson(sims) {
+  return JSON.stringify({ devices: { 'com.apple.CoreSimulator.SimRuntime.iOS-17-0': sims } });
 }
 
 let tmpHome, mainDir, wtDir;
@@ -215,4 +226,46 @@ test('action: reclaims a nested monorepo app-dir project registered under the wo
   assert.notEqual(process.exitCode, 1);
   assert.equal(getProject(wtDir), null);
   assert.equal(getProject(nestedDir), null);
+});
+
+// The environment dies whole: `worktree remove` must reap the owned devices
+// registered under it, not just clear rn-iso's tracking for them.
+test('action: on success, deletes an owned iOS sim via simctl', () => {
+  upsertProject(wtDir, {
+    metroPort: 8090,
+    platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'rn-iso-x' } },
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    simctlList: simctlJson([{ udid: 'U1', name: 'rn-iso-x', state: 'Shutdown', isAvailable: true }]),
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  run(wtDir, {});
+
+  assert.notEqual(process.exitCode, 1);
+  assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U1/.test(c)));
+  assert.equal(getProject(wtDir), null);
+});
+
+// A legacy assignment (`owned` absent) is a device rn-iso did not create --
+// its claim is cleared like any other, but the device itself must never be
+// shut down or deleted.
+test('action: does not delete a legacy (non-owned) iOS device', () => {
+  upsertProject(wtDir, {
+    metroPort: 8091,
+    platforms: { ios: { deviceUdid: 'U2' } },
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  run(wtDir, {});
+
+  assert.notEqual(process.exitCode, 1);
+  assert.ok(!exec.calls.runQuiet.some(c => /xcrun simctl delete U2/.test(c)));
+  assert.equal(getProject(wtDir), null);
 });
