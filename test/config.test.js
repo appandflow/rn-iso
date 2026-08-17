@@ -15,9 +15,7 @@ import {
   setDevice,
   clearDevice,
   allMetroPorts,
-  allClaimedDevices,
-  recordSimUsage,
-  getSimUsage,
+  allConsolePortsAndSerials,
   getProjectSettings,
   getProjectSetting,
   setProjectSetting,
@@ -105,17 +103,23 @@ test('allMetroPorts collects ports from all projects', () => {
   assert.deepEqual(allMetroPorts().sort(), [8082, 8083]);
 });
 
-test('allClaimedDevices returns udids and avd names across projects', () => {
+test('allConsolePortsAndSerials collects android console ports across projects', () => {
   const a = liveProjectDir('a');
   const b = liveProjectDir('b');
   upsertProject(a, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
   upsertProject(b, { bundleId: 'com.b', androidPackage: 'com.b', isExpo: false });
-  setDevice(a, 'ios', { deviceUdid: 'UDID-1' });
+  setDevice(a, 'android', { avdName: 'Pixel_5', consolePort: 5556 });
   setDevice(b, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
-  const claimed = allClaimedDevices();
-  assert.deepEqual(claimed.iosUdids, ['UDID-1']);
-  assert.deepEqual(claimed.androidAvds, ['Pixel_6']);
-  assert.deepEqual(claimed.androidConsolePorts, [5554]);
+  const result = allConsolePortsAndSerials();
+  assert.deepEqual(result.androidConsolePorts.sort(), [5554, 5556]);
+});
+
+test('allConsolePortsAndSerials collects physical serials (no avdName)', () => {
+  const a = liveProjectDir('a');
+  upsertProject(a, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
+  setDevice(a, 'android', { serial: 'R5CR70XXXXX' });
+  const result = allConsolePortsAndSerials();
+  assert.deepEqual(result.androidPhysicalSerials, ['R5CR70XXXXX']);
 });
 
 test('removeProject deletes entry', () => {
@@ -124,37 +128,14 @@ test('removeProject deletes entry', () => {
   assert.equal(getProject('/p'), null);
 });
 
-test('recordSimUsage increments and getSimUsage reads counts', () => {
-  recordSimUsage('ios', 'UDID-A');
-  recordSimUsage('ios', 'UDID-A');
-  recordSimUsage('ios', 'UDID-B');
-  recordSimUsage('android', 'Pixel_6');
-  const usage = getSimUsage();
-  assert.equal(usage.ios['UDID-A'], 2);
-  assert.equal(usage.ios['UDID-B'], 1);
-  assert.equal(usage.android['Pixel_6'], 1);
-});
-
-test('allClaimedDevices.iosClaims maps udid to owning project label/path', () => {
-  const myapp = liveProjectDir('myapp');
-  upsertProject(myapp, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: true });
-  setDevice(myapp, 'ios', { deviceUdid: 'UDID-PROJ' });
-  const claimed = allClaimedDevices();
-  assert.deepEqual(claimed.iosClaims['UDID-PROJ'], {
-    label: 'myapp',
-    path: myapp,
-  });
-});
-
-test('allClaimedDevices ignores claims from project paths that no longer exist', () => {
+test('allConsolePortsAndSerials ignores entries from project paths that no longer exist', () => {
   const live = liveProjectDir('live');
   upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
-  setDevice(live, 'ios', { deviceUdid: 'UDID-LIVE' });
+  setDevice(live, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
   upsertProject('/definitely/gone/worktree', { bundleId: 'com.dead', androidPackage: 'com.dead', isExpo: false });
-  setDevice('/definitely/gone/worktree', 'ios', { deviceUdid: 'UDID-DEAD' });
-  const claimed = allClaimedDevices();
-  assert.deepEqual(claimed.iosUdids, ['UDID-LIVE']);
-  assert.equal(claimed.iosClaims['UDID-DEAD'], undefined);
+  setDevice('/definitely/gone/worktree', 'android', { avdName: 'Pixel_7', consolePort: 5556 });
+  const result = allConsolePortsAndSerials();
+  assert.deepEqual(result.androidConsolePorts, [5554]);
 });
 
 test('pruneDeadProjects removes dead-path entries and keeps live ones', () => {
@@ -175,30 +156,6 @@ test('pruneDeadProjects returns empty list when nothing is dead', () => {
   upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
   assert.deepEqual(pruneDeadProjects(), []);
   assert.notEqual(getProject(live), null);
-});
-
-test('allClaimedDevices.androidClaims maps console port to owning project', () => {
-  const myapp = liveProjectDir('myapp');
-  upsertProject(myapp, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  setDevice(myapp, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
-  const claimed = allClaimedDevices();
-  assert.deepEqual(claimed.androidClaims[5554], {
-    label: 'myapp',
-    path: myapp,
-    avdName: 'Pixel_6',
-  });
-});
-
-test('allClaimedDevices.androidClaimsByAvd maps avdName to owning project', () => {
-  const myapp = liveProjectDir('myapp');
-  upsertProject(myapp, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  setDevice(myapp, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
-  const claimed = allClaimedDevices();
-  assert.deepEqual(claimed.androidClaimsByAvd['Pixel_6'], {
-    label: 'myapp',
-    path: myapp,
-    consolePort: 5554,
-  });
 });
 
 // --- Per-project settings ---

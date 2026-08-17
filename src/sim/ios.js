@@ -1,4 +1,3 @@
-import { randomBytes } from 'crypto';
 import { getExecutor } from '../exec.js';
 
 export function parseSimctlList(jsonOutput) {
@@ -41,36 +40,6 @@ export function formatIosLabel(udid) {
   return udid;
 }
 
-export function deviceFamilyRank(name) {
-  if (/^iPhone/i.test(name)) return 0;
-  if (/^iPad/i.test(name)) return 1;
-  return 2;
-}
-
-export function sortSims(sims, usage = {}) {
-  return [...sims].sort((a, b) => {
-    // 1. Family: iPhones before iPads before others.
-    const fa = deviceFamilyRank(a.name);
-    const fb = deviceFamilyRank(b.name);
-    if (fa !== fb) return fa - fb;
-    // 2. State: booted before shutdown (within the same family), so an
-    // already-running sim is reused instead of booting another.
-    if (a.state === 'Booted' && b.state !== 'Booted') return -1;
-    if (b.state === 'Booted' && a.state !== 'Booted') return 1;
-    // 3. Runtime version: newest iOS runtime first, so --auto and agent
-    // selection prefer the latest installed runtime over older ones.
-    const va = parseRuntimeVersion(a.runtime);
-    const vb = parseRuntimeVersion(b.runtime);
-    if (va !== vb) return vb.localeCompare(va, undefined, { numeric: true });
-    // 4. Usage count: descending (frequently picked sims float up).
-    const ua = usage[a.udid] || 0;
-    const ub = usage[b.udid] || 0;
-    if (ua !== ub) return ub - ua;
-    // 5. Name: stable alphabetical.
-    return a.name.localeCompare(b.name);
-  });
-}
-
 // launchctl lines look like:
 //   082a\t0\tUIKitApplication:com.example.app[082a][rb-legacy]
 // A foreign UI-test runner holding the sim is the case we care about. Apple's
@@ -94,42 +63,6 @@ export function parseOccupyingApps(launchctlOutput) {
 export function isSimOccupied(udid) {
   const out = getExecutor().runQuiet(`xcrun simctl spawn ${udid} launchctl list`);
   return parseOccupyingApps(out).length > 0;
-}
-
-export function findOccupiedSims(udids) {
-  return udids.filter(udid => {
-    try {
-      return isSimOccupied(udid);
-    } catch {
-      return false;
-    }
-  });
-}
-
-export function selectIosDevice({ existingUdid, claimedUdids, occupiedUdids = [], usage = {} }) {
-  const sims = listAllIosSims();
-  const claimed = new Set(claimedUdids);
-  const occupied = new Set(occupiedUdids);
-
-  if (existingUdid) {
-    const found = sims.find(s => s.udid === existingUdid);
-    if (found) {
-      return { kind: 'reuse', udid: found.udid, name: found.name, state: found.state };
-    }
-  }
-
-  if (sims.length === 0) return { kind: 'noSims' };
-
-  const annotate = list => list.map(s => ({ ...s, occupied: occupied.has(s.udid) }));
-
-  const available = sims.filter(s => !claimed.has(s.udid) && !occupied.has(s.udid));
-  if (available.length === 0) {
-    // Every sim is claimed by another project, held by a reservation, or busy
-    // with a foreign runner. The picker can offer to take one over.
-    return { kind: 'allClaimed', candidates: annotate(sortSims(sims, usage)) };
-  }
-
-  return { kind: 'allocate', candidates: annotate(sortSims(available, usage)) };
 }
 
 export function parseRuntimeVersion(runtimeId) {
@@ -162,13 +95,6 @@ export function listIosDeviceTypes() {
     identifier: dt.identifier,
     name: dt.name,
   }));
-}
-
-export function createIosSim(deviceTypeId, runtimeId) {
-  const suffix = randomBytes(3).toString('hex');
-  const name = `rn-iso-${suffix}`;
-  const out = getExecutor().run(`xcrun simctl create "${name}" "${deviceTypeId}" "${runtimeId}"`);
-  return out.trim();
 }
 
 // Newest iPhone device type on the newest installed runtime, unless the

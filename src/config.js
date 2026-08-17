@@ -264,55 +264,28 @@ export function findProjectByMetroPort(port) {
   return null;
 }
 
-export function allClaimedDevices() {
+// Ownership (not claims/reservations) is the model now: `up` records a
+// device directly on the owning project. The only thing that still needs a
+// cross-project view is avoiding console-port / physical-serial collisions
+// when creating a new owned Android device.
+export function allConsolePortsAndSerials() {
   const cfg = loadConfig();
   const result = {
-    iosUdids: [],
-    androidAvds: [],
     androidConsolePorts: [],
     androidPhysicalSerials: [],
-    // iosClaims: udid -> { label, path }. androidClaims: consolePort ->
-    // { label, path, avdName }. androidClaimsByAvd: avdName -> { label,
-    // path, consolePort }. androidPhysicalClaimsBySerial: serial ->
-    // { label, path }. `path` is the absolute project path so take-over
-    // flows can call clearDevice on the owning project.
-    iosClaims: {},
-    androidClaims: {},
-    androidClaimsByAvd: {},
-    androidPhysicalClaimsBySerial: {},
   };
   if (!cfg) return result;
   for (const [path, proj] of Object.entries(cfg.projects || {})) {
-    // Claims from project paths that no longer exist on disk are orphaned --
-    // nothing can ever run from a deleted worktree again -- so pickers treat
-    // those devices as free. `prune` removes the dead entries themselves.
+    // Entries from project paths that no longer exist on disk are orphaned --
+    // nothing can ever run from a deleted worktree again -- so their ports
+    // and serials are free to reuse. `prune` removes the dead entries.
     if (!existsSync(path)) continue;
-    const label = path.split('/').pop() || path;
-    const ios = proj.platforms?.ios;
-    if (ios?.deviceUdid) {
-      result.iosUdids.push(ios.deviceUdid);
-      result.iosClaims[ios.deviceUdid] = { label, path };
-    }
     const android = proj.platforms?.android;
-    if (android?.avdName) {
-      result.androidAvds.push(android.avdName);
-      result.androidClaimsByAvd[android.avdName] = {
-        label,
-        path,
-        consolePort: android.consolePort,
-      };
-    }
     if (typeof android?.consolePort === 'number') {
       result.androidConsolePorts.push(android.consolePort);
-      result.androidClaims[android.consolePort] = {
-        label,
-        path,
-        avdName: android.avdName,
-      };
     }
     if (android?.serial && !android.avdName) {
       result.androidPhysicalSerials.push(android.serial);
-      result.androidPhysicalClaimsBySerial[android.serial] = { label, path };
     }
   }
   return result;
@@ -332,17 +305,4 @@ export function pruneDeadProjects() {
   }
   if (removed.length) saveConfig(cfg);
   return removed;
-}
-
-export function recordSimUsage(platform, identifier) {
-  if (platform !== 'ios' && platform !== 'android') return;
-  const cfg = ensureConfig();
-  cfg.simUsage = cfg.simUsage || { ios: {}, android: {} };
-  cfg.simUsage[platform][identifier] = (cfg.simUsage[platform][identifier] || 0) + 1;
-  saveConfig(cfg);
-}
-
-export function getSimUsage() {
-  const cfg = loadConfig();
-  return cfg?.simUsage || { ios: {}, android: {} };
 }

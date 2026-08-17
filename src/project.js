@@ -28,8 +28,8 @@ export function projectShortcut(path, proj) {
 //   - a shortcut (label or path basename) that uniquely identifies a project
 //
 // Basename matching errors out on collision (multiple projects share the
-// basename) — set a `--label` on one of them via `rn-iso reserve` / `ios` /
-// `android` to disambiguate.
+// basename) -- set a `--label` on one of them via `rn-iso worktree create`
+// to disambiguate.
 //
 // Returns { found, error }.
 export function resolveRegisteredProject(arg) {

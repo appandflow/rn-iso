@@ -14,7 +14,7 @@ import {
   setMetro,
   setDevice,
   getSetupStatus,
-  allClaimedDevices,
+  allConsolePortsAndSerials,
 } from '../config.js';
 import { allocatePort } from '../ports.js';
 import { ensureMetro, logFileFor, findPidListeningOnPort } from '../metro.js';
@@ -282,7 +282,7 @@ async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, 
     ...adbLive.emulators.map(e => e.consolePort),
     ...adbLive.unhealthy.filter(u => u.consolePort != null).map(u => u.consolePort),
   ];
-  const claimedPorts = [...allClaimedDevices().androidConsolePorts, ...livePorts];
+  const claimedPorts = [...allConsolePortsAndSerials().androidConsolePorts, ...livePorts];
   const consolePort = nextConsolePort(claimedPorts);
   out(chalk.dim(`Created owned AVD ${created.avdName}`));
   // Record ownership BEFORE booting: if boot throws (timeout, etc.) the
