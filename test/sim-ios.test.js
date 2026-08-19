@@ -148,6 +148,55 @@ test('pickDefaultIosCreation returns null when nothing matches', () => {
   assert.equal(pickDefaultIosCreation(deviceTypes, runtimes, { deviceType: 'iPhone 99' }), null);
 });
 
+// Regression: every real Xcode install ships lettered models (SE, Air) beside
+// the numbered ones. localeCompare sorts letters after digits, so "iPhone SE"
+// beat "iPhone 17 Pro Max" and every default sim spawned as an SE. The fixture
+// above missed it by containing numbered models only.
+test('pickDefaultIosCreation prefers a numbered iPhone over lettered models (SE, Air)', () => {
+  const deviceTypes = [
+    { identifier: 'dt.se3', name: 'iPhone SE (3rd generation)' },
+    { identifier: 'dt.air', name: 'iPhone Air' },
+    { identifier: 'dt.17pm', name: 'iPhone 17 Pro Max' },
+    { identifier: 'dt.16', name: 'iPhone 16' },
+  ];
+  const runtimes = [
+    { identifier: 'rt.26-5', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
+  ];
+  const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
+  assert.equal(pick.deviceTypeId, 'dt.17pm');
+});
+
+test('pickDefaultIosCreation compares iPhone generations numerically, not lexically', () => {
+  const deviceTypes = [
+    { identifier: 'dt.9', name: 'iPhone 9' },
+    { identifier: 'dt.17', name: 'iPhone 17' },
+  ];
+  const runtimes = [
+    { identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
+  ];
+  assert.equal(pickDefaultIosCreation(deviceTypes, runtimes, {}).deviceTypeId, 'dt.17');
+});
+
+test('pickDefaultIosCreation picks the base model over Pro/Pro Max of the same generation', () => {
+  const deviceTypes = [
+    { identifier: 'dt.17pm', name: 'iPhone 17 Pro Max' },
+    { identifier: 'dt.17pro', name: 'iPhone 17 Pro' },
+    { identifier: 'dt.17', name: 'iPhone 17' },
+  ];
+  const runtimes = [
+    { identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
+  ];
+  assert.equal(pickDefaultIosCreation(deviceTypes, runtimes, {}).deviceTypeId, 'dt.17');
+});
+
+test('pickDefaultIosCreation still picks a lettered model when it is the only iPhone', () => {
+  const deviceTypes = [{ identifier: 'dt.se3', name: 'iPhone SE (3rd generation)' }];
+  const runtimes = [
+    { identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
+  ];
+  assert.equal(pickDefaultIosCreation(deviceTypes, runtimes, {}).deviceTypeId, 'dt.se3');
+});
+
 test('sanitizeDeviceLabel strips characters simctl names should not carry', () => {
   assert.equal(sanitizeDeviceLabel('feat-a/tlon-mobile'), 'feat-a-tlon-mobile');
   assert.equal(sanitizeDeviceLabel('x  y"z`$'), 'x-y-z');

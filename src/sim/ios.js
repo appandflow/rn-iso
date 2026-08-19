@@ -97,6 +97,23 @@ export function listIosDeviceTypes() {
   }));
 }
 
+// Ranks an iPhone device type name for "newest". Sorting these names with
+// localeCompare is wrong: letters sort after digits, so "iPhone SE (3rd
+// generation)" outranked "iPhone 17 Pro Max" and every default sim on a stock
+// Xcode install spawned as an SE. Generation number first, then the base model
+// ahead of Pro/Pro Max/Plus -- "newest iPhone" means iPhone 17, and the base
+// model is the lightest to boot. Lettered models (SE, Air, X) carry no
+// generation and rank below every numbered one, but stay pickable when they
+// are all that is installed.
+function rankIphone(name) {
+  const gen = /^iPhone\s+(\d+)/i.exec(name);
+  return {
+    gen: gen ? Number(gen[1]) : -1,
+    // Shorter name == plainer variant, so the base model wins its generation.
+    variant: -name.length,
+  };
+}
+
 // Newest iPhone device type on the newest installed runtime, unless the
 // caller pinned either by name. Pure: takes the listings as data.
 export function pickDefaultIosCreation(deviceTypes, runtimes, { deviceType, runtime } = {}) {
@@ -109,8 +126,12 @@ export function pickDefaultIosCreation(deviceTypes, runtimes, { deviceType, runt
     const supported = (rt.supportedDeviceTypes || []).filter(d =>
       deviceType ? d.name === deviceType : /^iPhone/i.test(d.name));
     if (supported.length === 0) continue;
-    const best = [...supported].sort((a, b) =>
-      b.name.localeCompare(a.name, undefined, { numeric: true }))[0];
+    const best = [...supported].sort((a, b) => {
+      const ra = rankIphone(a.name), rb = rankIphone(b.name);
+      return (rb.gen - ra.gen)
+        || (rb.variant - ra.variant)
+        || b.name.localeCompare(a.name, undefined, { numeric: true });
+    })[0];
     return { deviceTypeId: best.identifier, runtimeId: rt.identifier };
   }
   return null;
