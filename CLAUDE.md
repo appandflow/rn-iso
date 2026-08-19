@@ -236,7 +236,13 @@ run from an agent session. What *is* broken is simulator creation itself:
 `~/Library/Developer/CoreSimulator/Devices` is a symlink to
 `/Volumes/ExternalSSD/CoreSimulator-Devices`, and `CoreSimulatorService`
 (a launchd job) is denied by TCC on `/Volumes/*` even though a user shell
-writes there fine. Every `simctl create` dies with "Device was allocated
+writes there fine. The discriminator is TCC attribution, not uid or file
+mode — a Terminal-descended shell inherits a user-approved grant for the
+external volume, a launchd job has none and can never prompt for one.
+Confirm in one command without touching System Settings:
+`launchctl submit -l probe -- /bin/sh -c 'touch
+/Volumes/ExternalSSD/CoreSimulator-Devices/.p || echo DENIED'` — it is
+denied while the same write from your shell succeeds. Every `simctl create` dies with "Device was allocated
 but was stuck in creation state", and `simctl list devices` reports zero
 devices because `device_set.plist` cannot be written. Until the user
 grants that service Full Disk Access or moves the device set back to the
