@@ -229,27 +229,36 @@ are still required for the logic around the real call — this item is
 about not treating them as sufficient on their own for anything that
 shells out to a real toolchain.
 
-Current caveat on this machine (updated 2026-08-19): `xcrun simctl` no
-longer hangs — the earlier "wedged daemon" diagnosis was wrong, and
-mutations now fail fast, so a `timeout`-wrapped `simctl` call is safe to
-run from an agent session. What *is* broken is simulator creation itself:
-`~/Library/Developer/CoreSimulator/Devices` is a symlink to
-`/Volumes/ExternalSSD/CoreSimulator-Devices`, and `CoreSimulatorService`
-(a launchd job) is denied by TCC on `/Volumes/*` even though a user shell
-writes there fine. The discriminator is TCC attribution, not uid or file
-mode — a Terminal-descended shell inherits a user-approved grant for the
-external volume, a launchd job has none and can never prompt for one.
-Confirm in one command without touching System Settings:
-`launchctl submit -l probe -- /bin/sh -c 'touch
-/Volumes/ExternalSSD/CoreSimulator-Devices/.p || echo DENIED'` — it is
-denied while the same write from your shell succeeds. Every `simctl create` dies with "Device was allocated
-but was stuck in creation state", and `simctl list devices` reports zero
-devices because `device_set.plist` cannot be written. Until the user
-grants that service Full Disk Access or moves the device set back to the
-internal disk, iOS-side live verification is impossible on this machine —
-read-only `simctl list` calls still work and are the way to verify
-picker/parser logic against real data. Always wrap `simctl` in `timeout`
-regardless, so a future regression cannot wedge a session.
+Resolved gotcha, worth not re-learning (2026-08-19): iOS live verification
+was blocked for days by what was recorded as a "wedged simdiskimaged". That
+diagnosis was wrong. `simctl` does not hang; it fails fast. The real cause
+was that `~/Library/Developer/CoreSimulator/Devices` had been symlinked to
+`/Volumes/ExternalSSD/CoreSimulator-Devices`, and `CoreSimulatorService` is
+a launchd job, which TCC denies on `/Volumes/*`. Every `simctl create` died
+with "Device was allocated but was stuck in creation state" and `simctl
+list devices` reported zero devices, because `device_set.plist` could not
+be written.
+
+The discriminator is TCC attribution, not uid or file mode: a
+Terminal-descended shell inherits a user-approved grant for the external
+volume, a launchd job has none and can never prompt for one. Confirm that
+class of failure in one command, no System Settings needed:
+
+```sh
+launchctl submit -l probe -- /bin/sh -c \
+  'touch /Volumes/<vol>/<path>/.p || echo DENIED'
+```
+
+It is denied while the same write from your shell succeeds. Adding the
+daemon binaries to Full Disk Access by hand does NOT fix it — that was
+tried, with a service restart, and the EPERM was identical. The fix was
+moving the device set back to the internal disk, where a launchd job writes
+fine. General rule for this machine: source and build artifacts on the
+external SSD are fine because you reach them through Terminal-descended
+tools; anything a launchd-run daemon owns must live on the internal disk.
+
+Always wrap `simctl` in `timeout` regardless, so a future regression cannot
+wedge a session.
 
 ## Local development
 
