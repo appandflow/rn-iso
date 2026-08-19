@@ -227,11 +227,23 @@ repo" tests for the pattern) or as a manual verification recorded in the
 change's report. Mocked-executor tests remain the bulk of the suite and
 are still required for the logic around the real call — this item is
 about not treating them as sufficient on their own for anything that
-shells out to a real toolchain. Exception: `xcrun simctl` itself must NOT
-be run from an agent session on this machine — the daemon is currently
-wedged and a call hangs the whole session; verify iOS-side commands by
-other means (reading recorded output, asking the user to run it) until
-that's resolved.
+shells out to a real toolchain.
+
+Current caveat on this machine (updated 2026-08-19): `xcrun simctl` no
+longer hangs — the earlier "wedged daemon" diagnosis was wrong, and
+mutations now fail fast, so a `timeout`-wrapped `simctl` call is safe to
+run from an agent session. What *is* broken is simulator creation itself:
+`~/Library/Developer/CoreSimulator/Devices` is a symlink to
+`/Volumes/ExternalSSD/CoreSimulator-Devices`, and `CoreSimulatorService`
+(a launchd job) is denied by TCC on `/Volumes/*` even though a user shell
+writes there fine. Every `simctl create` dies with "Device was allocated
+but was stuck in creation state", and `simctl list devices` reports zero
+devices because `device_set.plist` cannot be written. Until the user
+grants that service Full Disk Access or moves the device set back to the
+internal disk, iOS-side live verification is impossible on this machine —
+read-only `simctl list` calls still work and are the way to verify
+picker/parser logic against real data. Always wrap `simctl` in `timeout`
+regardless, so a future regression cannot wedge a session.
 
 ## Local development
 

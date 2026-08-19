@@ -76,7 +76,7 @@ All commands below take the same `npx rn-iso` prefix.
 
 - **Config** at `~/.rn-iso/config.json`, keyed by absolute project path. Symlinked worktrees collapse via `realpath`.
 - **Port allocation:** `up`/`start` assign 8082, 8083, 8084 etc., reclaiming dead ports on the way.
-- **Owned device creation:** on iOS, `up` creates the newest iPhone device type on the newest installed runtime by default (or reuses the project's already-recorded owned sim, booting it if shut down). On Android, it creates an AVD via `avdmanager create avd` against the newest installed arm64 system image (rn-iso never installs system images itself -- it errors with install instructions if none is found). Override the defaults with `--device-type`/`--runtime`/`--system-image`, or persist them via `rn-iso config ios.deviceType|ios.runtime|android.systemImage`.
+- **Owned device creation:** on iOS, `up` creates the newest iPhone device type -- highest generation number, base model rather than Pro/Pro Max -- on the newest installed runtime by default (or reuses the project's already-recorded owned sim, booting it if shut down). On Android, it creates an AVD via `avdmanager create avd` against the newest installed arm64 system image (rn-iso never installs system images itself -- it errors with install instructions if none is found). Override the defaults with `--device-type`/`--runtime`/`--system-image`, or persist them via `rn-iso config ios.deviceType|ios.runtime|android.systemImage`.
 - **rn-iso never runs a build.** `up` only provisions the device, Metro, and (on Android) `adb reverse`; you run the project's own `expo run:*` / `react-native run-*` (or its wrapping script) against the printed facts. The skill's "Common setups reference" table has invocations for the common project shapes.
 - **Metro is always managed by rn-iso** -- started detached by `up`/`start`, PID-tracked, output captured in a per-project log file under `~/.rn-iso/logs/`. This is the only mode; there is no flag to have the build CLI start its own Metro. Both Expo and the RN CLI probe the target port and skip spawning a second bundler when Metro already answers `/status`, which is what makes this safe. `npx rn-iso stop` finds Metro by port via `lsof`, so it works regardless of who's asking.
 
@@ -88,7 +88,7 @@ A few options can be persisted per project so you don't have to repeat the same 
 
 1. CLI flag (`--device-type`, `--runtime`, `--system-image`)
 2. Stored project setting (this section)
-3. rn-iso's own default (newest iPhone on newest installed runtime; newest installed arm64 system image)
+3. rn-iso's own default (newest iPhone, base model, on newest installed runtime; newest installed arm64 system image)
 
 ```bash
 npx rn-iso config packageManager bun
