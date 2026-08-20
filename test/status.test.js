@@ -13,7 +13,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../src/exec.js';
-import { saveConfig } from '../src/config.js';
+import {saveConfig} from '../src/config.js';
 import statusCommand from '../src/commands/status.js';
 
 let tmpHome;
@@ -90,32 +90,6 @@ test('status tags owned devices and leaves unowned devices untagged', async () =
   assert.doesNotMatch(androidLine, /\(owned\)/);
 });
 
-test('status reports a project with an incomplete setup pipeline', async () => {
-  saveConfig({
-    version: 2,
-    projects: {
-      '/proj/a': {
-        label: 'agent-1',
-        metroPort: 8083,
-        platforms: {},
-        setup: {
-          complete: false,
-          commands: [
-            { command: 'npm install', ok: true },
-            { command: 'pod install', ok: false },
-          ],
-        },
-      },
-    },
-  });
-
-  const logs = await runStatus();
-
-  const setupLine = logs.find(l => /setup incomplete/.test(l));
-  assert.ok(setupLine, 'expected a setup incomplete line');
-  assert.match(setupLine, /pod install/);
-  assert.doesNotMatch(setupLine, /npm install/);
-});
 
 test('status says nothing extra for a project with complete setup', async () => {
   saveConfig({

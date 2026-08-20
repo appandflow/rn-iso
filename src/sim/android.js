@@ -186,7 +186,7 @@ export function getAvdNameForSerial(serial) {
 //   { notRunning: true } the AVD exists and is owned, but no live emulator
 //                        currently identifies as it -- skip shutdown,
 //                        proceed to deleteAvd where applicable.
-export function resolveOwnedAvdSerial(avdName, consolePort) {
+export function resolveOwnedAvdSerial(avdName) {
   if (!listAvds().includes(avdName)) return { missing: true };
   if (!avdName?.startsWith('rn-iso-')) return { notOwned: true };
   const adb = listAdbDevices();

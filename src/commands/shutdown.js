@@ -196,7 +196,7 @@ export default function shutdownCommand(program) {
             // skip rather than issue a command at an unverified device.
             let resolved;
             try {
-              resolved = resolveOwnedAvdSerial(a.avdName, a.consolePort);
+              resolved = resolveOwnedAvdSerial(a.avdName);
             } catch (probeErr) {
               skippedFailed.push({ path: a.path, platform: 'android', label: fallbackLabel, reason: `ownership could not be verified: ${String(probeErr?.message || probeErr).slice(0, 120)}` });
               continue;

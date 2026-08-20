@@ -1,6 +1,6 @@
 // src/commands/status.js
 import chalk from 'chalk';
-import { getSetupStatus, loadConfig } from '../config.js';
+import { loadConfig } from '../config.js';
 import { isMetroRunning } from '../ports.js';
 import { findProjectRoot, projectShortcut } from '../project.js';
 import { listAllIosSims } from '../sim/ios.js';
@@ -55,16 +55,6 @@ export default function statusCommand(program) {
             console.log(`  android: ${chalk.cyan(android.serial)} ${chalk.dim('(physical)')}${owned}`);
           } else {
             console.log(`  android: ${chalk.cyan(android.avdName)} ${chalk.dim(`(emulator-${android.consolePort})`)}${owned}`);
-          }
-        }
-
-        const setup = getSetupStatus(path);
-        if (setup && !setup.complete) {
-          if (setup.skipped) {
-            console.log(chalk.yellow('  setup incomplete: skipped (--no-install)'));
-          } else {
-            const failedCommands = (setup.commands || []).filter(r => !r.ok).map(r => r.command);
-            console.log(chalk.yellow(`  setup incomplete: ${failedCommands.join(', ')}`));
           }
         }
       }

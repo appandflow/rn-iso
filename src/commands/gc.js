@@ -338,7 +338,7 @@ export default function gcCommand(program) {
             deleteIosSim(d.id);
             console.log(chalk.green(`Deleted ios sim ${d.name} (${d.id})`));
           } else if (d.kind === 'android') {
-            const resolved = resolveOwnedAvdSerial(d.name, d.consolePort);
+            const resolved = resolveOwnedAvdSerial(d.name);
             if (resolved.notOwned) {
               console.log(chalk.yellow(`Skipped android avd ${d.name}: not rn-iso-owned by name -- not touched`));
               continue;

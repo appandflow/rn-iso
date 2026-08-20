@@ -123,7 +123,7 @@ test('resolveOwnedAvdSerial reports missing when the AVD does not exist at all',
     runQuiet: () => null,
     spawn: () => null,
   });
-  assert.deepEqual(resolveOwnedAvdSerial('rn-iso-gone', 5554), { missing: true });
+  assert.deepEqual(resolveOwnedAvdSerial('rn-iso-gone'), { missing: true });
 });
 
 test('resolveOwnedAvdSerial reports notOwned for a non-rn-iso AVD name', () => {
@@ -132,7 +132,7 @@ test('resolveOwnedAvdSerial reports notOwned for a non-rn-iso AVD name', () => {
     runQuiet: () => null,
     spawn: () => null,
   });
-  assert.deepEqual(resolveOwnedAvdSerial('Pixel_6_API_34', 5554), { notOwned: true });
+  assert.deepEqual(resolveOwnedAvdSerial('Pixel_6_API_34'), { notOwned: true });
 });
 
 test('resolveOwnedAvdSerial resolves the live serial by AVD identity, not by port', () => {
@@ -148,7 +148,7 @@ test('resolveOwnedAvdSerial resolves the live serial by AVD identity, not by por
     },
     spawn: () => null,
   });
-  assert.deepEqual(resolveOwnedAvdSerial('rn-iso-mine', 5554), { serial: 'emulator-5554' });
+  assert.deepEqual(resolveOwnedAvdSerial('rn-iso-mine'), { serial: 'emulator-5554' });
 });
 
 // The regression this fix exists for: the recorded consolePort is held by a
@@ -171,5 +171,5 @@ test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by
     },
     spawn: () => null,
   });
-  assert.deepEqual(resolveOwnedAvdSerial('rn-iso-mine', 5554), { notRunning: true });
+  assert.deepEqual(resolveOwnedAvdSerial('rn-iso-mine'), { notRunning: true });
 });

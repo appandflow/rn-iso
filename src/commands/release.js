@@ -53,7 +53,7 @@ function releaseAndroidDevice(entry, force) {
   // Verify identity against the LIVE adb list before shutting anything
   // down: the recorded consolePort is a slot, not an identity, and may now
   // be held by a foreign emulator.
-  const resolved = resolveOwnedAvdSerial(entry.avdName, entry.consolePort);
+  const resolved = resolveOwnedAvdSerial(entry.avdName);
   if (resolved.notOwned) {
     console.log(chalk.yellow(`Did not delete the device: AVD ${entry.avdName} is not rn-iso-owned by name -- leaving it running.`));
     return;

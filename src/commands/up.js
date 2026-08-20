@@ -14,7 +14,6 @@ import {
   upsertProject,
   setMetro,
   setDevice,
-  getSetupStatus,
   allConsolePortsAndSerials,
   loadConfig,
 } from '../config.js';
@@ -148,10 +147,9 @@ export function registerUp(program) {
       }
 
       const metro = { healthy: metroHealthy, conflict: metroConflict };
-      const setup = getSetupStatus(root);
 
       const payloadBundleId = platform === 'android' ? androidPackage : bundleId;
-      const facts = buildFacts({ platform, device, port, metro, bundleId: payloadBundleId, setup });
+      const facts = buildFacts({ platform, device, port, metro, bundleId: payloadBundleId });
 
       if (json) {
         console.log(JSON.stringify(facts));
@@ -251,7 +249,7 @@ async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, 
       // and may now be held by a foreign emulator (e.g. Android Studio's
       // own default on 5554). Deciding liveness from the port alone would
       // adb-reverse onto, and report the facts of, someone else's emulator.
-      const resolved = resolveOwnedAvdSerial(record.avdName, record.consolePort);
+      const resolved = resolveOwnedAvdSerial(record.avdName);
       if (resolved.notOwned) {
         note(chalk.yellow(`Note: recorded AVD ${record.avdName} is not rn-iso-owned by name -- creating a fresh owned AVD instead of reusing it.`));
         // Fall through to creation below.
@@ -363,8 +361,8 @@ async function bootOwnedAvdOnFreshPort({ avdName, projectPath, deviceName, out }
 }
 
 // Pure: shapes the `--json` payload / summary facts from already-resolved
-// device, Metro, and setup data.
-export function buildFacts({ platform, device, port, metro, bundleId, setup }) {
+// device and Metro data.
+export function buildFacts({ platform, device, port, metro, bundleId }) {
   const base = {
     platform,
     owned: Boolean(device.owned),
@@ -377,7 +375,6 @@ export function buildFacts({ platform, device, port, metro, bundleId, setup }) {
     // against it. A port is not identity here either.
     metroConflict: metro.conflict ?? null,
     bundleId: bundleId ?? null,
-    setup: setup ?? null,
   };
   if (platform === 'ios') {
     return { ...base, udid: device.deviceUdid, deviceName: device.deviceName ?? null };

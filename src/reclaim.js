@@ -72,7 +72,7 @@ function reclaimOwnedDevices(project) {
       // Verify identity against the LIVE adb list before shutting anything
       // down: the recorded consolePort is a slot, not an identity, and may
       // now be held by a foreign emulator (see resolveOwnedAvdSerial).
-      const resolved = resolveOwnedAvdSerial(android.avdName, android.consolePort);
+      const resolved = resolveOwnedAvdSerial(android.avdName);
       if (resolved.notOwned) {
         skippedDevices.push({
           platform: 'android',

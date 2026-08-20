@@ -203,15 +203,6 @@ function deleteNested(obj, dottedKey) {
   return true;
 }
 
-export function setSetupStatus(projectPath, status) {
-  const cfg = ensureConfig();
-  if (!cfg.projects[projectPath]) {
-    cfg.projects[projectPath] = { metroPort: null, platforms: {} };
-  }
-  cfg.projects[projectPath].setup = status;
-  saveConfig(cfg);
-}
-
 // True path-segment prefix, not a bare startsWith: "/a/foo-worktrees/x" must
 // not match "/a/foo-worktrees/xy" just because the strings share a prefix.
 export function isPathPrefix(prefix, path) {
@@ -236,14 +227,6 @@ export function findEnclosingWorktreeRoot(projectPath) {
     if (!best || path.length > best.length) best = path;
   }
   return best;
-}
-
-export function getSetupStatus(projectPath) {
-  const own = getProject(projectPath)?.setup;
-  if (own) return own;
-  const rootPath = findEnclosingWorktreeRoot(projectPath);
-  if (!rootPath || rootPath === projectPath) return null;
-  return getProject(rootPath)?.setup || null;
 }
 
 export function allMetroPorts() {

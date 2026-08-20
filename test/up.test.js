@@ -29,12 +29,11 @@ test('buildFacts shapes the ios payload', () => {
     port: 8082,
     metro: { healthy: true },
     bundleId: 'com.app',
-    setup: { complete: true, commands: [] },
   });
   assert.deepEqual(facts, {
     platform: 'ios', udid: 'U1', owned: true, deviceName: 'rn-iso-app',
     metroPort: 8082, metroHealthy: true, metroConflict: null,
-    bundleId: 'com.app', setup: { complete: true, commands: [] },
+    bundleId: 'com.app',
   });
 });
 
@@ -45,7 +44,6 @@ test('buildFacts shapes the android payload with serial and kind', () => {
     port: 8083,
     metro: { pid: 13, healthy: true, log: '/l.log' },
     bundleId: 'com.app',
-    setup: null,
   });
   assert.equal(facts.serial, 'emulator-5554');
   assert.equal(facts.kind, 'emulator');
@@ -61,7 +59,6 @@ test('buildFacts marks a physical android assignment', () => {
     port: 8084,
     metro: { pid: null, healthy: false, log: null },
     bundleId: null,
-    setup: null,
   });
   assert.equal(facts.kind, 'physical');
   assert.equal(facts.serial, 'R5CT1234');
@@ -724,7 +721,6 @@ test('buildFacts no longer reports metroPid or metroLog', () => {
     port: 8082,
     metro: { healthy: false },
     bundleId: 'io.example.app',
-    setup: null,
   });
   assert.equal(facts.metroPort, 8082);
   assert.equal(facts.metroHealthy, false);
@@ -739,7 +735,6 @@ test('buildFacts reports metroHealthy true when the probe found Metro', () => {
     port: 8082,
     metro: { healthy: true },
     bundleId: null,
-    setup: null,
   });
   assert.equal(facts.metroHealthy, true);
 });
@@ -765,7 +760,6 @@ test('action: up reports metroHealthy true when a real Metro is already on the r
       port,
       metro: { healthy },
       bundleId: null,
-      setup: null,
     });
     assert.equal(facts.metroHealthy, true);
     assert.equal(facts.metroPort, port);
@@ -785,7 +779,6 @@ test('buildFacts reports a conflict when something else holds the reserved port'
     port: 8082,
     metro: { healthy: false, conflict: 'pid 9 on port 8082 runs from /elsewhere, outside /p' },
     bundleId: null,
-    setup: null,
   });
   assert.equal(facts.metroHealthy, false);
   assert.match(facts.metroConflict, /elsewhere/);

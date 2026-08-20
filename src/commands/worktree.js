@@ -1,10 +1,8 @@
 import { existsSync, realpathSync, rmSync } from 'fs';
 import { resolve } from 'path';
 import chalk from 'chalk';
-import { detectPackageManager } from '../runner.js';
 import { resolveSettings } from '../settings.js';
-import { getSetupStatus, isPathPrefix, loadConfig, setSetupStatus, upsertProject } from '../config.js';
-import { getExecutor } from '../exec.js';
+import { isPathPrefix, loadConfig, upsertProject } from '../config.js';
 import { formatBytes } from '../artifacts.js';
 import { reclaimProject } from '../reclaim.js';
 import {
@@ -23,90 +21,11 @@ import {
   worktreePath,
 } from '../worktree.js';
 
-// A pipeline, not a boolean: one `install` is not enough for a monorepo, where
-// a failed postinstall silently leaves later setup steps unrun.
-//
-// Pure: `packageManager` is resolved by the caller (via `detectPackageManager`,
-// which walks the filesystem for lockfiles) rather than by this function, so
-// the whole decision tree here -- including the fallback branch -- is
-// unit-testable without touching disk.
-export function resolveInstallPipeline(settings, packageManager) {
-  const configured = settings?.worktree?.install;
-  if (configured === false) return [];
-  if (typeof configured === 'string') return [configured];
-  if (Array.isArray(configured)) return configured;
-  const pm = settings?.packageManager || packageManager;
-  return [`${pm} install`];
-}
-
-// Streams one pipeline command via spawn rather than buffering it through
-// exec.run/execSync. Two reasons:
-//   1. A chatty `pnpm install` on a large monorepo can run 40s+ and print
-//      well past execSync's maxBuffer; buffering also means the user sees
-//      nothing until the whole command finishes (or gets killed).
-//   2. The stdout contract for `worktree create` is absolute: stdout carries
-//      ONLY the worktree path, so the child's stdout is piped to OUR stderr,
-//      never to our stdout. Its stderr goes to our stderr too.
-function runOne(command, cwd) {
-  return new Promise((resolvePromise) => {
-    console.error(chalk.dim(`> ${command}`));
-    const exec = getExecutor();
-    let child;
-    try {
-      child = exec.spawn('sh', ['-c', command], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (e) {
-      const message = String(e?.message || e).slice(0, 500);
-      console.error(chalk.yellow(`  failed: ${command}`));
-      console.error(chalk.yellow(`  ${message}`));
-      resolvePromise({ command, ok: false, error: message });
-      return;
-    }
-    // Keep a bounded tail of combined output for the failure message --
-    // "failed: <command>" alone gives no clue why, but we must not hold the
-    // whole (potentially huge) output in memory just to report 500 chars.
-    let tail = '';
-    const onData = (chunk) => {
-      process.stderr.write(chunk);
-      tail = (tail + chunk.toString()).slice(-2000);
-    };
-    child.stdout?.on('data', onData);
-    child.stderr?.on('data', onData);
-    child.on('error', (err) => {
-      const message = String(err?.message || err).slice(0, 500);
-      console.error(chalk.yellow(`  failed: ${command}`));
-      console.error(chalk.yellow(`  ${message}`));
-      resolvePromise({ command, ok: false, error: message });
-    });
-    child.on('exit', (code) => {
-      if (code === 0) {
-        resolvePromise({ command, ok: true });
-        return;
-      }
-      const message = `exit ${code}${tail.trim() ? `: ${tail.trim().slice(-500)}` : ''}`;
-      console.error(chalk.yellow(`  failed: ${command}`));
-      console.error(chalk.yellow(`  ${message}`));
-      // Keep going (handled by the caller's loop): later commands may still
-      // be useful, and the recorded status tells the next `rn-iso ios`
-      // exactly what to re-run.
-      resolvePromise({ command, ok: false, error: message });
-    });
-  });
-}
-
-async function runPipeline(commands, cwd) {
-  const results = [];
-  for (const command of commands) {
-    results.push(await runOne(command, cwd));
-  }
-  return results;
-}
-
 export function registerCreate(worktree) {
   worktree
     .command('create <name>')
     .description('Create a git worktree with its environment set up. Prints the worktree path on stdout.')
     .option('--base <ref>', 'base ref: "fresh" (origin/HEAD, default) or "head"')
-    .option('--no-install', 'skip the setup pipeline')
     .option('--label <label>', 'rn-iso shortcut for the worktree (defaults to the worktree name)')
     .action(async (name, opts) => {
       // `name` comes from a hook (session text), not a hand-typed argument,
@@ -170,14 +89,6 @@ export function registerCreate(worktree) {
         console.error(chalk.yellow(`Failed to carry over ${f.file}: ${f.error}`));
       }
 
-      let results = [];
-      let skipped = false;
-      if (opts.install !== false) {
-        results = await runPipeline(resolveInstallPipeline(settings, detectPackageManager(target)), target);
-      } else {
-        skipped = true;
-      }
-      const complete = !skipped && results.every(r => r.ok);
 
       // Register the label now, before `rn-iso ios` ever runs, and mark this
       // entry as a worktree root. Without the label, the project would later
@@ -186,27 +97,13 @@ export function registerCreate(worktree) {
       // tlon-apps is "tlon-mobile"), so the shortcuts collide. The
       // `worktreeRoot` marker lets a project registered later from inside
       // this worktree (e.g. `cd apps/tlon-mobile && rn-iso ios`) find this
-      // label and this setup status -- see findEnclosingWorktreeRoot in
-      // config.js.
+      // label -- see findEnclosingWorktreeRoot in config.js.
       upsertProject(target, { label: opts.label || name, worktreeRoot: true });
-      setSetupStatus(
-        target,
-        skipped ? { complete: false, skipped: true, commands: [] } : { complete, commands: results }
-      );
 
-      if (!complete) {
-        if (skipped) {
-          console.error(chalk.dim('Setup pipeline skipped (--no-install).'));
-        } else {
-          const failedCommands = results.filter(r => !r.ok).map(r => r.command);
-          console.error(chalk.yellow(`Setup incomplete. Failed: ${failedCommands.join(', ')}`));
-          console.error(chalk.dim('The worktree is usable but may not build until these succeed.'));
-        }
-      }
+      console.error(chalk.dim('Worktree ready. Install dependencies yourself before building.'));
 
       // The WorktreeCreate hook reads stdout as the directory to use. Nothing
-      // else may be written here, and a setup failure must still exit 0 or the
-      // session spawn dies.
+      // else may be written here.
       console.log(target);
     });
 }
@@ -438,13 +335,7 @@ export function registerList(worktree) {
         return;
       }
       for (const entry of entries.slice(1)) {
-        const status = getSetupStatus(entry.path);
-        const label = status
-          ? status.complete
-            ? chalk.green('setup ok')
-            : chalk.yellow('setup incomplete')
-          : chalk.dim('unmanaged');
-        console.log(`${entry.path}  [${entry.branch || 'detached'}]  ${label}`);
+        console.log(`${entry.path}  [${entry.branch || 'detached'}]`);
       }
     });
 }

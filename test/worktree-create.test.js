@@ -4,10 +4,10 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, realpathSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { resolveInstallPipeline, registerCreate } from '../src/commands/worktree.js';
+import { registerCreate } from '../src/commands/worktree.js';
 import { resetExecutor } from '../src/exec.js';
 import { defaultWorktreeDir } from '../src/worktree.js';
-import { upsertProject, setSetupStatus, getSetupStatus, findEnclosingWorktreeRoot } from '../src/config.js';
+import {upsertProject, findEnclosingWorktreeRoot} from '../src/config.js';
 
 let tmpHome;
 
@@ -19,85 +19,6 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.RN_ISO_HOME;
-});
-
-test('uses the configured pipeline verbatim', async () => {
-  const pipeline = resolveInstallPipeline(
-    { worktree: { install: ['pnpm install', 'pnpm build:packages'] } },
-    'npm'
-  );
-  assert.deepEqual(pipeline, ['pnpm install', 'pnpm build:packages']);
-});
-
-test('accepts a single string as a one-command pipeline', async () => {
-  assert.deepEqual(resolveInstallPipeline({ worktree: { install: 'yarn' } }, 'npm'), ['yarn']);
-});
-
-test('install false disables the pipeline', async () => {
-  assert.deepEqual(resolveInstallPipeline({ worktree: { install: false } }, 'npm'), []);
-});
-
-test('falls back to a configured settings.packageManager over the passed-in one', async () => {
-  const pipeline = resolveInstallPipeline({ packageManager: 'pnpm' }, 'npm');
-  assert.deepEqual(pipeline, ['pnpm install']);
-});
-
-// This is the fallback branch that used to be untestable: resolveInstallPipeline
-// no longer calls detectPackageManager itself (that walks the filesystem for
-// lockfiles), so the caller-supplied package manager can be exercised directly
-// with no settings.packageManager override and no disk I/O.
-test('falls back to the caller-supplied package manager when settings has none', async () => {
-  assert.deepEqual(resolveInstallPipeline({}, 'pnpm'), ['pnpm install']);
-  assert.deepEqual(resolveInstallPipeline(undefined, 'bun'), ['bun install']);
-});
-
-test('setup status round-trips and reports incompleteness', async () => {
-  upsertProject('/proj', {});
-  setSetupStatus('/proj', {
-    complete: false,
-    commands: [
-      { command: 'pnpm install', ok: false },
-      { command: 'pnpm build:packages', ok: true },
-    ],
-  });
-  const status = getSetupStatus('/proj');
-  assert.equal(status.complete, false);
-  assert.equal(status.commands[0].ok, false);
-});
-
-test('getSetupStatus returns null for an unknown project', async () => {
-  assert.equal(getSetupStatus('/nope'), null);
-});
-
-// This is the scenario Fix 1 targets: `worktree create` registers the
-// worktree root with a label and a setup status, but the agent later runs
-// `rn-iso ios` from a nested app dir (e.g. apps/tlon-mobile in a monorepo),
-// which registers a *different* key with no setup status of its own. Without
-// the fallback, a later `getSetupStatus(<app dir>)` would return null and the
-// "setup incomplete" warning would never fire.
-test('getSetupStatus falls back to the enclosing worktree root status', async () => {
-  const root = '/repo-worktrees/feat-x';
-  upsertProject(root, { label: 'feat-x', worktreeRoot: true });
-  setSetupStatus(root, { complete: false, commands: [{ command: 'pnpm install', ok: false }] });
-
-  const appDir = `${root}/apps/tlon-mobile`;
-  upsertProject(appDir, {});
-
-  const status = getSetupStatus(appDir);
-  assert.equal(status.complete, false);
-  assert.equal(status.commands[0].command, 'pnpm install');
-});
-
-test('getSetupStatus prefers a project own status over the enclosing worktree root', async () => {
-  const root = '/repo-worktrees/feat-x';
-  upsertProject(root, { label: 'feat-x', worktreeRoot: true });
-  setSetupStatus(root, { complete: false, commands: [] });
-
-  const appDir = `${root}/apps/tlon-mobile`;
-  upsertProject(appDir, {});
-  setSetupStatus(appDir, { complete: true, commands: [] });
-
-  assert.equal(getSetupStatus(appDir).complete, true);
 });
 
 test('findEnclosingWorktreeRoot uses a real path-segment prefix, not a bare startsWith', async () => {
@@ -206,29 +127,6 @@ test('create action: success path writes exactly one stdout line, the worktree p
   }
 });
 
-test('create action: setup-pipeline failure still writes exactly one stdout line and does not set exitCode 1', async () => {
-  resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-fail-')));
-  const repo = join(base, 'repo');
-  try {
-    initScratchRepo(repo);
-    // A committed setup pipeline that always fails -- readCommittedSettings
-    // reads this straight off disk, no tracking required.
-    writeFileSync(join(repo, '.rn-iso.json'), JSON.stringify({ worktree: { install: 'exit 1' } }));
-
-    const { logs, errs } = await runCreateInRepo(repo, 'feat-y', {});
-
-    const expected = join(defaultWorktreeDir(repo), 'feat-y');
-    assert.deepEqual(logs, [expected]);
-    assert.notEqual(process.exitCode, 1);
-    // Sanity: the pipeline really did fail (and reported that on stderr,
-    // never stdout) -- otherwise this test would pass for the wrong reason.
-    assert.ok(errs.some(e => /Setup incomplete/.test(e)));
-  } finally {
-    process.exitCode = 0;
-    rmSync(base, { recursive: true, force: true });
-  }
-});
 
 // --- action-level tests: --base validation -----------------------------
 
