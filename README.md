@@ -15,7 +15,7 @@ npx rn-iso up ios --json     # ensure an owned sim + Metro; print the facts
 ```
 
 ```json
-{"platform":"ios","owned":true,"udid":"ABC-...","deviceName":"rn-iso-myproject","metroPort":8082,"metroHealthy":false,"bundleId":"io.tlon.groups","setup":{"complete":true,"commands":[]}}
+{"platform":"ios","owned":true,"udid":"ABC-...","deviceName":"rn-iso-myproject","metroPort":8082,"metroHealthy":false,"bundleId":"io.tlon.groups","metroConflict":null}
 ```
 
 `up` never builds or installs anything -- run the project's own build against the printed facts:
@@ -59,21 +59,21 @@ All commands below take the same `npx rn-iso` prefix.
 |---|---|
 | `up <ios\|android> [--json] [--device-type <name>] [--runtime <ver>] [--system-image <pkg>]` | Ensure an owned device and reserve a Metro port for the current project; print the facts. Never builds, never starts Metro. |
 | `device [--platform ios\|android] [--json]` | Print the current device assignment (no ensure/create side effects). |
-| `stop [<shortcut>\|<path>] [--force]` | Kill Metro. No arg = current project; pass a port (e.g. 8083), a project shortcut (label or unique basename), or an absolute path. |
-| `status` | Show all projects' device assignments (owned/legacy), setup status, and Metro state. |
+| `stop [<shortcut>\|<path>] [--force]` | Kill this project's Metro, after proving the process on the reserved port is ours. `--force` kills an unidentified listener. No arg = current project. |
+| `status` | Show all projects' device assignments (owned/legacy) and Metro state. |
 | `release [<port>\|<shortcut>\|<path>] [--platform <p>] [--force]` | Free a project's device assignment. Deletes it if owned (see above); clears it if legacy/physical. `--force` deletes even if in use by another tool (iOS only). |
 | `shutdown [<shortcut>\|<path>] [-y] [--keep-sims]` | Kill Metro, shut down (never delete) owned sims/emulators. Owned device records stay recorded so `up` can reuse them; legacy/physical assignments are cleared. No arg = every registered project. |
 | `prune` | Remove entries for deleted project directories, freeing their ports (not devices -- see `gc`). |
 | `gc [--delete] [--older-than <days>]` | Report (or, with `--delete`, reclaim) orphaned Xcode DerivedData, dead project entries, and orphaned `rn-iso-*` devices. Reports only by default. |
 | `config [<key> [<value>]] [--unset] [--project <target>] [--repo]` | Get / set a per-project (or, with `--repo`, repo-shared) setting. |
-| `worktree create <name> [--base fresh\|head] [--no-install] [--label <name>]` | Create an isolated git worktree: carries over gitignored files, runs the setup pipeline, prints the worktree path. |
+| `worktree create <name> [--base fresh\|head] [--label <name>]` | Create an isolated git worktree: carries over gitignored files, prints the worktree path. Does not install dependencies. |
 | `worktree remove <path> [--force]` | Remove a worktree, reclaiming its build artifacts, Metro port, and owned devices (deleted, not just freed). Refuses if it has uncommitted or unpushed work unless `--force`. |
-| `worktree list` | List this repo's worktrees with their setup status. |
+| `worktree list` | List this repo's worktrees and their branches. |
 
 ## How it works
 
 - **Config** at `~/.rn-iso/config.json`, keyed by absolute project path. Symlinked worktrees collapse via `realpath`.
-- **Port allocation:** `up`/`start` assign 8082, 8083, 8084 etc., reclaiming dead ports on the way.
+- **Port allocation:** `up` assigns 8082, 8083, 8084 etc., reclaiming dead ports on the way.
 - **Owned device creation:** on iOS, `up` creates the newest iPhone device type -- highest generation number, base model rather than Pro/Pro Max -- on the newest installed runtime by default (or reuses the project's already-recorded owned sim, booting it if shut down). On Android, it creates an AVD via `avdmanager create avd` against the newest installed arm64 system image (rn-iso never installs system images itself -- it errors with install instructions if none is found). Override the defaults with `--device-type`/`--runtime`/`--system-image`, or persist them via `rn-iso config ios.deviceType|ios.runtime|android.systemImage`.
 - **rn-iso never runs a build.** `up` only provisions the device, Metro, and (on Android) `adb reverse`; you run the project's own `expo run:*` / `react-native run-*` (or its wrapping script) against the printed facts. The skill's "Common setups reference" table has invocations for the common project shapes.
 - **rn-iso reserves the Metro port; you start Metro.** Which bundler command a project needs is project-specific judgment -- the same reason rn-iso stopped wrapping builds -- so `up` allocates and records a collision-free port and leaves the invocation to you. Both Expo and the RN CLI probe the target port and skip spawning a second bundler when Metro already answers `/status`, which is what makes it safe to start Metro yourself and then build against it. Teardown (`stop`, `release`, `worktree remove`, `gc`) finds Metro by port via `lsof`, but only kills it after confirming it answers `/status` **and** runs from inside the project -- a port is not identity, so an unidentified listener is reported instead of killed.
@@ -102,7 +102,7 @@ Allowed project-layer keys today: `packageManager` (one of `npm|yarn|pnpm|bun`),
 
 ## Project shortcuts (--label)
 
-Every project has a "shortcut" you can pass to `stop` / `release` / `logs` / `config --project` instead of the full path: its `label` if one was set (e.g. via `worktree create --label`), else inherited from the enclosing worktree's label, else the directory basename.
+Every project has a "shortcut" you can pass to `stop` / `release` / `config --project` instead of the full path: its `label` if one was set (e.g. via `worktree create --label`), else inherited from the enclosing worktree's label, else the directory basename.
 
 ```bash
 npx rn-iso worktree create feature-x --label agent-1
@@ -116,15 +116,17 @@ Shortcut collisions (two projects sharing the same basename with no distinguishi
 
 ```bash
 npx rn-iso worktree create feature-x        # creates ../<repo>-worktrees/feature-x
-npx rn-iso worktree list                    # shows every worktree + its setup status
+npx rn-iso worktree list                    # shows every worktree and its branch
 npx rn-iso worktree remove <path>           # removes it, deleting its owned device(s) and freeing its Metro port
 ```
 
-`worktree create <name>` does four things in one step: creates the git worktree itself (branched `worktree-<name>` off `origin/HEAD` by default -- pass `--base head` to branch off the current `HEAD` instead), carries over gitignored files (see "Carry-over" below), runs the project's setup pipeline (`--no-install` to skip), and registers a label for the worktree root so `rn-iso` shortcuts don't collide across a monorepo's worktrees (every worktree of a monorepo shares the same app-dir basename). Prefer it over a raw `git worktree add` for that reason. It prints only the resulting worktree path to stdout; everything else goes to stderr (see "Wiring into Claude Code" below).
+`worktree create <name>` does three things in one step: creates the git worktree itself (branched `worktree-<name>` off `origin/HEAD` by default -- pass `--base head` to branch off the current `HEAD` instead), carries over gitignored files (see "Carry-over" below), and registers a label for the worktree root so `rn-iso` shortcuts don't collide across a monorepo's worktrees (every worktree of a monorepo shares the same app-dir basename). Prefer it over a raw `git worktree add` for that reason. It prints only the resulting worktree path to stdout; everything else goes to stderr (see "Wiring into Claude Code" below).
+
+It deliberately does **not** install dependencies. Which commands a repo actually needs -- a plain install, a workspace filter, a codegen step after it -- is project-specific judgment, the same reason rn-iso stopped wrapping builds in 0.7 and stopped starting Metro in 0.8. Install them yourself (or from your agent) before building.
 
 `worktree remove <path>` reclaims the worktree's build artifacts, Metro port, and every owned device registered under it (deleting them, not just clearing the claim -- the environment dies whole) before removing the git worktree itself. It refuses if the worktree has uncommitted changes, untracked files, or commits that exist on no remote -- pass `--force` to override, but note `--force` only discards uncommitted/untracked state; committed work stays safe on the branch either way.
 
-`worktree list` shows every worktree with a setup status: `setup ok`, `setup incomplete` (the install pipeline failed -- `up`'s JSON `setup` field will also reflect this), or `unmanaged` (created some other way, e.g. raw `git worktree add`).
+`worktree list` shows every worktree and its branch.
 
 ### Carry-over
 
@@ -146,7 +148,7 @@ Only files that are both gitignored and pattern-matched are copied -- tracked fi
 
 ### Wiring into Claude Code (`WorktreeCreate` hook)
 
-Claude Code's `WorktreeCreate` hook fires when a session for a new worktree starts, and uses the hook command's stdout as the directory for that session. `rn-iso worktree create` is built for exactly this contract -- it prints only the resulting path to stdout, and always exits 0 (even when its setup pipeline fails), so a broken `npm install` never breaks the hook itself. Wire it in `.claude/settings.json`:
+Claude Code's `WorktreeCreate` hook fires when a session for a new worktree starts, and uses the hook command's stdout as the directory for that session. `rn-iso worktree create` is built for exactly this contract -- it prints only the resulting path to stdout, and everything else goes to stderr. Wire it in `.claude/settings.json`:
 
 ```json
 {
@@ -160,13 +162,13 @@ Claude Code's `WorktreeCreate` hook fires when a session for a new worktree star
 
 ## Settings
 
-`worktree create` and `up` resolve settings from three layers, merged with the first match winning (nested objects merge key by key; arrays -- like `worktree.install` -- are replaced wholesale, never concatenated):
+`worktree create` and `up` resolve settings from three layers, merged with the first match winning (nested objects merge key by key; arrays -- like `worktree.include` -- are replaced wholesale, never concatenated):
 
 1. **Project settings** -- per absolute project path, stored in `~/.rn-iso/config.json`. Set with `npx rn-iso config <key> <value>` (see above). Highest precedence.
 2. **Repo settings** -- shared by every worktree of the same repository (keyed by the repo's git common dir), also stored in `~/.rn-iso/config.json`, set with `npx rn-iso config <key> <value> --repo`. Local to this machine.
 3. **Committed settings** -- `.rn-iso.json` at the repo root, checked into git and shared with everyone who clones the repo. Lowest precedence, but the only layer that travels with the repo.
 
-Recognized keys include `packageManager`, `ios.deviceType`, `ios.runtime`, `android.systemImage`, and, under `worktree`: `baseRef` (`"fresh"` or `"head"`), `install` (`false` to skip the setup pipeline, or a string/array of commands to run instead of the default `<package manager> install`), and `include` (carry-over patterns, same role as `.worktreeinclude`). Example `.rn-iso.json`:
+Recognized keys include `ios.deviceType`, `ios.runtime`, `android.systemImage`, and, under `worktree`: `baseRef` (`"fresh"` or `"head"`) and `include` (carry-over patterns, same role as `.worktreeinclude`). Example `.rn-iso.json`:
 
 ```json
 {

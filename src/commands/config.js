@@ -22,8 +22,7 @@ import { gitCommonDir } from '../worktree.js';
 
 // `.script` keys died with the `ios`/`android` build wrappers; `up` creates
 // owned devices instead, so device-shape settings replace them.
-const ALLOWED_KEYS = ['packageManager', 'ios.deviceType', 'ios.runtime', 'android.systemImage'];
-const PM_VALUES = ['npm', 'yarn', 'pnpm', 'bun'];
+const ALLOWED_KEYS = ['ios.deviceType', 'ios.runtime', 'android.systemImage'];
 
 // Repo-layer settings additionally accept `worktreeDir` and any `worktree.*`
 // key (baseRef, install, include, ...) -- the set that `worktree create`
@@ -92,11 +91,6 @@ export default function configCommand(program) {
         return;
       }
 
-      if (key === 'packageManager' && !PM_VALUES.includes(value)) {
-        console.error(chalk.red(`Invalid packageManager "${value}". Must be one of: ${PM_VALUES.join(', ')}.`));
-        process.exit(1);
-      }
-
       setProjectSetting(found, key, value);
       console.log(chalk.green(`Set ${key} = ${value} for ${found}.`));
     });
@@ -138,12 +132,6 @@ function runRepo(key, value, opts) {
     const cur = readNestedValue(getRepoSettings(dir), key);
     if (cur === undefined) console.log(chalk.dim('(unset)'));
     else console.log(typeof cur === 'object' ? JSON.stringify(cur) : cur);
-    return;
-  }
-
-  if (key === 'packageManager' && !PM_VALUES.includes(value)) {
-    console.error(chalk.red(`Invalid packageManager "${value}". Must be one of: ${PM_VALUES.join(', ')}.`));
-    process.exit(1);
     return;
   }
 

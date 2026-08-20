@@ -161,9 +161,9 @@ test('pruneDeadProjects returns empty list when nothing is dead', () => {
 
 test('setProjectSetting writes a top-level key', () => {
   upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  setProjectSetting('/p', 'packageManager', 'bun');
-  assert.equal(getProjectSetting('/p', 'packageManager'), 'bun');
-  assert.deepEqual(getProjectSettings('/p'), { packageManager: 'bun' });
+  setProjectSetting('/p', 'ios.deviceType', 'iPhone 16');
+  assert.equal(getProjectSetting('/p', 'ios.deviceType'), 'iPhone 16');
+  assert.deepEqual(getProjectSettings('/p'), { ios: { deviceType: 'iPhone 16' } });
 });
 
 test('setProjectSetting writes a dotted key, creating intermediate objects', () => {
@@ -179,9 +179,9 @@ test('setProjectSetting writes a dotted key, creating intermediate objects', () 
 
 test('setProjectSetting overwrites an existing key', () => {
   upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  setProjectSetting('/p', 'packageManager', 'bun');
-  setProjectSetting('/p', 'packageManager', 'pnpm');
-  assert.equal(getProjectSetting('/p', 'packageManager'), 'pnpm');
+  setProjectSetting('/p', 'ios.deviceType', 'iPhone 16');
+  setProjectSetting('/p', 'ios.deviceType', 'iPhone 17');
+  assert.equal(getProjectSetting('/p', 'ios.deviceType'), 'iPhone 17');
 });
 
 test('unsetProjectSetting removes a key and reports whether it existed', () => {

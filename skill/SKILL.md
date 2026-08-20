@@ -22,7 +22,7 @@ npx rn-iso worktree create feature-x
 npx rn-iso up ios --json
 # => {"platform":"ios","owned":true,"udid":"ABC-...","deviceName":"rn-iso-feature-x",
 #     "metroPort":8082,"metroHealthy":false,"bundleId":"io.tlon.groups",
-#     "setup":{"complete":true,"commands":[]}}
+#     "metroConflict":null}
 
 # 3. YOU start Metro on the reserved port, in the background, from the
 #    project directory (see "Starting Metro" below).
@@ -47,7 +47,7 @@ npx rn-iso worktree remove <path>
 - Never assume `booted` is your sim, and never call a device verb without an explicit UDID/serial -- another project's simulator may also be booted.
 - `metroHealthy` in the JSON is a live ping of Metro's `/status` endpoint. It is normally **`false` right after `up`**, because nothing has started Metro yet -- that is expected, not an error. Start Metro yourself, then poll `device --json` until it reports `true` before building.
 - Android's JSON payload uses `serial` / `avdName` / `consolePort` / `kind` (`"emulator"` or `"physical"`) instead of `udid`. Android's `bundleId` field in the facts is the **Android package name**, not the iOS bundle id.
-- `rn-iso device --platform <ios|android> --json` is a read-only, no-ensure/no-create re-check of the current assignment plus Metro state -- use it to poll `metroHealthy` after starting Metro, or to confirm what's already assigned without touching devices. Its payload is a subset of `up --json`'s: it omits `owned`, `bundleId`, and `setup`, so use `up --json` (or `status`) when you need those fields.
+- `rn-iso device --platform <ios|android> --json` is a read-only, no-ensure/no-create re-check of the current assignment plus Metro state -- use it to poll `metroHealthy` after starting Metro, or to confirm what's already assigned without touching devices. Its payload is a subset of `up --json`'s: it omits `owned` and `bundleId`, so use `up --json` (or `status`) when you need those fields.
 
 ## Common setups reference
 
@@ -94,9 +94,22 @@ After starting it, poll `npx rn-iso device --platform <ios|android> --json` unti
 
 Owned devices are real resources: a booted iOS sim is roughly 1-2 GB of RAM, an Android emulator 2-3 GB. On a 16 GB machine, plan for **2-3 live environments** at a time, not more. There is no built-in concurrency limit -- `up` will happily create a fourth or fifth device and let the machine struggle. If you're spinning up several worktrees, `worktree remove` (or `release`) the ones you're done with before creating more.
 
+## Choosing a device
+
+`up` creates the newest base-model iPhone / an arm64 emulator by default. To pin a model, pass `--device-type "iPhone 17 Pro"` / `--runtime 26.2` (iOS) or `--system-image <pkg>` (Android), or persist them with `rn-iso config ios.deviceType "iPhone 17 Pro"`.
+
+`--device-type` applies on **reuse as well as creation**: if this project already owns a sim of a different model, `up` refuses rather than silently booting the old one. Run `rn-iso release` to delete it, then `up ios` to get the requested model. (Releasing destroys that sim's app state -- it is a fresh device.)
+
 ## The physical-device exception
 
-Hardware cannot be spawned. A physical Android device connected via `adb` is assigned by serial, the same way it always was -- it is the one exception to "every device rn-iso uses is one rn-iso created." `up`/`release`/`shutdown` never boot, shut down, or delete a physical device; they only assign/clear the serial. iOS has no equivalent (no physical-iOS support).
+Hardware cannot be spawned, so it is the one exception to "every device rn-iso uses is one rn-iso created." Assign a connected Android device explicitly:
+
+```bash
+adb devices                              # find the serial
+npx rn-iso up android --serial R5CT12345 --json
+```
+
+It is recorded with `owned: false`, so `up`/`release`/`shutdown`/`gc` never boot, shut down, or delete it -- they only assign and clear the serial. `up` still reserves the Metro port and wires `adb reverse` for it. **iOS has no equivalent**: rn-iso is simulator-only on iOS, and `up ios --serial` is rejected.
 
 ## When things go wrong
 
@@ -104,25 +117,24 @@ Hardware cannot be spawned. A physical Android device connected via `adb` is ass
 - **Failed to ensure device (Android)** -- usually a missing/misconfigured `JAVA_HOME` or `ANDROID_HOME`, or no arm64 system image installed (rn-iso never installs one for you; install with `sdkmanager "system-images;android-36;google_apis;arm64-v8a"` or similar, or pass `--system-image`).
 - **No matching iOS device type / runtime installed** -- install one via Xcode, or pass `--device-type` / `--runtime` explicitly to `up`.
 - **Blank screen / app installed but nothing renders** -- check `npx rn-iso status` for Metro state, then read the Metro log file you redirected output to for bundle/resolution errors (a stale `node_modules` after a branch switch is a classic -- reinstall deps, then `npx rn-iso stop` and start Metro again).
-- **Metro port collision** -- `up`/`start` reclaim dead ports automatically. "port busy by non-Metro process" means another tool is using that port; close it.
+- **`metroConflict` is non-null / "port is in use but is NOT this project's Metro"** -- something holds your reserved port that rn-iso cannot prove is your Metro. Almost always you started Metro from the wrong directory (the repo root instead of the app dir in a monorepo). Restart it from inside the project. Do NOT build until `metroHealthy` is true: the build CLIs reuse whatever answers on that port, so you would build against the wrong bundler.
 - **A recorded device was deleted out from under rn-iso** (sim/AVD gone) -- `up` detects the stale record and creates a fresh owned device automatically.
 - **"Refusing to remove `<path>`"** -- `rn-iso worktree remove` found uncommitted changes, untracked files, or commits not on any remote, and refused rather than risk losing work. Push the branch, or confirm `--force` with the user first (see "Destructive-command rules").
 - **`gc` reports entries as "skipped"** -- directories/devices `gc` could NOT prove are dead: the workspace lives on an unmounted volume, or a device is currently occupied by a foreign tool (e.g. a UI-test runner). Skipped is a safety outcome, not an error -- `gc` fails closed rather than guessing.
-- **If `rn-iso worktree list` shows "setup incomplete"**, or `rn-iso status` warns about it, the worktree's setup pipeline (e.g. `npm install`) failed when the worktree was created. Read the recorded failing command and re-run it directly rather than guessing why the build breaks.
 
 ## Worktrees
 
-**Prefer `npx rn-iso worktree create` over a raw `git worktree add`.** `create` performs carry-over of gitignored files (like `.env`), runs the project's setup pipeline (install, etc.), and sets the label that stops monorepo shortcut collisions (every worktree of a monorepo shares the same app-dir basename, e.g. `tlon-mobile`, so without the label their `rn-iso` shortcuts collide). A raw `git worktree add` skips all three, leaving a worktree that looks fine but has no `node_modules`, no `.env`, and a shortcut that fights its siblings.
+**Prefer `npx rn-iso worktree create` over a raw `git worktree add`.** `create` performs carry-over of gitignored files (like `.env`) and sets the label that stops monorepo shortcut collisions (every worktree of a monorepo shares the same app-dir basename, e.g. `tlon-mobile`, so without the label their `rn-iso` shortcuts collide). A raw `git worktree add` skips both, leaving a worktree with no `.env` and a shortcut that fights its siblings. **Installing dependencies is your job** -- rn-iso does not run `install` for you, because which commands a repo needs (a plain install, a workspace filter, a codegen step after it) is judgment you have from reading the repo.
 
 ```bash
-npx rn-iso worktree create <name> [--base fresh|head] [--no-install] [--label <label>]
+npx rn-iso worktree create <name> [--base fresh|head] [--label <label>]
 npx rn-iso worktree remove <path> [--force]
 npx rn-iso worktree list
 ```
 
-- **`create <name>`** -- makes a sibling worktree (next to the repo, not inside it -- see the README for why), branches it as `worktree-<name>` from `origin/HEAD` (`--base fresh`, the default) or the current `HEAD` (`--base head`), carries over any gitignored files matched by `.worktreeinclude` (or the `worktree.include` setting), then runs the install pipeline (`--no-install` skips it). **Prints only the worktree's absolute path to stdout** -- everything else goes to stderr, and the command exits 0 even if setup failed, so it's safe to wire into automation (see the README's `WorktreeCreate` hook example). If setup fails or is skipped, the worktree is still created and usable; `rn-iso up` will warn about it later via the facts payload's `setup` field.
+- **`create <name>`** -- makes a sibling worktree (next to the repo, not inside it -- see the README for why), branches it as `worktree-<name>` from `origin/HEAD` (`--base fresh`, the default) or the current `HEAD` (`--base head`), and carries over any gitignored files matched by `.worktreeinclude` (or the `worktree.include` setting). It does NOT install dependencies -- do that yourself before building. **Prints only the worktree's absolute path to stdout** -- everything else goes to stderr, so it's safe to wire into automation (see the README's `WorktreeCreate` hook example).
 - **`remove <path>`** -- reclaims the worktree's build artifacts, Metro port, and (nested app-dir projects included) every owned sim/AVD registered under it: an owned device is shut down and deleted, not just unassigned, since the environment dies whole. A legacy or physical device assignment is only ever cleared, never deleted. An owned iOS sim actively driven by a foreign UI-test runner is left running (its claim is dropped and it's reported as skipped, "left for gc") so `gc` can catch it later. Refuses (exit 1) if the worktree has uncommitted changes, untracked files, or commits not on any remote -- see "Destructive-command rules" above. Also refuses if `<path>` is the main checkout or not a worktree of the current repo at all.
-- **`list`** -- lists this repo's worktrees with a per-worktree setup status: `setup ok`, `setup incomplete`, or `unmanaged` (created outside `rn-iso worktree create`, e.g. by raw `git worktree add`).
+- **`list`** -- lists this repo's worktrees and their branches.
 
 ## gc -- reclaiming disk space and orphaned devices
 
@@ -138,7 +150,7 @@ The report has four buckets:
 
 ## Other useful commands
 
-- `npx rn-iso status` -- show all projects, their owned/legacy device assignments (tagged `(owned)`), setup status, and Metro state.
+- `npx rn-iso status` -- show all projects, their owned/legacy device assignments (tagged `(owned)`), and Metro state.
 - `npx rn-iso prune` -- remove entries for projects whose directory no longer exists (deleted worktrees), freeing their ports and killing any orphaned Metro. Live projects are never touched. Does not delete devices or build artifacts; see `gc` for both.
 - `npx rn-iso stop [<shortcut>|<path>] [--force]` -- kill this project's Metro, after verifying the process on the reserved port answers `/status` and runs from inside the project. Refuses (exit 1) if it cannot prove that; `--force` kills the listener anyway and is destructive -- ask the user first. No arg = current project.
 - `npx rn-iso release [<port>|<shortcut>|<path>] [--platform <p>] [--force]` -- free a project's device assignment. Defaults to the current project. See "Destructive-command rules" above -- this deletes owned devices.
@@ -147,7 +159,7 @@ The report has four buckets:
 
 ### Project shortcuts (--label)
 
-Every project has a "shortcut" you can pass to `stop` / `release` / `logs` / `config --project` instead of the full path: the project's `label` if set, else inherited from the enclosing worktree's label, else the directory basename. Set one explicitly on worktree creation:
+Every project has a "shortcut" you can pass to `stop` / `release` / `config --project` instead of the full path: the project's `label` if set, else inherited from the enclosing worktree's label, else the directory basename. Set one explicitly on worktree creation:
 
 ```bash
 npx rn-iso worktree create feature-x --label agent-1
