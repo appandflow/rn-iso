@@ -11,8 +11,9 @@ import {
   volumeRootFor,
 } from '../artifacts.js';
 import { reclaimProject } from '../reclaim.js';
-import { deleteIosSim, isSimOccupied, listAllIosSims, resolveOwnedIosSim, shutdownIosSim } from '../sim/ios.js';
-import { deleteAvd, listAvds, resolveOwnedAvdSerial, shutdownAndroidEmulator } from '../sim/android.js';
+import { listAllIosSims } from '../sim/ios.js';
+import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
+import { listAvds } from '../sim/android.js';
 
 // Bounds each device listing so a wedged simctl/emulator daemon can't hang
 // `gc` forever -- see the comment above the listAllIosSims/listAvds calls
@@ -317,43 +318,22 @@ export default function gcCommand(program) {
       // it is not safe to touch, so it is reported and left for a later
       // `gc` run rather than shut down out from under whatever is using it.
       for (const d of orphanedDevices) {
-        try {
-          if (d.kind === 'ios') {
-            const resolved = resolveOwnedIosSim(d.id);
-            if (resolved.notOwned) {
-              console.log(
-                chalk.yellow(`Skipped ios sim ${d.name} (${d.id}): now named "${resolved.notOwned}", not rn-iso-owned by name -- not touched`)
-              );
-              continue;
-            }
-            if (resolved.missing) {
-              console.log(chalk.dim(`iOS sim ${d.name} (${d.id}) is already gone; nothing to delete.`));
-              continue;
-            }
-            if (isSimOccupied(d.id)) {
-              console.log(chalk.yellow(`Skipped ios sim ${d.name} (${d.id}): occupied, left for a later gc`));
-              continue;
-            }
-            shutdownIosSim(d.id);
-            deleteIosSim(d.id);
-            console.log(chalk.green(`Deleted ios sim ${d.name} (${d.id})`));
-          } else if (d.kind === 'android') {
-            const resolved = resolveOwnedAvdSerial(d.name);
-            if (resolved.notOwned) {
-              console.log(chalk.yellow(`Skipped android avd ${d.name}: not rn-iso-owned by name -- not touched`));
-              continue;
-            }
-            if (resolved.missing) {
-              console.log(chalk.dim(`Android avd ${d.name} is already gone; nothing to delete.`));
-              continue;
-            }
-            if (resolved.serial) shutdownAndroidEmulator(resolved.serial);
-            deleteAvd(d.name);
-            console.log(chalk.green(`Deleted android avd ${d.name}`));
-          }
-        } catch (e) {
+        // Every guard lives in the shared teardown helper: ownership
+        // re-resolve, occupancy (iOS only), and per-device containment so one
+        // bad record cannot abort the sweep.
+        const r = d.kind === 'ios'
+          ? teardownOwnedIosSim(d.id, { del: true, label: d.name })
+          : teardownOwnedAvd(d.name, { del: true });
+        const what = d.kind === 'ios' ? `ios sim ${d.name} (${d.id})` : `android avd ${d.name}`;
+        if (r.status === 'torn-down') {
+          console.log(chalk.green(`Deleted ${what}`));
+        } else if (r.status === 'missing') {
+          console.log(chalk.dim(`${what} is already gone; nothing to delete.`));
+        } else if (r.status === 'skipped') {
+          console.log(chalk.yellow(`Skipped ${what}: ${r.reason} -- left for a later gc`));
+        } else {
           deleteFailures++;
-          console.log(chalk.red(`Failed to delete ${d.kind} device ${d.name}: ${String(e?.message || e)}`));
+          console.log(chalk.red(`Failed to delete ${d.kind} device ${d.name}: ${r.reason}`));
         }
       }
       if (deleteFailures) {

@@ -1,9 +1,8 @@
 import { rmSync } from 'fs';
 import { getProject, removeProject } from './config.js';
 import { resolveProjectMetro, killMetroTree } from './metro.js';
+import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.js';
 import { directorySize, findDerivedDataFor } from './artifacts.js';
-import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, deleteIosSim } from './sim/ios.js';
-import { resolveOwnedAvdSerial, shutdownAndroidEmulator, deleteAvd } from './sim/android.js';
 
 export function describeFreed(project) {
   const freed = [];
@@ -43,51 +42,24 @@ function reclaimOwnedDevices(project) {
   const ios = project?.platforms?.ios;
   if (ios?.owned && ios.deviceUdid) {
     const label = ios.deviceName || ios.deviceUdid;
-    try {
-      const resolved = resolveOwnedIosSim(ios.deviceUdid);
-      if (resolved.notOwned) {
-        skippedDevices.push({
-          platform: 'ios',
-          name: label,
-          udid: ios.deviceUdid,
-          reason: `sim is now named "${resolved.notOwned}", not rn-iso-owned -- not touched`,
-        });
-      } else if (resolved.missing) {
-        // Already gone: nothing to shut down or delete, and not a failure.
-      } else if (isSimOccupied(ios.deviceUdid)) {
-        skippedDevices.push({ platform: 'ios', name: label, udid: ios.deviceUdid, reason: 'in use by another process (occupied)' });
-      } else {
-        shutdownIosSim(ios.deviceUdid);
-        deleteIosSim(ios.deviceUdid);
-        deletedDevices.push(label);
-      }
-    } catch (e) {
-      skippedDevices.push({ platform: 'ios', name: label, udid: ios.deviceUdid, reason: `teardown failed: ${String(e?.message || e)}` });
+    const r = teardownOwnedIosSim(ios.deviceUdid, { del: true, label });
+    if (r.status === 'torn-down') deletedDevices.push(r.label);
+    else if (r.status === 'skipped') {
+      skippedDevices.push({ platform: 'ios', name: label, udid: ios.deviceUdid, reason: `${r.reason} -- not touched` });
+    } else if (r.status === 'failed') {
+      skippedDevices.push({ platform: 'ios', name: label, udid: ios.deviceUdid, reason: `teardown failed: ${r.reason}` });
     }
+    // 'missing' is already gone: nothing to shut down, delete, or report.
   }
 
   const android = project?.platforms?.android;
   if (android?.owned && android.avdName) {
-    try {
-      // Verify identity against the LIVE adb list before shutting anything
-      // down: the recorded consolePort is a slot, not an identity, and may
-      // now be held by a foreign emulator (see resolveOwnedAvdSerial).
-      const resolved = resolveOwnedAvdSerial(android.avdName);
-      if (resolved.notOwned) {
-        skippedDevices.push({
-          platform: 'android',
-          name: android.avdName,
-          reason: 'AVD name is not rn-iso-owned by name -- not touched',
-        });
-      } else if (resolved.missing) {
-        // Already gone: nothing to shut down or delete, and not a failure.
-      } else {
-        if (resolved.serial) shutdownAndroidEmulator(resolved.serial);
-        deleteAvd(android.avdName);
-        deletedDevices.push(android.avdName);
-      }
-    } catch (e) {
-      skippedDevices.push({ platform: 'android', name: android.avdName, reason: `teardown failed: ${String(e?.message || e)}` });
+    const r = teardownOwnedAvd(android.avdName, { del: true });
+    if (r.status === 'torn-down') deletedDevices.push(android.avdName);
+    else if (r.status === 'skipped') {
+      skippedDevices.push({ platform: 'android', name: android.avdName, reason: `${r.reason} -- not touched` });
+    } else if (r.status === 'failed') {
+      skippedDevices.push({ platform: 'android', name: android.avdName, reason: `teardown failed: ${r.reason}` });
     }
   }
 

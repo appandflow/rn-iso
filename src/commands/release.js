@@ -2,8 +2,8 @@
 import chalk from 'chalk';
 import { resolveRegisteredProject } from '../project.js';
 import { getProject, clearDevice, findProjectByMetroPort } from '../config.js';
-import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, deleteIosSim, formatIosLabel } from '../sim/ios.js';
-import { resolveOwnedAvdSerial, shutdownAndroidEmulator, deleteAvd } from '../sim/android.js';
+import { formatIosLabel } from '../sim/ios.js';
+import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
 
 // Owned devices are rn-iso's to destroy; releasing one deletes it. Anything
 // rn-iso did not create is only ever unassigned.
@@ -21,54 +21,34 @@ export function releaseAction({ record, occupied, force }) {
 // own, so there is nothing to do for a non-owned record.
 function releaseIosDevice(entry, force) {
   if (!entry.owned) return;
-  // Verify ownership by name against the LIVE sim list BEFORE probing
-  // occupancy or issuing shutdownIosSim -- isSimOccupied shells at the udid
-  // too, so probing it first would still land on whatever real simulator a
-  // renamed/stale record's udid now resolves to.
-  const resolved = resolveOwnedIosSim(entry.deviceUdid);
-  if (resolved.notOwned) {
-    console.log(chalk.yellow(`Did not delete the device: sim is now named "${resolved.notOwned}", not rn-iso-owned by name -- leaving it running.`));
-    return;
-  }
-  if (resolved.missing) {
+  // Every guard (ownership re-resolve, occupancy, containment) lives in
+  // teardownOwnedIosSim so all four teardown sites cannot drift apart.
+  const label = formatIosLabel(entry.deviceUdid);
+  const r = teardownOwnedIosSim(entry.deviceUdid, { del: true, force, label });
+  if (r.status === 'torn-down') {
+    console.log(chalk.green(`Deleted owned iOS sim ${r.label}`));
+  } else if (r.status === 'missing') {
     console.log(chalk.dim(`iOS sim ${entry.deviceUdid} is already gone; nothing to delete.`));
-    return;
-  }
-  const occupied = isSimOccupied(entry.deviceUdid);
-  const decision = releaseAction({ record: entry, occupied, force });
-  if (decision.action === 'delete') {
-    const label = formatIosLabel(entry.deviceUdid);
-    shutdownIosSim(entry.deviceUdid);
-    deleteIosSim(entry.deviceUdid);
-    console.log(chalk.green(`Deleted owned iOS sim ${label}`));
-  } else if (decision.reason) {
-    console.log(chalk.yellow(`Did not delete the device: ${decision.reason}.`));
+  } else if (r.status === 'failed') {
+    console.log(chalk.yellow(`Could not tear down the ios device: ${r.reason}. Clearing the assignment anyway.`));
+  } else {
+    console.log(chalk.yellow(`Did not delete the device: ${r.reason}.`));
   }
 }
 
 function releaseAndroidDevice(entry, force) {
   if (!entry.owned || !entry.avdName) return;
-  // Verify identity against the LIVE adb list before shutting anything
-  // down: the recorded consolePort is a slot, not an identity, and may now
-  // be held by a foreign emulator.
-  const resolved = resolveOwnedAvdSerial(entry.avdName);
-  if (resolved.notOwned) {
-    console.log(chalk.yellow(`Did not delete the device: AVD ${entry.avdName} is not rn-iso-owned by name -- leaving it running.`));
-    return;
-  }
-  if (resolved.missing) {
-    console.log(chalk.dim(`Android AVD ${entry.avdName} is already gone; nothing to delete.`));
-    return;
-  }
   // Android has no occupancy probe (see CLAUDE.md item 4), so an owned,
   // identity-verified AVD is always eligible for deletion here.
-  const decision = releaseAction({ record: entry, occupied: false, force });
-  if (decision.action === 'delete') {
-    if (resolved.serial) shutdownAndroidEmulator(resolved.serial);
-    deleteAvd(entry.avdName);
-    console.log(chalk.green(`Deleted owned AVD ${entry.avdName}${resolved.serial ? ` (${resolved.serial})` : ''}`));
-  } else if (decision.reason) {
-    console.log(chalk.yellow(`Did not delete the device: ${decision.reason}.`));
+  const r = teardownOwnedAvd(entry.avdName, { del: true });
+  if (r.status === 'torn-down') {
+    console.log(chalk.green(`Deleted owned AVD ${entry.avdName}${r.serial ? ` (${r.serial})` : ''}`));
+  } else if (r.status === 'missing') {
+    console.log(chalk.dim(`Android AVD ${entry.avdName} is already gone; nothing to delete.`));
+  } else if (r.status === 'failed') {
+    console.log(chalk.yellow(`Could not tear down the android device: ${r.reason}. Clearing the assignment anyway.`));
+  } else {
+    console.log(chalk.yellow(`Did not delete the device: ${r.reason}.`));
   }
 }
 

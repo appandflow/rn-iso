@@ -4,8 +4,8 @@ import prompts from 'prompts';
 import { resolveRegisteredProject } from '../project.js';
 import { loadConfig, clearDevice } from '../config.js';
 import { resolveProjectMetro, killMetroTree } from '../metro.js';
-import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, formatIosLabel } from '../sim/ios.js';
-import { resolveOwnedAvdSerial, shutdownAndroidEmulator } from '../sim/android.js';
+import { isSimOccupied, resolveOwnedIosSim, formatIosLabel } from '../sim/ios.js';
+import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
 
 export default function shutdownCommand(program) {
   program
@@ -144,79 +144,44 @@ export default function shutdownCommand(program) {
         }
       }
 
-      // Phase 2: shut down sims / emulators. shutdownIosSim and
-      // shutdownAndroidEmulator both go through runQuiet so failures (e.g.
-      // sim already shut down, adb missing) don't throw -- but resolving
-      // ownership (below) and deleteAvd's name guard can, so each device's
-      // teardown is wrapped individually: one bad record must not abort the
+      // Phase 2: shut down sims / emulators via the shared teardown helper,
+      // which contains each device's failure so one bad record cannot abort the
       // rest of the loop or leave later projects' assignments uncleared by
       // Phase 3.
       if (!opts.keepSims) {
         for (const msg of alreadyGoneNotices) console.log(msg);
+        // Both loops route through the shared teardown helper (del:false --
+        // shutdown never deletes), so this site cannot drift from release /
+        // reclaim / gc. The helper re-resolves ownership against the live
+        // list immediately before the only command issued here, checks
+        // occupancy, and contains its own throws.
         for (const s of iosSims) {
-          try {
-            // Best-effort re-check against the live sim list right before
-            // the only command this phase issues at it. A record whose
-            // udid no longer names an rn-iso-owned sim (renamed, or a
-            // stale/mistyped record) must be reported as a skip, not shut
-            // down. If the check itself can't be answered (simctl
-            // unavailable), fail CLOSED: skip rather than issue a command
-            // at a device whose ownership could not be verified. Unlike
-            // release/reclaim there is no deleteIosSim guard downstream,
-            // so this probe is the only protection on this path.
-            let resolved;
-            try {
-              resolved = resolveOwnedIosSim(s.udid);
-            } catch (probeErr) {
-              skippedFailed.push({ path: s.path, platform: 'ios', label: s.udid, reason: `ownership could not be verified: ${String(probeErr?.message || probeErr).slice(0, 120)}` });
-              continue;
-            }
-            if (resolved?.notOwned) {
-              skippedFailed.push({ path: s.path, platform: 'ios', label: `${resolved.notOwned} (${s.udid})`, reason: 'not rn-iso-owned by name (renamed or stale record)' });
-              continue;
-            }
-            if (resolved?.missing) {
-              console.log(chalk.dim(`iOS sim ${s.udid} is already gone, nothing to shut down ${chalk.dim(`(${s.path})`)}`));
-              continue;
-            }
-            shutdownIosSim(s.udid);
+          const r = teardownOwnedIosSim(s.udid, { del: false });
+          if (r.status === 'torn-down') {
             console.log(chalk.green(`Shut down iOS sim ${formatIosLabel(s.udid)} ${chalk.dim(`(${s.path})`)}`));
-          } catch (e) {
-            skippedFailed.push({ path: s.path, platform: 'ios', label: s.udid, reason: String(e?.message || e) });
+          } else if (r.status === 'missing') {
+            console.log(chalk.dim(`iOS sim ${s.udid} is already gone, nothing to shut down ${chalk.dim(`(${s.path})`)}`));
+          } else if (r.status === 'skipped' && r.kind === 'occupied') {
+            skippedOccupied.push({ path: s.path, platform: 'ios', label: s.udid });
+          } else if (r.status === 'skipped') {
+            skippedFailed.push({ path: s.path, platform: 'ios', label: s.udid, reason: r.reason });
+          } else {
+            skippedFailed.push({ path: s.path, platform: 'ios', label: s.udid, reason: r.reason });
           }
         }
         for (const a of androidEmus) {
           const fallbackLabel = a.avdName ?? `emulator-${a.consolePort}`;
-          try {
-            // Re-verify identity against the LIVE adb list right before the
-            // only command this phase issues at it -- the recorded
-            // consolePort is a slot, not an identity, and may now be held
-            // by a foreign emulator (e.g. Android Studio's own default on
-            // 5554). If the check itself can't be answered, fail CLOSED:
-            // skip rather than issue a command at an unverified device.
-            let resolved;
-            try {
-              resolved = resolveOwnedAvdSerial(a.avdName);
-            } catch (probeErr) {
-              skippedFailed.push({ path: a.path, platform: 'android', label: fallbackLabel, reason: `ownership could not be verified: ${String(probeErr?.message || probeErr).slice(0, 120)}` });
-              continue;
-            }
-            if (resolved?.notOwned) {
-              skippedFailed.push({ path: a.path, platform: 'android', label: fallbackLabel, reason: 'not rn-iso-owned by name (renamed or stale record)' });
-              continue;
-            }
-            if (resolved?.missing) {
-              console.log(chalk.dim(`Android AVD ${fallbackLabel} is already gone, nothing to shut down ${chalk.dim(`(${a.path})`)}`));
-              continue;
-            }
-            if (resolved?.notRunning) {
+          const r = teardownOwnedAvd(a.avdName, { del: false });
+          if (r.status === 'torn-down') {
+            if (r.serial) {
+              console.log(chalk.green(`Shut down ${fallbackLabel} (${r.serial}) ${chalk.dim(`(${a.path})`)}`));
+            } else {
               console.log(chalk.dim(`Android AVD ${fallbackLabel} is not currently running, nothing to shut down ${chalk.dim(`(${a.path})`)}`));
-              continue;
             }
-            shutdownAndroidEmulator(resolved.serial);
-            console.log(chalk.green(`Shut down ${fallbackLabel} (${resolved.serial}) ${chalk.dim(`(${a.path})`)}`));
-          } catch (e) {
-            skippedFailed.push({ path: a.path, platform: 'android', label: fallbackLabel, reason: String(e?.message || e) });
+          } else if (r.status === 'missing') {
+            console.log(chalk.dim(`Android AVD ${fallbackLabel} is already gone, nothing to shut down ${chalk.dim(`(${a.path})`)}`));
+          } else {
+            skippedFailed.push({ path: a.path, platform: 'android', label: fallbackLabel, reason: r.reason });
           }
         }
         for (const sk of skippedOccupied) {

@@ -47,9 +47,11 @@ src/
   metro.js              # port-to-process identity (resolveProjectMetro) and group killing
   worktree.js           # git worktree add/remove/list, base-ref resolution, carry-over
   artifacts.js          # Xcode DerivedData discovery/classification, mounted-volume detection
-  reclaim.js            # shared reclaim-a-project logic (used by prune, gc, worktree remove,
-                         # release, shutdown): frees Metro/port, and -- with
-                         # deleteOwnedDevices -- shuts down + deletes owned devices
+  teardown.js           # THE owned-device teardown: resolve -> occupancy -> shutdown -> delete,
+                         # with containment. Used by reclaim, release, shutdown, gc.
+  reclaim.js            # shared reclaim-a-project logic (used by prune, gc, worktree remove):
+                         # frees Metro/port, and -- with deleteOwnedDevices -- tears down
+                         # owned devices via teardown.js
   sim/
     ios.js              # simctl wrappers, owned-sim creation/selection, ownership verification
     android.js          # adb/emulator/avdmanager wrappers, owned-AVD creation/selection
@@ -145,26 +147,32 @@ bundler on 8081 either way.
 
 ### 4. Owned-device teardown is centralized and ownership-verified
 
-`reclaim.js`'s `reclaimOwnedDevices` (invoked via `reclaimProject(path, {
-deleteOwnedDevices: true })`) is the one place that shuts down and deletes
-owned devices; `release.js`, `shutdown.js`, and `gc.js` each re-implement
-the same three-step pattern inline for their own call sites, and all three
-must stay consistent with it. The pattern, in order: (1) re-resolve the
-device against the *live* sim/AVD list immediately before issuing any
-command at it (`resolveOwnedIosSim`) — a udid whose sim was renamed away
-from the `rn-iso-` prefix, or already deleted, must never be shut down,
-only reported as a skip; issuing shutdown first and only catching the
-mismatch at delete time would already have hit whatever real simulator
+`src/teardown.js` is the ONE implementation: `teardownOwnedIosSim(udid, {
+del, force, label })` and `teardownOwnedAvd(avdName, { del })`. Every site
+that destroys an owned device — `reclaim.js` (and through it `prune`, `gc`,
+`worktree remove`), `release.js`, `shutdown.js`, and `gc.js`'s orphan sweep —
+calls one of them. Until 0.10.0 this file said reclaim.js was "the one place"
+while admitting three others re-implemented the pattern inline; both could not
+be true, and the copies had begun to drift. Do not add a fifth copy.
+
+The invariants it enforces, in order: (1) re-resolve the device against the
+*live* sim/AVD list immediately before issuing any command at it
+(`resolveOwnedIosSim` / `resolveOwnedAvdSerial`) — a udid whose sim was
+renamed away from the `rn-iso-` prefix, or already deleted, must never be
+shut down, only reported as a skip; issuing shutdown first and only catching
+the mismatch at delete time would already have hit whatever real simulator
 that udid resolves to. (2) Check occupancy (`isSimOccupied`, iOS only —
-Android has no probe) — a foreign UI-test runner may still be attached to
-an owned sim, so an occupied one is left running and reported as skipped;
-`release --force` is the only override across these call sites (`gc` and
-`shutdown` have none, and simply leave it for a later `gc` run). (3) Only then shut down and
-delete. Each device's teardown is wrapped in its own try/catch so one bad
-record or exec throw can't abort a batch operation (`worktree remove`
-reaping several nested projects, `gc` sweeping many orphans). If you add a
-new device-deleting call site, follow this same order — don't skip the
-live re-resolve step because "the record should still be accurate."
+Android has no probe) — a foreign UI-test runner may still be attached to an
+owned sim, so an occupied one is left running and reported; `force` is the
+sole override and only `release` passes it. (3) Only then shut down, and
+delete only when `del` is set (`shutdown` never deletes). (4) Contain
+failures: a throw becomes `{ status: 'failed' }`, never an exception that
+aborts a batch (`worktree remove` reaping several nested projects, `gc`
+sweeping many orphans).
+
+Outcomes are `torn-down` / `missing` / `skipped` / `failed`; skips carry a
+`kind` (`'not-owned'` or `'occupied'`) so callers branch on data rather than
+matching on prose — `shutdown` reports those two cases differently.
 
 Project paths that no longer exist on disk are handled by `prune`/`gc`,
 not by device selection: a deleted worktree's Metro port is reclaimable
