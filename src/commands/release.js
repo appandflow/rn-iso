@@ -1,9 +1,7 @@
 // src/commands/release.js
 import chalk from 'chalk';
-import prompts from 'prompts';
 import { resolveRegisteredProject } from '../project.js';
 import { getProject, clearDevice, findProjectByMetroPort } from '../config.js';
-import { findPidListeningOnPort, processGroupLeader, killMetroTree } from '../metro.js';
 import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, deleteIosSim, formatIosLabel } from '../sim/ios.js';
 import { resolveOwnedAvdSerial, shutdownAndroidEmulator, deleteAvd } from '../sim/android.js';
 
@@ -86,8 +84,11 @@ export default function releaseCommand(program) {
         const port = parseInt(target, 10);
         found = findProjectByMetroPort(port);
         if (!found) {
-          await handleUnmatchedPort(port);
-          return;
+          // Killing an unregistered port-holder is Metro-lifecycle work, so it
+          // lives on `stop`. `release` only ever frees a project's DEVICE.
+          console.error(chalk.red(`No registered project has Metro port ${port}.`));
+          console.error(chalk.dim(`To kill whatever is listening there, run \`rn-iso stop ${port}\`.`));
+          process.exit(1);
         }
       } else {
         const result = resolveRegisteredProject(target);
@@ -126,35 +127,4 @@ export default function releaseCommand(program) {
         console.log(chalk.green(`Released ${p} assignment for ${found}.`));
       }
     });
-}
-
-async function handleUnmatchedPort(port) {
-  const pid = findPidListeningOnPort(port);
-  if (!pid) {
-    console.error(chalk.red(`No registered project has Metro port ${port}, and nothing is listening on that port.`));
-    process.exit(1);
-  }
-  console.log(chalk.dim(`No registered project has Metro port ${port}, but pid ${pid} is listening.`));
-  if (!process.stdin.isTTY) {
-    console.error(chalk.red('Refusing to kill an unrecognized process under non-TTY (no way to confirm).'));
-    process.exit(1);
-  }
-  const ok = await prompts({
-    type: 'confirm',
-    name: 'ok',
-    message: `Kill pid ${pid} on port ${port}?`,
-    initial: false,
-  });
-  if (!ok.ok) {
-    console.error(chalk.red('Cancelled.'));
-    process.exit(1);
-  }
-  // Take the whole group: lsof reports the socket holder, which for a bundler
-  // started through a package manager is the node child, not its wrapper.
-  const leader = processGroupLeader(pid) ?? pid;
-  if (!killMetroTree(leader)) {
-    console.error(chalk.red(`Could not kill pid ${pid} on port ${port}.`));
-    process.exit(1);
-  }
-  console.log(chalk.green(`Killed pid ${pid} on port ${port}.`));
 }

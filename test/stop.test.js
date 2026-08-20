@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stopAction } from '../src/commands/stop.js';
+import { stopAction, resolveStopTarget } from '../src/commands/stop.js';
 
 test('stopAction kills an identified Metro', () => {
   const r = stopAction({ resolution: { metro: { pid: 1, leader: 2 } }, force: false });
@@ -35,4 +35,40 @@ test('stopAction with --force still reports missing when nothing listens', () =>
 test('stopAction prefers the identified path even when force is set', () => {
   const r = stopAction({ resolution: { metro: { pid: 1, leader: 2 } }, force: true });
   assert.equal(r.action, 'killed');
+});
+
+// Port targeting belongs to `stop`: the port is the resource stop owns.
+// `release <port>` used to double as an arbitrary process killer, which put
+// the only "kill an unregistered port-holder" path on the device-teardown
+// command.
+test('resolveStopTarget resolves a numeric port to its owning project', () => {
+  const r = resolveStopTarget('8083', {
+    byPort: (p) => (p === 8083 ? '/proj/a' : null),
+    byShortcut: () => ({ found: null, error: 'nope' }),
+  });
+  assert.deepEqual(r, { project: '/proj/a', port: 8083 });
+});
+
+test('resolveStopTarget reports an unowned port so the caller can offer --force', () => {
+  const r = resolveStopTarget('8099', {
+    byPort: () => null,
+    byShortcut: () => ({ found: null, error: 'nope' }),
+  });
+  assert.deepEqual(r, { unownedPort: 8099 });
+});
+
+test('resolveStopTarget falls through to shortcut resolution for non-numeric targets', () => {
+  const r = resolveStopTarget('agent-1', {
+    byPort: () => null,
+    byShortcut: (t) => ({ found: t === 'agent-1' ? '/proj/a' : null, error: 'nope' }),
+  });
+  assert.deepEqual(r, { project: '/proj/a', port: null });
+});
+
+test('resolveStopTarget surfaces a shortcut resolution error', () => {
+  const r = resolveStopTarget('bogus', {
+    byPort: () => null,
+    byShortcut: () => ({ found: null, error: 'no such project' }),
+  });
+  assert.deepEqual(r, { error: 'no such project' });
 });
