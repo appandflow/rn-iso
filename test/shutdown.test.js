@@ -71,6 +71,9 @@ beforeEach(() => {
       if (cmd === 'emulator -list-avds') return 'rn-iso-projB\n';
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\tdevice\n';
       if (/adb -s emulator-5556 emu avd name/.test(cmd)) return 'rn-iso-projB\nOK';
+      // Occupancy probe: '' means "answered, nothing occupying". isSimOccupied
+      // fails CLOSED, so a null here would mark every sim occupied and skip it.
+      if (/simctl spawn .* launchctl list/.test(cmd)) return '';
       return null;
     },
     spawn() { throw new Error('spawn should not be called from shutdown'); },

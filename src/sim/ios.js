@@ -58,10 +58,15 @@ export function parseOccupyingApps(launchctlOutput) {
   return ids;
 }
 
-// Heuristic, and deliberately fails open: if the probe errors we report "not
-// occupied" so a bad probe can never block device selection entirely.
+// Fails CLOSED: an unanswerable probe reports "occupied". The pool-selection
+// model this used to fail open for was deleted in 0.7 -- every caller is now a
+// teardown site (release, shutdown, reclaim, gc), where failing open means
+// deleting a sim that may still be driven by a foreign UI-test runner, which
+// is exactly what the probe exists to prevent. Same direction as the
+// unmounted-volume guard: on doubt, skip, do not destroy.
 export function isSimOccupied(udid) {
   const out = getExecutor().runQuiet(`xcrun simctl spawn ${udid} launchctl list`);
+  if (out === null || out === undefined) return true;
   return parseOccupyingApps(out).length > 0;
 }
 

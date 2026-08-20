@@ -244,3 +244,23 @@ test('deleteIosSim no-ops quietly when the udid is already gone', () => {
   assert.doesNotThrow(() => deleteIosSim('UDID-GONE'));
   assert.equal(ranQuiet, false);
 });
+
+// Fails CLOSED: an unanswerable occupancy probe must report "occupied", so a
+// teardown site skips the sim instead of deleting one that may still be driven
+// by a foreign UI-test runner. This failed OPEN until 0.9.0, on a rationale
+// (never block device selection) whose model was deleted in 0.7.
+test('isSimOccupied reports occupied when the probe cannot answer', async () => {
+  const { setExecutor, resetExecutor } = await import('../src/exec.js');
+  const { isSimOccupied } = await import('../src/sim/ios.js');
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  assert.equal(isSimOccupied('UDID-X'), true);
+  resetExecutor();
+});
+
+test('isSimOccupied reports not-occupied when the probe answers with nothing', async () => {
+  const { setExecutor, resetExecutor } = await import('../src/exec.js');
+  const { isSimOccupied } = await import('../src/sim/ios.js');
+  setExecutor({ run: () => '', runQuiet: () => '', spawn: () => {} });
+  assert.equal(isSimOccupied('UDID-X'), false);
+  resetExecutor();
+});
