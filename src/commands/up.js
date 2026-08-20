@@ -19,7 +19,7 @@ import {
 } from '../config.js';
 import { allocatePort } from '../ports.js';
 import { resolveProjectMetro } from '../metro.js';
-import { createOwnedIosSim, bootIosSim, listAllIosSims, resolveOwnedIosSim } from '../sim/ios.js';
+import { createOwnedIosSim, bootIosSim, listAllIosSims, resolveOwnedIosSim, listIosDeviceTypes } from '../sim/ios.js';
 import {
   createOwnedAvd,
   listAvds,
@@ -48,6 +48,7 @@ export function registerUp(program) {
     .option('--device-type <name>', 'iOS device type to use when creating a new owned sim (e.g. "iPhone 17 Pro")')
     .option('--runtime <version>', 'iOS runtime version to use when creating a new owned sim (e.g. "26.2")')
     .option('--system-image <pkg>', 'Android system image package to use when creating a new owned AVD')
+    .option('--serial <serial>', 'Android only: assign a connected PHYSICAL device by adb serial instead of creating an owned emulator. rn-iso never boots, shuts down, or deletes hardware')
     .action(async (platform, opts) => {
       const json = Boolean(opts.json);
       // In --json mode the JSON payload is the ONLY stdout content, so every
@@ -58,6 +59,13 @@ export function registerUp(program) {
 
       if (platform !== 'ios' && platform !== 'android') {
         note(chalk.red(`Unknown platform "${platform}". Use "ios" or "android".`));
+        process.exit(1);
+        return;
+      }
+
+      // There is no physical-iOS support: simulators only.
+      if (opts.serial && platform === 'ios') {
+        note(chalk.red('--serial is Android only. rn-iso has no physical-iOS support; iOS is simulators only.'));
         process.exit(1);
         return;
       }
@@ -95,6 +103,7 @@ export function registerUp(program) {
             deviceType: opts.deviceType,
             runtime: opts.runtime,
             systemImage: opts.systemImage,
+            serial: opts.serial,
           },
           note,
           out,
@@ -192,6 +201,16 @@ function ensureOwnedIosDevice({ record, projectPath, label, settings, flags, not
         // Sim was deleted out from under the record: fall through to creation.
       } else {
         const sim = resolved.sim;
+        // Honour --device-type / settings on REUSE, not just on creation.
+        // Silently booting the old model made the flag look broken.
+        const wantedType = flags.deviceType || settings?.ios?.deviceType;
+        const mismatch = deviceTypeMismatch(sim.deviceTypeIdentifier, wantedType, listIosDeviceTypes());
+        if (mismatch) {
+          throw new Error(
+            `${mismatch}. rn-iso will not silently boot a different model. ` +
+            'Run `rn-iso release` to delete the current sim, then `up ios` again to create the requested one.'
+          );
+        }
         if (sim.state !== 'Booted') {
           out(chalk.dim(`Booting owned sim ${sim.name} (${sim.udid})...`));
           bootIosSim(sim.udid);
@@ -242,6 +261,15 @@ function findOtherProjectOwningAvd(avdName, projectPath) {
 }
 
 async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, flags, note, out }) {
+  // An explicit --serial short-circuits everything: the caller named a piece
+  // of hardware, so there is nothing to create, boot, or own.
+  if (flags.serial) {
+    const resolved = resolvePhysicalSerial(flags.serial, listAdbDevices());
+    if (resolved.error) throw new Error(resolved.error);
+    setDevice(projectPath, 'android', resolved.ok);
+    out(chalk.dim(`Assigned physical device ${resolved.ok.serial} (not owned: never booted or deleted by rn-iso)`));
+    return resolved.ok;
+  }
   if (record?.avdName) {
     if (record.owned) {
       // Verify identity against the LIVE adb list before deciding "ours is
@@ -358,6 +386,41 @@ async function bootOwnedAvdOnFreshPort({ avdName, projectPath, deviceName, out }
     throw new Error(`Emulator ${serial} did not finish booting. Diagnostic: ${JSON.stringify(result.diagnostic)}`);
   }
   return newRecord;
+}
+
+// Pure. Validates an explicit --serial against what adb actually reports.
+// Hardware cannot be spawned, so this is the one documented exception to the
+// ownership rule: rn-iso assigns the serial and wires adb reverse, and never
+// boots, shuts down, or deletes it. owned:false keeps every teardown path on
+// the clear-only branch.
+export function resolvePhysicalSerial(serial, adb) {
+  const physical = adb?.physical || [];
+  const emulators = adb?.emulators || [];
+  if (emulators.some(e => e.serial === serial)) {
+    return { error: `${serial} is an emulator, not a physical device. Use \`up android\` without --serial to get an owned emulator.` };
+  }
+  if (physical.some(p => p.serial === serial)) {
+    return { ok: { serial, kind: 'physical', owned: false } };
+  }
+  if (physical.length === 0) {
+    return { error: `No physical device is connected. adb reports none; check the cable and \`adb devices\`.` };
+  }
+  return { error: `${serial} is not connected. Connected physical devices: ${physical.map(p => p.serial).join(', ')}.` };
+}
+
+// Pure. Answers "is the sim we already own the model the caller just asked
+// for?" -- returns a human-readable mismatch or null. Before this, flags.deviceType
+// was consulted only on CREATION, so `up ios --device-type X` against an
+// existing environment silently booted the old model and the flag looked
+// broken. Returns null when either side is unknown: an unrecognized requested
+// name is creation's error to report, not ours.
+export function deviceTypeMismatch(recordedTypeId, requestedName, deviceTypes) {
+  if (!requestedName || !recordedTypeId) return null;
+  const wanted = (deviceTypes || []).find(d => d.name === requestedName);
+  if (!wanted) return null;
+  if (wanted.identifier === recordedTypeId) return null;
+  const recorded = (deviceTypes || []).find(d => d.identifier === recordedTypeId);
+  return `this project's sim is ${recorded ? recorded.name : recordedTypeId}, but --device-type asked for ${requestedName}`;
 }
 
 // Pure: shapes the `--json` payload / summary facts from already-resolved

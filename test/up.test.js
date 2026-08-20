@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'fs'
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { createServer } from 'http';
-import { buildFacts, registerUp } from '../src/commands/up.js';
+import { buildFacts, registerUp, deviceTypeMismatch, resolvePhysicalSerial } from '../src/commands/up.js';
 import { isMetroRunning } from '../src/ports.js';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { upsertProject, setDevice, getProject } from '../src/config.js';
@@ -798,4 +798,62 @@ test('buildFacts reports metroConflict null when the port is ours or free', () =
   });
   assert.equal(free.metroHealthy, false);
   assert.equal(free.metroConflict, null);
+});
+
+// Finding: --device-type was silently ignored once a device was recorded, so
+// `up ios --device-type "iPhone 17 Pro"` booted whatever model already
+// existed. A flag that quietly does nothing is worse than an error.
+const DTS = [
+  { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', name: 'iPhone 17 Pro' },
+  { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16', name: 'iPhone 16' },
+];
+
+test('deviceTypeMismatch returns null when nothing was requested', () => {
+  assert.equal(deviceTypeMismatch('com.apple.CoreSimulator.SimDeviceType.iPhone-16', undefined, DTS), null);
+});
+
+test('deviceTypeMismatch returns null when the recorded sim is the requested type', () => {
+  assert.equal(deviceTypeMismatch('com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', 'iPhone 17 Pro', DTS), null);
+});
+
+test('deviceTypeMismatch describes the mismatch when the recorded sim is a different model', () => {
+  const m = deviceTypeMismatch('com.apple.CoreSimulator.SimDeviceType.iPhone-16', 'iPhone 17 Pro', DTS);
+  assert.match(m, /iPhone 16/);
+  assert.match(m, /iPhone 17 Pro/);
+});
+
+test('deviceTypeMismatch returns null when the requested type is unknown, leaving creation to error', () => {
+  assert.equal(deviceTypeMismatch('com.apple.CoreSimulator.SimDeviceType.iPhone-16', 'iPhone 99', DTS), null);
+});
+
+test('deviceTypeMismatch returns null when the recorded type is unknown', () => {
+  assert.equal(deviceTypeMismatch(undefined, 'iPhone 17 Pro', DTS), null);
+});
+
+// `up android --serial <s>` revives the documented physical-device exception,
+// which had no entry point at all after the 0.7 pivot: the code could only
+// reuse a pre-0.7 record, and nothing could create one.
+test('resolvePhysicalSerial returns the record for a connected device', () => {
+  const adb = { physical: [{ serial: 'R5CT12345' }], emulators: [] };
+  assert.deepEqual(resolvePhysicalSerial('R5CT12345', adb), {
+    ok: { serial: 'R5CT12345', kind: 'physical', owned: false },
+  });
+});
+
+test('resolvePhysicalSerial refuses a serial adb cannot see', () => {
+  const adb = { physical: [{ serial: 'OTHER' }], emulators: [] };
+  const r = resolvePhysicalSerial('R5CT12345', adb);
+  assert.match(r.error, /not connected/);
+  assert.match(r.error, /OTHER/, 'should list what IS connected');
+});
+
+test('resolvePhysicalSerial refuses an emulator serial, which is not a physical device', () => {
+  const adb = { physical: [], emulators: [{ serial: 'emulator-5554', consolePort: 5554 }] };
+  const r = resolvePhysicalSerial('emulator-5554', adb);
+  assert.match(r.error, /emulator/i);
+});
+
+test('resolvePhysicalSerial reports clearly when no physical device is connected at all', () => {
+  const r = resolvePhysicalSerial('R5CT12345', { physical: [], emulators: [] });
+  assert.match(r.error, /no physical device/i);
 });

@@ -320,7 +320,7 @@ export function registerRemove(worktree) {
 export function registerList(worktree) {
   worktree
     .command('list')
-    .description("List this repository's worktrees with their setup status.")
+    .description("List this repository's worktrees.")
     .action(() => {
       const entries = listWorktrees(process.cwd());
       if (entries.length === 0) {

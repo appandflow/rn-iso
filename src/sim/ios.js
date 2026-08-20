@@ -15,6 +15,9 @@ export function parseSimctlList(jsonOutput) {
         name: dev.name,
         state: dev.state,
         runtime,
+        // Needed to tell whether a recorded sim is the device type the caller
+        // asked for: the record only carries rn-iso-<label>, not the model.
+        deviceTypeIdentifier: dev.deviceTypeIdentifier,
       });
     }
   }
