@@ -266,7 +266,7 @@ function describeKeptDevice(s) {
   return s.udid && s.udid !== s.name ? `${s.name} (${s.udid})` : s.name;
 }
 
-function reclaimAll(rootPath) {
+async function reclaimAll(rootPath) {
   const cfg = loadConfig();
   const keys = new Set([rootPath]);
   if (cfg?.projects) {
@@ -280,7 +280,7 @@ function reclaimAll(rootPath) {
   const deletedDevices = [];
   const skippedDevices = [];
   for (const key of keys) {
-    const r = reclaimProject(key, { deleteArtifacts: false, deleteOwnedDevices: true });
+    const r = await reclaimProject(key, { deleteArtifacts: false, deleteOwnedDevices: true });
     freed.push(...r.freed);
     if (r.killedPid) killedPids.push(r.killedPid);
     artifacts.push(...r.artifacts);
@@ -295,7 +295,7 @@ export function registerRemove(worktree) {
     .command('remove <target>')
     .description('Remove a worktree and reclaim its build artifacts, sim claim, and Metro port.')
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work')
-    .action((target, opts) => {
+    .action(async (target, opts) => {
       // Canonicalize with realpath, matching how config keys are
       // canonicalized (CLAUDE.md item 7). A plain resolve() misses a
       // symlinked target (/tmp vs /private/tmp on macOS, or a home dir
@@ -364,7 +364,7 @@ export function registerRemove(worktree) {
       // root AND every nested registered project under it (see reclaimAll
       // above) so a monorepo's Metro/device claim -- registered under a
       // nested app dir, not the root -- is not left leaking.
-      const result = reclaimAll(path);
+      const result = await reclaimAll(path);
 
       try {
         removeWorktree(path, { force: opts.force });

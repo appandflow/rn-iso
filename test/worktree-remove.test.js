@@ -7,23 +7,23 @@ import { removalBlockers, registerRemove } from '../src/commands/worktree.js';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { upsertProject, getProject } from '../src/config.js';
 
-test('no blockers for a clean worktree', () => {
+test('no blockers for a clean worktree', async () => {
   assert.deepEqual(removalBlockers({ dirty: false, unpushed: [] }), []);
 });
 
-test('reports uncommitted changes', () => {
+test('reports uncommitted changes', async () => {
   const blockers = removalBlockers({ dirty: true, unpushed: [] });
   assert.equal(blockers.length, 1);
   assert.match(blockers[0], /uncommitted/i);
 });
 
-test('reports unpushed commits with a count', () => {
+test('reports unpushed commits with a count', async () => {
   const blockers = removalBlockers({ dirty: false, unpushed: ['abc one', 'def two'] });
   assert.equal(blockers.length, 1);
   assert.match(blockers[0], /2 commit/);
 });
 
-test('reports both when both apply', () => {
+test('reports both when both apply', async () => {
   assert.equal(removalBlockers({ dirty: true, unpushed: ['abc one'] }).length, 2);
 });
 
@@ -31,7 +31,7 @@ test('reports both when both apply', () => {
 // failed -- see hasUncommittedWork/unpushedCommits in src/worktree.js. A
 // destructive command must fail CLOSED on that: treat "could not determine"
 // as its own blocker rather than let it fall through to "clean".
-test('reports an indeterminate-status blocker instead of treating it as clean', () => {
+test('reports an indeterminate-status blocker instead of treating it as clean', async () => {
   assert.equal(removalBlockers({ dirty: null, unpushed: [] }).length, 1);
   assert.equal(removalBlockers({ dirty: false, unpushed: null }).length, 1);
   assert.match(removalBlockers({ dirty: null, unpushed: null })[0], /could not determine/i);
@@ -143,35 +143,35 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-test('action: refuses on the main checkout, leaving config untouched and never calling git worktree remove', () => {
+test('action: refuses on the main checkout, leaving config untouched and never calling git worktree remove', async () => {
   upsertProject(mainDir, { metroPort: 8081 });
   const before = getProject(mainDir);
   const exec = makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) });
   setExecutor(exec);
 
   const run = captureAction(registerRemove);
-  run(mainDir, {});
+  await run(mainDir, {});
 
   assert.equal(process.exitCode, 1);
   assert.deepEqual(getProject(mainDir), before);
   assert.ok(!exec.calls.run.some(c => /worktree remove/.test(c)));
 });
 
-test('action: --force does not bypass the main-checkout refusal', () => {
+test('action: --force does not bypass the main-checkout refusal', async () => {
   upsertProject(mainDir, { metroPort: 8084 });
   const before = getProject(mainDir);
   const exec = makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) });
   setExecutor(exec);
 
   const run = captureAction(registerRemove);
-  run(mainDir, { force: true });
+  await run(mainDir, { force: true });
 
   assert.equal(process.exitCode, 1);
   assert.deepEqual(getProject(mainDir), before);
   assert.ok(!exec.calls.run.some(c => /worktree remove/.test(c)));
 });
 
-test('action: refuses when git cannot answer the status check, leaving config untouched', () => {
+test('action: refuses when git cannot answer the status check, leaving config untouched', async () => {
   upsertProject(wtDir, { metroPort: 8082 });
   const before = getProject(wtDir);
   const exec = makeExecutor({
@@ -181,14 +181,14 @@ test('action: refuses when git cannot answer the status check, leaving config un
   setExecutor(exec);
 
   const run = captureAction(registerRemove);
-  run(wtDir, {});
+  await run(wtDir, {});
 
   assert.equal(process.exitCode, 1);
   assert.deepEqual(getProject(wtDir), before);
   assert.ok(!exec.calls.run.some(c => /worktree remove/.test(c)));
 });
 
-test('action: on success, reclaimProject clears rn-iso tracking before removeWorktree runs', () => {
+test('action: on success, reclaimProject clears rn-iso tracking before removeWorktree runs', async () => {
   upsertProject(wtDir, { metroPort: 8083 });
   const exec = makeExecutor({
     worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
@@ -208,7 +208,7 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
   setExecutor(exec);
 
   const run = captureAction(registerRemove);
-  run(wtDir, {});
+  await run(wtDir, {});
 
   assert.notEqual(process.exitCode, 1);
   assert.equal(getProject(wtDir), null);
@@ -221,7 +221,7 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
 // where metroPort and the device claim actually live. Reclaiming only the
 // exact `path` argument (the old behaviour) leaves the nested entry, its
 // Metro process, and its port claim to leak until `prune` runs.
-test('action: reclaims a nested monorepo app-dir project registered under the worktree root, not just the root itself', () => {
+test('action: reclaims a nested monorepo app-dir project registered under the worktree root, not just the root itself', async () => {
   const nestedDir = join(wtDir, 'apps', 'mobile');
   upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
   upsertProject(nestedDir, { metroPort: 8085, platforms: { ios: { deviceUdid: 'UDID-1' } } });
@@ -231,7 +231,7 @@ test('action: reclaims a nested monorepo app-dir project registered under the wo
   setExecutor(exec);
 
   const run = captureAction(registerRemove);
-  run(wtDir, {});
+  await run(wtDir, {});
 
   assert.notEqual(process.exitCode, 1);
   assert.equal(getProject(wtDir), null);
@@ -240,7 +240,7 @@ test('action: reclaims a nested monorepo app-dir project registered under the wo
 
 // The environment dies whole: `worktree remove` must reap the owned devices
 // registered under it, not just clear rn-iso's tracking for them.
-test('action: on success, deletes an owned iOS sim via simctl', () => {
+test('action: on success, deletes an owned iOS sim via simctl', async () => {
   upsertProject(wtDir, {
     metroPort: 8090,
     platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'rn-iso-x' } },
@@ -252,7 +252,7 @@ test('action: on success, deletes an owned iOS sim via simctl', () => {
   setExecutor(exec);
 
   const run = captureAction(registerRemove);
-  run(wtDir, {});
+  await run(wtDir, {});
 
   assert.notEqual(process.exitCode, 1);
   assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U1/.test(c)));
@@ -262,7 +262,7 @@ test('action: on success, deletes an owned iOS sim via simctl', () => {
 // A legacy assignment (`owned` absent) is a device rn-iso did not create --
 // its claim is cleared like any other, but the device itself must never be
 // shut down or deleted.
-test('action: does not delete a legacy (non-owned) iOS device', () => {
+test('action: does not delete a legacy (non-owned) iOS device', async () => {
   upsertProject(wtDir, {
     metroPort: 8091,
     platforms: { ios: { deviceUdid: 'U2' } },
@@ -273,7 +273,7 @@ test('action: does not delete a legacy (non-owned) iOS device', () => {
   setExecutor(exec);
 
   const run = captureAction(registerRemove);
-  run(wtDir, {});
+  await run(wtDir, {});
 
   assert.notEqual(process.exitCode, 1);
   // Stronger than checking for the absence of a delete: U2 must never be
@@ -286,7 +286,7 @@ test('action: does not delete a legacy (non-owned) iOS device', () => {
 // The environment dies whole even in a monorepo: two nested app-dir keys
 // under one worktree root, each with their own owned sim, must both be
 // reaped by a single `worktree remove` -- not just the first one found.
-test('action: reaps owned sims under two nested monorepo app-dir keys, both of them', () => {
+test('action: reaps owned sims under two nested monorepo app-dir keys, both of them', async () => {
   const nestedDir1 = join(wtDir, 'apps', 'mobile1');
   const nestedDir2 = join(wtDir, 'apps', 'mobile2');
   upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
@@ -308,7 +308,7 @@ test('action: reaps owned sims under two nested monorepo app-dir keys, both of t
   setExecutor(exec);
 
   const run = captureAction(registerRemove);
-  run(wtDir, {});
+  await run(wtDir, {});
 
   assert.notEqual(process.exitCode, 1);
   assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U3/.test(c)));
@@ -321,7 +321,7 @@ test('action: reaps owned sims under two nested monorepo app-dir keys, both of t
 // block anything else: the worktree removal still proceeds, the OTHER
 // nested project's owned sim is still reaped, and the occupied one comes
 // back as a skip rather than aborting the whole command.
-test('action: an occupied owned sim is skipped, without blocking worktree removal or the other device\'s reclamation', () => {
+test('action: an occupied owned sim is skipped, without blocking worktree removal or the other device\'s reclamation', async () => {
   const nestedDir1 = join(wtDir, 'apps', 'mobile1');
   const nestedDir2 = join(wtDir, 'apps', 'mobile2');
   upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
@@ -348,7 +348,7 @@ test('action: an occupied owned sim is skipped, without blocking worktree remova
   console.log = (msg) => logs.push(msg);
   const run = captureAction(registerRemove);
   try {
-    run(wtDir, {});
+    await run(wtDir, {});
   } finally {
     console.log = originalLog;
   }

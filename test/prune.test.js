@@ -17,10 +17,10 @@ import pruneCommand from '../src/commands/prune.js';
 
 let tmpHome;
 
-function runPrune() {
+async function runPrune() {
   const program = new Command();
   pruneCommand(program);
-  program.parse(['node', 'rn-iso', 'prune']);
+  await program.parseAsync(['node', 'rn-iso', 'prune']);
 }
 
 beforeEach(() => {
@@ -46,7 +46,7 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-test('a dead project on an unmounted volume is not unregistered', () => {
+test('a dead project on an unmounted volume is not unregistered', async () => {
   const unmountedPath = '/Volumes/RnIsoTestVolumeThatDoesNotExist/proj/gone';
   const localDeadBase = mkdtempSync(join(tmpdir(), 'rn-iso-test-localbase-'));
   const localDeadPath = join(localDeadBase, 'no-longer-here');
@@ -64,7 +64,7 @@ test('a dead project on an unmounted volume is not unregistered', () => {
       repos: {},
     });
 
-    runPrune();
+    await runPrune();
 
     const cfg = loadConfig();
     // The unmounted-volume entry survives: its volume could not be
@@ -79,7 +79,7 @@ test('a dead project on an unmounted volume is not unregistered', () => {
   }
 });
 
-test('prunes nothing and reports every path still existing when nothing is dead', () => {
+test('prunes nothing and reports every path still existing when nothing is dead', async () => {
   const liveDir = mkdtempSync(join(tmpdir(), 'rn-iso-test-live-'));
   try {
     saveConfig({
@@ -88,7 +88,7 @@ test('prunes nothing and reports every path still existing when nothing is dead'
       repos: {},
     });
 
-    runPrune();
+    await runPrune();
 
     const cfg = loadConfig();
     assert.ok(cfg.projects[liveDir]);
@@ -97,7 +97,7 @@ test('prunes nothing and reports every path still existing when nothing is dead'
   }
 });
 
-test('a genuinely dead project on the boot volume is pruned and reported', () => {
+test('a genuinely dead project on the boot volume is pruned and reported', async () => {
   const deadBase = mkdtempSync(join(tmpdir(), 'rn-iso-test-deadbase-'));
   const deadPath = join(deadBase, 'gone');
   try {
@@ -107,7 +107,7 @@ test('a genuinely dead project on the boot volume is pruned and reported', () =>
       repos: {},
     });
 
-    runPrune();
+    await runPrune();
 
     const cfg = loadConfig();
     assert.equal(cfg.projects[deadPath], undefined);

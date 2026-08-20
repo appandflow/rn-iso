@@ -2,8 +2,8 @@
 import chalk from 'chalk';
 import prompts from 'prompts';
 import { resolveRegisteredProject } from '../project.js';
-import { loadConfig, setMetro, clearDevice } from '../config.js';
-import { killMetroByPid, findPidListeningOnPort } from '../metro.js';
+import { loadConfig, clearDevice } from '../config.js';
+import { resolveProjectMetro, killMetroTree } from '../metro.js';
 import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, formatIosLabel } from '../sim/ios.js';
 import { resolveOwnedAvdSerial, shutdownAndroidEmulator } from '../sim/android.js';
 
@@ -23,7 +23,7 @@ export default function shutdownCommand(program) {
 
       // Optional [target] narrows the scope to a single project. We
       // intentionally do NOT default to the current project when no arg is
-      // given — `shutdown` is the explicit "tear everything down" command,
+      // given -- `shutdown` is the explicit "tear everything down" command,
       // so omitting the target means "all projects".
       if (target) {
         const { found, error } = resolveRegisteredProject(target);
@@ -53,7 +53,7 @@ export default function shutdownCommand(program) {
       let hasDeviceAssignments = false;
       for (const [path, proj] of projects) {
         if (typeof proj.metroPort === 'number') {
-          metros.push({ path, port: proj.metroPort, pid: proj.metroPid });
+          metros.push({ path, port: proj.metroPort });
         }
         const ios = proj.platforms?.ios;
         if (ios?.deviceUdid) {
@@ -131,18 +131,14 @@ export default function shutdownCommand(program) {
         }
       }
 
-      // Phase 1: kill Metro instances. Try the recorded pid first; if that
-      // misses, look up whoever's listening on the port. Always clear the
-      // recorded metroPid so `status` reflects reality afterward.
+      // Phase 1: kill Metro instances, identity-verified. rn-iso no longer
+      // starts Metro, so a recorded port proves nothing about who holds it now.
       for (const m of metros) {
-        let pid = m.pid;
-        if (!pid || !killMetroByPid(pid)) {
-          pid = findPidListeningOnPort(m.port);
-          if (pid) killMetroByPid(pid);
-        }
-        setMetro(m.path, m.port, null);
-        if (pid) {
-          console.log(chalk.green(`Killed Metro pid ${pid} on port ${m.port} ${chalk.dim(`(${m.path})`)}`));
+        const resolution = await resolveProjectMetro(m.port, m.path);
+        if (resolution.metro && killMetroTree(resolution.metro.leader)) {
+          console.log(chalk.green(`Killed Metro pid ${resolution.metro.pid} on port ${m.port} ${chalk.dim(`(${m.path})`)}`));
+        } else if (resolution.notOurs) {
+          console.log(chalk.yellow(`Skipped port ${m.port}: ${resolution.notOurs} ${chalk.dim(`(${m.path})`)}`));
         } else {
           console.log(chalk.dim(`No Metro running on port ${m.port} (${m.path})`));
         }

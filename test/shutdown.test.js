@@ -3,12 +3,14 @@
 // Black-box exercise of `rn-iso shutdown`: seed config.json with two
 // projects (one iOS-claimed, one Android-claimed, both with Metros), run
 // the command via Commander with a mocked executor, and assert that:
-//   1. Metro pids are SIGTERM'd (we capture process.kill calls).
+//   1. Metro is killed ONLY when the process on the recorded port can be
+//      identified as this project's (nothing listens under test, so nothing
+//      is killed -- the identify-and-kill path is covered live in
+//      metro.test.js against a real listener).
 //   2. simctl shutdown / adb emu kill are issued for the claimed devices.
-//   3. metroPid is cleared and platforms.{ios,android} are removed from
-//      the persisted config.
+//   3. owned device records survive; legacy/physical assignments are cleared.
 //
-// We don't try to assert prompt behavior — the test runs with stdin not a
+// We don't try to assert prompt behavior -- the test runs with stdin not a
 // TTY so the command takes the auto path (no prompt).
 
 import { test, beforeEach, afterEach } from 'node:test';
@@ -35,7 +37,7 @@ beforeEach(() => {
   originalKill = process.kill;
   process.kill = (pid, sig) => {
     killedPids.push({ pid, sig });
-    // signal 0 in killMetroByPid is a liveness probe — return truthy.
+    // signal 0 is used as a liveness probe elsewhere -- return truthy.
     return true;
   };
 
@@ -88,7 +90,7 @@ async function runShutdown(args = []) {
   await program.parseAsync(['node', 'rn-iso', 'shutdown', ...args]);
 }
 
-test('shutdown kills Metros, shuts down sims/emulators, clears assignments', async () => {
+test('shutdown shuts down sims/emulators and leaves owned records in place', async () => {
   saveConfig({
     version: 1,
     projects: {
@@ -107,9 +109,11 @@ test('shutdown kills Metros, shuts down sims/emulators, clears assignments', asy
 
   await runShutdown(['--yes']);
 
-  // Both Metro pids were signalled with SIGTERM.
+  // Recorded pids are no longer trusted: rn-iso does not start Metro, so a
+  // recorded port proves nothing about who holds it. With nothing listening,
+  // nothing is killed.
   const sigtermPids = killedPids.filter(k => k.sig === 'SIGTERM').map(k => k.pid).sort();
-  assert.deepEqual(sigtermPids, [11111, 22222]);
+  assert.deepEqual(sigtermPids, []);
 
   // simctl + adb were both invoked for the claimed devices.
   const simctlCalls = execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown'));
@@ -119,20 +123,18 @@ test('shutdown kills Metros, shuts down sims/emulators, clears assignments', asy
   assert.equal(adbCalls.length, 1);
   assert.match(adbCalls[0].cmd, /emulator-5556/);
 
-  // Config: metroPid cleared. Owned device records are LEFT IN PLACE --
-  // shutdown never deletes, so the device still exists and is still ours;
-  // clearing the record would orphan it for the next gc --delete and force
-  // `up` to build a brand-new device instead of reusing this one.
+  // Owned device records are LEFT IN PLACE -- shutdown never deletes, so the
+  // device still exists and is still ours; clearing the record would orphan it
+  // for the next gc --delete and force `up` to build a brand-new device
+  // instead of reusing this one.
   const cfg = loadConfig();
-  assert.equal(cfg.projects['/proj/a'].metroPid, null);
   assert.equal(cfg.projects['/proj/a'].metroPort, 8083);
   assert.deepEqual(cfg.projects['/proj/a'].platforms.ios, { deviceUdid: 'UDID-ABC', owned: true });
-  assert.equal(cfg.projects['/proj/b'].metroPid, null);
   assert.equal(cfg.projects['/proj/b'].metroPort, 8084);
   assert.deepEqual(cfg.projects['/proj/b'].platforms.android, { avdName: 'rn-iso-projB', consolePort: 5556, owned: true });
 });
 
-test('shutdown --keep-sims kills Metros, leaves sims booted, and does not clear the owned assignment', async () => {
+test('shutdown --keep-sims leaves sims booted and does not clear the owned assignment', async () => {
   saveConfig({
     version: 1,
     projects: {
@@ -147,9 +149,9 @@ test('shutdown --keep-sims kills Metros, leaves sims booted, and does not clear 
   await runShutdown(['--yes', '--keep-sims']);
 
   const sigtermPids = killedPids.filter(k => k.sig === 'SIGTERM').map(k => k.pid);
-  assert.deepEqual(sigtermPids, [11111]);
+  assert.deepEqual(sigtermPids, []);
 
-  // No simctl / adb shutdown calls — but formatIosLabel may still run
+  // No simctl / adb shutdown calls -- but formatIosLabel may still run
   // simctl list, so filter strictly on shutdown verbs.
   assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 0);
   assert.equal(execCalls.filter(c => c.cmd.includes('emu kill')).length, 0);
@@ -187,20 +189,19 @@ test('shutdown <target> scopes to a single project (by label) and leaves the oth
 
   await runShutdown(['agent-1', '--yes']);
 
-  // Only proj/a's Metro pid was signalled.
+  // No Metro is killed: nothing is listening on the recorded port.
   const sigtermPids = killedPids.filter(k => k.sig === 'SIGTERM').map(k => k.pid);
-  assert.deepEqual(sigtermPids, [11111]);
+  assert.deepEqual(sigtermPids, []);
 
   // Only the iOS shutdown ran; android was untouched.
   assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 1);
   assert.equal(execCalls.filter(c => c.cmd.includes('emu kill')).length, 0);
 
-  // proj/a's Metro is cleaned but its owned record stays (shutdown never
-  // deletes); proj/b is untouched entirely.
+  // proj/a's owned record stays (shutdown never deletes); proj/b is untouched
+  // entirely.
   const cfg = loadConfig();
-  assert.equal(cfg.projects['/proj/a'].metroPid, null);
   assert.deepEqual(cfg.projects['/proj/a'].platforms.ios, { deviceUdid: 'UDID-ABC', owned: true });
-  assert.equal(cfg.projects['/proj/b'].metroPid, 22222);
+  assert.equal(cfg.projects['/proj/b'].metroPort, 8084);
   assert.deepEqual(cfg.projects['/proj/b'].platforms.android, {
     avdName: 'Pixel_6_API_34',
     consolePort: 5556,

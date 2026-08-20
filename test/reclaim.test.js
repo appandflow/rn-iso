@@ -44,8 +44,25 @@ test('reclaimProject removes the config entry', async () => {
   upsertProject('/proj', { metroPort: 8082 });
   setDevice('/proj', 'ios', { deviceUdid: 'U1' });
 
-  const result = reclaimProject('/proj', { deleteArtifacts: false });
+  const result = await reclaimProject('/proj', { deleteArtifacts: false });
   assert.equal(result.path, '/proj');
   assert.deepEqual(result.freed, ['ios sim U1']);
   assert.equal(getProject('/proj'), null);
+});
+
+test('reclaimProject refuses to kill an unidentified process on the port', async () => {
+  // A stale record plus a foreign listener must NOT be killed: this is the
+  // Metro analogue of the Android console-port Critical from the 0.7.0 review.
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd) => (cmd.includes('-sTCP:LISTEN') ? '4242' : ''),
+    spawn: () => {},
+  });
+  const { reclaimProject } = await import('../src/reclaim.js');
+  upsertProject('/nonexistent/project', { metroPort: 8082 });
+
+  const result = await reclaimProject('/nonexistent/project', { deleteArtifacts: false });
+  assert.equal(result.killedPid, null);
+  assert.ok(result.skippedMetro, 'must report why it declined');
+  resetExecutor();
 });

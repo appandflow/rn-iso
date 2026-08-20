@@ -1,6 +1,6 @@
 import { rmSync } from 'fs';
 import { getProject, removeProject } from './config.js';
-import { findPidListeningOnPort } from './metro.js';
+import { resolveProjectMetro, killMetroTree } from './metro.js';
 import { directorySize, findDerivedDataFor } from './artifacts.js';
 import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, deleteIosSim } from './sim/ios.js';
 import { resolveOwnedAvdSerial, shutdownAndroidEmulator, deleteAvd } from './sim/android.js';
@@ -101,7 +101,7 @@ function reclaimOwnedDevices(project) {
 // Callers who also delete the project directory itself (e.g. `worktree
 // remove`) must call this first: findDerivedDataFor matches on WorkspacePath
 // prefixes, which only resolve while the project directory still exists.
-export function reclaimProject(path, { deleteArtifacts = false, deleteOwnedDevices = false } = {}) {
+export async function reclaimProject(path, { deleteArtifacts = false, deleteOwnedDevices = false } = {}) {
   const project = getProject(path);
   const freed = describeFreed(project);
 
@@ -121,17 +121,18 @@ export function reclaimProject(path, { deleteArtifacts = false, deleteOwnedDevic
     : { deletedDevices: [], skippedDevices: [] };
 
   // A Metro started from a deleted directory can outlive it and squat on the
-  // port, so the port is not genuinely free until the process is gone.
+  // port, so the port is not genuinely free until the process is gone. Killing
+  // by port alone would repeat the Android console-port mistake, so identity is
+  // proven first and an unidentified listener is reported, never killed.
   let killedPid = null;
+  let skippedMetro = null;
   if (typeof project?.metroPort === 'number') {
-    const pid = findPidListeningOnPort(project.metroPort);
-    if (pid) {
-      try {
-        process.kill(pid, 'SIGTERM');
-        killedPid = pid;
-      } catch {
-        killedPid = null;
-      }
+    const resolution = await resolveProjectMetro(project.metroPort, path);
+    if (resolution.metro) {
+      killedPid = killMetroTree(resolution.metro.leader) ? resolution.metro.pid : null;
+      if (killedPid === null) skippedMetro = `could not kill pid ${resolution.metro.pid}`;
+    } else if (resolution.notOurs) {
+      skippedMetro = resolution.notOurs;
     }
   }
 
@@ -142,6 +143,7 @@ export function reclaimProject(path, { deleteArtifacts = false, deleteOwnedDevic
     freed,
     artifacts,
     killedPid,
+    skippedMetro,
     metroPort: project?.metroPort ?? null,
     deletedDevices,
     skippedDevices,

@@ -9,7 +9,7 @@ export default function pruneCommand(program) {
   program
     .command('prune')
     .description('Remove entries for projects whose directory no longer exists (deleted worktrees), freeing their sims/emulators and Metro ports. Live projects are never touched. Does not delete build artifacts; see `gc`.')
-    .action(() => {
+    .action(async () => {
       const cfg = loadConfig();
       const mountedVolumes = listMountedVolumes();
       const missingPaths = Object.keys(cfg?.projects || {}).filter(p => !existsSync(p));
@@ -41,7 +41,7 @@ export default function pruneCommand(program) {
 
       let reclaimableBytes = 0;
       for (const path of deadPaths) {
-        const result = reclaimProject(path, { deleteArtifacts: false });
+        const result = await reclaimProject(path, { deleteArtifacts: false });
         console.log(chalk.green(`Pruned ${path}`));
         if (result.freed.length) console.log(chalk.dim(`  freed: ${result.freed.join(', ')}`));
         if (result.killedPid) {

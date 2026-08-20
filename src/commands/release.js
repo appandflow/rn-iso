@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import prompts from 'prompts';
 import { resolveRegisteredProject } from '../project.js';
 import { getProject, clearDevice, findProjectByMetroPort } from '../config.js';
-import { findPidListeningOnPort } from '../metro.js';
+import { findPidListeningOnPort, processGroupLeader, killMetroTree } from '../metro.js';
 import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, deleteIosSim, formatIosLabel } from '../sim/ios.js';
 import { resolveOwnedAvdSerial, shutdownAndroidEmulator, deleteAvd } from '../sim/android.js';
 
@@ -149,11 +149,12 @@ async function handleUnmatchedPort(port) {
     console.error(chalk.red('Cancelled.'));
     process.exit(1);
   }
-  try {
-    process.kill(pid, 'SIGTERM');
-    console.log(chalk.green(`Killed pid ${pid} on port ${port}.`));
-  } catch (e) {
-    console.error(chalk.red(`Could not kill pid ${pid}: ${e.message}`));
+  // Take the whole group: lsof reports the socket holder, which for a bundler
+  // started through a package manager is the node child, not its wrapper.
+  const leader = processGroupLeader(pid) ?? pid;
+  if (!killMetroTree(leader)) {
+    console.error(chalk.red(`Could not kill pid ${pid} on port ${port}.`));
     process.exit(1);
   }
+  console.log(chalk.green(`Killed pid ${pid} on port ${port}.`));
 }

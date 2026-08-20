@@ -21,7 +21,7 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-test('uses the configured pipeline verbatim', () => {
+test('uses the configured pipeline verbatim', async () => {
   const pipeline = resolveInstallPipeline(
     { worktree: { install: ['pnpm install', 'pnpm build:packages'] } },
     'npm'
@@ -29,15 +29,15 @@ test('uses the configured pipeline verbatim', () => {
   assert.deepEqual(pipeline, ['pnpm install', 'pnpm build:packages']);
 });
 
-test('accepts a single string as a one-command pipeline', () => {
+test('accepts a single string as a one-command pipeline', async () => {
   assert.deepEqual(resolveInstallPipeline({ worktree: { install: 'yarn' } }, 'npm'), ['yarn']);
 });
 
-test('install false disables the pipeline', () => {
+test('install false disables the pipeline', async () => {
   assert.deepEqual(resolveInstallPipeline({ worktree: { install: false } }, 'npm'), []);
 });
 
-test('falls back to a configured settings.packageManager over the passed-in one', () => {
+test('falls back to a configured settings.packageManager over the passed-in one', async () => {
   const pipeline = resolveInstallPipeline({ packageManager: 'pnpm' }, 'npm');
   assert.deepEqual(pipeline, ['pnpm install']);
 });
@@ -46,12 +46,12 @@ test('falls back to a configured settings.packageManager over the passed-in one'
 // no longer calls detectPackageManager itself (that walks the filesystem for
 // lockfiles), so the caller-supplied package manager can be exercised directly
 // with no settings.packageManager override and no disk I/O.
-test('falls back to the caller-supplied package manager when settings has none', () => {
+test('falls back to the caller-supplied package manager when settings has none', async () => {
   assert.deepEqual(resolveInstallPipeline({}, 'pnpm'), ['pnpm install']);
   assert.deepEqual(resolveInstallPipeline(undefined, 'bun'), ['bun install']);
 });
 
-test('setup status round-trips and reports incompleteness', () => {
+test('setup status round-trips and reports incompleteness', async () => {
   upsertProject('/proj', {});
   setSetupStatus('/proj', {
     complete: false,
@@ -65,7 +65,7 @@ test('setup status round-trips and reports incompleteness', () => {
   assert.equal(status.commands[0].ok, false);
 });
 
-test('getSetupStatus returns null for an unknown project', () => {
+test('getSetupStatus returns null for an unknown project', async () => {
   assert.equal(getSetupStatus('/nope'), null);
 });
 
@@ -75,7 +75,7 @@ test('getSetupStatus returns null for an unknown project', () => {
 // which registers a *different* key with no setup status of its own. Without
 // the fallback, a later `getSetupStatus(<app dir>)` would return null and the
 // "setup incomplete" warning would never fire.
-test('getSetupStatus falls back to the enclosing worktree root status', () => {
+test('getSetupStatus falls back to the enclosing worktree root status', async () => {
   const root = '/repo-worktrees/feat-x';
   upsertProject(root, { label: 'feat-x', worktreeRoot: true });
   setSetupStatus(root, { complete: false, commands: [{ command: 'pnpm install', ok: false }] });
@@ -88,7 +88,7 @@ test('getSetupStatus falls back to the enclosing worktree root status', () => {
   assert.equal(status.commands[0].command, 'pnpm install');
 });
 
-test('getSetupStatus prefers a project own status over the enclosing worktree root', () => {
+test('getSetupStatus prefers a project own status over the enclosing worktree root', async () => {
   const root = '/repo-worktrees/feat-x';
   upsertProject(root, { label: 'feat-x', worktreeRoot: true });
   setSetupStatus(root, { complete: false, commands: [] });
@@ -100,20 +100,20 @@ test('getSetupStatus prefers a project own status over the enclosing worktree ro
   assert.equal(getSetupStatus(appDir).complete, true);
 });
 
-test('findEnclosingWorktreeRoot uses a real path-segment prefix, not a bare startsWith', () => {
+test('findEnclosingWorktreeRoot uses a real path-segment prefix, not a bare startsWith', async () => {
   upsertProject('/a/foo-worktrees/x', { label: 'x', worktreeRoot: true });
   assert.equal(findEnclosingWorktreeRoot('/a/foo-worktrees/xy'), null);
   assert.equal(findEnclosingWorktreeRoot('/a/foo-worktrees/xy/pkg'), null);
   assert.equal(findEnclosingWorktreeRoot('/a/foo-worktrees/x/pkg'), '/a/foo-worktrees/x');
 });
 
-test('findEnclosingWorktreeRoot picks the longest matching worktree-root key', () => {
+test('findEnclosingWorktreeRoot picks the longest matching worktree-root key', async () => {
   upsertProject('/repo-worktrees', { label: 'outer', worktreeRoot: true });
   upsertProject('/repo-worktrees/feat-x', { label: 'feat-x', worktreeRoot: true });
   assert.equal(findEnclosingWorktreeRoot('/repo-worktrees/feat-x/apps/mobile'), '/repo-worktrees/feat-x');
 });
 
-test('findEnclosingWorktreeRoot returns null when nothing is registered as a worktree root', () => {
+test('findEnclosingWorktreeRoot returns null when nothing is registered as a worktree root', async () => {
   upsertProject('/repo-worktrees/feat-x', { label: 'feat-x' });
   assert.equal(findEnclosingWorktreeRoot('/repo-worktrees/feat-x/apps/mobile'), null);
 });

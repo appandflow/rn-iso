@@ -185,7 +185,7 @@ export default function gcCommand(program) {
       }
       return n;
     })
-    .action(opts => {
+    .action(async opts => {
       const { orphaned, skipped } = findOrphanedDerivedData({ olderThanDays: opts.olderThan });
 
       const sized = orphaned.map(entry => {
@@ -294,7 +294,7 @@ export default function gcCommand(program) {
       }
       for (const path of deadProjects) {
         // Artifacts for these were already covered by the orphan sweep above.
-        const result = reclaimProject(path, { deleteArtifacts: false });
+        const result = await reclaimProject(path, { deleteArtifacts: false });
         console.log(chalk.green(`Pruned ${path}`));
         if (result.killedPid) {
           console.log(chalk.dim(`  killed orphaned Metro pid ${result.killedPid}`));
