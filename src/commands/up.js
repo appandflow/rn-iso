@@ -110,7 +110,9 @@ export function registerUp(program) {
         });
       } catch (e) {
         note(chalk.red(`Failed to ensure ${platform} device: ${e?.message || e}`));
-        if (platform === 'android') {
+        // The avdmanager hint only applies to emulator creation -- printing it
+        // after a --serial failure sends the user chasing the wrong thing.
+        if (platform === 'android' && !opts.serial) {
           note(chalk.dim('If this looks like an avdmanager failure, check that JAVA_HOME and ANDROID_HOME are set correctly.'));
         }
         process.exit(1);
