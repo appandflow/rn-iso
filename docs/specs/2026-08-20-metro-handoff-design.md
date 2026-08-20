@@ -196,8 +196,16 @@ not solved, by prescribing a predictable log path in SKILL.md.
 
 ## Versioning
 
-Folded into the unpublished 0.7.0 rather than shipped as a follow-up. npm is
-still on 0.6.2, so the managed-Metro model need never be published at all —
-and SKILL.md is distributed through `npx skills add`, where cached copies
-would carry "never start your own Metro" well past the release that reverses
-it.
+Ships as **0.8.0**.
+
+This section originally called for folding the change into an unpublished
+0.7.0, so that npm would never see the managed-Metro model at all. That option
+expired: 0.7.0 was published on 2026-08-20, before this work started, on the
+explicit call that the library has no users yet and the churn is acceptable.
+
+The consequence is real and should be stated rather than discovered: 0.7.0's
+SKILL.md tells agents "Metro is always managed by rn-iso ... never start your
+own Metro", and 0.8.0 reverses that. SKILL.md is distributed via
+`npx skills add`, so cached copies carry the stale rule until re-added. The
+0.8.0 release notes must therefore lead with the reversal under
+"Removed (breaking)" and say plainly that agents now start Metro themselves.
