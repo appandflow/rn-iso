@@ -816,8 +816,7 @@ Expected: FAIL — cannot find module `../src/commands/gc.js`.
 - [ ] **Step 3: Implement `src/commands/gc.js`**
 
 ```js
-import { rmSync } from 'fs';
-import { existsSync } from 'fs';
+import { existsSync, rmSync } from 'fs';
 import chalk from 'chalk';
 import { loadConfig } from '../config.js';
 import { directorySize, findOrphanedDerivedData, formatBytes } from '../artifacts.js';

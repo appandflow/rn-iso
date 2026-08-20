@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
-import { parseSimctlList, selectIosDevice, listAllIosSims, listBootedIosSims, sortSims, deviceFamilyRank } from '../src/sim/ios.js';
+import { parseSimctlList, listAllIosSims, listBootedIosSims, parseOccupyingApps, pickDefaultIosCreation, sanitizeDeviceLabel, deleteIosSim } from '../src/sim/ios.js';
 
 let tmpHome;
 
@@ -67,65 +67,6 @@ test('listBootedIosSims filters by state', () => {
   assert.deepEqual(booted.map(s => s.udid).sort(), ['UDID-A', 'UDID-C']);
 });
 
-test('selectIosDevice prefers existing assignment when sim still exists', () => {
-  setExecutor({ run: () => SIMCTL_OUTPUT, runQuiet: () => null, spawn: () => null });
-  const result = selectIosDevice({
-    existingUdid: 'UDID-B',
-    claimedUdids: [],
-  });
-  assert.deepEqual(result, { kind: 'reuse', udid: 'UDID-B', name: 'iPhone 15 Pro', state: 'Shutdown' });
-});
-
-test('selectIosDevice ignores existing assignment when sim no longer exists', () => {
-  setExecutor({ run: () => SIMCTL_OUTPUT, runQuiet: () => null, spawn: () => null });
-  const result = selectIosDevice({
-    existingUdid: 'GHOST-UDID',
-    claimedUdids: [],
-  });
-  assert.equal(result.kind, 'allocate');
-  assert.ok(Array.isArray(result.candidates));
-});
-
-test('selectIosDevice returns all unclaimed sims, booted first', () => {
-  // SIMCTL_OUTPUT: UDID-A iPhone 15 booted, UDID-B iPhone 15 Pro shutdown, UDID-C iPhone 14 booted.
-  setExecutor({ run: () => SIMCTL_OUTPUT, runQuiet: () => null, spawn: () => null });
-  const result = selectIosDevice({
-    existingUdid: null,
-    claimedUdids: [],
-  });
-  assert.equal(result.kind, 'allocate');
-  // Booted sims first (sorted by name within state), then shutdown sims.
-  assert.deepEqual(result.candidates.map(s => s.udid), ['UDID-C', 'UDID-A', 'UDID-B']);
-});
-
-test('selectIosDevice excludes claimed sims from candidates', () => {
-  setExecutor({ run: () => SIMCTL_OUTPUT, runQuiet: () => null, spawn: () => null });
-  const result = selectIosDevice({
-    existingUdid: null,
-    claimedUdids: ['UDID-A', 'UDID-C'],
-  });
-  assert.equal(result.kind, 'allocate');
-  assert.deepEqual(result.candidates.map(s => s.udid), ['UDID-B']);
-});
-
-test('selectIosDevice returns allClaimed when sims exist but every one is claimed', () => {
-  setExecutor({ run: () => SIMCTL_OUTPUT, runQuiet: () => null, spawn: () => null });
-  const result = selectIosDevice({
-    existingUdid: null,
-    claimedUdids: ['UDID-A', 'UDID-B', 'UDID-C'],
-  });
-  assert.equal(result.kind, 'allClaimed');
-  // candidates contains every sim, sorted, so the picker can offer to steal any.
-  assert.deepEqual(result.candidates.map(s => s.udid).sort(), ['UDID-A', 'UDID-B', 'UDID-C']);
-});
-
-test('selectIosDevice returns noSims when no iOS simulators exist at all', () => {
-  const empty = JSON.stringify({ devices: {} });
-  setExecutor({ run: () => empty, runQuiet: () => null, spawn: () => null });
-  const result = selectIosDevice({ existingUdid: null, claimedUdids: [] });
-  assert.equal(result.kind, 'noSims');
-});
-
 test('parseRuntimeVersion extracts major.minor from runtime id', async () => {
   const { parseRuntimeVersion } = await import('../src/sim/ios.js');
   assert.equal(parseRuntimeVersion('com.apple.CoreSimulator.SimRuntime.iOS-26-2'), '26.2');
@@ -154,56 +95,152 @@ test('parseSimctlList drops non-iOS runtimes (watchOS, tvOS, visionOS)', () => {
   assert.deepEqual(sims.map(s => s.udid), ['IOS-1']);
 });
 
-test('deviceFamilyRank ranks iPhone < iPad < other', () => {
-  assert.equal(deviceFamilyRank('iPhone 17 Pro'), 0);
-  assert.equal(deviceFamilyRank('iPad Pro 11-inch'), 1);
-  assert.equal(deviceFamilyRank('Apple TV'), 2);
+test('parseOccupyingApps finds xctrunner bundles', () => {
+  const out = [
+    '507e\t0\tUIKitApplication:com.apple.Spotlight[507e][rb-legacy]',
+    '082a\t0\tUIKitApplication:com.callstack.agentdevice.runner.uitests.xctrunner[082a][rb-legacy]',
+  ].join('\n');
+  assert.deepEqual(parseOccupyingApps(out), ['com.callstack.agentdevice.runner.uitests.xctrunner']);
 });
 
-test('sortSims orders by family, then state, then usage, then name', () => {
-  const sims = [
-    { udid: 'A', name: 'iPad Pro', state: 'Booted', runtime: 'r' },
-    { udid: 'B', name: 'iPhone 17 Pro', state: 'Shutdown', runtime: 'r' },
-    { udid: 'C', name: 'iPhone 16 Pro', state: 'Booted', runtime: 'r' },
-    { udid: 'D', name: 'iPhone 15 Pro', state: 'Booted', runtime: 'r' },
-  ];
-  // Without usage: iPhones first (booted before shutdown), then iPad.
-  // C and D are both iPhone+booted with usage 0 -> alpha sort: D ("15 Pro") before C ("16 Pro").
-  let sorted = sortSims(sims);
-  assert.deepEqual(sorted.map(s => s.udid), ['D', 'C', 'B', 'A']);
-  // With C used 5 times: C floats above D within iPhone+booted.
-  sorted = sortSims(sims, { C: 5 });
-  assert.deepEqual(sorted.map(s => s.udid), ['C', 'D', 'B', 'A']);
+test('parseOccupyingApps ignores apple system apps', () => {
+  const out = '507e\t0\tUIKitApplication:com.apple.Spotlight[507e][rb-legacy]';
+  assert.deepEqual(parseOccupyingApps(out), []);
 });
 
-test('sortSims keeps a booted sim ahead of a shutdown newer-runtime one', () => {
-  const rNew = 'com.apple.CoreSimulator.SimRuntime.iOS-26-5';
-  const rOld = 'com.apple.CoreSimulator.SimRuntime.iOS-17-5';
-  const sims = [
-    { udid: 'OLD-BOOTED', name: 'iPhone 15', state: 'Booted', runtime: rOld },
-    { udid: 'NEW-SHUTDOWN', name: 'iPhone 17 Pro', state: 'Shutdown', runtime: rNew },
-  ];
-  // Booted state outranks runtime: reuse the running sim rather than boot another.
-  const sorted = sortSims(sims);
-  assert.deepEqual(sorted.map(s => s.udid), ['OLD-BOOTED', 'NEW-SHUTDOWN']);
+test('parseOccupyingApps fails open on unparseable output', () => {
+  assert.deepEqual(parseOccupyingApps(''), []);
+  assert.deepEqual(parseOccupyingApps(null), []);
 });
 
-test('sortSims prefers newest runtime among sims in the same state', () => {
-  const rNew = 'com.apple.CoreSimulator.SimRuntime.iOS-26-5';
-  const rOld = 'com.apple.CoreSimulator.SimRuntime.iOS-17-5';
-  const sims = [
-    { udid: 'OLD', name: 'iPhone 15', state: 'Shutdown', runtime: rOld },
-    { udid: 'NEW', name: 'iPhone 17 Pro', state: 'Shutdown', runtime: rNew },
+test('pickDefaultIosCreation picks the newest iPhone on the newest runtime', () => {
+  const deviceTypes = [
+    { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPad-Pro', name: 'iPad Pro' },
+    { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16', name: 'iPhone 16' },
+    { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', name: 'iPhone 17 Pro' },
   ];
-  const sorted = sortSims(sims);
-  assert.deepEqual(sorted.map(s => s.udid), ['NEW', 'OLD']);
+  const runtimes = [
+    { identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2', name: 'iOS 26.2', version: '26.2',
+      supportedDeviceTypes: deviceTypes },
+    { identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5', name: 'iOS 26.5', version: '26.5',
+      supportedDeviceTypes: deviceTypes },
+  ];
+  const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
+  assert.equal(pick.runtimeId, 'com.apple.CoreSimulator.SimRuntime.iOS-26-5');
+  assert.equal(pick.deviceTypeId, 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro');
 });
 
-test('sortSims uses numeric runtime compare (26.10 newer than 26.5)', () => {
-  const sims = [
-    { udid: 'V5', name: 'iPhone 17', state: 'Shutdown', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5' },
-    { udid: 'V10', name: 'iPhone 17', state: 'Shutdown', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-10' },
+test('pickDefaultIosCreation honors explicit deviceType and runtime by name', () => {
+  const deviceTypes = [{ identifier: 'dt.iphone16', name: 'iPhone 16' }];
+  const runtimes = [
+    { identifier: 'rt.26-2', name: 'iOS 26.2', version: '26.2', supportedDeviceTypes: deviceTypes },
+    { identifier: 'rt.26-5', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
   ];
-  const sorted = sortSims(sims);
-  assert.deepEqual(sorted.map(s => s.udid), ['V10', 'V5']);
+  const pick = pickDefaultIosCreation(deviceTypes, runtimes, { deviceType: 'iPhone 16', runtime: '26.2' });
+  assert.equal(pick.deviceTypeId, 'dt.iphone16');
+  assert.equal(pick.runtimeId, 'rt.26-2');
+});
+
+test('pickDefaultIosCreation returns null when nothing matches', () => {
+  assert.equal(pickDefaultIosCreation([], [], {}), null);
+  const deviceTypes = [{ identifier: 'dt', name: 'iPhone 17' }];
+  const runtimes = [{ identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
+  assert.equal(pickDefaultIosCreation(deviceTypes, runtimes, { deviceType: 'iPhone 99' }), null);
+});
+
+// Regression: every real Xcode install ships lettered models (SE, Air) beside
+// the numbered ones. localeCompare sorts letters after digits, so "iPhone SE"
+// beat "iPhone 17 Pro Max" and every default sim spawned as an SE. The fixture
+// above missed it by containing numbered models only.
+test('pickDefaultIosCreation prefers a numbered iPhone over lettered models (SE, Air)', () => {
+  const deviceTypes = [
+    { identifier: 'dt.se3', name: 'iPhone SE (3rd generation)' },
+    { identifier: 'dt.air', name: 'iPhone Air' },
+    { identifier: 'dt.17pm', name: 'iPhone 17 Pro Max' },
+    { identifier: 'dt.16', name: 'iPhone 16' },
+  ];
+  const runtimes = [
+    { identifier: 'rt.26-5', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
+  ];
+  const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
+  assert.equal(pick.deviceTypeId, 'dt.17pm');
+});
+
+test('pickDefaultIosCreation compares iPhone generations numerically, not lexically', () => {
+  const deviceTypes = [
+    { identifier: 'dt.9', name: 'iPhone 9' },
+    { identifier: 'dt.17', name: 'iPhone 17' },
+  ];
+  const runtimes = [
+    { identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
+  ];
+  assert.equal(pickDefaultIosCreation(deviceTypes, runtimes, {}).deviceTypeId, 'dt.17');
+});
+
+test('pickDefaultIosCreation picks the base model over Pro/Pro Max of the same generation', () => {
+  const deviceTypes = [
+    { identifier: 'dt.17pm', name: 'iPhone 17 Pro Max' },
+    { identifier: 'dt.17pro', name: 'iPhone 17 Pro' },
+    { identifier: 'dt.17', name: 'iPhone 17' },
+  ];
+  const runtimes = [
+    { identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
+  ];
+  assert.equal(pickDefaultIosCreation(deviceTypes, runtimes, {}).deviceTypeId, 'dt.17');
+});
+
+test('pickDefaultIosCreation still picks a lettered model when it is the only iPhone', () => {
+  const deviceTypes = [{ identifier: 'dt.se3', name: 'iPhone SE (3rd generation)' }];
+  const runtimes = [
+    { identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
+  ];
+  assert.equal(pickDefaultIosCreation(deviceTypes, runtimes, {}).deviceTypeId, 'dt.se3');
+});
+
+test('sanitizeDeviceLabel strips characters simctl names should not carry', () => {
+  assert.equal(sanitizeDeviceLabel('feat-a/tlon-mobile'), 'feat-a-tlon-mobile');
+  assert.equal(sanitizeDeviceLabel('x  y"z`$'), 'x-y-z');
+});
+
+test('deleteIosSim refuses to delete a sim not owned by rn-iso', () => {
+  setExecutor({
+    run: () => JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
+          { udid: 'UDID-A', name: 'iPhone 15', state: 'Shutdown', isAvailable: true },
+        ],
+      },
+    }),
+    runQuiet: () => { throw new Error('should not be called'); },
+    spawn: () => null,
+  });
+  assert.throws(() => deleteIosSim('UDID-A'), /rn-iso/);
+});
+
+test('deleteIosSim deletes an rn-iso-owned sim', () => {
+  let ran = null;
+  setExecutor({
+    run: () => JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
+          { udid: 'UDID-B', name: 'rn-iso-my-project', state: 'Shutdown', isAvailable: true },
+        ],
+      },
+    }),
+    runQuiet: (cmd) => { ran = cmd; return null; },
+    spawn: () => null,
+  });
+  deleteIosSim('UDID-B');
+  assert.match(ran, /xcrun simctl delete UDID-B/);
+});
+
+test('deleteIosSim no-ops quietly when the udid is already gone', () => {
+  let ranQuiet = false;
+  setExecutor({
+    run: () => JSON.stringify({ devices: {} }),
+    runQuiet: () => { ranQuiet = true; return null; },
+    spawn: () => null,
+  });
+  assert.doesNotThrow(() => deleteIosSim('UDID-GONE'));
+  assert.equal(ranQuiet, false);
 });

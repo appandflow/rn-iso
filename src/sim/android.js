@@ -1,4 +1,72 @@
+import { existsSync, readdirSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import { getExecutor } from '../exec.js';
+
+export function androidHome() {
+  return process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || join(homedir(), 'Library', 'Android', 'sdk');
+}
+
+function avdmanagerPath() {
+  return join(androidHome(), 'cmdline-tools', 'latest', 'bin', 'avdmanager');
+}
+
+// system-images/<android-XX>/<tag>/<arch>/ on disk.
+export function listInstalledSystemImages() {
+  const root = join(androidHome(), 'system-images');
+  const images = [];
+  if (!existsSync(root)) return images;
+  for (const apiDir of readdirSync(root)) {
+    const m = apiDir.match(/^android-(\d+)$/);
+    if (!m) continue;
+    const apiPath = join(root, apiDir);
+    for (const tag of safeList(apiPath)) {
+      for (const arch of safeList(join(apiPath, tag))) {
+        images.push({ api: Number(m[1]), tag, arch, pkg: `system-images;${apiDir};${tag};${arch}` });
+      }
+    }
+  }
+  return images;
+}
+
+function safeList(dir) {
+  try { return readdirSync(dir); } catch { return []; }
+}
+
+// Highest API first; google_apis over other tags; Apple Silicon needs arm64.
+export function pickDefaultSystemImage(images, { systemImage } = {}) {
+  if (systemImage) return images.find(i => i.pkg === systemImage) || null;
+  const arm = images.filter(i => i.arch === 'arm64-v8a');
+  if (arm.length === 0) return null;
+  return [...arm].sort((a, b) =>
+    b.api - a.api || (b.tag === 'google_apis' ? 1 : 0) - (a.tag === 'google_apis' ? 1 : 0))[0];
+}
+
+export function createOwnedAvd(label, { systemImage } = {}) {
+  const pick = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage });
+  if (!pick) {
+    throw new Error('No arm64 Android system image is installed. Install one, e.g.: sdkmanager "system-images;android-36;google_apis;arm64-v8a"');
+  }
+  const avdName = `rn-iso-${sanitizeAvdLabel(label)}`;
+  // avdmanager prompts "Do you wish to create a custom hardware profile?";
+  // piping "no" answers it non-interactively.
+  getExecutor().run(`echo no | "${avdmanagerPath()}" create avd -n "${avdName}" -k "${pick.pkg}"`);
+  return { avdName };
+}
+
+export function sanitizeAvdLabel(label) {
+  return String(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+// Defense in depth: deletion must only ever reach an AVD rn-iso created
+// itself. A future caller bug (wrong record, stale name) must not be able
+// to delete a user's real AVD.
+export function deleteAvd(avdName) {
+  if (!avdName?.startsWith('rn-iso-')) {
+    throw new Error(`Refusing to delete AVD "${avdName}": not an rn-iso-owned AVD (name must start with "rn-iso-").`);
+  }
+  getExecutor().runQuiet(`"${avdmanagerPath()}" delete avd -n "${avdName}"`);
+}
 
 export function parseAvdList(text) {
   return text
@@ -34,8 +102,8 @@ export function parseAdbDevices(text) {
   return { emulators, physical, unhealthy };
 }
 
-export function listAvds() {
-  return parseAvdList(getExecutor().run('emulator -list-avds'));
+export function listAvds({ timeoutMs } = {}) {
+  return parseAvdList(getExecutor().run('emulator -list-avds', { timeoutMs }));
 }
 
 export function listAdbDevices() {
@@ -46,96 +114,6 @@ export function nextConsolePort(claimedPorts) {
   if (claimedPorts.length === 0) return 5554;
   const max = Math.max(...claimedPorts);
   return max + 2; // emulator console ports are even
-}
-
-// Build the full candidate list: every AVD on disk plus every physical
-// device adb currently sees. AVDs are paired with whether they have a
-// running emulator (and on which console port); physical devices are
-// always treated as running. Returns [] when neither exist.
-export function enumerateAndroidCandidates() {
-  const avds = listAvds();
-  const adbDevices = listAdbDevices();
-
-  const runningByAvd = {};
-  for (const e of adbDevices.emulators) {
-    const avdName = getAvdNameForSerial(e.serial);
-    if (avdName) runningByAvd[avdName] = e.consolePort;
-  }
-
-  const avdCandidates = avds.map(avdName => ({
-    kind: 'avd',
-    avdName,
-    isRunning: avdName in runningByAvd,
-    consolePort: runningByAvd[avdName] ?? null,
-  }));
-
-  const physicalCandidates = adbDevices.physical.map(p => ({
-    kind: 'physical',
-    serial: p.serial,
-    isRunning: true,
-    consolePort: null,
-  }));
-
-  return [...avdCandidates, ...physicalCandidates];
-}
-
-export function selectAndroidDevice({
-  existingAvd,
-  existingSerial,
-  existingConsolePort,
-  claimedAvds,
-  claimedSerials,
-  claimedConsolePorts,
-}) {
-  const all = enumerateAndroidCandidates();
-  if (all.length === 0) return { kind: 'noAvd' };
-
-  if (existingSerial) {
-    const found = all.find(c => c.kind === 'physical' && c.serial === existingSerial);
-    if (found) {
-      return {
-        kind: 'reuse',
-        deviceKind: 'physical',
-        serial: existingSerial,
-        isRunning: true,
-      };
-    }
-  }
-
-  if (existingAvd) {
-    const found = all.find(c => c.kind === 'avd' && c.avdName === existingAvd);
-    if (found) {
-      return {
-        kind: 'reuse',
-        deviceKind: 'avd',
-        avdName: existingAvd,
-        consolePort: found.consolePort ?? existingConsolePort ?? nextConsolePort(claimedConsolePorts),
-        isRunning: found.isRunning,
-      };
-    }
-  }
-
-  const claimedAvdSet = new Set(claimedAvds);
-  const claimedSerialSet = new Set(claimedSerials || []);
-  const unclaimed = all.filter(c => c.kind === 'avd'
-    ? !claimedAvdSet.has(c.avdName)
-    : !claimedSerialSet.has(c.serial));
-
-  if (unclaimed.length === 0) {
-    return { kind: 'allClaimed', candidates: sortAndroidCandidates(all) };
-  }
-  return { kind: 'allocate', candidates: sortAndroidCandidates(unclaimed) };
-}
-
-export function sortAndroidCandidates(list) {
-  return [...list].sort((a, b) => {
-    if (a.isRunning !== b.isRunning) return a.isRunning ? -1 : 1;
-    // Mixed lists: physical devices float above AVDs within the same running state.
-    if (a.kind !== b.kind) return a.kind === 'physical' ? -1 : 1;
-    const an = a.kind === 'physical' ? a.serial : a.avdName;
-    const bn = b.kind === 'physical' ? b.serial : b.avdName;
-    return an.localeCompare(bn);
-  });
 }
 
 export function bootAndroidEmulator(avdName, consolePort) {
@@ -185,4 +163,34 @@ export function getAvdNameForSerial(serial) {
   if (!out) return null;
   // `adb emu avd name` returns the AVD name on the first line, "OK" on the second.
   return out.split('\n')[0].trim() || null;
+}
+
+// Resolves an owned AVD name against the LIVE adb device list, verifying
+// identity before any destructive command (shutdown or delete) is issued at
+// a serial. A console port is a slot, not an identity: Android Studio's
+// default emulator also starts at 5554, the same first-free-even rule rn-iso
+// uses, so a recorded consolePort can end up occupied by a foreign emulator.
+// Blindly shutting down `emulator-<consolePort>` in that case kills the
+// user's own emulator, not ours -- the identity check here (matching
+// avdName against `adb emu avd name` for every live emulator, the same
+// pattern gc.js already used) is what prevents that.
+// Four outcomes:
+//   { missing: true }    no AVD named avdName exists at all (deleted, or a
+//                        stale/mistyped record) -- the honest already-gone
+//                        path, not an error.
+//   { notOwned: true }   avdName does not start with "rn-iso-" (a stale or
+//                        wrong record) -- must be reported as a skip, never
+//                        shut down or deleted.
+//   { serial }           a live emulator whose AVD identity matches avdName
+//                        was found: safe to shut down at this serial.
+//   { notRunning: true } the AVD exists and is owned, but no live emulator
+//                        currently identifies as it -- skip shutdown,
+//                        proceed to deleteAvd where applicable.
+export function resolveOwnedAvdSerial(avdName, consolePort) {
+  if (!listAvds().includes(avdName)) return { missing: true };
+  if (!avdName?.startsWith('rn-iso-')) return { notOwned: true };
+  const adb = listAdbDevices();
+  const match = adb.emulators.find(e => getAvdNameForSerial(e.serial) === avdName);
+  if (match) return { serial: match.serial };
+  return { notRunning: true };
 }

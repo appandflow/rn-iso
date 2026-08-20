@@ -1,11 +1,24 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'fs';
 import { join, dirname, resolve } from 'path';
-import { loadConfig } from './config.js';
+import { loadConfig, findEnclosingWorktreeRoot, getProject } from './config.js';
 
-// A project's "shortcut": its `label` field if set, else the path basename.
-// This is the user-facing handle for `stop`, `release`, etc.
+// A project's "shortcut": its `label` field if set, else derived from the
+// enclosing worktree's label (if this path lives inside a registered
+// worktree), else the path basename.
+//
+// The worktree-inherited form matters because every worktree of a monorepo
+// has app dirs sharing the same basename (every worktree's mobile app is
+// "tlon-mobile"), so a bare basename shortcut would collide across
+// worktrees. Deriving from the worktree label instead keeps shortcuts
+// unique: "<worktreeLabel>/<basename>".
 export function projectShortcut(path, proj) {
   if (proj?.label) return proj.label;
+  const rootPath = findEnclosingWorktreeRoot(path);
+  if (rootPath && rootPath !== path) {
+    const rootLabel = projectShortcut(rootPath, getProject(rootPath));
+    const base = path.split('/').pop() || path;
+    return `${rootLabel}/${base}`;
+  }
   return path.split('/').pop() || path;
 }
 
@@ -15,8 +28,8 @@ export function projectShortcut(path, proj) {
 //   - a shortcut (label or path basename) that uniquely identifies a project
 //
 // Basename matching errors out on collision (multiple projects share the
-// basename) — set a `--label` on one of them via `rn-iso reserve` / `ios` /
-// `android` to disambiguate.
+// basename) -- set a `--label` on one of them via `rn-iso worktree create`
+// to disambiguate.
 //
 // Returns { found, error }.
 export function resolveRegisteredProject(arg) {
@@ -26,7 +39,7 @@ export function resolveRegisteredProject(arg) {
   if (!arg) {
     const root = findProjectRoot(process.cwd());
     if (!root) return { found: null, error: 'Not in a React Native project (no package.json found).' };
-    if (!projects[root]) return { found: null, error: `No rn-iso entry for ${root}. Run \`rn-iso ios\` or \`rn-iso android\` first.` };
+    if (!projects[root]) return { found: null, error: `No rn-iso entry for ${root}. Run \`rn-iso up ios\` or \`rn-iso up android\` first.` };
     return { found: root };
   }
 

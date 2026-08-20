@@ -47,7 +47,7 @@ If `git status` isn't clean, commit / discard before tagging.
 
 ## 3. Cut the release
 
-1. **Bump the version** in `package.json` to the value chosen in step 1. No other version files to update — `bin/cli.js` reads from `package.json`.
+1. **Bump the version** in `package.json` to the value chosen in step 1 — `bin/cli.js` reads from `package.json`, so no other source file needs it. Then run `npm install --package-lock-only` so `package-lock.json`'s own `version` field (it duplicates `package.json`'s) matches; a stale lockfile version doesn't break anything functionally, but it's confusing to publish alongside a bumped `package.json`.
 2. **Verify the npm tarball** ships only what should ship:
    ```bash
    npm pack --dry-run

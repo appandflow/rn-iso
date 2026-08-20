@@ -26,10 +26,26 @@ export function saveConfig(config) {
   writeFileSync(getConfigPath(), JSON.stringify(config, null, 2) + '\n');
 }
 
+const CONFIG_VERSION = 2;
+
 export function ensureConfig() {
   const existing = loadConfig();
-  if (existing) return existing;
-  const fresh = { version: 1, projects: {} };
+  if (existing) {
+    // Migration is additive: add `repos` and bump the version, never rewrite
+    // `projects`. A v1 config carries live device claims we must not lose.
+    let changed = false;
+    if (!existing.repos) {
+      existing.repos = {};
+      changed = true;
+    }
+    if (existing.version !== CONFIG_VERSION) {
+      existing.version = CONFIG_VERSION;
+      changed = true;
+    }
+    if (changed) saveConfig(existing);
+    return existing;
+  }
+  const fresh = { version: CONFIG_VERSION, projects: {}, repos: {} };
   saveConfig(fresh);
   return fresh;
 }
@@ -116,6 +132,30 @@ export function unsetProjectSetting(projectPath, dottedKey) {
   return removed;
 }
 
+// --- Per-repo settings (keyed by git common dir, shared across worktrees) ---
+
+export function getRepoSettings(gitCommonDir) {
+  const cfg = loadConfig();
+  return cfg?.repos?.[gitCommonDir]?.settings || {};
+}
+
+export function setRepoSetting(gitCommonDir, dottedKey, value) {
+  const cfg = ensureConfig();
+  cfg.repos[gitCommonDir] = cfg.repos[gitCommonDir] || {};
+  cfg.repos[gitCommonDir].settings = cfg.repos[gitCommonDir].settings || {};
+  writeNested(cfg.repos[gitCommonDir].settings, dottedKey, value);
+  saveConfig(cfg);
+}
+
+export function unsetRepoSetting(gitCommonDir, dottedKey) {
+  const cfg = loadConfig();
+  const settings = cfg?.repos?.[gitCommonDir]?.settings;
+  if (!settings) return false;
+  const removed = deleteNested(settings, dottedKey);
+  if (removed) saveConfig(cfg);
+  return removed;
+}
+
 function readNested(obj, dottedKey) {
   if (!obj) return undefined;
   const keys = dottedKey.split('.');
@@ -141,15 +181,71 @@ function writeNested(obj, dottedKey, value) {
 
 function deleteNested(obj, dottedKey) {
   const keys = dottedKey.split('.');
+  const chain = [obj];
   let cur = obj;
   for (let i = 0; i < keys.length - 1; i++) {
     if (cur[keys[i]] == null || typeof cur[keys[i]] !== 'object') return false;
     cur = cur[keys[i]];
+    chain.push(cur);
   }
   const leaf = keys[keys.length - 1];
   if (!(leaf in cur)) return false;
   delete cur[leaf];
+  // Prune any intermediate objects left empty by the deletion, so e.g.
+  // removing the only key under `worktree.baseRef` also drops `worktree`.
+  for (let i = chain.length - 2; i >= 0; i--) {
+    const parent = chain[i];
+    const key = keys[i];
+    if (Object.keys(chain[i + 1]).length === 0) {
+      delete parent[key];
+    } else {
+      break;
+    }
+  }
   return true;
+}
+
+export function setSetupStatus(projectPath, status) {
+  const cfg = ensureConfig();
+  if (!cfg.projects[projectPath]) {
+    cfg.projects[projectPath] = { metroPort: null, metroPid: null, platforms: {} };
+  }
+  cfg.projects[projectPath].setup = status;
+  saveConfig(cfg);
+}
+
+// True path-segment prefix, not a bare startsWith: "/a/foo-worktrees/x" must
+// not match "/a/foo-worktrees/xy" just because the strings share a prefix.
+export function isPathPrefix(prefix, path) {
+  if (prefix === path) return true;
+  const withSlash = prefix.endsWith('/') ? prefix : `${prefix}/`;
+  return path.startsWith(withSlash);
+}
+
+// Given any project path, find the enclosing worktree-root entry: the
+// longest registered key with `worktreeRoot: true` that is a path-segment
+// prefix of the given path. A monorepo has several app dirs (tlon-mobile,
+// tlon-web, tlon-desktop) registered under the same worktree, so this walks
+// up by matching against every registered key rather than guessing one app
+// dir at `worktree create` time. Returns the registered key, or null.
+export function findEnclosingWorktreeRoot(projectPath) {
+  const cfg = loadConfig();
+  if (!cfg?.projects) return null;
+  let best = null;
+  for (const [path, proj] of Object.entries(cfg.projects)) {
+    if (!proj?.worktreeRoot) continue;
+    if (!isPathPrefix(path, projectPath)) continue;
+    if (!best || path.length > best.length) best = path;
+  }
+  return best;
+}
+
+export function getSetupStatus(projectPath) {
+  const own = getProject(projectPath)?.setup;
+  if (own) return own;
+  const rootPath = findEnclosingWorktreeRoot(projectPath);
+  if (!rootPath || rootPath === projectPath) return null;
+  return getProject(rootPath)?.setup || null;
 }
 
 export function allMetroPorts() {
@@ -168,55 +264,28 @@ export function findProjectByMetroPort(port) {
   return null;
 }
 
-export function allClaimedDevices() {
+// Ownership (not claims/reservations) is the model now: `up` records a
+// device directly on the owning project. The only thing that still needs a
+// cross-project view is avoiding console-port / physical-serial collisions
+// when creating a new owned Android device.
+export function allConsolePortsAndSerials() {
   const cfg = loadConfig();
   const result = {
-    iosUdids: [],
-    androidAvds: [],
     androidConsolePorts: [],
     androidPhysicalSerials: [],
-    // iosClaims: udid -> { label, path }. androidClaims: consolePort ->
-    // { label, path, avdName }. androidClaimsByAvd: avdName -> { label,
-    // path, consolePort }. androidPhysicalClaimsBySerial: serial ->
-    // { label, path }. `path` is the absolute project path so take-over
-    // flows can call clearDevice on the owning project.
-    iosClaims: {},
-    androidClaims: {},
-    androidClaimsByAvd: {},
-    androidPhysicalClaimsBySerial: {},
   };
   if (!cfg) return result;
   for (const [path, proj] of Object.entries(cfg.projects || {})) {
-    // Claims from project paths that no longer exist on disk are orphaned --
-    // nothing can ever run from a deleted worktree again -- so pickers treat
-    // those devices as free. `prune` removes the dead entries themselves.
+    // Entries from project paths that no longer exist on disk are orphaned --
+    // nothing can ever run from a deleted worktree again -- so their ports
+    // and serials are free to reuse. `prune` removes the dead entries.
     if (!existsSync(path)) continue;
-    const label = path.split('/').pop() || path;
-    const ios = proj.platforms?.ios;
-    if (ios?.deviceUdid) {
-      result.iosUdids.push(ios.deviceUdid);
-      result.iosClaims[ios.deviceUdid] = { label, path };
-    }
     const android = proj.platforms?.android;
-    if (android?.avdName) {
-      result.androidAvds.push(android.avdName);
-      result.androidClaimsByAvd[android.avdName] = {
-        label,
-        path,
-        consolePort: android.consolePort,
-      };
-    }
     if (typeof android?.consolePort === 'number') {
       result.androidConsolePorts.push(android.consolePort);
-      result.androidClaims[android.consolePort] = {
-        label,
-        path,
-        avdName: android.avdName,
-      };
     }
     if (android?.serial && !android.avdName) {
       result.androidPhysicalSerials.push(android.serial);
-      result.androidPhysicalClaimsBySerial[android.serial] = { label, path };
     }
   }
   return result;
@@ -236,17 +305,4 @@ export function pruneDeadProjects() {
   }
   if (removed.length) saveConfig(cfg);
   return removed;
-}
-
-export function recordSimUsage(platform, identifier) {
-  if (platform !== 'ios' && platform !== 'android') return;
-  const cfg = ensureConfig();
-  cfg.simUsage = cfg.simUsage || { ios: {}, android: {} };
-  cfg.simUsage[platform][identifier] = (cfg.simUsage[platform][identifier] || 0) + 1;
-  saveConfig(cfg);
-}
-
-export function getSimUsage() {
-  const cfg = loadConfig();
-  return cfg?.simUsage || { ios: {}, android: {} };
 }

@@ -39,11 +39,38 @@ beforeEach(() => {
     return true;
   };
 
-  // Capture exec invocations.
+  // Capture exec invocations. The list command answers with a device set
+  // naming the owned fixtures rn-iso-* so the ownership probe verifies
+  // them; the probe fails CLOSED on an unanswerable list, so a bare ''
+  // here would silently skip every shutdown.
   execCalls = [];
+  const listJson = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+        { udid: 'UDID-ABC', name: 'rn-iso-projA', state: 'Booted', isAvailable: true },
+        { udid: 'UDID-OCC', name: 'rn-iso-occ', state: 'Booted', isAvailable: true },
+      ],
+    },
+  });
+  // Android identity fixture: a live emulator on port 5556 that genuinely
+  // identifies (via `adb emu avd name`) as rn-iso-projB -- the owned AVD
+  // used by the default test fixtures below.
   setExecutor({
-    run(cmd) { execCalls.push({ kind: 'run', cmd }); return ''; },
-    runQuiet(cmd) { execCalls.push({ kind: 'runQuiet', cmd }); return null; },
+    run(cmd) {
+      execCalls.push({ kind: 'run', cmd });
+      if (cmd.includes('simctl list devices --json')) return listJson;
+      if (cmd === 'emulator -list-avds') return 'rn-iso-projB\n';
+      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\tdevice\n';
+      return '';
+    },
+    runQuiet(cmd) {
+      execCalls.push({ kind: 'runQuiet', cmd });
+      if (cmd.includes('simctl list devices --json')) return listJson;
+      if (cmd === 'emulator -list-avds') return 'rn-iso-projB\n';
+      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\tdevice\n';
+      if (/adb -s emulator-5556 emu avd name/.test(cmd)) return 'rn-iso-projB\nOK';
+      return null;
+    },
     spawn() { throw new Error('spawn should not be called from shutdown'); },
   });
 });
@@ -68,12 +95,12 @@ test('shutdown kills Metros, shuts down sims/emulators, clears assignments', asy
       '/proj/a': {
         metroPort: 8083,
         metroPid: 11111,
-        platforms: { ios: { deviceUdid: 'UDID-ABC' } },
+        platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
       },
       '/proj/b': {
         metroPort: 8084,
         metroPid: 22222,
-        platforms: { android: { avdName: 'Pixel_6_API_34', consolePort: 5556 } },
+        platforms: { android: { avdName: 'rn-iso-projB', consolePort: 5556, owned: true } },
       },
     },
   });
@@ -92,25 +119,27 @@ test('shutdown kills Metros, shuts down sims/emulators, clears assignments', asy
   assert.equal(adbCalls.length, 1);
   assert.match(adbCalls[0].cmd, /emulator-5556/);
 
-  // Config: metroPid cleared, platforms emptied. Project entries themselves
-  // remain so labels / metroPort allocations survive a restart.
+  // Config: metroPid cleared. Owned device records are LEFT IN PLACE --
+  // shutdown never deletes, so the device still exists and is still ours;
+  // clearing the record would orphan it for the next gc --delete and force
+  // `up` to build a brand-new device instead of reusing this one.
   const cfg = loadConfig();
   assert.equal(cfg.projects['/proj/a'].metroPid, null);
   assert.equal(cfg.projects['/proj/a'].metroPort, 8083);
-  assert.equal(cfg.projects['/proj/a'].platforms.ios, undefined);
+  assert.deepEqual(cfg.projects['/proj/a'].platforms.ios, { deviceUdid: 'UDID-ABC', owned: true });
   assert.equal(cfg.projects['/proj/b'].metroPid, null);
   assert.equal(cfg.projects['/proj/b'].metroPort, 8084);
-  assert.equal(cfg.projects['/proj/b'].platforms.android, undefined);
+  assert.deepEqual(cfg.projects['/proj/b'].platforms.android, { avdName: 'rn-iso-projB', consolePort: 5556, owned: true });
 });
 
-test('shutdown --keep-sims kills Metros but leaves sims booted (still clears assignments)', async () => {
+test('shutdown --keep-sims kills Metros, leaves sims booted, and does not clear the owned assignment', async () => {
   saveConfig({
     version: 1,
     projects: {
       '/proj/a': {
         metroPort: 8083,
         metroPid: 11111,
-        platforms: { ios: { deviceUdid: 'UDID-ABC' } },
+        platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
       },
     },
   });
@@ -125,9 +154,9 @@ test('shutdown --keep-sims kills Metros but leaves sims booted (still clears ass
   assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 0);
   assert.equal(execCalls.filter(c => c.cmd.includes('emu kill')).length, 0);
 
-  // Assignments still cleared.
+  // Owned assignment stays recorded (never cleared by shutdown).
   const cfg = loadConfig();
-  assert.equal(cfg.projects['/proj/a'].platforms.ios, undefined);
+  assert.deepEqual(cfg.projects['/proj/a'].platforms.ios, { deviceUdid: 'UDID-ABC', owned: true });
 });
 
 test('shutdown is a no-op when nothing is tracked', async () => {
@@ -145,13 +174,13 @@ test('shutdown <target> scopes to a single project (by label) and leaves the oth
         label: 'agent-1',
         metroPort: 8083,
         metroPid: 11111,
-        platforms: { ios: { deviceUdid: 'UDID-ABC' } },
+        platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
       },
       '/proj/b': {
         label: 'agent-2',
         metroPort: 8084,
         metroPid: 22222,
-        platforms: { android: { avdName: 'Pixel_6_API_34', consolePort: 5556 } },
+        platforms: { android: { avdName: 'Pixel_6_API_34', consolePort: 5556, owned: true } },
       },
     },
   });
@@ -166,15 +195,112 @@ test('shutdown <target> scopes to a single project (by label) and leaves the oth
   assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 1);
   assert.equal(execCalls.filter(c => c.cmd.includes('emu kill')).length, 0);
 
-  // proj/a is cleaned; proj/b is intact.
+  // proj/a's Metro is cleaned but its owned record stays (shutdown never
+  // deletes); proj/b is untouched entirely.
   const cfg = loadConfig();
   assert.equal(cfg.projects['/proj/a'].metroPid, null);
-  assert.equal(cfg.projects['/proj/a'].platforms.ios, undefined);
+  assert.deepEqual(cfg.projects['/proj/a'].platforms.ios, { deviceUdid: 'UDID-ABC', owned: true });
   assert.equal(cfg.projects['/proj/b'].metroPid, 22222);
   assert.deepEqual(cfg.projects['/proj/b'].platforms.android, {
     avdName: 'Pixel_6_API_34',
     consolePort: 5556,
+    owned: true,
   });
+});
+
+test('shutdown skips a legacy (non-owned) device and reports it, without issuing simctl shutdown', async () => {
+  saveConfig({
+    version: 1,
+    projects: {
+      '/proj/a': {
+        metroPort: 8083,
+        metroPid: 11111,
+        // owned absent -- rn-iso did not create this sim and must never
+        // shut it down, even though a claim for it is recorded.
+        platforms: { ios: { deviceUdid: 'UDID-LEGACY' } },
+      },
+    },
+  });
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(msg);
+  try {
+    await runShutdown(['--yes']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 0);
+  assert.ok(logs.some(l => /Skipped ios device UDID-LEGACY/.test(l)));
+
+  // Assignment is still cleared even though the device itself was untouched.
+  const cfg = loadConfig();
+  assert.equal(cfg.projects['/proj/a'].platforms.ios, undefined);
+});
+
+test('shutdown skips an occupied owned iOS sim and reports it, without issuing simctl shutdown', async () => {
+  saveConfig({
+    version: 1,
+    projects: {
+      '/proj/a': {
+        metroPort: 8083,
+        metroPid: 11111,
+        platforms: { ios: { deviceUdid: 'UDID-OCC', owned: true } },
+      },
+    },
+  });
+
+  // A foreign .xctrunner UI-test runner is attached -- isSimOccupied must
+  // report true, and shutdown must leave the sim alone. The ownership
+  // check (resolveOwnedIosSim) now runs before occupancy is probed, so the
+  // live listing must answer here too, naming UDID-OCC as rn-iso-owned.
+  const occListJson = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+        { udid: 'UDID-OCC', name: 'rn-iso-occ', state: 'Booted', isAvailable: true },
+      ],
+    },
+  });
+  setExecutor({
+    run(cmd) {
+      execCalls.push({ kind: 'run', cmd });
+      if (cmd.includes('simctl list devices --json')) return occListJson;
+      return '';
+    },
+    runQuiet(cmd) {
+      execCalls.push({ kind: 'runQuiet', cmd });
+      if (cmd.includes('simctl list devices --json')) return occListJson;
+      if (/simctl spawn UDID-OCC launchctl list/.test(cmd)) {
+        return '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]';
+      }
+      return null;
+    },
+    spawn() { throw new Error('spawn should not be called from shutdown'); },
+  });
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(msg);
+  try {
+    await runShutdown(['--yes']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(execCalls.filter(c => c.cmd.startsWith('xcrun simctl shutdown')).length, 0);
+  assert.ok(logs.some(l => /Skipped ios device/.test(l) && /in use/i.test(l)));
+
+  // Ordering: ownership (the live listing) must be verified BEFORE the
+  // occupancy probe shells at the udid.
+  const listIndex = execCalls.findIndex(c => c.cmd.includes('simctl list devices --json'));
+  const occupancyIndex = execCalls.findIndex(c => c.cmd.includes('launchctl list'));
+  assert.ok(listIndex !== -1 && occupancyIndex !== -1 && listIndex < occupancyIndex);
+
+  // Owned assignment stays recorded -- the sim was left running (occupied),
+  // so the record must still point at it.
+  const cfg = loadConfig();
+  assert.deepEqual(cfg.projects['/proj/a'].platforms.ios, { deviceUdid: 'UDID-OCC', owned: true });
 });
 
 test('shutdown <unknown-target> errors and exits without touching anything', async () => {
@@ -197,4 +323,82 @@ test('shutdown <unknown-target> errors and exits without touching anything', asy
   assert.equal(exitCode, 1);
   assert.equal(killedPids.length, 0);
   assert.equal(execCalls.length, 0);
+});
+
+test('shutdown fails closed when ownership cannot be verified: no simctl shutdown issued', async () => {
+  saveConfig({
+    version: 2,
+    projects: {
+      '/proj/a': { metroPort: 8083, metroPid: null, platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } },
+    },
+  });
+  // Break the ownership probe: the list command now returns garbage, so
+  // resolveOwnedIosSim throws. The probe is the only guard on this path
+  // (no deleteIosSim backstop), so shutdown must SKIP, not proceed.
+  setExecutor({
+    run(cmd) { execCalls.push({ kind: 'run', cmd }); return 'not json'; },
+    runQuiet(cmd) { execCalls.push({ kind: 'runQuiet', cmd }); return 'not json'; },
+    spawn() { throw new Error('spawn should not be called from shutdown'); },
+  });
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(msg);
+  try {
+    await runShutdown(['--yes']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(execCalls.filter(c => c.cmd.includes('simctl shutdown')).length, 0);
+  assert.ok(logs.some(l => /Skipped ios device/.test(l) && /could not be verified/i.test(l)));
+});
+
+// C1 regression: a console port is a slot, not an identity. If the user's
+// own emulator has taken the recorded port (Android Studio also defaults to
+// 5554, the same first-free-even rule rn-iso uses), shutdown must not kill
+// it just because the port number matches our record.
+test('shutdown skips an owned android record whose recorded port is held by a foreign emulator, without issuing emu kill', async () => {
+  saveConfig({
+    version: 2,
+    projects: {
+      '/proj/a': {
+        metroPort: 8083,
+        metroPid: 11111,
+        platforms: { android: { avdName: 'rn-iso-mine', consolePort: 5554, owned: true } },
+      },
+    },
+  });
+  setExecutor({
+    run(cmd) {
+      execCalls.push({ kind: 'run', cmd });
+      if (cmd === 'emulator -list-avds') return 'rn-iso-mine\n';
+      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
+      return '';
+    },
+    runQuiet(cmd) {
+      execCalls.push({ kind: 'runQuiet', cmd });
+      // The live emulator on the recorded port identifies as a DIFFERENT
+      // AVD -- the user's own emulator took the slot rn-iso remembers.
+      if (/adb -s emulator-5554 emu avd name/.test(cmd)) return 'Android_Studio_Default\nOK';
+      return null;
+    },
+    spawn() { throw new Error('spawn should not be called from shutdown'); },
+  });
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(msg);
+  try {
+    await runShutdown(['--yes']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(execCalls.filter(c => c.cmd.includes('emu kill')).length, 0);
+  assert.ok(logs.some(l => /rn-iso-mine/.test(l) && /not currently running/i.test(l)));
+
+  // Owned assignment stays recorded -- the device itself was left alone.
+  const cfg = loadConfig();
+  assert.deepEqual(cfg.projects['/proj/a'].platforms.android, { avdName: 'rn-iso-mine', consolePort: 5554, owned: true });
 });

@@ -1,4 +1,3 @@
-import { randomBytes } from 'crypto';
 import { getExecutor } from '../exec.js';
 
 export function parseSimctlList(jsonOutput) {
@@ -22,8 +21,8 @@ export function parseSimctlList(jsonOutput) {
   return sims;
 }
 
-export function listAllIosSims() {
-  const out = getExecutor().run('xcrun simctl list devices --json');
+export function listAllIosSims({ timeoutMs } = {}) {
+  const out = getExecutor().run('xcrun simctl list devices --json', { timeoutMs });
   return parseSimctlList(out);
 }
 
@@ -41,57 +40,29 @@ export function formatIosLabel(udid) {
   return udid;
 }
 
-export function deviceFamilyRank(name) {
-  if (/^iPhone/i.test(name)) return 0;
-  if (/^iPad/i.test(name)) return 1;
-  return 2;
+// launchctl lines look like:
+//   082a\t0\tUIKitApplication:com.example.app[082a][rb-legacy]
+// A foreign UI-test runner holding the sim is the case we care about. Apple's
+// own system apps are always present and mean nothing.
+export function parseOccupyingApps(launchctlOutput) {
+  if (typeof launchctlOutput !== 'string' || launchctlOutput.length === 0) return [];
+  const ids = [];
+  for (const line of launchctlOutput.split('\n')) {
+    const m = line.match(/UIKitApplication:([^[\s]+)/);
+    if (!m) continue;
+    const bundleId = m[1];
+    if (bundleId.startsWith('com.apple.')) continue;
+    if (!/\.xctrunner$/.test(bundleId)) continue;
+    ids.push(bundleId);
+  }
+  return ids;
 }
 
-export function sortSims(sims, usage = {}) {
-  return [...sims].sort((a, b) => {
-    // 1. Family: iPhones before iPads before others.
-    const fa = deviceFamilyRank(a.name);
-    const fb = deviceFamilyRank(b.name);
-    if (fa !== fb) return fa - fb;
-    // 2. State: booted before shutdown (within the same family), so an
-    // already-running sim is reused instead of booting another.
-    if (a.state === 'Booted' && b.state !== 'Booted') return -1;
-    if (b.state === 'Booted' && a.state !== 'Booted') return 1;
-    // 3. Runtime version: newest iOS runtime first, so --auto and agent
-    // selection prefer the latest installed runtime over older ones.
-    const va = parseRuntimeVersion(a.runtime);
-    const vb = parseRuntimeVersion(b.runtime);
-    if (va !== vb) return vb.localeCompare(va, undefined, { numeric: true });
-    // 4. Usage count: descending (frequently picked sims float up).
-    const ua = usage[a.udid] || 0;
-    const ub = usage[b.udid] || 0;
-    if (ua !== ub) return ub - ua;
-    // 5. Name: stable alphabetical.
-    return a.name.localeCompare(b.name);
-  });
-}
-
-export function selectIosDevice({ existingUdid, claimedUdids, usage = {} }) {
-  const sims = listAllIosSims();
-  const claimed = new Set(claimedUdids);
-
-  if (existingUdid) {
-    const found = sims.find(s => s.udid === existingUdid);
-    if (found) {
-      return { kind: 'reuse', udid: found.udid, name: found.name, state: found.state };
-    }
-  }
-
-  if (sims.length === 0) return { kind: 'noSims' };
-
-  const unclaimed = sims.filter(s => !claimed.has(s.udid));
-  if (unclaimed.length === 0) {
-    // Sims exist but every one is claimed by another project or a
-    // reservation. The picker can offer to steal one; the caller decides.
-    return { kind: 'allClaimed', candidates: sortSims(sims, usage) };
-  }
-
-  return { kind: 'allocate', candidates: sortSims(unclaimed, usage) };
+// Heuristic, and deliberately fails open: if the probe errors we report "not
+// occupied" so a bad probe can never block device selection entirely.
+export function isSimOccupied(udid) {
+  const out = getExecutor().runQuiet(`xcrun simctl spawn ${udid} launchctl list`);
+  return parseOccupyingApps(out).length > 0;
 }
 
 export function parseRuntimeVersion(runtimeId) {
@@ -126,11 +97,95 @@ export function listIosDeviceTypes() {
   }));
 }
 
-export function createIosSim(deviceTypeId, runtimeId) {
-  const suffix = randomBytes(3).toString('hex');
-  const name = `rn-iso-${suffix}`;
-  const out = getExecutor().run(`xcrun simctl create "${name}" "${deviceTypeId}" "${runtimeId}"`);
-  return out.trim();
+// Ranks an iPhone device type name for "newest". Sorting these names with
+// localeCompare is wrong: letters sort after digits, so "iPhone SE (3rd
+// generation)" outranked "iPhone 17 Pro Max" and every default sim on a stock
+// Xcode install spawned as an SE. Generation number first, then the base model
+// ahead of Pro/Pro Max/Plus -- "newest iPhone" means iPhone 17, and the base
+// model is the lightest to boot. Lettered models (SE, Air, X) carry no
+// generation and rank below every numbered one, but stay pickable when they
+// are all that is installed.
+function rankIphone(name) {
+  const gen = /^iPhone\s+(\d+)/i.exec(name);
+  return {
+    gen: gen ? Number(gen[1]) : -1,
+    // Shorter name == plainer variant, so the base model wins its generation.
+    variant: -name.length,
+  };
+}
+
+// Newest iPhone device type on the newest installed runtime, unless the
+// caller pinned either by name. Pure: takes the listings as data.
+export function pickDefaultIosCreation(deviceTypes, runtimes, { deviceType, runtime } = {}) {
+  const rts = [...runtimes].sort((a, b) =>
+    String(b.version).localeCompare(String(a.version), undefined, { numeric: true }));
+  const wantedRts = runtime
+    ? rts.filter(r => r.version === runtime || r.name.endsWith(runtime))
+    : rts;
+  for (const rt of wantedRts) {
+    const supported = (rt.supportedDeviceTypes || []).filter(d =>
+      deviceType ? d.name === deviceType : /^iPhone/i.test(d.name));
+    if (supported.length === 0) continue;
+    const best = [...supported].sort((a, b) => {
+      const ra = rankIphone(a.name), rb = rankIphone(b.name);
+      return (rb.gen - ra.gen)
+        || (rb.variant - ra.variant)
+        || b.name.localeCompare(a.name, undefined, { numeric: true });
+    })[0];
+    return { deviceTypeId: best.identifier, runtimeId: rt.identifier };
+  }
+  return null;
+}
+
+export function sanitizeDeviceLabel(label) {
+  return String(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+export function createOwnedIosSim(label, { deviceType, runtime } = {}) {
+  const pick = pickDefaultIosCreation(listIosDeviceTypes(), listIosRuntimes(), { deviceType, runtime });
+  if (!pick) {
+    throw new Error('No matching simulator device type / runtime is installed. Install one via Xcode, or pass --device-type / --runtime.');
+  }
+  const name = `rn-iso-${sanitizeDeviceLabel(label)}`;
+  const udid = getExecutor()
+    .run(`xcrun simctl create "${name}" "${pick.deviceTypeId}" "${pick.runtimeId}"`)
+    .trim();
+  return { udid, name };
+}
+
+// Resolves a udid against the live sim list ONCE, before any destructive
+// command (shutdown or delete) is issued at it. Ownership is decided purely
+// by the "rn-iso-" name prefix -- the same rule deleteIosSim enforces -- so
+// a caller can verify ownership up front instead of discovering it only
+// after shutdownIosSim has already been fired at someone's real simulator.
+// Three outcomes:
+//   { sim }             found, and named like an rn-iso sim: safe to touch.
+//   { missing: true }   no sim with this udid exists (already gone, or a
+//                       stale/mistyped record) -- the honest already-gone
+//                       path, not an error.
+//   { notOwned: name }  found, but not rn-iso-owned by name (user renamed
+//                       it, or the record is stale/wrong) -- must be
+//                       reported as a skip, never shut down or deleted.
+export function resolveOwnedIosSim(udid) {
+  const sim = listAllIosSims().find(s => s.udid === udid);
+  if (!sim) return { missing: true };
+  if (!sim.name?.startsWith('rn-iso-')) return { notOwned: sim.name };
+  return { sim };
+}
+
+// Defense in depth: deletion must only ever reach a sim rn-iso created
+// itself. A future caller bug (wrong record, stale udid) must not be able
+// to delete a user's real simulator. Idempotent: a udid that is already
+// gone is a no-op, not an error. This is the backstop -- callers that shut
+// a sim down first should verify ownership via resolveOwnedIosSim before
+// that shutdown, not rely on this guard alone.
+export function deleteIosSim(udid) {
+  const result = resolveOwnedIosSim(udid);
+  if (result.missing) return;
+  if (result.notOwned) {
+    throw new Error(`Refusing to delete simulator "${result.notOwned}" (${udid}): not an rn-iso-owned sim (name must start with "rn-iso-").`);
+  }
+  getExecutor().runQuiet(`xcrun simctl delete ${udid}`);
 }
 
 export function listIosRuntimes() {
