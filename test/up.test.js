@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { createServer } from 'http';
 import { buildFacts, registerUp } from '../src/commands/up.js';
+import { isMetroRunning } from '../src/ports.js';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { upsertProject, setDevice, getProject } from '../src/config.js';
 
@@ -26,13 +27,13 @@ test('buildFacts shapes the ios payload', () => {
     platform: 'ios',
     device: { deviceUdid: 'U1', owned: true, deviceName: 'rn-iso-app' },
     port: 8082,
-    metro: { pid: 12, healthy: true, log: '/l.log' },
+    metro: { healthy: true },
     bundleId: 'com.app',
     setup: { complete: true, commands: [] },
   });
   assert.deepEqual(facts, {
     platform: 'ios', udid: 'U1', owned: true, deviceName: 'rn-iso-app',
-    metroPort: 8082, metroPid: 12, metroHealthy: true, metroLog: '/l.log',
+    metroPort: 8082, metroHealthy: true,
     bundleId: 'com.app', setup: { complete: true, commands: [] },
   });
 });
@@ -293,7 +294,7 @@ test('action: --json prints exactly one parseable stdout line matching buildFact
   assert.equal(facts.owned, true);
   assert.match(facts.deviceName, /^rn-iso-/);
   assert.equal(typeof facts.metroPort, 'number');
-  assert.equal(facts.metroHealthy, true);
+  assert.equal(facts.metroHealthy, false, 'up reserves the port but does not start Metro');
   assert.ok(exec.calls.run.some(c => /simctl create/.test(c)));
   assert.ok(exec.calls.run.some(c => /simctl boot/.test(c)));
 });
@@ -359,7 +360,7 @@ test('action: an owned record renamed away from rn-iso- ownership is not booted;
   assert.equal(facts.owned, true);
 });
 
-test('action: a legacy shut-down device is not booted, but Metro is still ensured', async () => {
+test('action: a legacy shut-down device is not booted, and the port is reserved without starting Metro', async () => {
   const root = makeProjectDir();
   upsertProject(root, { bundleId: null, androidPackage: null, isExpo: false });
   setDevice(root, 'ios', { deviceUdid: 'U1' }); // legacy: no `owned: true`
@@ -407,7 +408,7 @@ test('action: a legacy shut-down device is not booted, but Metro is still ensure
   const facts = JSON.parse(logs[0]);
   assert.equal(facts.udid, 'U1');
   assert.equal(facts.owned, false);
-  assert.equal(facts.metroHealthy, true);
+  assert.equal(facts.metroHealthy, false, 'up reserves the port but does not start Metro');
   assert.ok(errs.some(e => /shut down|not owned|not booted/i.test(String(e))), 'expected a stderr note about the unbooted legacy device');
 });
 
@@ -417,7 +418,7 @@ test('action: a legacy shut-down device is not booted, but Metro is still ensure
 // (wedged root daemon on this machine) the full Android pipeline can be
 // mocked and driven here.
 
-test('action: a legacy AVD not seen by adb is not booted, but Metro is still ensured', async () => {
+test('action: a legacy AVD not seen by adb is not booted, and the port is reserved without starting Metro', async () => {
   const root = makeAndroidProjectDir();
   upsertProject(root, { bundleId: null, androidPackage: 'com.example.scratch', isExpo: false });
   setDevice(root, 'android', { avdName: 'rn-iso-app', consolePort: 5554 }); // legacy: no `owned: true`
@@ -459,7 +460,7 @@ test('action: a legacy AVD not seen by adb is not booted, but Metro is still ens
   assert.equal(facts.avdName, 'rn-iso-app');
   assert.equal(facts.serial, 'emulator-5554');
   assert.equal(facts.owned, false);
-  assert.equal(facts.metroHealthy, true);
+  assert.equal(facts.metroHealthy, false, 'up reserves the port but does not start Metro');
   assert.ok(errs.some(e => /not owned/i.test(String(e))), 'expected a stderr note about the unbooted legacy AVD');
   assert.ok(errs.some(e => /skipping adb reverse/i.test(String(e))), 'expected a stderr note skipping adb reverse');
 });
@@ -538,7 +539,7 @@ test('action: fresh project creates and records an owned AVD before boot, then r
   assert.equal(facts.consolePort, 5554);
   assert.match(facts.avdName, /^rn-iso-/);
   assert.equal(facts.bundleId, 'com.example.scratch');
-  assert.equal(facts.metroHealthy, true);
+  assert.equal(facts.metroHealthy, false, 'up reserves the port but does not start Metro');
 });
 
 // I6: an owned Android record must be reused by verifying the running
@@ -713,4 +714,61 @@ test('action: creating an AVD that already exists AND is owned by another projec
   assert.ok(errs.some(e => /already exists and is owned by another project/i.test(String(e)) && /--label/.test(String(e))));
   // The AVD was never adopted for this project.
   assert.equal(getProject(root)?.platforms?.android, undefined);
+});
+
+test('buildFacts no longer reports metroPid or metroLog', () => {
+  const facts = buildFacts({
+    platform: 'ios',
+    device: { owned: true, deviceUdid: 'ABC', deviceName: 'rn-iso-x' },
+    port: 8082,
+    metro: { healthy: false },
+    bundleId: 'io.example.app',
+    setup: null,
+  });
+  assert.equal(facts.metroPort, 8082);
+  assert.equal(facts.metroHealthy, false);
+  assert.equal('metroPid' in facts, false);
+  assert.equal('metroLog' in facts, false);
+});
+
+test('buildFacts reports metroHealthy true when the probe found Metro', () => {
+  const facts = buildFacts({
+    platform: 'ios',
+    device: { owned: true, deviceUdid: 'ABC' },
+    port: 8082,
+    metro: { healthy: true },
+    bundleId: null,
+    setup: null,
+  });
+  assert.equal(facts.metroHealthy, true);
+});
+
+// The assertions above pin "up does not start Metro". This pins the other half
+// of the contract: when the agent HAS started Metro on the reserved port, up
+// reports it healthy. Uses a real listener, since metroHealthy is a real
+// /status request.
+test('action: up reports metroHealthy true when a real Metro is already on the reserved port', async () => {
+  const { createServer } = await import('node:http');
+  const port = 8137;
+  const server = createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('packager-status:running');
+  });
+  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+  try {
+    const healthy = await isMetroRunning(port);
+    assert.equal(healthy, true, 'sanity: the probe must see the real listener');
+    const facts = buildFacts({
+      platform: 'ios',
+      device: { owned: true, deviceUdid: 'U1' },
+      port,
+      metro: { healthy },
+      bundleId: null,
+      setup: null,
+    });
+    assert.equal(facts.metroHealthy, true);
+    assert.equal(facts.metroPort, port);
+  } finally {
+    server.close();
+  }
 });

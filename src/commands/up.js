@@ -17,8 +17,7 @@ import {
   allConsolePortsAndSerials,
   loadConfig,
 } from '../config.js';
-import { allocatePort } from '../ports.js';
-import { ensureMetro, logFileFor, findPidListeningOnPort } from '../metro.js';
+import { allocatePort, isMetroRunning } from '../ports.js';
 import { createOwnedIosSim, bootIosSim, listAllIosSims, resolveOwnedIosSim } from '../sim/ios.js';
 import {
   createOwnedAvd,
@@ -110,18 +109,17 @@ export function registerUp(program) {
       let port = proj.metroPort;
       if (!port) {
         port = await allocatePort(root);
-        setMetro(root, port, null);
+        setMetro(root, port);
       }
 
-      const metroResult = await ensureMetro({ projectPath: root, isExpo, port });
-      if (!metroResult.alreadyRunning) {
-        setMetro(root, port, metroResult.pid);
-        out(chalk.dim(`Metro started detached (pid ${metroResult.pid}, port ${port})`));
+      // rn-iso reserves the port but does not start Metro: which bundler
+      // command a project needs is project-specific judgment, the same reason
+      // the build wrappers were removed. Report what is actually there.
+      const metroHealthy = await isMetroRunning(port);
+      if (metroHealthy) {
+        out(chalk.dim(`Metro already running on port ${port}`));
       } else {
-        out(chalk.dim(`Metro port: ${port} (already running)`));
-      }
-      if (!metroResult.ready) {
-        note(chalk.yellow(`Warning: Metro on port ${port} did not report ready.`));
+        out(chalk.dim(`Metro port reserved: ${port} (not running -- start it yourself)`));
       }
 
       if (platform === 'android') {
@@ -138,12 +136,7 @@ export function registerUp(program) {
         }
       }
 
-      const metroPid = metroResult.pid ?? findPidListeningOnPort(port);
-      const metro = {
-        pid: metroPid,
-        healthy: metroResult.ready,
-        log: logFileFor(root),
-      };
+      const metro = { healthy: metroHealthy };
       const setup = getSetupStatus(root);
 
       const payloadBundleId = platform === 'android' ? androidPackage : bundleId;
@@ -365,9 +358,7 @@ export function buildFacts({ platform, device, port, metro, bundleId, setup }) {
     platform,
     owned: Boolean(device.owned),
     metroPort: port,
-    metroPid: metro.pid ?? null,
     metroHealthy: Boolean(metro.healthy),
-    metroLog: metro.log ?? null,
     bundleId: bundleId ?? null,
     setup: setup ?? null,
   };

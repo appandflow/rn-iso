@@ -3,7 +3,6 @@ import chalk from 'chalk';
 import { findProjectRoot } from '../project.js';
 import { getProject } from '../config.js';
 import { isMetroRunning } from '../ports.js';
-import { logFileFor } from '../metro.js';
 
 export default function deviceCommand(program) {
   program
@@ -33,9 +32,7 @@ export default function deviceCommand(program) {
         // (metroHealthy pings /status) and find the log without guessing paths.
         const metro = {
           metroPort: proj.metroPort,
-          metroPid: proj.metroPid ?? null,
           metroHealthy: proj.metroPort ? await isMetroRunning(proj.metroPort) : false,
-          metroLog: logFileFor(root),
         };
         let payload;
         if (opts.platform === 'ios') {

@@ -2,7 +2,6 @@
 import chalk from 'chalk';
 import { getSetupStatus, loadConfig } from '../config.js';
 import { isMetroRunning } from '../ports.js';
-import { isPidAlive, logFileExists } from '../metro.js';
 import { findProjectRoot, projectShortcut } from '../project.js';
 import { listAllIosSims } from '../sim/ios.js';
 
@@ -37,13 +36,8 @@ export default function statusCommand(program) {
 
         if (proj.metroPort) {
           const running = await isMetroRunning(proj.metroPort);
-          const pidLive = isPidAlive(proj.metroPid);
-          const label = running
-            ? chalk.green('running')
-            : pidLive ? chalk.yellow('pid alive but not responding') : chalk.dim('stopped');
-          console.log(`  metro: port ${proj.metroPort} pid ${proj.metroPid ?? '?'} (${label})`);
-          const log = logFileExists(path);
-          if (log) console.log(chalk.dim(`  log: ${log}`));
+          const label = running ? chalk.green('running') : chalk.dim('not running');
+          console.log(`  metro: port ${proj.metroPort} (${label})`);
         } else {
           console.log(chalk.dim('  metro: unassigned'));
         }

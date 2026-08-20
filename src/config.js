@@ -59,7 +59,6 @@ export function upsertProject(projectPath, fields) {
   const cfg = ensureConfig();
   const existing = cfg.projects[projectPath] || {
     metroPort: null,
-    metroPid: null,
     platforms: {},
   };
   cfg.projects[projectPath] = {
@@ -77,13 +76,12 @@ export function removeProject(projectPath) {
   saveConfig(cfg);
 }
 
-export function setMetro(projectPath, metroPort, metroPid) {
+export function setMetro(projectPath, metroPort) {
   const cfg = ensureConfig();
   if (!cfg.projects[projectPath]) {
     throw new Error(`Project not registered: ${projectPath}`);
   }
   cfg.projects[projectPath].metroPort = metroPort;
-  cfg.projects[projectPath].metroPid = metroPid;
   saveConfig(cfg);
 }
 
@@ -208,7 +206,7 @@ function deleteNested(obj, dottedKey) {
 export function setSetupStatus(projectPath, status) {
   const cfg = ensureConfig();
   if (!cfg.projects[projectPath]) {
-    cfg.projects[projectPath] = { metroPort: null, metroPid: null, platforms: {} };
+    cfg.projects[projectPath] = { metroPort: null, platforms: {} };
   }
   cfg.projects[projectPath].setup = status;
   saveConfig(cfg);

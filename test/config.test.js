@@ -79,12 +79,11 @@ test('upsertProject creates a new project entry with defaults', () => {
 
 test('upsertProject preserves existing fields when called again', () => {
   upsertProject('/p', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  setMetro('/p', 8082, 12345);
+  setMetro('/p', 8082);
   upsertProject('/p', { bundleId: 'com.b', androidPackage: 'com.b', isExpo: false });
   const proj = getProject('/p');
   assert.equal(proj.bundleId, 'com.b');
   assert.equal(proj.metroPort, 8082);
-  assert.equal(proj.metroPid, 12345);
 });
 
 test('setDevice and clearDevice mutate platforms', () => {
