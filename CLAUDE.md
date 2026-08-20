@@ -40,12 +40,10 @@ State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
 bin/cli.js              # commander entry, registers each command module
 src/
   exec.js               # mockable child_process wrapper
-  config.js             # config CRUD, device records, setup status
+  config.js             # config CRUD, device records, layered settings
   settings.js           # layered settings resolution (project > repo > committed .rn-iso.json)
   project.js            # project root walk, bundle-id detection (incl. native fallbacks), shortcut resolution
   ports.js              # Metro port allocation + reclamation
-  runner.js             # package-manager detection (walks up for monorepos); survives solely
-                         # as the worktree install-pipeline default now that build dispatch is gone
   metro.js              # port-to-process identity (resolveProjectMetro) and group killing
   worktree.js           # git worktree add/remove/list, base-ref resolution, carry-over
   artifacts.js          # Xcode DerivedData discovery/classification, mounted-volume detection
@@ -118,7 +116,7 @@ command, and never touch a device rn-iso didn't create.
 then prints the facts (`buildFacts`) and stops. It never runs `expo
 run:ios` / `react-native run-android` or any equivalent, never installs an
 app, and never launches one. That judgment — which script, which CLI,
-which flags a given project needs — used to live in rn-iso (`runner.js`'s
+which flags a given project needs — used to live in rn-iso (the deleted `runner.js`'s
 build dispatch, deleted) and was a maintenance burden that kept getting
 project idiosyncrasies wrong; a coding agent has that judgment natively
 from reading the repo, so the build step was handed to the caller
@@ -128,7 +126,13 @@ CLI's rough edge), don't — that belongs in the agent's own build
 invocation or upstream in the build CLI, not in the broker. `up`'s only
 job is: device ensured, port reserved, facts printed.
 
-As of 0.8.0 this extends to Metro. rn-iso reserves the port -- a genuinely
+As of 0.8.0 this extends to Metro, and as of 0.9.0 the principle has NO
+exceptions left: `worktree create` no longer runs an install pipeline either
+(`runner.js` and the whole setup-status concept went with it). Deciding a
+repo's setup commands -- a plain install, a workspace filter, a codegen step
+after it -- is the same judgment call as choosing a build or bundler command.
+
+On Metro specifically: rn-iso reserves the port -- a genuinely
 contended, cross-project resource that only a broker can arbitrate -- but no
 longer spawns the bundler, because choosing its command line is the same
 project-specific judgment that made build dispatch untenable. The concrete
