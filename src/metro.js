@@ -178,3 +178,23 @@ export async function resolveProjectMetro(port, projectPath, { probe = isMetroRu
   const leader = processGroupLeader(pid) ?? pid;
   return { metro: { pid, leader, cwd } };
 }
+
+// Kills the process GROUP. lsof reports whoever holds the socket, which for a
+// bundler started through a package manager is the node child, not the wrapper
+// (observed on member-app: `npm exec react-native start` as pid 59806 with the
+// node child 59914 actually holding the port). Killing only the listener
+// orphans the wrapper.
+export function killMetroTree(leader) {
+  if (!leader) return false;
+  try {
+    process.kill(-leader, 'SIGTERM');
+    return true;
+  } catch {
+    try {
+      process.kill(leader, 'SIGTERM');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}

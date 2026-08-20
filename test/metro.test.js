@@ -11,7 +11,12 @@ import {
   parsePsPgid,
   isInsideProject,
   resolveProjectMetro,
+  killMetroTree,
 } from '../src/metro.js';
+import { spawn as realSpawn } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 afterEach(() => resetExecutor());
 
@@ -125,4 +130,80 @@ test('resolveProjectMetro identifies our Metro and reports its group leader', as
   assert.equal(r.metro.pid, 59914);
   assert.equal(r.metro.leader, 59806);
   resetExecutor();
+});
+
+test('killMetroTree signals the process group, not just the pid', () => {
+  const signalled = [];
+  const origKill = process.kill;
+  process.kill = (pid, sig) => { signalled.push([pid, sig]); };
+  try {
+    assert.equal(killMetroTree(59806), true);
+    assert.deepEqual(signalled[0], [-59806, 'SIGTERM']);
+  } finally {
+    process.kill = origKill;
+  }
+});
+
+test('killMetroTree falls back to the bare pid when the group is gone', () => {
+  const signalled = [];
+  const origKill = process.kill;
+  process.kill = (pid, sig) => {
+    if (pid < 0) throw new Error('ESRCH');
+    signalled.push([pid, sig]);
+  };
+  try {
+    assert.equal(killMetroTree(59806), true);
+    assert.deepEqual(signalled[0], [59806, 'SIGTERM']);
+  } finally {
+    process.kill = origKill;
+  }
+});
+
+test('killMetroTree reports false when nothing could be signalled', () => {
+  const origKill = process.kill;
+  process.kill = () => { throw new Error('ESRCH'); };
+  try {
+    assert.equal(killMetroTree(1234567), false);
+  } finally {
+    process.kill = origKill;
+  }
+});
+
+// The whole feature is real lsof/ps/kill behavior, and a mocked executor
+// cannot prove those commands are correct. This runs a genuine listener that
+// answers /status exactly like Metro does, from a real directory.
+test('resolveProjectMetro identifies and kills a REAL listening process from the project dir', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rn-iso-metro-'));
+  const port = 8099;
+  const script = join(dir, 'fake-metro.js');
+  writeFileSync(script, `
+    const http = require('http');
+    http.createServer((req, res) => res.end('packager-status:running'))
+        .listen(${port}, '127.0.0.1');
+  `);
+  const child = realSpawn(process.execPath, [script], { cwd: dir, detached: true, stdio: 'ignore' });
+  child.unref();
+  try {
+    for (let i = 0; i < 40; i++) {
+      if (await isMetroRunning(port)) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const ours = await resolveProjectMetro(port, dir);
+    assert.ok(ours.metro, `expected identification, got ${JSON.stringify(ours)}`);
+    assert.equal(typeof ours.metro.pid, 'number');
+
+    const foreign = await resolveProjectMetro(port, join(tmpdir(), 'some-other-project'));
+    assert.ok(foreign.notOurs, 'a process outside the project must not be claimed');
+
+    assert.equal(killMetroTree(ours.metro.leader), true);
+    for (let i = 0; i < 40; i++) {
+      if (!(await isMetroRunning(port))) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.equal(await isMetroRunning(port), false, 'real process should be dead');
+  } finally {
+    try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+    try { process.kill(child.pid, 'SIGKILL'); } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
