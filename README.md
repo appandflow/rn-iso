@@ -59,7 +59,7 @@ All commands below take the same `npx rn-iso` prefix.
 |---|---|
 | `up <ios\|android> [--json] [--device-type <name>] [--runtime <ver>] [--system-image <pkg>]` | Ensure an owned device and reserve a Metro port for the current project; print the facts. Never builds, never starts Metro. |
 | `device [--platform ios\|android] [--json]` | Print the current device assignment (no ensure/create side effects). |
-| `stop [<shortcut>\|<path>] [--force]` | Kill this project's Metro, after proving the process on the reserved port is ours. `--force` kills an unidentified listener. No arg = current project. |
+| `stop [<port>\|<shortcut>\|<path>] [--force]` | Kill this project's Metro, after proving the process on the reserved port is ours. `--force` kills an unidentified listener. Pass a port to target it directly; a port no project owns prompts first. No arg = current project. |
 | `status` | Show all projects' device assignments (owned/legacy) and Metro state. |
 | `release [<port>\|<shortcut>\|<path>] [--platform <p>] [--force]` | Free a project's device assignment. Deletes it if owned (see above); clears it if legacy/physical. `--force` deletes even if in use by another tool (iOS only). |
 | `shutdown [<shortcut>\|<path>] [-y] [--keep-sims]` | Kill Metro, shut down (never delete) owned sims/emulators. Owned device records stay recorded so `up` can reuse them; legacy/physical assignments are cleared. No arg = every registered project. |
