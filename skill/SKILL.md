@@ -1,12 +1,12 @@
 ---
 name: rn-iso
-description: Environment broker for isolated React Native / Expo dev environments. Each project (or worktree) gets its own owned simulator/emulator and Metro server, created on demand and reaped on release. Use to spin up a worktree, get a ready device + Metro, and discover which device to target for UI interactions -- rn-iso never runs your build.
+description: Environment broker for isolated React Native / Expo dev environments. Each project (or worktree) gets its own owned simulator/emulator, created on demand and reaped on release, plus a reserved collision-free Metro port. Use to spin up a worktree, get a ready device and port, and discover which device to target for UI interactions -- rn-iso never runs your build and never starts Metro.
 user_invocable: true
 ---
 
 # rn-iso -- Isolated RN Dev Environments
 
-You are an AI agent working on a React Native / Expo project, possibly alongside other agents working on different projects or worktrees. rn-iso is a pure **environment broker**: it creates and owns a dedicated simulator/emulator and Metro server per project, and hands you the facts to build against. It never runs your build -- that's your job, using the project's own tooling.
+You are an AI agent working on a React Native / Expo project, possibly alongside other agents working on different projects or worktrees. rn-iso is a pure **environment broker**: it creates and owns a dedicated simulator/emulator per project and reserves a collision-free Metro port, then hands you the facts to build against. It never runs your build and never starts Metro -- both are your job, using the project's own tooling.
 
 Invoke the CLI via `npx`: `npx rn-iso <command>`. Don't `npm install -g`; `npx` resolves the latest published version.
 

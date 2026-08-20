@@ -56,7 +56,7 @@ src/
     ios.js              # simctl wrappers, owned-sim creation/selection, ownership verification
     android.js          # adb/emulator/avdmanager wrappers, owned-AVD creation/selection
   commands/
-    up.js                 # the broker command: ensure owned device + Metro + port, print facts
+    up.js                 # the broker command: ensure owned device, reserve Metro port, print facts
     device.js              # read-only facts query, no ensure side effects
     stop.js               # kill this project's Metro, identity-verified
     status.js
