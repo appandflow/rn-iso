@@ -2,7 +2,7 @@
 import chalk from 'chalk';
 import { findProjectRoot } from '../project.js';
 import { getProject } from '../config.js';
-import { isMetroRunning } from '../ports.js';
+import { resolveProjectMetro } from '../metro.js';
 
 export default function deviceCommand(program) {
   program
@@ -30,9 +30,15 @@ export default function deviceCommand(program) {
       if (opts.json) {
         // Metro fields let agents verify the bundler is actually serving
         // (metroHealthy pings /status) and find the log without guessing paths.
+        // Same identity proof as `up` and teardown: a bare /status ping would
+        // report a foreign bundler on our reserved port as healthy.
+        const resolution = proj.metroPort
+          ? await resolveProjectMetro(proj.metroPort, root)
+          : { missing: true };
         const metro = {
           metroPort: proj.metroPort,
-          metroHealthy: proj.metroPort ? await isMetroRunning(proj.metroPort) : false,
+          metroHealthy: Boolean(resolution.metro),
+          metroConflict: resolution.notOurs ?? null,
         };
         let payload;
         if (opts.platform === 'ios') {

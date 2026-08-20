@@ -18,7 +18,8 @@ import {
   allConsolePortsAndSerials,
   loadConfig,
 } from '../config.js';
-import { allocatePort, isMetroRunning } from '../ports.js';
+import { allocatePort } from '../ports.js';
+import { resolveProjectMetro } from '../metro.js';
 import { createOwnedIosSim, bootIosSim, listAllIosSims, resolveOwnedIosSim } from '../sim/ios.js';
 import {
   createOwnedAvd,
@@ -116,10 +117,18 @@ export function registerUp(program) {
 
       // rn-iso reserves the port but does not start Metro: which bundler
       // command a project needs is project-specific judgment, the same reason
-      // the build wrappers were removed. Report what is actually there.
-      const metroHealthy = await isMetroRunning(port);
+      // the build wrappers were removed. Report what is actually there, and
+      // prove identity the same way teardown does -- reporting a foreign
+      // listener as "healthy" would send the agent's build at someone else's
+      // bundler, since the build CLIs skip spawning when /status answers.
+      const metroResolution = await resolveProjectMetro(port, root);
+      const metroHealthy = Boolean(metroResolution.metro);
+      const metroConflict = metroResolution.notOurs ?? null;
       if (metroHealthy) {
-        out(chalk.dim(`Metro already running on port ${port}`));
+        out(chalk.dim(`Metro running on port ${port} (verified as this project's)`));
+      } else if (metroConflict) {
+        note(chalk.yellow(`Warning: port ${port} is in use but is NOT this project's Metro: ${metroConflict}.`));
+        note(chalk.dim('Start Metro from inside this project directory, or free the port.'));
       } else {
         out(chalk.dim(`Metro port reserved: ${port} (not running -- start it yourself)`));
       }
@@ -138,7 +147,7 @@ export function registerUp(program) {
         }
       }
 
-      const metro = { healthy: metroHealthy };
+      const metro = { healthy: metroHealthy, conflict: metroConflict };
       const setup = getSetupStatus(root);
 
       const payloadBundleId = platform === 'android' ? androidPackage : bundleId;
@@ -361,6 +370,12 @@ export function buildFacts({ platform, device, port, metro, bundleId, setup }) {
     owned: Boolean(device.owned),
     metroPort: port,
     metroHealthy: Boolean(metro.healthy),
+    // Non-null only when SOMETHING holds the reserved port but could not be
+    // proven to be this project's Metro. metroHealthy alone used to be a bare
+    // /status ping, which meant a foreign bundler on our port read as healthy
+    // and an agent following "poll until healthy, then build" would build
+    // against it. A port is not identity here either.
+    metroConflict: metro.conflict ?? null,
     bundleId: bundleId ?? null,
     setup: setup ?? null,
   };

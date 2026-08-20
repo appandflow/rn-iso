@@ -33,7 +33,7 @@ test('buildFacts shapes the ios payload', () => {
   });
   assert.deepEqual(facts, {
     platform: 'ios', udid: 'U1', owned: true, deviceName: 'rn-iso-app',
-    metroPort: 8082, metroHealthy: true,
+    metroPort: 8082, metroHealthy: true, metroConflict: null,
     bundleId: 'com.app', setup: { complete: true, commands: [] },
   });
 });
@@ -772,4 +772,37 @@ test('action: up reports metroHealthy true when a real Metro is already on the r
   } finally {
     server.close();
   }
+});
+
+// Finding 1: metroHealthy must not treat the port as identity. A foreign
+// listener that answers /status on our reserved port made up report healthy,
+// and SKILL tells agents to build once healthy -- so the agent would have
+// built against someone else's bundler.
+test('buildFacts reports a conflict when something else holds the reserved port', () => {
+  const facts = buildFacts({
+    platform: 'ios',
+    device: { owned: true, deviceUdid: 'U1' },
+    port: 8082,
+    metro: { healthy: false, conflict: 'pid 9 on port 8082 runs from /elsewhere, outside /p' },
+    bundleId: null,
+    setup: null,
+  });
+  assert.equal(facts.metroHealthy, false);
+  assert.match(facts.metroConflict, /elsewhere/);
+});
+
+test('buildFacts reports metroConflict null when the port is ours or free', () => {
+  const ours = buildFacts({
+    platform: 'ios', device: { owned: true, deviceUdid: 'U1' }, port: 8082,
+    metro: { healthy: true }, bundleId: null, setup: null,
+  });
+  assert.equal(ours.metroHealthy, true);
+  assert.equal(ours.metroConflict, null);
+
+  const free = buildFacts({
+    platform: 'ios', device: { owned: true, deviceUdid: 'U1' }, port: 8082,
+    metro: { healthy: false }, bundleId: null, setup: null,
+  });
+  assert.equal(free.metroHealthy, false);
+  assert.equal(free.metroConflict, null);
 });
