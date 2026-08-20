@@ -72,11 +72,10 @@ test('buildFacts marks a physical android assignment', () => {
 //
 // Real `xcrun simctl` mutation calls (create/boot/delete) cannot be run live
 // on this machine (a wedged root daemon hangs them -- tracked separately),
-// so the full pipeline is driven here with a mocked executor instead. Metro
-// readiness is exercised for real: the mocked `spawn` starts an actual tiny
-// HTTP server on the requested port that answers `/status`, so
-// `ensureMetro`'s real polling (`waitForMetroReady`) resolves quickly
-// instead of needing to fake network calls.
+// so the full pipeline is driven here with a mocked executor instead. `up` no
+// longer starts Metro, so metroHealthy is false throughout these fixtures; the
+// healthy path is pinned separately at the bottom of this file against a real
+// listener, since metroHealthy is a real /status request.
 
 function captureAction(register) {
   let captured;
@@ -132,12 +131,14 @@ function makeAndroidHome() {
   return dir;
 }
 
-// Spawns a real (tiny) HTTP server that answers Metro's /status probe, bound
-// to whatever port the caller (ensureMetro) asked `npx ... start --port N`
-// to use. Returns a fake child handle; the server is closed by the caller.
+// Returns a fake child handle for spawns. rn-iso no longer spawns Metro, so
+// the only spawn reaching here is the Android emulator; the --port branch is
+// kept so a caller that does ask for a port still gets a real /status
+// responder rather than silently getting nothing.
 function fakeMetroSpawn(servers) {
   return (cmd, args) => {
     const idx = args.indexOf('--port');
+    if (idx === -1) return { pid: 4242, unref() {} };
     const port = Number(args[idx + 1]);
     const server = createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/plain' });

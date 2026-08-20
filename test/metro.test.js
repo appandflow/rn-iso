@@ -3,9 +3,6 @@ import assert from 'node:assert/strict';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { isMetroRunning } from '../src/ports.js';
 import {
-  logFileFor,
-  projectHash,
-  buildMetroSpawnArgs,
   parseLsofPids,
   parseLsofCwd,
   parsePsPgid,
@@ -19,41 +16,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 afterEach(() => resetExecutor());
-
-test('projectHash is deterministic and short', () => {
-  const a = projectHash('/foo/bar');
-  const b = projectHash('/foo/bar');
-  const c = projectHash('/foo/baz');
-  assert.equal(a, b);
-  assert.notEqual(a, c);
-  assert.equal(a.length, 12);
-});
-
-test('logFileFor uses RN_ISO_HOME and project hash', () => {
-  process.env.RN_ISO_HOME = '/tmp/test-rn-iso';
-  const path = logFileFor('/some/project');
-  assert.match(path, /^\/tmp\/test-rn-iso\/logs\/[0-9a-f]{12}\.log$/);
-  delete process.env.RN_ISO_HOME;
-});
-
-test('buildMetroSpawnArgs returns correct argv for expo', () => {
-  const { cmd, args } = buildMetroSpawnArgs({ isExpo: true, port: 8083 });
-  assert.equal(cmd, 'npx');
-  assert.deepEqual(args, ['expo', 'start', '--port', '8083']);
-});
-
-test('buildMetroSpawnArgs returns correct argv for bare', () => {
-  const { cmd, args } = buildMetroSpawnArgs({ isExpo: false, port: 8083 });
-  assert.equal(cmd, 'npx');
-  assert.deepEqual(args, ['react-native', 'start', '--port', '8083']);
-});
-
-test('buildMetroSpawnArgs appends extras after base args', () => {
-  const expo = buildMetroSpawnArgs({ isExpo: true, port: 8083, extras: ['--reset-cache'] });
-  assert.deepEqual(expo.args, ['expo', 'start', '--port', '8083', '--reset-cache']);
-  const bare = buildMetroSpawnArgs({ isExpo: false, port: 8083, extras: ['--reset-cache', '--verbose'] });
-  assert.deepEqual(bare.args, ['react-native', 'start', '--port', '8083', '--reset-cache', '--verbose']);
-});
 
 // --- port-to-process identity ------------------------------------------------
 

@@ -1,9 +1,10 @@
 // src/commands/up.js
 //
 // `rn-iso up <platform>` is the broker command: it ensures an OWNED device
-// (creating one if needed), allocates the Metro port, ensures managed
-// Metro, wires adb reverse on Android, and prints the facts. It never runs
-// a build -- the agent runs the project's own build against the facts.
+// (creating one if needed), reserves the Metro port, wires adb reverse on
+// Android, and prints the facts. It never runs a build and never starts
+// Metro -- the agent starts Metro on the reserved port and runs the
+// project's own build against the facts.
 import chalk from 'chalk';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage, projectShortcut } from '../project.js';
 import { gitCommonDir, repoRoot } from '../worktree.js';
@@ -39,8 +40,9 @@ export function registerUp(program) {
   program
     .command('up <platform>')
     .description(
-      'Ensure an owned device, Metro, and port for the current project, and print the facts. ' +
-      'Never runs a build -- run the project\'s own build against the printed facts.'
+      'Ensure an owned device and reserve a Metro port for the current project, and print the facts. ' +
+      'Never runs a build and never starts Metro -- start Metro on the reserved port and run the ' +
+      'project\'s own build against the printed facts.'
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option('--device-type <name>', 'iOS device type to use when creating a new owned sim (e.g. "iPhone 17 Pro")')
@@ -157,8 +159,8 @@ export function registerUp(program) {
 // Ownership rule: never boot, shut down, or destroy a device rn-iso did not
 // create. A legacy record (no `owned: true`) is reused only if it is
 // already live; if it is shut down / not running we do NOT boot it -- we
-// print a note and leave it as-is (Metro and the port are still ensured by
-// the caller). A recorded device that no longer exists at all (deleted sim,
+// print a note and leave it as-is (the port is still reserved by the
+// caller). A recorded device that no longer exists at all (deleted sim,
 // removed AVD) is dropped and falls through to creation.
 export async function ensureOwnedDevice({ platform, project, projectPath, label, settings, flags = {}, note = () => {}, out = () => {} }) {
   const record = project?.platforms?.[platform] || null;
