@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 
 // execSync's default maxBuffer (1 MB) is too small for real output on a
 // large monorepo -- e.g. `git ls-files --others --ignored --exclude-standard`
@@ -21,7 +21,7 @@ const defaultExecutor = {
   run(cmd, { timeoutMs } = {}) {
     const opts = { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: MAX_BUFFER };
     if (timeoutMs) opts.timeout = timeoutMs;
-    return execSync(cmd, opts).trim();
+    return execFileSync('/bin/sh', ['-c', cmd], opts).trim();
   },
   runQuiet(cmd, opts) {
     try {
