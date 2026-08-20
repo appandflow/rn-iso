@@ -6,10 +6,12 @@ Quick orientation for AI assistants working in this repo.
 
 A Node.js CLI that acts as an environment broker for React Native / Expo:
 `rn-iso up <platform>` creates (or reuses) an **owned** simulator/emulator and
-a managed Metro server for the current project (or git worktree), then prints
-the facts — UDID/serial, port, bundle id — so an agent can run the project's
-own build against them. rn-iso itself never builds or installs anything. The
-lifecycle is `worktree create` -> `up <platform> --json` -> agent runs the
+reserves a Metro port for the current project (or git worktree), then prints
+the facts — UDID/serial, port, bundle id — so an agent can start Metro and run
+the project's own build against them. rn-iso itself never builds, installs, or
+starts a bundler. The
+lifecycle is `worktree create` -> `up <platform> --json` -> agent starts Metro
+on the reserved port -> agent runs the
 project's build -> work -> `worktree remove` (which reaps the owned
 device(s) along with the worktree).
 
@@ -44,7 +46,7 @@ src/
   ports.js              # Metro port allocation + reclamation
   runner.js             # package-manager detection (walks up for monorepos); survives solely
                          # as the worktree install-pipeline default now that build dispatch is gone
-  metro.js              # detached Metro spawn, PID + log lifecycle
+  metro.js              # port-to-process identity (resolveProjectMetro) and group killing
   worktree.js           # git worktree add/remove/list, base-ref resolution, carry-over
   artifacts.js          # Xcode DerivedData discovery/classification, mounted-volume detection
   reclaim.js            # shared reclaim-a-project logic (used by prune, gc, worktree remove,
@@ -56,7 +58,7 @@ src/
   commands/
     up.js                 # the broker command: ensure owned device + Metro + port, print facts
     device.js              # read-only facts query, no ensure side effects
-    start.js stop.js logs.js
+    stop.js               # kill this project's Metro, identity-verified
     status.js
     release.js shutdown.js prune.js
     worktree.js          # worktree create/remove/list
@@ -110,9 +112,9 @@ device-selection or device-teardown logic, preserve this rule: create only
 `rn-iso-<label>`-named devices, verify that prefix before any destructive
 command, and never touch a device rn-iso didn't create.
 
-### 3. `up` is a broker, never a build wrapper
+### 3. `up` is a broker, never a build wrapper -- and that now includes Metro
 
-`commands/up.js` ensures an owned device, a Metro port, and managed Metro,
+`commands/up.js` ensures an owned device and reserves a Metro port,
 then prints the facts (`buildFacts`) and stops. It never runs `expo
 run:ios` / `react-native run-android` or any equivalent, never installs an
 app, and never launches one. That judgment — which script, which CLI,
@@ -124,7 +126,18 @@ entirely. If you're tempted to add install/launch/verification logic to
 `up` (e.g. a post-install `xcrun simctl launch` to work around some build
 CLI's rough edge), don't — that belongs in the agent's own build
 invocation or upstream in the build CLI, not in the broker. `up`'s only
-job is: device ready, Metro ready, facts printed.
+job is: device ensured, port reserved, facts printed.
+
+As of 0.8.0 this extends to Metro. rn-iso reserves the port -- a genuinely
+contended, cross-project resource that only a broker can arbitrate -- but no
+longer spawns the bundler, because choosing its command line is the same
+project-specific judgment that made build dispatch untenable. The concrete
+failure that settled it: on `member-app`, whose own start script is
+`react-native start --client-logs`, rn-iso spawned `react-native start --port
+8082` and silently dropped the project's flag. If you are tempted to re-add
+spawning, note that it also never bought what it appeared to: the agent still
+had to pass `--port` to its own build, so a forgotten flag produced a second
+bundler on 8081 either way.
 
 ### 4. Owned-device teardown is centralized and ownership-verified
 

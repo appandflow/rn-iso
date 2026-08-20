@@ -18,33 +18,36 @@ The primary agent flow, start to finish:
 # 1. Create an isolated worktree (skip if you're already in one).
 npx rn-iso worktree create feature-x
 
-# 2. Ensure a ready device + Metro for the platform you're targeting.
+# 2. Ensure a ready device and reserve a Metro port.
 npx rn-iso up ios --json
 # => {"platform":"ios","owned":true,"udid":"ABC-...","deviceName":"rn-iso-feature-x",
-#     "metroPort":8082,"metroPid":12345,"metroHealthy":true,
-#     "metroLog":"~/.rn-iso/logs/<hash>.log","bundleId":"io.tlon.groups",
+#     "metroPort":8082,"metroHealthy":false,"bundleId":"io.tlon.groups",
 #     "setup":{"complete":true,"commands":[]}}
 
-# 3. YOU run the project's own build, targeting the facts from step 2
+# 3. YOU start Metro on the reserved port, in the background, from the
+#    project directory (see "Starting Metro" below).
+npx expo start --port 8082 > /tmp/metro-feature-x.log 2>&1 &
+
+# 4. YOU run the project's own build, targeting the facts from step 2
 #    (see "Common setups" below).
 npx expo run:ios --device ABC-... --port 8082
 
-# 4. Work: interact with the device, iterate, hot-reload.
+# 5. Work: interact with the device, iterate, hot-reload.
 
-# 5. When done, remove the worktree -- this also deletes the owned device(s).
+# 6. When done, remove the worktree -- this also deletes the owned device(s).
 npx rn-iso worktree remove <path>
 ```
 
-`up` **creates the device if none exists yet** (an owned `rn-iso-<label>` sim/AVD), reuses it if one is already recorded, and always ensures Metro is running (managed -- detached, PID-tracked, logged; this is the only mode, there is no flag to opt out). It never installs an app and never invokes a build CLI. Reading `package.json` / the native project to decide how to build is your job, not rn-iso's -- you have that judgment natively from repo context; rn-iso only provisions the resources.
+`up` **creates the device if none exists yet** (an owned `rn-iso-<label>` sim/AVD), reuses it if one is already recorded, and **reserves a Metro port** for the project. It does not start Metro, install an app, or invoke a build CLI. Reading `package.json` / the native project to decide how to build -- and which bundler command to run -- is your job, not rn-iso's; you have that judgment natively from repo context, and rn-iso only provisions the contended resources (the device and the port).
 
 ## The facts contract
 
 - Always get your target device and port from `up --json` or `device --json` -- never hardcode or guess a UDID/serial/port.
 - Always pass them **explicitly** to your build command and to any device-interaction tool (`agent-device`, `xcrun simctl`, `adb -s`, `idb`).
 - Never assume `booted` is your sim, and never call a device verb without an explicit UDID/serial -- another project's simulator may also be booted.
-- `metroHealthy` in the JSON is a live ping of Metro's `/status` endpoint. If it's `false` right after `up`, something is wrong -- check `metroLog` / run `rn-iso logs`.
+- `metroHealthy` in the JSON is a live ping of Metro's `/status` endpoint. It is normally **`false` right after `up`**, because nothing has started Metro yet -- that is expected, not an error. Start Metro yourself, then poll `device --json` until it reports `true` before building.
 - Android's JSON payload uses `serial` / `avdName` / `consolePort` / `kind` (`"emulator"` or `"physical"`) instead of `udid`. Android's `bundleId` field in the facts is the **Android package name**, not the iOS bundle id.
-- `rn-iso device --platform <ios|android> --json` is a read-only, no-ensure/no-create re-check of the current assignment plus Metro state -- use it when you just need to confirm what's already assigned without touching devices or Metro. Its payload is a subset of `up --json`'s: it omits `owned`, `bundleId`, and `setup`, so use `up --json` (or `status`) when you need those fields.
+- `rn-iso device --platform <ios|android> --json` is a read-only, no-ensure/no-create re-check of the current assignment plus Metro state -- use it to poll `metroHealthy` after starting Metro, or to confirm what's already assigned without touching devices. Its payload is a subset of `up --json`'s: it omits `owned`, `bundleId`, and `setup`, so use `up --json` (or `status`) when you need those fields.
 
 ## Common setups reference
 
@@ -59,18 +62,31 @@ npx rn-iso worktree remove <path>
 | Monorepo | run from the app directory (`apps/<app>`), not the repo root |
 | Custom variants/flavors | prefer the project's own script (it bakes in the right flags); append device/port |
 
-Both Expo and the RN CLI probe the target port and skip spawning a second bundler when Metro already answers `/status` -- this is what makes rn-iso's managed-only Metro safe to build against.
+Both Expo and the RN CLI probe the target port and skip spawning a second bundler when Metro already answers `/status` -- which is what makes it safe to start Metro yourself and then build against it.
 
-## Metro rules
+## Starting Metro
 
-- Metro is **always managed by rn-iso** (started by `up`, detached, PID-tracked, logged to a per-project file). Never start your own Metro server, and never pass a flag that makes the build CLI spawn its own bundler.
-- Something looks wrong (blank screen, red box)? Read `npx rn-iso logs -n 50` **first** -- it's faster than screenshots and usually shows the actual bundling/resolution error.
-- `npx rn-iso start` exists as the standalone "just Metro" command if you ever need it without a device action.
+rn-iso reserves a **port** and never starts Metro itself. Which bundler command a project needs is judgment you have from reading the repo -- the same reason rn-iso does not run your build. Start it yourself on the reserved port, before you build:
+
+| Project shape | Metro invocation |
+|---|---|
+| Expo | `npx expo start --port <port>` |
+| Bare RN | `npx react-native start --port <port>` |
+| Has its own `start` script | run that and append `--port <port>` -- it may carry flags that matter (e.g. `--client-logs`) |
+| Monorepo | run from the app directory (`apps/<app>`), not the repo root |
+
+Two rules that keep teardown working:
+
+- **Start it from inside the project directory, in the background.** `rn-iso stop` (and `release` / `worktree remove` / `gc`) identify your Metro by checking that the process on the reserved port both answers `/status` **and** runs from inside the project. A Metro started from somewhere else cannot be identified, and rn-iso will refuse to kill it rather than risk killing something of yours. If that happens, `rn-iso stop --force` overrides -- ask the user first.
+- **Redirect its output to a predictable file.** rn-iso no longer captures Metro's log, so a later session can only find it if the path is guessable (e.g. `/tmp/metro-<label>.log`). Read that file **first** on a blank screen or red box -- it's faster than screenshots and usually shows the actual bundling/resolution error.
+
+After starting it, poll `npx rn-iso device --platform <ios|android> --json` until `metroHealthy` is `true`, then build.
 
 ## Destructive-command rules
 
 - **Never run `rn-iso gc --delete` without asking the user.** It can erase tens of gigabytes of build output. A bare `rn-iso gc` (no flag) only reports and is always safe.
 - **Never pass `--force` to `rn-iso worktree remove` without asking the user.** A refusal means the worktree holds uncommitted changes, untracked files, or commits that exist on no remote; `--force` discards the uncommitted/untracked state permanently.
+- **Never pass `--force` to `rn-iso stop` without asking the user.** A refusal means the process on the reserved port could not be proven to be this project's Metro; `--force` kills it regardless, which may be a process the user cares about.
 - **`release` now deletes the device.** If the assigned device is one rn-iso created (`owned: true`), `release` shuts it down AND deletes it -- not just a claim release. Don't release an environment you intend to keep using. Don't call `release` unless the user explicitly asks.
 - **`worktree remove` deletes owned devices too.** The environment dies whole: removing a worktree also shuts down and deletes every owned sim/AVD registered under it (including nested monorepo app-dir projects). This is on top of the uncommitted/unpushed-work guard above -- expect it, and don't remove a worktree you (or the user) still need the device from.
 
@@ -87,7 +103,7 @@ Hardware cannot be spawned. A physical Android device connected via `adb` is ass
 - **"No rn-iso entry for `<project>`"** -- run `npx rn-iso up ios` (or `up android`) first.
 - **Failed to ensure device (Android)** -- usually a missing/misconfigured `JAVA_HOME` or `ANDROID_HOME`, or no arm64 system image installed (rn-iso never installs one for you; install with `sdkmanager "system-images;android-36;google_apis;arm64-v8a"` or similar, or pass `--system-image`).
 - **No matching iOS device type / runtime installed** -- install one via Xcode, or pass `--device-type` / `--runtime` explicitly to `up`.
-- **Blank screen / app installed but nothing renders** -- check `npx rn-iso status` for Metro state, then `npx rn-iso logs -n 50` for bundle/resolution errors (a stale `node_modules` after a branch switch is a classic -- reinstall deps, then `npx rn-iso stop` + `start`).
+- **Blank screen / app installed but nothing renders** -- check `npx rn-iso status` for Metro state, then read the Metro log file you redirected output to for bundle/resolution errors (a stale `node_modules` after a branch switch is a classic -- reinstall deps, then `npx rn-iso stop` and start Metro again).
 - **Metro port collision** -- `up`/`start` reclaim dead ports automatically. "port busy by non-Metro process" means another tool is using that port; close it.
 - **A recorded device was deleted out from under rn-iso** (sim/AVD gone) -- `up` detects the stale record and creates a fresh owned device automatically.
 - **"Refusing to remove `<path>`"** -- `rn-iso worktree remove` found uncommitted changes, untracked files, or commits not on any remote, and refused rather than risk losing work. Push the branch, or confirm `--force` with the user first (see "Destructive-command rules").
@@ -112,7 +128,7 @@ npx rn-iso worktree list
 
 `npx rn-iso gc [--delete] [--older-than <days>]` finds Xcode DerivedData directories left behind by deleted worktrees, dead `rn-iso` project entries, AND orphaned `rn-iso-*` devices (sims/AVDs not referenced by any live config entry), and reports what reclaiming them would free.
 
-**`gc` with no flag only reports -- it never deletes anything.** Pass `--delete` to actually remove the reported directories, entries, and devices (see the destructive-command rule above -- always ask before running it with `--delete`). It isn't the only destructive command in the tool -- `release` (deletes owned devices) and `worktree remove --force` (discards uncommitted/untracked work) are destructive too; see the destructive-command rules above for all three. `--older-than <days>` narrows the artifact report to directories not accessed recently.
+**`gc` with no flag only reports -- it never deletes anything.** Pass `--delete` to actually remove the reported directories, entries, and devices (see the destructive-command rule above -- always ask before running it with `--delete`). It isn't the only destructive command in the tool -- `release` (deletes owned devices), `worktree remove --force` (discards uncommitted/untracked work), and `stop --force` (kills an unidentified process) are destructive too; see the destructive-command rules above for all four. `--older-than <days>` narrows the artifact report to directories not accessed recently.
 
 The report has four buckets:
 - **Orphaned build artifacts** -- DerivedData whose workspace path no longer exists. Deleted (with sizes) under `--delete`.
@@ -123,10 +139,8 @@ The report has four buckets:
 ## Other useful commands
 
 - `npx rn-iso status` -- show all projects, their owned/legacy device assignments (tagged `(owned)`), setup status, and Metro state.
-- `npx rn-iso logs [<port>|<shortcut>|<path>] [-n <lines>] [--follow]` -- print the managed Metro log (default: last 50 lines of the current project's). This is where bundle progress, module-resolution errors, and client console logs land. **Check this first on a blank screen or red box** -- it's faster than screenshots.
 - `npx rn-iso prune` -- remove entries for projects whose directory no longer exists (deleted worktrees), freeing their ports and killing any orphaned Metro. Live projects are never touched. Does not delete devices or build artifacts; see `gc` for both.
-- `npx rn-iso start [--reset-cache] [-- <extras...>]` -- start Metro detached on the project's assigned port WITHOUT ensuring a device. `--reset-cache` clears Metro's transform cache. Other extras after `--` are forwarded to `expo start` / `react-native start`.
-- `npx rn-iso stop [<port>|<shortcut>|<path>]` -- kill Metro. No arg = current project. Passing a port (e.g. `8083`) kills whatever is on it; a project shortcut (label or unique basename) or absolute path targets that project.
+- `npx rn-iso stop [<shortcut>|<path>] [--force]` -- kill this project's Metro, after verifying the process on the reserved port answers `/status` and runs from inside the project. Refuses (exit 1) if it cannot prove that; `--force` kills the listener anyway and is destructive -- ask the user first. No arg = current project.
 - `npx rn-iso release [<port>|<shortcut>|<path>] [--platform <p>] [--force]` -- free a project's device assignment. Defaults to the current project. See "Destructive-command rules" above -- this deletes owned devices.
 - `npx rn-iso shutdown [<shortcut>|<path>] [-y] [--keep-sims]` -- kill Metro and shut down (never delete) owned sims/emulators. Owned device records stay recorded (the device still exists and is still ours, so `up` can boot it back up); legacy or physical device assignments are cleared instead, since rn-iso doesn't control those devices' lifecycle. An owned device is left running and reported as skipped if it's currently occupied by a foreign UI-test runner. Only touches devices rn-iso created (`owned: true`). With no arg, scopes to **every** registered project (end-of-day reset); pass a project shortcut or absolute path to scope to one. Prompts unless `-y` / non-TTY; `--keep-sims` only kills Metro without touching devices or assignments.
 - `npx rn-iso config [<key> [<value>]] [--unset] [--project <target>] [--repo]` -- persist settings. Project-layer allowed keys: `packageManager` (npm|yarn|pnpm|bun), `ios.deviceType`, `ios.runtime`, `android.systemImage`. With `--repo`, additionally accepts `worktreeDir` and any `worktree.*` key. Resolution order for `up`: CLI flag (`--device-type`/`--runtime`/`--system-image`) > stored setting > rn-iso's own default (newest iPhone, base model, on newest installed runtime; newest installed arm64 system image).

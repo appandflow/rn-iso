@@ -1,6 +1,6 @@
 # rn-iso
 
-An environment broker for React Native / Expo: `rn-iso up <platform>` creates (or reuses) a dedicated, **owned** simulator/emulator and a managed Metro server for the current project, then hands you the facts -- UDID/serial, port, bundle id -- so you (or your coding agent) can run the project's own build. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
+An environment broker for React Native / Expo: `rn-iso up <platform>` creates (or reuses) a dedicated, **owned** simulator/emulator and reserves a Metro port for the current project, then hands you the facts -- UDID/serial, port, bundle id -- so you (or your coding agent) can start Metro and run the project's own build. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
 
 > **Experimental.** APIs, flags, and on-disk state may change. File issues if anything breaks.
 
@@ -15,7 +15,7 @@ npx rn-iso up ios --json     # ensure an owned sim + Metro; print the facts
 ```
 
 ```json
-{"platform":"ios","owned":true,"udid":"ABC-...","deviceName":"rn-iso-myproject","metroPort":8082,"metroPid":12345,"metroHealthy":true,"metroLog":"~/.rn-iso/logs/<hash>.log","bundleId":"io.tlon.groups","setup":{"complete":true,"commands":[]}}
+{"platform":"ios","owned":true,"udid":"ABC-...","deviceName":"rn-iso-myproject","metroPort":8082,"metroHealthy":false,"bundleId":"io.tlon.groups","setup":{"complete":true,"commands":[]}}
 ```
 
 `up` never builds or installs anything -- run the project's own build against the printed facts:
@@ -57,11 +57,9 @@ All commands below take the same `npx rn-iso` prefix.
 
 | Command | Purpose |
 |---|---|
-| `up <ios\|android> [--json] [--device-type <name>] [--runtime <ver>] [--system-image <pkg>]` | Ensure an owned device, managed Metro, and a port for the current project; print the facts. Never builds. |
+| `up <ios\|android> [--json] [--device-type <name>] [--runtime <ver>] [--system-image <pkg>]` | Ensure an owned device and reserve a Metro port for the current project; print the facts. Never builds, never starts Metro. |
 | `device [--platform ios\|android] [--json]` | Print the current device assignment (no ensure/create side effects). |
-| `start [--reset-cache] [-- <extras...>]` | Start Metro detached, no device action. |
-| `stop [<port>\|<shortcut>\|<path>]` | Kill Metro. No arg = current project; pass a port (e.g. 8083), a project shortcut (label or unique basename), or an absolute path. |
-| `logs [<port>\|<shortcut>\|<path>] [-n <lines>] [--follow]` | Print the managed Metro log (bundle progress, resolution errors, client logs). |
+| `stop [<shortcut>\|<path>] [--force]` | Kill Metro. No arg = current project; pass a port (e.g. 8083), a project shortcut (label or unique basename), or an absolute path. |
 | `status` | Show all projects' device assignments (owned/legacy), setup status, and Metro state. |
 | `release [<port>\|<shortcut>\|<path>] [--platform <p>] [--force]` | Free a project's device assignment. Deletes it if owned (see above); clears it if legacy/physical. `--force` deletes even if in use by another tool (iOS only). |
 | `shutdown [<shortcut>\|<path>] [-y] [--keep-sims]` | Kill Metro, shut down (never delete) owned sims/emulators. Owned device records stay recorded so `up` can reuse them; legacy/physical assignments are cleared. No arg = every registered project. |
@@ -78,7 +76,7 @@ All commands below take the same `npx rn-iso` prefix.
 - **Port allocation:** `up`/`start` assign 8082, 8083, 8084 etc., reclaiming dead ports on the way.
 - **Owned device creation:** on iOS, `up` creates the newest iPhone device type -- highest generation number, base model rather than Pro/Pro Max -- on the newest installed runtime by default (or reuses the project's already-recorded owned sim, booting it if shut down). On Android, it creates an AVD via `avdmanager create avd` against the newest installed arm64 system image (rn-iso never installs system images itself -- it errors with install instructions if none is found). Override the defaults with `--device-type`/`--runtime`/`--system-image`, or persist them via `rn-iso config ios.deviceType|ios.runtime|android.systemImage`.
 - **rn-iso never runs a build.** `up` only provisions the device, Metro, and (on Android) `adb reverse`; you run the project's own `expo run:*` / `react-native run-*` (or its wrapping script) against the printed facts. The skill's "Common setups reference" table has invocations for the common project shapes.
-- **Metro is always managed by rn-iso** -- started detached by `up`/`start`, PID-tracked, output captured in a per-project log file under `~/.rn-iso/logs/`. This is the only mode; there is no flag to have the build CLI start its own Metro. Both Expo and the RN CLI probe the target port and skip spawning a second bundler when Metro already answers `/status`, which is what makes this safe. `npx rn-iso stop` finds Metro by port via `lsof`, so it works regardless of who's asking.
+- **rn-iso reserves the Metro port; you start Metro.** Which bundler command a project needs is project-specific judgment -- the same reason rn-iso stopped wrapping builds -- so `up` allocates and records a collision-free port and leaves the invocation to you. Both Expo and the RN CLI probe the target port and skip spawning a second bundler when Metro already answers `/status`, which is what makes it safe to start Metro yourself and then build against it. Teardown (`stop`, `release`, `worktree remove`, `gc`) finds Metro by port via `lsof`, but only kills it after confirming it answers `/status` **and** runs from inside the project -- a port is not identity, so an unidentified listener is reported instead of killed.
 
 If you need a single shared sim with a mutex instead of one owned device per project, see [`react-native-worktree`](https://github.com/aleqsio/react-native-worktree).
 
