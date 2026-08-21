@@ -1,5 +1,5 @@
 import { request } from 'http';
-import { createServer } from 'net';
+import { connect } from 'net';
 import { existsSync } from 'fs';
 import { loadConfig, allMetroPorts, removeProject } from './config.js';
 
@@ -19,16 +19,31 @@ export function isMetroRunning(port) {
   });
 }
 
-// A real bind, not a /status probe. isMetroRunning only answers for Metro, so
-// probing with it would hand out a port held by a web server, a stale bundler,
-// or anything else that is not ours. Binding 0.0.0.0 fails with EADDRINUSE if
-// anything holds the port on any interface.
-export function isPortFree(port) {
+// A real connect, not a /status probe and not a bind.
+//
+// Not /status: isMetroRunning only answers for Metro, so probing with it would
+// hand out a port held by a web server or a stale bundler.
+//
+// Not bind: a bind test looks right and fails in production. Node sets
+// SO_REUSEADDR, so binding 0.0.0.0 SUCCEEDS while another PROCESS holds
+// 127.0.0.1 on the same port -- the port reads free and gets handed out
+// anyway. (A same-process bind test does raise EADDRINUSE, which is exactly
+// how a unit test can pass while the real case fails.)
+//
+// Connecting to 127.0.0.1 answers the question that actually matters: will a
+// bundler started here collide with something already listening?
+export function isPortFree(port, { timeoutMs = 400 } = {}) {
   return new Promise((resolve) => {
-    const srv = createServer();
-    srv.once('error', () => resolve(false));
-    srv.once('listening', () => srv.close(() => resolve(true)));
-    srv.listen(port, '0.0.0.0');
+    const sock = connect({ port, host: '127.0.0.1' });
+    const done = (free) => {
+      sock.removeAllListeners();
+      sock.destroy();
+      resolve(free);
+    };
+    sock.setTimeout(timeoutMs);
+    sock.once('connect', () => done(false));   // something is listening
+    sock.once('error', () => done(true));      // ECONNREFUSED: nothing there
+    sock.once('timeout', () => done(false));   // filtered/hung: assume taken
   });
 }
 

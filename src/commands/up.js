@@ -131,6 +131,22 @@ export function registerUp(program) {
       if (!port) {
         port = await allocatePort(root);
         setMetro(root, port);
+      } else {
+        // A reservation that something else has taken over is unusable: the
+        // agent can never start Metro there, so reporting the conflict every
+        // run would strand the project forever. Move it to a free port
+        // instead. Only a FOREIGN holder triggers this -- our own Metro
+        // answering on the port is the healthy case.
+        const held = await resolveProjectMetro(port, root);
+        if (held.notOurs) {
+          const fresh = await allocatePort(root);
+          if (fresh !== port) {
+            note(chalk.yellow(`Port ${port} is held by something else (${held.notOurs}).`));
+            note(chalk.dim(`Reserved port ${fresh} for this project instead.`));
+            port = fresh;
+            setMetro(root, port);
+          }
+        }
       }
 
       // rn-iso reserves the port but does not start Metro: which bundler

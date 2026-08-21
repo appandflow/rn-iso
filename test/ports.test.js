@@ -125,16 +125,27 @@ test('computeNextPort throws rather than returning an occupied port when the ran
   await assert.rejects(() => computeNextPort(async () => false), /no free Metro port/i);
 });
 
-test('isPortFree detects a real listener', async () => {
-  const { createServer } = await import('node:http');
+// Cross-PROCESS on purpose. An in-process bind test passes even when the
+// implementation is wrong: Node sets SO_REUSEADDR, so binding 0.0.0.0 while a
+// separate process holds 127.0.0.1 succeeds and the port reads free. That
+// exact bug shipped and was caught only by a live squatter, not by the
+// same-process test that preceded this one.
+test('isPortFree detects a listener held by ANOTHER process', async () => {
+  const { spawn } = await import('node:child_process');
   const { isPortFree } = await import('../src/ports.js');
-  const server = createServer(() => {});
-  await new Promise((r) => server.listen(8123, '127.0.0.1', r));
+  const port = 8131;
+  const child = spawn(process.execPath, ['-e',
+    `require('http').createServer((q,r)=>r.end('x')).listen(${port},'127.0.0.1')`,
+  ], { stdio: 'ignore' });
   try {
-    assert.equal(await isPortFree(8123), false, 'a bound port must not read as free');
-    assert.equal(await isPortFree(8124), true, 'an unbound port must read as free');
+    for (let i = 0; i < 40; i++) {
+      if (!(await isPortFree(port))) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    assert.equal(await isPortFree(port), false, 'a port held by another process must not read as free');
+    assert.equal(await isPortFree(8132), true, 'an unused port must read as free');
   } finally {
-    server.close();
+    child.kill('SIGKILL');
   }
 });
 
