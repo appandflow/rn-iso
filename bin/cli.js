@@ -11,6 +11,8 @@ import shutdownCommand from '../src/commands/shutdown.js';
 import configCommand from '../src/commands/config.js';
 import worktreeCommand from '../src/commands/worktree.js';
 import upCommand from '../src/commands/up.js';
+import guideCommand from '../src/commands/guide.js';
+import skillCommand from '../src/commands/skill.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 
@@ -30,6 +32,8 @@ releaseCommand(program);
 shutdownCommand(program);
 configCommand(program);
 worktreeCommand(program);
+guideCommand(program, pkg.version);
+skillCommand(program, pkg.version);
 
 // parseAsync (not parse): several command actions (up, release, shutdown,
 // worktree) are async, and commander only awaits/propagates their errors

@@ -8,7 +8,7 @@
 import chalk from 'chalk';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage, projectShortcut } from '../project.js';
 import { gitCommonDir, repoRoot } from '../worktree.js';
-import { resolveSettings } from '../settings.js';
+import { resolveSettings, unknownSettingKeys } from '../settings.js';
 import {
   getProject,
   upsertProject,
@@ -48,6 +48,7 @@ export function registerUp(program) {
     .option('--device-type <name>', 'iOS device type to use when creating a new owned sim (e.g. "iPhone 17 Pro")')
     .option('--runtime <version>', 'iOS runtime version to use when creating a new owned sim (e.g. "26.2")')
     .option('--system-image <pkg>', 'Android system image package to use when creating a new owned AVD')
+    .option('--wait-metro [seconds]', 'Wait until Metro answers on the reserved port before printing the facts (default 60s). Removes the hand-rolled poll loop every agent script otherwise needs')
     .option('--serial <serial>', 'Android only: assign a connected PHYSICAL device by adb serial instead of creating an owned emulator. rn-iso never boots, shuts down, or deletes hardware')
     .action(async (platform, opts) => {
       const json = Boolean(opts.json);
@@ -82,6 +83,13 @@ export function registerUp(program) {
         gitCommonDir: gitCommonDir(root),
         repoRoot: repoRoot(root),
       });
+
+      // Warn loudly about settings rn-iso no longer reads. A key that silently
+      // stops being honoured (a committed worktree.install after 0.9.0) shows
+      // up only as a downstream mystery.
+      for (const key of unknownSettingKeys(settings)) {
+        note(chalk.yellow(`Warning: setting "${key}" is not read by rn-iso and will be ignored.`));
+      }
 
       const bundleId = detectBundleId(root);
       const androidPackage = detectAndroidPackage(root);
@@ -131,7 +139,28 @@ export function registerUp(program) {
       // prove identity the same way teardown does -- reporting a foreign
       // listener as "healthy" would send the agent's build at someone else's
       // bundler, since the build CLIs skip spawning when /status answers.
-      const metroResolution = await resolveProjectMetro(port, root);
+      let metroResolution = await resolveProjectMetro(port, root);
+      // --wait-metro polls for OUR Metro specifically: a foreign listener that
+      // answers /status must not satisfy the wait, or the build proceeds
+      // against the wrong bundler -- the exact failure metroConflict exists to
+      // catch.
+      if (opts.waitMetro && !metroResolution.metro) {
+        const seconds = opts.waitMetro === true ? 60 : Number(opts.waitMetro);
+        if (!Number.isFinite(seconds) || seconds <= 0) {
+          note(chalk.red(`Invalid --wait-metro value "${opts.waitMetro}". Pass a number of seconds.`));
+          process.exit(1);
+          return;
+        }
+        note(chalk.dim(`Waiting up to ${seconds}s for Metro on port ${port}...`));
+        const deadline = Date.now() + seconds * 1000;
+        while (Date.now() < deadline && !metroResolution.metro) {
+          await new Promise(r => setTimeout(r, 500));
+          metroResolution = await resolveProjectMetro(port, root);
+        }
+        if (!metroResolution.metro) {
+          note(chalk.yellow(`Metro did not come up on port ${port} within ${seconds}s.`));
+        }
+      }
       const metroHealthy = Boolean(metroResolution.metro);
       const metroConflict = metroResolution.notOurs ?? null;
       if (metroHealthy) {

@@ -1,7 +1,7 @@
 import { existsSync, realpathSync, rmSync } from 'fs';
 import { resolve } from 'path';
 import chalk from 'chalk';
-import { resolveSettings } from '../settings.js';
+import { resolveSettings, unknownSettingKeys } from '../settings.js';
 import { isPathPrefix, loadConfig, upsertProject } from '../config.js';
 import { formatBytes } from '../artifacts.js';
 import { reclaimProject } from '../reclaim.js';
@@ -46,6 +46,10 @@ export function registerCreate(worktree) {
       }
       const common = gitCommonDir(process.cwd());
       const settings = resolveSettings({ gitCommonDir: common, repoRoot: root });
+      // stdout carries ONLY the worktree path, so this goes to stderr.
+      for (const key of unknownSettingKeys(settings)) {
+        console.error(chalk.yellow(`Warning: setting "${key}" is not read by rn-iso and will be ignored.`));
+      }
 
       // `--base` reaches here as a raw string -- commander does not
       // validate `.option()` values against an enum. resolveBaseRef treats
@@ -224,11 +228,21 @@ export function registerRemove(worktree) {
           // reads like a bug rather than a missing remote. Say so.
           console.error(chalk.dim('  (no remote is configured for this worktree, so every commit counts as unpushed)'));
         }
-        // Committed work is not actually at risk here: the branch ref
-        // survives `git worktree remove --force`. Only uncommitted changes
-        // (and untracked files) are discarded by --force; say so plainly
-        // rather than implying --force throws away commits too.
-        console.error(chalk.dim('Push the branch, or re-run with --force. --force discards uncommitted changes and untracked files; committed work stays on the branch.'));
+        // A native build rewrites tracked files -- `pod install` always
+        // touches Podfile.lock and project.pbxproj -- so this refusal fires
+        // after almost every iOS build. Leading with --force taught agents to
+        // reach for the destructive flag as the routine response, which is a
+        // bad habit to teach: it also discards real uncommitted work. Lead
+        // with restore instead.
+        //
+        // Committed work is not at risk either way: the branch ref survives
+        // `git worktree remove --force`. Only uncommitted changes and
+        // untracked files are discarded.
+        console.error(chalk.dim('If a native build rewrote tracked files (pod install always rewrites Podfile.lock'));
+        console.error(chalk.dim('and project.pbxproj), restore them and retry:'));
+        console.error(chalk.dim('  git -C <worktree> checkout -- ios/Podfile.lock "ios/*.xcodeproj/project.pbxproj"'));
+        console.error(chalk.dim('Otherwise: commit or push the branch. --force is a last resort -- it discards'));
+        console.error(chalk.dim('uncommitted changes and untracked files permanently; committed work stays on the branch.'));
         process.exitCode = 1;
         return;
       }

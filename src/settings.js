@@ -25,6 +25,40 @@ export function mergeSettingsLayers(layers) {
   return out;
 }
 
+// Every setting rn-iso actually reads. Kept next to the resolver so deleting a
+// feature forces a decision about its setting: a key that quietly stops being
+// honoured is worse than one that errors. A committed `worktree.install`
+// silently became a no-op in 0.9.0 and the only symptom was a worktree with no
+// dependencies.
+const KNOWN_SETTINGS = new Set([
+  'ios.deviceType',
+  'ios.runtime',
+  'android.systemImage',
+  'worktreeDir',
+  'worktree.baseRef',
+  'worktree.include',
+]);
+
+// Returns dotted paths for keys rn-iso does not read. Leaf-level: a known
+// parent with an unknown child reports only the child.
+export function unknownSettingKeys(settings, prefix = '') {
+  if (!isPlainObject(settings)) return [];
+  const unknown = [];
+  for (const [key, value] of Object.entries(settings)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (isPlainObject(value)) {
+      // Only recurse into a namespace we know; an entirely unknown object is
+      // reported once rather than leaf by leaf.
+      const hasKnownChildren = [...KNOWN_SETTINGS].some(k => k.startsWith(`${path}.`));
+      if (hasKnownChildren) unknown.push(...unknownSettingKeys(value, path));
+      else unknown.push(path);
+      continue;
+    }
+    if (!KNOWN_SETTINGS.has(path)) unknown.push(path);
+  }
+  return unknown;
+}
+
 export function readCommittedSettings(repoRoot) {
   if (!repoRoot) return {};
   const p = join(repoRoot, '.rn-iso.json');
