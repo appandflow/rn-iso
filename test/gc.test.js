@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { saveConfig, loadConfig } from '../src/config.js';
-import gcCommand, { findOrphanedDevices, formatGcReport } from '../src/commands/gc.js';
+import gcCommand, { findOrphanedDevices, formatGcReport, describeUnverifiableDevices } from '../src/commands/gc.js';
 
 test('reports orphans with sizes and a total', () => {
   const lines = formatGcReport({
@@ -427,7 +427,7 @@ test('--delete reaps a dead project\'s owned orphan device in the same run it pr
 // machine as orphaned, and --delete would have destroyed every live
 // environment. No saveConfig() call here at all, so loadConfig() returns
 // null, not {projects: {}}.
-test('gc with no config file at all skips the device sweep instead of orphaning every rn-iso-* device', async () => {
+test('gc with no config names rn-iso devices it cannot verify, but never touches them', async () => {
   const execCalls = [];
   installDeviceExecutor({
     devices: [{ udid: 'UDID-LIVE', name: 'rn-iso-someones-live-env', state: 'Booted' }],
@@ -444,8 +444,15 @@ test('gc with no config file at all skips the device sweep instead of orphaning 
   }
 
   const output = logs.join('\n');
-  assert.doesNotMatch(output, /rn-iso-someones-live-env/, 'must not report a device as orphaned when there is no config to check it against');
+  // It IS named -- silently skipping meant a wiped config orphaned simulators
+  // that nothing would ever surface again.
+  assert.match(output, /rn-iso-someones-live-env/, 'an unverifiable device should still be surfaced by name');
   assert.match(output, /no rn-iso config found/i);
+  assert.match(output, /cannot be verified as orphaned/i);
+  // ...but it is never classified as orphaned, and never acted on: an empty
+  // reference map would make every rn-iso-* device on the machine look
+  // orphaned, including another RN_ISO_HOME's live environments.
+  assert.doesNotMatch(output, /Orphaned devices/i, 'must not classify it as orphaned');
   assert.equal(execCalls.some(c => c.startsWith('xcrun simctl shutdown')), false);
   assert.equal(execCalls.some(c => c.startsWith('xcrun simctl delete')), false);
 });
@@ -457,4 +464,30 @@ test('rejects a non-numeric --older-than instead of silently skipping every entr
   await assert.rejects(() =>
     program.parseAsync(['node', 'rn-iso', 'gc', '--older-than', 'lastweek'])
   );
+});
+
+// With no config, gc must never DELETE (a missing config makes every rn-iso-*
+// device look orphaned, including another RN_ISO_HOME's live ones) -- but it
+// should still SAY they exist. Silently skipping meant a wiped config orphaned
+// simulators that nothing would ever surface again.
+test('describeUnverifiableDevices names rn-iso devices it cannot verify', () => {
+  const notices = describeUnverifiableDevices(
+    ['rn-iso-alpha', 'iPhone 17 Pro'],
+    ['rn-iso-beta', 'Pixel_6_API_34'],
+  );
+  const joined = notices.join('\n');
+  assert.match(joined, /rn-iso-alpha/);
+  assert.match(joined, /rn-iso-beta/);
+  assert.doesNotMatch(joined, /iPhone 17 Pro/, 'must not mention devices that are not ours');
+  assert.doesNotMatch(joined, /Pixel_6/, 'must not mention devices that are not ours');
+});
+
+test('describeUnverifiableDevices says only that the sweep was skipped when nothing is ours', () => {
+  const notices = describeUnverifiableDevices(['iPhone 17 Pro'], []);
+  assert.equal(notices.length, 1);
+  assert.match(notices[0], /device sweep skipped/);
+});
+
+test('describeUnverifiableDevices tolerates empty listings', () => {
+  assert.equal(describeUnverifiableDevices([], []).length, 1);
 });

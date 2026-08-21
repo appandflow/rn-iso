@@ -111,6 +111,20 @@ export function findOrphanedDevices({ sims = [], avds = [], config, isMounted, d
   return { orphaned, kept };
 }
 
+// With no config, deleting is off the table -- an empty reference map makes
+// every rn-iso-* device look orphaned, including another RN_ISO_HOME's live
+// ones. But saying nothing was its own failure mode: a wiped config (or a
+// throwaway RN_ISO_HOME) orphaned simulators that nothing would ever surface
+// again. Report them by name so a human can judge; never act on them.
+export function describeUnverifiableDevices(simNames = [], avdNames = []) {
+  const ours = [...simNames, ...avdNames].filter(n => typeof n === 'string' && n.startsWith('rn-iso-'));
+  if (ours.length === 0) return ['no rn-iso config found; device sweep skipped'];
+  return [
+    `no rn-iso config found, so ${ours.length} rn-iso-created device(s) cannot be verified as orphaned: ${ours.join(', ')}`,
+    'they were NOT touched. If they are stale, delete them with `xcrun simctl delete <udid>` or `avdmanager delete avd -n <name>`',
+  ];
+}
+
 export function formatGcReport({
   orphaned,
   skipped,
@@ -241,8 +255,17 @@ export default function gcCommand(program) {
         // orphaned -- including devices belonging to another rn-iso HOME,
         // or ones a config read glitch merely failed to surface. Skip the
         // sweep entirely rather than risk `--delete` destroying every live
-        // environment on the machine.
-        deviceSweepNotices.push('no rn-iso config found; device sweep skipped');
+        // environment on the machine. orphanedDevices stays empty, so
+        // --delete cannot touch any of them -- but they are still named.
+        let simNames = [];
+        let avdNames = [];
+        try {
+          simNames = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }).map(s => s.name);
+        } catch { /* toolchain unavailable: report what we can */ }
+        try {
+          avdNames = listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+        } catch { /* same */ }
+        deviceSweepNotices.push(...describeUnverifiableDevices(simNames, avdNames));
       } else {
         let sims = [];
         try {

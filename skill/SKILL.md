@@ -20,6 +20,7 @@ npx rn-iso guide facts       # the --json payload, field by field
 npx rn-iso guide metro       # how to start Metro, per project shape
 npx rn-iso guide errors      # every refusal and what to do about it
 npx rn-iso guide lifecycle   # the full flow, end to end
+npx rn-iso guide cleanup     # what reclaims devices, and disk hygiene
 npx rn-iso guide settings    # which settings are honoured
 ```
 

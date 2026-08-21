@@ -154,6 +154,37 @@ CAPACITY
   16 GB machine plan for 2-3 live environments. Nothing enforces this.`,
   },
 
+  cleanup: {
+    summary: 'Where simulators come from, and how they get reclaimed',
+    body: () => `CLEANUP AND DISK
+
+WHAT RECLAIMS AN OWNED DEVICE
+  rn-iso release            deletes this project's owned device
+  rn-iso worktree remove    deletes every owned device under the worktree
+  rn-iso gc --delete        sweeps rn-iso-* devices no project references
+
+A device leaks when a project is abandoned WITHOUT any of those -- the sim
+survives with nothing pointing at it. \`rn-iso gc\` (no flag, always safe)
+reports those; \`gc --delete\` reaps them.
+
+THE ONE CASE GC WILL NOT REAP
+  If the config is gone entirely (deleted ~/.rn-iso, or a throwaway
+  RN_ISO_HOME), gc cannot tell your stale devices from another config's LIVE
+  ones, so it refuses to delete anything. It still NAMES the rn-iso-* devices
+  it found, so you can judge. Delete them yourself:
+    xcrun simctl delete <udid>
+    avdmanager delete avd -n <name>
+
+DISK
+  Simulators are large and live in the CoreSimulator device set, not in your
+  project. If the disk is filling up, rn-iso's own devices are usually not the
+  bulk of it -- Apple's default simulators and old runtimes are. Useful:
+    xcrun simctl delete unavailable     # sims for runtimes you removed
+    xcrun simctl list devices           # see everything
+    rn-iso gc                           # report build artifacts + orphans
+  Xcode recreates default simulators on demand, so deleting them is safe.`,
+  },
+
   settings: {
     summary: 'Settings rn-iso reads, and where they can live',
     body: () => `SETTINGS
