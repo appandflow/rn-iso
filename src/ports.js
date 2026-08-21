@@ -1,4 +1,5 @@
 import { request } from 'http';
+import { createServer } from 'net';
 import { existsSync } from 'fs';
 import { loadConfig, allMetroPorts, removeProject } from './config.js';
 
@@ -18,10 +19,38 @@ export function isMetroRunning(port) {
   });
 }
 
-export function computeNextPort() {
-  const ports = allMetroPorts();
-  if (ports.length === 0) return 8082;
-  return Math.max(...ports, 8081) + 1;
+// A real bind, not a /status probe. isMetroRunning only answers for Metro, so
+// probing with it would hand out a port held by a web server, a stale bundler,
+// or anything else that is not ours. Binding 0.0.0.0 fails with EADDRINUSE if
+// anything holds the port on any interface.
+export function isPortFree(port) {
+  return new Promise((resolve) => {
+    const srv = createServer();
+    srv.once('error', () => resolve(false));
+    srv.once('listening', () => srv.close(() => resolve(true)));
+    srv.listen(port, '0.0.0.0');
+  });
+}
+
+const FIRST_PORT = 8082;
+const PORT_SCAN_LIMIT = 200;
+
+// Scans upward for a port that is BOTH unclaimed in the registry and actually
+// free on the machine. The old implementation was max(registry)+1 with no
+// liveness check, which deterministically handed the same occupied port to
+// several projects in a row -- releasing a project lowered the max again, so
+// `release` then `up` returned the same bad number. Scanning also reuses gaps
+// left by released projects instead of climbing forever.
+export async function computeNextPort(isFree = isPortFree) {
+  const taken = new Set(allMetroPorts());
+  for (let port = FIRST_PORT; port < FIRST_PORT + PORT_SCAN_LIMIT; port++) {
+    if (taken.has(port)) continue;
+    if (await isFree(port)) return port;
+  }
+  throw new Error(
+    `Found no free Metro port between ${FIRST_PORT} and ${FIRST_PORT + PORT_SCAN_LIMIT - 1}. ` +
+    'Free one up, or stop a stale bundler (`rn-iso status`, `rn-iso stop <port>`).'
+  );
 }
 
 export async function findReclaimablePort(excludeProjectPath, probe = isMetroRunning) {
@@ -45,11 +74,14 @@ export async function findReclaimablePort(excludeProjectPath, probe = isMetroRun
   return null;
 }
 
-export async function allocatePort(projectPath, probe = isMetroRunning) {
+export async function allocatePort(projectPath, probe = isMetroRunning, isFree = isPortFree) {
   const reclaim = await findReclaimablePort(projectPath, probe);
-  if (reclaim) {
+  // A reclaimable port belongs to a project whose directory is gone AND whose
+  // Metro no longer answers -- but something unrelated may have taken it since,
+  // so it still has to pass the same bind check as a fresh port.
+  if (reclaim && await isFree(reclaim.port)) {
     removeProject(reclaim.ownerPath);
     return reclaim.port;
   }
-  return computeNextPort();
+  return computeNextPort(isFree);
 }
