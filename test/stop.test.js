@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stopAction, resolveStopTarget } from '../src/commands/stop.js';
+import { stopAction, resolveStopTarget, stopTargets } from '../src/commands/stop.js';
 
 test('stopAction kills an identified Metro', () => {
   const r = stopAction({ resolution: { metro: { pid: 1, leader: 2 } }, force: false });
@@ -71,4 +71,38 @@ test('resolveStopTarget surfaces a shortcut resolution error', () => {
     byShortcut: () => ({ found: null, error: 'no such project' }),
   });
   assert.deepEqual(r, { error: 'no such project' });
+});
+
+// Reported from the field: `worktree create X --label X` labels the worktree
+// ROOT, which owns no port, while `up` registers the app dir (shortcut
+// "X/tlon-mobile"). `stop X` therefore printed "No Metro port assigned" and
+// exited 0 while Metro kept running -- an agent reads exit 0 as done.
+test('stopTargets falls through to nested projects when the target owns no port', () => {
+  const projects = {
+    '/wt/x': { label: 'X', worktreeRoot: true },
+    '/wt/x/apps/mobile': { metroPort: 8083 },
+  };
+  assert.deepEqual(stopTargets('/wt/x', projects), [
+    { path: '/wt/x/apps/mobile', port: 8083 },
+  ]);
+});
+
+test('stopTargets returns the target itself when it owns a port', () => {
+  const projects = { '/proj/a': { metroPort: 8082 } };
+  assert.deepEqual(stopTargets('/proj/a', projects), [{ path: '/proj/a', port: 8082 }]);
+});
+
+test('stopTargets collects every nested project with a port', () => {
+  const projects = {
+    '/wt/x': { label: 'X', worktreeRoot: true },
+    '/wt/x/apps/a': { metroPort: 8083 },
+    '/wt/x/apps/b': { metroPort: 8084 },
+    '/other': { metroPort: 8099 },
+  };
+  const got = stopTargets('/wt/x', projects).map(t => t.port).sort();
+  assert.deepEqual(got, [8083, 8084], 'must not reach outside the target');
+});
+
+test('stopTargets returns empty when nothing under the target owns a port', () => {
+  assert.deepEqual(stopTargets('/wt/x', { '/wt/x': { worktreeRoot: true } }), []);
 });

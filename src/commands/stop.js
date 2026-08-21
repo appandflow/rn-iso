@@ -2,7 +2,7 @@
 import chalk from 'chalk';
 import prompts from 'prompts';
 import { resolveRegisteredProject } from '../project.js';
-import { getProject, findProjectByMetroPort } from '../config.js';
+import { findProjectByMetroPort, loadConfig, isPathPrefix } from '../config.js';
 import {
   resolveProjectMetro,
   killMetroTree,
@@ -38,6 +38,22 @@ export function resolveStopTarget(target, { byPort, byShortcut }) {
   return { project: found, port: null };
 }
 
+// Pure. A worktree root carries the label but owns no port -- `up` registers
+// the app DIRECTORY, whose shortcut is "<label>/<basename>". So `stop <label>`
+// used to resolve the root, find no port, and exit 0 while Metro kept running.
+// Fall through to every registered project underneath the target.
+export function stopTargets(targetPath, projects) {
+  const own = projects?.[targetPath];
+  if (own?.metroPort) return [{ path: targetPath, port: own.metroPort }];
+  const nested = [];
+  for (const [path, proj] of Object.entries(projects || {})) {
+    if (path === targetPath) continue;
+    if (!isPathPrefix(targetPath, path)) continue;
+    if (proj?.metroPort) nested.push({ path, port: proj.metroPort });
+  }
+  return nested;
+}
+
 export default function stopCommand(program) {
   program
     .command('stop [target]')
@@ -62,33 +78,44 @@ export default function stopCommand(program) {
         return;
       }
 
-      const proj = getProject(resolved.project);
-      const port = resolved.port ?? proj?.metroPort;
-      if (!port) {
-        console.log(chalk.dim(`No Metro port assigned to ${resolved.project}.`));
-        return;
-      }
+      const targets = resolved.port
+        ? [{ path: resolved.project, port: resolved.port }]
+        : stopTargets(resolved.project, loadConfig()?.projects || {});
 
-      const resolution = await resolveProjectMetro(port, resolved.project);
-      if (resolution.notOurs && force) resolution.pid = findPidListeningOnPort(port);
-
-      const result = stopAction({ resolution, force });
-      if (result.action === 'missing') {
-        console.log(chalk.dim(`No Metro running on port ${port}.`));
-        return;
-      }
-      if (result.action === 'refused') {
-        console.error(chalk.yellow(`Refusing to kill port ${port}: ${result.reason}.`));
-        console.error(chalk.dim('Pass --force to kill it anyway.'));
+      if (targets.length === 0) {
+        // Exit NON-ZERO: an agent reads exit 0 as "stopped", and silently
+        // doing nothing here stranded live Metros in the field.
+        console.error(chalk.red(`No Metro port assigned to ${resolved.project}, and no registered project under it owns one.`));
+        console.error(chalk.dim('Run `rn-iso status` to see which projects hold ports.'));
         process.exit(1);
       }
-      const leader = result.leader ?? result.pid;
-      if (!leader || !killMetroTree(leader)) {
-        console.error(chalk.red(`Could not kill the process on port ${port}.`));
-        process.exit(1);
+
+      let failed = false;
+      for (const t of targets) {
+        const resolution = await resolveProjectMetro(t.port, t.path);
+        if (resolution.notOurs && force) resolution.pid = findPidListeningOnPort(t.port);
+
+        const result = stopAction({ resolution, force });
+        if (result.action === 'missing') {
+          console.log(chalk.dim(`No Metro running on port ${t.port} (${t.path}).`));
+          continue;
+        }
+        if (result.action === 'refused') {
+          console.error(chalk.yellow(`Refusing to kill port ${t.port}: ${result.reason}.`));
+          console.error(chalk.dim('Pass --force to kill it anyway.'));
+          failed = true;
+          continue;
+        }
+        const leader = result.leader ?? result.pid;
+        if (!leader || !killMetroTree(leader)) {
+          console.error(chalk.red(`Could not kill the process on port ${t.port}.`));
+          failed = true;
+          continue;
+        }
+        const how = result.action === 'forced' ? ' (forced, identity unverified)' : '';
+        console.log(chalk.green(`Killed Metro on port ${t.port}${how} (${t.path})`));
       }
-      const how = result.action === 'forced' ? ' (forced, identity unverified)' : '';
-      console.log(chalk.green(`Killed Metro on port ${port}${how} (${resolved.project})`));
+      if (failed) process.exit(1);
     });
 }
 
