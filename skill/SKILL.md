@@ -51,6 +51,8 @@ npx rn-iso worktree remove <path>               # 7. environment dies whole
 
 Start Metro **from inside the project directory** and send its output somewhere predictable -- that is how teardown recognizes it as yours, and how a later session finds its log. `npx rn-iso guide metro` has the per-project-shape commands.
 
+On APFS, `worktree create --carry-ignored` clones every gitignored path (`node_modules`, `ios/Pods`, `ios/build` codegen) instead of leaving you to reinstall, skipping anything in `.worktreeexclude`. It replaces step 2 in most repos -- but the clone matches the source worktree, not this branch's manifests, so reinstall anyway if the branch changes them. Off by default: outside APFS the clone falls back to a real copy of every byte, which `worktree create` warns about.
+
 **Do not build while `metroConflict` is non-null.** It means something holds your port that rn-iso cannot attribute to you, and the build CLIs will happily reuse whatever answers there -- so you would build against the wrong bundler. `npx rn-iso guide errors` lists the causes.
 
 ## Destructive commands -- ask the user first
