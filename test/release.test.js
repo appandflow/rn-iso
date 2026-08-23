@@ -112,10 +112,13 @@ test('release verifies iOS ownership before probing occupancy', async () => {
     },
   });
   const execCalls = [];
+  // Booted on purpose: isSimOccupied short-circuits to "not occupied" for a
+  // device that is not booted, so a shut-down fixture would never reach the
+  // probe this test is asserting the ordering of.
   const listJson = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-        { udid: 'UDID-ABC', name: 'rn-iso-app', state: 'Shutdown', isAvailable: true },
+        { udid: 'UDID-ABC', name: 'rn-iso-app', state: 'Booted', isAvailable: true },
       ],
     },
   });

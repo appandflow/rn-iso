@@ -264,3 +264,48 @@ test('isSimOccupied reports not-occupied when the probe answers with nothing', a
   assert.equal(isSimOccupied('UDID-X'), false);
   resetExecutor();
 });
+
+// A shut-down device cannot be occupied, and `simctl spawn` cannot answer for
+// one -- it exits non-zero with "device is not booted", which the probe alone
+// reads as occupied. That left a shut-down orphan permanently unreapable: gc
+// reported it and skipped it every run. The state check has to come first.
+test('isSimOccupied reports not-occupied for a shut-down device without probing', async () => {
+  const { setExecutor, resetExecutor } = await import('../src/exec.js');
+  const { isSimOccupied } = await import('../src/sim/ios.js');
+  const devices = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
+        { udid: 'UDID-X', name: 'rn-iso-x', state: 'Shutdown', isAvailable: true },
+      ],
+    },
+  });
+  let probed = false;
+  setExecutor({
+    run: () => devices,
+    runQuiet: () => {
+      probed = true;
+      return null;
+    },
+    spawn: () => {},
+  });
+  assert.equal(isSimOccupied('UDID-X'), false);
+  assert.equal(probed, false, 'must not spawn into a device that is not booted');
+  resetExecutor();
+});
+
+// The state check must not weaken the guard for a device that IS booted: an
+// unanswerable probe there is still doubt, and doubt still means occupied.
+test('isSimOccupied still fails closed for a booted device whose probe cannot answer', async () => {
+  const { setExecutor, resetExecutor } = await import('../src/exec.js');
+  const { isSimOccupied } = await import('../src/sim/ios.js');
+  const devices = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
+        { udid: 'UDID-X', name: 'rn-iso-x', state: 'Booted', isAvailable: true },
+      ],
+    },
+  });
+  setExecutor({ run: () => devices, runQuiet: () => null, spawn: () => {} });
+  assert.equal(isSimOccupied('UDID-X'), true);
+  resetExecutor();
+});
