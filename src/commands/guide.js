@@ -203,6 +203,7 @@ KEYS RN-ISO READS
   worktreeDir           where worktrees are created (repo layer)
   worktree.baseRef      "fresh" (origin/HEAD) or "head"
   worktree.include      carry-over patterns, same role as .worktreeinclude
+  worktree.exclude      --carry-ignored skip list, same role as .worktreeexclude
 
 Anything else is IGNORED, and rn-iso warns about it by name. If you see such a
 warning, the key was either renamed or removed -- check this list rather than

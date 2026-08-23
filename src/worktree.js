@@ -50,7 +50,14 @@ export function matchesInclude(path, patterns) {
 }
 
 export function readWorktreeInclude(root) {
-  const p = join(root, '.worktreeinclude');
+  return readPatternFile(join(root, '.worktreeinclude'));
+}
+
+export function readWorktreeExclude(root) {
+  return readPatternFile(join(root, '.worktreeexclude'));
+}
+
+function readPatternFile(p) {
   if (!existsSync(p)) return null;
   return readFileSync(p, 'utf-8')
     .split('\n')
@@ -104,6 +111,50 @@ export function carryOverFiles({ root, target, patterns }) {
     }
   }
   return { copied, failed };
+}
+
+// carryOverFiles is file-by-file, which is right for a handful of small config
+// files but not for the multi-GB trees a worktree needs to build without a
+// reinstall: node_modules, ios/Pods, and ios/build (RN codegen output, without
+// which xcodebuild fails on a missing States.cpp before pod install regenerates
+// it). Unlike listGitignoredFiles this keeps git's collapsed directory entries
+// -- they are the whole point here -- and does not exclude node_modules.
+export function listGitignoredEntries(root) {
+  const out = getExecutor().runQuiet(
+    `git -C "${root}" ls-files --others --ignored --exclude-standard --directory --no-empty-directory`
+  );
+  if (!out) return [];
+  return out.split('\n').filter(Boolean).map(e => (e.endsWith('/') ? e.slice(0, -1) : e));
+}
+
+// An exclude list rather than an include list: the failure mode of naming what
+// to copy is that a new ignored artifact is silently absent months later and
+// surfaces as a confusing build error, whereas the failure mode of naming what
+// to skip is a directory copied needlessly.
+//
+// `cloned` is false when `cp -c` was refused and the entry had to be copied for
+// real -- APFS clonefiles only work same-volume, and that is the difference
+// between ~40 MB and several GB per worktree, so the caller warns about it.
+export function cloneIgnoredEntries({ root, target, patterns }) {
+  const copied = [];
+  const failed = [];
+  let cloned = true;
+  for (const rel of listGitignoredEntries(root)) {
+    if (matchesInclude(rel, patterns)) continue;
+    const from = join(root, rel);
+    const to = join(target, rel);
+    try {
+      mkdirSync(dirname(to), { recursive: true });
+      if (getExecutor().runQuiet(`cp -Rc "${from}" "${to}"`) === null) {
+        getExecutor().run(`cp -R "${from}" "${to}"`);
+        cloned = false;
+      }
+      copied.push(rel);
+    } catch (e) {
+      failed.push({ file: rel, error: String(e?.message || e) });
+    }
+  }
+  return { copied, failed, cloned };
 }
 
 // Returns null (indeterminate) when `runQuiet` could not get an answer from

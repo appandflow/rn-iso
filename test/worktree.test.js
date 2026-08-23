@@ -13,6 +13,8 @@ import {
   hasUncommittedWork,
   listWorktrees,
   carryOverFiles,
+  cloneIgnoredEntries,
+  listGitignoredEntries,
   listGitignoredFiles,
   addWorktree,
   removeWorktree,
@@ -234,6 +236,63 @@ test('carryOverFiles reports per-file failures instead of swallowing them', () =
     assert.equal(failed.length, 1);
     assert.equal(failed[0].file, 'apps/missing/.env');
     assert.match(failed[0].error, /ENOENT|no such file/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test('listGitignoredEntries keeps collapsed directories and does not exclude node_modules', () => {
+  let capturedCmd;
+  setExecutor({
+    run: (cmd) => {
+      throw new Error(`unexpected run: ${cmd}`);
+    },
+    // The trailing slashes are what `--directory` emits for a wholly-ignored
+    // directory; listGitignoredFiles drops these entries, this one must not.
+    runQuiet: (cmd) => {
+      capturedCmd = cmd;
+      return 'node_modules/\nios/Pods/\nios/.xcode.env.local';
+    },
+    spawn: () => {},
+  });
+
+  assert.deepEqual(listGitignoredEntries('/repo'), ['node_modules', 'ios/Pods', 'ios/.xcode.env.local']);
+  assert.match(capturedCmd, /--directory/);
+  assert.doesNotMatch(capturedCmd, /exclude,glob/);
+});
+
+test('cloneIgnoredEntries skips excluded paths and reports a clone that fell back to a real copy', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
+  const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
+  try {
+    const cmds = [];
+    setExecutor({
+      run: (cmd) => {
+        cmds.push(cmd);
+        return '';
+      },
+      runQuiet: (cmd) => {
+        if (cmd.startsWith('git ')) return 'node_modules/\nbench/results/logs/';
+        // Anything else is the `cp -c` probe; null is how the real executor
+        // reports a refused clonefile (different volume, or not APFS).
+        cmds.push(cmd);
+        return null;
+      },
+      spawn: () => {},
+    });
+
+    const { copied, failed, cloned } = cloneIgnoredEntries({
+      root,
+      target,
+      patterns: ['bench/results/logs'],
+    });
+
+    assert.deepEqual(copied, ['node_modules']);
+    assert.deepEqual(failed, []);
+    assert.equal(cloned, false);
+    assert.ok(cmds.some(c => c.startsWith('cp -Rc')));
+    assert.ok(cmds.some(c => c.startsWith('cp -R ')));
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });

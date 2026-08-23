@@ -8,11 +8,13 @@ import { reclaimProject } from '../reclaim.js';
 import {
   addWorktree,
   carryOverFiles,
+  cloneIgnoredEntries,
   defaultWorktreeDir,
   gitCommonDir,
   hasRemote,
   hasUncommittedWork,
   listWorktrees,
+  readWorktreeExclude,
   readWorktreeInclude,
   removeWorktree,
   repoRoot,
@@ -27,6 +29,7 @@ export function registerCreate(worktree) {
     .description('Create a git worktree with its environment set up. Prints the worktree path on stdout.')
     .option('--base <ref>', 'base ref: "fresh" (origin/HEAD, default) or "head"')
     .option('--label <label>', 'rn-iso shortcut for the worktree (defaults to the worktree name)')
+    .option('--carry-ignored', 'clone every gitignored path (node_modules, Pods, build output) except those in .worktreeexclude')
     .action(async (name, opts) => {
       // `name` comes from a hook (session text), not a hand-typed argument,
       // and flows unescaped into a shell command (`-b "worktree-${name}"`)
@@ -93,6 +96,21 @@ export function registerCreate(worktree) {
         console.error(chalk.yellow(`Failed to carry over ${f.file}: ${f.error}`));
       }
 
+      let carriedIgnored = false;
+      if (opts.carryIgnored) {
+        const excluded = readWorktreeExclude(root);
+        const skip = excluded && excluded.length ? excluded : (settings?.worktree?.exclude || []);
+        const res = cloneIgnoredEntries({ root, target, patterns: skip });
+        carriedIgnored = res.copied.length > 0;
+        if (res.copied.length) console.error(chalk.dim(`Cloned ${res.copied.length} gitignored path(s).`));
+        if (!res.cloned) {
+          console.error(chalk.yellow('Copy-on-write clone unavailable (not APFS, or a different volume) -- these are full copies using real disk.'));
+        }
+        for (const f of res.failed) {
+          console.error(chalk.yellow(`Failed to clone ${f.file}: ${f.error}`));
+        }
+      }
+
 
       // Register the label now, before `rn-iso ios` ever runs, and mark this
       // entry as a worktree root. Without the label, the project would later
@@ -104,7 +122,11 @@ export function registerCreate(worktree) {
       // label -- see findEnclosingWorktreeRoot in config.js.
       upsertProject(target, { label: opts.label || name, worktreeRoot: true });
 
-      console.error(chalk.dim('Worktree ready. Install dependencies yourself before building.'));
+      // Cloned dependencies match the source worktree, not necessarily this
+      // branch's manifests -- same contract as restoring a CI cache.
+      console.error(chalk.dim(carriedIgnored
+        ? 'Worktree ready. Cloned dependencies may be stale; reinstall if this branch changes them.'
+        : 'Worktree ready. Install dependencies yourself before building.'));
 
       // The WorktreeCreate hook reads stdout as the directory to use. Nothing
       // else may be written here.
