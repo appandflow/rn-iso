@@ -67,7 +67,23 @@ export function parseOccupyingApps(launchctlOutput) {
 // deleting a sim that may still be driven by a foreign UI-test runner, which
 // is exactly what the probe exists to prevent. Same direction as the
 // unmounted-volume guard: on doubt, skip, do not destroy.
+//
+// A device that is not booted is the one case that is not doubt: nothing can
+// be running on it, and `simctl spawn` cannot answer for it either -- it exits
+// non-zero with "device is not booted", which the probe alone would read as
+// occupied. That made a shut-down orphan permanently unreapable: `gc` reported
+// it and skipped it on every run, forever. Check the state first, and only
+// probe a device that is actually booted.
 export function isSimOccupied(udid) {
+  let sim;
+  try {
+    sim = listAllIosSims().find(s => s.udid === udid);
+  } catch {
+    // Could not read the device list: that IS doubt, so fall through to the
+    // probe and let it fail closed.
+    sim = undefined;
+  }
+  if (sim && sim.state !== 'Booted') return false;
   const out = getExecutor().runQuiet(`xcrun simctl spawn ${udid} launchctl list`);
   if (out === null || out === undefined) return true;
   return parseOccupyingApps(out).length > 0;
