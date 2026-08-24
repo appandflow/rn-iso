@@ -38,6 +38,7 @@ const KNOWN_SETTINGS = new Set([
   'worktree.baseRef',
   'worktree.include',
   'worktree.exclude',
+  'caches',
 ]);
 
 // Returns dotted paths for keys rn-iso does not read. Leaf-level: a known

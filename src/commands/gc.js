@@ -14,6 +14,9 @@ import { reclaimProject } from '../reclaim.js';
 import { listAllIosSims } from '../sim/ios.js';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
 import { listAvds } from '../sim/android.js';
+import { discoverCaches, sizeCaches } from '../caches.js';
+import { getExecutor } from '../exec.js';
+import { resolveSettings } from '../settings.js';
 
 // Bounds each device listing so a wedged simctl/emulator daemon can't hang
 // `gc` forever -- see the comment above the listAllIosSims/listAvds calls
@@ -132,6 +135,7 @@ export function formatGcReport({
   totalBytes,
   orphanedDevices = [],
   deviceSweepNotices = [],
+  caches = [],
 }) {
   const lines = [];
 
@@ -185,6 +189,21 @@ export function formatGcReport({
     for (const entry of skipped) lines.push(`  ${entry.dir}: ${entry.reason}`);
   }
 
+  // Shared caches are reported apart from everything above, and never counted
+  // in the reclaim total: the rest of this report is dead weight, while these
+  // are alive and load-bearing. Deleting one costs the next build the time the
+  // cache was saving -- it is a performance decision, not cleanup.
+  if (caches.length) {
+    const total = caches.reduce((n, c) => n + c.bytes, 0);
+    lines.push(`Shared build caches (${caches.length}) - alive, not garbage:`);
+    for (const c of caches) {
+      lines.push(`  ${formatBytes(c.bytes).padStart(10)}  ${c.name}`);
+      lines.push(`              ${c.dir}`);
+      lines.push(`              ${c.bounded ? c.note : `unbounded, ${c.note}`}`);
+    }
+    lines.push(`  total: ${formatBytes(total)}`);
+  }
+
   return lines;
 }
 
@@ -193,6 +212,7 @@ export default function gcCommand(program) {
     .command('gc')
     .description('Reclaim build artifacts and config entries left behind by worktrees that no longer exist. Reports by default; pass --delete to act.')
     .option('--delete', 'actually delete the reported artifacts and entries')
+    .option('--caches', 'also report the shared build caches (Metro, ccache, Xcode compilation cache); with --delete, empty them')
     .option('--older-than <days>', 'only consider artifacts not accessed in this many days', v => {
       const n = parseInt(v, 10);
       if (!Number.isFinite(n) || String(n) !== String(v).trim()) {
@@ -202,6 +222,15 @@ export default function gcCommand(program) {
     })
     .action(async opts => {
       const { orphaned, skipped } = findOrphanedDerivedData({ olderThanDays: opts.olderThan });
+
+      // Opt-in, and separate from everything else this command reclaims. These
+      // caches are shared by every project on the machine, so the blast radius
+      // is not "this dead worktree" -- it is every build that would have hit
+      // them. Sizing walks gigabytes, so only do it when asked.
+      const settings = resolveSettings({});
+      const caches = opts.caches
+        ? sizeCaches(discoverCaches({ declared: settings?.caches }))
+        : [];
 
       const sized = orphaned.map(entry => {
         const bytes = directorySize(entry.dir);
@@ -288,11 +317,15 @@ export default function gcCommand(program) {
         orphanedDevices = findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects }).orphaned;
       }
 
-      for (const line of formatGcReport({ orphaned: sized, skipped: allSkipped, deadProjects, totalBytes, orphanedDevices, deviceSweepNotices })) {
+      for (const line of formatGcReport({ orphaned: sized, skipped: allSkipped, deadProjects, totalBytes, orphanedDevices, deviceSweepNotices, caches })) {
         console.log(line);
       }
 
-      if (sized.length === 0 && deadProjects.length === 0 && orphanedDevices.length === 0) return;
+      // Caches count toward "is there anything to do": a machine with no dead
+      // worktrees can still be carrying gigabytes of shared cache, and that is
+      // the whole reason to ask for --caches.
+      const nothingToReclaim = sized.length === 0 && deadProjects.length === 0 && orphanedDevices.length === 0;
+      if (nothingToReclaim && !caches.length) return;
 
       if (!opts.delete) {
         console.log(chalk.dim('\nDry run. Re-run with --delete to reclaim.'));
@@ -336,10 +369,9 @@ export default function gcCommand(program) {
       // (notOwned), an already-gone one is reported as such without being
       // treated as a failure (missing), and a probe that itself throws
       // fails CLOSED -- caught below, reported, and left untouched, same as
-      // any other teardown failure. Only then is occupancy checked -- a
-      // foreign process still attached to an otherwise-orphaned sim means
-      // it is not safe to touch, so it is reported and left for a later
-      // `gc` run rather than shut down out from under whatever is using it.
+      // any other teardown failure. Occupancy no longer defers a delete: an
+      // orphaned sim referenced by no live project is going away, and leaving
+      // it "for a later gc" only asked the same question again forever.
       for (const d of orphanedDevices) {
         // Every guard lives in the shared teardown helper: ownership
         // re-resolve, occupancy (iOS only), and per-device containment so one
@@ -365,8 +397,35 @@ export default function gcCommand(program) {
       const reclaimedSuffix = reclaimedUnmeasured
         ? ` (${reclaimedUnmeasured} entr${reclaimedUnmeasured === 1 ? 'y' : 'ies'} unmeasured)`
         : '';
+      // Emptied last and counted apart from `reclaimedBytes`: this is not
+      // reclaimed garbage, it is a cache someone will now have to refill.
+      let cacheBytes = 0;
+      for (const c of caches) {
+        try {
+          if (c.files) {
+            // `dir` here is the system temp directory, not a directory this
+            // cache owns. Only ever remove the files we listed inside it.
+            for (const f of c.files) rmSync(f, { force: true });
+          } else if (c.name === 'ccache') {
+            // Let ccache clear itself so its config and stats survive.
+            getExecutor().runQuiet('ccache --clear');
+          } else {
+            rmSync(c.dir, { recursive: true, force: true });
+          }
+          cacheBytes += c.bytes;
+          console.log(chalk.green(`Emptied ${c.name} (${formatBytes(c.bytes)})`));
+        } catch (e) {
+          console.log(chalk.yellow(`Could not empty ${c.name}: ${String(e?.message || e)}`));
+        }
+      }
+
       console.log(
         chalk.dim(`\nReclaimed ${reclaimedUnmeasured ? 'at least ' : ''}${formatBytes(reclaimedBytes)}${reclaimedSuffix}.`)
       );
+      if (cacheBytes) {
+        console.log(
+          chalk.dim(`Emptied ${formatBytes(cacheBytes)} of shared cache. The next build in each project pays to refill it.`)
+        );
+      }
     });
 }

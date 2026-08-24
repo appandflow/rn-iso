@@ -204,6 +204,7 @@ KEYS RN-ISO READS
   worktree.baseRef      "fresh" (origin/HEAD) or "head"
   worktree.include      carry-over patterns, same role as .worktreeinclude
   worktree.exclude      --carry-ignored skip list, same role as .worktreeexclude
+  caches                extra shared-cache paths for 'gc --caches' to report
 
 Anything else is IGNORED, and rn-iso warns about it by name. If you see such a
 warning, the key was either renamed or removed -- check this list rather than
