@@ -14,6 +14,8 @@ import {
   listWorktrees,
   carryOverFiles,
   cloneIgnoredEntries,
+  podsOutOfSync,
+  isPodInstallChurn,
   listGitignoredEntries,
   listGitignoredFiles,
   addWorktree,
@@ -497,4 +499,67 @@ test('removeWorktree includes --force only when asked, for a path containing a s
     `git -C "${path}" worktree remove "${path}"`,
     `git -C "${path}" worktree remove --force "${path}"`,
   ]);
+});
+
+// `ios/Pods/` is gitignored and gets cloned; `ios/Podfile.lock` is tracked and
+// comes from the branch. When the source worktree's two disagree, the clone
+// imports the contradiction and xcodebuild reports it only after every pod has
+// compiled ("sandbox is not in sync"). Catching it at create time is a file
+// comparison; catching it at build time cost 25 minutes on a real project.
+function podsFixture({ manifest, podfileLock, dir = 'ios' }) {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-pods-'));
+  mkdirSync(join(root, dir, 'Pods'), { recursive: true });
+  if (manifest != null) writeFileSync(join(root, dir, 'Pods', 'Manifest.lock'), manifest);
+  if (podfileLock != null) writeFileSync(join(root, dir, 'Podfile.lock'), podfileLock);
+  return root;
+}
+
+test('carried Pods matching their Podfile.lock produce no warning', () => {
+  const root = podsFixture({ manifest: 'PODS:\n  - fmt (11.0.2)\n', podfileLock: 'PODS:\n  - fmt (11.0.2)\n' });
+  assert.deepEqual(podsOutOfSync(root, ['ios/Pods', 'node_modules']), []);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('carried Pods that disagree with Podfile.lock are reported', () => {
+  const root = podsFixture({ manifest: 'React-Core (= 0.86.2)\n', podfileLock: 'React-Core (= 0.79.6)\n' });
+  assert.deepEqual(podsOutOfSync(root, ['ios/Pods']), [{ dir: 'ios', reason: 'mismatch' }]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('carried Pods with no Podfile.lock beside them are reported as missing', () => {
+  const root = podsFixture({ manifest: 'React-Core (= 0.86.2)\n', podfileLock: null });
+  assert.deepEqual(podsOutOfSync(root, ['ios/Pods']), [{ dir: 'ios', reason: 'missing' }]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+// A monorepo keeps the app -- and its Pods -- under e.g. apps/mobile, so the
+// check cannot be hardcoded to a top-level `ios/`.
+test('a monorepo app directory is checked at its own path', () => {
+  const root = podsFixture({ manifest: 'a\n', podfileLock: 'b\n', dir: 'apps/mobile/ios' });
+  assert.deepEqual(podsOutOfSync(root, ['apps/mobile/ios/Pods']), [{ dir: 'apps/mobile/ios', reason: 'mismatch' }]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('entries that are not Pods directories are ignored, including lookalikes', () => {
+  const root = podsFixture({ manifest: 'a\n', podfileLock: 'b\n' });
+  assert.deepEqual(podsOutOfSync(root, ['node_modules', 'ios/build', 'vendor/PodsHelper']), []);
+  rmSync(root, { recursive: true, force: true });
+});
+
+// No Manifest.lock means nothing was ever installed into that directory, so
+// there is no claim to contradict. Warning there would be noise.
+test('a Pods directory with no Manifest.lock is not reported', () => {
+  const root = podsFixture({ manifest: null, podfileLock: 'a\n' });
+  assert.deepEqual(podsOutOfSync(root, ['ios/Pods']), []);
+  rmSync(root, { recursive: true, force: true });
+});
+
+// The removal refusal used to print the CocoaPods restore command
+// unconditionally. On member-app the dirty files are brand assets a shell
+// script rewrites, so following that command cleared nothing.
+test('pod-install churn is recognised so the restore advice only fires when it works', () => {
+  assert.equal(isPodInstallChurn([' M ios/Podfile.lock', ' M ios/PatientApp.xcodeproj/project.pbxproj']), true);
+  assert.equal(isPodInstallChurn([' M ios/Podfile.lock', ' M config.json']), false, 'a brand asset is not pod churn');
+  assert.equal(isPodInstallChurn([' M App/Images/ic_app_ios.png']), false);
+  assert.equal(isPodInstallChurn([]), false, 'nothing dirty is not pod churn');
 });

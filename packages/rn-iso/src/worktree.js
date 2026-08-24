@@ -157,6 +157,48 @@ export function cloneIgnoredEntries({ root, target, patterns }) {
   return { copied, failed, cloned };
 }
 
+// `ios/Pods/` is gitignored, so --carry-ignored clones it wholesale, including
+// the `Pods/Manifest.lock` that records which Podfile.lock produced it.
+// `ios/Podfile.lock` is TRACKED, so the new worktree gets the committed version
+// instead. When the source worktree's installed Pods do not match its own
+// committed Podfile.lock -- common on a branch mid-upgrade, or when a
+// `pod install` was never committed -- the clone imports that contradiction.
+//
+// Xcode notices only in the very last build phase, after every pod has
+// compiled: "The sandbox is not in sync with the Podfile.lock". On a real
+// project that is ~25 minutes and 10k log lines before anything says so, which
+// is why this cheap file comparison is worth doing at create time.
+//
+// Driven off the cloned entry list rather than a hardcoded `ios/Pods` so it
+// covers a monorepo, where the app (and its Pods) sit under e.g. `apps/mobile`.
+// Returns one entry per Pods directory that is out of sync; an empty array
+// means every carried Pods directory matches its Podfile.lock.
+export function podsOutOfSync(target, copiedEntries, { read = readFileSync } = {}) {
+  const problems = [];
+  for (const rel of copiedEntries || []) {
+    if (rel !== 'Pods' && !rel.endsWith('/Pods')) continue;
+    const iosDir = rel === 'Pods' ? '' : rel.slice(0, -'/Pods'.length);
+    const manifest = join(target, rel, 'Manifest.lock');
+    const podfileLock = join(target, iosDir, 'Podfile.lock');
+    if (!existsSync(manifest)) continue;
+    // No Podfile.lock next to a carried Pods directory is the same failure
+    // wearing a different hat: the sandbox check compares against a file that
+    // is not there.
+    if (!existsSync(podfileLock)) {
+      problems.push({ dir: iosDir || '.', reason: 'missing' });
+      continue;
+    }
+    try {
+      if (read(manifest, 'utf-8') !== read(podfileLock, 'utf-8')) {
+        problems.push({ dir: iosDir || '.', reason: 'mismatch' });
+      }
+    } catch {
+      // Unreadable is not the same as out of sync, and this is advisory.
+    }
+  }
+  return problems;
+}
+
 // Returns null (indeterminate) when `runQuiet` could not get an answer from
 // git at all -- e.g. index.lock held by a concurrent process, a permission
 // error, or `dir` not being a git worktree -- as distinct from `false`
@@ -167,6 +209,30 @@ export function hasUncommittedWork(dir) {
   const out = getExecutor().runQuiet(`git -C "${dir}" status --porcelain`);
   if (out === null) return null;
   return out.trim().length > 0;
+}
+
+// The paths behind a `dirty` verdict, as `git status --porcelain` short codes
+// plus path. The refusal message used to name only the CocoaPods case, which is
+// the common cause but not the only one: on member-app the dirty files are
+// brand assets a shell script rewrites (app icons, config.json, Config.xcconfig),
+// and following the printed `git checkout -- ios/Podfile.lock` does not clear
+// the refusal. Naming what is actually dirty points at the real cause.
+//
+// Returns [] when git could not answer; the caller already treats that as its
+// own blocker via hasUncommittedWork returning null.
+export function dirtyPaths(dir, { limit = 10 } = {}) {
+  const out = getExecutor().runQuiet(`git -C "${dir}" status --porcelain`);
+  if (out === null) return [];
+  const lines = out.split('\n').map(l => l.trimEnd()).filter(Boolean);
+  return lines.slice(0, limit);
+}
+
+// Whether the dirty set is only the files a `pod install` rewrites. That is the
+// case where "restore and retry" actually works, so the advice is only printed
+// when it applies.
+export function isPodInstallChurn(paths) {
+  if (!paths || paths.length === 0) return false;
+  return paths.every(line => /(?:^|\/)(?:Podfile\.lock|project\.pbxproj)$/.test(line.slice(3).trim()));
 }
 
 // Commits reachable from HEAD but from no remote ref. Removing the worktree

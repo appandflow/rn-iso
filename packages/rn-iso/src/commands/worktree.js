@@ -10,10 +10,13 @@ import {
   carryOverFiles,
   cloneIgnoredEntries,
   defaultWorktreeDir,
+  dirtyPaths,
   gitCommonDir,
   hasRemote,
   hasUncommittedWork,
+  isPodInstallChurn,
   listWorktrees,
+  podsOutOfSync,
   readWorktreeExclude,
   readWorktreeInclude,
   removeWorktree,
@@ -97,17 +100,31 @@ export function registerCreate(worktree) {
       }
 
       let carriedIgnored = false;
+      let carriedDeps = false;
       if (opts.carryIgnored) {
         const excluded = readWorktreeExclude(root);
         const skip = excluded && excluded.length ? excluded : (settings?.worktree?.exclude || []);
         const res = cloneIgnoredEntries({ root, target, patterns: skip });
         carriedIgnored = res.copied.length > 0;
+        carriedDeps = res.copied.some(rel => rel === 'node_modules' || rel.endsWith('/node_modules'));
         if (res.copied.length) console.error(chalk.dim(`Cloned ${res.copied.length} gitignored path(s).`));
+        // A count reads like success. It is not: the clone can only carry what
+        // the source worktree has, and a source with no node_modules produces a
+        // healthy-looking count and a worktree that cannot build.
+        if (carriedIgnored && !carriedDeps) {
+          console.error(chalk.yellow('No node_modules among them -- the source worktree has none. Install dependencies before building.'));
+        }
         if (!res.cloned) {
           console.error(chalk.yellow('Copy-on-write clone unavailable (not APFS, or a different volume) -- these are full copies using real disk.'));
         }
         for (const f of res.failed) {
           console.error(chalk.yellow(`Failed to clone ${f.file}: ${f.error}`));
+        }
+        for (const p of podsOutOfSync(target, res.copied)) {
+          const where = p.dir === '.' ? 'Podfile.lock' : `${p.dir}/Podfile.lock`;
+          console.error(chalk.yellow(p.reason === 'missing'
+            ? `Carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} but there is no ${where}. Run \`pod install\` before building.`
+            : `Carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} does not match ${where}. Pods are gitignored and cloned; Podfile.lock is tracked and comes from the branch, so the two can disagree. Run \`pod install\` before building, or xcodebuild fails with "sandbox is not in sync" only after every pod has compiled.`));
         }
       }
 
@@ -268,9 +285,23 @@ export function registerRemove(worktree) {
         // Committed work is not at risk either way: the branch ref survives
         // `git worktree remove --force`. Only uncommitted changes and
         // untracked files are discarded.
-        console.error(chalk.dim('If a native build rewrote tracked files (pod install always rewrites Podfile.lock'));
-        console.error(chalk.dim('and project.pbxproj), restore them and retry:'));
-        console.error(chalk.dim('  git -C <worktree> checkout -- ios/Podfile.lock "ios/*.xcodeproj/project.pbxproj"'));
+        // Name what is actually dirty. `pod install` churn is the common
+        // cause but not the only one -- a brand/env script that rewrites
+        // tracked assets produces the same refusal, and the CocoaPods restore
+        // command does nothing for it, so printing that unconditionally sends
+        // the reader down the wrong path.
+        const paths = dirty ? dirtyPaths(path) : [];
+        if (paths.length) {
+          for (const line of paths) console.error(chalk.dim(`      ${line}`));
+          console.error(chalk.dim('  (git -C <worktree> status -s for the full list)'));
+        }
+        if (isPodInstallChurn(paths)) {
+          console.error(chalk.dim('That is only the files `pod install` rewrites. Restore them and retry:'));
+          console.error(chalk.dim('  git -C <worktree> checkout -- ios/Podfile.lock "ios/*.xcodeproj/project.pbxproj"'));
+        } else {
+          console.error(chalk.dim('If a build or a setup script rewrote tracked files, restore those paths and retry:'));
+          console.error(chalk.dim('  git -C <worktree> checkout -- <path>...'));
+        }
         console.error(chalk.dim('Otherwise: commit or push the branch. --force is a last resort -- it discards'));
         console.error(chalk.dim('uncommitted changes and untracked files permanently; committed work stays on the branch.'));
         process.exitCode = 1;
