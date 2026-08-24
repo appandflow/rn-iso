@@ -15,6 +15,7 @@ import guideCommand from '../src/commands/guide.js';
 import skillCommand from '../src/commands/skill.js';
 import doctorCommand from '../src/commands/doctor.js';
 import cacheCommand from '../src/commands/cache.js';
+import buildCacheCommand from '../src/commands/build-cache.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 
@@ -38,6 +39,7 @@ guideCommand(program, pkg.version);
 skillCommand(program, pkg.version);
 doctorCommand(program);
 cacheCommand(program);
+buildCacheCommand(program);
 
 // parseAsync (not parse): several command actions (up, release, shutdown,
 // worktree) are async, and commander only awaits/propagates their errors
