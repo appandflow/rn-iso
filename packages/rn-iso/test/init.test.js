@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { projectFacts, renderWorkflow, renderWorktreeExclude } from '../src/init.js';
+import { projectFacts, renderDevScript, renderWorkflow, renderWorktreeExclude } from '../src/init.js';
 
 const expoApp = { pkg: { name: 'demo', dependencies: { expo: '~57.0.0', 'react-native': '0.86.2' } } };
 const bareApp = { pkg: { name: 'bare', dependencies: { 'react-native': '0.86.2' } } };
@@ -70,4 +70,45 @@ test('the worktree exclude file is patterns and comments only', () => {
   const lines = renderWorktreeExclude().split('\n').filter(l => l.trim() && !l.startsWith('#'));
   assert.ok(lines.length > 0);
   assert.ok(lines.every(l => !l.includes(' ')), 'a pattern with a space in it would not match anything');
+});
+
+// The middle of the loop is a sequence, and getting the order wrong fails in
+// ways that do not name themselves -- build before Metro answers and the app
+// opens on a red screen.
+test('the dev script waits for Metro to answer before running the build', () => {
+  const script = renderDevScript(projectFacts(expoApp));
+  const bundlerAt = script.indexOf('expo start');
+  const readyAt = script.indexOf('packager-status:running', bundlerAt);
+  const runAt = script.indexOf('expo run:ios');
+  assert.ok(bundlerAt !== -1 && readyAt !== -1 && runAt !== -1);
+  assert.ok(readyAt < runAt, 'readiness must be established before the build starts');
+});
+
+test('the dev script polls rather than sleeping a fixed amount', () => {
+  const script = renderDevScript(projectFacts(expoApp));
+  assert.match(script, /for _ in \$\(seq/);
+});
+
+// --no-bundler is the mistake this script exists partly to prevent, so it must
+// not appear in an actual command -- only in the comment warning about it.
+test('no generated command uses --no-bundler', () => {
+  for (const facts of [projectFacts(expoApp), projectFacts(bareApp)]) {
+    const commands = renderDevScript(facts)
+      .split('\n')
+      .filter(l => l.trim() && !l.trim().startsWith('#'));
+    assert.equal(commands.filter(l => l.includes('--no-bundler')).length, 0);
+  }
+});
+
+// A bare app has no dev client to receive the deep link, and compiling the port
+// in would poison a fingerprint-keyed build cache.
+test('only the bare script points the app at the bundler at runtime', () => {
+  assert.match(renderDevScript(projectFacts(bareApp)), /RCT_jsLocation/);
+  assert.doesNotMatch(renderDevScript(projectFacts(expoApp)), /RCT_jsLocation/);
+});
+
+// The port is what `up --json` and `status` both report, so a log named after it
+// can be found again without anything having to remember where it went.
+test('the Metro log is named after the port', () => {
+  assert.match(renderDevScript(projectFacts(expoApp)), /rn-iso-metro-\$\{PORT\}\.log/);
 });

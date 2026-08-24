@@ -1,8 +1,8 @@
 import chalk from 'chalk';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
 import { findProjectRoot } from '../project.js';
-import { projectFacts, renderWorkflow, renderWorktreeExclude } from '../init.js';
+import { projectFacts, renderDevScript, renderWorkflow, renderWorktreeExclude } from '../init.js';
 import { runDoctor } from '../doctor.js';
 
 function readJson(path) {
@@ -35,6 +35,9 @@ export default function initCommand(program) {
       const files = [
         { path: join(root, 'WORKFLOW.md'), contents: renderWorkflow(facts) },
         { path: join(root, '.worktreeexclude'), contents: renderWorktreeExclude() },
+        // Executable: it is meant to be run, and a script you have to chmod
+        // before it works is a papercut on every fresh clone.
+        { path: join(root, 'scripts', 'dev'), contents: renderDevScript(facts), mode: 0o755 },
       ];
 
       let wrote = 0;
@@ -46,7 +49,8 @@ export default function initCommand(program) {
           console.error(chalk.dim('  --force overwrites it.'));
           continue;
         }
-        writeFileSync(file.path, file.contents);
+        mkdirSync(dirname(file.path), { recursive: true });
+        writeFileSync(file.path, file.contents, file.mode ? { mode: file.mode } : undefined);
         console.error(chalk.green(`Wrote ${file.path}`));
         wrote++;
       }
