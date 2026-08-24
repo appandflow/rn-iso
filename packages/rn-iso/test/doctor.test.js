@@ -155,3 +155,18 @@ test('detectXcodeMajor reports unknown rather than throwing when xcodebuild is m
     resetExecutor();
   }
 });
+
+// An app can depend on a dozen expo-* modules and still build with
+// `react-native run-ios`. member-app is the real case: `expo` 53 in
+// dependencies, `ios` script running `react-native run-ios`, and `status`
+// already printing "(bare)". doctor used to key on the dependency alone and
+// contradicted status with two Expo-only findings.
+test('an expo-dependency project that builds with react-native run-ios is not flagged', () => {
+  const pkg = { dependencies: { expo: '53.0.23', 'react-native': '0.79.6' } };
+  assert.equal(checkDevClient(pkg, false), null);
+});
+
+test('the dev client finding still fires for a project that builds with expo run:ios', () => {
+  const pkg = { dependencies: { expo: '~57.0.0' } };
+  assert.equal(checkDevClient(pkg, true).level, 'cost');
+});

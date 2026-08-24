@@ -13,6 +13,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { getExecutor } from './exec.js';
+import { detectIsExpo } from './project.js';
 
 // `xcodebuild -version` prints "Xcode 26.1" on its first line. Anything else --
 // no Xcode, command line tools only, a localized or future format -- is null,
@@ -49,12 +50,18 @@ function readJson(path) {
 // A reserved Metro port only reaches the app through expo-dev-client's deep
 // link: `--port` is never compiled into the binary. Without it the app looks
 // for Metro on 8081, finds nothing, and shows a red screen naming none of this.
-export function checkDevClient(pkg) {
+//
+// `isExpo` is whether the project BUILDS with the Expo CLI, which is not the
+// same as having `expo` in dependencies: an app can depend on a dozen expo-*
+// modules and still launch through `react-native run-ios`, where `--port` is
+// baked in at build time and no deep link is involved. Callers pass
+// detectIsExpo(projectRoot) so this agrees with what `status` prints.
+export function checkDevClient(pkg, isExpo = true) {
   const deps = { ...(pkg?.dependencies || {}), ...(pkg?.devDependencies || {}) };
   if (deps['expo-dev-client']) return null;
   // Bare React Native has its own way of reaching a non-default port and no
   // dev client to install; this advice only applies to an Expo app.
-  if (!deps.expo) return null;
+  if (!isExpo || !deps.expo) return null;
   return finding(
     'cost',
     'expo-dev-client is not installed',
@@ -227,12 +234,16 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
   const podfile = read(join('ios', 'Podfile'));
   const metroConfig = read('metro.config.js');
 
-  const isExpo = Boolean(pkg?.dependencies?.expo);
+  // Same detector `status` uses, so one project never reads as expo in one
+  // command and bare in another. It weighs the `ios` script above the presence
+  // of the `expo` package, which is the distinction the Expo-only checks below
+  // actually depend on.
+  const isExpo = detectIsExpo(projectRoot);
   const expoRange = pkg?.dependencies?.expo || '';
   const sdkMajor = parseInt(String(expoRange).replace(/[^\d.]/g, '').split('.')[0], 10) || null;
 
   return [
-    checkDevClient(pkg),
+    checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
     checkCompilationCache(podfile, xcodeMajor),
     checkCcacheConflict(podfile, podfileProperties),
