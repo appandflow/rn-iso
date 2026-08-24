@@ -4,6 +4,45 @@ An environment broker for React Native / Expo: `rn-iso up <platform>` creates (o
 
 > **Experimental.** APIs, flags, and on-disk state may change. File issues if anything breaks.
 
+## Why this exists
+
+Coding agents are moving to the cloud, and React Native is one of the places
+that goes badly. A cloud agent needs macOS, a matching Xcode, a booted
+simulator, a signing identity, and every MCP server re-authenticated -- on
+runners that cost several times a Linux box and lag Xcode releases by months.
+Physical devices are simply out of reach.
+
+Locally, none of that is a problem. The environment is already set up, the
+Mac is already paid for, simulators work, you are already logged into
+everything, and the agent harness already provides the isolation that a cloud
+sandbox is there to provide.
+
+What breaks locally is that agents share one machine. Two of them reach for
+port 8081, or the same booted simulator, and both end up talking to the wrong
+bundler -- silently, because nothing tells you a build attached to somebody
+else's Metro. When an agent is killed mid-run it leaves a simulator booted, a
+Metro squatting on a port, and an `xcodebuild` test runner pinning a device
+nothing can now delete.
+
+That is the whole job of this tool: arbitrate the contended resources, and
+reclaim them when the agent that owned them dies badly. Everything else --
+which build command, which bundler flags, when to install -- is judgment a
+coding agent already has from reading the repo, and rn-iso deliberately does
+not take it back.
+
+### Where local honestly loses
+
+- **CPU and memory are finite.** Two or three live environments on a 16 GB
+  machine, not ten. Cloud wins this outright.
+- **Paths are not stable.** CI checks out to the same path every run, so
+  path-keyed caches (ccache, Xcode's compilation cache, a CocoaPods sandbox)
+  just work. Locally every worktree sits somewhere different, and those caches
+  quietly miss everything -- measured on one project as 0 ccache hits out of
+  1094 across two workspaces. It is fixable, but it is a tax cloud does not pay.
+- **Disk grows without bound.** Simulators, DerivedData and the shared caches
+  that make any of this fast all accumulate. `gc` and `gc --caches` exist for
+  that reason.
+
 State lives in `~/.rn-iso/config.json`, keyed by absolute project path. Worktrees count as separate projects. There is no shared mutex -- each project gets its own port and its own device.
 
 ## Quick start
@@ -64,7 +103,7 @@ All commands below take the same `npx rn-iso` prefix.
 | `release [<port>\|<shortcut>\|<path>] [--platform <p>] [--force]` | Free a project's device assignment. Deletes it if owned (see above); clears it if legacy/physical. `--force` deletes even if in use by another tool (iOS only). |
 | `shutdown [<shortcut>\|<path>] [-y] [--keep-sims]` | Kill Metro, shut down (never delete) owned sims/emulators. Owned device records stay recorded so `up` can reuse them; legacy/physical assignments are cleared. No arg = every registered project. |
 | `prune` | Remove entries for deleted project directories, freeing their ports (not devices -- see `gc`). |
-| `gc [--delete] [--older-than <days>]` | Report (or, with `--delete`, reclaim) orphaned Xcode DerivedData, dead project entries, and orphaned `rn-iso-*` devices. Reports only by default. |
+| `gc [--delete] [--older-than <days>] [--caches]` | Report (or, with `--delete`, reclaim) orphaned Xcode DerivedData, dead project entries, and orphaned `rn-iso-*` devices. Reports only by default. `--caches` additionally reports the shared build caches -- see below. |
 | `config [<key> [<value>]] [--unset] [--project <target>] [--repo]` | Get / set a per-project (or, with `--repo`, repo-shared) setting. |
 | `worktree create <name> [--base fresh\|head] [--label <name>] [--carry-ignored]` | Create an isolated git worktree: carries over gitignored files, prints the worktree path. Does not install dependencies unless `--carry-ignored` clones them. |
 | `worktree remove <path> [--force]` | Remove a worktree, reclaiming its build artifacts, Metro port, and owned devices (deleted, not just freed). Refuses if it has uncommitted or unpushed work unless `--force`. |
@@ -100,6 +139,38 @@ npx rn-iso config ios.deviceType --unset
 ```
 
 Allowed project-layer keys today: `ios.deviceType`, `ios.runtime`, `android.systemImage`. Pass `--repo` to operate on the repo-shared layer instead (keyed by the repo's git common dir), which additionally accepts `worktreeDir` and any `worktree.*` key -- see "Settings" below. Settings live in `~/.rn-iso/config.json`.
+
+## Shared build caches (`gc --caches`)
+
+Everything `gc` reclaims by default is *dead*: a DerivedData directory whose
+workspace no longer exists belongs to nobody. Shared build caches are the
+opposite -- alive by design, shared by every project on the machine, and
+pruned by nothing:
+
+- **Metro's `FileStore`** has no eviction logic whatsoever.
+- **Xcode's compilation cache** has no size cap.
+- **Metro file maps** accumulate one file per project root ever served.
+- **ccache** is the exception: it caps itself, and `gc --caches` reports the cap
+  rather than warning about it.
+
+So they are reported in their own bucket and are *never* touched by a plain
+`gc --delete`:
+
+```bash
+npx rn-iso gc --caches            # report sizes only
+npx rn-iso gc --caches --delete   # empty them
+```
+
+Emptying is a performance decision, not cleanup: the next build in every
+project pays to refill what you removed. The summary says so.
+
+Caches rn-iso cannot detect -- a Metro `FileStore` root, an Expo build-cache
+provider's artifact directory, a relocated `COMPILATION_CACHE_CAS_PATH` -- come
+from a project's own config, so name them with the `caches` setting:
+
+```bash
+npx rn-iso config caches '["~/.myapp-metro-cache", "~/.myapp-build-cache"]' --repo
+```
 
 ## Project shortcuts (--label)
 
