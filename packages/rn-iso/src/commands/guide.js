@@ -102,10 +102,32 @@ metroHealthy is true, or let rn-iso do it:
 not on any remote"
   A native build rewrites tracked files -- \`pod install\` always touches
   Podfile.lock and project.pbxproj -- so this fires after almost every iOS
-  build. RESTORE THOSE FILES rather than reaching for --force:
+  build. The refusal now PRINTS THE DIRTY PATHS: restore those rather than
+  reaching for --force. When the list is only pod churn:
     git checkout -- ios/Podfile.lock ios/*.xcodeproj/project.pbxproj
+  A setup script that rewrites tracked assets (brand icons, generated config)
+  produces the same refusal and the command above clears nothing -- restore
+  the paths the refusal actually named.
   Use --force only when you genuinely intend to discard work; it deletes
   uncommitted and untracked files permanently.
+
+"Carried <dir>/Pods does not match <dir>/Podfile.lock" (worktree create)
+  \`ios/Pods\` is gitignored, so --carry-ignored clones it; \`ios/Podfile.lock\`
+  is tracked, so it comes from the branch. When the source worktree's two
+  disagree, the new worktree inherits the contradiction. Run \`pod install\`
+  before building. Ignore it and xcodebuild fails with
+    error: The sandbox is not in sync with the Podfile.lock
+  in the LAST build phase, after every pod has already compiled.
+
+"No node_modules among them" (worktree create --carry-ignored)
+  The clone can only carry what the source worktree has, and the source has no
+  node_modules. The path count above that line is not evidence of a usable
+  worktree. Install dependencies before building.
+
+"Installed rn-iso skill is X but this CLI is Y"
+  The skill is a plain file copy, so upgrading rn-iso never refreshes it, and
+  npx can serve a cached older CLI. Run \`npx rn-iso skill install\`. If the
+  CLI itself is the old half, \`npx rn-iso@latest\` bypasses the stale cache.
 
 "No Metro port assigned to <path>, and no registered project under it owns one"
   Nothing to stop. Exit code 1, deliberately: exit 0 here used to let agents

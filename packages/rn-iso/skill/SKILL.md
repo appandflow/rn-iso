@@ -8,7 +8,9 @@ user_invocable: true
 
 You are an AI agent working on a React Native / Expo project, possibly alongside other agents working on different projects or worktrees. rn-iso is a pure **environment broker**: it creates and owns a dedicated simulator/emulator per project and reserves a collision-free Metro port, then hands you the facts to build against. It never runs your build and never starts Metro -- both are your job, using the project's own tooling.
 
-Invoke the CLI via `npx`: `npx rn-iso <command>`. Don't `npm install -g`; `npx` resolves the latest published version.
+Invoke the CLI via `npx`: `npx rn-iso <command>`. Don't `npm install -g`.
+
+`npx` usually resolves the latest published version, but not always: a stale entry in the npm cache (or a different node version's cache) can serve an old one, and an old CLI silently lacks commands this file documents. **Check once per session** -- `npx rn-iso --version` -- and use `npx rn-iso@latest` if it disagrees with the version stamped at the bottom of this file. `up` warns when the two are out of step.
 
 ## Read the CLI's own docs for anything specific
 
@@ -52,6 +54,11 @@ npx rn-iso worktree remove <path>               # 7. environment dies whole
 Start Metro **from inside the project directory** and send its output somewhere predictable -- that is how teardown recognizes it as yours, and how a later session finds its log. `npx rn-iso guide metro` has the per-project-shape commands.
 
 On APFS, `worktree create --carry-ignored` clones every gitignored path (`node_modules`, `ios/Pods`, `ios/build` codegen) instead of leaving you to reinstall, skipping anything in `.worktreeexclude`. It replaces step 2 in most repos -- but the clone matches the source worktree, not this branch's manifests, so reinstall anyway if the branch changes them. Off by default: outside APFS the clone falls back to a real copy of every byte, which `worktree create` warns about.
+
+**Read what `--carry-ignored` prints; it is not just a count.** Two warnings there are the difference between building and losing half an hour:
+
+- *No node_modules among them* -- the source worktree has none, so the clone carried nothing you can build against. Install before doing anything else.
+- *Carried Pods do not match Podfile.lock* -- `ios/Pods` is gitignored and cloned, `ios/Podfile.lock` is tracked and comes from the branch, so the two can disagree. Run `pod install` before building. Skip it and xcodebuild reports `The sandbox is not in sync with the Podfile.lock` only after every pod has compiled.
 
 **Do not build while `metroConflict` is non-null.** It means something holds your port that rn-iso cannot attribute to you, and the build CLIs will happily reuse whatever answers there -- so you would build against the wrong bundler. `npx rn-iso guide errors` lists the causes.
 
