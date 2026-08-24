@@ -356,13 +356,11 @@ export function registerRemove(worktree) {
 export function registerList(worktree) {
   worktree
     .command('list')
-    .description("List this repository's worktrees.")
+    .description("List this repository's worktrees. `rn-iso status` shows the same worktrees WITH their environments -- prefer it.")
     .action(() => {
+      console.error(chalk.dim('`rn-iso status` lists worktrees alongside their devices, ports and what is running.'));
       const entries = listWorktrees(process.cwd());
       if (entries.length === 0) {
-        // listWorktrees also returns [] outside any git repo -- distinguish
-        // that from "this repo just has no linked worktrees" so the message
-        // does not imply a main checkout exists when there isn't one.
         console.log(chalk.dim('Not a git repository.'));
         return;
       }
@@ -370,10 +368,10 @@ export function registerList(worktree) {
         console.log(chalk.dim('No worktrees besides the main checkout.'));
         return;
       }
-      for (const entry of entries.slice(1)) {
-        console.log(`${entry.path}  [${entry.branch || 'detached'}]`);
+      for (const entry of entries) {
+        console.log(`${entry.path}${entry.branch ? chalk.dim(` [${entry.branch}]`) : ''}`);
       }
-    });
+    })
 }
 
 export default function worktreeCommand(program) {
