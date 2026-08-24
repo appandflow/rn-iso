@@ -13,7 +13,7 @@
 // Detected rather than assumed: the advice differs enough between an Expo app
 // and a bare one that guessing would produce a document that is wrong in the
 // places people actually get stuck.
-export function projectFacts({ pkg, appConfig, hasPodfile, files = [] }) {
+export function projectFacts({ pkg, appConfig, hasPodfile, files = [], ancestorFiles = [] }) {
   const deps = { ...(pkg?.dependencies || {}), ...(pkg?.devDependencies || {}) };
   const expoRange = deps.expo || null;
   const sdkMajor = expoRange
@@ -31,7 +31,7 @@ export function projectFacts({ pkg, appConfig, hasPodfile, files = [] }) {
     // Preferring the project's own scripts means inheriting flags it already
     // decided on, which is the whole reason not to invent a command.
     scripts: pkg?.scripts || {},
-    pm: detectPackageManager({ files, packageManagerField: pkg?.packageManager }),
+    pm: detectPackageManager({ files, ancestorFiles, packageManagerField: pkg?.packageManager }),
   };
 }
 
@@ -295,12 +295,16 @@ echo "Metro log: \${LOG}" >&2
 // corepack enforces it. Otherwise the lockfile is the evidence. npm is the
 // fallback rather than a guess -- it is what `npx` implies and what a project
 // with no lockfile committed will get.
-export function detectPackageManager({ files = [], packageManagerField = null } = {}) {
+export function detectPackageManager({ files = [], packageManagerField = null, ancestorFiles = [] } = {}) {
   const declared = packageManagerField ? String(packageManagerField).split('@')[0] : null;
   if (['npm', 'yarn', 'pnpm', 'bun'].includes(declared)) return declared;
-  if (files.includes('pnpm-lock.yaml')) return 'pnpm';
-  if (files.includes('yarn.lock')) return 'yarn';
-  if (files.includes('bun.lockb') || files.includes('bun.lock')) return 'bun';
+  // A monorepo keeps its lockfile at the workspace root, not in the app package,
+  // so looking only in the project directory reports npm for a pnpm repo -- and
+  // `npm run ios -- --flag` is the wrong invocation there.
+  const seen = [...files, ...ancestorFiles];
+  if (seen.includes('pnpm-lock.yaml')) return 'pnpm';
+  if (seen.includes('yarn.lock')) return 'yarn';
+  if (seen.includes('bun.lockb') || seen.includes('bun.lock')) return 'bun';
   return 'npm';
 }
 

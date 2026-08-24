@@ -164,3 +164,17 @@ test('the port is passed exactly once to the bundler', () => {
     assert.equal((line.match(/--port/g) || []).length, 1, line);
   }
 });
+
+// A monorepo keeps its lockfile at the workspace root, not in the app package.
+// Looking only in the project directory reports npm for a pnpm repo, and
+// `npm run ios -- --flag` is the wrong invocation there.
+test('a lockfile above the project directory is found', () => {
+  assert.equal(detectPackageManager({ files: ['package.json'], ancestorFiles: ['pnpm-lock.yaml'] }), 'pnpm');
+});
+
+test('a lockfile in the project directory still wins nothing over the declared field', () => {
+  assert.equal(
+    detectPackageManager({ files: ['yarn.lock'], ancestorFiles: ['pnpm-lock.yaml'], packageManagerField: 'bun@1.0.0' }),
+    'bun'
+  );
+});

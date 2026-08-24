@@ -118,7 +118,7 @@ export function checkCcacheConflict(podfileSource, podfileProperties) {
 //
 // So top-level is right going forward, experiments still works as a fallback,
 // and top-level ON AN OLD SDK is the combination that silently does nothing.
-export function checkBuildCacheProvider(appConfig, sdkMajor, isExpo = true) {
+export function checkBuildCacheProvider(appConfig, sdkMajor, isExpo = true, dynamicConfig = null) {
   // Bare React Native has no equivalent hook: the community CLI never consults
   // a provider, so there is nothing to misconfigure and nothing to suggest
   // beyond building the lookup yourself.
@@ -128,6 +128,20 @@ export function checkBuildCacheProvider(appConfig, sdkMajor, isExpo = true) {
       'No build cache hook outside Expo',
       'The provider that lets a workspace install a cached .app instead of compiling is an Expo CLI feature; the React Native community CLI has no equivalent. `@expo/fingerprint` works standalone on a bare project, so the pieces exist -- keying a stored .app on it and installing that yourself is the missing part.',
       null
+    );
+  }
+  // A project whose config is code -- app.config.ts / app.config.js -- cannot be
+  // read statically, and evaluating it would mean running arbitrary project code
+  // inside a diagnostic. Saying nothing would be worse: it reads as a pass, and
+  // this is the check whose failure mode is silence in the first place.
+  if (!appConfig && dynamicConfig) {
+    return finding(
+      'note',
+      `Cannot check the build cache provider in ${dynamicConfig}`,
+      'This config is code, so it is not readable without executing it. Confirm by hand that a buildCacheProvider is set, and that it is on the key this SDK reads.',
+      sdkMajor && sdkMajor <= 53
+        ? 'SDK 53 reads expo.experiments.buildCacheProvider and ignores the top-level key in silence.'
+        : 'Use the top-level expo.buildCacheProvider; the experiments key still works as a fallback.'
     );
   }
   if (!appConfig) return null;
@@ -180,6 +194,9 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
 
   const pkg = readJson(join(projectRoot, 'package.json'));
   const appConfig = readJson(join(projectRoot, 'app.json'));
+  const dynamicConfig = appConfig
+    ? null
+    : ['app.config.ts', 'app.config.js', 'app.config.mjs'].find(f => existsSync(join(projectRoot, f))) || null;
   const podfileProperties = readJson(join(projectRoot, 'ios', 'Podfile.properties.json'));
   const podfile = read(join('ios', 'Podfile'));
   const metroConfig = read('metro.config.js');
@@ -193,6 +210,6 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
     checkMetroCache(metroConfig),
     checkCompilationCache(podfile, xcodeMajor),
     checkCcacheConflict(podfile, podfileProperties),
-    checkBuildCacheProvider(appConfig, sdkMajor, isExpo),
+    checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
   ].filter(Boolean);
 }

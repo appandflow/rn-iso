@@ -85,3 +85,23 @@ test('metro config with a cacheStore is reported as nothing; without one it is a
   assert.equal(checkMetroCache('module.exports = config;').level, 'cost');
   assert.equal(checkMetroCache(null).level, 'note', 'a missing config is worth a note, not an accusation');
 });
+
+// A config that is code cannot be read without executing it, and executing
+// project code inside a diagnostic is not acceptable. Saying nothing would be
+// worse than saying so: silence reads as a pass, and this is the check whose
+// failure mode is silence in the first place.
+test('a project whose config is app.config.ts is told the check could not run', () => {
+  const f = checkBuildCacheProvider(null, 53, true, 'app.config.ts');
+  assert.equal(f.level, 'note');
+  assert.match(f.title, /Cannot check/);
+  assert.match(f.fix, /experiments/, 'SDK 53 needs the experiments key, so name it');
+});
+
+test('a newer SDK with a dynamic config is pointed at the top-level key', () => {
+  const f = checkBuildCacheProvider(null, 57, true, 'app.config.js');
+  assert.match(f.fix, /top-level/);
+});
+
+test('no config at all and no dynamic config stays silent', () => {
+  assert.equal(checkBuildCacheProvider(null, 57, true, null), null);
+});

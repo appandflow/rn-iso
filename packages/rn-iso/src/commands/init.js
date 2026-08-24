@@ -5,6 +5,26 @@ import { findProjectRoot } from '../project.js';
 import { projectFacts, renderDevScript, renderWorkflow, renderWorktreeExclude } from '../init.js';
 import { runDoctor } from '../doctor.js';
 
+// Bounded on purpose: far enough to clear a monorepo's apps/<name> nesting,
+// not so far that it starts reading a lockfile from an unrelated parent repo.
+function ancestorEntries(start, levels = 4) {
+  const seen = [];
+  let dir = start;
+  for (let i = 0; i < levels; i++) {
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+    try {
+      seen.push(...readdirSync(dir));
+    } catch {
+      break;
+    }
+    // A workspace root is the natural stopping point.
+    if (existsSync(join(dir, '.git'))) break;
+  }
+  return seen;
+}
+
 function readJson(path) {
   try {
     return JSON.parse(readFileSync(path, 'utf-8'));
@@ -33,6 +53,9 @@ export default function initCommand(program) {
         // Lockfiles are the evidence for which package manager this repo uses,
         // so the generated commands invoke the one it actually has.
         files: readdirSync(root),
+        // A monorepo's lockfile sits at the workspace root, above the app
+        // package. Walk up to find it rather than reporting npm for a pnpm repo.
+        ancestorFiles: ancestorEntries(root),
       });
 
       const files = [
