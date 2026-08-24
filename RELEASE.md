@@ -9,6 +9,14 @@ real workflow at the same time.
 rn-iso now lives in `packages/rn-iso`; run these from there unless a step says
 otherwise.
 
+**Every package in this repo carries the same version and is published
+together.** The caches and the CLI are one product -- a cache package registers
+itself through the CLI's manifest, and the CLI trims what the caches wrote -- so
+a version that tells you which CLI a cache was built against is worth more than
+one that counts that package's own changes. A release with no changes to a
+package still publishes it; the cost is a version number, and the alternative is
+a compatibility matrix nobody maintains.
+
 The source of truth for "what was last released" is the npm registry, not
 local git tags — a publish can fail after the tag is pushed, leaving the tag
 ahead of what's actually on npm. Pull the published version and list commits
