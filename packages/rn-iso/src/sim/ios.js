@@ -162,12 +162,22 @@ export function sanitizeDeviceLabel(label) {
   return String(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
+// The `rn-iso-` prefix is the ownership marker every destructive path checks,
+// so it is not optional. A label that already carries it (a worktree literally
+// named `rn-iso-test-dialogue`) would otherwise produce
+// `rn-iso-rn-iso-test-dialogue`, so strip one leading copy before prefixing.
+// The invariant is unchanged: the result always starts with `rn-iso-`.
+export function ownedSimName(label) {
+  const clean = sanitizeDeviceLabel(label);
+  return `rn-iso-${clean.startsWith('rn-iso-') ? clean.slice('rn-iso-'.length) : clean}`;
+}
+
 export function createOwnedIosSim(label, { deviceType, runtime } = {}) {
   const pick = pickDefaultIosCreation(listIosDeviceTypes(), listIosRuntimes(), { deviceType, runtime });
   if (!pick) {
     throw new Error('No matching simulator device type / runtime is installed. Install one via Xcode, or pass --device-type / --runtime.');
   }
-  const name = `rn-iso-${sanitizeDeviceLabel(label)}`;
+  const name = ownedSimName(label);
   const udid = getExecutor()
     .run(`xcrun simctl create "${name}" "${pick.deviceTypeId}" "${pick.runtimeId}"`)
     .trim();

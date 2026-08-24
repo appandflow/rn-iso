@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
-import { parseSimctlList, listAllIosSims, listBootedIosSims, parseOccupyingApps, pickDefaultIosCreation, sanitizeDeviceLabel, deleteIosSim } from '../src/sim/ios.js';
+import { parseSimctlList, listAllIosSims, listBootedIosSims, parseOccupyingApps, pickDefaultIosCreation, sanitizeDeviceLabel, ownedSimName, deleteIosSim } from '../src/sim/ios.js';
 
 let tmpHome;
 
@@ -328,4 +328,15 @@ test('isSimOccupied still fails closed for a booted device whose probe cannot an
   setExecutor({ run: () => devices, runQuiet: () => null, spawn: () => {} });
   assert.equal(isSimOccupied('UDID-X'), true);
   resetExecutor();
+});
+
+// A worktree named `rn-iso-test-dialogue` used to become the simulator
+// `rn-iso-rn-iso-test-dialogue`. The prefix is the ownership marker, so it must
+// still be there exactly once.
+test('ownedSimName does not double the ownership prefix', () => {
+  assert.equal(ownedSimName('rn-iso-test-dialogue'), 'rn-iso-test-dialogue');
+  assert.equal(ownedSimName('test-dialogue'), 'rn-iso-test-dialogue');
+  assert.equal(ownedSimName('feat-a/tlon-mobile'), 'rn-iso-feat-a-tlon-mobile');
+  assert.ok(ownedSimName('rn-iso-x').startsWith('rn-iso-'));
+  assert.ok(ownedSimName('rn-iso').startsWith('rn-iso-'), 'a bare "rn-iso" label still gets a prefix');
 });

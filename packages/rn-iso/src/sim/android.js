@@ -47,7 +47,7 @@ export function createOwnedAvd(label, { systemImage } = {}) {
   if (!pick) {
     throw new Error('No arm64 Android system image is installed. Install one, e.g.: sdkmanager "system-images;android-36;google_apis;arm64-v8a"');
   }
-  const avdName = `rn-iso-${sanitizeAvdLabel(label)}`;
+  const avdName = ownedAvdName(label);
   // avdmanager prompts "Do you wish to create a custom hardware profile?";
   // piping "no" answers it non-interactively.
   getExecutor().run(`echo no | "${avdmanagerPath()}" create avd -n "${avdName}" -k "${pick.pkg}"`);
@@ -56,6 +56,13 @@ export function createOwnedAvd(label, { systemImage } = {}) {
 
 export function sanitizeAvdLabel(label) {
   return String(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+// See ownedSimName in sim/ios.js: the `rn-iso-` prefix is the ownership marker,
+// and a label that already starts with it must not get a second one.
+export function ownedAvdName(label) {
+  const clean = sanitizeAvdLabel(label);
+  return `rn-iso-${clean.startsWith('rn-iso-') ? clean.slice('rn-iso-'.length) : clean}`;
 }
 
 // Defense in depth: deletion must only ever reach an AVD rn-iso created
