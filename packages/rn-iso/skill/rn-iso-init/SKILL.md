@@ -5,15 +5,27 @@ description: Use when setting up a React Native or Expo repo so that multiple ag
 
 # Making a repo fast for parallel agents
 
-`npx rn-iso doctor` reports what is costing time. This explains what to do about
-it, and why each thing matters — the *why* is the part worth reading, because
-the specifics are Xcode- and SDK-version-shaped and will age.
-
-Run the doctor first. Everything below is one of its findings.
+## Start here
 
 ```bash
-npx rn-iso doctor
+npx rn-iso init      # writes the docs and the run script, then reports what is left
 ```
+
+`init` writes what can be generated safely: a `WORKFLOW.md` describing the loop,
+an executable `scripts/dev` that reserves an environment and runs against it, and
+a `.worktreeexclude`. It adapts to the project — Expo or bare, which SDK, which
+package manager, and whether the repo has its own `ios`/`start` scripts to prefer
+over invented commands. It never overwrites an existing file without `--force`.
+
+Then it runs `rn-iso doctor` and lists what it could not fix itself.
+
+**Everything below is one of those findings.** They are left to you rather than
+generated because each one edits a file the project already owns — a
+`metro.config.js` with its own transformer, a `Podfile` with existing
+`post_install` logic, an app config that may be TypeScript. A generator that
+rewrites those is a generator that eventually corrupts one, so read the current
+contents, make the smallest edit that fits, and re-run `rn-iso doctor` to confirm
+it landed.
 
 ## The one that blocks, not just slows
 

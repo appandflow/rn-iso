@@ -102,7 +102,8 @@ export default function initCommand(program) {
           console.error(`  ${f.level === 'cost' ? chalk.yellow('costs time') : chalk.dim('note')}  ${f.title}`);
           if (f.fix) console.error(chalk.dim(`    -> ${f.fix}`));
         }
-        console.error(chalk.dim('\n`rn-iso doctor` explains each of these in full.'));
+        console.error(chalk.dim('\n`rn-iso doctor` explains each in full, and the rn-iso-init skill'));
+        console.error(chalk.dim('walks through fixing them: npx rn-iso skill install'));
       }
 
       if (wrote === 0) console.error(chalk.dim('\nNothing written.'));
