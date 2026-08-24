@@ -6,6 +6,7 @@
 // Metro -- the agent starts Metro on the reserved port and runs the
 // project's own build against the facts.
 import chalk from 'chalk';
+import { installedSkillVersions, staleSkillCopies } from './skill.js';
 import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage, projectShortcut } from '../project.js';
 import { gitCommonDir, repoRoot } from '../worktree.js';
 import { resolveSettings, unknownSettingKeys } from '../settings.js';
@@ -27,15 +28,18 @@ import {
   adbReverse,
   nextConsolePort,
   listAdbDevices,
-  sanitizeAvdLabel,
+  ownedAvdName,
   resolveOwnedAvdSerial,
 } from '../sim/android.js';
 
-export default function upCommand(program) {
-  registerUp(program);
+export default function upCommand(program, cliVersion) {
+  registerUp(program, cliVersion);
 }
 
-export function registerUp(program) {
+// `cliVersion` is optional: without it the skill-staleness check is skipped
+// rather than comparing against undefined, which would report every installed
+// copy as stale. Only bin/cli.js has the real version to pass.
+export function registerUp(program, cliVersion = null) {
   program
     .command('up <platform>')
     .description(
@@ -56,6 +60,18 @@ export function registerUp(program) {
       // being suppressed.
       const out = (line) => { if (json) console.error(line); else console.log(line); };
       const note = (line) => console.error(line);
+
+      // The installed skill is a plain file copy, so upgrading rn-iso never
+      // refreshes it. A 0.10.0 skill against a 0.14.0 CLI describes a command
+      // surface with four commands missing, and nothing says so. `up` is the
+      // command every session runs, so it is where the mismatch is worth one
+      // line. Never fatal, and never on stdout -- see the --json contract above.
+      for (const stale of cliVersion ? staleSkillCopies(installedSkillVersions(), cliVersion) : []) {
+        note(chalk.yellow(
+          `Installed rn-iso skill is ${stale.version ?? 'an unstamped older version'} but this CLI is ${cliVersion}. `
+          + 'Run `npx rn-iso skill install` so the docs your agent reads match the binary.'
+        ));
+      }
 
       if (platform !== 'ios' && platform !== 'android') {
         note(chalk.red(`Unknown platform "${platform}". Use "ios" or "android".`));
@@ -381,7 +397,7 @@ async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, 
     // "already exists", permanently wedging this project. Since the AVD is
     // ours by name, adopt it instead of failing forever.
     const message = String(e?.message || e);
-    const avdName = `rn-iso-${sanitizeAvdLabel(label)}`;
+    const avdName = ownedAvdName(label);
     if (message.includes('already exists') && listAvds().includes(avdName)) {
       // Guard against hijacking another project's device: the "already
       // exists" recovery above exists for THIS project's own abandoned AVD

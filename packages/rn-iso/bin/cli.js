@@ -27,7 +27,7 @@ program
   .version(pkg.version);
 
 deviceCommand(program);
-upCommand(program);
+upCommand(program, pkg.version);
 stopCommand(program);
 pruneCommand(program);
 gcCommand(program);

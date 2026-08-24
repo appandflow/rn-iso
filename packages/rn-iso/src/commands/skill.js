@@ -9,7 +9,7 @@
 // cannot fix that on its own -- nothing about upgrading the package knows
 // where the skill was copied to -- so this makes refreshing it one command.
 import chalk from 'chalk';
-import { copyFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -32,6 +32,48 @@ export function bundledSkills() {
     { name: 'rn-iso', source: join(root, 'SKILL.md') },
     { name: 'rn-iso-init', source: join(root, 'rn-iso-init', 'SKILL.md') },
   ];
+}
+
+// The installed copy is a plain file copy, so nothing about it records which
+// CLI produced it and nothing can tell an agent that its copy is four minors
+// behind. Stamping the version in is what makes staleness detectable at all.
+// An HTML comment because it must not disturb the frontmatter a skill loader
+// parses, and must not render as text.
+const VERSION_MARKER = /<!--\s*rn-iso-skill-version:\s*([0-9][^\s]*)\s*-->/;
+
+export function stampSkillVersion(text, version) {
+  const marker = `<!-- rn-iso-skill-version: ${version} -->`;
+  const body = text.replace(VERSION_MARKER, '').trimEnd();
+  return `${body}\n\n${marker}\n`;
+}
+
+export function parseSkillVersion(text) {
+  const m = VERSION_MARKER.exec(String(text || ''));
+  return m ? m[1] : null;
+}
+
+// The version stamped into each installed copy, or null for a copy that
+// predates stamping (which is itself a stale copy worth reporting).
+export function installedSkillVersions(home = homedir(), name = 'rn-iso', { read = readFileSync, exists = existsSync } = {}) {
+  const found = [];
+  for (const dir of skillTargets(home, name)) {
+    const file = join(dir, 'SKILL.md');
+    if (!exists(file)) continue;
+    try {
+      found.push({ file, version: parseSkillVersion(read(file, 'utf-8')) });
+    } catch {
+      // An unreadable copy is not evidence of anything; stay quiet.
+    }
+  }
+  return found;
+}
+
+// Pure: which installed copies disagree with the running CLI. An installed
+// copy NEWER than the CLI counts too -- that is the npx-served-a-stale-binary
+// case, where the docs an agent reads describe commands the running CLI does
+// not have.
+export function staleSkillCopies(installed, cliVersion) {
+  return (installed || []).filter(s => s.version !== cliVersion);
 }
 
 export function bundledSkillPath() {
@@ -74,7 +116,7 @@ export default function skillCommand(program, version) {
         for (const dir of skillTargets(homedir(), skillToInstall.name)) {
           try {
             mkdirSync(dir, { recursive: true });
-            copyFileSync(skillToInstall.source, join(dir, 'SKILL.md'));
+            writeFileSync(join(dir, 'SKILL.md'), stampSkillVersion(readFileSync(skillToInstall.source, 'utf-8'), version));
             console.log(chalk.green(`Installed ${skillToInstall.name} ${version} skill -> ${join(dir, 'SKILL.md')}`));
             installed++;
           } catch (e) {
