@@ -110,7 +110,7 @@ test('resolveRegisteredProject prefers a project label over a colliding basename
   // /a/agent-x has basename agent-x; /b/other has explicit label agent-x.
   // Only `other` (with the explicit label) matches the shortcut "agent-x"
   // when the basename isn't a label, because projectShortcut returns label
-  // if set and otherwise falls back to basename — both projects' shortcuts
+  // if set and otherwise falls back to basename -- both projects' shortcuts
   // resolve to "agent-x", which is a collision.
   upsertProject('/a/agent-x', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   upsertProject('/b/other', { bundleId: 'b', androidPackage: 'b', isExpo: false, label: 'agent-x' });

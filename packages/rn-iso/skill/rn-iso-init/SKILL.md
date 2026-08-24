@@ -19,15 +19,36 @@ over invented commands. It never overwrites an existing file without `--force`.
 
 Then it runs `rn-iso doctor` and lists what it could not fix itself.
 
-**Everything below is one of those findings.** They are left to you rather than
-generated because each one edits a file the project already owns — a
-`metro.config.js` with its own transformer, a `Podfile` with existing
-`post_install` logic, an app config that may be TypeScript. A generator that
-rewrites those is a generator that eventually corrupts one, so read the current
-contents, make the smallest edit that fits, and re-run `rn-iso doctor` to confirm
-it landed.
+## What doctor reports, and what it does not
+
+`doctor` reads five things and nothing else. Every one of them is a file it can
+read statically:
+
+| Finding | Read from |
+|---|---|
+| `expo-dev-client` is not installed | `package.json` |
+| Metro cache is per-project | `metro.config.js` (is there a `cacheStores`?) |
+| Compilation caching off, or left at its default CAS path | `ios/Podfile` |
+| ccache and compilation caching both enabled | `ios/Podfile` + `ios/Podfile.properties.json` |
+| `buildCacheProvider` missing, or on the key this SDK ignores | `app.json` (an `app.config.ts` is code, so it says so instead of guessing) |
+
+**Everything else on this page is yours to check by hand.** doctor does not read
+`.fingerprintignore`, does not look at `CLANG_OTHER_PREFIX_MAPPINGS` or
+`SWIFT_ENABLE_COMPILE_CACHE`, and does not check the `EXDevMenu` Info.plist
+keys. A clean `doctor` run does not mean those are right — it means it had
+nothing to say about the five things it reads. Each section below says which
+kind it is.
+
+The findings it does report are left to you rather than auto-fixed because each
+one edits a file the project already owns — a `metro.config.js` with its own
+transformer, a `Podfile` with existing `post_install` logic, an app config that
+may be TypeScript. A generator that rewrites those is a generator that
+eventually corrupts one, so read the current contents, make the smallest edit
+that fits, and re-run `rn-iso doctor` to confirm it landed.
 
 ## The one that blocks, not just slows
+
+*doctor reports this.*
 
 **`expo-dev-client` must be installed** for a reserved Metro port to reach the
 app at all. `--port` is never compiled into the binary: it travels in the deep
@@ -45,9 +66,12 @@ which does not include the port — so a binary built for 8082 would be served t
 a workspace holding 8083 and would silently talk to the wrong bundler. Keeping
 the port out of the binary is what lets one cached build serve every workspace.
 
+### Quieting the dev menu (check this by hand)
+
 The dev client also puts an onboarding sheet and a floating gear over every
 screenshot. Three Info.plist keys turn those off (`expo-dev-menu` reads them as
-defaults), and the same names work as `<meta-data>` in AndroidManifest.xml:
+defaults), and the same names work as `<meta-data>` in AndroidManifest.xml.
+**doctor does not check these** — open the Info.plist and look:
 
 ```
 EXDevMenuIsOnboardingFinished      true
@@ -57,9 +81,20 @@ EXDevMenuShowsAtLaunch             false
 
 ## Skip the build entirely
 
+*doctor reports whether a provider is configured, and whether it is on the key
+this SDK reads. It does not check `.fingerprintignore`.*
+
 A ticket that changes no native input should not compile anything. Expo's build
 cache provider keys a built `.app` on a fingerprint of the native inputs and
 installs it instead of building.
+
+**Use the packaged provider rather than writing one.** It is the same cache
+`rn-iso build-cache` uses, it registers itself with rn-iso so `gc --caches` can
+trim it, and it works with no rn-iso installed:
+
+```bash
+npm i -D @rn-iso/expo-build-cache
+```
 
 Where the key goes moved when the setting left experiments, and the wrong
 combination is a silent no-op rather than an error:
@@ -69,19 +104,45 @@ combination is a silent no-op rather than an error:
 | 53 | `expo.experiments.buildCacheProvider` **only** |
 | 54+ | `expo.buildCacheProvider`, falling back to the experiments key |
 
+```jsonc
+// SDK 54+
+{ "expo": { "buildCacheProvider": { "plugin": "@rn-iso/expo-build-cache" } } }
+```
+
 So top-level is right going forward, and top-level on SDK 53 is the combination
 that does nothing at all.
 
+What the provider does, if you need to write your own: Expo hands it the
+platform, a fingerprint hash of the native inputs, and the run options. It
+returns the path of a matching `.app`/`.apk` or null, and is called again after
+a build to store one. Key on the fingerprint **plus** the build configuration
+and the target class — a Release build must not answer a Debug lookup, and a
+device build must not answer a simulator one, because both produce a binary that
+cannot run and neither says so.
+
 Add `.fingerprintignore` for anything that changes without changing the build.
 `ios/Podfile.lock` is the usual culprit: pod checksums can embed absolute paths,
-which makes the fingerprint differ per machine and the cache never hit.
+which makes the fingerprint differ per machine and the cache never hit. Nothing
+checks this for you; a cache that never hits looks exactly like a cache that is
+not configured.
 
 **Bare React Native has no equivalent hook** — the community CLI never consults
-a provider. `@expo/fingerprint` works standalone, so the pieces exist: fingerprint
-the native inputs yourself, store the built `.app` under that key, and install it
-instead of building when it matches.
+a provider. Ask rn-iso directly instead:
+
+```bash
+APP=$(npx rn-iso build-cache resolve --platform ios) || {
+  npx react-native run-ios --udid "$UDID" --port "$PORT"
+  npx rn-iso build-cache store --platform ios --path "$BUILT_APP"
+}
+```
+
+It needs `@expo/fingerprint`, which works on a project with no Expo in it at all.
 
 ## Share compiled output between workspaces
+
+*doctor reports whether compilation caching is on and whether its CAS path is
+outside DerivedData, and whether ccache conflicts with it. It does not check the
+prefix mappings or the Swift setting below.*
 
 On Xcode 26+, compilation caching is content-addressed, so it survives a
 different DerivedData — but **the default CAS path is inside DerivedData**,
@@ -94,9 +155,10 @@ config.build_settings['COMPILATION_CACHE_CAS_PATH'] = File.expand_path('~/Librar
 ```
 
 Cache keys still contain absolute source paths, so a fresh worktree misses
-everything until those are canonicalised. `CLANG_OTHER_PREFIX_MAPPINGS` maps
-them, and the root must be **normalised** — `$(PODS_ROOT)/../..` expands but is
-not normalised and matches nothing:
+everything until those are canonicalised. **doctor does not check this** — read
+the Podfile. `CLANG_OTHER_PREFIX_MAPPINGS` maps them, and the root must be
+**normalised**: `$(PODS_ROOT)/../..` expands but is not normalised and matches
+nothing:
 
 ```ruby
 config.build_settings['REPO_ROOT'] = '$(PODS_ROOT)/../..'
@@ -105,8 +167,9 @@ config.build_settings['CLANG_OTHER_PREFIX_MAPPINGS'] =
   '$(REPO_ROOT:standardizepath)=/^src $(DERIVED_DATA_DIR)=/^build'
 ```
 
-Leave **Swift** unmapped. `SWIFT_OTHER_PREFIX_MAPPINGS` crashes swift-frontend
-whenever a compile batch mixes mapped and unmapped sources
+Leave **Swift** unmapped, and again check by hand.
+`SWIFT_OTHER_PREFIX_MAPPINGS` crashes swift-frontend whenever a compile batch
+mixes mapped and unmapped sources
 ([swiftlang/swift#90698](https://github.com/swiftlang/swift/pull/90698) — fixed
 upstream, not yet in a released Xcode). Swift caching cannot hit across
 workspaces without it anyway, so turn it off explicitly and silence the
@@ -124,16 +187,35 @@ paths *inside* generated files like header maps and VFS overlays, which no
 
 ## Share Metro's transform cache
 
+*doctor reports whether `metro.config.js` sets any `cacheStores` at all. It does
+not check where they point.*
+
 Metro's default cache lives under the project, so every worktree re-transforms
 the whole module graph from cold — thousands of modules, every time. One
 `FileStore` outside any project fixes it:
 
+```bash
+npm i -D @rn-iso/metro-cache
+```
+
+```js
+// metro.config.js
+const { sharedCacheStores } = require('@rn-iso/metro-cache');
+config.cacheStores = sharedCacheStores('myapp');
+```
+
+The `FileStore` itself is the easy part — that call is equivalent to:
+
 ```js
 const { FileStore } = require('metro-cache');
 config.cacheStores = [
-  new FileStore({ root: path.join(os.homedir(), '.<app>-metro-cache') }),
+  new FileStore({ root: path.join(os.homedir(), '.myapp-metro-cache') }),
 ];
 ```
+
+What the package adds is registering the store with rn-iso, at the right entry
+depth, so the next section actually works on it. Hand-roll the `FileStore` if
+you prefer, then register it yourself.
 
 ## Keep it from growing forever
 
@@ -144,11 +226,31 @@ emptying costs the next build in every project the time the cache was saving:
 ```bash
 npx rn-iso gc --caches                            # what exists, and how big
 npx rn-iso gc --caches --delete --older-than 30   # drop entries unused for 30 days
+npx rn-iso cache list                             # the same set, registered and detected
 ```
 
-Point rn-iso at the caches it cannot detect, since they come from your own
-config:
+rn-iso only detects the caches it was taught to recognise (Xcode's CAS, Metro's
+file maps). Anything chosen by a project's own config has to name itself:
 
 ```bash
-npx rn-iso config caches '["~/.myapp-metro-cache", "~/.myapp-build-cache"]' --repo
+npx rn-iso cache register ~/.myapp-metro-cache --name "Metro transforms" --entries-depth 2
+npx rn-iso cache register ~/.myapp-cas --atomic   # index-backed: emptied whole or not at all
+```
+
+`--entries-depth` is what makes trimming safe, and the default of 1 is wrong for
+both caches above. A Metro `FileStore` shards its keys across 256 directories
+and a build cache is keyed `<platform>/<key>`, so at depth 1 a single removal
+takes a 256th of every transform on the machine, or an entire platform's builds.
+Register 2 and `--older-than` trims one transform or one build. Registration is
+idempotent and keyed on the directory, so a cache can do it on every build —
+which is exactly what `@rn-iso/metro-cache` and `@rn-iso/expo-build-cache`
+already do for you.
+
+The older `caches` setting still works: a list of paths under `caches` in a
+committed `.rn-iso.json` is reported alongside the registered ones. It has no
+`rn-iso config` key of its own, and every path in it is treated as a flat store,
+so prefer `cache register` for anything needing a depth or `--atomic`.
+
+```json
+{ "caches": ["~/.myapp-metro-cache", "~/.myapp-build-cache"] }
 ```

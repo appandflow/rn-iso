@@ -115,8 +115,30 @@ not on any remote"
   200 consecutive ports are claimed or occupied. \`rn-iso status\` shows what
   rn-iso knows about; the rest is other software.
 
+"Could not reserve a Metro port after 5 attempts"
+  Several \`up\` runs raced for the same ports and each one lost. Nothing is
+  wrong; retry.
+
 "Failed to ensure android device: No physical device is connected"
-  \`up android --serial <s>\` needs the device visible to \`adb devices\`.`,
+  \`up android --serial <s>\` needs the device visible to \`adb devices\`.
+
+"Could not tear down the <platform> device: ..."
+  The delete itself failed, so \`release\` KEPT the assignment and exited 1.
+  That is deliberate: dropping the record would leave a device on the machine
+  that nothing references and nothing will ever reap. Fix the cause and re-run
+  \`rn-iso release\`.
+
+"rn-iso config at <path> is not valid JSON"
+  The file holding every owned-device record will not parse, and rn-iso never
+  resets it for you -- a silent reset would orphan every simulator it names.
+  Repair the file, or move it aside (\`mv <path> <path>.broken\`) and accept
+  that the devices it recorded become orphans you delete by hand.
+
+"Timed out waiting for the rn-iso config lock at <path>"
+  Every config write is serialised so parallel \`up\` runs cannot lose each
+  other's records. A lock older than 10s is taken over automatically, so this
+  means a command really is holding it. If none is running, remove that
+  directory.`,
   },
 
   lifecycle: {
@@ -145,9 +167,15 @@ not on any remote"
 
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             erases build output, tens of GB
+  gc --caches --delete    empties the shared build caches every project uses
   worktree remove --force discards uncommitted and untracked work
-  release                 DELETES the owned device, not just its assignment
+  release                 DELETES the owned device, not just its assignment,
+                          without checking whether anything is still attached
   stop --force            kills a process rn-iso could not identify
+
+Only \`shutdown\` spares a device another process is driving, because that
+device survives the call. A delete goes ahead regardless, so there is no
+\`--force\` on \`release\` -- there is nothing for it to override.
 
 CAPACITY
   A booted iOS sim is roughly 1-2 GB of RAM, an Android emulator 2-3 GB. On a
@@ -163,9 +191,19 @@ WHAT RECLAIMS AN OWNED DEVICE
   rn-iso worktree remove    deletes every owned device under the worktree
   rn-iso gc --delete        sweeps rn-iso-* devices no project references
 
+None of those checks occupancy: a device being deleted goes away even if
+something is still driving it. \`rn-iso shutdown\` is the one that spares an
+occupied sim, because it only shuts down and never deletes.
+
+If a delete fails, the device's config record is KEPT and the command reports
+it. A record is what makes the device findable again, so it outlives a failed
+teardown rather than turning it into an orphan.
+
 A device leaks when a project is abandoned WITHOUT any of those -- the sim
 survives with nothing pointing at it. \`rn-iso gc\` (no flag, always safe)
-reports those; \`gc --delete\` reaps them.
+reports those; \`gc --delete\` reaps them. \`rn-iso prune\` only removes the
+dead config ENTRIES and frees their ports; it deletes no device, and says the
+devices those entries named are "no longer referenced" so gc can reap them.
 
 THE ONE CASE GC WILL NOT REAP
   If the config is gone entirely (deleted ~/.rn-iso, or a throwaway
@@ -182,7 +220,16 @@ DISK
     xcrun simctl delete unavailable     # sims for runtimes you removed
     xcrun simctl list devices           # see everything
     rn-iso gc                           # report build artifacts + orphans
-  Xcode recreates default simulators on demand, so deleting them is safe.`,
+  Xcode recreates default simulators on demand, so deleting them is safe.
+
+SHARED BUILD CACHES
+  The caches that make a second workspace fast are alive by design and never
+  included in a plain \`gc --delete\`. Ask for them:
+    rn-iso gc --caches                            # report sizes only
+    rn-iso gc --caches --delete --older-than 30   # trim unused entries
+    rn-iso cache list                             # the same set, sizes only
+  Trim rather than empty. Emptying costs the next build in every project the
+  time the cache was saving.`,
   },
 
   settings: {
@@ -204,12 +251,28 @@ KEYS RN-ISO READS
   worktree.baseRef      "fresh" (origin/HEAD) or "head"
   worktree.include      carry-over patterns, same role as .worktreeinclude
   worktree.exclude      --carry-ignored skip list, same role as .worktreeexclude
-  caches                extra shared-cache paths for 'gc --caches' to report
-                        (prefer 'rn-iso cache register', which the cache itself can call)
+  caches                extra shared-cache paths for 'gc --caches' to report.
+                        Repo layer or .rn-iso.json; the value is a JSON array,
+                        e.g. rn-iso config caches '["~/.myapp-metro-cache"]'
+                        --repo. Every path is treated as a flat store.
 
 Anything else is IGNORED, and rn-iso warns about it by name. If you see such a
 warning, the key was either renamed or removed -- check this list rather than
-assuming it still applies.`,
+assuming it still applies.
+
+PREFER 'rn-iso cache register' OVER THE 'caches' SETTING
+A cache can register itself, once, and 'gc --caches' and 'rn-iso cache list'
+see it from then on:
+
+  rn-iso cache register <dir> --name "<what to call it>" --entries-depth 2
+
+--entries-depth is how far below <dir> one entry sits (default 1, a flat
+store). Pass 2 for a root with a layer of grouping above the entries -- a
+Metro FileStore shards across 256 directories, a build cache is keyed
+<platform>/<key> -- or 'gc --caches --delete --older-than N' removes a whole
+shard or platform instead of one entry. Pass --atomic for a cache whose index
+references its own data (an LLVM CAS): it is then emptied whole or not at all.
+Registration is idempotent and keyed on the directory.`,
   },
 };
 

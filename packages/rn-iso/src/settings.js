@@ -7,9 +7,9 @@ function isPlainObject(v) {
 }
 
 // First layer wins. Nested plain objects merge key by key so a repo can set
-// worktree.baseRef without erasing a committed worktree.install. Arrays are
-// replaced wholesale: a partial override of a command pipeline would be
-// meaningless.
+// worktree.baseRef without erasing a committed worktree.include. Arrays are
+// replaced wholesale: a carry-over pattern list is one decision, and half of
+// one from another layer would be meaningless.
 export function mergeSettingsLayers(layers) {
   const out = {};
   for (const layer of layers) {

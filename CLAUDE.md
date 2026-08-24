@@ -20,54 +20,118 @@ State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
 
 ## Architecture conventions
 
-- **ESM only.** `"type": "module"`, no transpiler, Node 20+ directly. No
-  CommonJS, no `require()`.
+- **ESM only, in `packages/rn-iso`.** `"type": "module"`, no transpiler, Node
+  20+ directly. No CommonJS, no `require()`. **The documented exception is the
+  two cache packages** (`packages/expo-build-cache`, `packages/metro-cache`):
+  they are CJS on purpose, because a `metro.config.js` and an Expo build-cache
+  provider are both loaded by `require()`. They reach rn-iso through a dynamic
+  `import('rn-iso/cache-manifest')` — a plain `require()` of an ESM module
+  throws `ERR_REQUIRE_ESM` on Node before 20.19, which silently turned
+  registration into a no-op on every one of those versions. Keep that import
+  dynamic and fire-and-forget: rn-iso is an optional peer, and a missing or old
+  one must never break a bundler config or a build.
 - **Single exec wrapper.** All `child_process` calls go through
   `src/exec.js` (`getExecutor()`). Tests inject a mock via `setExecutor()`.
   Anywhere outside `exec.js` that imports `child_process` directly is a bug.
+  It offers `run(cmd)` (shell), `runQuiet(cmd)` (shell, null on failure),
+  `runFile(file, args)` (argv array, no shell) and `spawn`. Use `runFile`
+  whenever an argument is a path the user chose rather than a string this
+  codebase composed — `storeBuild` copies a caller-supplied `.app` path that
+  way, so a space or a quote in it reaches `cp` as one literal argument.
 - **Pure parsing/decision logic separate from invocation.** Functions like
   `parseSimctlList`, `parseAdbDevices`, `pickDefaultIosCreation`,
-  `pickDefaultSystemImage`, `releaseAction`, `findOrphanedDevices`, and
-  `buildFacts` are pure and unit-tested; the I/O wrappers around them (the
-  actual `simctl`/`avdmanager`/`adb` calls) are thin.
-- **ASCII in source files.** No em dashes, smart quotes, or check marks in
-  `src/`, `bin/`, `test/`. Markdown files (README, SKILL, this file) may use
-  them. The hooks have flagged this before.
+  `pickDefaultSystemImage`, `parseXcodeMajor`, `buildCacheKey`,
+  `findOrphanedDevices`, and `buildFacts` are pure and unit-tested; the I/O
+  wrappers around them (the actual `simctl`/`avdmanager`/`adb`/`xcodebuild`
+  calls) are thin.
+- **Config writes are locked and atomic.** Every mutator in `src/config.js`
+  runs its read-modify-write inside `withConfigLock()` and lands via
+  `saveConfig`'s write-temp-then-rename. Several rn-iso commands genuinely do
+  run at once (a `worktree create` per agent, each followed by its own `up`),
+  and two interleaving unlocked writes lose one side's device record. Add new
+  state-touching code inside the lock, not beside it. Port reservation follows
+  the same rule from the other end: `claimMetroPort` writes only if the config
+  still shows the port unclaimed, and `reserveMetroPort` re-allocates when it
+  does not, so two parallel `up` runs cannot both take a port they both probed
+  as free. And `loadConfig` THROWS on unparseable JSON rather than resetting —
+  the file holds the record of every device rn-iso owns, so a silent reset
+  would orphan all of them and hand `gc --delete` a machine full of live
+  environments to destroy.
+- **ASCII in source files.** No em dashes, smart quotes, or check marks in any
+  package's `src/`, `bin/`, `test/`, or `index.js`. Markdown files (the
+  READMEs, the SKILLs, this file) may use them. The hooks have flagged this
+  before.
 
 ## File layout
 
+The repo is an npm workspace. Everything published lives under `packages/`,
+and the root holds only the workspace manifest and these docs.
+
 ```
-bin/cli.js              # commander entry, registers each command module
-src/
-  exec.js               # mockable child_process wrapper
-  config.js             # config CRUD, device records, layered settings
-  settings.js           # layered settings resolution (project > repo > committed .rn-iso.json)
-  project.js            # project root walk, bundle-id detection (incl. native fallbacks), shortcut resolution
-  ports.js              # Metro port allocation + reclamation
-  metro.js              # port-to-process identity (resolveProjectMetro) and group killing
-  worktree.js           # git worktree add/remove/list, base-ref resolution, carry-over
-  artifacts.js          # Xcode DerivedData discovery/classification, mounted-volume detection
-  teardown.js           # THE owned-device teardown: resolve -> occupancy -> shutdown -> delete,
-                         # with containment. Used by reclaim, release, shutdown, gc.
-  reclaim.js            # shared reclaim-a-project logic (used by prune, gc, worktree remove):
-                         # frees Metro/port, and -- with deleteOwnedDevices -- tears down
-                         # owned devices via teardown.js
-  sim/
-    ios.js              # simctl wrappers, owned-sim creation/selection, ownership verification
-    android.js          # adb/emulator/avdmanager wrappers, owned-AVD creation/selection
-  commands/
-    up.js                 # the broker command: ensure owned device, reserve Metro port, print facts
-    device.js              # read-only facts query, no ensure side effects
-    stop.js               # kill this project's Metro, identity-verified
-    status.js
-    release.js shutdown.js prune.js
-    worktree.js          # worktree create/remove/list
-    gc.js                 # report/reclaim orphaned build artifacts, dead project entries, orphaned devices
-    config.js              # per-project / repo settings CRUD
-test/
-  *.test.js             # `node --test` (no framework)
-skill/SKILL.md          # the agent-facing skill
+packages/rn-iso/          # the CLI. ESM, Node 20+.
+  bin/cli.js              # commander entry, registers each command module
+  src/
+    exec.js               # mockable child_process wrapper (run / runQuiet / runFile / spawn)
+    config.js             # config CRUD under a lockfile, device records, atomic writes,
+                          # claimMetroPort, layered settings storage
+    settings.js           # layered settings resolution (project > repo > committed .rn-iso.json)
+                          # plus KNOWN_SETTINGS / unknownSettingKeys, which is what warns about a
+                          # key rn-iso stopped reading
+    project.js            # project root walk, bundle-id detection (incl. native fallbacks), shortcut resolution
+    ports.js              # Metro port allocation, reclamation, and race-safe reservation
+    metro.js              # port-to-process identity (resolveProjectMetro) and group killing
+    worktree.js           # git worktree add/remove/list, base-ref resolution, carry-over
+    artifacts.js          # Xcode DerivedData discovery/classification, mounted-volume detection
+    status.js             # pure shaping of the cross-project state `status` prints
+    teardown.js           # THE owned-device teardown: resolve -> occupancy -> shutdown -> delete,
+                          # with containment. Used by reclaim, release, shutdown, gc.
+    reclaim.js            # shared reclaim-a-project logic (used by prune, gc, worktree remove):
+                          # frees Metro/port, and -- with deleteOwnedDevices -- tears down
+                          # owned devices via teardown.js
+    caches.js             # shared-cache discovery (Xcode CAS, Metro file maps, declared paths),
+                          # sizing, and entry-level pruning at a cache's entriesDepth
+    cache-manifest.js     # the registry caches write to describe themselves. Exported to other
+                          # packages as `rn-iso/cache-manifest`; changing its shape is a public
+                          # API change.
+    build-cache.js        # the CLI-side build cache: key derivation, resolve/store, self-registration
+    doctor.js             # the checks behind `doctor` -- each a pure function of the text it is given
+    init.js               # the WORKFLOW.md / scripts/dev / .worktreeexclude templates, all pure
+    sim/
+      ios.js              # simctl wrappers, owned-sim creation/selection, ownership verification
+      android.js          # adb/emulator/avdmanager wrappers, owned-AVD creation/selection
+    commands/
+      up.js               # the broker command: ensure owned device, reserve Metro port, print facts
+      device.js           # read-only facts query, no ensure side effects
+      stop.js             # kill this project's Metro, identity-verified
+      status.js
+      release.js shutdown.js prune.js
+      worktree.js         # worktree create/remove/list
+      gc.js               # report/reclaim orphaned build artifacts, dead project entries,
+                          # orphaned devices, and -- with --caches -- the shared caches
+      config.js           # per-project / repo settings CRUD
+      cache.js            # cache register / forget / list
+      build-cache.js      # build-cache resolve / store / path
+      doctor.js           # print the findings from src/doctor.js
+      init.js             # write the generated files, then run doctor
+      guide.js            # version-matched reference topics, printed by the binary
+      skill.js            # copy the bundled skills into ~/.claude and ~/.agents
+  test/
+    *.test.js             # `node --test` (no framework)
+  skill/
+    SKILL.md              # the always-on agent skill: how to drive the CLI
+    rn-iso-init/SKILL.md  # the task-shaped skill: making a repo fast for parallel agents
+
+packages/expo-build-cache/  # @rn-iso/expo-build-cache. CJS (see conventions above).
+  index.js                  # the Expo build-cache provider: resolveBuildCache / uploadBuildCache
+packages/metro-cache/       # @rn-iso/metro-cache. CJS (see conventions above).
+  index.js                  # sharedCacheStores(): a FileStore outside any project, self-registered
 ```
+
+The two cache packages duplicate a little of `src/build-cache.js` on purpose:
+they must work with no rn-iso installed. `buildCacheKey` is the piece that
+matters — both entry points build the key the same way, so they address the
+same entries. Change one and you must change the other, or the CLI and the
+provider quietly stop sharing a cache.
 
 ## Particularities to remember
 
@@ -86,8 +150,12 @@ checklist:
 - Behavior change (e.g., a new `up --json` field, a new destructive
   side effect)? Update both the relevant section and "When things go wrong".
 
-The skill is shipped to users via the `npx skills add janicduplessis/rn-iso`
-line in the README; staleness breaks agent guidance.
+Two skills ship in the package, and `skill install` copies both:
+`skill/SKILL.md` (how to drive the CLI) and `skill/rn-iso-init/SKILL.md`
+(how to make a repo fast for parallel agents). A change to caching,
+`doctor`, or `init` usually belongs in the second one, not the first.
+Staleness breaks agent guidance, and the copy on a user's machine is a
+plain file copy that upgrading rn-iso does not refresh.
 
 ### 2. The ownership rule
 
@@ -98,6 +166,11 @@ owning project (`release`, `worktree remove`, or `gc` sweeping an orphan)
 destroys the device it owns, not just a claim on it. The one exception is
 physical devices: hardware cannot be spawned, so a physical Android device
 is still assigned by serial and never booted/shut down/deleted by rn-iso.
+
+The record is the only thing that makes a device findable again, so it
+outlives a failed teardown: when a delete fails, `release` reports it, keeps
+the assignment, and exits 1. Clearing the record there is what turns a failed
+teardown into a simulator nothing references and nothing will ever reap.
 
 History: this replaces an earlier invariant, "never auto-create
 simulators," which existed because early auto-creation accumulated junk
@@ -148,7 +221,7 @@ bundler on 8081 either way.
 ### 4. Owned-device teardown is centralized and ownership-verified
 
 `src/teardown.js` is the ONE implementation: `teardownOwnedIosSim(udid, {
-del, force, label })` and `teardownOwnedAvd(avdName, { del })`. Every site
+del, label })` and `teardownOwnedAvd(avdName, { del })`. Every site
 that destroys an owned device — `reclaim.js` (and through it `prune`, `gc`,
 `worktree remove`), `release.js`, `shutdown.js`, and `gc.js`'s orphan sweep —
 calls one of them. Until 0.10.0 this file said reclaim.js was "the one place"
@@ -169,8 +242,9 @@ one rn-iso created, for a project that is going away, and the process holding
 it is almost always the caller's own UI-test runner. Skipping there leaked
 booted sims and live `xcodebuild test-without-building` runners out of
 `worktree remove`, and "left for a later gc" only deferred the same decision
-to a command that made it the same way. `force` remains as an explicit
-override for the shutdown path. (3) Only then shut down, and
+to a command that made it the same way. So there is no override flag on this
+path at all: `release` takes no `--force`, because there is nothing left for
+it to override. (3) Only then shut down, and
 delete only when `del` is set (`shutdown` never deletes). (4) Contain
 failures: a throw becomes `{ status: 'failed' }`, never an exception that
 aborts a batch (`worktree remove` reaping several nested projects, `gc`
@@ -220,14 +294,17 @@ Claude Code's `WorktreeCreate` hook uses whatever the hook command writes to
 stdout as the directory for the new session — and only that. So
 `registerCreate` in `src/commands/worktree.js` prints the worktree's
 absolute path to stdout and NOTHING else: every status line, carry-over
-notice, and setup-pipeline failure goes to `console.error` (stderr)
-instead. It also exits 0 even when the setup pipeline fails — a non-zero
-exit here would make the hook treat worktree creation itself as failed and
-abort the session, when really the worktree exists and is usable, just
-maybe not buildable yet (the failure is recorded via `setSetupStatus` and
-surfaced later by `worktree list` and in `up --json`'s `setup` field). If you touch this
-command, keep every new `console.log` off the success path and never turn
-a setup failure into a non-zero exit.
+notice and warning goes to `console.error` (stderr) instead. If you touch
+this command, keep every new `console.log` off the success path.
+
+The same reasoning applies to a non-zero exit: it would make the hook treat
+worktree creation itself as failed and abort the session, when the worktree
+exists and is usable. Only a failure to produce a worktree belongs on that
+path.
+
+`build-cache resolve` has the same contract for the same reason — the path
+on stdout, every explanation on stderr — because it is meant to be captured
+with `$(...)`.
 
 ### 8. The unmounted-volume guard always fails closed
 
@@ -293,14 +370,26 @@ wedge a session.
 
 ## Local development
 
+The repo root is the npm workspace. Install and test from there:
+
 ```bash
-npm install         # one-time
-npm test            # node --test test/*.test.js
-npm link            # symlink rn-iso onto your PATH for live testing
+npm install         # one-time, from the repo root; installs every package
+npm test            # from the repo root: runs the rn-iso suite
 ```
 
-After `npm link`, edits to `src/` are picked up immediately by the linked
-`rn-iso` command.
+Root `npm test` delegates to `npm test --workspace rn-iso`, which is
+`node --test test/*.test.js`. The cache packages have no suite of their own —
+`buildCacheKey`'s rules are covered on the `src/build-cache.js` side, so a
+change to either copy of it needs the CLI suite run and the other copy read.
+
+Linking is per package, so it happens inside the package directory:
+
+```bash
+cd packages/rn-iso && npm link    # symlink rn-iso onto your PATH for live testing
+```
+
+After `npm link`, edits to `packages/rn-iso/src/` are picked up immediately by
+the linked `rn-iso` command.
 
 ## Releases
 
