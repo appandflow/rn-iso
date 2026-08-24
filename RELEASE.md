@@ -6,6 +6,9 @@ real workflow at the same time.
 
 ## 1. Decide the version
 
+rn-iso now lives in `packages/rn-iso`; run these from there unless a step says
+otherwise.
+
 The source of truth for "what was last released" is the npm registry, not
 local git tags — a publish can fail after the tag is pushed, leaving the tag
 ahead of what's actually on npm. Pull the published version and list commits

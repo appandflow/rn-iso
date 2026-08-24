@@ -1,0 +1,49 @@
+{
+  "name": "rn-iso",
+  "version": "0.14.0",
+  "description": "Isolated React Native dev environments per project/worktree",
+  "type": "module",
+  "bin": {
+    "rn-iso": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skill",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "prompts": "^2.4.2"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/janicduplessis/rn-iso.git"
+  },
+  "homepage": "https://github.com/janicduplessis/rn-iso#readme",
+  "bugs": {
+    "url": "https://github.com/janicduplessis/rn-iso/issues"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "metro",
+    "simulator",
+    "emulator",
+    "worktree",
+    "agent"
+  ],
+  "license": "MIT",
+  "author": "Janic Duplessis",
+  "exports": {
+    "./cache-manifest": "./src/cache-manifest.js"
+  }
+}
