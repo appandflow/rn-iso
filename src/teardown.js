@@ -38,7 +38,15 @@ export function teardownOwnedIosSim(udid, { del = false, force = false, label } 
       return { status: 'skipped', kind: 'not-owned', reason: `sim is now named "${resolved.notOwned}", not rn-iso-owned by name` };
     }
     if (resolved.missing) return { status: 'missing' };
-    if (!force && isSimOccupied(udid)) {
+    // Occupancy only protects a device that is going to SURVIVE. `del` means
+    // this sim is being destroyed: it is one rn-iso created, for a project that
+    // is going away, and the process holding it is almost always the caller's
+    // own UI-test runner, which has nothing to return to. Skipping here is what
+    // leaked booted sims out of `worktree remove` -- the environment is meant to
+    // die whole, and "left for a later gc" only deferred the same decision to a
+    // command that made it the same way. `shutdown` keeps the check, because the
+    // device it spares is still there to come back to.
+    if (!del && !force && isSimOccupied(udid)) {
       return { status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' };
     }
     shutdownIosSim(udid);

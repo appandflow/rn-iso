@@ -162,9 +162,15 @@ renamed away from the `rn-iso-` prefix, or already deleted, must never be
 shut down, only reported as a skip; issuing shutdown first and only catching
 the mismatch at delete time would already have hit whatever real simulator
 that udid resolves to. (2) Check occupancy (`isSimOccupied`, iOS only —
-Android has no probe) — a foreign UI-test runner may still be attached to an
-owned sim, so an occupied one is left running and reported; `force` is the
-sole override and only `release` passes it. (3) Only then shut down, and
+Android has no probe) **only when the device will survive**, i.e. `del` is
+false. Occupancy exists to spare a device you are coming back to, so
+`shutdown` honours it. A device being deleted is going away regardless: it is
+one rn-iso created, for a project that is going away, and the process holding
+it is almost always the caller's own UI-test runner. Skipping there leaked
+booted sims and live `xcodebuild test-without-building` runners out of
+`worktree remove`, and "left for a later gc" only deferred the same decision
+to a command that made it the same way. `force` remains as an explicit
+override for the shutdown path. (3) Only then shut down, and
 delete only when `del` is set (`shutdown` never deletes). (4) Contain
 failures: a throw becomes `{ status: 'failed' }`, never an exception that
 aborts a batch (`worktree remove` reaping several nested projects, `gc`

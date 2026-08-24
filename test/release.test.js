@@ -101,7 +101,7 @@ test('a throwing iOS ownership probe is contained: reported as a skip, the assig
   assert.equal(cfg.projects['/proj/a'].platforms.android, undefined);
 });
 
-test('release verifies iOS ownership before probing occupancy', async () => {
+test('release verifies iOS ownership before any destructive command reaches the udid', async () => {
   saveConfig({
     version: 2,
     projects: {
@@ -138,9 +138,13 @@ test('release verifies iOS ownership before probing occupancy', async () => {
 
   await runRelease(['/proj/a']);
 
+  // release deletes, and a device being deleted is no longer occupancy-gated --
+  // so the command that must not precede the ownership check is the destructive
+  // one itself. Issuing shutdown/delete first would already have hit whatever
+  // real simulator that udid resolves to.
   const listIndex = execCalls.findIndex(c => c.includes('simctl list devices --json'));
-  const occupancyIndex = execCalls.findIndex(c => c.includes('launchctl list'));
+  const destructiveIndex = execCalls.findIndex(c => /simctl (shutdown|delete)/.test(c));
   assert.ok(listIndex !== -1, 'ownership must be verified via a live listing');
-  assert.ok(occupancyIndex !== -1, 'occupancy must still be probed once ownership is confirmed');
-  assert.ok(listIndex < occupancyIndex, 'ownership must be verified BEFORE the occupancy probe shells at the udid');
+  assert.ok(destructiveIndex !== -1, 'release must actually tear the device down');
+  assert.ok(listIndex < destructiveIndex, 'ownership must be verified BEFORE anything destructive shells at the udid');
 });

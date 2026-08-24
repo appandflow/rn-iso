@@ -55,12 +55,37 @@ test('teardownOwnedIosSim reports missing without erroring', () => {
   assert.deepEqual(teardownOwnedIosSim('U1', { del: true }), { status: 'missing' });
 });
 
-test('teardownOwnedIosSim skips an occupied sim and never shuts it down', () => {
+// Occupancy protects a device that will SURVIVE. `shutdown` spares an occupied
+// sim because it is still there to come back to.
+test('teardownOwnedIosSim skips an occupied sim it is only shutting down', () => {
+  const exec = iosExecutor({ sims: [OWNED], occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n' });
+  setExecutor(exec);
+  const r = teardownOwnedIosSim('U1', { del: false });
+  assert.equal(r.status, 'skipped');
+  assert.match(r.reason, /occupied/);
+  assert.ok(!exec.calls.some(c => /simctl shutdown|simctl delete/.test(c)));
+});
+
+// ...but a sim being DELETED is going away regardless: it is one rn-iso
+// created, for a project that is going away, and the holder is almost always
+// the caller's own UI-test runner. Skipping here leaked booted sims out of
+// `worktree remove` and only deferred the same decision to gc.
+test('teardownOwnedIosSim deletes an occupied sim anyway, without needing force', () => {
   const exec = iosExecutor({ sims: [OWNED], occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n' });
   setExecutor(exec);
   const r = teardownOwnedIosSim('U1', { del: true });
+  assert.equal(r.status, 'torn-down');
+  assert.ok(exec.calls.some(c => /simctl delete U1/.test(c)));
+});
+
+// Ownership is still absolute: aggression applies to what rn-iso created, and
+// a sim renamed out of the prefix is not that, occupied or not.
+test('teardownOwnedIosSim still refuses a sim that is not rn-iso-owned, even when deleting', () => {
+  const exec = iosExecutor({ sims: [{ udid: 'U1', name: 'My iPhone', state: 'Booted', isAvailable: true }] });
+  setExecutor(exec);
+  const r = teardownOwnedIosSim('U1', { del: true });
   assert.equal(r.status, 'skipped');
-  assert.match(r.reason, /occupied/);
+  assert.equal(r.kind, 'not-owned');
   assert.ok(!exec.calls.some(c => /simctl shutdown|simctl delete/.test(c)));
 });
 
@@ -137,8 +162,9 @@ test('skip outcomes carry a machine-readable kind, so callers need not match pro
   assert.equal(teardownOwnedIosSim('U1', { del: true }).kind, 'not-owned');
   resetExecutor();
 
+  // del:false -- the occupied skip only exists for a device that will survive.
   setExecutor(iosExecutor({ sims: [OWNED], occupied: '\t1\t0\tUIKitApplication:com.x.xctrunner[0x1]\n' }));
-  assert.equal(teardownOwnedIosSim('U1', { del: true }).kind, 'occupied');
+  assert.equal(teardownOwnedIosSim('U1', { del: false }).kind, 'occupied');
   resetExecutor();
 
   setExecutor(androidExecutor({ avds: ['Pixel_6'], adb: 'List of devices attached\n' }));

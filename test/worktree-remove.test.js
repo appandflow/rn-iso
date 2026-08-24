@@ -321,7 +321,7 @@ test('action: reaps owned sims under two nested monorepo app-dir keys, both of t
 // block anything else: the worktree removal still proceeds, the OTHER
 // nested project's owned sim is still reaped, and the occupied one comes
 // back as a skip rather than aborting the whole command.
-test('action: an occupied owned sim is skipped, without blocking worktree removal or the other device\'s reclamation', async () => {
+test('action: an occupied owned sim is deleted with the rest -- the environment dies whole', async () => {
   const nestedDir1 = join(wtDir, 'apps', 'mobile1');
   const nestedDir2 = join(wtDir, 'apps', 'mobile2');
   upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
@@ -357,9 +357,11 @@ test('action: an occupied owned sim is skipped, without blocking worktree remova
   assert.notEqual(process.exitCode, 1);
   assert.ok(exec.calls.run.some(c => /worktree remove/.test(c)));
 
-  // The occupied sim was never shut down or deleted, but the other one was.
-  assert.ok(!exec.calls.runQuiet.some(c => /xcrun simctl shutdown U5/.test(c)));
-  assert.ok(!exec.calls.runQuiet.some(c => /xcrun simctl delete U5/.test(c)));
+  // Both sims go, occupied or not: they are rn-iso's own, created for a project
+  // that is being removed, and the holder is almost always the caller's own
+  // UI-test runner. Sparing U5 here is what used to leak a booted sim and a
+  // live runner out of `worktree remove`.
+  assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U5/.test(c)));
   assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U6/.test(c)));
 
   // Both config entries are cleared either way -- reclaiming rn-iso's own
@@ -368,7 +370,7 @@ test('action: an occupied owned sim is skipped, without blocking worktree remova
   assert.equal(getProject(nestedDir1), null);
   assert.equal(getProject(nestedDir2), null);
 
-  // The skip is reported, naming the same device the (absent) freed line
-  // would have -- rn-iso-c (U5), not a bare udid or bare name.
-  assert.ok(logs.some(l => /kept rn-iso-c \(U5\)/.test(l) && /in use/i.test(l)));
+  // Nothing is reported as kept: there is no occupied-skip path left for a
+  // device being deleted, so no "kept ..." line should appear at all.
+  assert.ok(!logs.some(l => /kept/i.test(l)), `unexpected kept line: ${logs.join(' | ')}`);
 });
