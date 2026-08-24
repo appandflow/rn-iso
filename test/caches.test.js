@@ -1,4 +1,4 @@
-import { test, afterEach } from 'node:test';
+import { test, afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,7 +6,19 @@ import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { discoverCaches, pruneCache, sizeCaches } from '../src/caches.js';
 
-afterEach(() => resetExecutor());
+// discoverCaches reads the cache manifest, which lives under the config dir --
+// so these tests must redirect it like every other config-touching test, or
+// they see whatever this machine has actually registered.
+let tmpHome;
+beforeEach(() => {
+  tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-home-'));
+  process.env.RN_ISO_HOME = tmpHome;
+});
+afterEach(() => {
+  resetExecutor();
+  rmSync(tmpHome, { recursive: true, force: true });
+  delete process.env.RN_ISO_HOME;
+});
 
 // Declared caches are the ones rn-iso cannot detect: a Metro FileStore or an
 // Expo build-cache directory is chosen by a project's own config.

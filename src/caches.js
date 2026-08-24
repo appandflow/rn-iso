@@ -12,6 +12,7 @@ import { existsSync, readdirSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { derivedDataRoot, directorySize } from './artifacts.js';
+import { registeredCaches } from './cache-manifest.js';
 
 // Xcode 26's content-addressed compilation cache. The default sits at the
 // DerivedData root, which makes it per-machine rather than per-workspace -- but
@@ -74,8 +75,16 @@ function declaredCaches(paths) {
 // to know WHICH caches exist does not pay for a full directory walk of several
 // gigabytes.
 export function discoverCaches({ declared = [] } = {}) {
-  const found = [compilationCache(), metroFileMaps(), ...declaredCaches(declared)];
-  return found.filter(Boolean);
+  // Registered first: a cache that described itself is better information than
+  // anything inferred here, so when both name the same directory the
+  // registration wins. Detection stays as the fallback for caches that nothing
+  // has registered -- Xcode's, and anything named in the `caches` setting.
+  const registered = registeredCaches();
+  const seen = new Set(registered.map(c => c.dir));
+  const detected = [compilationCache(), metroFileMaps(), ...declaredCaches(declared)]
+    .filter(Boolean)
+    .filter(c => !seen.has(c.dir));
+  return [...registered, ...detected];
 }
 
 export function sizeCaches(caches) {
