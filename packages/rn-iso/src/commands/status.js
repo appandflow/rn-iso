@@ -2,12 +2,13 @@
 import chalk from 'chalk';
 import { totalmem } from 'os';
 import { loadConfig } from '../config.js';
+import { getExecutor } from '../exec.js';
 import { isMetroRunning } from '../ports.js';
 import { resolveProjectMetro } from '../metro.js';
 import { findProjectRoot, projectShortcut } from '../project.js';
 import { listAllIosSims } from '../sim/ios.js';
 import { listWorktrees } from '../worktree.js';
-import { capacity, environmentState, unprovisionedWorktrees } from '../status.js';
+import { capacity, diskIsTight, environmentState, parseDfFree, unprovisionedWorktrees } from '../status.js';
 
 export default function statusCommand(program) {
   program
@@ -81,7 +82,16 @@ export default function statusCommand(program) {
         const marker = path === cwdRoot ? chalk.bold.cyan(`* ${shortcut}`) : shortcut;
         const idle = state.live ? '' : chalk.dim(' [idle]');
         console.log(`\n${marker}${idle} ${chalk.dim(`(${path})`)}`);
-        console.log(chalk.dim(`  app: ${proj.bundleId ?? '?'} (${proj.isExpo ? 'expo' : 'bare'})`));
+        // `worktree create` registers the worktree ROOT to reserve its label,
+        // but in a monorepo the app lives in a subdirectory and registers its
+        // own entry. The root has no bundle id, no port and no device, so an
+        // `app: ? (bare)` line described it as a broken app instead of what it
+        // is. Only the label-only case is relabelled: a root that IS the app
+        // still prints a normal app line.
+        const labelOnly = proj.worktreeRoot && !proj.bundleId && !state.metro && !state.ios && !state.android;
+        console.log(labelOnly
+          ? chalk.dim('  worktree root (holds the label; the app registers its own entry)')
+          : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${proj.isExpo ? 'expo' : 'bare'})`));
 
         if (state.metro) {
           const label = state.metro.running
@@ -114,6 +124,13 @@ export default function statusCommand(program) {
           `\n${cap.liveCount} live environment(s), roughly ${gb(cap.committedMb)} of ${gb(cap.totalMemoryMb)} committed.`
         )
       );
+      // RAM was the only resource reported, and disk is the one that actually
+      // ran out. Bounded and failure-tolerant: an unreadable df prints nothing.
+      const disk = parseDfFree(getExecutor().runQuiet('df -k /', { timeoutMs: 5000 }));
+      if (disk) {
+        const line = `${gb(disk.availableMb)} free of ${gb(disk.totalMb)} on disk.`;
+        console.log(diskIsTight(disk) ? chalk.yellow(`${line} A single iOS build can exhaust that -- run \`rn-iso gc\` before starting another environment.`) : chalk.dim(line));
+      }
       if (cap.overCapacity) {
         console.log(
           chalk.yellow('Over comfortable capacity. A machine that swaps is slower than one working in sequence -- release one before starting another.')

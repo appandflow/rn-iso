@@ -92,6 +92,33 @@ export function capacity(states, totalMemoryMb) {
   };
 }
 
+// Free disk, parsed from `df -k <path>`. rn-iso reports RAM commitment but was
+// silent about disk, and disk is what actually ran out: two member-app
+// environments filled a 926 GB volume, and once it was full nothing could run
+// at all -- including `gc`, the command that exists to reclaim space.
+//
+// `df -k` rather than `-h` so the number needs no unit parsing. Returns null on
+// any surprise: this is a hint printed beside a summary, never a gate.
+export function parseDfFree(output) {
+  const lines = String(output || '').trim().split('\n');
+  if (lines.length < 2) return null;
+  // Fields: Filesystem 1024-blocks Used Available Capacity ... Mounted-on.
+  // The filesystem name can contain spaces, so count from the RIGHT of the
+  // capacity field rather than assuming field 0 is one token.
+  const m = /\s(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%/.exec(lines[lines.length - 1]);
+  if (!m) return null;
+  const totalKb = Number(m[1]);
+  const availableKb = Number(m[3]);
+  if (!Number.isFinite(totalKb) || !Number.isFinite(availableKb) || totalKb <= 0) return null;
+  return { availableMb: Math.round(availableKb / 1024), totalMb: Math.round(totalKb / 1024) };
+}
+
+// Below this, a single iOS build can fail partway with a disk error that names
+// nothing about disk. Worth saying before it happens, not after.
+export function diskIsTight(disk) {
+  return Boolean(disk && disk.availableMb < 25 * 1024);
+}
+
 // Worktrees rn-iso knows nothing about: a workspace someone created by hand, or
 // one whose environment was released. Listing them is what makes this a
 // replacement for `worktree list` rather than a second thing to check.

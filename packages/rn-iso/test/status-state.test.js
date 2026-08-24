@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { capacity, environmentState, unprovisionedWorktrees } from '../src/status.js';
+import { capacity, diskIsTight, environmentState, parseDfFree, unprovisionedWorktrees } from '../src/status.js';
 
 const BOOTED = { udid: 'U1', name: 'rn-iso-app', state: 'Booted' };
 const SHUTDOWN = { udid: 'U1', name: 'rn-iso-app', state: 'Shutdown' };
@@ -81,4 +81,40 @@ test('capacity says nothing when the machine size is unknown', () => {
 test('unprovisioned worktrees are the ones with no registered environment', () => {
   const worktrees = [{ path: '/wt/a' }, { path: '/wt/b' }];
   assert.deepEqual(unprovisionedWorktrees(worktrees, ['/wt/a']).map(w => w.path), ['/wt/b']);
+});
+
+// rn-iso reported RAM commitment and said nothing about disk. Disk is what
+// actually ran out: a full volume stopped every command, including the `gc`
+// that exists to reclaim space.
+test('parseDfFree reads the available and total columns from df -k', () => {
+  const out = [
+    'Filesystem   1024-blocks       Used  Available Capacity iused ifree %iused  Mounted on',
+    '/dev/disk3s5   970989436  776862512  164363576    83%    12M  1.6G    1%   /',
+  ].join('\n');
+  assert.deepEqual(parseDfFree(out), {
+    availableMb: Math.round(164363576 / 1024),
+    totalMb: Math.round(970989436 / 1024),
+  });
+});
+
+// A volume name can contain spaces, so the columns are counted from the
+// capacity percentage rightwards rather than by splitting on whitespace.
+test('a filesystem name containing spaces still parses', () => {
+  const out = [
+    'Filesystem 1024-blocks Used Available Capacity Mounted on',
+    'my volume name 2097152 1048576 1048576 50% /Volumes/x',
+  ].join('\n');
+  assert.deepEqual(parseDfFree(out), { availableMb: 1024, totalMb: 2048 });
+});
+
+test('unreadable df output is null, never a guess', () => {
+  assert.equal(parseDfFree(''), null);
+  assert.equal(parseDfFree(null), null);
+  assert.equal(parseDfFree('Filesystem 1024-blocks Used Available Capacity'), null);
+});
+
+test('a nearly full disk is flagged before a build discovers it', () => {
+  assert.equal(diskIsTight({ availableMb: 5 * 1024, totalMb: 900 * 1024 }), true);
+  assert.equal(diskIsTight({ availableMb: 190 * 1024, totalMb: 900 * 1024 }), false);
+  assert.equal(diskIsTight(null), false);
 });
