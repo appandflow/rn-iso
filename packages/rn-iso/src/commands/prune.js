@@ -8,7 +8,7 @@ import { isOnMountedVolume, listMountedVolumes } from '../artifacts.js';
 export default function pruneCommand(program) {
   program
     .command('prune')
-    .description('Remove entries for projects whose directory no longer exists (deleted worktrees), freeing their sims/emulators and Metro ports. Live projects are never touched. Does not delete build artifacts; see `gc`.')
+    .description('Remove entries for projects whose directory no longer exists (deleted worktrees), freeing their Metro ports and dropping their device records. Deletes no sim, emulator or build artifact: use `gc` to reap the devices those entries used to reference, and to reclaim build output. Live projects are never touched.')
     .action(async () => {
       const cfg = loadConfig();
       const mountedVolumes = listMountedVolumes();
@@ -39,22 +39,27 @@ export default function pruneCommand(program) {
         return;
       }
 
-      let reclaimableBytes = 0;
+      // 'list', not 'measure': the only question here is whether any build
+      // output is left behind, which the count answers. Sizing it would shell
+      // a `du` walk per directory for a number this command never prints.
+      let leftoverArtifacts = 0;
       for (const path of deadPaths) {
-        const result = await reclaimProject(path, { deleteArtifacts: false });
+        const result = await reclaimProject(path, { deleteArtifacts: false, artifacts: 'list' });
         console.log(chalk.green(`Pruned ${path}`));
-        if (result.freed.length) console.log(chalk.dim(`  freed: ${result.freed.join(', ')}`));
+        if (result.dereferenced.length) {
+          console.log(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')} (still on this machine; \`rn-iso gc\` reaps them)`));
+        }
         if (result.killedPid) {
           console.log(chalk.dim(`  killed orphaned Metro pid ${result.killedPid} on port ${result.metroPort}`));
         }
-        for (const artifact of result.artifacts) reclaimableBytes += artifact.bytes;
+        leftoverArtifacts += result.artifacts.length;
       }
 
       console.log(chalk.dim(`\n${deadPaths.length} project entr${deadPaths.length === 1 ? 'y' : 'ies'} removed.`));
       if (unmountedPaths.length > 0) {
         console.log(chalk.dim(`${unmountedPaths.length} more on an unmounted volume left untouched.`));
       }
-      if (reclaimableBytes > 0) {
+      if (leftoverArtifacts > 0) {
         console.log(chalk.yellow('Build artifacts from these projects are still on disk. Run `rn-iso gc` to review them.'));
       }
     });

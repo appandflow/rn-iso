@@ -1,7 +1,8 @@
 import { request } from 'http';
 import { connect } from 'net';
 import { existsSync } from 'fs';
-import { loadConfig, allMetroPorts, removeProject } from './config.js';
+import { loadConfig, allMetroPorts, removeProject, claimMetroPort } from './config.js';
+import { isOnMountedVolume, listMountedVolumes } from './artifacts.js';
 
 export function isMetroRunning(port) {
   return new Promise((resolve) => {
@@ -68,9 +69,10 @@ export async function computeNextPort(isFree = isPortFree) {
   );
 }
 
-export async function findReclaimablePort(excludeProjectPath, probe = isMetroRunning) {
+export async function findReclaimablePort(excludeProjectPath, probe = isMetroRunning, { isMounted = isOnMountedVolume, mountedVolumes } = {}) {
   const cfg = loadConfig();
   if (!cfg?.projects) return null;
+  const mounted = mountedVolumes || listMountedVolumes();
   const candidates = [];
   for (const [path, proj] of Object.entries(cfg.projects)) {
     if (path === excludeProjectPath) continue;
@@ -78,6 +80,12 @@ export async function findReclaimablePort(excludeProjectPath, probe = isMetroRun
     // removes the whole entry, and doing that to a live project would also
     // drop its device claim out from under it.
     if (existsSync(path)) continue;
+    // A path on a volume that is not mounted right now is not gone, it is
+    // unplugged: the project still owns its label, port and device record.
+    // allocatePort removes the entry of whatever this returns, so failing
+    // open here would silently delete a live project's record -- the same
+    // direction gc and prune already fail in (CLAUDE.md item 8).
+    if (!isMounted(path, mounted)) continue;
     if (typeof proj.metroPort === 'number') {
       candidates.push({ port: proj.metroPort, ownerPath: path });
     }
@@ -99,4 +107,22 @@ export async function allocatePort(projectPath, probe = isMetroRunning, isFree =
     return reclaim.port;
   }
   return computeNextPort(isFree);
+}
+
+const RESERVE_ATTEMPTS = 5;
+
+// Allocation and recording are two steps with a gap between them: the probes
+// take hundreds of milliseconds, and a second `up` running in parallel can
+// pick the same port in that window. claimMetroPort writes only if the config
+// still shows the port unclaimed, so a loser here simply allocates again --
+// and that second pass now sees the winner's record and skips its port.
+export async function reserveMetroPort(projectPath, probe = isMetroRunning, isFree = isPortFree) {
+  for (let attempt = 0; attempt < RESERVE_ATTEMPTS; attempt++) {
+    const port = await allocatePort(projectPath, probe, isFree);
+    const claimed = claimMetroPort(projectPath, port);
+    if (claimed !== null) return claimed;
+  }
+  throw new Error(
+    `Could not reserve a Metro port after ${RESERVE_ATTEMPTS} attempts: another rn-iso run claimed each one first. Retry.`
+  );
 }

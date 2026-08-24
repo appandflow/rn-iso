@@ -89,12 +89,14 @@ test('teardownOwnedIosSim still refuses a sim that is not rn-iso-owned, even whe
   assert.ok(!exec.calls.some(c => /simctl shutdown|simctl delete/.test(c)));
 });
 
-test('teardownOwnedIosSim force overrides occupancy', () => {
-  const exec = iosExecutor({ sims: [OWNED], occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n' });
+// A delete that fails leaves the sim on disk. The outcome must be 'failed', so
+// callers report a leak instead of a device they never destroyed.
+test('teardownOwnedIosSim reports a failed delete rather than torn-down', () => {
+  const exec = iosExecutor({ sims: [OWNED], throwOn: 'simctl delete' });
   setExecutor(exec);
-  const r = teardownOwnedIosSim('U1', { del: true, force: true });
-  assert.equal(r.status, 'torn-down');
-  assert.ok(exec.calls.some(c => /simctl delete U1/.test(c)));
+  const r = teardownOwnedIosSim('U1', { del: true });
+  assert.equal(r.status, 'failed');
+  assert.match(r.reason, /boom/);
 });
 
 // Containment: a throw must become a reported outcome, never propagate and

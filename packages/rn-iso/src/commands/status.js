@@ -20,11 +20,16 @@ export default function statusCommand(program) {
       const cwdRoot = findProjectRoot(process.cwd());
 
       // Tolerate a machine with no simctl (a Linux box doing Android work).
+      // "simctl did not answer" and "simctl answered with zero sims" are
+      // different facts: only the second one proves a recorded sim is gone.
       let simsByUdid = {};
+      let simsAvailable = true;
+      let simctlError = null;
       try {
         for (const sim of listAllIosSims()) simsByUdid[sim.udid] = sim;
-      } catch {
-        // Fall back to reporting the udid without a name or a state.
+      } catch (e) {
+        simsAvailable = false;
+        simctlError = String(e?.message || e).split('\n')[0];
       }
 
       // The first entry is the main checkout, not a workspace: listing it as
@@ -41,7 +46,7 @@ export default function statusCommand(program) {
             ? await resolveProjectMetro(proj.metroPort, path)
             : { missing: true };
         }
-        states.push(environmentState({ ...proj, __path: path }, { simsByUdid, metro, worktrees }));
+        states.push(environmentState({ ...proj, __path: path }, { simsByUdid, metro, worktrees, simsAvailable }));
       }
 
       const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
@@ -49,13 +54,25 @@ export default function statusCommand(program) {
       const orphanWorktrees = unprovisionedWorktrees(worktrees, projects.map(([p]) => p));
 
       if (opts.json) {
-        console.log(JSON.stringify({ environments: states, capacity: cap, unprovisionedWorktrees: orphanWorktrees }, null, 2));
+        console.log(JSON.stringify({
+          environments: states,
+          capacity: cap,
+          unprovisionedWorktrees: orphanWorktrees,
+          simctlAvailable: simsAvailable,
+        }, null, 2));
         return;
       }
 
       if (projects.length === 0 && orphanWorktrees.length === 0) {
         console.log(chalk.dim('No projects registered.'));
         return;
+      }
+
+      // Said once, up front: without a sim listing every iOS line below reports
+      // a state of "unknown" rather than a fact, and none of them can be
+      // checked against the machine.
+      if (!simsAvailable) {
+        console.log(chalk.yellow(`simctl could not be read (${simctlError}), so no iOS sim below could be checked.`));
       }
 
       for (const [i, [path, proj]] of projects.entries()) {

@@ -10,7 +10,7 @@ import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
 export default function shutdownCommand(program) {
   program
     .command('shutdown [target]')
-    .description('Stop Metro and shut down sims/emulators across rn-iso projects, then clear their device assignments. With no arg, targets every registered project; pass a project shortcut (label or unique basename) or absolute path to scope to one.')
+    .description('Stop Metro and shut down sims/emulators across rn-iso projects. Records for owned devices are kept, so `up` boots the same device back up; only assignments for devices rn-iso does not own are cleared. With no arg, targets every registered project; pass a project shortcut (label or unique basename) or absolute path to scope to one.')
     .option('-y, --yes', 'Skip the confirmation prompt (also implied when stdin is not a TTY)')
     .option('--keep-sims', "Don't shut down simulators/emulators; only kill Metro and clear assignments")
     .action(async (target, opts) => {
@@ -98,6 +98,19 @@ export default function shutdownCommand(program) {
             const label = android.avdName || `emulator-${android.consolePort}`;
             if (!android.owned) {
               skippedLegacy.push({ path, platform: 'android', label });
+            } else if (!android.avdName) {
+              // An owned record with a console port but no AVD name cannot be
+              // identity-verified: resolveOwnedAvdSerial matches on the AVD
+              // name, and a console port is a slot a foreign emulator can hold.
+              // Reporting it as "already gone" would hide an emulator that is
+              // very likely still running, so report it as a skip that names
+              // what is missing.
+              skippedFailed.push({
+                path,
+                platform: 'android',
+                label,
+                reason: 'the record has no AVD name, so the emulator cannot be identified; shut it down by hand (`adb -s emulator-<port> emu kill`)',
+              });
             } else {
               androidEmus.push({ path, avdName: android.avdName, consolePort: android.consolePort });
             }

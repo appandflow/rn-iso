@@ -57,6 +57,14 @@ test('a recorded device that no longer exists is reported rather than shown as f
   assert.match(s.warnings.join(' '), /no longer exists/);
 });
 
+// An empty map from a simctl that never answered is not evidence. Warning per
+// project there reports a machine-wide tooling failure as a device problem.
+test('an unreadable sim listing leaves the state unknown instead of warning per project', () => {
+  const s = environmentState(project(), { simsByUdid: {}, metro: { missing: true }, simsAvailable: false });
+  assert.equal(s.ios.state, 'unknown');
+  assert.equal(s.warnings.join(' ').includes('no longer exists'), false);
+});
+
 // Past the point where committed memory outweighs the machine, more parallelism
 // makes everything slower -- and that is the one failure a parallel agent cannot
 // observe for itself.

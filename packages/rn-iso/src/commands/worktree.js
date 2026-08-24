@@ -170,21 +170,21 @@ export function removalBlockers({ dirty, unpushed }) {
 // Reclaims `rootPath` itself plus every registered key that is a
 // path-segment prefix match under it (reusing isPathPrefix from config.js,
 // the same helper findEnclosingWorktreeRoot uses for the inverse lookup),
-// and aggregates the freed devices, killed pids, artifacts, and owned-device
-// deletions across all of them. The environment dies whole: `deleteOwnedDevices`
-// is always on here, so every owned iOS sim / AVD registered under the
-// worktree (including nested monorepo app-dir keys) is reaped along with it.
-// An occupied owned sim is left running (see reclaimOwnedDevices in
-// reclaim.js) and comes back in `skippedDevices` instead of `deletedDevices`.
-// The `freed:` line identifies an iOS device by udid (describeFreed uses
-// `ios.deviceUdid`, never deviceName). A `kept ...` line built from
-// `s.name` alone (deviceName-or-udid) can show a different string for the
-// same device -- e.g. "freed: ios sim U1" next to "kept rn-iso-x: ..." --
-// leaving a reader unable to tell the two lines are about the same
-// simulator. Include the udid alongside the name whenever they differ so
-// the two lines are visibly the same device; android skips have no
-// separate udid (their `name` already is the freed identifier, the AVD
-// name), so this is a no-op for them.
+// and aggregates the de-referenced devices, killed pids, artifacts, and
+// owned-device deletions across all of them. The environment dies whole:
+// `deleteOwnedDevices` is always on here, so every owned iOS sim / AVD
+// registered under the worktree (including nested monorepo app-dir keys) is
+// reaped along with it, occupied or not. A device rn-iso does not own, and one
+// whose delete failed, come back in `skippedDevices` instead of
+// `deletedDevices`.
+// The `no longer referenced:` line identifies an iOS device by udid
+// (describeDereferenced uses `ios.deviceUdid`, never deviceName). A `kept ...`
+// line built from `s.name` alone (deviceName-or-udid) can show a different
+// string for the same device, leaving a reader unable to tell the two lines
+// are about the same simulator. Include the udid alongside the name whenever
+// they differ so the two lines are visibly the same device; android skips have
+// no separate udid (their `name` already is the AVD name), so this is a no-op
+// for them.
 function describeKeptDevice(s) {
   return s.udid && s.udid !== s.name ? `${s.name} (${s.udid})` : s.name;
 }
@@ -197,20 +197,28 @@ async function reclaimAll(rootPath) {
       if (isPathPrefix(rootPath, key)) keys.add(key);
     }
   }
-  const freed = [];
+  const dereferenced = [];
   const killedPids = [];
   const artifacts = [];
   const deletedDevices = [];
   const skippedDevices = [];
+  const keptEntries = [];
   for (const key of keys) {
-    const r = await reclaimProject(key, { deleteArtifacts: false, deleteOwnedDevices: true });
-    freed.push(...r.freed);
+    // 'measure': this command prints how much build output it reclaimed, so
+    // the du walk behind artifact.bytes is a number the user actually sees.
+    const r = await reclaimProject(key, {
+      deleteArtifacts: false,
+      deleteOwnedDevices: true,
+      artifacts: 'measure',
+    });
+    dereferenced.push(...r.dereferenced);
     if (r.killedPid) killedPids.push(r.killedPid);
     artifacts.push(...r.artifacts);
     deletedDevices.push(...r.deletedDevices);
     skippedDevices.push(...r.skippedDevices);
+    if (r.keptEntry) keptEntries.push(key);
   }
-  return { freed, killedPids, artifacts, deletedDevices, skippedDevices };
+  return { dereferenced, killedPids, artifacts, deletedDevices, skippedDevices, keptEntries };
 }
 
 export function registerRemove(worktree) {
@@ -313,19 +321,25 @@ export function registerRemove(worktree) {
         // bundler is gone, instead of just "tracking was cleared".
         console.error(chalk.red(`git worktree remove failed: ${String(e?.message || e)}`));
         console.error(chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`));
-        if (result.freed.length) console.error(chalk.dim(`  freed: ${result.freed.join(', ')}`));
+        if (result.dereferenced.length) console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
         for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
         if (result.deletedDevices.length) console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
         for (const s of result.skippedDevices) console.error(chalk.dim(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
+        for (const kept of result.keptEntries) {
+          console.error(chalk.dim(`  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso release ${kept}\` once the cause is fixed.`));
+        }
         process.exitCode = 1;
         return;
       }
       console.log(chalk.green(`Removed worktree ${path}`));
-      if (result.freed.length) console.log(chalk.dim(`  freed: ${result.freed.join(', ')}`));
+      if (result.dereferenced.length) console.log(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
       for (const pid of result.killedPids) console.log(chalk.dim(`  killed Metro pid ${pid}`));
       if (result.deletedDevices.length) console.log(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
       for (const s of result.skippedDevices) {
-        console.log(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason} (left for gc)`));
+        console.log(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
+      }
+      for (const kept of result.keptEntries) {
+        console.log(chalk.yellow(`  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso release ${kept}\` once the cause is fixed.`));
       }
 
       // directorySize (behind result.artifacts[].bytes) returns 0 both for a

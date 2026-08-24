@@ -18,7 +18,11 @@ const IOS_SIM_MB = 1500;
 const ANDROID_EMULATOR_MB = 2500;
 const METRO_MB = 700;
 
-export function environmentState(project, { simsByUdid = {}, metro = null, worktrees = [] } = {}) {
+// `simsAvailable: false` means the sim listing could not be read at all
+// (simctl missing, or a failing simctl). An empty map then says nothing about
+// any recorded sim, so this reports the state as unknown instead of claiming
+// every recorded device is gone.
+export function environmentState(project, { simsByUdid = {}, metro = null, worktrees = [], simsAvailable = true } = {}) {
   const ios = project.platforms?.ios;
   const android = project.platforms?.android;
   const sim = ios ? simsByUdid[ios.deviceUdid] : null;
@@ -40,7 +44,7 @@ export function environmentState(project, { simsByUdid = {}, metro = null, workt
   // silently builds against the wrong bundler, so it outranks everything else.
   if (metro?.notOurs) warnings.push(`port ${project.metroPort}: ${metro.notOurs}`);
   // A device recorded but no longer present means the record outlived the sim.
-  if (ios && !sim) warnings.push(`recorded sim ${ios.deviceUdid} no longer exists`);
+  if (ios && !sim && simsAvailable) warnings.push(`recorded sim ${ios.deviceUdid} no longer exists`);
   // Booted with no bundler is the shape of an environment somebody walked away
   // from: it holds ~1.5 GB and serves nothing.
   if (simBooted && project.metroPort && !metroRunning) {
@@ -53,7 +57,12 @@ export function environmentState(project, { simsByUdid = {}, metro = null, workt
     memoryMb,
     warnings,
     ios: ios
-      ? { name: sim?.name ?? null, udid: ios.deviceUdid, owned: Boolean(ios.owned), state: sim?.state ?? 'missing' }
+      ? {
+        name: sim?.name ?? null,
+        udid: ios.deviceUdid,
+        owned: Boolean(ios.owned),
+        state: sim?.state ?? (simsAvailable ? 'missing' : 'unknown'),
+      }
       : null,
     android: android
       ? { name: android.avdName ?? android.serial, owned: Boolean(android.owned), physical: Boolean(android.serial && !android.avdName) }

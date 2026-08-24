@@ -61,11 +61,15 @@ export function sanitizeAvdLabel(label) {
 // Defense in depth: deletion must only ever reach an AVD rn-iso created
 // itself. A future caller bug (wrong record, stale name) must not be able
 // to delete a user's real AVD.
+//
+// The delete itself runs through the THROWING run(): an avdmanager delete
+// that fails leaves the AVD on disk, and teardown.js turns the throw into
+// { status: 'failed' } so the caller reports a leak instead of "torn down".
 export function deleteAvd(avdName) {
   if (!avdName?.startsWith('rn-iso-')) {
     throw new Error(`Refusing to delete AVD "${avdName}": not an rn-iso-owned AVD (name must start with "rn-iso-").`);
   }
-  getExecutor().runQuiet(`"${avdmanagerPath()}" delete avd -n "${avdName}"`);
+  getExecutor().run(`"${avdmanagerPath()}" delete avd -n "${avdName}"`);
 }
 
 export function parseAvdList(text) {
@@ -124,28 +128,35 @@ export function bootAndroidEmulator(avdName, consolePort) {
   }).unref();
 }
 
+// runQuiet returns null whenever the command fails, which is the normal state
+// for most of a boot: adb answers "device offline" or "device not found" until
+// the emulator has registered. Null is "not booted yet", so it reads as an
+// empty string and the poll continues.
+function getprop(exec, serial, prop) {
+  const out = exec.runQuiet(`adb -s ${serial} shell getprop ${prop}`);
+  return typeof out === 'string' ? out.trim() : '';
+}
+
 export async function waitForBoot(serial, timeoutMs = 60000) {
   const exec = getExecutor();
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     // sys.boot_completed is the canonical "system fully up" signal; some
     // older AVD images set dev.bootcomplete sooner. Either is fine.
-    const sysBoot = exec.runQuiet(`adb -s ${serial} shell getprop sys.boot_completed`).trim();
-    if (sysBoot === '1') return { ok: true };
-    const devBoot = exec.runQuiet(`adb -s ${serial} shell getprop dev.bootcomplete`).trim();
-    if (devBoot === '1') return { ok: true };
+    if (getprop(exec, serial, 'sys.boot_completed') === '1') return { ok: true };
+    if (getprop(exec, serial, 'dev.bootcomplete') === '1') return { ok: true };
     await new Promise(r => setTimeout(r, 1000));
   }
   // Diagnostic snapshot for the timeout error: shows the user exactly
   // what adb sees and why the polling never resolved.
-  const devices = exec.runQuiet('adb devices').trim();
+  const devicesOut = exec.runQuiet('adb devices');
   return {
     ok: false,
     diagnostic: {
-      devices,
-      sysBoot: exec.runQuiet(`adb -s ${serial} shell getprop sys.boot_completed`).trim(),
-      devBoot: exec.runQuiet(`adb -s ${serial} shell getprop dev.bootcomplete`).trim(),
-      bootAnim: exec.runQuiet(`adb -s ${serial} shell getprop init.svc.bootanim`).trim(),
+      devices: typeof devicesOut === 'string' ? devicesOut.trim() : '',
+      sysBoot: getprop(exec, serial, 'sys.boot_completed'),
+      devBoot: getprop(exec, serial, 'dev.bootcomplete'),
+      bootAnim: getprop(exec, serial, 'init.svc.bootanim'),
     },
   };
 }

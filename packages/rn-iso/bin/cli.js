@@ -47,4 +47,15 @@ initCommand(program);
 // worktree) are async, and commander only awaits/propagates their errors
 // correctly through parseAsync. Top-level await is fine here -- this file
 // is ESM ("type": "module" in package.json).
-await program.parseAsync();
+try {
+  await program.parseAsync();
+} catch (err) {
+  // Errors that describe a state the user must repair carry their own
+  // instructions, so the message is the whole output. Anything else is a bug,
+  // and its stack trace is the useful part.
+  if (err?.code === 'RN_ISO_CONFIG_CORRUPT') {
+    console.error(err.message);
+    process.exit(1);
+  }
+  throw err;
+}

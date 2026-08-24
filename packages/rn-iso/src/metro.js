@@ -104,13 +104,30 @@ export async function resolveProjectMetro(port, projectPath, { probe = isMetroRu
   return { metro: { pid, leader, cwd } };
 }
 
+// The process group rn-iso itself runs in. A Metro backgrounded by a
+// non-interactive script (`npm start & rn-iso up ios`) shares its shell's
+// process group with rn-iso, so signalling that group would kill the shell
+// and rn-iso along with it.
+function ownProcessGroup() {
+  return processGroupLeader(process.pid);
+}
+
 // Kills the process GROUP. lsof reports whoever holds the socket, which for a
 // bundler started through a package manager is the node child, not the wrapper
 // (observed on member-app: `npm exec react-native start` as pid 59806 with the
 // node child 59914 actually holding the port). Killing only the listener
-// orphans the wrapper.
+// orphans the wrapper. The one exception is a group rn-iso is itself a member
+// of: there the bare pid is signalled instead.
 export function killMetroTree(leader) {
   if (!leader) return false;
+  if (leader === ownProcessGroup()) {
+    try {
+      process.kill(leader, 'SIGTERM');
+      return true;
+    } catch {
+      return false;
+    }
+  }
   try {
     process.kill(-leader, 'SIGTERM');
     return true;

@@ -217,21 +217,41 @@ test('deleteIosSim refuses to delete a sim not owned by rn-iso', () => {
   assert.throws(() => deleteIosSim('UDID-A'), /rn-iso/);
 });
 
+const OWNED_SIM_LIST = JSON.stringify({
+  devices: {
+    'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
+      { udid: 'UDID-B', name: 'rn-iso-my-project', state: 'Shutdown', isAvailable: true },
+    ],
+  },
+});
+
 test('deleteIosSim deletes an rn-iso-owned sim', () => {
-  let ran = null;
+  const ran = [];
   setExecutor({
-    run: () => JSON.stringify({
-      devices: {
-        'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
-          { udid: 'UDID-B', name: 'rn-iso-my-project', state: 'Shutdown', isAvailable: true },
-        ],
-      },
-    }),
-    runQuiet: (cmd) => { ran = cmd; return null; },
+    run: (cmd) => {
+      ran.push(cmd);
+      return cmd.includes('list devices') ? OWNED_SIM_LIST : null;
+    },
+    runQuiet: () => null,
     spawn: () => null,
   });
   deleteIosSim('UDID-B');
-  assert.match(ran, /xcrun simctl delete UDID-B/);
+  assert.ok(ran.some(c => /xcrun simctl delete UDID-B/.test(c)));
+});
+
+// A failed simctl delete leaves the sim on disk. It must reach the caller as a
+// throw (teardown.js turns it into { status: 'failed' }), not be swallowed into
+// a report of a device that was never actually deleted.
+test('deleteIosSim propagates a simctl failure instead of swallowing it', () => {
+  setExecutor({
+    run: (cmd) => {
+      if (cmd.includes('list devices')) return OWNED_SIM_LIST;
+      throw new Error('simctl: Unable to delete device');
+    },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+  assert.throws(() => deleteIosSim('UDID-B'), /Unable to delete device/);
 });
 
 test('deleteIosSim no-ops quietly when the udid is already gone', () => {

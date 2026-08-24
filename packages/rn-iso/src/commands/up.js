@@ -12,12 +12,11 @@ import { resolveSettings, unknownSettingKeys } from '../settings.js';
 import {
   getProject,
   upsertProject,
-  setMetro,
   setDevice,
   allConsolePortsAndSerials,
   loadConfig,
 } from '../config.js';
-import { allocatePort } from '../ports.js';
+import { reserveMetroPort } from '../ports.js';
 import { resolveProjectMetro } from '../metro.js';
 import { createOwnedIosSim, bootIosSim, listAllIosSims, resolveOwnedIosSim, listIosDeviceTypes } from '../sim/ios.js';
 import {
@@ -129,8 +128,7 @@ export function registerUp(program) {
 
       let port = proj.metroPort;
       if (!port) {
-        port = await allocatePort(root);
-        setMetro(root, port);
+        port = await reserveMetroPort(root);
       } else {
         // A reservation that something else has taken over is unusable: the
         // agent can never start Metro there, so reporting the conflict every
@@ -139,12 +137,11 @@ export function registerUp(program) {
         // answering on the port is the healthy case.
         const held = await resolveProjectMetro(port, root);
         if (held.notOurs) {
-          const fresh = await allocatePort(root);
+          const fresh = await reserveMetroPort(root);
           if (fresh !== port) {
             note(chalk.yellow(`Port ${port} is held by something else (${held.notOurs}).`));
             note(chalk.dim(`Reserved port ${fresh} for this project instead.`));
             port = fresh;
-            setMetro(root, port);
           }
         }
       }

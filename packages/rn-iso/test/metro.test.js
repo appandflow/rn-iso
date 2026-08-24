@@ -7,6 +7,7 @@ import {
   parseLsofCwd,
   parsePsPgid,
   isInsideProject,
+  processGroupLeader,
   resolveProjectMetro,
   killMetroTree,
 } from '../src/metro.js';
@@ -121,6 +122,43 @@ test('killMetroTree falls back to the bare pid when the group is gone', () => {
   }
 });
 
+// A Metro backgrounded by a non-interactive script shares its shell's process
+// group with rn-iso itself, so signalling the group would kill rn-iso and the
+// shell that started it.
+test('killMetroTree signals the bare pid when the leader is our own process group', () => {
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd) => (cmd.includes('ps -o pgid=') ? ' 4242\n' : ''),
+    spawn: () => {},
+  });
+  const signalled = [];
+  const origKill = process.kill;
+  process.kill = (pid, sig) => { signalled.push([pid, sig]); };
+  try {
+    assert.equal(killMetroTree(4242), true);
+    assert.deepEqual(signalled, [[4242, 'SIGTERM']], 'must never signal the group rn-iso is in');
+  } finally {
+    process.kill = origKill;
+    resetExecutor();
+  }
+});
+
+// Live: the guard reads the real `ps -o pgid= -p <pid>` for THIS process. A
+// mocked executor cannot prove that command reports the group rn-iso is in.
+test('killMetroTree resolves its own process group with the real ps and spares it', () => {
+  const ownPgid = processGroupLeader(process.pid);
+  assert.ok(Number.isFinite(ownPgid), 'ps must report a numeric pgid for this process');
+  const signalled = [];
+  const origKill = process.kill;
+  process.kill = (pid, sig) => { signalled.push([pid, sig]); };
+  try {
+    assert.equal(killMetroTree(ownPgid), true);
+    assert.deepEqual(signalled, [[ownPgid, 'SIGTERM']], 'rn-iso must never signal its own group');
+  } finally {
+    process.kill = origKill;
+  }
+});
+
 test('killMetroTree reports false when nothing could be signalled', () => {
   const origKill = process.kill;
   process.kill = () => { throw new Error('ESRCH'); };
@@ -134,18 +172,35 @@ test('killMetroTree reports false when nothing could be signalled', () => {
 // The whole feature is real lsof/ps/kill behavior, and a mocked executor
 // cannot prove those commands are correct. This runs a genuine listener that
 // answers /status exactly like Metro does, from a real directory.
+//
+// The listener binds port 0 and reports back the port the kernel gave it, so
+// the test never competes with a real dev server for a fixed number.
 test('resolveProjectMetro identifies and kills a REAL listening process from the project dir', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'rn-iso-metro-'));
-  const port = 8099;
   const script = join(dir, 'fake-metro.js');
   writeFileSync(script, `
     const http = require('http');
-    http.createServer((req, res) => res.end('packager-status:running'))
-        .listen(${port}, '127.0.0.1');
+    const server = http.createServer((req, res) => res.end('packager-status:running'));
+    server.listen(0, '127.0.0.1', () => {
+      process.stdout.write(String(server.address().port) + '\\n');
+    });
   `);
-  const child = realSpawn(process.execPath, [script], { cwd: dir, detached: true, stdio: 'ignore' });
+  const child = realSpawn(process.execPath, [script], { cwd: dir, detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
   child.unref();
+  const port = await new Promise((resolve, reject) => {
+    let buffered = '';
+    const timer = setTimeout(() => reject(new Error('the fake Metro never reported a port')), 10000);
+    child.stdout.on('data', (chunk) => {
+      buffered += chunk;
+      const line = buffered.split('\n')[0];
+      if (buffered.includes('\n')) {
+        clearTimeout(timer);
+        resolve(parseInt(line, 10));
+      }
+    });
+  });
   try {
+    assert.ok(Number.isFinite(port), 'the fake Metro must report the port it bound');
     for (let i = 0; i < 40; i++) {
       if (await isMetroRunning(port)) break;
       await new Promise((r) => setTimeout(r, 100));

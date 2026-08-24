@@ -406,3 +406,37 @@ test('shutdown skips an owned android record whose recorded port is held by a fo
   const cfg = loadConfig();
   assert.deepEqual(cfg.projects['/proj/a'].platforms.android, { avdName: 'rn-iso-mine', consolePort: 5554, owned: true });
 });
+
+// An owned android record can carry a console port but no AVD name (an
+// interrupted `up`, or an older record). resolveOwnedAvdSerial matches on the
+// AVD name, so teardownOwnedAvd(undefined) reports 'missing' -- "already gone"
+// for an emulator that is very likely still running. Report the missing name
+// instead.
+test('shutdown reports an owned android record with no AVD name instead of calling it already gone', async () => {
+  saveConfig({
+    version: 2,
+    projects: {
+      '/proj/a': {
+        metroPort: 8085,
+        platforms: { android: { consolePort: 5558, owned: true } },
+      },
+    },
+  });
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(msg);
+  try {
+    await runShutdown(['--yes']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(logs.some(l => /already gone/.test(l)), false, 'a running emulator must not be reported as gone');
+  const skipLine = logs.find(l => /Skipped android device emulator-5558/.test(l));
+  assert.ok(skipLine, 'expected a skip naming the emulator');
+  assert.match(skipLine, /no AVD name/);
+  // Nothing was shut down at that console port: a port is a slot, not an
+  // identity, and a foreign emulator can hold it.
+  assert.equal(execCalls.filter(c => c.cmd.includes('emu kill')).length, 0);
+});

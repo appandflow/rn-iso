@@ -6,27 +6,7 @@ import { join } from 'path';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { saveConfig, loadConfig } from '../src/config.js';
-import releaseCommand, { releaseAction } from '../src/commands/release.js';
-
-test('owned device is deleted', () => {
-  assert.deepEqual(releaseAction({ record: { owned: true }, occupied: false, force: false }),
-    { action: 'delete', reason: null });
-});
-
-test('occupied owned device is cleared, not deleted, without --force', () => {
-  const r = releaseAction({ record: { owned: true }, occupied: true, force: false });
-  assert.equal(r.action, 'clear');
-  assert.match(r.reason, /in use/i);
-});
-
-test('--force deletes an occupied owned device', () => {
-  assert.equal(releaseAction({ record: { owned: true }, occupied: true, force: true }).action, 'delete');
-});
-
-test('legacy and physical assignments are cleared, never deleted', () => {
-  assert.equal(releaseAction({ record: { deviceUdid: 'U' }, occupied: false, force: false }).action, 'clear');
-  assert.equal(releaseAction({ record: { serial: 'R5', owned: false }, occupied: false, force: true }).action, 'clear');
-});
+import releaseCommand from '../src/commands/release.js';
 
 // --- Action-level: per-platform containment (I2) and ordering -----------
 
@@ -39,6 +19,9 @@ beforeEach(() => {
 
 afterEach(() => {
   resetExecutor();
+  // A kept device record makes `release` exit non-zero; clear it so one test's
+  // expected failure does not fail the whole file.
+  process.exitCode = 0;
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.RN_ISO_HOME;
 });
@@ -49,7 +32,7 @@ async function runRelease(args = []) {
   await program.parseAsync(['node', 'rn-iso', 'release', ...args]);
 }
 
-test('a throwing iOS ownership probe is contained: reported as a skip, the assignment is still cleared, and android still processes', async () => {
+test('a throwing iOS ownership probe is contained: reported, the ios record is kept, and android still processes', async () => {
   saveConfig({
     version: 2,
     projects: {
@@ -96,9 +79,58 @@ test('a throwing iOS ownership probe is contained: reported as a skip, the assig
   // verified) -- proof the iOS throw didn't abort the whole command.
   assert.ok(execCalls.some(c => /delete avd -n "rn-iso-app"/.test(c)));
   const cfg = loadConfig();
-  // Both assignments are cleared regardless of the iOS teardown failure.
-  assert.equal(cfg.projects['/proj/a'].platforms.ios, undefined);
+  // The iOS sim may well still exist, so its record survives: dropping it
+  // would leave a simulator nothing references. The android device really was
+  // deleted, so its assignment is cleared.
+  assert.ok(cfg.projects['/proj/a'].platforms.ios, 'a failed teardown must keep its device record');
   assert.equal(cfg.projects['/proj/a'].platforms.android, undefined);
+});
+
+// The delete itself failing is the same fact as a failing probe: the sim is
+// still on the machine, so the record that names it stays.
+test('release keeps the ios record when the simctl delete fails', async () => {
+  saveConfig({
+    version: 2,
+    projects: {
+      '/proj/a': {
+        metroPort: 8083,
+        platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
+      },
+    },
+  });
+  const listJson = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+        { udid: 'UDID-ABC', name: 'rn-iso-app', state: 'Shutdown', isAvailable: true },
+      ],
+    },
+  });
+  setExecutor({
+    run(cmd) {
+      if (cmd.includes('simctl list devices --json')) return listJson;
+      if (cmd.includes('simctl delete')) throw new Error('Unable to delete device');
+      return '';
+    },
+    runQuiet(cmd) {
+      if (cmd.includes('simctl list devices --json')) return listJson;
+      return null;
+    },
+    spawn() { throw new Error('spawn should not be called from release'); },
+  });
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+  try {
+    await runRelease(['/proj/a']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.ok(logs.some(l => /Unable to delete device/.test(l)), 'the failure must be reported');
+  assert.ok(loadConfig().projects['/proj/a'].platforms.ios, 'the undeleted sim must stay tracked');
+  assert.equal(process.exitCode, 1, 'a device left behind is not a success');
+  process.exitCode = 0;
 });
 
 test('release verifies iOS ownership before any destructive command reaches the udid', async () => {

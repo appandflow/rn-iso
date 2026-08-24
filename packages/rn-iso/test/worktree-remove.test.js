@@ -97,6 +97,9 @@ function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees 
       runCalls.push(cmd);
       if (/worktree remove/.test(cmd)) return '';
       if (/simctl list devices --json/.test(cmd)) return simctlList;
+      // deleteIosSim/deleteAvd go through the throwing run() so a failed
+      // delete surfaces as { status: 'failed' } instead of a false success.
+      if (/simctl delete|delete avd/.test(cmd)) return '';
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet(cmd) {
@@ -255,7 +258,7 @@ test('action: on success, deletes an owned iOS sim via simctl', async () => {
   await run(wtDir, {});
 
   assert.notEqual(process.exitCode, 1);
-  assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U1/.test(c)));
+  assert.ok(exec.calls.run.some(c => /xcrun simctl delete U1/.test(c)));
   assert.equal(getProject(wtDir), null);
 });
 
@@ -311,8 +314,8 @@ test('action: reaps owned sims under two nested monorepo app-dir keys, both of t
   await run(wtDir, {});
 
   assert.notEqual(process.exitCode, 1);
-  assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U3/.test(c)));
-  assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U4/.test(c)));
+  assert.ok(exec.calls.run.some(c => /xcrun simctl delete U3/.test(c)));
+  assert.ok(exec.calls.run.some(c => /xcrun simctl delete U4/.test(c)));
   assert.equal(getProject(nestedDir1), null);
   assert.equal(getProject(nestedDir2), null);
 });
@@ -361,8 +364,8 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
   // that is being removed, and the holder is almost always the caller's own
   // UI-test runner. Sparing U5 here is what used to leak a booted sim and a
   // live runner out of `worktree remove`.
-  assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U5/.test(c)));
-  assert.ok(exec.calls.runQuiet.some(c => /xcrun simctl delete U6/.test(c)));
+  assert.ok(exec.calls.run.some(c => /xcrun simctl delete U5/.test(c)));
+  assert.ok(exec.calls.run.some(c => /xcrun simctl delete U6/.test(c)));
 
   // Both config entries are cleared either way -- reclaiming rn-iso's own
   // tracking does not depend on whether the device itself could be torn

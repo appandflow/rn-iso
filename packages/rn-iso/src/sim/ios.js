@@ -61,19 +61,16 @@ export function parseOccupyingApps(launchctlOutput) {
   return ids;
 }
 
-// Fails CLOSED: an unanswerable probe reports "occupied". The pool-selection
-// model this used to fail open for was deleted in 0.7 -- every caller is now a
-// teardown site (release, shutdown, reclaim, gc), where failing open means
-// deleting a sim that may still be driven by a foreign UI-test runner, which
-// is exactly what the probe exists to prevent. Same direction as the
+// Fails CLOSED: an unanswerable probe reports "occupied". The callers are the
+// shutdown paths -- `rn-iso shutdown`, and teardownOwnedIosSim when it is not
+// deleting -- where the sim survives the command and a wrong "free" answer
+// pulls it out from under a foreign UI-test runner. Same direction as the
 // unmounted-volume guard: on doubt, skip, do not destroy.
 //
 // A device that is not booted is the one case that is not doubt: nothing can
 // be running on it, and `simctl spawn` cannot answer for it either -- it exits
-// non-zero with "device is not booted", which the probe alone would read as
-// occupied. That made a shut-down orphan permanently unreapable: `gc` reported
-// it and skipped it on every run, forever. Check the state first, and only
-// probe a device that is actually booted.
+// non-zero with "device is not booted", which the probe alone reads as
+// occupied. Check the state first, and only probe a device that is booted.
 export function isSimOccupied(udid) {
   let sim;
   try {
@@ -203,13 +200,17 @@ export function resolveOwnedIosSim(udid) {
 // gone is a no-op, not an error. This is the backstop -- callers that shut
 // a sim down first should verify ownership via resolveOwnedIosSim before
 // that shutdown, not rely on this guard alone.
+//
+// The delete itself runs through the THROWING run(): a simctl delete that
+// fails leaves the device on disk, and teardown.js turns the throw into
+// { status: 'failed' } so the caller reports a leak instead of "torn down".
 export function deleteIosSim(udid) {
   const result = resolveOwnedIosSim(udid);
   if (result.missing) return;
   if (result.notOwned) {
     throw new Error(`Refusing to delete simulator "${result.notOwned}" (${udid}): not an rn-iso-owned sim (name must start with "rn-iso-").`);
   }
-  getExecutor().runQuiet(`xcrun simctl delete ${udid}`);
+  getExecutor().run(`xcrun simctl delete ${udid}`);
 }
 
 export function listIosRuntimes() {

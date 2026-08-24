@@ -12,8 +12,8 @@
 //      have been renamed away from rn-iso- ownership, or the record may be
 //      stale, and firing shutdown first would land on whatever real device
 //      that identifier now resolves to.
-//   2. Check occupancy (iOS only -- Android has no probe) and skip an occupied
-//      device rather than destroying it. `force` is the sole override.
+//   2. Check occupancy (iOS only -- Android has no probe) when the device will
+//      survive the call, and skip an occupied one rather than shutting it down.
 //   3. Only then shut down, and delete only if asked.
 //   4. Contain failures: a throw becomes a reported outcome, never an
 //      exception that aborts a batch (worktree remove reaping several nested
@@ -31,7 +31,7 @@
 import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, deleteIosSim } from './sim/ios.js';
 import { resolveOwnedAvdSerial, shutdownAndroidEmulator, deleteAvd } from './sim/android.js';
 
-export function teardownOwnedIosSim(udid, { del = false, force = false, label } = {}) {
+export function teardownOwnedIosSim(udid, { del = false, label } = {}) {
   try {
     const resolved = resolveOwnedIosSim(udid);
     if (resolved.notOwned) {
@@ -41,12 +41,11 @@ export function teardownOwnedIosSim(udid, { del = false, force = false, label } 
     // Occupancy only protects a device that is going to SURVIVE. `del` means
     // this sim is being destroyed: it is one rn-iso created, for a project that
     // is going away, and the process holding it is almost always the caller's
-    // own UI-test runner, which has nothing to return to. Skipping here is what
-    // leaked booted sims out of `worktree remove` -- the environment is meant to
-    // die whole, and "left for a later gc" only deferred the same decision to a
-    // command that made it the same way. `shutdown` keeps the check, because the
-    // device it spares is still there to come back to.
-    if (!del && !force && isSimOccupied(udid)) {
+    // own UI-test runner, which has nothing to return to. The environment is
+    // meant to die whole, so a delete proceeds regardless of occupancy.
+    // `shutdown` keeps the check, because the device it spares is still there
+    // to come back to.
+    if (!del && isSimOccupied(udid)) {
       return { status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' };
     }
     shutdownIosSim(udid);
@@ -57,8 +56,8 @@ export function teardownOwnedIosSim(udid, { del = false, force = false, label } 
   }
 }
 
-// Android has no occupancy probe, so `force` is accepted and ignored for
-// signature symmetry with the iOS side rather than silently implying one.
+// Android has no occupancy probe, so an owned, identity-verified AVD is always
+// eligible: there is no equivalent of the iOS occupancy skip here.
 export function teardownOwnedAvd(avdName, { del = false } = {}) {
   try {
     const resolved = resolveOwnedAvdSerial(avdName);

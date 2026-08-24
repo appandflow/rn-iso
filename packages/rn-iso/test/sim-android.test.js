@@ -11,6 +11,7 @@ import {
   pickDefaultSystemImage,
   deleteAvd,
   resolveOwnedAvdSerial,
+  waitForBoot,
 } from '../src/sim/android.js';
 
 let tmpHome;
@@ -107,12 +108,24 @@ test('deleteAvd refuses to delete an AVD not owned by rn-iso', () => {
 test('deleteAvd deletes an rn-iso-owned AVD', () => {
   let ran = null;
   setExecutor({
-    run: () => null,
-    runQuiet: (cmd) => { ran = cmd; return null; },
+    run: (cmd) => { ran = cmd; return null; },
+    runQuiet: () => null,
     spawn: () => null,
   });
   deleteAvd('rn-iso-my-project');
   assert.match(ran, /delete avd -n "rn-iso-my-project"/);
+});
+
+// A failed avdmanager delete leaves the AVD on disk. It must reach the caller
+// as a throw (teardown.js turns it into { status: 'failed' }), not be swallowed
+// into a report of a device that was never actually deleted.
+test('deleteAvd propagates an avdmanager failure instead of swallowing it', () => {
+  setExecutor({
+    run: () => { throw new Error('avdmanager: could not delete'); },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+  assert.throws(() => deleteAvd('rn-iso-my-project'), /could not delete/);
 });
 
 // --- resolveOwnedAvdSerial: identity verification, not port trust --------
@@ -172,4 +185,42 @@ test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by
     spawn: () => null,
   });
   assert.deepEqual(resolveOwnedAvdSerial('rn-iso-mine'), { notRunning: true });
+});
+
+// --- waitForBoot: adb fails for most of a boot -------------------------
+
+// runQuiet returns null whenever the command fails, and `adb shell getprop`
+// fails ("device offline", "device not found") until the emulator registers.
+// Calling .trim() on that null threw a TypeError out of `up android`, reported
+// as a bogus "Failed to ensure android device".
+test('waitForBoot keeps polling while adb still fails', async () => {
+  let calls = 0;
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd) => {
+      if (!/getprop/.test(cmd)) return '';
+      calls++;
+      // Both getprop calls fail on the first pass, then sys.boot_completed
+      // answers on the second.
+      if (calls <= 2) return null;
+      return /sys.boot_completed/.test(cmd) ? '1\n' : null;
+    },
+    spawn: () => null,
+  });
+  const result = await waitForBoot('emulator-5554', 5000);
+  assert.deepEqual(result, { ok: true });
+  assert.ok(calls > 2, 'the first, failing pass must not end the wait');
+});
+
+// The timeout path reads the same properties for its diagnostic, so it must
+// survive adb failing there too.
+test('waitForBoot reports a timeout diagnostic when adb never answers', async () => {
+  setExecutor({
+    run: () => '',
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+  const result = await waitForBoot('emulator-5554', 10);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.diagnostic, { devices: '', sysBoot: '', devBoot: '', bootAnim: '' });
 });
