@@ -14,8 +14,7 @@ import { reclaimProject } from '../reclaim.js';
 import { listAllIosSims } from '../sim/ios.js';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
 import { listAvds } from '../sim/android.js';
-import { discoverCaches, sizeCaches } from '../caches.js';
-import { getExecutor } from '../exec.js';
+import { discoverCaches, pruneCache, sizeCaches } from '../caches.js';
 import { resolveSettings } from '../settings.js';
 
 // Bounds each device listing so a wedged simctl/emulator daemon can't hang
@@ -199,7 +198,7 @@ export function formatGcReport({
     for (const c of caches) {
       lines.push(`  ${formatBytes(c.bytes).padStart(10)}  ${c.name}`);
       lines.push(`              ${c.dir}`);
-      lines.push(`              ${c.bounded ? c.note : `unbounded, ${c.note}`}`);
+      lines.push(`              ${c.note}`);
     }
     lines.push(`  total: ${formatBytes(total)}`);
   }
@@ -212,7 +211,7 @@ export default function gcCommand(program) {
     .command('gc')
     .description('Reclaim build artifacts and config entries left behind by worktrees that no longer exist. Reports by default; pass --delete to act.')
     .option('--delete', 'actually delete the reported artifacts and entries')
-    .option('--caches', 'also report the shared build caches (Metro, ccache, Xcode compilation cache); with --delete, empty them')
+    .option('--caches', 'also report the shared build caches (Metro, Xcode compilation cache, and any declared in the `caches` setting)')
     .option('--older-than <days>', 'only consider artifacts not accessed in this many days', v => {
       const n = parseInt(v, 10);
       if (!Number.isFinite(n) || String(n) !== String(v).trim()) {
@@ -401,14 +400,26 @@ export default function gcCommand(program) {
       // reclaimed garbage, it is a cache someone will now have to refill.
       let cacheBytes = 0;
       for (const c of caches) {
+        // With --older-than, trim entries instead of emptying: a cache is worth
+        // keeping, it is only the entries nothing has touched in weeks that are
+        // not. The CAS is the exception -- its index would outlive the leaves.
+        if (opts.olderThan) {
+          const r = pruneCache(c, { olderThanDays: opts.olderThan });
+          if (r.skipped) {
+            console.log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
+          } else if (r.removed) {
+            cacheBytes += r.bytes;
+            console.log(chalk.green(`Trimmed ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`));
+          } else {
+            console.log(chalk.dim(`${c.name}: nothing older than ${opts.olderThan}d`));
+          }
+          continue;
+        }
         try {
           if (c.files) {
             // `dir` here is the system temp directory, not a directory this
             // cache owns. Only ever remove the files we listed inside it.
             for (const f of c.files) rmSync(f, { force: true });
-          } else if (c.name === 'ccache') {
-            // Let ccache clear itself so its config and stats survive.
-            getExecutor().runQuiet('ccache --clear');
           } else {
             rmSync(c.dir, { recursive: true, force: true });
           }

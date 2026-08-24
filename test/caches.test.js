@@ -1,41 +1,12 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
-import { discoverCaches, sizeCaches } from '../src/caches.js';
+import { discoverCaches, pruneCache, sizeCaches } from '../src/caches.js';
 
 afterEach(() => resetExecutor());
-
-// ccache is asked for its own config rather than guessed at: CCACHE_DIR, a
-// config file and the compiled-in default all resolve inside ccache.
-test('discoverCaches reads ccache config instead of guessing a path', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rn-iso-ccache-'));
-  try {
-    setExecutor({
-      run: () => '',
-      runQuiet: (cmd) => {
-        if (cmd.includes('--get-config cache_dir')) return dir;
-        if (cmd.includes('--get-config max_size')) return '5.0 GB';
-        return null;
-      },
-      spawn: () => {},
-    });
-    const found = discoverCaches().filter(c => c.name === 'ccache');
-    assert.equal(found.length, 1);
-    assert.equal(found[0].dir, dir);
-    assert.equal(found[0].bounded, true, 'ccache caps itself, so it is not the one to warn about');
-    assert.match(found[0].note, /5\.0 GB/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('discoverCaches omits ccache entirely when it is not installed', () => {
-  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
-  assert.equal(discoverCaches().some(c => c.name === 'ccache'), false);
-});
 
 // Declared caches are the ones rn-iso cannot detect: a Metro FileStore or an
 // Expo build-cache directory is chosen by a project's own config.
@@ -65,7 +36,6 @@ test('metro file maps are reported as an explicit file list, never as a director
     assert.ok(Array.isArray(found.files) && found.files.length > 0);
     assert.ok(found.files.includes(stray));
     assert.ok(found.files.every(f => f.startsWith(tmpdir())));
-    assert.equal(found.bounded, false, 'nothing ever removes these');
   } finally {
     rmSync(stray, { force: true });
   }
@@ -86,5 +56,68 @@ test('sizeCaches keeps a precounted size and measures the rest', () => {
     assert.ok(sized[1].bytes >= 2048, 'an entry without a size is measured');
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// "Used" has to mean read-or-written. A cache hit reads an entry without
+// rewriting it, so pruning on mtime alone would evict exactly the entries that
+// are earning their keep.
+test('pruneCache keeps a recently READ entry whose mtime is old', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rn-iso-prune-'));
+  try {
+    const old = join(dir, 'cold');
+    const read = join(dir, 'hot');
+    writeFileSync(old, 'a');
+    writeFileSync(read, 'b');
+    const longAgo = new Date(Date.now() - 90 * 24 * 3600 * 1000);
+    utimesSync(old, longAgo, longAgo);
+    // Written long ago, read just now -- a cache hit looks exactly like this.
+    utimesSync(read, new Date(), longAgo);
+
+    const r = pruneCache({ dir, prune: 'entries' }, { olderThanDays: 30 });
+    assert.equal(r.removed, 1);
+    assert.equal(existsSync(old), false, 'untouched entry should go');
+    assert.equal(existsSync(read), true, 'recently read entry must survive');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The CAS indexes its own data files; removing leaves would leave the index
+// pointing at data that no longer exists.
+test('pruneCache refuses to trim an index-backed cache, and says why', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rn-iso-atomic-'));
+  try {
+    writeFileSync(join(dir, 'v9.1.leaf'), 'x');
+    const veryOld = new Date(Date.now() - 365 * 24 * 3600 * 1000);
+    utimesSync(join(dir, 'v9.1.leaf'), veryOld, veryOld);
+
+    const r = pruneCache({ dir, prune: 'atomic' }, { olderThanDays: 1 });
+    assert.equal(r.removed, 0);
+    assert.match(r.skipped, /whole/);
+    assert.equal(existsSync(join(dir, 'v9.1.leaf')), true, 'nothing may be removed piecemeal');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Metro's file maps live loose in the system temp dir, so pruning must walk the
+// explicit list and never the directory.
+test('pruneCache trims only the listed files when a cache does not own its directory', () => {
+  const mine = join(tmpdir(), `metro-file-map-rn-iso-prunetest-${process.pid}`);
+  const notMine = join(tmpdir(), `rn-iso-bystander-${process.pid}`);
+  writeFileSync(mine, 'x');
+  writeFileSync(notMine, 'y');
+  const longAgo = new Date(Date.now() - 90 * 24 * 3600 * 1000);
+  utimesSync(mine, longAgo, longAgo);
+  utimesSync(notMine, longAgo, longAgo);
+  try {
+    const r = pruneCache({ dir: tmpdir(), files: [mine], prune: 'entries' }, { olderThanDays: 30 });
+    assert.equal(r.removed, 1);
+    assert.equal(existsSync(mine), false);
+    assert.equal(existsSync(notMine), true, 'a file the cache does not own must survive');
+  } finally {
+    rmSync(mine, { force: true });
+    rmSync(notMine, { force: true });
   }
 });

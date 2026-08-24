@@ -5,36 +5,13 @@
 // DerivedData directory belongs to one workspace and is provably dead once that
 // workspace is gone. A shared cache is alive by design, shared across every
 // project on the machine, and never dead -- only bigger. Nothing prunes them:
-// Metro's FileStore has no eviction at all, and Xcode's compilation cache has no
-// size cap. That is why they are reported separately and never included in a
+// Metro's FileStore has no eviction logic at all, and Xcode's compilation cache
+// has no size cap. That is why they are reported separately and never included in a
 // plain `gc --delete`: deleting one is a performance decision, not a cleanup.
-import { existsSync, readdirSync, statSync } from 'fs';
+import { existsSync, readdirSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { join } from 'path';
-import { getExecutor } from './exec.js';
 import { derivedDataRoot, directorySize } from './artifacts.js';
-
-// `bounded` records whether the cache evicts anything on its own. An unbounded
-// cache is the one worth telling the user about, because it will only ever grow.
-const UNBOUNDED = false;
-const BOUNDED = true;
-
-// ccache is the one cache here that can cap itself, so read its own config
-// rather than guessing a path -- CCACHE_DIR, a config file, or the default all
-// resolve inside ccache, and it reports the answer.
-function ccacheCache() {
-  const dir = getExecutor().runQuiet('ccache --get-config cache_dir');
-  if (!dir) return null;
-  const path = dir.trim();
-  if (!path || !existsSync(path)) return null;
-  const max = getExecutor().runQuiet('ccache --get-config max_size');
-  return {
-    name: 'ccache',
-    dir: path,
-    bounded: BOUNDED,
-    note: max ? `capped at ${max.trim()} by ccache itself` : 'capped by ccache itself',
-  };
-}
 
 // Xcode 26's content-addressed compilation cache. The default sits at the
 // DerivedData root, which makes it per-machine rather than per-workspace -- but
@@ -44,7 +21,10 @@ function ccacheCache() {
 function compilationCache() {
   const dir = join(derivedDataRoot(), 'CompilationCache.noindex');
   if (!existsSync(dir)) return null;
-  return { name: 'Xcode compilation cache', dir, bounded: UNBOUNDED, note: 'no size cap' };
+  // An LLVM CAS: `v4.actions` indexes the `v9.*.leaf` data files. Removing
+  // leaves individually would leave the index pointing at data that is gone,
+  // so this one can only be emptied wholesale.
+  return { name: 'Xcode compilation cache', dir, prune: 'atomic', note: 'index-backed, so it can only be emptied whole' };
 }
 
 // Metro's file map: one per project root, in the system temp dir. Individually
@@ -73,7 +53,7 @@ function metroFileMaps() {
     dir: root,
     files: names.map(n => join(root, n)),
     bytes,
-    bounded: UNBOUNDED,
+    prune: 'entries',
     note: `${names.length} file(s), one per project root Metro has served`,
   };
 }
@@ -85,14 +65,16 @@ function declaredCaches(paths) {
   return (paths || [])
     .map(p => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p))
     .filter(p => existsSync(p))
-    .map(dir => ({ name: 'declared', dir, bounded: UNBOUNDED, note: 'from the `caches` setting' }));
+    // Declared caches -- a Metro FileStore, an Expo build-cache directory -- are
+    // flat collections of independent entries, so old ones can go individually.
+    .map(dir => ({ name: 'declared', dir, prune: 'entries', note: 'from the `caches` setting' }));
 }
 
 // Sizes are measured here rather than at discovery so a caller that only wants
 // to know WHICH caches exist does not pay for a full directory walk of several
 // gigabytes.
 export function discoverCaches({ declared = [] } = {}) {
-  const found = [ccacheCache(), compilationCache(), metroFileMaps(), ...declaredCaches(declared)];
+  const found = [compilationCache(), metroFileMaps(), ...declaredCaches(declared)];
   return found.filter(Boolean);
 }
 
@@ -101,4 +83,57 @@ export function sizeCaches(caches) {
     ...c,
     bytes: c.bytes ?? directorySize(c.dir),
   }));
+}
+
+// Remove entries not used in the last `olderThanDays`, and report what went.
+//
+// "Used" is the later of atime and mtime: a cache hit reads an entry without
+// rewriting it, so mtime alone would age out exactly the entries that are
+// earning their keep. Metro's FileStore is a flat sharded tree of one file per
+// key and the Expo build cache is one directory per fingerprint, so in both
+// cases an entry is independent and can go on its own.
+//
+// Returns { removed, bytes, skipped } -- `skipped` explains a cache that cannot
+// be trimmed this way rather than silently doing nothing to it.
+export function pruneCache(cache, { olderThanDays, now = Date.now() } = {}) {
+  const cutoff = now - olderThanDays * 24 * 60 * 60 * 1000;
+
+  if (cache.prune === 'atomic') {
+    return { removed: 0, bytes: 0, skipped: 'index-backed; empty it whole or not at all' };
+  }
+
+  const entries = cache.files ?? topLevelEntries(cache.dir);
+  let removed = 0;
+  let bytes = 0;
+  for (const entry of entries) {
+    let used;
+    let size;
+    try {
+      const st = statSync(entry);
+      used = Math.max(st.atimeMs, st.mtimeMs);
+      size = st.isDirectory() ? directorySize(entry) : st.size;
+    } catch {
+      continue;
+    }
+    if (used >= cutoff) continue;
+    try {
+      rmSync(entry, { recursive: true, force: true });
+      removed++;
+      bytes += size;
+    } catch {
+      // An entry that vanished or is unreadable is not worth failing the sweep.
+    }
+  }
+  return { removed, bytes, skipped: null };
+}
+
+// A cache's entries are its top-level children, EXCEPT where the cache does not
+// own its directory -- Metro's file maps live loose in the system temp dir, and
+// carry an explicit file list for exactly that reason.
+function topLevelEntries(dir) {
+  try {
+    return readdirSync(dir).map(n => join(dir, n));
+  } catch {
+    return [];
+  }
 }

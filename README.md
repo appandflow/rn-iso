@@ -150,16 +150,27 @@ pruned by nothing:
 - **Metro's `FileStore`** has no eviction logic whatsoever.
 - **Xcode's compilation cache** has no size cap.
 - **Metro file maps** accumulate one file per project root ever served.
-- **ccache** is the exception: it caps itself, and `gc --caches` reports the cap
-  rather than warning about it.
 
 So they are reported in their own bucket and are *never* touched by a plain
 `gc --delete`:
 
 ```bash
-npx rn-iso gc --caches            # report sizes only
-npx rn-iso gc --caches --delete   # empty them
+npx rn-iso gc --caches                            # report sizes only
+npx rn-iso gc --caches --delete --older-than 30   # trim entries unused for 30 days
+npx rn-iso gc --caches --delete                   # empty them completely
 ```
+
+Prefer trimming. Most of these caches are a flat collection of independent
+entries -- one file per key for Metro's `FileStore`, one directory per
+fingerprint for an Expo build cache -- so the ones nothing has touched in weeks
+can go while the rest keep working. "Unused" means neither read nor written: a
+cache hit reads an entry without rewriting it, so pruning on modification time
+alone would evict exactly the entries that are earning their keep.
+
+Xcode's compilation cache is the exception. It is an LLVM CAS whose `v4.actions`
+index references its `v9.*.leaf` data files, so removing leaves individually
+would leave the index pointing at data that is gone. `--older-than` reports it
+as left alone; it can only be emptied whole.
 
 Emptying is a performance decision, not cleanup: the next build in every
 project pays to refill what you removed. The summary says so.
