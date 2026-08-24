@@ -18,23 +18,33 @@ function cacheRoot(name) {
   return process.env.RN_ISO_METRO_CACHE || path.join(os.homedir(), `.${name}-metro-cache`);
 }
 
-// Best effort: this package is useful without rn-iso installed, and a missing
-// peer must never break a bundler config. Registration is idempotent.
+// rn-iso is an ES module, so this has to be a dynamic import: `require` of an
+// ESM module throws ERR_REQUIRE_ESM on Node before 20.19, which silently turned
+// registration into a no-op on every one of those versions.
+//
+// Fire and forget: this package is useful without rn-iso installed, a missing
+// peer must never break a bundler config, and building the cache stores must
+// never wait on the registry. Registration is idempotent.
 function registerOnce(dir) {
-  try {
-    // eslint-disable-next-line global-require
-    const { register } = require('rn-iso/cache-manifest');
-    register({
-      dir,
-      name: 'Metro transform cache',
-      // One file per cache key, so entries nothing has touched can go
-      // individually rather than emptying the whole store.
-      prune: 'entries',
-      note: 'shared Metro transforms; no eviction of its own',
+  import('rn-iso/cache-manifest')
+    .then(({ register }) => {
+      register({
+        dir,
+        name: 'Metro transform cache',
+        // One file per cache key, so entries nothing has touched can go
+        // individually rather than emptying the whole store.
+        prune: 'entries',
+        // FileStore shards its keys one level down -- <root>/<byte>/<rest> --
+        // across 256 directories. At the default depth of 1 gc would treat a
+        // shard as an entry, so a single removal would take a 256th of every
+        // transform on the machine, live ones included.
+        entriesDepth: 2,
+        note: 'shared Metro transforms; no eviction of its own',
+      });
+    })
+    .catch(() => {
+      // rn-iso not installed, or too old to export the manifest.
     });
-  } catch {
-    // rn-iso not installed, or too old to export the manifest.
-  }
 }
 
 // `name` only distinguishes one app's cache from another's on the same machine.

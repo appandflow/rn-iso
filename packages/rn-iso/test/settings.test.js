@@ -101,3 +101,20 @@ test('unknownSettingKeys tolerates empty and malformed input', () => {
   assert.deepEqual(unknownSettingKeys(null), []);
   assert.deepEqual(unknownSettingKeys('nope'), []);
 });
+
+test('repo-layer caches set via the CLI parse path round-trips as a real array', async () => {
+  const { isAllowedRepoKey, parseSettingValue } = await import('../src/commands/config.js');
+  assert.equal(isAllowedRepoKey('caches'), true);
+  const parsed = parseSettingValue('caches', '["~/.myapp-metro-cache", "/tmp/build-cache"]');
+  assert.deepEqual(parsed, ['~/.myapp-metro-cache', '/tmp/build-cache']);
+  setRepoSetting('/repo/.git', 'caches', parsed);
+  const resolved = resolveSettings({ gitCommonDir: '/repo/.git' });
+  assert.deepEqual(resolved.caches, ['~/.myapp-metro-cache', '/tmp/build-cache']);
+});
+
+test('parseSettingValue leaves scalar values as strings and rejects malformed JSON', async () => {
+  const { parseSettingValue } = await import('../src/commands/config.js');
+  assert.equal(parseSettingValue('ios.runtime', '26.2'), '26.2');
+  assert.equal(parseSettingValue('ios.deviceType', 'iPhone 17 Pro'), 'iPhone 17 Pro');
+  assert.throws(() => parseSettingValue('caches', '["unterminated'), /does not parse/);
+});

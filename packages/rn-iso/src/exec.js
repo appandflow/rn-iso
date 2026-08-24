@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'child_process';
+import { execFileSync, execSync, spawn } from 'child_process';
 
 // execSync's default maxBuffer (1 MB) is too small for real output on a
 // large monorepo -- e.g. `git ls-files --others --ignored --exclude-standard`
@@ -22,6 +22,14 @@ const defaultExecutor = {
     const opts = { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: MAX_BUFFER };
     if (timeoutMs) opts.timeout = timeoutMs;
     return execSync(cmd, opts).trim();
+  },
+  // No shell, so an argument carrying a space, a quote, or a `$` reaches the
+  // program as one literal argument. Use this whenever an argument is a path
+  // the user chose rather than a string this codebase composed.
+  runFile(file, args = [], { timeoutMs } = {}) {
+    const opts = { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: MAX_BUFFER };
+    if (timeoutMs) opts.timeout = timeoutMs;
+    return execFileSync(file, args, opts).trim();
   },
   runQuiet(cmd, opts) {
     try {

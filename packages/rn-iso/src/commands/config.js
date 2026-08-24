@@ -24,11 +24,27 @@ import { gitCommonDir } from '../worktree.js';
 // owned devices instead, so device-shape settings replace them.
 const ALLOWED_KEYS = ['ios.deviceType', 'ios.runtime', 'android.systemImage'];
 
-// Repo-layer settings additionally accept `worktreeDir` and any `worktree.*`
-// key (baseRef, install, include, ...) -- the set that `worktree create`
-// resolves via resolveSettings.
-function isAllowedRepoKey(key) {
-  return ALLOWED_KEYS.includes(key) || key === 'worktreeDir' || key.startsWith('worktree.');
+// Repo-layer settings additionally accept `worktreeDir`, `caches`, and any
+// `worktree.*` key (baseRef, include, exclude) -- the set that `worktree
+// create` and `gc --caches` resolve via resolveSettings. The prefix match is
+// deliberately wider than that list: settings.js owns which keys are actually
+// honoured, and warns by name about any that are not.
+export function isAllowedRepoKey(key) {
+  return ALLOWED_KEYS.includes(key) || key === 'worktreeDir' || key === 'caches' || key.startsWith('worktree.');
+}
+
+// Array-valued settings (`caches`, `worktree.include`) arrive on the command
+// line as JSON text. Store them as real arrays/objects so resolveSettings
+// hands consumers the shape they expect; scalar values (a device name, a
+// runtime like "26.2") stay strings.
+export function parseSettingValue(key, value) {
+  const trimmed = String(value).trim();
+  if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    throw new Error(`Value for ${key} looks like JSON but does not parse. Quote it as valid JSON, e.g. '["~/.myapp-metro-cache"]'.`);
+  }
 }
 
 function readNestedValue(obj, dottedKey) {
@@ -116,7 +132,7 @@ function runRepo(key, value, opts) {
   }
 
   if (!isAllowedRepoKey(key)) {
-    console.error(chalk.red(`Unknown key "${key}". Allowed: ${ALLOWED_KEYS.join(', ')}, worktreeDir, worktree.*.`));
+    console.error(chalk.red(`Unknown key "${key}". Allowed: ${ALLOWED_KEYS.join(', ')}, worktreeDir, caches, worktree.*.`));
     process.exit(1);
     return;
   }
@@ -135,7 +151,15 @@ function runRepo(key, value, opts) {
     return;
   }
 
-  setRepoSetting(dir, key, value);
+  let parsed;
+  try {
+    parsed = parseSettingValue(key, value);
+  } catch (e) {
+    console.error(chalk.red(String(e?.message || e)));
+    process.exit(1);
+    return;
+  }
+  setRepoSetting(dir, key, parsed);
   console.log(chalk.green(`Set ${key} = ${value} for repo ${dir}.`));
 }
 

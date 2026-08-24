@@ -1,9 +1,9 @@
 import chalk from 'chalk';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { findProjectRoot } from '../project.js';
 import { projectFacts, renderDevScript, renderWorkflow, renderWorktreeExclude } from '../init.js';
-import { runDoctor } from '../doctor.js';
+import { detectXcodeMajor, runDoctor } from '../doctor.js';
 
 // Bounded on purpose: far enough to clear a monorepo's apps/<name> nesting,
 // not so far that it starts reading a lockfile from an unrelated parent repo.
@@ -77,6 +77,10 @@ export default function initCommand(program) {
         }
         mkdirSync(dirname(file.path), { recursive: true });
         writeFileSync(file.path, file.contents, file.mode ? { mode: file.mode } : undefined);
+        // writeFileSync's `mode` applies only when it creates the file, so
+        // --force over an existing scripts/dev keeps whatever bits that file
+        // already had. chmod every time instead.
+        if (file.mode) chmodSync(file.path, file.mode);
         console.error(chalk.green(`Wrote ${file.path}`));
         wrote++;
       }
@@ -93,7 +97,7 @@ export default function initCommand(program) {
       // The generated document tells you what to do; doctor tells you what is
       // still wrong. Running it here means init ends on the truth about this
       // repo rather than on a template's assumptions.
-      const findings = runDoctor(root);
+      const findings = runDoctor(root, { xcodeMajor: detectXcodeMajor() });
       if (findings.length === 0) {
         console.error(chalk.green('\nNothing else to flag.'));
       } else {

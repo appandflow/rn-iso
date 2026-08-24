@@ -12,6 +12,25 @@
 // seen and why it matters stays useful even when its advice does not.
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { getExecutor } from './exec.js';
+
+// `xcodebuild -version` prints "Xcode 26.1" on its first line. Anything else --
+// no Xcode, command line tools only, a localized or future format -- is null,
+// which every caller treats as "version unknown" rather than as a number.
+export function parseXcodeMajor(output) {
+  const m = /^Xcode\s+(\d+)/m.exec(String(output || ''));
+  if (!m) return null;
+  const major = parseInt(m[1], 10);
+  return Number.isFinite(major) ? major : null;
+}
+
+// The thin I/O half. Returns null on any failure: this is a hint that shapes
+// advice, and a machine without Xcode must still be able to run doctor.
+export function detectXcodeMajor() {
+  // Bounded: doctor is read-only advice, and a wedged Xcode install must not
+  // hang it.
+  return parseXcodeMajor(getExecutor().runQuiet('xcodebuild -version', { timeoutMs: 10000 }));
+}
 
 // 'cost'  -- measurably slower, silently
 // 'note'  -- worth knowing, not necessarily wrong
@@ -72,14 +91,21 @@ export function checkCompilationCache(podfileSource, xcodeMajor) {
   // The content-addressed compilation cache is Xcode 26+. On anything older
   // there is nothing to advise: saying "enable it" would be wrong, and saying
   // "upgrade Xcode" is a bigger decision than this command should be making.
+  // A null major means the version could not be read, which is not the same as
+  // "old": the advice still goes out, hedged, rather than being withheld.
   if (xcodeMajor != null && xcodeMajor < 26) return null;
   const enabled = /COMPILATION_CACHE_ENABLE_CACHING/.test(podfileSource);
   const path = /COMPILATION_CACHE_CAS_PATH/.test(podfileSource);
   if (!enabled) {
+    // Say which Xcode this is about. Naming a version rn-iso never read would
+    // read as a measurement, and the advice is wrong on anything older than 26.
+    const version = xcodeMajor != null
+      ? `On Xcode ${xcodeMajor}`
+      : 'On Xcode 26 or newer (this machine\'s Xcode version could not be read, so check yours first)';
     return finding(
       'note',
       'Xcode compilation caching is not enabled',
-      `On Xcode ${xcodeMajor ?? 26}+ a content-addressed cache can carry compiled output between workspaces, which is the difference between a full build and a partial one in a fresh worktree.`,
+      `${version} a content-addressed cache can carry compiled output between workspaces, which is the difference between a full build and a partial one in a fresh worktree.`,
       "Set COMPILATION_CACHE_ENABLE_CACHING = YES in the Podfile's post_install, with COMPILATION_CACHE_CAS_PATH outside DerivedData."
     );
   }

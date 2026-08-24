@@ -6,7 +6,10 @@ import {
   checkCcacheConflict,
   checkDevClient,
   checkMetroCache,
+  detectXcodeMajor,
+  parseXcodeMajor,
 } from '../src/doctor.js';
+import { resetExecutor, setExecutor } from '../src/exec.js';
 
 // Where the key lives moved when the setting was promoted out of experiments,
 // and the combination that silently does nothing is the NEW key on an OLD SDK.
@@ -104,4 +107,51 @@ test('a newer SDK with a dynamic config is pointed at the top-level key', () => 
 
 test('no config at all and no dynamic config stays silent', () => {
   assert.equal(checkBuildCacheProvider(null, 57, true, null), null);
+});
+
+// Nothing ever passed an Xcode version, so every user was told what "Xcode 26+"
+// offers, including the ones on Xcode 15 for whom that check should not fire and
+// the ones whose actual version this line was quietly guessing at.
+test('the compilation cache advice names the Xcode it was told about', () => {
+  const podfile = 'post_install do |installer|\nend\n';
+  assert.match(checkCompilationCache(podfile, 27).detail, /On Xcode 27 /);
+});
+
+test('an unreadable Xcode version is hedged rather than guessed at', () => {
+  const podfile = 'post_install do |installer|\nend\n';
+  const f = checkCompilationCache(podfile, null);
+  assert.equal(f.level, 'note', 'the advice still goes out: unknown is not the same as too old');
+  assert.match(f.detail, /could not be read/);
+  assert.doesNotMatch(f.detail, /^On Xcode 26 a /, 'a version rn-iso never read must not read as a measurement');
+});
+
+// The version comes from `xcodebuild -version`, whose first line is "Xcode 26.1".
+test('parseXcodeMajor reads the major from real xcodebuild output', () => {
+  assert.equal(parseXcodeMajor('Xcode 26.1\nBuild version 17B55\n'), 26);
+  assert.equal(parseXcodeMajor('Xcode 15\nBuild version 15A240d'), 15);
+});
+
+// No Xcode, command line tools only, or a format this does not know: all of them
+// mean "unknown", never a number.
+test('parseXcodeMajor returns null for anything it does not recognise', () => {
+  for (const output of [null, '', 'xcode-select: error: tool not installed', 'Xcode vNext']) {
+    assert.equal(parseXcodeMajor(output), null, JSON.stringify(output));
+  }
+});
+
+// A mocked executor proves the parsing; running the real command proves the
+// output has the shape the parser expects on this machine.
+test('detectXcodeMajor agrees with the real xcodebuild, when there is one', () => {
+  resetExecutor();
+  const major = detectXcodeMajor();
+  assert.ok(major === null || (Number.isInteger(major) && major > 0), `got ${major}`);
+});
+
+test('detectXcodeMajor reports unknown rather than throwing when xcodebuild is missing', () => {
+  setExecutor({ run: () => { throw new Error('not found'); }, runQuiet: () => null, spawn: () => {} });
+  try {
+    assert.equal(detectXcodeMajor(), null);
+  } finally {
+    resetExecutor();
+  }
 });

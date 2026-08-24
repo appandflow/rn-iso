@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { findProjectRoot } from '../project.js';
-import { runDoctor } from '../doctor.js';
+import { detectXcodeMajor, runDoctor } from '../doctor.js';
 
 export default function doctorCommand(program) {
   program
@@ -15,7 +15,7 @@ export default function doctorCommand(program) {
         return;
       }
 
-      const findings = runDoctor(root);
+      const findings = runDoctor(root, { xcodeMajor: detectXcodeMajor() });
 
       if (opts.json) {
         console.log(JSON.stringify({ project: root, findings }, null, 2));

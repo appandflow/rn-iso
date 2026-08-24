@@ -10,9 +10,9 @@
 // once, and `gc --caches` and `doctor` both see it from then on. Registration
 // is idempotent and keyed on the directory: re-registering an existing cache
 // updates its metadata rather than duplicating it.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import { dirname, join, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import { getConfigDir } from './config.js';
 
 export function manifestPath() {
@@ -36,12 +36,36 @@ export function readManifest(path = manifestPath()) {
   }
 }
 
+// Two writers are normal here: a metro.config.js and a build-cache provider
+// both register on every build, and several worktrees build at once. A
+// read-modify-write straight onto caches.json leaves a half-written file
+// readable for as long as the write takes, which readManifest can only treat as
+// corrupt. Writing a sibling and renaming makes the swap atomic, so a reader
+// sees either the old manifest or the new one.
+function writeManifest(path, caches) {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+  try {
+    writeFileSync(tmp, JSON.stringify({ version: 1, caches }, null, 2));
+    renameSync(tmp, path);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
 // `prune` is the entry's contract with gc, and the only field a caller really
 // has to think about:
 //   'entries' -- a flat collection of independent entries, so old ones can go
 //                individually. One file per key, or one directory per build.
 //   'atomic'  -- an index references the data, so removing pieces corrupts it.
 //                Empty it whole or not at all (an LLVM CAS is this).
+//
+// `entriesDepth` says how far below `dir` those entries sit, and defaults to 1
+// (the children of the root are the entries). A cache whose root holds a layer
+// of grouping directories -- <root>/<platform>/<fingerprint> for a build cache,
+// <root>/<shard>/<key> for a Metro FileStore -- registers 2, so gc trims one
+// build or one transform rather than an entire platform or shard.
 export function register(entry, path = manifestPath()) {
   if (!entry?.dir) throw new Error('a cache registration needs a `dir`');
   const dir = expand(entry.dir);
@@ -50,6 +74,7 @@ export function register(entry, path = manifestPath()) {
     dir,
     name: entry.name || dir,
     prune: entry.prune === 'atomic' ? 'atomic' : 'entries',
+    entriesDepth: normalizeDepth(entry.entriesDepth),
     note: entry.note || 'registered by the project',
     // Which project registered it, so a stale entry can be explained later.
     // Not used for lookup: two projects may legitimately share one cache, which
@@ -58,9 +83,17 @@ export function register(entry, path = manifestPath()) {
   };
   const caches = manifest.caches.filter(c => expand(c.dir) !== dir);
   caches.push(record);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify({ version: 1, caches }, null, 2));
+  writeManifest(path, caches);
   return record;
+}
+
+// A depth gc cannot walk is worse than no depth at all: too deep and it treats
+// nothing as an entry, too shallow and one removal takes a whole group. Anything
+// that is not a whole number of at least 1 falls back to the flat default.
+function normalizeDepth(value) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) return 1;
+  return n;
 }
 
 export function unregister(dir, path = manifestPath()) {
@@ -68,8 +101,7 @@ export function unregister(dir, path = manifestPath()) {
   const target = expand(dir);
   const caches = manifest.caches.filter(c => expand(c.dir) !== target);
   if (caches.length === manifest.caches.length) return false;
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify({ version: 1, caches }, null, 2));
+  writeManifest(path, caches);
   return true;
 }
 
@@ -84,6 +116,7 @@ export function registeredCaches(path = manifestPath()) {
       name: c.name,
       dir: c.dir,
       prune: c.prune === 'atomic' ? 'atomic' : 'entries',
+      entriesDepth: normalizeDepth(c.entriesDepth),
       note: c.note,
     }));
 }

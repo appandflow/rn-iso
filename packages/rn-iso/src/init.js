@@ -125,6 +125,16 @@ the same contract as restoring a CI cache. Reinstall if the branch changes them.
 ## 2. Device and Metro
 
 \`\`\`bash
+./scripts/dev
+\`\`\`
+
+\`rn-iso init\` wrote that script next to this file. It does sections 2 and 3 in
+one command, in the order they have to happen. Edit it freely -- it is this
+repo's build command, not rn-iso's.
+
+The rest of section 2 and section 3 is what it does, and why each step is there.
+
+\`\`\`bash
 npx rn-iso up ios --json      # owned simulator + a reserved Metro port
 ${bundlerCommand(facts, ['--port', '<port>'])} > /tmp/rn-iso-metro-<port>.log 2>&1 &
 \`\`\`

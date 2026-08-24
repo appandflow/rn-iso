@@ -178,3 +178,18 @@ test('a lockfile in the project directory still wins nothing over the declared f
     'bun'
   );
 });
+
+// `rn-iso init` writes scripts/dev next to WORKFLOW.md, and the document never
+// mentioned it -- so the generated instructions were the manual sequence the
+// script exists to replace.
+test('the workflow points at the script init writes alongside it', () => {
+  for (const facts of [projectFacts(expoApp), projectFacts(bareApp)]) {
+    const doc = renderWorkflow(facts);
+    assert.match(doc, /\.\/scripts\/dev/);
+    const scriptAt = doc.indexOf('./scripts/dev');
+    const manualAt = doc.indexOf('npx rn-iso up ios --json');
+    assert.ok(scriptAt !== -1 && manualAt !== -1);
+    assert.ok(scriptAt < manualAt, 'the one command comes before the steps it stands for');
+    assert.match(doc, /what it does/, 'the manual commands stay, as the explanation of the script');
+  }
+});

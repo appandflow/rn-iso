@@ -1,6 +1,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { register, readManifest, registeredCaches, unregister, manifestPath } from '../src/cache-manifest.js';
@@ -77,4 +78,34 @@ test('a corrupt manifest reads as empty rather than throwing', () => {
 
 test('a registration needs a directory', () => {
   assert.throws(() => register({ name: 'nameless' }), /needs a `dir`/);
+});
+
+// The depth is what stops gc from treating <root>/ios as one entry and removing
+// every iOS build with it, so an unusable value must fall back to the flat
+// default rather than being carried through.
+test('entriesDepth defaults to 1 and rejects anything that is not a usable depth', () => {
+  register({ dir: cacheDir });
+  assert.equal(readManifest().caches[0].entriesDepth, 1);
+
+  register({ dir: cacheDir, entriesDepth: 2 });
+  assert.equal(readManifest().caches[0].entriesDepth, 2);
+  assert.equal(registeredCaches()[0].entriesDepth, 2, 'and it reaches the reader, not just the file');
+
+  for (const bad of [0, -1, 1.5, 'two', null]) {
+    register({ dir: cacheDir, entriesDepth: bad });
+    assert.equal(readManifest().caches[0].entriesDepth, 1, `entriesDepth ${JSON.stringify(bad)}`);
+  }
+});
+
+// A metro.config.js and a build-cache provider both register on every build, and
+// several worktrees build at once. A reader must never catch the manifest
+// half-written, and the write must not leave temporary files behind.
+test('a registration replaces the manifest atomically and leaves no temp file', () => {
+  register({ dir: cacheDir, name: 'first' });
+  register({ dir: join(tmpdir(), 'rn-iso-second'), name: 'second' });
+  unregister(cacheDir);
+
+  const leftovers = readdirSync(dirname(manifestPath())).filter(n => n.includes('tmp'));
+  assert.deepEqual(leftovers, [], 'the staged file has to be renamed away, not left behind');
+  assert.deepEqual(readManifest().caches.map(c => c.name), ['second']);
 });

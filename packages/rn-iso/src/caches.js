@@ -10,9 +10,12 @@
 // plain `gc --delete`: deleting one is a performance decision, not a cleanup.
 import { existsSync, readdirSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { derivedDataRoot, directorySize } from './artifacts.js';
 import { registeredCaches } from './cache-manifest.js';
+import { findProjectRoot } from './project.js';
+import { resolveSettings } from './settings.js';
+import { gitCommonDir, repoRoot } from './worktree.js';
 
 // Xcode 26's content-addressed compilation cache. The default sits at the
 // DerivedData root, which makes it per-machine rather than per-workspace -- but
@@ -64,11 +67,29 @@ function metroFileMaps() {
 // they are chosen by a project's own config -- so they are declared.
 function declaredCaches(paths) {
   return (paths || [])
-    .map(p => (p.startsWith('~') ? join(homedir(), p.slice(1)) : p))
+    // resolve() as well as expanding ~: the manifest stores resolved paths, and
+    // a declared path written as `~/x/../x` or as a relative path would
+    // otherwise fail to match the registration of the same directory and be
+    // reported twice.
+    .map(p => resolve(p.startsWith('~') ? join(homedir(), p.slice(1)) : p))
     .filter(p => existsSync(p))
     // Declared caches -- a Metro FileStore, an Expo build-cache directory -- are
     // flat collections of independent entries, so old ones can go individually.
     .map(dir => ({ name: 'declared', dir, prune: 'entries', note: 'from the `caches` setting' }));
+}
+
+// The `caches` setting is per project, so it only has an answer when the
+// command runs inside one. Outside a project there is nothing declared to add,
+// which is a normal state for `gc` on a machine-wide sweep, not an error.
+export function declaredCachePaths(cwd = process.cwd()) {
+  const root = findProjectRoot(cwd);
+  if (!root) return [];
+  const settings = resolveSettings({
+    projectPath: root,
+    gitCommonDir: gitCommonDir(root),
+    repoRoot: repoRoot(root),
+  });
+  return Array.isArray(settings?.caches) ? settings.caches : [];
 }
 
 // Sizes are measured here rather than at discovery so a caller that only wants
@@ -79,11 +100,15 @@ export function discoverCaches({ declared = [] } = {}) {
   // anything inferred here, so when both name the same directory the
   // registration wins. Detection stays as the fallback for caches that nothing
   // has registered -- Xcode's, and anything named in the `caches` setting.
-  const registered = registeredCaches();
+  // `source` lets a report say which rows a project described itself and which
+  // ones rn-iso guessed at, so "nothing registered" is never printed over a
+  // machine that plainly has caches.
+  const registered = registeredCaches().map(c => ({ ...c, source: 'registered' }));
   const seen = new Set(registered.map(c => c.dir));
   const detected = [compilationCache(), metroFileMaps(), ...declaredCaches(declared)]
     .filter(Boolean)
-    .filter(c => !seen.has(c.dir));
+    .filter(c => !seen.has(c.dir))
+    .map(c => ({ ...c, source: 'detected' }));
   return [...registered, ...detected];
 }
 
@@ -111,7 +136,7 @@ export function pruneCache(cache, { olderThanDays, now = Date.now() } = {}) {
     return { removed: 0, bytes: 0, skipped: 'index-backed; empty it whole or not at all' };
   }
 
-  const entries = cache.files ?? topLevelEntries(cache.dir);
+  const entries = cache.files ?? entriesAtDepth(cache.dir, cache.entriesDepth ?? 1);
   let removed = 0;
   let bytes = 0;
   for (const entry of entries) {
@@ -136,13 +161,33 @@ export function pruneCache(cache, { olderThanDays, now = Date.now() } = {}) {
   return { removed, bytes, skipped: null };
 }
 
-// A cache's entries are its top-level children, EXCEPT where the cache does not
-// own its directory -- Metro's file maps live loose in the system temp dir, and
-// carry an explicit file list for exactly that reason.
-function topLevelEntries(dir) {
-  try {
-    return readdirSync(dir).map(n => join(dir, n));
-  } catch {
-    return [];
+// A cache's entries are the children `depth` levels below its root. Depth 1 is
+// a flat store. Depth 2 is a root with one layer of grouping above the entries:
+// a build cache is <root>/<platform>/<fingerprint>, and a Metro FileStore is
+// <root>/<shard>/<key> with 256 shards -- so at depth 1 a single removal would
+// take an entire platform's builds or a 256th of every transform on the machine.
+//
+// Anything at an intermediate level that is not a directory is left out
+// entirely: readdirSync throws on it, and a child of the root that gc cannot
+// explain is one it must not remove.
+//
+// A cache that does not own its directory does not come through here at all --
+// Metro's file maps live loose in the system temp dir and carry an explicit
+// file list for exactly that reason.
+function entriesAtDepth(dir, depth) {
+  let level = [dir];
+  for (let i = 0; i < depth; i++) {
+    const next = [];
+    for (const parent of level) {
+      let names;
+      try {
+        names = readdirSync(parent);
+      } catch {
+        continue;
+      }
+      for (const name of names) next.push(join(parent, name));
+    }
+    level = next;
   }
+  return level;
 }

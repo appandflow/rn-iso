@@ -321,6 +321,7 @@ function installDeviceExecutor({ devices, execCalls, throwOnShutdownFor = new Se
     run(cmd) {
       execCalls.push(cmd);
       if (cmd.includes('simctl list devices --json')) return iosListJson(devices);
+      if (cmd.startsWith('xcrun simctl delete ')) return '';
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet(cmd) {

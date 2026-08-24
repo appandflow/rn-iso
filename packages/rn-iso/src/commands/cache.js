@@ -1,6 +1,6 @@
 import chalk from 'chalk';
-import { register, registeredCaches, unregister } from '../cache-manifest.js';
-import { sizeCaches } from '../caches.js';
+import { register, unregister } from '../cache-manifest.js';
+import { declaredCachePaths, discoverCaches, sizeCaches } from '../caches.js';
 import { formatBytes } from '../artifacts.js';
 
 export default function cacheCommand(program) {
@@ -13,18 +13,25 @@ export default function cacheCommand(program) {
     .description('Record a shared cache directory. Idempotent: registering the same directory again updates it.')
     .option('--name <name>', 'what to call it in reports')
     .option('--atomic', 'the cache indexes its own data, so it can only be emptied whole, never trimmed entry by entry')
+    .option('--entries-depth <n>', 'how many levels below the directory the entries sit (default 1). Pass 2 for a root holding a layer of grouping directories, such as a Metro FileStore (256 shards) or a build cache keyed <platform>/<key>.', v => parseInt(v, 10))
     .option('--note <note>', 'why it exists, shown in reports')
     .action((dir, opts) => {
       const record = register({
         dir,
         name: opts.name,
         prune: opts.atomic ? 'atomic' : 'entries',
+        entriesDepth: opts.entriesDepth,
         note: opts.note,
       });
       console.log(chalk.green(`Registered ${record.name} -> ${record.dir}`));
-      console.log(chalk.dim(record.prune === 'atomic'
-        ? '  Will be emptied whole; --older-than will leave it alone.'
-        : '  Entries can be trimmed individually with `gc --caches --delete --older-than <days>`.'));
+      if (record.prune === 'atomic') {
+        console.log(chalk.dim('  Will be emptied whole; --older-than will leave it alone.'));
+        return;
+      }
+      console.log(chalk.dim('  Entries can be trimmed individually with `gc --caches --delete --older-than <days>`.'));
+      console.log(chalk.dim(record.entriesDepth === 1
+        ? `  An entry is a direct child of ${record.dir}. Pass --entries-depth if they sit deeper.`
+        : `  An entry is ${record.entriesDepth} levels below ${record.dir}.`));
     });
 
   cache
@@ -40,18 +47,23 @@ export default function cacheCommand(program) {
 
   cache
     .command('list')
-    .description('Show the registered caches and their sizes')
+    .description('Show every shared cache gc knows about, registered or detected, and its size')
+    // The same set `gc --caches` acts on. Listing only the registered ones said
+    // "No caches registered" on a machine carrying gigabytes of Xcode CAS and
+    // Metro file maps, which reads as "there is nothing here".
     .action(() => {
-      const caches = sizeCaches(registeredCaches());
+      const caches = sizeCaches(discoverCaches({ declared: declaredCachePaths() }));
       if (!caches.length) {
-        console.log(chalk.dim('No caches registered.'));
+        console.log(chalk.dim('No caches registered or detected.'));
         console.log(chalk.dim('A project registers its own with `rn-iso cache register <dir>`.'));
         return;
       }
       for (const c of caches) {
-        console.log(`${formatBytes(c.bytes).padStart(10)}  ${c.name}`);
+        const tag = c.source === 'registered' ? 'registered' : 'detected';
+        console.log(`${formatBytes(c.bytes).padStart(10)}  ${c.name} ${chalk.dim(`(${tag})`)}`);
         console.log(chalk.dim(`            ${c.dir}`));
       }
       console.log(chalk.dim(`  total: ${formatBytes(caches.reduce((n, c) => n + c.bytes, 0))}`));
+      console.log(chalk.dim('  registered: a project described it. detected: rn-iso recognised its shape.'));
     });
 }

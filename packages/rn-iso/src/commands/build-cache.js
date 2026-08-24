@@ -1,11 +1,29 @@
 import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { findProjectRoot } from '../project.js';
-import { cacheRoot, fingerprintProject, loadFingerprinter, resolveBuild, storeBuild } from '../build-cache.js';
+import { buildCacheKey, cacheRoot, fingerprintProject, loadFingerprinter, resolveBuild, storeBuild } from '../build-cache.js';
 import { formatBytes } from '../artifacts.js';
 import { directorySize } from '../artifacts.js';
 
 const PLATFORMS = new Set(['ios', 'android']);
+
+// The same three inputs @rn-iso/expo-build-cache reads out of Expo's run
+// options, so both entry points address the same entry. Left unset they mean
+// what the build CLIs default to: a Debug/debug build for a simulator.
+function runOptionsFrom(opts) {
+  return {
+    configuration: opts.configuration,
+    variant: opts.variant,
+    device: opts.device,
+  };
+}
+
+function addKeyOptions(cmd) {
+  return cmd
+    .option('--configuration <name>', 'iOS: the Xcode configuration the build used (default Debug). A Release build stored without this answers Debug resolves.')
+    .option('--variant <name>', 'Android: the gradle variant the build used (default debug)')
+    .option('--device <id>', 'the device the build targets, when it is not a simulator or emulator. A build for real hardware is keyed apart from a simulator one.');
+}
 
 function project() {
   const root = findProjectRoot(process.cwd());
@@ -39,10 +57,10 @@ export default function buildCacheCommand(program) {
     .command('build-cache')
     .description('A build cache for projects with no provider hook: ask whether a build already exists for what is on disk, and store one when you have made it. Never builds anything.');
 
-  cache
+  addKeyOptions(cache
     .command('resolve')
     .description('Print the path of a cached build matching the current native fingerprint. Prints nothing and exits 1 on a miss, so `APP=$(... ) || build` works.')
-    .requiredOption('--platform <platform>', 'ios or android')
+    .requiredOption('--platform <platform>', 'ios or android'))
     .action(async opts => {
       if (!requirePlatform(opts.platform)) return;
       const root = project();
@@ -56,7 +74,7 @@ export default function buildCacheCommand(program) {
         return;
       }
 
-      const hit = resolveBuild(opts.platform, hash);
+      const hit = resolveBuild(opts.platform, buildCacheKey(opts.platform, hash, runOptionsFrom(opts)));
       if (!hit) {
         // stdout stays empty on a miss so `$(...)` is falsy; the explanation
         // goes to stderr like every other status line in this CLI.
@@ -69,11 +87,11 @@ export default function buildCacheCommand(program) {
       console.log(hit);
     });
 
-  cache
+  addKeyOptions(cache
     .command('store')
     .description('Store a build you just made under the current native fingerprint.')
     .requiredOption('--platform <platform>', 'ios or android')
-    .requiredOption('--path <path>', 'the .app or .apk to store')
+    .requiredOption('--path <path>', 'the .app or .apk to store'))
     .action(async opts => {
       if (!requirePlatform(opts.platform)) return;
       const root = project();
@@ -93,7 +111,7 @@ export default function buildCacheCommand(program) {
       }
 
       try {
-        const stored = storeBuild(opts.platform, hash, opts.path);
+        const stored = storeBuild(opts.platform, buildCacheKey(opts.platform, hash, runOptionsFrom(opts)), opts.path);
         console.error(chalk.green(`Stored ${opts.platform} build for ${hash.slice(0, 12)}`));
         console.log(stored);
       } catch (e) {

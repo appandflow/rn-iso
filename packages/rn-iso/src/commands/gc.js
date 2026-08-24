@@ -14,8 +14,7 @@ import { reclaimProject } from '../reclaim.js';
 import { listAllIosSims } from '../sim/ios.js';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
 import { listAvds } from '../sim/android.js';
-import { discoverCaches, pruneCache, sizeCaches } from '../caches.js';
-import { resolveSettings } from '../settings.js';
+import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches } from '../caches.js';
 
 // Bounds each device listing so a wedged simctl/emulator daemon can't hang
 // `gc` forever -- see the comment above the listAllIosSims/listAvds calls
@@ -226,9 +225,8 @@ export default function gcCommand(program) {
       // caches are shared by every project on the machine, so the blast radius
       // is not "this dead worktree" -- it is every build that would have hit
       // them. Sizing walks gigabytes, so only do it when asked.
-      const settings = resolveSettings({});
       const caches = opts.caches
-        ? sizeCaches(discoverCaches({ declared: settings?.caches }))
+        ? sizeCaches(discoverCaches({ declared: declaredCachePaths() }))
         : [];
 
       const sized = orphaned.map(entry => {
