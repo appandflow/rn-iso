@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { findProjectRoot } from '../project.js';
 import { projectFacts, renderDevScript, renderWorkflow, renderWorktreeExclude } from '../init.js';
@@ -30,6 +30,9 @@ export default function initCommand(program) {
         pkg: readJson(join(root, 'package.json')),
         appConfig: readJson(join(root, 'app.json')),
         hasPodfile: existsSync(join(root, 'ios', 'Podfile')),
+        // Lockfiles are the evidence for which package manager this repo uses,
+        // so the generated commands invoke the one it actually has.
+        files: readdirSync(root),
       });
 
       const files = [
@@ -58,6 +61,8 @@ export default function initCommand(program) {
       console.error(
         chalk.dim(
           `\nDetected: ${facts.isExpo ? `Expo${facts.sdkMajor ? ` SDK ${facts.sdkMajor}` : ''}` : 'bare React Native'}` +
+          `, ${facts.pm}` +
+          `${facts.scripts?.ios ? ", using this repo's own scripts" : ''}` +
           `${facts.hasPodfile ? ', with an ios/Podfile' : ''}.`
         )
       );

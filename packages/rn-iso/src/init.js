@@ -13,7 +13,7 @@
 // Detected rather than assumed: the advice differs enough between an Expo app
 // and a bare one that guessing would produce a document that is wrong in the
 // places people actually get stuck.
-export function projectFacts({ pkg, appConfig, hasPodfile }) {
+export function projectFacts({ pkg, appConfig, hasPodfile, files = [] }) {
   const deps = { ...(pkg?.dependencies || {}), ...(pkg?.devDependencies || {}) };
   const expoRange = deps.expo || null;
   const sdkMajor = expoRange
@@ -28,6 +28,10 @@ export function projectFacts({ pkg, appConfig, hasPodfile }) {
     // The run command is the one thing rn-iso refuses to decide at runtime, so
     // the template states the project's own rather than inventing one.
     runCommand: expoRange ? 'npx expo run:ios' : 'npx react-native run-ios',
+    // Preferring the project's own scripts means inheriting flags it already
+    // decided on, which is the whole reason not to invent a command.
+    scripts: pkg?.scripts || {},
+    pm: detectPackageManager({ files, packageManagerField: pkg?.packageManager }),
   };
 }
 
@@ -122,7 +126,7 @@ the same contract as restoring a CI cache. Reinstall if the branch changes them.
 
 \`\`\`bash
 npx rn-iso up ios --json      # owned simulator + a reserved Metro port
-npx expo start --port <port> > /tmp/rn-iso-metro-<port>.log 2>&1 &
+${bundlerCommand(facts, ['--port', '<port>'])} > /tmp/rn-iso-metro-<port>.log 2>&1 &
 \`\`\`
 
 rn-iso reserves the port; it does not start Metro. Start it yourself from inside
@@ -148,7 +152,7 @@ ${devClientSection(facts)}
 ## 3. Run
 
 \`\`\`bash
-${facts.runCommand} --device <udid> --port <port>
+${runCommandFor(facts, facts.isExpo ? ['--device', '<udid>', '--port', '<port>'] : ['--udid', '<udid>', '--port', '<port>'])}
 \`\`\`
 
 Do not add \`--no-bundler\`, however reasonable it looks once you have started
@@ -224,10 +228,13 @@ export function renderDevScript(facts) {
   // --client-logs is a community-CLI flag and has no Expo equivalent; Expo's
   // bundler already receives the app's console over React Native's own logging
   // channel, whoever started it.
-  const startBundler = facts.isExpo ? 'npx expo start' : 'npx react-native start --client-logs';
-  const runIos = facts.isExpo
-    ? 'npx expo run:ios --device "$UDID" --port "$PORT"'
-    : 'npx react-native run-ios --udid "$UDID" --port "$PORT"';
+  const startBundler = bundlerCommand(facts, ['--port', '"$PORT"']);
+  const runIos = runCommandFor(
+    facts,
+    facts.isExpo
+      ? ['--device', '"$UDID"', '--port', '"$PORT"']
+      : ['--udid', '"$UDID"', '--port', '"$PORT"']
+  );
 
   // A bare app has no dev client to receive the deep link, so the port has to
   // reach it at runtime instead. Compiling it in would poison a
@@ -264,7 +271,7 @@ if curl -sf "http://localhost:\${PORT}/status" 2>/dev/null | grep -q packager-st
 else
   # From inside the project directory, or teardown cannot prove the bundler is
   # ours and will refuse to kill it.
-  ${startBundler} --port "$PORT" > "$LOG" 2>&1 &
+  ${startBundler} > "$LOG" 2>&1 &
   # Poll rather than sleep: it is ready in a couple of seconds, and a fixed
   # sleep is either a waste or a race.
   for _ in $(seq 1 60); do
@@ -280,4 +287,48 @@ ${runIos}
 echo "" >&2
 echo "Metro log: \${LOG}" >&2
 `;
+}
+
+// Which package manager, and how it forwards flags to a script.
+//
+// The `packageManager` field wins when present: it is the declared answer, and
+// corepack enforces it. Otherwise the lockfile is the evidence. npm is the
+// fallback rather than a guess -- it is what `npx` implies and what a project
+// with no lockfile committed will get.
+export function detectPackageManager({ files = [], packageManagerField = null } = {}) {
+  const declared = packageManagerField ? String(packageManagerField).split('@')[0] : null;
+  if (['npm', 'yarn', 'pnpm', 'bun'].includes(declared)) return declared;
+  if (files.includes('pnpm-lock.yaml')) return 'pnpm';
+  if (files.includes('yarn.lock')) return 'yarn';
+  if (files.includes('bun.lockb') || files.includes('bun.lock')) return 'bun';
+  return 'npm';
+}
+
+// npm and pnpm need `--` before flags meant for the script rather than for
+// themselves; yarn and bun forward them directly and would pass a literal `--`
+// through to the script. Derived by running all four, not from documentation.
+export function runScript(pm, script, args = []) {
+  const needsSeparator = pm === 'npm' || pm === 'pnpm';
+  const parts = [pm, 'run', script];
+  if (args.length) {
+    if (needsSeparator) parts.push('--');
+    parts.push(...args);
+  }
+  return parts.join(' ');
+}
+
+// Prefer the project's own script over a command we invent. A `start` script
+// often carries flags that matter -- --client-logs, a variant, a flavor -- and
+// spawning the bundler directly drops them silently. Fall back only when the
+// script genuinely is not there.
+export function bundlerCommand(facts, args) {
+  if (facts.scripts?.start) return runScript(facts.pm, 'start', args);
+  const direct = facts.isExpo ? 'npx expo start' : 'npx react-native start --client-logs';
+  return `${direct} ${args.join(' ')}`.trim();
+}
+
+export function runCommandFor(facts, args) {
+  if (facts.scripts?.ios) return runScript(facts.pm, 'ios', args);
+  const direct = facts.isExpo ? 'npx expo run:ios' : 'npx react-native run-ios';
+  return `${direct} ${args.join(' ')}`.trim();
 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { projectFacts, renderDevScript, renderWorkflow, renderWorktreeExclude } from '../src/init.js';
+import { detectPackageManager, projectFacts, renderDevScript, renderWorkflow, renderWorktreeExclude, runScript } from '../src/init.js';
 
 const expoApp = { pkg: { name: 'demo', dependencies: { expo: '~57.0.0', 'react-native': '0.86.2' } } };
 const bareApp = { pkg: { name: 'bare', dependencies: { 'react-native': '0.86.2' } } };
@@ -111,4 +111,56 @@ test('only the bare script points the app at the bundler at runtime', () => {
 // can be found again without anything having to remember where it went.
 test('the Metro log is named after the port', () => {
   assert.match(renderDevScript(projectFacts(expoApp)), /rn-iso-metro-\$\{PORT\}\.log/);
+});
+
+// The packageManager field is the declared answer and corepack enforces it, so
+// it outranks a lockfile that may just be stale.
+test('the packageManager field beats a lockfile, and a lockfile beats the default', () => {
+  assert.equal(detectPackageManager({ files: ['yarn.lock'], packageManagerField: 'pnpm@9.0.0' }), 'pnpm');
+  assert.equal(detectPackageManager({ files: ['pnpm-lock.yaml'] }), 'pnpm');
+  assert.equal(detectPackageManager({ files: ['yarn.lock'] }), 'yarn');
+  assert.equal(detectPackageManager({ files: ['bun.lockb'] }), 'bun');
+  assert.equal(detectPackageManager({ files: [] }), 'npm', 'npm is the fallback npx implies');
+});
+
+// npm and pnpm need `--` before flags meant for the script; yarn and bun would
+// pass a literal `--` through to it. Established by running all four.
+test('flags are forwarded the way each package manager actually wants them', () => {
+  assert.equal(runScript('npm', 'ios', ['--device', 'X']), 'npm run ios -- --device X');
+  assert.equal(runScript('pnpm', 'ios', ['--device', 'X']), 'pnpm run ios -- --device X');
+  assert.equal(runScript('yarn', 'ios', ['--device', 'X']), 'yarn run ios --device X');
+  assert.equal(runScript('bun', 'ios', ['--device', 'X']), 'bun run ios --device X');
+});
+
+test('a script with no extra flags gets no separator at all', () => {
+  assert.equal(runScript('npm', 'start'), 'npm run start');
+});
+
+// A project's own start script often carries flags that matter -- --client-logs,
+// a variant, a flavor -- and spawning the bundler directly drops them silently.
+test('the project script is preferred over a command we would invent', () => {
+  const facts = projectFacts({
+    pkg: { dependencies: { expo: '~57.0.0' }, scripts: { ios: 'expo run:ios', start: 'expo start --client-logs' } },
+    files: ['yarn.lock'],
+  });
+  const script = renderDevScript(facts);
+  assert.match(script, /yarn run start --port/);
+  assert.match(script, /yarn run ios --device/);
+  assert.doesNotMatch(script, /npx expo start/);
+});
+
+test('a project with no scripts falls back to a direct command rather than inventing a script', () => {
+  const script = renderDevScript(projectFacts({ pkg: { dependencies: { expo: '~57.0.0' } }, files: [] }));
+  assert.match(script, /npx expo start --port/);
+  assert.doesNotMatch(script, /run start/);
+});
+
+// The port must be passed exactly once: twice is not harmless, since the second
+// occurrence is what some CLIs actually read.
+test('the port is passed exactly once to the bundler', () => {
+  for (const files of [[], ['pnpm-lock.yaml']]) {
+    const facts = projectFacts({ pkg: { dependencies: { expo: '~57.0.0' }, scripts: { start: 'expo start' } }, files });
+    const line = renderDevScript(facts).split('\n').find(l => l.includes('$LOG') && l.includes('&'));
+    assert.equal((line.match(/--port/g) || []).length, 1, line);
+  }
 });
