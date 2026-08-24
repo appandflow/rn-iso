@@ -140,7 +140,7 @@ export function checkBuildCacheProvider(appConfig, sdkMajor, isExpo = true, dyna
       `Cannot check the build cache provider in ${dynamicConfig}`,
       'This config is code, so it is not readable without executing it. Confirm by hand that a buildCacheProvider is set, and that it is on the key this SDK reads.',
       sdkMajor && sdkMajor <= 53
-        ? 'SDK 53 reads expo.experiments.buildCacheProvider and ignores the top-level key in silence.'
+        ? `SDK ${sdkMajor} reads expo.experiments.buildCacheProvider and ignores the top-level key in silence.`
         : 'Use the top-level expo.buildCacheProvider; the experiments key still works as a fallback.'
     );
   }
