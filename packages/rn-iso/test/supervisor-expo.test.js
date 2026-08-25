@@ -266,3 +266,14 @@ describe('startExpoServer', () => {
     assert.equal(called, 0);
   });
 });
+
+// The tlon field test: a failed bundle was stored at info and logs --errors
+// returned empty against a genuinely broken build. Expo's failure vocabulary
+// has no bullet and no leading "error".
+test('inferLevel classifies Expo bundling failures as errors', () => {
+  assert.equal(inferLevel('iOS Bundling failed 6566ms apps/tlon-mobile/index.tsx (1 module)'), 'error');
+  assert.equal(inferLevel('Unable to resolve "./tailwind.json" from "index.tsx"'), 'error');
+  assert.equal(inferLevel('Failed to load app from http://localhost:8084'), 'error');
+  assert.equal(inferLevel('iOS Bundled 812ms index.js (1150 modules)'), 'info');
+  assert.equal(inferLevel('Bundling 100%'), 'info');
+});

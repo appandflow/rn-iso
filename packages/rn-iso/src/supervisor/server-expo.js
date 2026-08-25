@@ -136,6 +136,14 @@ export function inferLevel(line) {
   const lead = word ? word[1].toLowerCase() : '';
   if (lead === 'error' || lead === 'fatal') return 'error';
   if (lead === 'warn' || lead === 'warning') return 'warn';
+  // Expo's real failure vocabulary carries no bullet and no leading "error":
+  // "iOS Bundling failed 6566ms ..." and "Unable to resolve \"./x\" from ..."
+  // were both stored at info in the tlon field test, which made
+  // `logs --errors` return empty against a build that failed. Match the
+  // phrases, not a prefix.
+  if (/\bBundling failed\b/.test(text)) return 'error';
+  if (/^Unable to resolve\b/.test(text)) return 'error';
+  if (/^Failed to (load|resolve|compile|build)\b/.test(text)) return 'error';
   return 'info';
 }
 
