@@ -127,6 +127,64 @@ export function checkCompilationCache(podfileSource, xcodeMajor) {
   return null;
 }
 
+// `.rn-iso/` holds this workspace's build output, its logs and the supervisor
+// pidfile: everything that is meaningful only to the checkout that produced it.
+// It has to be listed in TWO files, and the failure mode of missing either one
+// is silent.
+//
+// The asymmetric case is the one worth naming. Gitignored but not
+// worktree-excluded is exactly the state in which `worktree create
+// --carry-ignored` copies the previous workspace's DerivedData, its stale logs
+// and a pidfile pointing at a dead process into a brand new worktree -- which
+// is worse than starting with an empty cache, because the build output is keyed
+// to a path the new worktree does not have and the pidfile names a supervisor
+// that is not running. Excluded but not gitignored is the other half: nothing
+// is carried, but every build offers its own DerivedData up for commit.
+const WORKSPACE_DIR = '.rn-iso';
+
+// gitignore and worktreeexclude are both line-oriented path lists, so the entry
+// is matched as a path and not as a substring: a commented-out line ignores
+// nothing, and `/.rn-iso`, `.rn-iso` and `.rn-iso/` are the same entry.
+function listsWorkspaceDir(source) {
+  if (source == null) return false;
+  return String(source)
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'))
+    .some(line => line.replace(/^\/+/, '').replace(/\/+$/, '') === WORKSPACE_DIR);
+}
+
+export function checkArtifactLayout({ gitignoreSource, worktreeExcludeSource } = {}) {
+  const gitignored = listsWorkspaceDir(gitignoreSource);
+  const excluded = listsWorkspaceDir(worktreeExcludeSource);
+  if (gitignored && excluded) return null;
+
+  if (gitignored && !excluded) {
+    return finding(
+      'cost',
+      '.rn-iso/ is gitignored but not worktree-excluded',
+      'It is ignored files that `worktree create --carry-ignored` carries, so this is the state in which a new worktree is handed the previous one\'s DerivedData, stale logs and a pidfile for a process that is not running. That is worse than starting with an empty cache: the build output is keyed to a path the new worktree does not have.',
+      `Add ${WORKSPACE_DIR}/ to .worktreeexclude, or run \`rn-iso init\`.`
+    );
+  }
+
+  if (excluded && !gitignored) {
+    return finding(
+      'note',
+      '.rn-iso/ is worktree-excluded but not gitignored',
+      'Nothing is carried into a new worktree, but this workspace offers its own build output, logs and pidfile up for commit, and git status stops being readable.',
+      `Add ${WORKSPACE_DIR}/ to .gitignore, or run \`rn-iso init\`.`
+    );
+  }
+
+  return finding(
+    'note',
+    '.rn-iso/ is neither gitignored nor worktree-excluded',
+    'It holds this workspace\'s build output, logs and supervisor pidfile. Unignored, they are offered up for commit; not excluded, `worktree create --carry-ignored` would carry them into a fresh worktree once they are ignored.',
+    `Add ${WORKSPACE_DIR}/ to both .gitignore and .worktreeexclude, or run \`rn-iso init\`.`
+  );
+}
+
 // ccache and compilation caching are mutually exclusive in practice: the ccache
 // launcher is what disables explicitly built modules, which caching requires.
 export function checkCcacheConflict(podfileSource, podfileProperties) {
@@ -233,6 +291,8 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
   const podfileProperties = readJson(join(projectRoot, 'ios', 'Podfile.properties.json'));
   const podfile = read(join('ios', 'Podfile'));
   const metroConfig = read('metro.config.js');
+  const gitignore = read('.gitignore');
+  const worktreeExclude = read('.worktreeexclude');
 
   // Same detector `status` uses, so one project never reads as expo in one
   // command and bare in another. It weighs the `ios` script above the presence
@@ -246,6 +306,7 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
     checkCompilationCache(podfile, xcodeMajor),
+    checkArtifactLayout({ gitignoreSource: gitignore, worktreeExcludeSource: worktreeExclude }),
     checkCcacheConflict(podfile, podfileProperties),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
   ].filter(Boolean);

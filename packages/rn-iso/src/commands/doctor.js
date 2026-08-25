@@ -24,7 +24,7 @@ export default function doctorCommand(program) {
 
       if (findings.length === 0) {
         console.log(chalk.green('Nothing to flag.'));
-        console.log(chalk.dim('Checked: dev client, Metro cache, compilation cache, ccache conflict, build cache provider.'));
+        console.log(chalk.dim('Checked: dev client, Metro cache, compilation cache, ccache conflict, artifact layout, build cache provider.'));
         return;
       }
 

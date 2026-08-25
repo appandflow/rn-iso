@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  checkArtifactLayout,
   checkBuildCacheProvider,
   checkCompilationCache,
   checkCcacheConflict,
@@ -169,4 +170,63 @@ test('an expo-dependency project that builds with react-native run-ios is not fl
 test('the dev client finding still fires for a project that builds with expo run:ios', () => {
   const pkg = { dependencies: { expo: '~57.0.0' } };
   assert.equal(checkDevClient(pkg, true).level, 'cost');
+});
+
+// .rn-iso/ holds this workspace's build output, logs and supervisor pidfile.
+// Gitignored but not worktree-excluded is the asymmetry that matters: it is
+// exactly the state in which `worktree create --carry-ignored` copies another
+// workspace's DerivedData, stale logs and a dead pidfile into a fresh worktree,
+// which is strictly worse than starting with an empty cache.
+test('reports when .rn-iso is gitignored but not worktree-excluded', () => {
+  const f = checkArtifactLayout({
+    gitignoreSource: '.rn-iso/\n',
+    worktreeExcludeSource: '**/*.log\n',
+  });
+  assert.ok(f, 'expected a finding');
+  assert.match(f.detail, /carry/i);
+});
+
+test('silent when both are wired', () => {
+  assert.equal(checkArtifactLayout({
+    gitignoreSource: '.rn-iso/\n',
+    worktreeExcludeSource: '.rn-iso/\n',
+  }), null);
+});
+
+// Worktree-excluded but not gitignored is the other half: nothing is carried,
+// but every build commits its own DerivedData.
+test('reports when .rn-iso is worktree-excluded but not gitignored', () => {
+  const f = checkArtifactLayout({
+    gitignoreSource: 'node_modules\n',
+    worktreeExcludeSource: '.rn-iso/\n',
+  });
+  assert.ok(f, 'expected a finding');
+  assert.match(f.title, /not gitignored/);
+  assert.match(f.detail, /commit/i);
+});
+
+// A missing file is not a different diagnosis from a file that does not mention
+// the directory: both mean the layout was never wired up, and both are fixed by
+// the same command.
+test('reports when neither file mentions the workspace directory', () => {
+  const f = checkArtifactLayout({ gitignoreSource: null, worktreeExcludeSource: null });
+  assert.ok(f, 'expected a finding');
+  assert.match(f.fix, /rn-iso init/);
+});
+
+// The entry is a path, not a substring: leading and trailing slashes and
+// comments are all the forms a real .gitignore is written in.
+test('the entry is recognised however it is written, and comments do not count', () => {
+  assert.match(
+    checkArtifactLayout({
+      gitignoreSource: '# ignore .rn-iso/ one day\nnode_modules\n',
+      worktreeExcludeSource: '.rn-iso/\n',
+    }).title,
+    /not gitignored/,
+    'a commented-out entry ignores nothing'
+  );
+  assert.equal(checkArtifactLayout({
+    gitignoreSource: '/.rn-iso\n',
+    worktreeExcludeSource: '.rn-iso\n',
+  }), null);
 });
