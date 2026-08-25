@@ -25,8 +25,8 @@ the disk does. Registering it with
 [`rn-iso`](https://www.npmjs.com/package/rn-iso) makes it visible:
 
 ```bash
-npx rn-iso gc --caches                            # what it has grown to
-npx rn-iso gc --caches --delete --older-than 30   # drop entries unused for 30 days
+npx rn-iso gc                            # what it has grown to (reported on every run)
+npx rn-iso gc --delete --older-than 30   # drop entries unused for 30 days
 ```
 
 Entries are trimmed individually — one file per cache key — so trimming costs

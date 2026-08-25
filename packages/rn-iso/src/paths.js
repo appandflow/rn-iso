@@ -112,7 +112,7 @@ export function legacyMetroCacheName(dir) {
 }
 
 // The `name` @rn-iso/metro-cache registers itself under. A hand-wired FileStore
-// registered through `rn-iso cache register` carries whatever name its owner
+// registered through `rn-iso/cache-manifest` carries whatever name its owner
 // chose, and must never be moved: its metro.config.js still points at the old
 // directory, so moving it would take away a cache nothing knows how to find.
 export const METRO_CACHE_REGISTRATION_NAME = 'Metro transform cache';

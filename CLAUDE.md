@@ -33,8 +33,9 @@ State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
   manifest file directly removes the dependency instead of guarding it. Keep it
   that way: rn-iso is an optional peer, and a missing or old one must never
   break a bundler config or a build. `rn-iso/cache-manifest` still exists as a
-  public export for consumers that DO have rn-iso; it is simply not how these
-  two packages register.
+  public export for consumers that DO have rn-iso -- and, since the `cache
+  register` / `forget` / `list` verbs were removed, the ONLY way to register a
+  cache by hand; it is simply not how these two packages do it.
 - **Single exec wrapper.** All `child_process` calls go through
   `src/exec.js` (`getExecutor()`). Tests inject a mock via `setExecutor()`.
   Anywhere outside `exec.js` that imports `child_process` directly is a bug.
@@ -93,7 +94,7 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
     status.js             # pure shaping of the cross-project state `status` prints
     teardown.js           # THE owned-device teardown: resolve -> occupancy -> shutdown -> delete,
                           # with containment. Used by reclaim, release, shutdown, gc.
-    reclaim.js            # shared reclaim-a-project logic (used by prune, gc, worktree remove):
+    reclaim.js            # shared reclaim-a-project logic (used by gc and worktree remove):
                           # frees Metro/port, and -- with deleteOwnedDevices -- tears down
                           # owned devices via teardown.js
     caches.js             # shared-cache discovery (Xcode CAS, Metro file maps, declared paths),
@@ -112,12 +113,11 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
       device.js           # read-only facts query, no ensure side effects
       stop.js             # kill this project's Metro, identity-verified
       status.js
-      release.js shutdown.js prune.js
+      release.js shutdown.js
       worktree.js         # worktree create/remove/list
-      gc.js               # report/reclaim orphaned build artifacts, dead project entries,
-                          # orphaned devices, and -- with --caches -- the shared caches
+      gc.js               # report/reclaim dead project entries and orphaned devices, and
+                          # report the shared caches (every run; there is no --caches flag)
       config.js           # per-project / repo settings CRUD
-      cache.js            # cache register / forget / list
       build-cache.js      # build-cache resolve / store / path
       doctor.js           # print the findings from src/doctor.js
       init.js             # write the generated files, then run doctor
@@ -161,7 +161,7 @@ you add a command, change a flag, change picker UX, or alter defaults — open
 `skill/SKILL.md` and update the relevant section in the same change. Quick
 checklist:
 
-- New command? Add it under "Other useful commands" or its own section if
+- New command? Add it under "Command surface" or its own section if
   meaty (like `worktree` or `gc`).
 - New / changed flag on `up`? Update "The env lifecycle" and the facts
   contract / common-setups table if the flag matters for non-interactive
@@ -241,7 +241,7 @@ bundler on 8081 either way.
 
 `src/teardown.js` is the ONE implementation: `teardownOwnedIosSim(udid, {
 del, label })` and `teardownOwnedAvd(avdName, { del })`. Every site
-that destroys an owned device — `reclaim.js` (and through it `prune`, `gc`,
+that destroys an owned device — `reclaim.js` (and through it `gc` and
 `worktree remove`), `release.js`, `shutdown.js`, and `gc.js`'s orphan sweep —
 calls one of them. Until 0.10.0 this file said reclaim.js was "the one place"
 while admitting three others re-implemented the pattern inline; both could not
@@ -273,7 +273,7 @@ Outcomes are `torn-down` / `missing` / `skipped` / `failed`; skips carry a
 `kind` (`'not-owned'` or `'occupied'`) so callers branch on data rather than
 matching on prose — `shutdown` reports those two cases differently.
 
-Project paths that no longer exist on disk are handled by `prune`/`gc`,
+Project paths that no longer exist on disk are handled by `gc`,
 not by device selection: a deleted worktree's Metro port is reclaimable
 (`findReclaimablePort` in `ports.js` only ever reclaims dead-path
 projects — removing a live project's entry would drop its device claim)
@@ -281,7 +281,7 @@ and its owned devices are swept by `gc`'s orphan-device check
 (`findOrphanedDevices`) once nothing references them. Caveat carried over
 from the old claim model: a project on an unmounted volume looks "dead" by
 a plain existence check; local worktrees are the supported case, and both
-`gc` and `prune` fail closed on an unmounted volume (see item 8).
+`gc` and `findReclaimablePort` fail closed on an unmounted volume (see item 8).
 
 ### 5. `RN_ISO_HOME` is the test redirect
 

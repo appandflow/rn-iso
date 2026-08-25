@@ -64,7 +64,7 @@ On APFS, `worktree create --carry-ignored` clones every gitignored path (`node_m
 
 ## Destructive commands -- ask the user first
 
-- **`gc --delete`** erases build output, potentially tens of GB. With `--caches` it also empties the shared build caches, which every project on the machine then pays to refill. A bare `gc` only reports and is always safe.
+- **`gc --delete`** drops dead project entries and deletes the orphaned `rn-iso-*` devices it reported, potentially tens of GB of simulator. With `--all` it also empties the shared build caches, which every project on the machine then pays to refill. A bare `gc` only reports -- it writes nothing and is always safe.
 - **`worktree remove --force`** discards uncommitted changes and untracked files permanently. A plain refusal usually means a native build rewrote tracked files (`pod install` always touches `Podfile.lock` and `project.pbxproj`) -- **restore those and retry** rather than forcing. `npx rn-iso guide errors` shows how.
 - **`release`** deletes the owned device, not just its assignment, and does not check whether another tool is still attached to it -- a running UI-test session goes with it. There is no `--force` to reach for, because nothing is guarding it. Don't release an environment you still need.
 - **`stop --force`** kills a process rn-iso could not identify as yours.
@@ -79,11 +79,11 @@ Most changes touch no native input, and those should not compile anything. A rep
 
 `npx rn-iso init` writes that setup into the repo and reports what is still missing; `npx rn-iso doctor` reports the same findings on their own, read-only. Where the repo has no provider hook, `npx rn-iso build-cache resolve --platform ios` prints a cached build's path (exit 1 on a miss) and `build-cache store` puts one there. **Read the repo's own `WORKFLOW.md` or `scripts/dev` first if it has them** -- that is this project's build command, and it wins over anything you would invent.
 
-These caches never evict themselves. `npx rn-iso gc --caches` reports what they have grown to and `gc --caches --delete --older-than <days>` trims the entries nothing has used. Trim rather than empty: emptying costs the next build in every project the time the cache was saving.
+These caches never evict themselves. Every `npx rn-iso gc` run reports what they have grown to -- each one tagged *registered* or *detected* -- and `gc --delete --older-than <days>` trims the entries nothing has used. Trim rather than empty: `gc --delete --all` empties them whole -- the only way to clear an index-backed cache like Xcode's CAS -- and costs the next build in every project the time the cache was saving.
 
 ## Command surface
 
-`up` (device + port + facts) · `device` (read-only re-check) · `stop` (kill this project's Metro) · `release` (free/delete a device) · `shutdown` (shut down, never delete) · `status` · `prune` · `gc` (add `--caches` for the shared build caches) · `config` · `worktree create|remove|list` · `init` (set a repo up for parallel agents) · `doctor` (what is silently costing build time) · `cache` (register/list shared caches) · `build-cache` (resolve/store a built app) · `guide` · `skill install`
+`up` (device + port + facts) · `device` (read-only re-check) · `stop` (kill this project's Metro) · `release` (free/delete a device) · `shutdown` (shut down, never delete) · `status` · `gc` (dead entries, orphaned devices, and the shared build caches) · `config` · `worktree create|remove|list` · `init` (set a repo up for parallel agents) · `doctor` (what is silently costing build time) · `build-cache` (resolve/store a built app) · `guide` · `skill install`
 
 Run `npx rn-iso <command> --help` for flags, or `npx rn-iso guide` for the reference.
 

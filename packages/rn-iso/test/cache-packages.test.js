@@ -3,7 +3,7 @@
 // between them is the one line most likely to break silently -- `require` of an
 // ESM module throws ERR_REQUIRE_ESM on Node before 20.19, and registration is
 // best-effort, so the throw was swallowed and the caches simply never appeared
-// in `gc --caches` on those versions.
+// in gc's cache report on those versions.
 //
 // These tests exercise the real packages, from this Node, through the real
 // manifest. Each package is imported exactly once per process (CommonJS caches

@@ -89,8 +89,8 @@ cache provider keys a built `.app` on a fingerprint of the native inputs and
 installs it instead of building.
 
 **Use the packaged provider rather than writing one.** It is the same cache
-`rn-iso build-cache` uses, it registers itself with rn-iso so `gc --caches` can
-trim it, and it works with no rn-iso installed:
+`rn-iso build-cache` uses, it registers itself with rn-iso so `gc` can report
+and trim it, and it works with no rn-iso installed:
 
 ```bash
 npm i -D @rn-iso/expo-build-cache
@@ -224,20 +224,26 @@ at all, and the compilation cache has no size cap. Trim rather than empty —
 emptying costs the next build in every project the time the cache was saving:
 
 ```bash
-npx rn-iso gc --caches                            # what exists, and how big
-npx rn-iso gc --caches --delete --older-than 30   # drop entries unused for 30 days
-npx rn-iso cache list                             # the same set, registered and detected
+npx rn-iso gc                            # every cache, how big, registered or detected
+npx rn-iso gc --delete --older-than 30   # drop entries unused for 30 days
+npx rn-iso gc --delete --all             # empty them whole, including the Xcode CAS
 ```
+
+Caches are part of every `gc` report, not something you ask for — there is no
+`--caches` flag. A bare `gc` writes nothing.
 
 rn-iso only detects the caches it was taught to recognise (Xcode's CAS, Metro's
-file maps). Anything chosen by a project's own config has to name itself:
+file maps). Anything chosen by a project's own config has to name itself, from
+code:
 
-```bash
-npx rn-iso cache register ~/.myapp-metro-cache --name "Metro transforms" --entries-depth 2
-npx rn-iso cache register ~/.myapp-cas --atomic   # index-backed: emptied whole or not at all
+```js
+import { register } from 'rn-iso/cache-manifest';
+
+register({ dir: '~/.myapp-metro-cache', name: 'Metro transforms', entriesDepth: 2 });
+register({ dir: '~/.myapp-cas', prune: 'atomic' }); // index-backed: emptied whole or not at all
 ```
 
-`--entries-depth` is what makes trimming safe, and the default of 1 is wrong for
+`entriesDepth` is what makes trimming safe, and the default of 1 is wrong for
 both caches above. A Metro `FileStore` shards its keys across 256 directories
 and a build cache is keyed `<platform>/<key>`, so at depth 1 a single removal
 takes a 256th of every transform on the machine, or an entire platform's builds.
@@ -246,10 +252,10 @@ idempotent and keyed on the directory, so a cache can do it on every build —
 which is exactly what `@rn-iso/metro-cache` and `@rn-iso/expo-build-cache`
 already do for you.
 
-The older `caches` setting still works: a list of paths under `caches` in a
-committed `.rn-iso.json` is reported alongside the registered ones. It has no
-`rn-iso config` key of its own, and every path in it is treated as a flat store,
-so prefer `cache register` for anything needing a depth or `--atomic`.
+The `caches` setting is the no-code alternative: a list of paths under `caches`
+in a committed `.rn-iso.json` is reported alongside the registered ones. It has
+no `rn-iso config` key of its own, and every path in it is treated as a flat
+store, so register from code for anything needing a depth or `atomic`.
 
 ```json
 { "caches": ["~/.myapp-metro-cache", "~/.myapp-build-cache"] }

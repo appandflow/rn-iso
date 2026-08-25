@@ -26,7 +26,7 @@ const ALLOWED_KEYS = ['ios.deviceType', 'ios.runtime', 'android.systemImage'];
 
 // Repo-layer settings additionally accept `worktreeDir`, `caches`, and any
 // `worktree.*` key (baseRef, include, exclude) -- the set that `worktree
-// create` and `gc --caches` resolve via resolveSettings. The prefix match is
+// create` and `gc`'s cache report resolve via resolveSettings. The prefix match is
 // deliberately wider than that list: settings.js owns which keys are actually
 // honoured, and warns by name about any that are not.
 export function isAllowedRepoKey(key) {

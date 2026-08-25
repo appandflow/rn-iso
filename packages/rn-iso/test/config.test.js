@@ -252,7 +252,7 @@ test('allConsolePortsAndSerials ignores entries from project paths that no longe
 
 // A path on an unplugged external volume only LOOKS gone. Its emulator may
 // still be running, so handing its console port to a second emulator would
-// collide. Same direction gc and prune fail in.
+// collide. Same direction gc fails in.
 test('allConsolePortsAndSerials keeps the claim of a project on an unmounted volume', () => {
   const unmounted = '/Volumes/NotPluggedIn/worktree';
   upsertProject(unmounted, { bundleId: 'com.x', androidPackage: 'com.x', isExpo: false });

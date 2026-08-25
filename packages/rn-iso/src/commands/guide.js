@@ -188,8 +188,8 @@ not on any remote"
   npx rn-iso worktree remove <path>
 
 DESTRUCTIVE COMMANDS -- ask the user first
-  gc --delete             erases build output, tens of GB
-  gc --caches --delete    empties the shared build caches every project uses
+  gc --delete             deletes orphaned rn-iso-* devices, tens of GB
+  gc --delete --all       empties the shared build caches every project uses
   worktree remove --force discards uncommitted and untracked work
   release                 DELETES the owned device, not just its assignment,
                           without checking whether anything is still attached
@@ -222,10 +222,12 @@ it. A record is what makes the device findable again, so it outlives a failed
 teardown rather than turning it into an orphan.
 
 A device leaks when a project is abandoned WITHOUT any of those -- the sim
-survives with nothing pointing at it. \`rn-iso gc\` (no flag, always safe)
-reports those; \`gc --delete\` reaps them. \`rn-iso prune\` only removes the
-dead config ENTRIES and frees their ports; it deletes no device, and says the
-devices those entries named are "no longer referenced" so gc can reap them.
+survives with nothing pointing at it. \`rn-iso gc\` (no flag, writes nothing,
+always safe) reports those; \`gc --delete\` reaps them, and in the same run
+drops the dead config ENTRIES those projects left behind and frees their
+Metro ports. \`--older-than <days>\` goes further: it also reaps an owned
+device whose PROJECT has been untouched that long, even though the project
+itself is still there.
 
 THE ONE CASE GC WILL NOT REAP
   If the config is gone entirely (deleted ~/.rn-iso, or a throwaway
@@ -241,15 +243,17 @@ DISK
   bulk of it -- Apple's default simulators and old runtimes are. Useful:
     xcrun simctl delete unavailable     # sims for runtimes you removed
     xcrun simctl list devices           # see everything
-    rn-iso gc                           # report build artifacts + orphans
+    rn-iso gc                           # report dead entries, orphans, caches
   Xcode recreates default simulators on demand, so deleting them is safe.
 
 SHARED BUILD CACHES
   The caches that make a second workspace fast are alive by design and never
-  included in a plain \`gc --delete\`. Ask for them:
-    rn-iso gc --caches                            # report sizes only
-    rn-iso gc --caches --delete --older-than 30   # trim unused entries
-    rn-iso cache list                             # the same set, sizes only
+  included in a plain \`gc --delete\`. Every \`gc\` run reports them anyway,
+  each row tagged (registered) or (detected), with its size:
+    rn-iso gc                            # report, caches included
+    rn-iso gc --delete --older-than 30   # trim entries nothing has used
+    rn-iso gc --delete --all             # empty them whole, index-backed ones
+                                         # (the Xcode CAS) included
   Trim rather than empty. Emptying costs the next build in every project the
   time the cache was saving.`,
   },
@@ -273,7 +277,7 @@ KEYS RN-ISO READS
   worktree.baseRef      "fresh" (origin/HEAD) or "head"
   worktree.include      carry-over patterns, same role as .worktreeinclude
   worktree.exclude      --carry-ignored skip list, same role as .worktreeexclude
-  caches                extra shared-cache paths for 'gc --caches' to report.
+  caches                extra shared-cache paths for 'gc' to report.
                         Repo layer or .rn-iso.json; the value is a JSON array,
                         e.g. rn-iso config caches '["~/.myapp-metro-cache"]'
                         --repo. Every path is treated as a flat store.
@@ -282,18 +286,20 @@ Anything else is IGNORED, and rn-iso warns about it by name. If you see such a
 warning, the key was either renamed or removed -- check this list rather than
 assuming it still applies.
 
-PREFER 'rn-iso cache register' OVER THE 'caches' SETTING
-A cache can register itself, once, and 'gc --caches' and 'rn-iso cache list'
-see it from then on:
+PREFER SELF-REGISTRATION OVER THE 'caches' SETTING
+There is no 'cache' command. A cache registers itself from code instead, once,
+and every 'gc' report shows it from then on, tagged (registered):
 
-  rn-iso cache register <dir> --name "<what to call it>" --entries-depth 2
+  import { register } from 'rn-iso/cache-manifest';
+  register({ dir: '<dir>', name: '<what to call it>', entriesDepth: 2 });
 
---entries-depth is how far below <dir> one entry sits (default 1, a flat
-store). Pass 2 for a root with a layer of grouping above the entries -- a
-Metro FileStore shards across 256 directories, a build cache is keyed
-<platform>/<key> -- or 'gc --caches --delete --older-than N' removes a whole
-shard or platform instead of one entry. Pass --atomic for a cache whose index
-references its own data (an LLVM CAS): it is then emptied whole or not at all.
+entriesDepth is how far below dir one entry sits (default 1, a flat store).
+Pass 2 for a root with a layer of grouping above the entries -- a Metro
+FileStore shards across 256 directories, a build cache is keyed
+<platform>/<key> -- or 'gc --delete --older-than N' removes a whole shard or
+platform instead of one entry. Pass prune: 'atomic' for a cache whose index
+references its own data (an LLVM CAS): it is then left alone by --older-than
+and emptied whole only by 'gc --delete --all'.
 Registration is idempotent and keyed on the directory.`,
   },
 };

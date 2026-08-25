@@ -84,7 +84,7 @@ export async function findReclaimablePort(excludeProjectPath, probe = isMetroRun
     // unplugged: the project still owns its label, port and device record.
     // allocatePort removes the entry of whatever this returns, so failing
     // open here would silently delete a live project's record -- the same
-    // direction gc and prune already fail in (CLAUDE.md item 8).
+    // direction gc's dead-entry sweep already fails in (CLAUDE.md item 8).
     if (!isMounted(path, mounted)) continue;
     if (typeof proj.metroPort === 'number') {
       candidates.push({ port: proj.metroPort, ownerPath: path });

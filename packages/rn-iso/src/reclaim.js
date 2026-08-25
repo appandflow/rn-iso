@@ -75,7 +75,7 @@ function reclaimOwnedDevices(project) {
 }
 
 // Drop a project's rn-iso state and, optionally, its owned devices. Shared by
-// `prune`, `gc`, and `worktree remove` so the three cannot drift.
+// `gc` and `worktree remove` so the two cannot drift.
 //
 // There is no build-output step here any more. Build output lives inside the
 // workspace (`<root>/.rn-iso/`), so it is reclaimed by whatever removes the

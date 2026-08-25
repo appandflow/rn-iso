@@ -5,8 +5,8 @@
 // them went away. Guarding DerivedData CLASSIFICATION stopped being
 // necessary once build output moved inside the workspace -- there is no
 // global directory left to reverse-map back to a project. Guarding the
-// PROJECT REGISTRY did not: findReclaimablePort (ports.js), gc's dead-entry
-// sweep and prune all refuse to act on a project whose volume is merely
+// PROJECT REGISTRY did not: findReclaimablePort (ports.js) and gc's
+// dead-entry sweep both refuse to act on a project whose volume is merely
 // unplugged, because removing its entry drops its device claim and orphans a
 // real simulator. See CLAUDE.md item 8: on doubt, skip, don't delete.
 import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
@@ -138,8 +138,8 @@ function resolveVolumeRoot(path) {
 // it is not. That is the exact bug CLAUDE.md #9 documents for the artifact
 // sweep, and listDerivedDataEntries below already resolves symlinks before
 // classifying -- this extracts that same logic so any OTHER caller that
-// gates a destructive action on "is this project's volume mounted" (prune,
-// gc's project sweep) goes through the same resolution instead of
+// gates a destructive action on "is this project's volume mounted" (gc's
+// project sweep, findReclaimablePort) goes through the same resolution instead of
 // re-introducing the textual-only bug in a second place. Ambiguity (an
 // unresolvable symlinked ancestor) returns false, the safe direction: an
 // unconfirmed volume must never be treated as mounted.

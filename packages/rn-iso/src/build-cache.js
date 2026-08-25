@@ -124,7 +124,7 @@ export async function fingerprintProject(projectRoot) {
   return result?.hash ?? null;
 }
 
-// Registration is what makes an entry visible to `gc --caches`, and every entry
+// Registration is what makes an entry visible to `gc`'s report, and every entry
 // is an independent directory, so old ones can be trimmed individually. The
 // entries sit two levels down -- <root>/<platform>/<key> -- so gc must be told
 // that, or it treats ios/ and android/ as the entries and one removal takes a

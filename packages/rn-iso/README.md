@@ -39,9 +39,8 @@ not take it back.
   just work. Locally every worktree sits somewhere different, and those caches
   quietly miss everything -- measured on one project as 0 ccache hits out of
   1094 across two workspaces. It is fixable, but it is a tax cloud does not pay.
-- **Disk grows without bound.** Simulators, DerivedData and the shared caches
-  that make any of this fast all accumulate. `gc` and `gc --caches` exist for
-  that reason.
+- **Disk grows without bound.** Simulators and the shared caches that make any
+  of this fast all accumulate. `gc` exists for that reason.
 
 State lives in `~/.rn-iso/config.json`, keyed by absolute project path. Worktrees count as separate projects. There is no shared mutex -- each project gets its own port and its own device.
 
@@ -123,13 +122,10 @@ All commands below take the same `npx rn-iso` prefix.
 | `status [--json]` | Show all projects' device assignments (owned/legacy) and Metro state. |
 | `release [<port>\|<shortcut>\|<path>] [--platform <p>]` | Free a project's device assignment. Deletes the device if owned, without checking occupancy (see above); clears it if legacy/physical. On a failed delete it keeps the record and exits 1. |
 | `shutdown [<shortcut>\|<path>] [-y] [--keep-sims]` | Kill Metro, shut down (never delete) owned sims/emulators, skipping any that are occupied. Owned device records stay recorded so `up` can reuse them; legacy/physical assignments are cleared. No arg = every registered project. |
-| `prune` | Remove entries for projects whose directory no longer exists, freeing their Metro ports and dropping their device records. Deletes no sim, emulator, or build artifact -- `gc` reaps the devices those entries no longer reference. |
-| `gc [--delete] [--older-than <days>] [--caches]` | Report (or, with `--delete`, reclaim) orphaned Xcode DerivedData, dead project entries, and orphaned `rn-iso-*` devices. Reports only by default. `--caches` additionally reports the shared build caches -- see below. |
+| `gc [--delete] [--older-than <days>] [--all]` | Report what rn-iso has left behind: entries for projects whose directory no longer exists, orphaned `rn-iso-*` devices, and every shared build cache with its size. Reports and writes nothing by default; `--delete` reclaims the dead entries (freeing their Metro ports) and reaps the orphaned devices. `--older-than <days>` additionally reaps owned devices whose *project* has gone untouched that long, and trims cache entries nothing has used in that time. `--all` (with `--delete`) empties the caches whole -- see below. |
 | `config [<key> [<value>]] [--unset] [--project <target>] [--repo]` | Get / set a per-project (or, with `--repo`, repo-shared) setting. |
 | `doctor [--json]` | Report the configuration that makes a second workspace slower than it needs to be: a missing dev client, a per-project Metro cache, a compilation cache left at its default path, a ccache conflict, a build-cache provider on the key this SDK ignores. Read-only, and always exits 0. |
 | `init [--force]` | Write `WORKFLOW.md`, an executable `scripts/dev`, and `.worktreeexclude` for this repo, then run `doctor`. Never overwrites an existing file without `--force`. |
-| `cache register <dir> [--name <n>] [--atomic] [--entries-depth <n>] [--note <s>]` | Record a shared cache so `gc --caches` can report and trim it. Idempotent, keyed on the directory. |
-| `cache forget <dir>` / `cache list` | Drop a registration (deleting nothing on disk) / show every cache gc knows about, registered *and* detected, with sizes. |
 | `build-cache resolve --platform <p> [--configuration <c>] [--variant <v>] [--device <id>]` | Print the path of a cached build matching the current native fingerprint. Prints nothing and exits 1 on a miss. |
 | `build-cache store --platform <p> --path <app> [--configuration <c>] [--variant <v>] [--device <id>]` | Store a build you just made under the current native fingerprint. |
 | `build-cache path` | Print the cache root, so a script can inspect or clear it directly. |
@@ -168,25 +164,25 @@ npx rn-iso config ios.deviceType --unset
 
 Allowed project-layer keys today: `ios.deviceType`, `ios.runtime`, `android.systemImage`. Pass `--repo` to operate on the repo-shared layer instead (keyed by the repo's git common dir), which additionally accepts `worktreeDir` and any `worktree.*` key -- see "Settings" below. Settings live in `~/.rn-iso/config.json`.
 
-## Shared build caches (`gc --caches`)
+## Shared build caches
 
-Everything `gc` reclaims by default is *dead*: a DerivedData directory whose
-workspace no longer exists belongs to nobody. Shared build caches are the
-opposite -- alive by design, shared by every project on the machine, and
-pruned by nothing:
+Everything `gc` reclaims is *dead*: a project entry whose directory no longer
+exists belongs to nobody, and a `rn-iso-*` simulator nothing references is
+never coming back. Shared build caches are the opposite -- alive by design,
+shared by every project on the machine, and pruned by nothing:
 
 - **Metro's `FileStore`** has no eviction logic whatsoever.
 - **Xcode's compilation cache** has no size cap.
 - **Metro file maps** accumulate one file per project root ever served.
 
-So they are reported in their own bucket and are *never* touched by a plain
-`gc --delete`:
+So every `gc` run reports them -- in their own bucket, tagged *registered* or
+*detected*, and never counted in the reclaim total -- and a plain `gc --delete`
+*never* touches them:
 
 ```bash
-npx rn-iso gc --caches                            # report sizes only
-npx rn-iso gc --caches --delete --older-than 30   # trim entries unused for 30 days
-npx rn-iso gc --caches --delete                   # empty them completely
-npx rn-iso cache list                             # the same set, sizes only
+npx rn-iso gc                            # report everything, caches included
+npx rn-iso gc --delete --older-than 30   # trim entries unused for 30 days
+npx rn-iso gc --delete --all             # empty them completely
 ```
 
 Prefer trimming. Most of these caches are a flat collection of independent
@@ -199,7 +195,7 @@ alone would evict exactly the entries that are earning their keep.
 Xcode's compilation cache is the exception. It is an LLVM CAS whose `v4.actions`
 index references its `v9.*.leaf` data files, so removing leaves individually
 would leave the index pointing at data that is gone. `--older-than` reports it
-as left alone; it can only be emptied whole.
+as left alone; it can only be emptied whole, which is what `--all` does.
 
 Emptying is a performance decision, not cleanup: the next build in every
 project pays to refill what you removed. The summary says so.
@@ -208,30 +204,38 @@ project pays to refill what you removed. The summary says so.
 
 A Metro `FileStore` root, a build-cache provider's artifact directory, a
 relocated `COMPILATION_CACHE_CAS_PATH` -- all come from a project's own config,
-so rn-iso cannot guess them. The cache names itself instead, once:
+so rn-iso cannot guess them. The cache names itself instead, once, from code:
 
-```bash
-npx rn-iso cache register ~/.myapp-metro-cache --name "Metro transforms" --entries-depth 2
-npx rn-iso cache register ~/.myapp-cas --atomic   # index-backed: emptied whole or not at all
+```js
+// A setup script, a build-cache provider -- anywhere that creates the cache.
+// `rn-iso/cache-manifest` is ESM, so a CJS caller needs `await import(...)`.
+import { register } from 'rn-iso/cache-manifest';
+
+register({
+  dir: '~/.myapp-metro-cache',
+  name: 'Metro transforms',
+  entriesDepth: 2,
+});
+register({ dir: '~/.myapp-cas', prune: 'atomic' }); // index-backed: emptied whole or not at all
 ```
 
-`--entries-depth` says how far below the directory one entry sits, and it is
+`entriesDepth` says how far below the directory one entry sits, and it is
 what keeps trimming safe. The default, 1, is a flat store: every child of the
 root is an entry. A root with a layer of grouping *above* the entries registers
 2 -- Metro's `FileStore` shards its keys across 256 directories, and a build
-cache is keyed `<platform>/<key>` -- so `gc --caches --delete --older-than 30`
+cache is keyed `<platform>/<key>` -- so `gc --delete --older-than 30`
 trims one transform or one build instead of a 256th of every transform on the
 machine, or an entire platform's builds.
 
 Registration is idempotent and keyed on the directory, so a cache can call it on
-every build; `@rn-iso/metro-cache` and `@rn-iso/expo-build-cache` both do. Use
-`rn-iso cache forget <dir>` to drop a registration without deleting anything.
+every build; `@rn-iso/metro-cache` and `@rn-iso/expo-build-cache` both do (by
+writing the manifest directly, so they need no rn-iso installed at all).
 
-The older `caches` setting still works and is still read: a list of paths under
-`caches` in a committed `.rn-iso.json` is reported alongside the registered
-ones. It has no `rn-iso config` key of its own, and every path in it is treated
-as a flat store, so prefer `cache register` for anything that needs a depth or
-`--atomic`.
+The `caches` setting is the no-code alternative and is still read: a list of
+paths under `caches` in a committed `.rn-iso.json` is reported alongside the
+registered ones. It has no `rn-iso config` key of its own, and every path in it
+is treated as a flat store, so register from code for anything that needs a
+depth or `atomic`.
 
 ```json
 { "caches": ["~/.myapp-metro-cache", "~/.myapp-build-cache"] }
@@ -240,7 +244,7 @@ as a flat store, so prefer `cache register` for anything that needs a depth or
 ## The cache packages
 
 Two optional packages ship alongside the CLI. Both register themselves with
-rn-iso the first time they run, so `gc --caches` reports and trims them, and
+rn-iso the first time they run, so `gc` reports and trims them, and
 both work fine without rn-iso installed -- it is an optional peer.
 
 - **[`@rn-iso/metro-cache`](https://www.npmjs.com/package/@rn-iso/metro-cache)**

@@ -8,7 +8,7 @@
 //   config.cacheStores = sharedCacheStores('myapp');
 //
 // The thin part is the FileStore. The part worth packaging is telling rn-iso the
-// cache exists, so `gc --caches` can report and trim it -- Metro's FileStore has
+// cache exists, so `gc` can report and trim it -- Metro's FileStore has
 // no eviction logic whatsoever, so without that it grows until the disk does.
 
 const fs = require('node:fs');
@@ -45,7 +45,7 @@ function cacheRoot(name) {
   return name === undefined || name === null || name === '' ? root : path.join(root, cacheNameSegment(name));
 }
 
-// Registering makes this cache visible to `rn-iso gc --caches`, which is the
+// Registering makes this cache visible to `rn-iso gc`'s report, which is the
 // only thing that will ever trim it -- Metro's FileStore has no eviction of its
 // own.
 //

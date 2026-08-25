@@ -123,7 +123,7 @@ function artifactIn(dir) {
   return found ? path.join(dir, found) : null;
 }
 
-// Registering makes this cache visible to `rn-iso gc --caches`, which is the
+// Registering makes this cache visible to `rn-iso gc`'s report, which is the
 // only thing that will ever trim it.
 //
 // The manifest is written directly rather than through rn-iso's own module, for

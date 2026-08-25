@@ -226,9 +226,9 @@ test('pruneCache trims only the listed files when a cache does not own its direc
   }
 });
 
-// The `caches` setting is the only way to tell rn-iso about a cache it cannot
-// detect, and `gc --caches` resolved settings with no project path at all -- so
-// the setting existed, was documented, and reached nothing.
+// The `caches` setting is the no-code way to tell rn-iso about a cache it
+// cannot detect, and gc's cache report resolved settings with no project path
+// at all -- so the setting existed, was documented, and reached nothing.
 test('declaredCachePaths reads the caches setting of the project it is run in', () => {
   const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'rn-iso-declproj-')));
   const declared = mkdtempSync(join(tmpdir(), 'rn-iso-declcache-'));
@@ -259,7 +259,7 @@ test('declaredCachePaths is empty outside a project rather than an error', () =>
   }
 });
 
-// `cache list` prints the tag, so a machine carrying gigabytes of Xcode CAS is
+// gc's report prints the tag, so a machine carrying gigabytes of Xcode CAS is
 // never described as having no caches.
 test('discoverCaches says of each cache whether a project registered it', () => {
   const registeredDir = mkdtempSync(join(tmpdir(), 'rn-iso-src-reg-'));

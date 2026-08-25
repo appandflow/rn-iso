@@ -181,7 +181,7 @@ export function removalBlockers({ dirty, unpushed }) {
 // `metroPort` and the device claim actually live; the worktree-root entry
 // has `platforms: {}` and `metroPort: null`. Reclaiming only the root key
 // (the old behaviour) frees nothing and leaves the Metro process and its
-// port claim to leak until someone runs `prune`.
+// port claim to leak until someone runs `gc --delete`.
 //
 // Reclaims `rootPath` itself plus every registered key that is a
 // path-segment prefix match under it (reusing isPathPrefix from config.js,

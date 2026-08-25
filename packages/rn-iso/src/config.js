@@ -415,11 +415,11 @@ export function allConsolePortsAndSerials({ isMounted = isOnMountedVolume } = {}
   for (const [path, proj] of Object.entries(cfg.projects || {})) {
     // Entries from project paths that no longer exist on disk are orphaned --
     // nothing can ever run from a deleted worktree again -- so their ports
-    // and serials are free to reuse. `prune` removes the dead entries.
+    // and serials are free to reuse. `gc --delete` removes the dead entries.
     // A path on a volume that is not mounted right now only looks gone (this
     // machine's repos live on an external SSD), and its emulator may well be
     // running: handing its console port to a second emulator would collide,
-    // so it keeps its claim, the same direction gc and prune fail in.
+    // so it keeps its claim, the same direction gc fails in.
     if (!existsSync(path) && isMounted(path)) continue;
     const android = proj.platforms?.android;
     if (typeof android?.consolePort === 'number') {

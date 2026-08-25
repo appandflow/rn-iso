@@ -38,7 +38,7 @@ test('isRealMount refuses to guess when either dev is missing', () => {
 // Carried over from the symlink case test/artifacts.test.js used to cover
 // through listDerivedDataEntries. The producer is gone, but the symlink
 // resolution behind isOnMountedVolume is the whole reason this half of
-// artifacts.js survived, and findReclaimablePort/gc/prune gate destructive
+// artifacts.js survived, and findReclaimablePort and gc gate destructive
 // work on it -- so the coverage moves here rather than disappearing with the
 // DerivedData classifier.
 test('isOnMountedVolume resolves a symlinked ancestor instead of classifying the raw path text', () => {

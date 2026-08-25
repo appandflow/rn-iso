@@ -223,7 +223,7 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
 // the worktree root that `worktree create` registers. That nested key is
 // where metroPort and the device claim actually live. Reclaiming only the
 // exact `path` argument (the old behaviour) leaves the nested entry, its
-// Metro process, and its port claim to leak until `prune` runs.
+// Metro process, and its port claim to leak until `gc --delete` runs.
 test('action: reclaims a nested monorepo app-dir project registered under the worktree root, not just the root itself', async () => {
   const nestedDir = join(wtDir, 'apps', 'mobile');
   upsertProject(wtDir, { metroPort: null, worktreeRoot: true });

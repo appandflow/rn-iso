@@ -205,9 +205,9 @@ shared caches are content-addressed and append-only.
 ## Keeping it fast
 
 \`\`\`bash
-npx rn-iso doctor                                 # what is silently costing time
-npx rn-iso gc --caches                            # what the caches have grown to
-npx rn-iso gc --caches --delete --older-than 30   # trim what nothing has used
+npx rn-iso doctor                        # what is silently costing time
+npx rn-iso gc                            # what the shared caches have grown to
+npx rn-iso gc --delete --older-than 30   # trim what nothing has used
 \`\`\`
 `;
 }
