@@ -16,10 +16,12 @@
 // report here: v3 prescribes the cache paths, so there is nothing left to
 // register by hand. The programmatic `rn-iso/cache-manifest` export stays --
 // that is how @rn-iso/metro-cache and src/build-cache.js self-register.
-import { existsSync, statSync } from 'fs';
+import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
+import { homedir, tmpdir } from 'os';
+import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError } from 'commander';
-import { clearDevice, loadConfig } from '../config.js';
+import { clearDevice, getConfigDir, loadConfig } from '../config.js';
 import {
   formatBytes,
   isOnMountedVolume,
@@ -256,8 +258,18 @@ export function formatGcReport({
       lines.push(`  ${formatBytes(c.bytes).padStart(10)}  ${c.name}${tag}`);
       lines.push(`              ${c.dir}`);
       if (c.note) lines.push(`              ${c.note}`);
+      // Only --all annotates these, and it says both halves out loud: what it
+      // would empty, and what it refuses to touch and why. A refusal that is
+      // not printed is indistinguishable from a cache that was not there.
+      if (c.willEmpty) lines.push('              --all would EMPTY this cache');
+      else if (c.emptySkipped) lines.push(`              --all skips this cache: ${c.emptySkipped}`);
     }
     lines.push(`  total: ${formatBytes(total)}`);
+    const doomed = caches.filter(c => c.willEmpty);
+    if (doomed.length) {
+      const doomedBytes = doomed.reduce((n, c) => n + c.bytes, 0);
+      lines.push(`  --all would empty ${doomed.length} of these (${formatBytes(doomedBytes)})`);
+    }
   }
 
   return lines;
@@ -302,10 +314,136 @@ function deviceSweepIsScoped(unsafeAllowScopedDeviceSweep) {
   return Boolean(process.env.RN_ISO_HOME) && !unsafeAllowScopedDeviceSweep;
 }
 
+// The same invariant, one step further out. `deviceSweepIsScoped` says a scoped
+// config must never sweep machine-global DEVICES; --all needs the general form:
+//
+//   RN_ISO_HOME scopes the config. Anything outside the config dir is
+//   machine-global. A scoped config must never destroy machine-global state.
+//
+// It matters here because discoverCaches returns DETECTED caches as well as
+// registered ones, and every detected one is machine-global: Xcode's CAS lives
+// under ~/Library/Developer/Xcode/DerivedData and Metro's file maps live in
+// os.tmpdir(). Neither moves with RN_ISO_HOME. So --all under a throwaway home
+// would empty the real machine's caches -- the identical bug that was just
+// fixed for devices, aimed at disk instead of at live environments.
+//
+// The device guard skips the sweep wholesale because there is no such thing as
+// a simulator "inside getConfigDir()". Caches do have that distinction, so this
+// one filters rather than skips: an in-scope cache is still emptied, and the
+// machine-global ones are reported as refused WITH the reason.
+//
+// There is deliberately no parameter, flag or env var that lifts it, not even
+// the test-only kind `deviceSweepIsScoped` accepts. That escape hatch is safe
+// there because every device those tests touch is mocked; nothing mocks rmSync,
+// so the same hatch here would be a way for a buggy test to empty the real
+// machine's CAS. The suite does not need one: a cache placed inside
+// getConfigDir() is genuinely in scope and is emptied without any override.
+function cacheSweepIsScoped() {
+  return Boolean(process.env.RN_ISO_HOME);
+}
+
+// Canonicalized so a containment check is not fooled by symlinks (CLAUDE.md
+// item 6): on macOS getConfigDir() under a temp dir resolves through
+// /var -> /private/var, and comparing one resolved path against one unresolved
+// one would answer "outside" for a directory that is plainly inside. A path
+// that cannot be realpath'd falls back to `resolve`, which then reads as
+// outside -- doubt skips, it does not delete (CLAUDE.md item 8).
+function canonicalPath(p) {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+// Strictly inside: the config dir ITSELF is not "a cache in scope". It holds
+// config.json and the cache manifest, and emptying it would take the record of
+// every device rn-iso owns with it.
+function isInsideConfigDir(dir) {
+  const root = canonicalPath(getConfigDir());
+  const target = canonicalPath(dir);
+  const rel = relative(root, target);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+// Annotates each cache with what --all would do to it, so the report and the
+// action agree by construction rather than by both re-deciding. Without --all
+// no cache is annotated at all, which is what keeps a bare `gc` a report.
+function planCacheEmptying(caches, all) {
+  if (!all) return caches;
+  const scoped = cacheSweepIsScoped();
+  return caches.map(c => {
+    if (scoped && !isInsideConfigDir(c.dir)) {
+      return {
+        ...c,
+        willEmpty: false,
+        emptySkipped: `RN_ISO_HOME scopes this config, but ${c.dir} is outside it and therefore machine-global`,
+      };
+    }
+    if (!ownsItsDirectory(c)) {
+      return { ...c, willEmpty: false, emptySkipped: `${c.dir} is not a directory this cache owns` };
+    }
+    return { ...c, willEmpty: true, emptySkipped: null };
+  });
+}
+
+// A last fail-closed check on the one operation in `gc` that cannot be undone.
+// A cache that carries an explicit `files` list does not own its directory --
+// Metro's maps live loose in os.tmpdir() alongside everything else's temp
+// files -- and a mis-registered `dir` naming a volume root, the user's home,
+// the temp dir or the config dir is a typo, never a cache.
+function ownsItsDirectory(cache) {
+  if (Array.isArray(cache.files)) return false;
+  const dir = canonicalPath(cache.dir);
+  if (dirname(dir) === dir) return false;
+  return ![homedir(), tmpdir(), getConfigDir()].map(canonicalPath).includes(dir);
+}
+
+// Emptying, as opposed to --older-than's trimming.
+//
+// Everything pruneCache can already handle goes through pruneCache: a cutoff
+// one day in the FUTURE makes every entry older than it, so an entries-style
+// cache empties through the exact code --older-than uses, honouring
+// entriesDepth and an explicit `files` list rather than re-deriving either.
+//
+// An index-backed cache is the one case it cannot: pruneCache refuses it by
+// design ("empty it whole or not at all"), and that refusal is the whole reason
+// --all exists -- with only age-based trimming on the machine, Xcode's CAS was
+// skipped by every path and grew without bound. `prune: 'atomic'` is the
+// contract from caches.js and cache-manifest.js; this reads it rather than
+// re-deciding which caches are index-backed.
+function emptyCache(cache) {
+  if (cache.prune !== 'atomic') {
+    return pruneCache(cache, { olderThanDays: 0, now: Date.now() + DAY_MS });
+  }
+
+  let names;
+  try {
+    names = readdirSync(cache.dir);
+  } catch (e) {
+    return { removed: 0, bytes: 0, skipped: `could not read ${cache.dir}: ${e.message}` };
+  }
+  // The directory itself stays: it is the cache, and the next build recreates
+  // its contents into it. Only what it holds goes, in one step, which is what
+  // "emptied whole" means for an index that addresses its own data files.
+  let removed = 0;
+  let failed = 0;
+  for (const name of names) {
+    try {
+      rmSync(join(cache.dir, name), { recursive: true, force: true });
+      removed++;
+    } catch {
+      failed++;
+    }
+  }
+  return { removed, bytes: failed ? 0 : (cache.bytes ?? 0), failed, skipped: null };
+}
+
 // Everything gc knows, gathered without writing anything. `runGc` prints this
 // and then, only with --delete, acts on it.
 export async function collectGcReport({
   olderThan = null,
+  all = false,
   now = Date.now(),
   lastTouched = projectLastTouched,
   unsafeAllowScopedDeviceSweep = false,
@@ -313,7 +451,12 @@ export async function collectGcReport({
   // Reported on every run now that v3 prescribes the cache paths: `cache list`
   // was the only way to see a registered cache, and it is gone. Sizing walks
   // the directories, which is the cost of the report being complete.
-  const caches = sizeCaches(discoverCaches({ declared: declaredCachePaths() }));
+  // With --all each row is annotated with whether it would be emptied and, if
+  // not, why -- decided here so the report and the action cannot disagree.
+  const caches = planCacheEmptying(
+    sizeCaches(discoverCaches({ declared: declaredCachePaths() })),
+    all
+  );
 
   // A project path that no longer exists looks "dead" -- but if it lives
   // on a volume that is simply not mounted right now (this machine's
@@ -410,7 +553,7 @@ export async function collectGcReport({
     }
   }
 
-  return { skipped, deadProjects, orphanedDevices, staleDevices, deviceSweepNotices, caches, olderThan };
+  return { skipped, deadProjects, orphanedDevices, staleDevices, deviceSweepNotices, caches, olderThan, all };
 }
 
 // Report, then (only with --delete) act. Exported so the suite can drive the
@@ -418,8 +561,13 @@ export async function collectGcReport({
 // the flags declared below.
 export async function runGc(opts = {}) {
   const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
+  // --all reaches CACHES ONLY. It is not "delete everything gc knows about":
+  // devices and project entries are reached by --delete alone, exactly as
+  // before, so this flag's blast radius is disk rather than live environments.
+  const all = Boolean(opts.all);
   const report = await collectGcReport({
     olderThan,
+    all,
     unsafeAllowScopedDeviceSweep: opts.unsafeAllowScopedDeviceSweep,
   });
   for (const line of formatGcReport(report)) console.log(line);
@@ -431,11 +579,14 @@ export async function runGc(opts = {}) {
   const actionable = deadProjects.length > 0
     || orphanedDevices.length > 0
     || staleDevices.length > 0
-    || (olderThan !== null && caches.length > 0);
+    || ((olderThan !== null || all) && caches.length > 0);
 
   if (!opts.delete) {
-    if (actionable) console.log(chalk.dim('\nDry run. Re-run with --delete to reclaim.'));
-    else if (caches.length) console.log(chalk.dim('\nPass --delete --older-than <days> to trim the caches above.'));
+    if (all) console.log(chalk.dim('\nDry run. Re-run with --delete --all to empty the caches above.'));
+    else if (actionable) console.log(chalk.dim('\nDry run. Re-run with --delete to reclaim.'));
+    else if (caches.length) {
+      console.log(chalk.dim('\nPass --delete --older-than <days> to trim the caches above, or --delete --all to empty them.'));
+    }
     return;
   }
 
@@ -514,9 +665,18 @@ export async function runGc(opts = {}) {
   // touched in weeks that are not. A CAS is the exception -- its index would
   // outlive the leaves -- and it says so rather than silently ignoring the
   // flag.
+  // --all supersedes --older-than for caches: emptying is what trimming by age
+  // could not do to an index-backed cache, and running both would only ask the
+  // same directory twice. --older-than still governs the stale-device sweep
+  // above, which is why the two flags remain independently useful.
+  if (all) {
+    emptyCaches(caches);
+    return;
+  }
+
   if (olderThan === null) {
     if (caches.length) {
-      console.log(chalk.dim('Shared caches left alone: pass --older-than <days> to trim them.'));
+      console.log(chalk.dim('Shared caches left alone: pass --older-than <days> to trim them, or --all to empty them.'));
     }
     return;
   }
@@ -541,6 +701,36 @@ export async function runGc(opts = {}) {
   }
 }
 
+// The --all half of the cache pass. Kept beside the trim loop it mirrors: both
+// report per cache, both total at the end, and neither counts what it removed
+// as reclaimed garbage -- a cache is weight someone will now pay to refill.
+function emptyCaches(caches) {
+  let cacheBytes = 0;
+  for (const c of caches) {
+    if (!c.willEmpty) {
+      console.log(chalk.yellow(`Left ${c.name} alone: ${c.emptySkipped}`));
+      continue;
+    }
+    const r = emptyCache(c);
+    if (r.skipped) {
+      console.log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
+    } else if (r.removed) {
+      cacheBytes += r.bytes;
+      console.log(chalk.green(`Emptied ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`));
+    } else {
+      console.log(chalk.dim(`${c.name}: already empty`));
+    }
+    if (r.failed) {
+      console.log(chalk.red(`  ${r.failed} entr${r.failed === 1 ? 'y' : 'ies'} in ${c.dir} could not be removed`));
+    }
+  }
+  if (cacheBytes) {
+    console.log(
+      chalk.dim(`Emptied ${formatBytes(cacheBytes)} of shared cache. Every build that wanted any of it now pays to rebuild it.`)
+    );
+  }
+}
+
 export default function gcCommand(program) {
   program
     .command('gc')
@@ -553,6 +743,7 @@ export default function gcCommand(program) {
       }
       return n;
     })
+    .option('--all', 'with --delete, empty every shared cache whole rather than trimming it by age -- the only way to clear an index-backed cache. Reaches caches only, never devices or project entries. Caches outside the config dir are refused while RN_ISO_HOME is set.')
     .action(async opts => {
       await runGc(opts);
     });

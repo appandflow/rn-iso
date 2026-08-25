@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
@@ -701,6 +701,134 @@ test('--delete --older-than trims the cache entries nothing has touched', async 
   const { existsSync } = await import('node:fs');
   assert.equal(existsSync(oldEntry), false, 'the untouched entry should be trimmed');
   assert.ok(existsSync(freshEntry), 'a recently used entry must survive');
+});
+
+// --- gc --delete --all: the whole-or-nothing caches ---------------------
+//
+// --older-than TRIMS entries by age, and an index-backed cache cannot be
+// trimmed at all: Xcode's LLVM CAS addresses its `v9.*.leaf` data files from a
+// `v4.actions` index, so removing leaves individually corrupts it. pruneCache
+// declines it by design, which left nothing on the machine able to clear it.
+// --all is that path, and it is emptying rather than trimming.
+
+test('--delete --all empties an index-backed cache that --older-than cannot trim', async () => {
+  // Registered INSIDE getConfigDir(): RN_ISO_HOME scopes what --all is allowed
+  // to destroy, and a cache under the config dir is genuinely in scope.
+  const casDir = join(tmpHome, 'compilation-cache');
+  const leaf = join(casDir, 'v9.data.leaf');
+  const index = join(casDir, 'v4.actions');
+  mkdirSync(casDir, { recursive: true });
+  writeFileSync(leaf, 'x'.repeat(1000));
+  writeFileSync(index, 'index');
+  register({ dir: casDir, name: 'Xcode compilation cache', prune: 'atomic' });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+
+  const report = await collectGcReport({ all: true });
+  assert.ok(
+    report.caches.some(c => c.prune === 'atomic' && c.willEmpty),
+    'an in-scope index-backed cache must be marked for emptying'
+  );
+
+  // The gap --all exists to close: age-based trimming skips this cache whole.
+  await captureLog(() => cli(['--delete', '--older-than', '30']));
+  assert.ok(existsSync(leaf), '--older-than must leave an index-backed cache alone');
+
+  await captureLog(() => cli(['--delete', '--all']));
+  assert.equal(existsSync(leaf), false, '--delete --all must empty the data');
+  assert.equal(existsSync(index), false, 'the index goes with the data it addresses');
+});
+
+// Emptying an entries-style cache goes through pruneCache, the same code
+// --older-than uses -- there is no second removal path for the ordinary case.
+test('--delete --all empties an entries-style cache including entries used today', async () => {
+  const cacheDir = join(tmpHome, 'my-cache');
+  const freshEntry = join(cacheDir, 'entry-fresh');
+  mkdirSync(freshEntry, { recursive: true });
+  writeFileSync(join(freshEntry, 'blob'), 'x'.repeat(1000));
+  register({ dir: cacheDir, name: 'My cache' });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+
+  await captureLog(() => cli(['--delete', '--all']));
+
+  assert.equal(existsSync(freshEntry), false, '--all empties; it does not filter by age');
+  assert.ok(existsSync(cacheDir), 'the cache directory itself stays; only its entries go');
+});
+
+test('--all without --delete reports what would be emptied and writes nothing', async () => {
+  const casDir = join(tmpHome, 'compilation-cache');
+  const leaf = join(casDir, 'v9.data.leaf');
+  mkdirSync(casDir, { recursive: true });
+  writeFileSync(leaf, 'x'.repeat(1000));
+  register({ dir: casDir, name: 'Xcode compilation cache', prune: 'atomic' });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+  const before = loadConfig();
+
+  const output = await captureLog(() => cli(['--all']));
+
+  assert.match(output, /Xcode compilation cache/);
+  assert.match(output, /empt/i, 'the report must say the cache would be emptied');
+  assert.ok(existsSync(leaf), '--all without --delete must write nothing');
+  assert.deepEqual(loadConfig(), before, '--all without --delete must not mutate config');
+});
+
+// The guard --all makes mandatory, and the reason this flag is dangerous:
+// discoverCaches returns DETECTED caches as well as registered ones, and the
+// detected ones are MACHINE-GLOBAL. Xcode's CAS sits under
+// ~/Library/Developer/Xcode/DerivedData and Metro's file maps sit in
+// os.tmpdir(); neither moves with RN_ISO_HOME. So --all under a throwaway home
+// would empty the real machine's caches -- structurally the same bug as the
+// scoped device sweep that destroyed two real simulators on this branch, aimed
+// at disk instead of at live environments.
+//
+// RN_ISO_HOME scopes the config. Anything outside the config dir is
+// machine-global. A scoped config must never destroy machine-global state.
+test('--delete --all under a scoped home refuses machine-global caches', async () => {
+  // Detected exactly the way it is on a real machine: HOME is redirected here,
+  // so this is where caches.js looks for Xcode's CAS. It is outside
+  // getConfigDir(), which is what makes it off limits.
+  const globalCas = join(fakeHome, 'Library', 'Developer', 'Xcode', 'DerivedData', 'CompilationCache.noindex');
+  const leaf = join(globalCas, 'v9.data.leaf');
+  mkdirSync(globalCas, { recursive: true });
+  writeFileSync(leaf, 'x'.repeat(1000));
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+
+  const output = await captureLog(() => cli(['--delete', '--all']));
+
+  assert.ok(existsSync(leaf), 'a machine-global cache must survive a scoped --all');
+  assert.match(output, /RN_ISO_HOME/, 'the refusal must be reported with its reason, not silent');
+});
+
+// --all's blast radius is disk, never live environments. The device sweep is
+// deliberately LIFTED here: --all must not widen its reach even on a run where
+// the sweep is genuinely working.
+test('--all reaches caches only: never a device, never a project entry', async () => {
+  const livePath = join(fakeHome, 'live-project');
+  mkdirSync(livePath, { recursive: true });
+  saveConfig({
+    version: 2,
+    projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-LIVE', owned: true } } } },
+    repos: {},
+  });
+  const cacheDir = join(tmpHome, 'my-cache');
+  const entry = join(cacheDir, 'entry-a');
+  mkdirSync(entry, { recursive: true });
+  writeFileSync(join(entry, 'blob'), 'x'.repeat(1000));
+  register({ dir: cacheDir, name: 'My cache' });
+  const execCalls = [];
+  installDeviceExecutor({ devices: [{ udid: 'UDID-LIVE', name: 'rn-iso-live' }], execCalls });
+
+  await captureLog(() => sweepingGc({ delete: true, all: true }));
+
+  assert.equal(execCalls.some(c => c.startsWith('xcrun simctl shutdown')), false, '--all must not shut down a device');
+  assert.equal(execCalls.some(c => c.startsWith('xcrun simctl delete')), false, '--all must not delete a device');
+  const cfg = loadConfig();
+  assert.ok(cfg.projects[livePath], '--all must not drop a project entry');
+  assert.ok(cfg.projects[livePath].platforms?.ios, '--all must not clear a device record');
+  assert.equal(existsSync(entry), false, 'the cache it WAS aimed at is emptied');
 });
 
 test('rejects a non-numeric --older-than instead of silently skipping every entry', async () => {
