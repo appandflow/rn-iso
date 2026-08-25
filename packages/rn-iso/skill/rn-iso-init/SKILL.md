@@ -104,7 +104,17 @@ EAS. `rn-iso ios` / `rn-iso android` consult the same cache directly and need no
 provider at all; configuring one makes the two share artifacts instead of
 filling two caches with the same builds.
 
-**Use the packaged provider rather than writing one.** It addresses the same
+**An existing provider is kept, never replaced.** If the project already
+configures one -- `"buildCacheProvider": "eas"` on newer SDKs is common, and it
+serves the whole team a remote cache -- leave it exactly where it is. Do not
+swap it for `@rn-iso/expo-build-cache`: `rn-iso ios` / `rn-iso android` never
+consult the provider (they build directly and use rn-iso's local cache), so
+the EAS cache keeps serving `expo run` / CI builds while rn-iso's cache serves
+the agent loop. The two coexist; replacing one with the other only removes a
+cache someone was using.
+
+**Where the project has NO provider, use the packaged one rather than writing
+your own.** It addresses the same
 `~/.rn-iso/build-cache` that `rn-iso ios` does, it registers itself with rn-iso
 so `gc` can report and trim it, and it works with no rn-iso installed:
 

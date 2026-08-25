@@ -296,10 +296,16 @@ export function checkBuildCacheProvider(appConfig, sdkMajor, isExpo = true, dyna
     return finding(
       'note',
       'No Expo build cache provider configured',
-      'Without one, every workspace builds the app even when no native input changed. With one, a JS-only ticket installs a cached .app instead of compiling.',
-      'Add a buildCacheProvider to app.json pointing at a local provider module.'
+      'Without one, every `expo run` builds the app even when no native input changed. rn-iso ios/android have their own local cache regardless; a provider extends the same benefit to builds run outside rn-iso.',
+      'Add a buildCacheProvider to app.json -- "eas" for the remote EAS cache, or @rn-iso/expo-build-cache for the local one. An existing provider is kept as-is.'
     );
   }
+  // A provider is configured. Which one is the project's own business: "eas"
+  // (the remote cache), @rn-iso/expo-build-cache, or a custom module all
+  // satisfy this check, and init never replaces one. rn-iso ios/android do
+  // not consult the provider -- they build with xcodebuild/gradle directly
+  // and use rn-iso's local cache -- so a remote EAS cache and rn-iso's cache
+  // coexist, each serving the builds that go through its own path.
 
   if (sdkMajor && sdkMajor <= 53 && topLevel && !experimental) {
     return finding(
