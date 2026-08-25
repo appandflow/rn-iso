@@ -228,8 +228,8 @@ trims one transform or one build instead of a 256th of every transform on the
 machine, or an entire platform's builds.
 
 Registration is idempotent and keyed on the directory, so a cache can call it on
-every build; `@rn-iso/metro-cache` and `@rn-iso/expo-build-cache` both do (by
-writing the manifest directly, so they need no rn-iso installed at all).
+every build; `@rn-iso/metro` and `@rn-iso/expo-build-cache` both do (by writing
+the manifest directly, so they need no rn-iso installed at all).
 
 The `caches` setting is the no-code alternative and is still read: a list of
 paths under `caches` in a committed `.rn-iso.json` is reported alongside the
@@ -247,10 +247,11 @@ Two optional packages ship alongside the CLI. Both register themselves with
 rn-iso the first time they run, so `gc` reports and trims them, and
 both work fine without rn-iso installed -- it is an optional peer.
 
-- **[`@rn-iso/metro-cache`](https://www.npmjs.com/package/@rn-iso/metro-cache)**
+- **[`@rn-iso/metro`](https://www.npmjs.com/package/@rn-iso/metro)**
   -- one Metro transform cache shared by every worktree, instead of Metro's
   per-project default that makes each new workspace re-transform the whole
-  module graph.
+  module graph. It also carries the NDJSON reporter rn-iso uses to capture a
+  dev server's logs, which is not a cache and is not wired up by `init`.
 - **[`@rn-iso/expo-build-cache`](https://www.npmjs.com/package/@rn-iso/expo-build-cache)**
   -- a local Expo build cache provider. When no native input changed, the Expo
   CLI installs a cached `.app` / `.apk` instead of compiling. Wire it to

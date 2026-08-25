@@ -22,7 +22,7 @@ State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
 
 - **ESM only, in `packages/rn-iso`.** `"type": "module"`, no transpiler, Node
   20+ directly. No CommonJS, no `require()`. **The documented exception is the
-  two cache packages** (`packages/expo-build-cache`, `packages/metro-cache`):
+  two cache packages** (`packages/expo-build-cache`, `packages/metro`):
   they are CJS on purpose, because a `metro.config.js` and an Expo build-cache
   provider are both loaded by `require()`. **They do not import rn-iso at
   all** — they self-register by writing `<config dir>/caches.json` directly.
@@ -36,6 +36,9 @@ State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
   public export for consumers that DO have rn-iso -- and, since the `cache
   register` / `forget` / `list` verbs were removed, the ONLY way to register a
   cache by hand; it is simply not how these two packages do it.
+  `@rn-iso/metro` carries a second export for the same reason it is CJS:
+  `ndjsonReporter` is `require()`d by whoever hosts Metro programmatically, and
+  it imports nothing from rn-iso either.
 - **Single exec wrapper.** All `child_process` calls go through
   `src/exec.js` (`getExecutor()`). Tests inject a mock via `setExecutor()`.
   Anywhere outside `exec.js` that imports `child_process` directly is a bug.
@@ -131,8 +134,11 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
 
 packages/expo-build-cache/  # @rn-iso/expo-build-cache. CJS (see conventions above).
   index.js                  # the Expo build-cache provider: resolveBuildCache / uploadBuildCache
-packages/metro-cache/       # @rn-iso/metro-cache. CJS (see conventions above).
-  index.js                  # sharedCacheStores(): a FileStore outside any project, self-registered
+packages/metro/             # @rn-iso/metro. CJS (see conventions above).
+  index.js                  # sharedCacheStores(): a FileStore outside any project, self-registered.
+                            # ndjsonReporter(): Metro's events as NDJSON records, for whoever hosts
+                            # Metro programmatically -- both CLIs discard a config-set reporter
+  test/reporter.test.js     # `node --test`, CommonJS like the package it tests
 ```
 
 The two cache packages duplicate a little of `src/build-cache.js` and
@@ -405,10 +411,13 @@ npm install         # one-time, from the repo root; installs every package
 npm test            # from the repo root: runs the rn-iso suite
 ```
 
-Root `npm test` delegates to `npm test --workspace rn-iso`, which is
-`node --test test/*.test.js`. The cache packages have no suite of their own —
-`buildCacheKey`'s rules are covered on the `src/build-cache.js` side, so a
-change to either copy of it needs the CLI suite run and the other copy read.
+Root `npm test` runs every workspace suite in turn — `rn-iso`, then
+`@rn-iso/expo-build-cache`, then `@rn-iso/metro` — each of them
+`node --test test/*.test.js`. The two ecosystem packages test only what is
+theirs alone (self-registration, the NDJSON reporter); `buildCacheKey`'s rules
+and the cache-root resolution are covered on the CLI side
+(`src/build-cache.js`, `test/cache-packages.test.js`), so a change to either
+copy of them still needs the CLI suite run and the other copy read.
 
 Linking is per package, so it happens inside the package directory:
 

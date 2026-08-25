@@ -25,7 +25,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-// THIS RESOLUTION EXISTS THREE TIMES: here, in packages/metro-cache/index.js,
+// THIS RESOLUTION EXISTS THREE TIMES: here, in packages/metro/index.js,
 // and in rn-iso's own src/paths.js (sharedBuildCache / sharedMetroCache). This
 // package cannot import that module -- it has to work on a machine with no
 // rn-iso installed at all -- so the duplication is deliberate, exactly like

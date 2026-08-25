@@ -64,7 +64,7 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
   process.env.RN_ISO_HOME = home;
   process.env.RN_ISO_METRO_CACHE = cacheRoot;
   try {
-    const { sharedCacheStores } = await import('../../metro-cache/index.js');
+    const { sharedCacheStores } = await import('../../metro/index.js');
     // Metro's own FileStore is not a dependency of rn-iso, and the store object
     // is not what is under test here.
     class FakeStore {
@@ -93,7 +93,7 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
 // project and the specifier does not resolve on any Node version. Both packages
 // write the manifest themselves, so neither may name rn-iso as a module.
 test('neither package reaches rn-iso as a module', () => {
-  for (const pkg of ['expo-build-cache', 'metro-cache']) {
+  for (const pkg of ['expo-build-cache', 'metro']) {
     const source = readFileSync(join(PACKAGES, pkg, 'index.js'), 'utf-8');
     assert.doesNotMatch(source, /require\(\s*['"]rn-iso/, `${pkg} must not require rn-iso`);
     assert.doesNotMatch(source, /import\(\s*['"]rn-iso/, `${pkg} must not import rn-iso either`);
@@ -111,7 +111,7 @@ test('both packages resolve the same cache roots the CLI does', async () => {
   process.env.RN_ISO_HOME = home;
   try {
     const provider = await import('../../expo-build-cache/index.js');
-    const metro = await import('../../metro-cache/index.js');
+    const metro = await import('../../metro/index.js');
 
     assert.equal(provider.cacheRoot(), sharedBuildCache());
     assert.equal(provider.cacheRoot(), join(home, 'build-cache'));

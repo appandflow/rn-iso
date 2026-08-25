@@ -270,7 +270,7 @@ test('a legacy cache whose destination is taken says so', () => {
 //
 // The Metro half cannot be derived that way -- the legacy directory was named
 // after the app, `~/.<name>-metro-cache` -- so the manifest is the only record
-// of where it actually is. Only the ones @rn-iso/metro-cache registered may
+// of where it actually is. Only the ones @rn-iso/metro registered may
 // move: a FileStore someone wired up by hand still points at its own directory,
 // and moving that would take away a cache nothing else knows how to find.
 function withFakeHome(fn) {
@@ -300,7 +300,7 @@ test('the legacy build cache is found next to the config dir', () => {
   });
 });
 
-test('only the Metro caches @rn-iso/metro-cache registered are candidates', () => {
+test('only the Metro caches @rn-iso/metro registered are candidates', () => {
   withFakeHome((outer, home) => {
     const ours = join(outer, '.demo-metro-cache');
     const handRolled = join(outer, '.other-metro-cache');

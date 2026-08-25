@@ -10,7 +10,7 @@
 // once, and `gc`'s report and `doctor` both see it from then on. This is the
 // ONLY registration path: the `cache register` / `forget` / `list` verbs are
 // gone, and this module stays as the public `rn-iso/cache-manifest` export
-// because it is how @rn-iso/metro-cache and src/build-cache.js self-register.
+// because it is how @rn-iso/metro and src/build-cache.js self-register.
 // Registration is idempotent and keyed on the directory: re-registering an
 // existing cache updates its metadata rather than duplicating it.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';

@@ -195,12 +195,12 @@ the whole module graph from cold — thousands of modules, every time. One
 `FileStore` outside any project fixes it:
 
 ```bash
-npm i -D @rn-iso/metro-cache
+npm i -D @rn-iso/metro
 ```
 
 ```js
 // metro.config.js
-const { sharedCacheStores } = require('@rn-iso/metro-cache');
+const { sharedCacheStores } = require('@rn-iso/metro');
 config.cacheStores = sharedCacheStores('myapp');
 ```
 
@@ -249,8 +249,8 @@ and a build cache is keyed `<platform>/<key>`, so at depth 1 a single removal
 takes a 256th of every transform on the machine, or an entire platform's builds.
 Register 2 and `--older-than` trims one transform or one build. Registration is
 idempotent and keyed on the directory, so a cache can do it on every build —
-which is exactly what `@rn-iso/metro-cache` and `@rn-iso/expo-build-cache`
-already do for you.
+which is exactly what `@rn-iso/metro` and `@rn-iso/expo-build-cache` already do
+for you.
 
 The `caches` setting is the no-code alternative: a list of paths under `caches`
 in a committed `.rn-iso.json` is reported alongside the registered ones. It has

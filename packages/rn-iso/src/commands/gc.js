@@ -15,7 +15,7 @@
 // v2's `cache register` / `cache forget` / `cache list` verbs folded into the
 // report here: v3 prescribes the cache paths, so there is nothing left to
 // register by hand. The programmatic `rn-iso/cache-manifest` export stays --
-// that is how @rn-iso/metro-cache and src/build-cache.js self-register.
+// that is how @rn-iso/metro and src/build-cache.js self-register.
 import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';

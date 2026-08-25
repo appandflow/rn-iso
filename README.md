@@ -9,7 +9,7 @@ This repository is a workspace. Everything published lives under `packages/`.
 | Package | What it is |
 |---|---|
 | [`rn-iso`](./packages/rn-iso) | The CLI and the environment broker. `up` creates an owned simulator/emulator and reserves a collision-free Metro port, then prints the facts your build needs. It never runs your build and never starts Metro. |
-| [`@rn-iso/metro-cache`](./packages/metro-cache) | One Metro transform cache shared by every worktree, instead of Metro's per-project default that makes each new workspace re-transform the whole module graph. |
+| [`@rn-iso/metro`](./packages/metro) | One Metro transform cache shared by every worktree, instead of Metro's per-project default that makes each new workspace re-transform the whole module graph. Plus the NDJSON reporter that turns the dev server's events into structured logs. |
 | [`@rn-iso/expo-build-cache`](./packages/expo-build-cache) | A local Expo build cache provider. When no native input changed, the Expo CLI installs a cached `.app` / `.apk` instead of compiling. |
 
 **[Read the rn-iso documentation](./packages/rn-iso/README.md)** -- the commands,

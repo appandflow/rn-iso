@@ -201,7 +201,7 @@ export function checkArtifactLayout({ gitignoreSource, worktreeExcludeSource } =
 //
 // The build cache has one fixed old address. The Metro caches do not: each was
 // named after an app (`~/.<name>-metro-cache`), so the manifest is the only
-// record of where they are. Only the ones @rn-iso/metro-cache registered are
+// record of where they are. Only the ones @rn-iso/metro registered are
 // candidates -- a FileStore someone wired up by hand still points at its own
 // directory, and moving that would take away a cache nothing knows how to find.
 export function pendingCacheMigrations({ caches = null } = {}) {

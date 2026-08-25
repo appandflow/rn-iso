@@ -1,0 +1,17 @@
+{
+  "name": "@rn-iso/metro",
+  "version": "0.14.1",
+  "description": "Metro integration for rn-iso: one transform cache shared by every worktree, plus an NDJSON reporter for structured logs.",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "peerDependencies": {
+    "metro-cache": "*"
+  }
+}

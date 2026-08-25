@@ -43,7 +43,7 @@ export function workspaceStateFile(projectRoot) {
 // test run against a temp directory without touching the real machine.
 //
 // THE TWO CACHE ROOTS BELOW EXIST THREE TIMES. The copies are in
-// packages/metro-cache/index.js and packages/expo-build-cache/index.js, which
+// packages/metro/index.js and packages/expo-build-cache/index.js, which
 // cannot import this module: both have to work on a machine with no rn-iso
 // installed at all. Change one and you must change all three, or the CLI stores
 // a build in one directory while the provider looks for it in another and
@@ -111,7 +111,7 @@ export function legacyMetroCacheName(dir) {
   return m ? m[1] : null;
 }
 
-// The `name` @rn-iso/metro-cache registers itself under. A hand-wired FileStore
+// The `name` @rn-iso/metro registers itself under. A hand-wired FileStore
 // registered through `rn-iso/cache-manifest` carries whatever name its owner
 // chose, and must never be moved: its metro.config.js still points at the old
 // directory, so moving it would take away a cache nothing knows how to find.
