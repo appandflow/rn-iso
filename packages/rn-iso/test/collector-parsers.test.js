@@ -36,6 +36,8 @@ import {
   parseLogcatLine,
   parseLogcatTimestamp,
   parsePidof,
+  pidWatchInterval,
+  watchAppPid,
   NOISE_TAGS,
 } from '../src/collector/android.js';
 import { LEVELS, SOURCES } from '../src/ndjson.js';
@@ -366,5 +368,113 @@ describe('android: logcat -v time', () => {
       assert.equal(levelForLogcat('E', 'libEGL'), 'info');
       assert.equal(levelForLogcat('E', 'MyApp'), 'error');
     });
+  });
+});
+
+// --- watchAppPid: the app restart the collector used to sleep through ------
+describe('watchAppPid', () => {
+  // A hand-driven timer, so a 3-second poll costs nothing and every tick is
+  // deliberate.
+  function driver() {
+    const queue = [];
+    return {
+      setTimer: (fn) => { queue.push(fn); return queue.length; },
+      clearTimer: () => { queue.length = 0; },
+      async tick() { const fn = queue.shift(); if (fn) await fn(); },
+      get pending() { return queue.length; },
+    };
+  }
+
+  test('a new pid is a restart; the same pid is not', async () => {
+    const d = driver();
+    const seen = [];
+    let answer = 3132;
+    const w = watchAppPid({
+      serial: 'emulator-5554', packageName: 'com.x', pid: 3132, intervalMs: 1,
+      resolve: () => answer, onChange: (pid) => seen.push(pid),
+      setTimer: d.setTimer, clearTimer: d.clearTimer,
+    });
+    await d.tick();
+    assert.deepEqual(seen, [], 'the same pid is not a change');
+    answer = 4200;
+    await d.tick();
+    assert.deepEqual(seen, [4200]);
+    await d.tick();
+    assert.deepEqual(seen, [4200], 'and it is reported once, not on every poll');
+    w.stop();
+  });
+
+  test('the app being GONE is not a restart -- the pid that comes back is', async () => {
+    const d = driver();
+    const seen = [];
+    let answer = null;
+    const w = watchAppPid({
+      serial: 'emulator-5554', packageName: 'com.x', pid: 3132, intervalMs: 1,
+      resolve: () => answer, onChange: (pid) => seen.push(pid),
+      setTimer: d.setTimer, clearTimer: d.clearTimer,
+    });
+    await d.tick();
+    assert.deepEqual(seen, [], 'a closed app leaves the stream alone');
+    answer = 4200;
+    await d.tick();
+    assert.deepEqual(seen, [4200]);
+    w.stop();
+  });
+
+  test('an adb that throws is a missed poll, not a dead watcher', async () => {
+    const d = driver();
+    const seen = [];
+    let throwing = true;
+    const w = watchAppPid({
+      serial: 'emulator-5554', packageName: 'com.x', pid: 3132, intervalMs: 1,
+      resolve: () => { if (throwing) throw new Error('device offline'); return 4200; },
+      onChange: (pid) => seen.push(pid),
+      setTimer: d.setTimer, clearTimer: d.clearTimer,
+    });
+    await d.tick();
+    assert.deepEqual(seen, []);
+    assert.equal(d.pending, 1, 'the watch is still scheduled');
+    throwing = false;
+    await d.tick();
+    assert.deepEqual(seen, [4200]);
+    w.stop();
+    assert.equal(d.pending, 0);
+  });
+
+  test('an onChange that throws does not stop the watch either', async () => {
+    const d = driver();
+    let answer = 4200;
+    const w = watchAppPid({
+      serial: 'emulator-5554', packageName: 'com.x', pid: 3132, intervalMs: 1,
+      resolve: () => answer, onChange: () => { throw new Error('reattach failed'); },
+      setTimer: d.setTimer, clearTimer: d.clearTimer,
+    });
+    await d.tick();
+    assert.equal(d.pending, 1);
+    w.stop();
+  });
+
+  test('stop() is what lets the collector process exit', async () => {
+    const d = driver();
+    const w = watchAppPid({
+      serial: 'emulator-5554', packageName: 'com.x', pid: 3132, intervalMs: 1,
+      resolve: () => 3132, onChange: () => {},
+      setTimer: d.setTimer, clearTimer: d.clearTimer,
+    });
+    assert.equal(d.pending, 1);
+    w.stop();
+    assert.equal(d.pending, 0);
+    await d.tick();
+    assert.equal(d.pending, 0, 'a stopped watch does not reschedule');
+  });
+
+  test('the interval is 3s unless a test redirects it', () => {
+    delete process.env.RN_ISO_PID_WATCH_MS;
+    assert.equal(pidWatchInterval(), 3000);
+    process.env.RN_ISO_PID_WATCH_MS = '100';
+    assert.equal(pidWatchInterval(), 100);
+    process.env.RN_ISO_PID_WATCH_MS = 'nonsense';
+    assert.equal(pidWatchInterval(), 3000);
+    delete process.env.RN_ISO_PID_WATCH_MS;
   });
 });

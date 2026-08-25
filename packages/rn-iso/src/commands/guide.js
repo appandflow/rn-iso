@@ -56,7 +56,11 @@ other line goes to stderr, so it is always safe to pipe.
                   dev-client server picker awaiting a tap). The warning on
                   stderr is a numbered list in the order that clears it:
                   confirm the alert first, then the picker, and only with no
-                  alert showing, the openurl retry it prints.
+                  alert showing, the openurl retry it prints. On ANDROID
+                  there is no alert, so the list leads with the dev-client
+                  deep link (\`am start -a android.intent.action.VIEW -d
+                  '<devClientUrl>'\`), which is the whole answer when the app
+                  has a scheme.
   metroPort       the port the app was wired to
   logs            { dir }
   durationMs      wall time for the whole run
@@ -65,9 +69,24 @@ other line goes to stderr, so it is always safe to pipe.
 
   platform        "android"
   serial          the owned emulator (always "emulator-<consolePort>")
+  avdName         the AVD's NAME (rn-iso-<label>). The serial is a slot --
+                  emulator-5554 is whatever booted into that console port
+                  first -- so this is what addresses the emulator in
+                  \`emulator -avd\`, avdmanager, or a device tool
+  deviceName      the same name, matching the iOS payload's field
   fingerprint / cacheHit / cacheSkipped / appPath / launched   as above
   bundleId        the ANDROID PACKAGE NAME, not the iOS bundle id
-  logs            { dir, device } -- device is the collector's own log file
+  debugHttpHost   "10.0.2.2:<port>" when the app's SharedPreferences were
+                  pointed at this workspace's Metro, null when they were not
+                  (Contract 6's Android half; the adb reverse still covers
+                  the app's compiled-in 8081)
+  debugHttpHostNote
+                  why the write did not land, when it did not. A launch
+                  survives it -- this is the difference between the two
+  devClientUrl    the expo-dev-client deep link that was opened, or null for
+                  a plain launcher start. This is the command that puts the
+                  app back on THIS workspace's bundle
+  logs            the workspace log directory
 
 ON FAILURE
   \`start\`, \`ios\` and \`android\` all print the error contract instead,
@@ -396,18 +415,23 @@ captured"  (in metro.ndjson, bare RN)
 not on any remote"  (worktree remove)
   A native build rewrites tracked files -- \`pod install\` always touches
   Podfile.lock and project.pbxproj -- so this fires after almost every iOS
-  build. The refusal PRINTS THE DIRTY PATHS: restore those rather than
-  reaching for --force. When the list is only pod churn:
-    git checkout -- ios/Podfile.lock ios/*.xcodeproj/project.pbxproj
+  build. The refusal PRINTS THE DIRTY PATHS, and the restore command under it
+  carries those same paths: run it as printed rather than reaching for --force.
+  It is built from what git reported, so in a monorepo it names
+  \`apps/<app>/ios/Podfile.lock\` rather than an \`ios/...\` example that would
+  fail with "did not match any file(s) known to git".
   A setup script that rewrites tracked assets (brand icons, generated config)
-  produces the same refusal and the command above clears nothing -- restore
-  the paths the refusal actually named.
+  produces the same refusal, with the same treatment: restore the paths the
+  refusal actually named.
   Use --force only when you genuinely intend to discard work; it deletes
   uncommitted and untracked files permanently.
   Two things rn-iso wrote itself never cause this refusal: the workspace's own
-  \`.rn-iso/\`, and a \`.gitignore\` whose only change is the \`.rn-iso/\` entry
-  \`start\`/\`ios\`/\`android\` add (verified line by line against what rn-iso
-  writes; any other added or removed line still refuses).
+  \`.rn-iso/\`, and a \`.gitignore\` that is nothing but the \`.rn-iso/\` entry
+  \`start\`/\`ios\`/\`android\` add -- appended to a tracked file (restored before
+  the removal) or created whole in a repo that had none (deleted before it),
+  verified line by line against what rn-iso writes; any other line either way
+  still refuses. Commit that entry with your PR and it stops being written at
+  all.
 
 "Refusing to create <name>: the branch worktree-<name> already exists at <sha>,
 but --base <ref> resolves to <sha>"  (worktree create)

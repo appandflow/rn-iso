@@ -1,4 +1,4 @@
-import { existsSync, realpathSync, rmSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { isAbsolute, relative, resolve } from 'path';
 import chalk from 'chalk';
 import { resolveSettings, unknownSettingKeys } from '../settings.js';
@@ -306,34 +306,75 @@ export function addsOnlyWorkspaceIgnoreBlock(diff) {
   return added > 0 && sawEntry;
 }
 
-// A path this code is about to interpolate into a shell command. Anything
-// outside the set is not examined at all -- it stays dirty, which is the safe
-// direction, and no quoting question arises.
+// PURE. Whether a .gitignore file's WHOLE content is rn-iso's own block -- the
+// untracked half of the same dead end.
+//
+// On a repo that has no .gitignore at all, the self-ensure does not modify a
+// file, it CREATES one, and git reports `?? .gitignore`. `worktree remove`
+// counted that as untracked work and refused, offering --force -- the loop's
+// own write blocking the loop's own teardown, exactly as the modified case did
+// one file over. A diff cannot decide this one: an untracked file has no index
+// side to diff against, so the content itself is the evidence.
+//
+// The rule is the same shape as addsOnlyWorkspaceIgnoreBlock, and fails CLOSED
+// for the same reason: every non-blank line must be one of the block's own, and
+// the `.rn-iso` entry itself must be among them, so a file carrying one line
+// the repo wrote (or only our comments) is work and stays dirty. The allowed
+// set is derived from renderWorkspaceIgnoreBlock rather than retyped, so it
+// cannot drift from the writer.
+export function isOnlyWorkspaceIgnoreBlock(content) {
+  if (typeof content !== 'string' || content.trim() === '') return false;
+  const allowed = new Set(renderWorkspaceIgnoreBlock().split('\n').map(l => l.trim()));
+  let sawEntry = false;
+  for (const raw of content.split('\n')) {
+    const line = raw.trim();
+    if (line === '') continue;
+    if (!allowed.has(line)) return false;
+    if (listsWorkspaceDir(line)) sawEntry = true;
+  }
+  return sawEntry;
+}
+
+// A path this code is about to interpolate into a shell command, or resolve
+// against the worktree root. Anything outside the set is not examined at all --
+// it stays dirty, which is the safe direction, and no quoting question arises.
 const SAFE_DIFF_PATH = /^[A-Za-z0-9._/-]+$/;
 
-// Drops a `.gitignore` whose only change is rn-iso's own block from a dirty
-// listing, and reports which files that was. `diff` is injected (it is the one
-// impure step) so the decision above stays testable without git.
+// Drops a `.gitignore` that is rn-iso's own write from a dirty listing, and
+// reports which files those were AND in which of the two ways, because the two
+// need opposite treatments afterwards:
 //
-// Only an UNSTAGED modification (` M`) qualifies: a staged change is not what
-// `git diff` describes and not what `git checkout -- <file>` would undo, so it
-// is left to refuse.
-export function excludeSelfHealedIgnores(lines, { diff }) {
+//   healed   ` M path` -- the repo tracks a .gitignore and the self-ensure
+//                         APPENDED the block to it. Undone with `git checkout`.
+//   created  `?? path` -- the repo had no .gitignore and the self-ensure WROTE
+//                         one. There is nothing to restore it to; it is deleted.
+//
+// `diff` and `read` are injected (they are the impure steps) so the two
+// decisions above stay testable without git and without a filesystem.
+//
+// For the modified case only an UNSTAGED modification (` M`) qualifies: a staged
+// change is not what `git diff` describes and not what `git checkout -- <file>`
+// would undo, so it is left to refuse.
+export function excludeSelfHealedIgnores(lines, { diff, read }) {
   const kept = [];
   const healed = [];
+  const created = [];
   for (const line of lines || []) {
     const path = porcelainPath(line);
-    const candidate = path
-      && String(line).startsWith(' M ')
+    const isIgnoreFile = path
       && /(?:^|\/)\.gitignore$/.test(path)
       && SAFE_DIFF_PATH.test(path);
-    if (candidate && addsOnlyWorkspaceIgnoreBlock(diff(path))) {
+    if (isIgnoreFile && String(line).startsWith(' M ') && addsOnlyWorkspaceIgnoreBlock(diff(path))) {
       healed.push(path);
+      continue;
+    }
+    if (isIgnoreFile && String(line).startsWith('?? ') && isOnlyWorkspaceIgnoreBlock(read(path))) {
+      created.push(path);
       continue;
     }
     kept.push(line);
   }
-  return { lines: kept, healed };
+  return { lines: kept, healed, created };
 }
 
 // PURE. The worktree entry a path belongs to: an exact match, or the enclosing
@@ -377,8 +418,14 @@ export function removalRemedy(dirtyLines, { worktree = '<worktree>' } = {}) {
   const lines = [];
   if (tracked.length) {
     if (isPodInstallChurn(tracked)) {
+      // The lead-in is what this case adds: "a build did this, restoring it is
+      // safe". The command under it is built from the paths git NAMED, like
+      // every other class of dirt -- the hardcoded `ios/...` example it used to
+      // print is wrong in any repo whose app is not at the root, and a monorepo
+      // reader got `error: pathspec 'ios/Podfile.lock' did not match any
+      // file(s) known to git` from a remedy that was supposed to be pasteable.
       lines.push('That is only the files `pod install` rewrites. Restore them and retry:');
-      lines.push(`  git -C ${worktree} checkout -- ios/Podfile.lock "ios/*.xcodeproj/project.pbxproj"`);
+      lines.push(`  git -C ${worktree} checkout -- ${pathArgs(tracked)}`);
     } else {
       lines.push('Tracked files were modified -- if a build or a setup script did it, restore them and retry:');
       lines.push(`  git -C ${worktree} checkout -- ${pathArgs(tracked)}`);
@@ -495,12 +542,46 @@ async function reclaimAll(rootPath) {
 // directory that is about to be deleted anyway. A removal that fails is
 // skipped, not thrown: `git worktree remove` is about to report the same
 // problem in better words.
+// The two file operations this command performs on a path git named, both
+// contained the same way purgeWorkspaceArtifacts is: resolve it, and refuse it
+// if it did not land inside the worktree. A `..` in a listing, or a path this
+// code mis-parsed, must not reach outside the directory that is about to be
+// deleted.
+function insidePath(root, rel) {
+  const target = resolve(root, rel);
+  const inside = relative(root, target);
+  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) return null;
+  return target;
+}
+
+// The content of a file git reported inside the worktree, or '' when it cannot
+// be read -- which the caller must treat as "not ours", the safe direction.
+function readInside(root, rel) {
+  const target = insidePath(root, rel);
+  if (!target) return '';
+  try {
+    return readFileSync(target, 'utf-8');
+  } catch {
+    return '';
+  }
+}
+
+function removeInside(root, rel) {
+  const target = insidePath(root, rel);
+  if (!target) return false;
+  try {
+    rmSync(target, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function purgeWorkspaceArtifacts(root, dirtyLines) {
   const removed = [];
   for (const rel of workspaceArtifactPaths(dirtyLines)) {
-    const target = resolve(root, rel);
-    const inside = relative(root, target);
-    if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) continue;
+    const target = insidePath(root, rel);
+    if (!target) continue;
     if (!existsSync(target)) continue;
     try {
       rmSync(target, { recursive: true, force: true });
@@ -582,14 +663,21 @@ export function registerRemove(worktree) {
       // whether anything that is NOT ours is dirty.
       //
       // A .gitignore carrying nothing but rn-iso's own block is the same
-      // exclusion one file over (addsOnlyWorkspaceIgnoreBlock above): rn-iso
-      // wrote it, and it is checked line by line against what rn-iso writes
-      // rather than assumed.
+      // exclusion one file over (addsOnlyWorkspaceIgnoreBlock and
+      // isOnlyWorkspaceIgnoreBlock above): rn-iso wrote it, and it is checked
+      // line by line against what rn-iso writes rather than assumed. Both
+      // shapes count -- the block APPENDED to a tracked .gitignore, and a whole
+      // .gitignore CREATED where the repo had none, which is what a repo with
+      // no ignore file at all produces and what the refusal was hit on.
       const gitAnswered = hasUncommittedWork(path);
       const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
-      const { lines: dirtyLines, healed: selfHealedIgnores } = excludeSelfHealedIgnores(
+      const {
+        lines: dirtyLines,
+        healed: selfHealedIgnores,
+        created: selfCreatedIgnores,
+      } = excludeSelfHealedIgnores(
         excludeWorkspaceArtifacts(allDirty),
-        { diff: (file) => unstagedDiff(path, file) }
+        { diff: (file) => unstagedDiff(path, file), read: (file) => readInside(path, file) }
       );
       const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
       const unpushed = unpushedCommits(path);
@@ -672,6 +760,19 @@ export function registerRemove(worktree) {
           console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
         }
       }
+      // ... and a .gitignore that exists only because rn-iso wrote it is
+      // deleted rather than restored: there is no earlier version to go back
+      // to, and git refuses over an untracked file exactly as it refuses over a
+      // modified one. Same containment as the workspace purge -- the path is
+      // resolved and checked to still be inside the worktree that is about to
+      // be deleted anyway.
+      for (const file of selfCreatedIgnores) {
+        if (removeInside(path, file)) {
+          console.error(chalk.dim(`  removed ${file} (rn-iso wrote all of it)`));
+        } else {
+          console.error(chalk.yellow(`  could not remove ${file}; git may refuse to remove the worktree`));
+        }
+      }
       // Undoing that entry un-ignores what it was ignoring: `.rn-iso/` was
       // invisible to the listing above precisely BECAUSE the self-heal had
       // added the entry, and the moment it is restored the directory is
@@ -679,7 +780,7 @@ export function registerRemove(worktree) {
       // against real git, where the removal failed here with "contains
       // modified or untracked files" after a clean verdict. So ask git once
       // more, and only when something was actually restored.
-      if (selfHealedIgnores.length) {
+      if (selfHealedIgnores.length || selfCreatedIgnores.length) {
         for (const purged of purgeWorkspaceArtifacts(path, dirtyPaths(path, { limit: Infinity }))) {
           console.error(chalk.dim(`  removed ${purged} (this workspace's own output)`));
         }

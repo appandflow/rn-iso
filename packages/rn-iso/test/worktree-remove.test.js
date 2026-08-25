@@ -12,10 +12,11 @@ import {
   porcelainPath,
   removalBlockers,
   registerRemove,
+  isOnlyWorkspaceIgnoreBlock,
   removalRemedy,
   workspaceArtifactPaths,
 } from '../src/commands/worktree.js';
-import { renderWorkspaceIgnoreBlock } from '../src/engine/workspace.js';
+import { ensureWorkspaceIgnored, renderWorkspaceIgnoreBlock } from '../src/engine/workspace.js';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { upsertProject, getProject } from '../src/config.js';
 
@@ -108,12 +109,33 @@ test('the remedy names the right command for each class of dirt', () => {
 });
 
 // The one case where "restore and retry" is a complete instruction keeps its
-// specific command.
+// own lead-in -- but the command under it is built from the paths git named,
+// like every other class of dirt.
 test('pod-install churn keeps its exact restore command', () => {
   const lines = removalRemedy([' M ios/Podfile.lock', ' M ios/App.xcodeproj/project.pbxproj']).join('\n');
   assert.match(lines, /pod install` rewrites/);
   assert.match(lines, /ios\/Podfile\.lock/);
   assert.doesNotMatch(lines, /clean -fd/, 'nothing untracked, so nothing to clean');
+});
+
+// A monorepo's pods do not live at `ios/`. The remedy used to print a
+// hardcoded `ios/Podfile.lock ios/*.xcodeproj/project.pbxproj` whatever the
+// paths actually were, so in a monorepo it printed a command that fails --
+// `error: pathspec 'ios/Podfile.lock' did not match any file(s) known to git` --
+// which reads like rn-iso being broken and sends the reader to --force. The
+// paths are already in hand and already repo-relative; print those.
+test('pod-install churn names the paths git actually reported, not an ios/ example', () => {
+  const lines = removalRemedy(
+    [' M apps/mobile/ios/Podfile.lock', ' M apps/mobile/ios/App.xcodeproj/project.pbxproj'],
+    { worktree: '/tmp/wt' }
+  ).join('\n');
+  assert.match(lines, /pod install` rewrites/);
+  assert.match(
+    lines,
+    /git -C \/tmp\/wt checkout -- apps\/mobile\/ios\/Podfile\.lock apps\/mobile\/ios\/App\.xcodeproj\/project\.pbxproj/
+  );
+  assert.ok(!lines.includes('"ios/*.xcodeproj/project.pbxproj"'), 'no glob nothing asked for');
+  assert.ok(!/ ios\/Podfile\.lock/.test(lines), 'and no path this worktree does not have');
 });
 
 test('the remedy names the worktree when it is given one', () => {
@@ -621,27 +643,119 @@ test('an empty, missing or entry-less diff is not ours', () => {
   );
 });
 
+// The other half of the same dead end, and the one a repo with NO .gitignore
+// hits: `start` does not MODIFY a file there, it CREATES one, so git reports
+// `?? .gitignore` and `worktree remove` refused over an untracked file it had
+// written itself. A diff cannot answer this one -- an untracked file has no
+// index side -- so the whole content is checked against the block instead, and
+// on the same fail-closed rule: one line that is not ours and it stays dirty.
+test('a .gitignore that is nothing but rn-iso own block is recognized as ours', () => {
+  assert.equal(isOnlyWorkspaceIgnoreBlock(renderWorkspaceIgnoreBlock()), true);
+  assert.equal(isOnlyWorkspaceIgnoreBlock(`\n${renderWorkspaceIgnoreBlock()}\n\n`), true, 'blank lines are not content');
+});
+
+test('anything else in the file is the repo own, and refuses', () => {
+  assert.equal(isOnlyWorkspaceIgnoreBlock(`${renderWorkspaceIgnoreBlock()}.env.local\n`), false);
+  assert.equal(isOnlyWorkspaceIgnoreBlock(`node_modules/\n${renderWorkspaceIgnoreBlock()}`), false);
+  assert.equal(isOnlyWorkspaceIgnoreBlock(''), false);
+  assert.equal(isOnlyWorkspaceIgnoreBlock(null), false);
+  assert.equal(
+    isOnlyWorkspaceIgnoreBlock('# rn-iso: this workspace\'s build output, logs and supervisor pidfile.\n'),
+    false,
+    'the comment alone, without the entry itself, is not the block'
+  );
+});
+
+test('excludeSelfHealedIgnores drops an untracked .gitignore rn-iso wrote whole', () => {
+  const read = () => renderWorkspaceIgnoreBlock();
+  const result = excludeSelfHealedIgnores(['?? apps/x/.gitignore'], { diff: () => '', read });
+  assert.deepEqual(result.lines, []);
+  assert.deepEqual(result.created, ['apps/x/.gitignore']);
+  assert.deepEqual(result.healed, [], 'nothing to restore: the file did not exist before');
+
+  assert.deepEqual(
+    excludeSelfHealedIgnores(['?? apps/x/.gitignore'], { diff: () => '', read: () => `${renderWorkspaceIgnoreBlock()}.env\n` }).lines,
+    ['?? apps/x/.gitignore'],
+    'one line of the repo own and it is work, not ours'
+  );
+  assert.deepEqual(
+    excludeSelfHealedIgnores(['?? scratch.txt'], { diff: () => '', read }).lines,
+    ['?? scratch.txt'],
+    'a file that is not a .gitignore is never read'
+  );
+});
+
 test('excludeSelfHealedIgnores drops only an unstaged .gitignore whose diff is ours', () => {
   const ours = ignoreDiff({ added: ourBlockLines() });
   const seen = [];
   const diff = (file) => { seen.push(file); return ours; };
 
-  const clean = excludeSelfHealedIgnores([' M apps/x/.gitignore'], { diff });
+  const clean = excludeSelfHealedIgnores([' M apps/x/.gitignore'], { diff, read: () => '' });
   assert.deepEqual(clean.lines, []);
   assert.deepEqual(clean.healed, ['apps/x/.gitignore']);
+  assert.deepEqual(clean.created, [], 'a modified file is restored, not deleted');
   assert.deepEqual(seen, ['apps/x/.gitignore']);
 
   // A STAGED change to the same file is a different thing: `git checkout --`
   // would not clear it and git would refuse anyway. Fail closed.
   assert.deepEqual(
-    excludeSelfHealedIgnores(['M  apps/x/.gitignore'], { diff }).lines,
+    excludeSelfHealedIgnores(['M  apps/x/.gitignore'], { diff, read: () => '' }).lines,
     ['M  apps/x/.gitignore']
   );
   assert.deepEqual(
-    excludeSelfHealedIgnores([' M src/app.js'], { diff }).lines,
+    excludeSelfHealedIgnores([' M src/app.js'], { diff, read: () => '' }).lines,
     [' M src/app.js'],
     'a file that is not a .gitignore is never asked about'
   );
+});
+
+test('action: a worktree dirty only with a .gitignore rn-iso created removes, deleting it first', async () => {
+  upsertProject(wtDir, { metroPort: 8097 });
+  // The real file, because this is the one case decided by CONTENT on disk
+  // rather than by a diff git can be asked for.
+  writeFileSync(join(wtDir, '.gitignore'), renderWorkspaceIgnoreBlock());
+  mkdirSync(join(wtDir, '.rn-iso'), { recursive: true });
+  writeFileSync(join(wtDir, '.rn-iso', 'state.json'), '{}');
+  setExecutor(makeExecutor({
+    dirty: '?? .gitignore\n',
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  }));
+
+  const errs = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  assert.notEqual(process.exitCode, 1, `refused: ${errs.join('\n')}`);
+  assert.equal(existsSync(join(wtDir, '.gitignore')), false, 'deleted, because git refuses over an untracked file');
+  assert.match(errs.join('\n'), /removed \.gitignore \(rn-iso wrote all of it\)/);
+});
+
+test('action: a .gitignore with the repo own lines in it still refuses', async () => {
+  writeFileSync(join(wtDir, '.gitignore'), `${renderWorkspaceIgnoreBlock()}.env.local\n`);
+  setExecutor(makeExecutor({
+    dirty: '?? .gitignore\n',
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  }));
+
+  const errs = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  assert.equal(process.exitCode, 1);
+  assert.equal(existsSync(join(wtDir, '.gitignore')), true, 'a file with the repo own content is never deleted');
+  assert.match(errs.join('\n'), /clean -fd/);
 });
 
 test('action: a worktree dirty only with rn-iso own gitignore append removes, restoring the file first', async () => {
@@ -800,6 +914,67 @@ test('action: the dirty-tree remedy names the real worktree, not a placeholder',
 // appended block, and that `git worktree remove` still refuses over the
 // modified .gitignore unless it is restored first (it does; that is why the
 // verdict is paired with a restore rather than left to die with the directory).
+// The gate-run dead end, end to end: a repo with NO .gitignore at all, the real
+// `ensureWorkspaceIgnored` writing one, and real git refusing to remove the
+// worktree over the untracked file rn-iso itself created. Only real git settles
+// whether deleting the file is enough (it is; the .rn-iso/ the entry was hiding
+// becomes untracked again the moment it goes, which is why the purge runs a
+// second time).
+test('against a real repo: a worktree whose only dirt is the .gitignore rn-iso created', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-created-')));
+  const repo = join(base, 'repo');
+  const originalCwd = process.cwd();
+  const errs = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  try {
+    const bareRemote = join(base, 'remote.git');
+    mkdirSync(bareRemote, { recursive: true });
+    execSync(`git init -q --bare "${bareRemote}"`);
+    mkdirSync(repo, { recursive: true });
+    const git = (cmd) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    git(`git remote add origin "${bareRemote}"`);
+    writeFileSync(join(repo, 'package.json'), '{}');
+    git('git add -A');
+    git('git commit -q -m init');
+    git('git push -q -u origin HEAD');
+    const wt = join(base, 'wt');
+    git(`git worktree add -q "${wt}" -b feat-created`);
+
+    // Exactly what `start` does, through the real function: the repo has no
+    // .gitignore, so one is created -- and it is untracked.
+    assert.equal(ensureWorkspaceIgnored(wt).added, true);
+    mkdirSync(join(wt, '.rn-iso', 'logs'), { recursive: true });
+    writeFileSync(join(wt, '.rn-iso', 'state.json'), '{}');
+    assert.equal(
+      execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim(),
+      '?? .gitignore',
+      'sanity: real git reports the created file, and nothing else -- .rn-iso/ is hidden by it'
+    );
+
+    console.error = (m) => errs.push(String(m));
+    console.log = () => {};
+    const run = captureAction(registerRemove);
+    await run(wt, {});
+    console.error = originalError;
+    console.log = originalLog;
+
+    assert.notEqual(process.exitCode, 1, `refused: ${errs.join('\n')}`);
+    assert.equal(existsSync(wt), false, 'real git actually removed the worktree');
+    assert.match(errs.join('\n'), /removed \.gitignore \(rn-iso wrote all of it\)/);
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+    process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('against a real repo: removal from a monorepo app dir, dirty only with rn-iso own gitignore append', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-live-')));

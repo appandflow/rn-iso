@@ -37,6 +37,17 @@ So the loop is:
   to .gitignore`). It was the one edit safe to generate, so it stopped being a
   setup step. (doctor still reports a missing entry, because doctor is read-only
   and runs on repos no rn-iso command has touched yet.)
+
+  **Do commit it, though, with whatever PR the agent is already opening.** It is
+  a one-line repo-hygiene edit every checkout wants, and committing it is what
+  makes it stop being written -- which matters for the cache: the file is a
+  working-tree file, so `@expo/fingerprint` sees it. Every workspace that runs
+  rn-iso writes the identical block and so fingerprints identically to every
+  other one; the mismatch is only against a tree that has NEVER run rn-iso (a
+  clean CI checkout, a worktree whose first build has not happened yet), and
+  committing the entry ends that difference for good. Symptom while it lasts:
+  the first `rn-iso ios` in a new worktree misses a cache entry another
+  worktree stored for the same commit, then hits from then on.
 - **A `.worktreeexclude` for it.** `.rn-iso/` holds a workspace's own derived
   data, its logs and the supervisor pidfile -- build output keyed to a path a new
   worktree does not have, and a pidfile for a process that is not running -- so
@@ -184,6 +195,26 @@ Add `.fingerprintignore` for anything that changes without changing the build.
 which makes the fingerprint differ per machine and the cache never hit. Nothing
 checks this for you; a cache that never hits looks exactly like a cache that is
 not configured.
+
+The same file bites a second way, from the other direction. `pod install`
+rewrites `Podfile.lock` -- observed on `hermes-engine`, whose checksum changed
+on a plain re-install with no dependency change -- and `Podfile.lock` is a
+fingerprint input, so a build that ran `pod install` fingerprints differently
+from the commit it was built at, and the next worktree on that same commit
+misses. A repo that wants cross-worktree hits should commit a *settled*
+`Podfile.lock`: run `pod install` once, commit whatever it produced, and check
+that a second run leaves it alone. The diagnostic when two workspaces that
+should agree do not is to fingerprint both and diff the sources rather than the
+hash:
+
+```bash
+npx @expo/fingerprint fingerprint:generate > /tmp/fp-a.json   # in workspace A
+npx @expo/fingerprint fingerprint:generate > /tmp/fp-b.json   # in workspace B
+diff <(jq -S . /tmp/fp-a.json) <(jq -S . /tmp/fp-b.json)
+```
+
+The differing source names the file, which is the answer: either commit it, or
+add it to `.fingerprintignore` if it genuinely does not change the build.
 
 **Bare React Native has no equivalent hook** — the community CLI never consults
 a provider, so there is nothing to configure and nothing to write. Use `rn-iso

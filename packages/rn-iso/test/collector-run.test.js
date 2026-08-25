@@ -63,9 +63,9 @@ function writeShim(name, body) {
   return file;
 }
 
-function spawnCollector(args) {
+function spawnCollector(args, env = {}) {
   const child = spawn(process.execPath, [ENTRY, ...args], {
-    env: { ...process.env, PATH: `${shimDir}${delimiter}${process.env.PATH}`, RN_ISO_HOME: tmpHome },
+    env: { ...process.env, PATH: `${shimDir}${delimiter}${process.env.PATH}`, RN_ISO_HOME: tmpHome, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   running.push(child);
@@ -339,5 +339,167 @@ describe('runCollector seams', () => {
     assert.equal(result, null);
     assert.equal(code, 1);
     assert.match(deviceLog().find(r => r.event === 'collector_failed').msg, /ENOENT/);
+  });
+});
+
+// --- rule 3: an app restart is not the end of the collector ----------------
+//
+// The failure this closes: `--pid` pins logcat to ONE process, so restarting
+// the app -- the most common thing anyone does between two log reads -- left
+// the collector streaming for a pid that would never write another line.
+// Nothing failed, nothing exited, `rn-iso logs --source device` simply had no
+// more lines and said nothing about why.
+describe('the android collector follows the app across a restart', () => {
+  // A fake adb whose `pidof` answers 3132 until a marker file appears and
+  // 4200 afterwards -- an app restart, from the only angle the collector can
+  // see one. Each logcat prints a line that names its own pid, so the device
+  // log says which stream produced what.
+  const restartingShim = () => writeShim('adb', [
+    `case "$*" in`,
+    `  '-s emulator-5554 shell pidof -s com.example.app')`,
+    `    if [ -f "${join(shimDir, 'restarted')}" ]; then echo 4200; else echo 3132; fi ;;`,
+    `  '-s emulator-5554 logcat --pid 3132 -v time')`,
+    `    echo '08-21 17:51:19.507 I/ReactNativeJS(  3132): before the restart'`,
+    `    exec sleep 30 ;;`,
+    `  '-s emulator-5554 logcat --pid 4200 -v time')`,
+    `    echo '08-21 17:51:29.507 I/ReactNativeJS(  4200): after the restart'`,
+    `    exec sleep 30 ;;`,
+    `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
+    `esac`,
+  ].join('\n'));
+
+  test('a new pid reattaches the stream, with a record saying so', async () => {
+    restartingShim();
+    const child = spawnCollector(
+      ['--platform', 'android', '--root', root, '--serial', 'emulator-5554', '--package', 'com.example.app'],
+      // The real watch is every 3s; a suite must not sit through it.
+      { RN_ISO_PID_WATCH_MS: '100' }
+    );
+    await until(() => deviceLog().some(r => /before the restart/.test(r.msg || '')), { label: 'the first stream' });
+
+    writeFileSync(join(shimDir, 'restarted'), '');
+
+    const reattached = await until(
+      () => deviceLog().find(r => r.event === 'collector_reattached'),
+      { label: 'the reattach record' }
+    );
+    assert.match(reattached.msg, /pid 4200/);
+    assert.match(reattached.msg, /was 3132/);
+    await until(() => deviceLog().some(r => /after the restart/.test(r.msg || '')), { label: 'the second stream' });
+
+    // Still one collector, still registered under this pid, still alive: a
+    // restart is not an exit.
+    assert.equal(readCollectors(root).android.pid, child.pid);
+    assert.equal(deviceLog().some(r => r.event === 'collector_stopped'), false);
+
+    process.kill(child.pid, 'SIGTERM');
+    assert.deepEqual(await exited(child), { code: 0, signal: null });
+    assert.equal('collectors' in (state() || {}), false);
+  });
+
+  test('the same pid, poll after poll, changes nothing', async () => {
+    writeShim('adb', [
+      `case "$*" in`,
+      `  '-s emulator-5554 shell pidof -s com.example.app') echo 3132 ;;`,
+      `  '-s emulator-5554 logcat --pid 3132 -v time')`,
+      `    echo '08-21 17:51:19.507 I/ReactNativeJS(  3132): steady'`,
+      `    exec sleep 30 ;;`,
+      `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
+      `esac`,
+    ].join('\n'));
+    const child = spawnCollector(
+      ['--platform', 'android', '--root', root, '--serial', 'emulator-5554', '--package', 'com.example.app'],
+      { RN_ISO_PID_WATCH_MS: '50' }
+    );
+    await until(() => deviceLog().some(r => /steady/.test(r.msg || '')), { label: 'the stream' });
+    await new Promise(r => setTimeout(r, 400)); // several polls
+    assert.equal(deviceLog().filter(r => r.event === 'collector_reattached').length, 0);
+    process.kill(child.pid, 'SIGKILL');
+    await exited(child);
+  });
+});
+
+// The same rule through the seams, where the edges are reachable: a stream
+// that ends on its own while the app is back under a new pid, and a watcher
+// that must not outlive the collector.
+describe('runCollector reattach seams', () => {
+  const fakeChild = (pid) => {
+    const handlers = {};
+    return {
+      pid,
+      stdout: { setEncoding() {}, on() {} },
+      stderr: { setEncoding() {}, on() {} },
+      on(event, fn) { handlers[event] = fn; },
+      emit(event, ...args) { handlers[event]?.(...args); },
+      kill() { this.killed = true; },
+    };
+  };
+
+  test('a stream that ends while the app is back under a new pid reattaches instead of exiting', async () => {
+    const started = [];
+    let pid = 3132;
+    let code = null;
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      pidOf: () => pid,
+      // Long enough that the timer never fires: the exit probe is the path
+      // under test.
+      pidWatchMs: 60000,
+      startStream: ({ pid: streamPid }) => { const c = fakeChild(streamPid); started.push(c); return c; },
+      attachSignals: false,
+      onExit: (c) => { code = c; },
+    });
+    assert.deepEqual(started.map(c => c.pid), [3132]);
+
+    pid = 4200;
+    started[0].emit('exit', 0, null);
+
+    assert.deepEqual(started.map(c => c.pid), [3132, 4200], 'the stream came back on the new pid');
+    assert.equal(code, null, 'and the collector did not exit');
+    assert.ok(deviceLog().some(r => r.event === 'collector_reattached'));
+    result.finish(0, 'info', 'done', 'collector_stopped');
+  });
+
+  test('a stream that ends with no app left is still the end of the collector', async () => {
+    let code = null;
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      pidOf: () => null,
+      pidWatchMs: 60000,
+      startStream: ({ pid: streamPid }) => fakeChild(streamPid),
+      attachSignals: false,
+      onExit: (c) => { code = c; },
+    });
+    result.child.emit('exit', 0, null);
+    assert.equal(code, 0);
+    assert.ok(deviceLog().some(r => r.event === 'collector_stopped'));
+    assert.equal('collectors' in (state() || {}), false);
+  });
+
+  test('finish() stops the watcher, or the collector process never exits', async () => {
+    const timers = { set: 0, cleared: 0 };
+    let stopped = false;
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      startStream: ({ pid }) => fakeChild(pid),
+      watchPid: () => ({ stop: () => { stopped = true; timers.cleared++; }, probe: () => null, pid: 3132 }),
+      attachSignals: false,
+      onExit: () => {},
+    });
+    assert.ok(result);
+    result.finish(0, 'info', 'done', 'collector_stopped');
+    assert.equal(stopped, true);
   });
 });

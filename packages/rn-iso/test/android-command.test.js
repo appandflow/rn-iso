@@ -21,7 +21,13 @@ import {
   NO_DEVICE,
   NO_FINGERPRINT,
   NO_METRO,
+  androidDevClientScheme,
   androidFacts,
+  apkDevClientFacts,
+  dumpApkManifest,
+  findAapt,
+  newestBuildTools,
+  parseXmltree,
   displayPath,
   formatDuration,
   killPreviousCollector,
@@ -70,7 +76,7 @@ const never = (what) => () => { throw new Error(`${what} must not run in this ca
 function harness(overrides = {}) {
   const calls = {
     ensureDevice: [], booted: [], metro: [], fingerprint: [], resolveCached: [], storeCached: [],
-    prebuild: [], build: [], install: [], launch: [], spawn: [], kill: [],
+    prebuild: [], build: [], install: [], launch: [], scheme: [], spawn: [], kill: [],
     loadProvider: [], resolveRemoteBuild: [], uploadRemoteBuild: [],
     verify: [], ensureIgnored: [],
   };
@@ -92,7 +98,13 @@ function harness(overrides = {}) {
     prebuild: async (...args) => { calls.prebuild.push(args); return { ok: true, durationMs: 12000 }; },
     build: async (args) => { calls.build.push(args); return { ok: true, apkPath: fakeApk(), durationMs: 161000 }; },
     install: (args) => { calls.install.push(args); return { ok: true }; },
-    launch: (args) => { calls.launch.push(args); return { ok: true, mode: 'am-start' }; },
+    // The default is what launchAndroidApp returns for a project with no
+    // dev-client scheme: the launcher activity, both port mechanisms in
+    // place. The dev-client shape has its own tests below.
+    launch: (args) => { calls.launch.push(args); return { ok: true, mode: 'am-start', reversed: ['tcp:8081->tcp:8082', 'tcp:8082->tcp:8082'], debugHttpHost: '10.0.2.2:8082', debugHttpHostNote: null }; },
+    // Reading the scheme out of the APK shells out to aapt; the resolver has
+    // its own tests (against a real dump), so the flow injects the answer.
+    resolveDevClientScheme: (projectRoot, apkPath) => { calls.scheme.push([projectRoot, apkPath]); return undefined; },
     spawn: (cmd, args, opts) => { calls.spawn.push({ cmd, args, opts }); return { pid: 9001, unref: () => { calls.spawn.at(-1).unrefed = true; } }; },
     kill: (pid, signal) => { calls.kill.push([pid, signal]); },
     // The retry is real (one test below is about it); only the sleep is
@@ -156,12 +168,17 @@ describe('a cache hit', () => {
     assert.deepEqual(JSON.parse(h.stdout[0]), {
       platform: 'android',
       serial: 'emulator-5584',
+      avdName: 'rn-iso-app-412',
+      deviceName: 'rn-iso-app-412',
       fingerprint: FINGERPRINT,
       cacheHit: 'local',
       cacheSkipped: false,
       appPath: '/cache/app-debug.apk',
       bundleId: 'com.example.app',
       launched: true,
+      debugHttpHost: '10.0.2.2:8082',
+      debugHttpHostNote: null,
+      devClientUrl: null,
       logs: workspaceLogsDir(root),
     });
     assert.deepEqual(JSON.parse(h.stdout[0]), result.facts);
@@ -705,14 +722,21 @@ describe('the pure parts', () => {
 
   test('androidFacts and lastBuildRecord fill every field of their contracts', () => {
     assert.deepEqual(androidFacts({}), {
-      platform: 'android', serial: null, fingerprint: null, cacheHit: false, cacheSkipped: false,
-      appPath: null, bundleId: null, launched: false, logs: null,
+      platform: 'android', serial: null, avdName: null, deviceName: null, fingerprint: null,
+      cacheHit: false, cacheSkipped: false, appPath: null, bundleId: null, launched: false,
+      debugHttpHost: null, debugHttpHostNote: null, devClientUrl: null, logs: null,
     });
+    // A device tool is addressed by AVD name, not by console-port slot, and
+    // deviceName falls back to it rather than being separately null.
+    assert.deepEqual(
+      { avdName: androidFacts({ avdName: 'rn-iso-app-412' }).avdName, deviceName: androidFacts({ avdName: 'rn-iso-app-412' }).deviceName },
+      { avdName: 'rn-iso-app-412', deviceName: 'rn-iso-app-412' }
+    );
     // cacheHit is a LEVEL, not a boolean: 'local' | 'remote' | false.
     assert.equal(androidFacts({ cacheHit: 'remote' }).cacheHit, 'remote');
     assert.equal(androidFacts({ cacheHit: true }).cacheHit, false);
     const record = lastBuildRecord({ startedAt: 'now', status: 'ok' });
-    assert.deepEqual(Object.keys(record), ['platform', 'fingerprint', 'cacheKey', 'cacheHit', 'cacheSkipped', 'durationMs', 'appPath', 'bundleId', 'startedAt', 'status']);
+    assert.deepEqual(Object.keys(record), ['platform', 'avdName', 'deviceName', 'fingerprint', 'cacheKey', 'cacheHit', 'cacheSkipped', 'durationMs', 'appPath', 'bundleId', 'startedAt', 'status']);
     assert.equal(lastBuildRecord({ startedAt: 'now', status: 'failed', errorCode: BUILD_ERROR }).errorCode, BUILD_ERROR);
   });
 
@@ -773,5 +797,222 @@ describe('the workspace directory is gitignored first', () => {
     const h = harness();
     await h.run();
     assert.deepEqual(h.calls.ensureIgnored, [root]);
+  });
+});
+
+// --- Contract 6, REPORTED (the result used to be invisible) ----------------
+//
+// launchAndroidApp has always returned debugHttpHost and debugHttpHostNote,
+// and until now every caller dropped them on the floor. That is how a
+// debug_http_host write that emitted an INVALID SHELL SCRIPT, and so had
+// never once succeeded, produced output identical to one that worked: the
+// launch survives on the adb reverse alone, and nothing printed the
+// difference. These tests are the consumer.
+describe('the port wiring is reported', () => {
+  test('a successful debug_http_host write is a phase line and two facts', async () => {
+    const h = harness();
+    const result = await h.run();
+    assert.match(labelled(h.stderr, 'wired')[0], /debug_http_host 10\.0\.2\.2:8082 \+ adb reverse tcp:8081 -> tcp:8082/);
+    assert.equal(result.facts.debugHttpHost, '10.0.2.2:8082');
+    assert.equal(result.facts.debugHttpHostNote, null);
+  });
+
+  test('a failed one is a WARNING, a note in the facts, and a record in the timeline', async () => {
+    const h = harness({
+      launch: () => ({ ok: true, mode: 'am-start', reversed: ['tcp:8081->tcp:8082'], debugHttpHost: null, debugHttpHostNote: 'debug_http_host not written (run-as: package not debuggable); relying on adb reverse' }),
+    });
+    const result = await h.run();
+    // The run still succeeds -- the reverse covers the 8081 path on its own.
+    assert.equal(result.ok, true);
+    const wired = labelled(h.stderr, 'wired')[0];
+    assert.match(wired, /not debuggable/);
+    assert.match(wired, /adb reverse tcp:8081 -> tcp:8082/, 'what DID work is still named');
+    assert.equal(result.facts.debugHttpHost, null);
+    assert.match(result.facts.debugHttpHostNote, /relying on adb reverse/);
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
+    const record = records.find(r => r.event === 'debug_http_host_failed');
+    assert.ok(record, 'the note belongs in the timeline, where `logs --errors` finds it');
+    assert.equal(record.level, 'warn');
+  });
+});
+
+// --- the dev-client deep link (F7) -----------------------------------------
+describe('the dev-client deep link', () => {
+  test('the scheme is read from the APK that was just installed, and passed to the launch', async () => {
+    const asked = [];
+    const h = harness({ resolveDevClientScheme: (projectRoot, apkPath) => { asked.push([projectRoot, apkPath]); return 'exp+app'; } });
+    await h.run();
+    assert.equal(asked.length, 1);
+    assert.equal(h.calls.launch[0].devClientScheme, 'exp+app');
+    // The apk the resolver is pointed at is the one that was installed, not
+    // a source tree it would have to guess a build output path in.
+    assert.deepEqual(asked[0], [root, h.calls.install[0].apkPath]);
+  });
+
+  test('the deep-link launch says so, and the url is in the facts', async () => {
+    const url = 'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082';
+    const h = harness({
+      resolveDevClientScheme: () => 'exp+app',
+      launch: () => ({ ok: true, mode: 'deep-link', devClientUrl: url, reversed: [], debugHttpHost: '10.0.2.2:8082' }),
+    });
+    const result = await h.run();
+    assert.match(labelled(h.stderr, 'launch')[0], /expo-dev-client deep link/);
+    assert.equal(result.facts.devClientUrl, url);
+  });
+
+  test('a deep link that resolved nothing is a warning, not a failure', async () => {
+    const h = harness({
+      resolveDevClientScheme: () => 'exp+app',
+      launch: () => ({ ok: true, mode: 'am-start', devClientNote: 'am start -d exp+app://... did not start anything on emulator-5584: Error: Activity not started, unable to resolve Intent; fell back to the launcher activity', reversed: [], debugHttpHost: '10.0.2.2:8082' }),
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true);
+    assert.ok(labelled(h.stderr, 'wired').some(l => /unable to resolve Intent/.test(l)));
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
+    assert.ok(records.find(r => r.event === 'dev_client_link_failed'));
+  });
+
+  test('an unverified launch names the deep link FIRST, as a command that can be pasted', async () => {
+    const h = harness({
+      resolveDevClientScheme: () => 'exp+app',
+      verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
+    });
+    await h.run();
+    const steps = h.stderr.filter(l => /^\s+\d+\./.test(l.replace(/^\s{2}\s*/, '  ')));
+    const text = h.stderr.join('\n');
+    const link = text.indexOf('am start -a android.intent.action.VIEW');
+    const picker = text.indexOf('DEVELOPMENT SERVERS');
+    assert.ok(link > 0, 'the deep link is in the guidance');
+    assert.ok(link < picker, 'and it comes before the picker advice');
+    // The exact command, with the exact url: 10.0.2.2, this workspace's port,
+    // percent-encoded, quoted for the shell it is pasted into.
+    assert.match(text, /adb -s emulator-5584 shell am start -a android\.intent\.action\.VIEW -d 'exp\+app:\/\/expo-development-client\/\?url=http%3A%2F%2F10\.0\.2\.2%3A8082'/);
+    assert.ok(steps.length >= 2);
+  });
+
+  test('no scheme, no deep link in the guidance', async () => {
+    const h = harness({ verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) });
+    await h.run();
+    const text = h.stderr.join('\n');
+    assert.doesNotMatch(text, /expo-development-client/);
+    assert.match(text, /DEVELOPMENT SERVERS/);
+  });
+});
+
+// --- F15: the emulator's NAME, not just its console-port slot --------------
+describe('the device identity is recorded', () => {
+  test('avdName and deviceName reach the facts and state.json lastBuild', async () => {
+    const h = harness();
+    const result = await h.run();
+    assert.equal(result.facts.avdName, 'rn-iso-app-412');
+    assert.equal(result.facts.deviceName, 'rn-iso-app-412');
+    assert.equal(result.facts.serial, 'emulator-5584');
+    const lastBuild = readState().lastBuild;
+    assert.equal(lastBuild.avdName, 'rn-iso-app-412');
+    assert.equal(lastBuild.deviceName, 'rn-iso-app-412');
+  });
+
+  test('a failure after the device is resolved still records which emulator it was', async () => {
+    const h = harness({ install: () => ({ failed: true, reason: 'adb install failed' }) });
+    const result = await h.run();
+    assert.equal(result.ok, false);
+    assert.equal(readState().lastBuild.avdName, 'rn-iso-app-412');
+  });
+});
+
+// --- reading the dev-client scheme out of the BUILT APK ---------------------
+//
+// The fixture is a real `aapt dump xmltree` of a real expo-dev-client debug
+// APK (see its header). Everything below is asserted against that rather than
+// against a hand-written manifest, because the two things that make this hard
+// are both properties of real output: the scheme can be an UNRESOLVED
+// resource reference, and the manifest of a dev client declares a dozen
+// schemes belonging to other people's SDKs.
+describe('the APK dev-client scheme', () => {
+  const dump = () => readFileSync(join(import.meta.dirname, 'fixtures', 'aapt-xmltree-devclient.txt'), 'utf-8');
+
+  test('the scheme is the launchable activity\'s, not the longest in the manifest', () => {
+    const facts = apkDevClientFacts(dump());
+    assert.equal(facts.devClient, true);
+    assert.deepEqual(facts.schemes, ['th3rdwave']);
+    // The trap: these ARE in the manifest, on other activities.
+    assert.doesNotMatch(JSON.stringify(facts.schemes), /expo-dev-launcher|stripe/);
+  });
+
+  test('aapt2\'s namespace-qualified spelling parses to the same thing', () => {
+    const aapt2 = dump().replace(/A: android:/g, 'A: http://schemas.android.com/apk/res/android:');
+    assert.deepEqual(apkDevClientFacts(aapt2), apkDevClientFacts(dump()));
+  });
+
+  test('an unresolved @0x resource reference is not a scheme', () => {
+    // MainActivity's first VIEW filter carries `android:scheme=@0x7f1300c6`.
+    const tree = parseXmltree(dump());
+    const values = [];
+    const walk = (n) => { if ('android:scheme' in n.attrs) values.push(n.attrs['android:scheme']); n.children.forEach(walk); };
+    walk(tree);
+    assert.ok(values.includes(null), 'the reference is parsed, as null');
+    assert.ok(!apkDevClientFacts(dump()).schemes.includes(null));
+  });
+
+  test('an app with no expo-dev-launcher in it is not a dev client', () => {
+    const plain = dump().split('\n').filter(l => !l.includes('devlauncher')).join('\n');
+    assert.equal(apkDevClientFacts(plain).devClient, false);
+  });
+
+  test('a manifest with no launchable activity yields no schemes rather than the wrong one', () => {
+    const noMain = dump().replace(/android\.intent\.action\.MAIN/g, 'android.intent.action.SEND');
+    assert.deepEqual(apkDevClientFacts(noMain).schemes, []);
+  });
+
+  test('androidDevClientScheme: the APK answers, in both directions', () => {
+    assert.equal(androidDevClientScheme(root, '/x/app.apk', { dump: () => dump() }), 'th3rdwave');
+    // A readable APK that is not a dev client is a plain launch -- NOT a
+    // fall through to app.json, which would deep-link an app with no
+    // launcher to handle it.
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { scheme: 'fromconfig' } }));
+    const plain = dump().split('\n').filter(l => !l.includes('devlauncher')).join('\n');
+    assert.equal(androidDevClientScheme(root, '/x/app.apk', { dump: () => plain }), undefined);
+  });
+
+  test('an unreadable APK falls back to the project config, exactly as iOS does', () => {
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { scheme: 'fromconfig' } }));
+    // No expo-dev-client in this fixture project's dependencies, so the
+    // config reader refuses too: a plain launch, not a link nothing answers.
+    assert.equal(androidDevClientScheme(root, '/x/app.apk', { dump: () => null }), undefined);
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'expo-dev-client': '^5.0.0' } }));
+    assert.equal(androidDevClientScheme(root, '/x/app.apk', { dump: () => null }), 'fromconfig');
+  });
+
+  test('newestBuildTools sorts by version, not by string', () => {
+    assert.equal(newestBuildTools(['34.0.0', '36.0.0', '9.0.0', '35.0.0']), '36.0.0');
+    assert.equal(newestBuildTools(['36.0.0', '36.0.1']), '36.0.1');
+    assert.equal(newestBuildTools(['source.properties', 'NOTICE.txt']), null);
+    assert.equal(newestBuildTools([]), null);
+  });
+
+  test('findAapt takes the newest build-tools that actually has one', () => {
+    const found = findAapt('/sdk', {
+      readDir: () => ['35.0.0', '36.0.0'],
+      exists: (path) => path === join('/sdk', 'build-tools', '35.0.0', 'aapt2'),
+    });
+    assert.deepEqual(found, { path: join('/sdk', 'build-tools', '35.0.0', 'aapt2'), tool: 'aapt2', version: '35.0.0' });
+    assert.equal(findAapt('/sdk', { readDir: () => { throw new Error('ENOENT'); }, exists: () => false }), null);
+    assert.equal(findAapt('/sdk', { readDir: () => ['36.0.0'], exists: () => false }), null);
+  });
+
+  test('dumpApkManifest spells the dump the way each tool wants, and swallows failures', () => {
+    const calls = [];
+    const exec = { runFile: (file, args) => { calls.push([file, ...args]); return 'E: manifest (line=2)\n'; } };
+    dumpApkManifest('/x/app.apk', { exec, aapt: { path: '/sdk/aapt', tool: 'aapt' } });
+    dumpApkManifest('/x/app.apk', { exec, aapt: { path: '/sdk/aapt2', tool: 'aapt2' } });
+    assert.deepEqual(calls, [
+      ['/sdk/aapt', 'dump', 'xmltree', '/x/app.apk', 'AndroidManifest.xml'],
+      ['/sdk/aapt2', 'dump', 'xmltree', '--file', 'AndroidManifest.xml', '/x/app.apk'],
+    ]);
+    const throwing = { runFile: () => { throw new Error('Invalid file'); } };
+    assert.equal(dumpApkManifest('/x/app.apk', { exec: throwing, aapt: { path: '/sdk/aapt', tool: 'aapt' } }), null);
+    // Output that is not a manifest tree is not a manifest tree.
+    assert.equal(dumpApkManifest('/x/app.apk', { exec: { runFile: () => 'ERROR: dump failed' }, aapt: { path: '/sdk/aapt', tool: 'aapt' } }), null);
+    assert.equal(dumpApkManifest(null, { exec: throwing }), null);
   });
 });

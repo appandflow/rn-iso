@@ -98,7 +98,9 @@ TypeScript -- and a generator that rewrites those eventually corrupts one. So
 `doctor` reports, read-only and always exit 0, and the bundled `rn-iso-init`
 skill is the playbook for applying each finding by hand. The one edit that
 needed no judgement, `.rn-iso/` in `.gitignore`, is self-ensured: `start`,
-`ios` and `android` each add it if it is missing and say so once on stderr.
+`ios` and `android` each add it if it is missing and say so once on stderr --
+commit that line with the change you were already making, and it stops being
+rewritten in every fresh worktree.
 
 For AI coding agents, install the bundled skills so the agent knows how to drive the CLI (the lifecycle, the facts contract, and the destructive-command rules):
 

@@ -767,7 +767,16 @@ describe('failure output', () => {
       }),
     });
     assert.equal(exitCode, 1);
-    assert.deepEqual(logs, [], 'stdout stays empty on failure, even in --json mode');
+    // --json is a contract about stdout in BOTH directions: exactly one
+    // parseable line, whether the run succeeded or failed. A caller capturing
+    // it with `$(...)` and parsing the result got an empty string here, which
+    // is the one answer a JSON parser cannot act on.
+    assert.equal(logs.length, 1, 'exactly one line on stdout, even on failure');
+    assert.deepEqual(JSON.parse(logs[0]), {
+      code: 'RN_ISO_BUILD_FAILED',
+      message: null,
+      remedy: null,
+    });
     const text = errs.join('\n');
     assert.match(text, /^build {7}FAILED after 2m41s/m);
     assert.match(text, /AppDelegate\.mm:12:4: use of undeclared identifier 'foo'/);
@@ -775,6 +784,27 @@ describe('failure output', () => {
     assert.match(text, /and 3 more diagnostics in the log/);
     assert.match(text, new RegExp(`^log {9}${buildLogFile(root).replace(/[/\\^$*+?.()|[\]{}]/g, '\\$&')}`, 'm'));
     assert.match(text, /^failed {6}RN_ISO_BUILD_FAILED/m);
+  });
+
+  // The same contract every other --json failure has, on the step an agent hits
+  // most often. `ios` printed NOTHING on stdout here, so a caller could not
+  // tell a failed build from a crashed CLI without reading stderr prose.
+  test('--json puts one parseable {code, message, remedy} line on stdout when the gate refuses', async () => {
+    const { logs, exitCode } = await run({ json: true });
+    assert.equal(exitCode, 1);
+    assert.equal(logs.length, 1);
+    const payload = JSON.parse(logs[0]);
+    assert.equal(payload.code, 'RN_ISO_NO_METRO');
+    assert.match(payload.message, /no dev server/);
+    assert.match(payload.remedy, /rn-iso start/);
+  });
+
+  // Without --json stdout stays untouched: the human path prints its diagnosis
+  // on stderr and nothing captures stdout.
+  test('without --json a failure still writes nothing to stdout', async () => {
+    const { logs, exitCode } = await run({});
+    assert.equal(exitCode, 1);
+    assert.deepEqual(logs, []);
   });
 
   test('a build with no recognizable diagnostic falls back to the transcript tail', async () => {

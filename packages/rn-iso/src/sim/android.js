@@ -33,13 +33,34 @@ function safeList(dir) {
   try { return readdirSync(dir); } catch { return []; }
 }
 
-// Highest API first; google_apis over other tags; Apple Silicon needs arm64.
+// The 16KB-page-size variants of the system images (`..._ps16k`). They are a
+// perfectly good Android, and rn-iso will happily use one when it is the only
+// thing installed -- an expo-dev-client debug build installs, launches and
+// loads a bundle on one, verified on this machine's only image,
+// `system-images;android-36;google_apis_playstore_ps16k;arm64-v8a`.
+//
+// They are ranked LAST anyway, and ahead of the API-level preference, because
+// what they change is exactly what a React Native app is made of: a 16KB-page
+// device refuses to load any .so whose segments are aligned to 4KB, which is
+// every native module built with an NDK older than r27 and not yet rebuilt.
+// The failure is `dlopen failed: ... p_align` at startup, on a build that
+// works everywhere else, and an agent debugging THAT is debugging the
+// emulator rn-iso silently chose for it. When a plain image exists, it is the
+// one that tells you about your app rather than about your device.
+function pageSizeRank(image) {
+  return /(^|_)ps16k$/.test(String(image?.tag || '')) ? 1 : 0;
+}
+
+// Plain pages first; then highest API; then google_apis over other tags.
+// Apple Silicon needs arm64.
 export function pickDefaultSystemImage(images, { systemImage } = {}) {
   if (systemImage) return images.find(i => i.pkg === systemImage) || null;
   const arm = images.filter(i => i.arch === 'arm64-v8a');
   if (arm.length === 0) return null;
   return [...arm].sort((a, b) =>
-    b.api - a.api || (b.tag === 'google_apis' ? 1 : 0) - (a.tag === 'google_apis' ? 1 : 0))[0];
+    pageSizeRank(a) - pageSizeRank(b)
+    || b.api - a.api
+    || (b.tag === 'google_apis' ? 1 : 0) - (a.tag === 'google_apis' ? 1 : 0))[0];
 }
 
 export function createOwnedAvd(label, { systemImage } = {}) {

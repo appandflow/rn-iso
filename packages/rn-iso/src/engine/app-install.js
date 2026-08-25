@@ -84,8 +84,16 @@ export function jsLocationValue(metroPort) {
 //     "scheme://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081"
 // The CLI delivers it with `simctl openurl` (packages/@expo/cli/src/start/
 // platforms/ios/simctl.ts line 191), which is what launchIosApp does below.
-export function devClientUrl(scheme, metroPort) {
-  return `${scheme}://expo-development-client/?url=${encodeURIComponent(`http://localhost:${metroPort}`)}`;
+//
+// `host` is the one thing that differs by platform: a simulator shares the
+// mac's loopback, an emulator does not (see EMULATOR_HOST_LOOPBACK below).
+// The shape is otherwise identical, and expo-dev-launcher parses it the same
+// way on both -- packages/expo-dev-launcher/android/src/debug/java/expo/
+// modules/devlauncher/helpers/DevLauncherURLHelper.kt line 7 is
+// `fun isDevLauncherUrl(uri: Uri) = uri.host == "expo-development-client"`,
+// the same host-segment match EXDevLauncherURLHelper.swift line 34 makes.
+export function devClientUrl(scheme, metroPort, host = 'localhost') {
+  return `${scheme}://expo-development-client/?url=${encodeURIComponent(`http://${host}:${metroPort}`)}`;
 }
 
 // Order matters. RCT_jsLocation is written FIRST, unconditionally, even on
@@ -203,38 +211,176 @@ export function reverseMetroPorts({ serial, metroPort }, { exec = null } = {}) {
 // bare ip and then appends the BAKED dev-server port to -- it cannot carry a
 // workspace port). 10.0.2.2 is the emulator's route to the host loopback.
 //
+// VERIFIED against react-native (checkout at /Volumes/ExternalSSD/Developer/
+// react-native), packages/react-native/ReactAndroid/src/main/java/com/
+// facebook/react/packagerconnection/PackagerConnectionSettings.kt:
+//   line 20  PreferenceManager.getDefaultSharedPreferences(appContext)
+//            -- which is <pkg>_preferences.xml, hence the file name below.
+//   line 79  private const val PREFS_DEBUG_SERVER_HOST_KEY = "debug_http_host"
+//   line 35  getString(PREFS_DEBUG_SERVER_HOST_KEY, null) is returned as-is
+//            when non-empty, BEFORE AndroidInfoHelpers.getServerHost.
+//
 // Written via run-as, which works because this is always a debuggable build
 // on an owned emulator. Best-effort by design: any failure is reported and
 // launch proceeds -- the adb reverse mapping covers the 8081 path alone.
+
+// The emulator's fixed alias for the host loopback (qemu user-mode
+// networking). Everything rn-iso points AT the host from inside an emulator
+// uses this and not `localhost`, deliberately and in one place:
+// `adb reverse` would make localhost work too, but a reverse is per-adb-
+// connection state that dies with an adb server restart or a re-attach and is
+// only re-applied by the next `rn-iso android`, while 10.0.2.2 is routing the
+// emulator itself provides. It also keeps debug_http_host and the dev-client
+// deep link naming the SAME host, which matters because expo-dev-launcher
+// persists the url it was opened with in its recent-servers list.
+export const EMULATOR_HOST_LOOPBACK = '10.0.2.2';
+
+// `adb shell` does NOT escape its arguments -- it joins them with spaces and
+// hands the resulting STRING to the device's shell, which parses it. So an
+// argv array does not protect anything on the far side: a multi-line script
+// passed as one element arrives as many device-shell commands.
+//
+// OBSERVED, on emulator-5556 running Android 16, with the very script below:
+// unquoted, `sh -c` took only the first word (`cd`) and the remaining lines
+// ran in the DEVICE shell, whose cwd is `/` --
+//   mkdir: 'shared_prefs': Read-only file system
+// while the same argv with the script quoted wrote the file correctly. Single
+// quotes, because they quote everything (the prefs XML is full of double
+// quotes), and `'\''` for the one character they cannot carry.
+export function deviceShellArg(text) {
+  return `'${String(text).replace(/'/g, "'\\''")}'`;
+}
+
+// PURE. The device-side script that lands debug_http_host in the app's
+// default SharedPreferences, whatever state that file is in. Exported so a
+// test can EXECUTE it (test/engine-app-install.test.js runs it under a local
+// `sh -c` against a temp dir): the previous version of this function was
+// asserted only by a regex over its argv, and shipped three separate shell
+// defects -- `if`/`then` collapsed onto one line by a `.join(' ')`, inner
+// double quotes that closed the outer quoting and turned `>10.0.2.2:8085`
+// into a redirection, and `\n` inside a single-line command. A test that
+// cannot fail on any of those is not a test of this.
+//
+// The file is REBUILT rather than patched, which is what removes the sed
+// expressions (and toybox's sed, which is what an emulator has, is not GNU
+// sed) and what makes one code path cover all four states: no file, a file
+// with the key, a file without it, and Android's empty-prefs form `<map />`.
+// Everything except the header, the closing tag and any existing
+// debug_http_host line is carried over verbatim.
+export function debugHttpHostScript({ packageName, host, dataDir = null }) {
+  const dir = dataDir || `/data/data/${packageName}`;
+  const prefs = `shared_prefs/${packageName}_preferences.xml`;
+  const tmp = `${prefs}.rn-iso.tmp`;
+  // Real newlines: this whole string is ONE argv element, quoted by
+  // deviceShellArg, so the device shell hands it to `sh -c` as one script.
+  return [
+    `cd ${dir} || exit 1`,
+    'mkdir -p shared_prefs || exit 1',
+    `printf '%s\\n' '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>' '<map>' > ${tmp} || exit 1`,
+    `if [ -f ${prefs} ]; then grep -v 'debug_http_host' ${prefs} | grep -v '<?xml' | grep -v '<map' | grep -v '</map>' >> ${tmp}; fi`,
+    `printf '%s\\n' '    <string name="debug_http_host">${host}</string>' '</map>' >> ${tmp} || exit 1`,
+    `mv ${tmp} ${prefs} || exit 1`,
+    // The self-check is the whole difference between "adb exited 0" and "the
+    // value is in the file": a shell that mis-parses this script can still
+    // exit 0 having written nothing, which is exactly how the old one passed
+    // for months.
+    `grep -q '>${host}<' ${prefs} || exit 1`,
+  ].join('\n');
+}
+
 export function writeDebugHttpHost({ serial, packageName, metroPort }, { exec = null } = {}) {
   const e = exec || getExecutor();
-  const host = `10.0.2.2:${metroPort}`;
-  const prefs = `shared_prefs/${packageName}_preferences.xml`;
-  const script = [
-    `cd /data/data/${packageName} || exit 1`,
-    `if [ ! -f ${prefs} ]; then mkdir -p shared_prefs && printf '%s\n' "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" "<map>" "    <string name=\"debug_http_host\">${host}</string>" "</map>" > ${prefs};`,
-    `elif grep -q debug_http_host ${prefs}; then sed -i "s|<string name=\"debug_http_host\">[^<]*</string>|<string name=\"debug_http_host\">${host}</string>|" ${prefs};`,
-    `else sed -i "s|</map>|    <string name=\"debug_http_host\">${host}</string>\n</map>|" ${prefs}; fi`,
-  ].join(' ');
+  const host = `${EMULATOR_HOST_LOOPBACK}:${metroPort}`;
+  const script = debugHttpHostScript({ packageName, host });
   try {
-    e.runFile('adb', ['-s', serial, 'shell', 'run-as', packageName, 'sh', '-c', script]);
+    e.runFile('adb', ['-s', serial, 'shell', 'run-as', packageName, 'sh', '-c', deviceShellArg(script)]);
     return { ok: true, host };
   } catch (err) {
     return { ok: false, reason: `debug_http_host not written (${describe(err)}); relying on adb reverse` };
   }
 }
 
-export function launchAndroidApp({ serial, packageName, metroPort }, { exec = null } = {}) {
+// PURE. The dev-client deep link for an emulator: the same shape iOS opens
+// with `simctl openurl`, pointed at 10.0.2.2 rather than localhost (see
+// EMULATOR_HOST_LOOPBACK).
+export function androidDevClientUrl(scheme, metroPort) {
+  return devClientUrl(scheme, metroPort, EMULATOR_HOST_LOOPBACK);
+}
+
+// PURE. `am start` is the one adb command whose EXIT CODE cannot be trusted:
+// it prints its diagnosis and still exits 0 for an intent nothing resolves
+// ("Error: Activity not started, unable to resolve Intent { ... }"). Expo's
+// own CLI reads the output for the same reason (packages/@expo/cli/src/start/
+// platforms/android/adb.ts, openAsync: it matches on the text, not the
+// status). Returns the error line, or null when the output looks like a
+// start.
+export function amStartError(text) {
+  const out = String(text ?? '');
+  for (const raw of out.split('\n')) {
+    const line = raw.trim();
+    if (/^Error:/i.test(line)) return line;
+    // "Warning: Activity not started, its current task has been brought to
+    // the front" is the SUCCESS case for an app already running -- do not
+    // treat a Warning as a failure.
+  }
+  return null;
+}
+
+// The dev-client deep link, delivered with `am start -a VIEW -d <url>` --
+// which is what `expo run:android` sends too (packages/@expo/cli/src/start/
+// platforms/android/adb.ts line 139, openUrlAsync: `adbShellArgs(device.pid,
+// 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', url)`).
+//
+// The url is quoted for the DEVICE shell (deviceShellArg): adb hands the
+// joined argv to that shell, and the url carries `?` (a glob) and, for a
+// scheme carrying query parameters, `&`.
+export function openAndroidDevClientUrl({ serial, url }, { exec = null } = {}) {
+  const e = exec || getExecutor();
+  let out;
+  try {
+    out = e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', deviceShellArg(url)]);
+  } catch (err) {
+    return { failed: true, reason: `am start -d ${url} failed on ${serial}: ${describe(err)}` };
+  }
+  const error = amStartError(out);
+  if (error) return { failed: true, reason: `am start -d ${url} did not start anything on ${serial}: ${error}` };
+  return { ok: true, url };
+}
+
+// Order on Android mirrors iOS's: the port wiring FIRST (both mechanisms),
+// then the launch. The dev-client deep link is what makes a cold launch land
+// on this workspace's bundle instead of expo-dev-launcher's DEVELOPMENT
+// SERVERS picker -- the same bug iOS's openurl exists for, and the reason
+// every Android launch before this reported `unverified`.
+//
+// A deep link that does not resolve is NOT fatal: the app is installed and a
+// plain launcher start still gives the developer the picker, which is
+// strictly better than refusing the run. It comes back as `devClientNote`,
+// which commands/android.js prints.
+export function launchAndroidApp({ serial, packageName, metroPort, devClientScheme = null }, { exec = null } = {}) {
   const e = exec || getExecutor();
   const reversed = reverseMetroPorts({ serial, metroPort }, { exec: e });
   if (reversed.failed) return reversed;
   const prefs = writeDebugHttpHost({ serial, packageName, metroPort }, { exec: e });
+  const wiring = {
+    reversed: reversed.reversed,
+    debugHttpHost: prefs.ok ? prefs.host : null,
+    debugHttpHostNote: prefs.ok ? null : prefs.reason,
+  };
+
+  let devClientNote = null;
+  if (devClientScheme) {
+    const url = androidDevClientUrl(devClientScheme, metroPort);
+    const opened = openAndroidDevClientUrl({ serial, url }, { exec: e });
+    if (opened.ok) return { ok: true, mode: 'deep-link', devClientUrl: url, ...wiring };
+    devClientNote = `${opened.reason}; fell back to the launcher activity`;
+  }
 
   const component = resolveLaunchActivity(serial, packageName, { exec: e });
   if (component) {
     try {
       e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component]);
-      return { ok: true, mode: 'am-start', component, reversed: reversed.reversed, debugHttpHost: prefs.ok ? prefs.host : null, debugHttpHostNote: prefs.ok ? null : prefs.reason };
+      return { ok: true, mode: 'am-start', component, devClientNote, ...wiring };
     } catch (err) {
       return { failed: true, code: LAUNCH_ERROR, reason: `am start -n ${component} failed on ${serial}: ${describe(err)}` };
     }
@@ -245,7 +391,7 @@ export function launchAndroidApp({ serial, packageName, metroPort }, { exec = nu
     // resolved, which covers apps whose manifest resolve-activity could not
     // read (a disabled-by-default alias, a package just installed).
     e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1']);
-    return { ok: true, mode: 'monkey', reversed: reversed.reversed, debugHttpHost: prefs.ok ? prefs.host : null, debugHttpHostNote: prefs.ok ? null : prefs.reason };
+    return { ok: true, mode: 'monkey', devClientNote, ...wiring };
   } catch (err) {
     return { failed: true, code: LAUNCH_ERROR, reason: `Could not launch ${packageName} on ${serial}: no launcher activity resolved and monkey failed: ${describe(err)}` };
   }
@@ -421,8 +567,15 @@ export function unverifiedLaunchLines({
       push(`Only if no alert is showing, re-launch: xcrun simctl launch --console ${udid} ${bundleId}`);
     }
   } else {
-    // No confirmation alert on Android: `am start` delivers the deep link
-    // outright, so the picker is the first thing that can be waiting.
+    // The deep link goes FIRST on Android, and it is the whole answer when
+    // it is available: there is no confirmation alert in front of `am start`
+    // (that is an iOS 26 thing), so re-sending it is a command that either
+    // loads this workspace's bundle or says why it did not. The picker is
+    // only what you are looking at when there is no scheme to deep-link
+    // with, and the plain re-launch only ever reopens the same picker.
+    if (url && serial) {
+      push(`Re-send the dev-client deep link -- this is the command that points the app at THIS workspace's Metro: adb -s ${serial} shell am start -a android.intent.action.VIEW -d '${url}'`);
+    }
     push(picker);
     if (serial && bundleId) {
       push(`Otherwise the reverse mapping was not in place when the app started. Re-launch: adb -s ${serial} shell monkey -p ${bundleId} 1`);

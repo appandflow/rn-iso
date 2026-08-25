@@ -163,3 +163,87 @@ export function startAndroidLogcat({ serial, pid, spawnFn = null }) {
     detached: false,
   });
 }
+
+// --- surviving an app restart (the collector used to go silent here) -------
+//
+// `--pid` is what makes this stream "this app" rather than "this device", and
+// it is also what pins it to ONE process. Restarting the app -- the single
+// most common thing a developer does between two log reads -- gives it a new
+// pid, and everything after that was collected for a process that no longer
+// exists: `rn-iso logs --source device` simply stopped having lines, with
+// nothing in the timeline saying why. (logcat itself does not fail here. It
+// keeps running happily, filtering on a pid nothing will ever write under
+// again, which is exactly why this cannot be left to the stream to notice.)
+//
+// So the pid is re-checked on a timer, unconditionally rather than only while
+// the stream is quiet: a quiet stream is not a signal on Android, where a
+// backgrounded app can be silent for minutes, and `pidof` is one adb call
+// every few seconds.
+export const PID_WATCH_MS = 3000;
+
+// A test redirect, in the spirit of RN_ISO_HOME: the collector is spawned as
+// a separate PROCESS in its own tests (see collector-run.test.js), so an
+// injected interval cannot reach it and a suite must not wait out the real
+// one.
+export function pidWatchInterval() {
+  const override = Number(process.env.RN_ISO_PID_WATCH_MS);
+  return Number.isFinite(override) && override > 0 ? override : PID_WATCH_MS;
+}
+
+// Polls `pidof -s <pkg>` and calls onChange(newPid) when the app comes back
+// under a different one. A pid that has gone to NOTHING is not a change: the
+// app being closed is not a restart, and the next poll that finds a pid is
+// the restart. Stop() is mandatory -- an unstopped timer keeps the collector
+// process alive after finish().
+export function watchAppPid({
+  serial,
+  packageName,
+  pid,
+  intervalMs = null,
+  exec = null,
+  onChange,
+  resolve = resolveAppPid,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
+}) {
+  const every = intervalMs ?? pidWatchInterval();
+  let current = pid;
+  let stopped = false;
+  let timer = null;
+  const tick = async () => {
+    timer = null;
+    if (stopped) return;
+    let next = null;
+    try {
+      next = resolve(serial, packageName, { exec });
+    } catch {
+      // An adb hiccup is not a restart. The next tick asks again.
+    }
+    if (next && next !== current) {
+      current = next;
+      try {
+        await onChange(next);
+      } catch {
+        // The reattach reports its own failures; a throw here must not stop
+        // the watcher from trying again on the next tick.
+      }
+    }
+    if (!stopped) timer = setTimer(tick, every);
+  };
+  timer = setTimer(tick, every);
+  return {
+    stop() {
+      stopped = true;
+      if (timer) clearTimer(timer);
+      timer = null;
+    },
+    probe() {
+      try {
+        return resolve(serial, packageName, { exec });
+      } catch {
+        return null;
+      }
+    },
+    get pid() { return current; },
+  };
+}

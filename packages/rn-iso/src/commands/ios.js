@@ -605,6 +605,15 @@ export async function runIos(opts = {}, overrides = {}) {
     if (remedy) note(chalk.dim(phaseLine('remedy', remedy)));
     if (build) writeLastBuild(root, lastBuildRecord({ ...build, startedAt, status: 'failed', errorCode: code, durationMs: elapsed() }), { write: d.writeWorkspaceState });
     note(chalk.red(phaseLine('failed', code)));
+    // --json is a promise about stdout in BOTH directions: exactly one
+    // parseable line whatever happened. Without this, a failed `ios --json`
+    // put NOTHING on stdout, so a caller that captured it with `$(...)` had an
+    // empty string to parse and no machine-readable way to tell a refusal from
+    // a crash. The shape is `android`'s, deliberately: one contract, two
+    // commands. `message` is null on the build-failure path, where the
+    // diagnosis is the extracted diagnostics on stderr and in the build log --
+    // the code is what a consumer branches on, and `guide errors` maps it.
+    if (json) console.log(JSON.stringify({ code, message: message ?? null, remedy: remedy ?? null }));
     writer?.close?.();
     process.exit(1);
     return null;

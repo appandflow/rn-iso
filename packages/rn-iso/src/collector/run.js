@@ -22,6 +22,11 @@
 //    was killed, a pid that never appeared: each writes a final record and
 //    clears the registration. A dead collector must never leave a record
 //    claiming it is alive, because the next `ios` run kills the recorded pid.
+// 3. AN APP RESTART IS NOT AN EXIT (android). The logcat stream is pinned to
+//    a pid, so a restart -- the most ordinary thing a developer does -- left
+//    it collecting for a process that no longer exists, silently and
+//    forever. The pid is watched, and a new one REATTACHES the stream with a
+//    `collector_reattached` record in the timeline. See watchAppPid.
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,7 +35,7 @@ import { workspaceLogsDir } from '../paths.js';
 import { createLineReader } from '../supervisor/server-expo.js';
 import { readWorkspaceState, writeWorkspaceState } from '../supervisor/run.js';
 import { appNameFromBundleId, parseLogStreamLine, startIosLogStream } from './ios.js';
-import { parseLogcatLine, startAndroidLogcat, waitForAppPid } from './android.js';
+import { parseLogcatLine, startAndroidLogcat, waitForAppPid, watchAppPid } from './android.js';
 
 export const PLATFORMS = ['ios', 'android'];
 
@@ -113,6 +118,12 @@ export async function runCollector({
   startStream = null,
   resolvePid = null,
   pidTimeoutMs = 30000,
+  // The android restart watch (rule 3). `pidOf` is the single call it makes;
+  // pidWatchMs is only ever set by a test, since the collector normally runs
+  // as its own process (RN_ISO_PID_WATCH_MS is the redirect for that case).
+  pidOf = null,
+  pidWatchMs = null,
+  watchPid = watchAppPid,
   now = Date.now,
   onExit = (code) => process.exit(code),
   attachSignals = true,
@@ -132,9 +143,13 @@ export async function runCollector({
   }
 
   let finished = false;
+  let watcher = null;
   const finish = (code, level, msg, event) => {
     if (finished) return;
     finished = true;
+    // Before anything else: an unstopped interval keeps this process alive
+    // long after its last record.
+    watcher?.stop();
     writer.write({ src: 'device', level, event, msg });
     try { unregisterCollector(root, platform); } catch { /* best effort at exit */ }
     const closed = writer.close();
@@ -155,10 +170,7 @@ export async function runCollector({
     for (const signal of ['SIGTERM', 'SIGINT']) {
       process.on(signal, () => {
         flushReaders();
-        // The stream tool is not detached, so it shares this process group;
-        // signalling its pid directly is still what makes it exit promptly,
-        // and its own exit handler is then pre-empted by finish()'s guard.
-        try { if (child?.pid) process.kill(child.pid, 'SIGTERM'); } catch { /* already gone */ }
+        killChild(child);
         finish(0, 'info', `device log collector received ${signal}; detaching`, 'collector_stopped');
       });
     }
@@ -186,51 +198,119 @@ export async function runCollector({
       : `device log collector pid ${process.pid} streaming ${packageName} (pid ${pid}) on ${serial}`,
   });
 
-  try {
-    child = startStream
-      ? startStream({ platform, udid, appName, serial, pid })
-      : (platform === 'ios'
-        ? startIosLogStream({ udid, appName })
-        : startAndroidLogcat({ serial, pid }));
-  } catch (err) {
-    finish(1, 'error', `device log collector could not start: ${describe(err)}`, 'collector_failed');
-    return null;
-  }
-
   const parse = platform === 'ios' ? parseLogStreamLine : parseLogcatLine;
   const onLine = (line) => {
     const record = parse(line, { now });
     if (record) writer.write(record);
   };
-  const outReader = createLineReader(onLine);
-  // stderr of the stream tool is not app output: `log stream` writes its
-  // filter banner and simctl's getpwuid warning there, and adb writes
-  // connection notices. Kept at debug so a genuine "device offline" is still
-  // recoverable from the log without drowning the timeline.
-  const errReader = createLineReader((line) => {
-    const text = String(line).trimEnd();
-    if (text.trim()) writer.write({ src: 'device', level: 'debug', raw: true, event: 'collector_stderr', msg: text });
-  });
-  flushReaders = () => { outReader.flush(); errReader.flush(); };
-  child.stdout?.setEncoding?.('utf-8');
-  child.stderr?.setEncoding?.('utf-8');
-  child.stdout?.on('data', (chunk) => outReader.push(chunk));
-  child.stderr?.on('data', (chunk) => errReader.push(chunk));
 
-  // The stream ending is the NORMAL end of a collector's life: the app was
-  // killed, the sim shut down, the emulator went away. That is not a failure
-  // of the collector, so it exits 0 -- with a record saying why, or `logs`
-  // would just stop having device lines with no explanation.
-  child.on('exit', (code, signal) => {
+  // One stream attachment: spawn, wire the readers, and own the exit. Called
+  // again for every reattach, which is why it is a function -- the reattach
+  // path used to not exist at all, and there is no second copy of this.
+  const attach = (streamPid) => {
+    const spawned = startStream
+      ? startStream({ platform, udid, appName, serial, pid: streamPid })
+      : (platform === 'ios'
+        ? startIosLogStream({ udid, appName })
+        : startAndroidLogcat({ serial, pid: streamPid }));
+    const outReader = createLineReader(onLine);
+    // stderr of the stream tool is not app output: `log stream` writes its
+    // filter banner and simctl's getpwuid warning there, and adb writes
+    // connection notices. Kept at debug so a genuine "device offline" is still
+    // recoverable from the log without drowning the timeline.
+    const errReader = createLineReader((line) => {
+      const text = String(line).trimEnd();
+      if (text.trim()) writer.write({ src: 'device', level: 'debug', raw: true, event: 'collector_stderr', msg: text });
+    });
+    flushReaders = () => { outReader.flush(); errReader.flush(); };
+    spawned.stdout?.setEncoding?.('utf-8');
+    spawned.stderr?.setEncoding?.('utf-8');
+    spawned.stdout?.on('data', (chunk) => outReader.push(chunk));
+    spawned.stderr?.on('data', (chunk) => errReader.push(chunk));
+
+    // The stream ending is the NORMAL end of a collector's life: the app was
+    // killed, the sim shut down, the emulator went away. That is not a failure
+    // of the collector, so it exits 0 -- with a record saying why, or `logs`
+    // would just stop having device lines with no explanation.
+    //
+    // `spawned !== child` means this exit is one WE caused by reattaching, and
+    // the collector is very much alive. Identity rather than a flag: the old
+    // child's exit event arrives whenever it arrives, which can be after the
+    // new one is already streaming.
+    spawned.on('exit', (code, signal) => {
+      if (spawned !== child) return;
+      flushReaders();
+      // logcat does keep running across a restart, but it does not have to:
+      // if the stream ended AND the app is back under a new pid, that is a
+      // restart this collector should follow rather than a device that went
+      // away.
+      const next = platform === 'android' ? watcher?.probe() : null;
+      if (next && next !== pid) {
+        reattach(next, 'the log stream ended');
+        return;
+      }
+      const how = signal ? `signal ${signal}` : `exit code ${code}`;
+      finish(0, 'info', `device log stream ended (${how}); the app or device is gone`, 'collector_stopped');
+    });
+    spawned.on('error', (err) => {
+      if (spawned !== child) return;
+      finish(1, 'error', `device log stream failed: ${describe(err)}`, 'collector_failed');
+    });
+    return spawned;
+  };
+
+  // Rule 3. The old stream is killed first: two logcats on one device write
+  // every line twice, and the old one is filtering on a dead pid anyway.
+  const reattach = (nextPid, why = 'the app restarted') => {
+    if (finished) return;
+    const previous = pid;
     flushReaders();
-    const how = signal ? `signal ${signal}` : `exit code ${code}`;
-    finish(0, 'info', `device log stream ended (${how}); the app or device is gone`, 'collector_stopped');
-  });
-  child.on('error', (err) => {
-    finish(1, 'error', `device log stream failed: ${describe(err)}`, 'collector_failed');
-  });
+    killChild(child);
+    child = null;
+    writer.write({
+      src: 'device',
+      level: 'info',
+      event: 'collector_reattached',
+      msg: `${why}: ${packageName} is now pid ${nextPid} on ${serial} (was ${previous}); reattaching the log stream`,
+    });
+    pid = nextPid;
+    try {
+      child = attach(nextPid);
+    } catch (err) {
+      finish(1, 'error', `device log collector could not reattach to pid ${nextPid}: ${describe(err)}`, 'collector_failed');
+    }
+  };
+
+  try {
+    child = attach(pid);
+  } catch (err) {
+    finish(1, 'error', `device log collector could not start: ${describe(err)}`, 'collector_failed');
+    return null;
+  }
+
+  if (platform === 'android' && !finished) {
+    watcher = watchPid({
+      serial,
+      packageName,
+      pid,
+      intervalMs: pidWatchMs,
+      resolve: pidOf || undefined,
+      onChange: (nextPid) => reattach(nextPid),
+    });
+  }
 
   return { child, writer, finish, startedAt, pid };
+}
+
+// The stream tool is not detached, so it shares this process group;
+// signalling its pid directly is still what makes it exit promptly, and its
+// own exit handler is then pre-empted (by finish()'s guard on the way out, or
+// by the `spawned !== child` check on a reattach).
+function killChild(child) {
+  try {
+    if (child?.pid) process.kill(child.pid, 'SIGTERM');
+    else child?.kill?.('SIGTERM');
+  } catch { /* already gone */ }
 }
 
 function describe(err) {

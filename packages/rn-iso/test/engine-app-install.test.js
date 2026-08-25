@@ -11,9 +11,10 @@
 // (kRCTJsLocationKey line 30, jsLocation line 554, serverRootWithHostPort
 // line 70), and the dev-client URL in expo's UrlCreator.ts line 88 plus
 // EXDevLauncherURLHelperTests.swift line 15.
-import { test, describe } from 'node:test';
+import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isBundleActivityLine } from '../src/supervisor/server-expo.js';
@@ -26,8 +27,13 @@ import {
   isBundleProof,
   unverifiedLaunchLines,
   verifyLaunch,
+  amStartError,
+  androidDevClientUrl,
+  debugHttpHostScript,
+  deviceShellArg,
   installAndroidApp,
   installIosApp,
+  openAndroidDevClientUrl,
   jsLocationValue,
   launchAndroidApp,
   launchIosApp,
@@ -481,5 +487,199 @@ describe('unverifiedLaunchLines: the action comes first', () => {
     assert.ok(picker !== -1 && relaunch !== -1);
     assert.ok(picker < relaunch);
     assert.ok(!lines.some(l => /Open in <app>/.test(l)), 'the iOS 26 alert is not an android case');
+  });
+});
+
+// --- debug_http_host: the script is EXECUTED here, not pattern-matched -----
+//
+// The argv-regex test above passed for the entire life of a writeDebugHttpHost
+// that COULD NOT RUN. The script it built had three defects and any one of
+// them was fatal: `.join(' ')` put `if` and `then` on one line
+// (`sh: syntax error: unexpected 'then'`), the escaped inner double quotes
+// closed the outer quoting so `>10.0.2.2:8085` parsed as a REDIRECTION, and
+// the `\n` in the printf arguments went into a single-line command. A regex
+// over the argv cannot see any of that. Executing the thing can.
+//
+// The runner below is a faithful stand-in for what adb does with
+// `adb shell run-as <pkg> sh -c <arg>`: adb does NOT escape -- it joins the
+// argv with spaces and hands the STRING to the device's shell, which parses
+// it and hands the quoted script on to `sh -c`. So the outer `sh -c` here is
+// the device shell, and the inner one is the script's. (`run-as` itself adds
+// no parsing layer: it switches uid and execs its remaining argv.)
+//
+// Verified against the real thing as well, on a real emulator, with a real
+// debuggable app -- see the change's report. This is the part of it that can
+// run in CI.
+describe('the debug_http_host script, run for real under sh', () => {
+  let dir;
+  const PKG = 'com.example.app';
+  const prefsPath = () => join(dir, 'shared_prefs', `${PKG}_preferences.xml`);
+
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'rn-iso-prefs-')); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  // The device shell, then the script's shell. Throws (non-zero exit) exactly
+  // where adb would report a failure.
+  const runScript = (port) => execFileSync('/bin/sh', ['-c', `sh -c ${deviceShellArg(debugHttpHostScript({ packageName: PKG, host: `10.0.2.2:${port}`, dataDir: dir }))}`], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+
+  // A strict-enough XML reader: it fails on unbalanced or unclosed tags, so
+  // "the file parses" is an assertion and not a grep. Returns the <map>'s
+  // string entries.
+  const parsePrefs = (text) => {
+    const entries = {};
+    const stack = [];
+    const tag = /<(\/?)([\w:.-]+)((?:\s+[\w:.-]+\s*=\s*"[^"]*")*)\s*(\/?)>/g;
+    const body = text.replace(/<\?xml[^>]*\?>/g, '');
+    let last = 0;
+    let m;
+    while ((m = tag.exec(body)) !== null) {
+      const [full, closing, name, attrs, selfClosing] = m;
+      const between = body.slice(last, m.index);
+      last = m.index + full.length;
+      if (closing) {
+        const open = stack.pop();
+        assert.equal(open?.name, name, `</${name}> closes <${open?.name}>`);
+        if (name === 'string') entries[open.attrs.name] = between;
+        continue;
+      }
+      const attrMap = {};
+      for (const a of attrs.matchAll(/([\w:.-]+)\s*=\s*"([^"]*)"/g)) attrMap[a[1]] = a[2];
+      if (selfClosing) { if (name === 'string') entries[attrMap.name] = ''; continue; }
+      stack.push({ name, attrs: attrMap });
+    }
+    assert.deepEqual(stack, [], 'every tag is closed');
+    assert.match(body.trim(), /^<map>[\s\S]*<\/map>$/, 'the root element is <map>');
+    return entries;
+  };
+
+  test('case 1: no prefs file at all', () => {
+    runScript(8085);
+    const entries = parsePrefs(readFileSync(prefsPath(), 'utf-8'));
+    assert.deepEqual(entries, { debug_http_host: '10.0.2.2:8085' });
+  });
+
+  test('case 2: a prefs file that already carries the key (the value is replaced, once)', () => {
+    runScript(8085);
+    runScript(8099);
+    const text = readFileSync(prefsPath(), 'utf-8');
+    assert.deepEqual(parsePrefs(text), { debug_http_host: '10.0.2.2:8099' });
+    assert.equal(text.match(/debug_http_host/g).length, 1, 'no second entry: the last write wins, it does not accumulate');
+  });
+
+  test('case 3: a prefs file WITHOUT the key keeps every other entry', () => {
+    execFileSync('/bin/sh', ['-c', `mkdir -p ${join(dir, 'shared_prefs')}`]);
+    writeFileSync(prefsPath(), [
+      // Android's own writer: single-quoted declaration, four-space indent.
+      "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>",
+      '<map>',
+      '    <string name="onboarding">done</string>',
+      '    <string name="last_route">/settings?tab=1&amp;q=x</string>',
+      '</map>',
+      '',
+    ].join('\n'));
+    runScript(8085);
+    assert.deepEqual(parsePrefs(readFileSync(prefsPath(), 'utf-8')), {
+      onboarding: 'done',
+      last_route: '/settings?tab=1&amp;q=x',
+      debug_http_host: '10.0.2.2:8085',
+    });
+  });
+
+  test('case 4: Android\'s empty-prefs form, `<map />`', () => {
+    execFileSync('/bin/sh', ['-c', `mkdir -p ${join(dir, 'shared_prefs')}`]);
+    writeFileSync(prefsPath(), "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map />\n");
+    runScript(8085);
+    assert.deepEqual(parsePrefs(readFileSync(prefsPath(), 'utf-8')), { debug_http_host: '10.0.2.2:8085' });
+  });
+
+  test('a data directory that does not exist exits non-zero rather than pretending', () => {
+    const script = debugHttpHostScript({ packageName: PKG, host: '10.0.2.2:8085', dataDir: join(dir, 'nope') });
+    assert.throws(() => execFileSync('/bin/sh', ['-c', `sh -c ${deviceShellArg(script)}`], { stdio: 'ignore' }));
+  });
+
+  test('the script is multi-line, and every line survives the quoting', () => {
+    const script = debugHttpHostScript({ packageName: PKG, host: '10.0.2.2:8085' });
+    assert.ok(script.split('\n').length >= 6, 'a real script, not a one-liner');
+    assert.match(script, /^cd \/data\/data\/com\.example\.app \|\| exit 1$/m);
+    // The defect that made `>10.0.2.2:8085` a redirection: the XML's double
+    // quotes must never be escaped INSIDE a double-quoted shell word.
+    assert.doesNotMatch(script, /\\"/);
+    // Round-trip: what the device shell will hand to `sh -c` is byte for byte
+    // what was built.
+    const roundTripped = execFileSync('/bin/sh', ['-c', `printf %s ${deviceShellArg(script)}`], { encoding: 'utf-8' });
+    assert.equal(roundTripped, script);
+  });
+});
+
+// --- the dev-client deep link, Android half --------------------------------
+describe('the Android dev-client deep link', () => {
+  test('the url is the iOS shape pointed at the emulator loopback', () => {
+    assert.equal(
+      androidDevClientUrl('exp+app', 8085),
+      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085'
+    );
+    // Same builder, same shape, different host: iOS keeps localhost.
+    assert.equal(devClientUrl('exp+app', 8085), 'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085');
+  });
+
+  test('launchAndroidApp sends it, quoted for the device shell, and skips resolve-activity', () => {
+    const exec = recordingExec();
+    const result = launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' }, { exec });
+    assert.equal(result.mode, 'deep-link');
+    assert.equal(result.devClientUrl, 'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082');
+    assert.deepEqual(exec.calls.at(-1), [
+      'adb', '-s', 'emulator-5554', 'shell', 'am', 'start',
+      '-a', 'android.intent.action.VIEW',
+      // Quoted: adb hands the joined argv to the device's shell, and this url
+      // carries `?`.
+      '-d', `'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082'`,
+    ]);
+    assert.ok(!exec.calls.some(c => c.includes('resolve-activity')), 'the deep link IS the launch');
+    // The port wiring still ran first, both halves of it.
+    assert.equal(result.debugHttpHost, '10.0.2.2:8082');
+    assert.deepEqual(result.reversed, ['tcp:8081->tcp:8082', 'tcp:8082->tcp:8082']);
+  });
+
+  test('am start exits 0 on an intent it could not resolve, so the OUTPUT is read', () => {
+    // Captured shape from `am start` itself: it prints the error and returns
+    // 0, which is why the exit code cannot be the check.
+    assert.match(amStartError('Starting: Intent { act=android.intent.action.VIEW dat=exp+app://expo-development-client/... }\nError: Activity not started, unable to resolve Intent'), /unable to resolve Intent/);
+    assert.equal(amStartError('Starting: Intent { act=android.intent.action.VIEW dat=exp+app://... }'), null);
+    // An app already in the foreground: a Warning, and a success.
+    assert.equal(amStartError('Starting: Intent { ... }\nWarning: Activity not started, its current task has been brought to the front'), null);
+    assert.equal(amStartError(''), null);
+  });
+
+  test('a deep link nothing answers falls back to the launcher and says so', () => {
+    const exec = recordingExec({
+      outputs: {
+        'android.intent.action.VIEW': 'Starting: Intent { act=android.intent.action.VIEW dat=exp+app://expo-development-client/... }\nError: Activity not started, unable to resolve Intent { act=android.intent.action.VIEW }',
+        'resolve-activity': 'priority=0 isDefault=true\ncom.example.app/.MainActivity\n',
+      },
+    });
+    const result = launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' }, { exec });
+    // The app is installed and a launcher start still gives the developer
+    // something: refusing the run here would be strictly worse.
+    assert.equal(result.ok, true);
+    assert.equal(result.mode, 'am-start');
+    assert.match(result.devClientNote, /unable to resolve Intent/);
+    assert.match(result.devClientNote, /fell back to the launcher activity/);
+    assert.deepEqual(exec.calls.at(-1), ['adb', '-s', 'emulator-5554', 'shell', 'am', 'start', '-n', 'com.example.app/.MainActivity']);
+  });
+
+  test('openAndroidDevClientUrl reports an adb failure rather than throwing', () => {
+    const exec = recordingExec({ fail: 'am start' });
+    const r = openAndroidDevClientUrl({ serial: 'emulator-5554', url: 'exp+app://x' }, { exec });
+    assert.equal(r.failed, true);
+    assert.match(r.reason, /am start -d exp\+app:\/\/x failed/);
+  });
+
+  test('deviceShellArg quotes what adb will not', () => {
+    assert.equal(deviceShellArg('a b'), `'a b'`);
+    assert.equal(deviceShellArg("it's"), `'it'\\''s'`);
+    // The property that matters: one shell round trip returns the input.
+    for (const raw of ['a b', "it's", 'x\ny', '?url=a&b=c', '$HOME `id`', '<map>']) {
+      assert.equal(execFileSync('/bin/sh', ['-c', `printf %s ${deviceShellArg(raw)}`], { encoding: 'utf-8' }), raw);
+    }
   });
 });

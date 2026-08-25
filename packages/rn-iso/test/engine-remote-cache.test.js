@@ -32,6 +32,7 @@ import {
   readProjectConfig,
   resolveRemote,
   runOptionsFor,
+  uploadDestination,
   uploadRemote,
 } from '../src/engine/remote-cache.js';
 
@@ -427,5 +428,205 @@ describe('dynamicConfigFile', () => {
     assert.equal(dynamicConfigFile(root), null);
     writeProviderModule('app.config.ts', '');
     assert.equal(dynamicConfigFile(root), 'app.config.ts');
+  });
+});
+
+// --- the provider's stdout is not ours to give away ------------------------
+//
+// The provider plugin runs IN-PROCESS: `resolveBuildCache` is a function call,
+// not a subprocess, so its `console.log` writes to the same fd 1 that carries
+// `ios --json`'s single payload line. eas-build-cache-provider prints
+// "Searching builds with matching fingerprint on EAS servers" on every lookup
+// and "Uploading build to EAS" on every store, and both landed INTERLEAVED
+// with the JSON payload -- one unparseable stdout on every cache miss, on both
+// platforms. So while a provider function runs, rn-iso catches everything it
+// writes to stdout and puts it where progress belongs.
+
+// Replaces process.stdout.write and process.stderr.write with recorders BEFORE
+// the call, so what is asserted is what would have reached the terminal: the
+// capture installs itself over these, and a leak shows up as a line in `out`.
+function tapStreams(fn) {
+  const out = [];
+  const err = [];
+  const originalOut = process.stdout.write;
+  const originalErr = process.stderr.write;
+  const originalLog = console.log;
+  process.stdout.write = (chunk, enc, cb) => {
+    out.push(String(chunk));
+    if (typeof enc === 'function') enc(); else if (typeof cb === 'function') cb();
+    return true;
+  };
+  process.stderr.write = (chunk, enc, cb) => {
+    err.push(String(chunk));
+    if (typeof enc === 'function') enc(); else if (typeof cb === 'function') cb();
+    return true;
+  };
+  const restore = () => {
+    process.stdout.write = originalOut;
+    process.stderr.write = originalErr;
+    console.log = originalLog;
+  };
+  return Promise.resolve()
+    .then(() => fn({ out, err }))
+    .then((value) => { restore(); return { value, out, err }; }, (error) => { restore(); throw error; });
+}
+
+function records() {
+  const written = [];
+  return { written, writer: { write: (record) => { written.push(record); return true; } } };
+}
+
+describe('provider output containment', () => {
+  test('a provider that logs never reaches stdout: it goes to stderr and into the build log', async () => {
+    const appPath = join(root, 'Fixture.app');
+    mkdirSync(appPath);
+    const log = records();
+    const { provider } = plugin({
+      resolveBuildCache: async () => {
+        console.log('Searching builds with matching fingerprint on EAS servers');
+        process.stdout.write('half a line');
+        process.stdout.write(' and the rest\n');
+        return appPath;
+      },
+    });
+    const { value, out, err } = await tapStreams(() => resolveRemote({
+      provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', logWriter: log.writer,
+    }));
+    assert.deepEqual(value, { appPath }, 'the hit still comes back');
+    assert.deepEqual(out, [], 'nothing at all on stdout');
+    assert.match(err.join(''), /Searching builds with matching fingerprint/);
+    assert.match(err.join(''), /half a line and the rest/);
+    assert.deepEqual(
+      log.written.map(r => ({ src: r.src, level: r.level, event: r.event })),
+      [
+        { src: 'build', level: 'debug', event: 'provider' },
+        { src: 'build', level: 'debug', event: 'provider' },
+      ]
+    );
+    assert.equal(log.written[1].msg, 'half a line and the rest', 'chunks are joined into lines');
+  });
+
+  test('stdout is restored when the provider returns, throws, or is abandoned', async () => {
+    const LEAK = 'provider-line-that-must-never-reach-stdout';
+    const cases = [
+      plugin({ resolveBuildCache: async () => { console.log(LEAK); return null; } }),
+      plugin({ resolveBuildCache: async () => { console.log(LEAK); throw new Error('boom'); } }),
+      plugin({ resolveBuildCache: () => { console.log(LEAK); return new Promise(() => {}); } }),
+    ];
+    for (const { provider } of cases) {
+      const { out } = await tapStreams(async () => {
+        await resolveRemote({
+          provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', timeoutMs: 30,
+          logWriter: records().writer,
+        });
+        // The command's own payload, written the moment the call is over.
+        console.log('{"payload":true}');
+      });
+      // The tap sees every stdout write in the process, and node --test's own
+      // reporter is one of them, so this is about the two lines that matter.
+      assert.ok(out.join('').includes('{"payload":true}'), 'the payload reaches the real stdout');
+      assert.ok(!out.join('').includes(LEAK), 'and the provider line never did');
+    }
+  });
+
+  test('an abandoned provider that prints after its budget still cannot reach stdout', async () => {
+    let release;
+    const done = new Promise((resolve) => { release = resolve; });
+    const { provider } = plugin({
+      resolveBuildCache: async () => {
+        await done;
+        console.log('late line from a call nothing is waiting for');
+        return null;
+      },
+    });
+    const { out, err } = await tapStreams(async () => {
+      const result = await resolveRemote({
+        provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', timeoutMs: 20,
+        logWriter: records().writer,
+      });
+      assert.deepEqual(result, { timedOut: true });
+      console.log('{"payload":true}');
+      release();
+      await done;
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    assert.ok(out.join('').includes('{"payload":true}'), 'the payload reaches the real stdout');
+    assert.ok(!out.join('').includes('late line from a call'), 'the abandoned call still cannot');
+    assert.match(err.join(''), /late line from a call nothing is waiting for/);
+  });
+
+  test('nested provider calls restore in order, and the inner one does not free stdout early', async () => {
+    const inner = plugin({ resolveBuildCache: async () => { console.log('inner'); return null; } }).provider;
+    const { provider } = plugin({
+      resolveBuildCache: async () => {
+        await resolveRemote({
+          provider: inner, platform: 'ios', projectRoot: root, fingerprintHash: 'a',
+          logWriter: records().writer,
+        });
+        console.log('outer, after the inner call returned');
+        return null;
+      },
+    });
+    const { out, err } = await tapStreams(async () => {
+      await resolveRemote({
+        provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', logWriter: records().writer,
+      });
+      console.log('{"payload":true}');
+    });
+    assert.ok(out.join('').includes('{"payload":true}'));
+    assert.ok(!out.join('').includes('outer, after the inner call returned'));
+    assert.match(err.join(''), /inner/);
+    assert.match(err.join(''), /outer, after the inner call returned/);
+  });
+
+  test('an upload names where it is going when the provider printed it', async () => {
+    const notes = [];
+    const { provider } = plugin({
+      uploadBuildCache: async () => {
+        console.log('Uploading build to https://expo.dev/accounts/acme/projects/app/builds/abc');
+      },
+    });
+    const result = await tapStreams(() => uploadRemote({
+      provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', buildPath: '/b.app',
+      logWriter: records().writer, note: (line) => notes.push(line),
+    }));
+    assert.deepEqual(result.value, {
+      uploaded: true,
+      destination: 'https://expo.dev/accounts/acme/projects/app/builds/abc',
+    });
+    assert.equal(notes.length, 1);
+    assert.match(notes[0], /^cache {7}uploading to https:\/\/expo\.dev\/accounts\/acme/);
+  });
+
+  test('an upload that names no destination says nothing extra', async () => {
+    const notes = [];
+    const { provider } = plugin({ uploadBuildCache: async () => { console.log('Uploading build to EAS'); } });
+    const result = await tapStreams(() => uploadRemote({
+      provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', buildPath: '/b.app',
+      logWriter: records().writer, note: (line) => notes.push(line),
+    }));
+    assert.deepEqual(result.value, { uploaded: true }, 'no destination key when there is no destination');
+    assert.deepEqual(notes, []);
+  });
+});
+
+describe('uploadDestination', () => {
+  test('prefers a URL, falls back to an owner/slug, and is null otherwise', () => {
+    assert.equal(
+      uploadDestination(['Uploading build to https://expo.dev/accounts/acme/projects/app (2.1 MB)']),
+      'https://expo.dev/accounts/acme/projects/app'
+    );
+    assert.equal(uploadDestination(['Uploading build to acme/my-app']), 'acme/my-app');
+    assert.equal(uploadDestination(['Uploading build to @acme/my-app...']), '@acme/my-app');
+    assert.equal(uploadDestination(['Uploading build to EAS']), null);
+    assert.equal(uploadDestination([]), null);
+    assert.equal(uploadDestination(null), null);
+  });
+
+  test('reads through the colour codes a provider prints', () => {
+    assert.equal(
+      uploadDestination(['\u001b[2mUploading build to\u001b[22m https://expo.dev/x/y']),
+      'https://expo.dev/x/y'
+    );
   });
 });

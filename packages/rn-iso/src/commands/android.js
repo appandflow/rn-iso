@@ -25,6 +25,7 @@
 // every workspace on the machine, so the Metro port is never baked into it --
 // `adb reverse tcp:8081 tcp:<reserved>` applies it at launch instead.
 import chalk from 'chalk';
+import { existsSync, readdirSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getProject, upsertProject } from '../config.js';
@@ -35,16 +36,23 @@ import { isPidAlive, resolveProjectMetro } from '../metro.js';
 import { workspaceLogsDir } from '../paths.js';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../project.js';
 import {
+  // devClientScheme is the app.json half of the iOS reader and is not
+  // iOS-specific at all -- it reads the project's config, which is the
+  // fallback here too. Imported rather than copied: two readers of one
+  // config key drift, and this one is already tested.
+  devClientScheme as configuredDevClientScheme,
   ensureWorkspaceIgnoredSafely,
   noMetroMessage,
   noMetroRemedy,
+  pickDevClientScheme,
   resolveMetroWithRetry,
 } from './ios.js';
 import { resolveSettings } from '../settings.js';
 import { gitCommonDir, repoRoot } from '../worktree.js';
 import { readCollectors } from '../collector/run.js';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/run.js';
-import { DEFAULT_METRO_PORT, LAUNCH_UNVERIFIED, installAndroidApp, launchAndroidApp, unverifiedLaunchLines, verifyLaunch } from '../engine/app-install.js';
+import { DEFAULT_METRO_PORT, LAUNCH_UNVERIFIED, androidDevClientUrl, installAndroidApp, launchAndroidApp, unverifiedLaunchLines, verifyLaunch } from '../engine/app-install.js';
+import { androidHome } from '../sim/android.js';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.js';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.js';
 import { buildAndroid } from '../engine/gradle.js';
@@ -77,6 +85,186 @@ const LABEL_WIDTH = 11;
 // How many raw transcript lines stand in for a diagnostic when nothing could
 // be extracted from the build output.
 const FALLBACK_LINES = 5;
+
+// --- the dev-client deep link, Android half (mirrors devClientScheme in
+// --- commands/ios.js) ------------------------------------------------------
+//
+// Without this an expo-dev-client app cold-launches into expo-dev-launcher's
+// DEVELOPMENT SERVERS screen -- EMPTY on a fresh emulator, since the launcher
+// has no history to list -- and every `rn-iso android` run reported
+// `launched: unverified` because nothing ever asked this workspace's Metro
+// for a bundle. iOS has had the deep link since the picker bug; Android had
+// only `am start -n <component>`, which IS the launcher screen.
+//
+// The BUILT APK is the primary source, for the reason the iOS comment gives:
+// a project with a dynamic config has no scheme in app.json at all, while
+// whatever the config pipeline computed is in the manifest of the thing we
+// just installed.
+//
+// `aapt dump badging` is NOT the dump to read -- verified on a real
+// dev-client APK, badging prints the package, the launchable activity and the
+// permissions, and NOT ONE intent-filter data element. `aapt dump xmltree
+// <apk> AndroidManifest.xml` prints the whole manifest tree including
+// `android:scheme`, in 10ms on a 415MB apk, and aapt2's `dump xmltree --file`
+// prints the same tree with namespace-qualified attribute names. Both are
+// parsed below.
+
+// Build-tools directory names are versions: "36.0.0", "35.0.0", "34.0.0".
+// PURE, so the ordering is testable without an SDK.
+export function newestBuildTools(names) {
+  return [...(Array.isArray(names) ? names : [])]
+    .filter((n) => /^\d+(\.\d+)*(-\w+)?$/.test(String(n)))
+    .sort((a, b) => {
+      const pa = String(a).split(/[.-]/).map(Number);
+      const pb = String(b).split(/[.-]/).map(Number);
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pb[i] || 0) - (pa[i] || 0);
+        if (d) return d;
+      }
+      return 0;
+    })[0] ?? null;
+}
+
+// aapt / aapt2, newest build-tools first. Neither is on PATH on a normal
+// machine (verified: `which aapt` finds nothing with a fully installed SDK),
+// so they are addressed through ANDROID_HOME the way sim/android.js addresses
+// avdmanager.
+export function findAapt(home = androidHome(), { readDir = readdirSync, exists = existsSync } = {}) {
+  const root = join(home, 'build-tools');
+  let versions = [];
+  try {
+    versions = readDir(root);
+  } catch {
+    return null;
+  }
+  while (versions.length) {
+    const version = newestBuildTools(versions);
+    if (!version) return null;
+    for (const tool of ['aapt', 'aapt2']) {
+      const path = join(root, version, tool);
+      if (exists(path)) return { path, tool, version };
+    }
+    versions = versions.filter((v) => v !== version);
+  }
+  return null;
+}
+
+// The manifest tree, as text. Null on anything at all going wrong: a missing
+// SDK, an apk aapt cannot read, a build-tools install without aapt. The
+// app.json fallback is behind this and a missing scheme is survivable.
+export function dumpApkManifest(apkPath, { exec = null, aapt = null } = {}) {
+  if (typeof apkPath !== 'string' || apkPath.trim() === '') return null;
+  const tool = aapt || findAapt();
+  if (!tool) return null;
+  const e = exec || getExecutor();
+  // The two spellings of the same dump; aapt2 wants the entry behind --file.
+  const args = tool.tool === 'aapt2'
+    ? ['dump', 'xmltree', '--file', 'AndroidManifest.xml', apkPath]
+    : ['dump', 'xmltree', apkPath, 'AndroidManifest.xml'];
+  try {
+    const out = e.runFile(tool.path, args);
+    return typeof out === 'string' && out.includes('E: manifest') ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+// PURE. aapt's xmltree is an indented element/attribute listing:
+//
+//   E: activity (line=262)
+//     A: android:name(0x01010003)="com.x.MainActivity" (Raw: "com.x.MainActivity")
+//     E: intent-filter (line=272)
+//       E: data (line=291)
+//         A: android:scheme(0x01010027)="th3rdwave" (Raw: "th3rdwave")
+//
+// Attributes belong to the nearest element above them at a smaller indent,
+// which is all the structure this needs. Values that are not string literals
+// -- `@0x7f1300c6` (an unresolved resource reference, which a scheme set from
+// a string resource really is) and `(type 0x12)0xffffffff` -- come back as
+// null rather than as their raw text: a scheme nobody can resolve must not
+// become a deep link.
+export function parseXmltree(text) {
+  const root = { tag: '#root', attrs: {}, children: [], indent: -1 };
+  const stack = [root];
+  for (const raw of String(text ?? '').split('\n')) {
+    const indent = raw.search(/\S/);
+    if (indent < 0) continue;
+    const line = raw.trim();
+    const element = /^E: ([\w.:-]+)/.exec(line);
+    if (element) {
+      while (stack.length > 1 && stack[stack.length - 1].indent >= indent) stack.pop();
+      const node = { tag: element[1], attrs: {}, children: [], indent };
+      stack[stack.length - 1].children.push(node);
+      stack.push(node);
+      continue;
+    }
+    const attr = /^A: ([^(=]+?)(?:\(0x[0-9a-f]+\))?=(.*)$/.exec(line);
+    if (attr && stack.length > 1) {
+      // aapt prints `android:name`, aapt2 the full namespace URI.
+      const name = attr[1].replace(/^http:\/\/schemas\.android\.com\/apk\/res\/android:/, 'android:');
+      const value = /^"((?:[^"\\]|\\.)*)"/.exec(attr[2]);
+      stack[stack.length - 1].attrs[name] = value ? value[1] : null;
+    }
+  }
+  return root;
+}
+
+function eachNode(node, fn) {
+  fn(node);
+  for (const child of node.children) eachNode(child, fn);
+}
+
+// PURE. What the installed APK says about deep-linking into it:
+//   devClient   does the manifest declare expo-dev-launcher at all
+//   schemes     the schemes on the LAUNCHABLE activity, in manifest order
+//
+// Scoping the schemes to the launchable activity is the whole point, and it
+// is not caution -- on the real APK this was built against, the manifest also
+// declares `expo-dev-launcher` (on the launcher's own OAuth AuthActivity),
+// `stripe-connect`, `stripe-auth`, `link-popup` and four more from SDKs.
+// `expo-dev-launcher` is the LONGEST of them, so the length tie-break Expo's
+// CLI uses (and that pickDevClientScheme inherits for iOS, where the plist
+// gives no activity structure) picks exactly the wrong one. The activity that
+// answers android.intent.action.MAIN is the app.
+export function apkDevClientFacts(text) {
+  const root = parseXmltree(text);
+  const facts = { devClient: false, schemes: [] };
+  let launchable = null;
+  eachNode(root, (node) => {
+    const name = node.attrs['android:name'];
+    if (typeof name === 'string' && name.startsWith('expo.modules.devlauncher')) facts.devClient = true;
+    if (node.tag !== 'activity' && node.tag !== 'activity-alias') return;
+    const filters = node.children.filter((c) => c.tag === 'intent-filter');
+    const isLauncher = filters.some((f) => f.children.some((c) => c.tag === 'action' && c.attrs['android:name'] === 'android.intent.action.MAIN'));
+    if (!isLauncher || launchable) return;
+    launchable = node;
+    for (const filter of filters) {
+      for (const data of filter.children) {
+        if (data.tag !== 'data') continue;
+        const scheme = data.attrs['android:scheme'];
+        if (typeof scheme === 'string' && scheme.trim()) facts.schemes.push(scheme.trim());
+      }
+    }
+  });
+  return facts;
+}
+
+// The scheme to deep-link this launch with, or undefined for "plain launch".
+//
+// The APK is authoritative in BOTH directions: an app whose manifest has no
+// expo-dev-launcher in it is not a dev client, and sending it a deep link
+// would just fail to resolve. Only when the apk cannot be read at all does
+// this fall back to the project config, exactly as iOS does.
+export function androidDevClientScheme(root, apkPath, { exec = null, dump = dumpApkManifest, aapt = null } = {}) {
+  const text = dump(apkPath, { exec, aapt });
+  if (text) {
+    const facts = apkDevClientFacts(text);
+    if (!facts.devClient) return undefined;
+    const scheme = pickDevClientScheme(facts.schemes);
+    if (scheme) return scheme;
+  }
+  return configuredDevClientScheme(root, null);
+}
 
 export function collectorEntry() {
   return fileURLToPath(new URL('../collector/run.js', import.meta.url));
@@ -116,10 +304,17 @@ export function formatDuration(ms) {
 }
 
 // PURE. The --json payload.
-export function androidFacts({ serial, fingerprint, cacheHit, cacheSkipped = false, appPath, bundleId, launched, logs }) {
+export function androidFacts({ serial, avdName = null, deviceName = null, fingerprint, cacheHit, cacheSkipped = false, appPath, bundleId, launched, logs, debugHttpHost = null, debugHttpHostNote = null, devClientUrl = null }) {
   return {
     platform: PLATFORM,
     serial: serial ?? null,
+    // The serial is a SLOT (emulator-5554 is whatever booted into that
+    // console port first); the AVD name is the identity, and it is what every
+    // device tool -- `emulator -avd`, avdmanager, an agent's device skill --
+    // is addressed by. A payload that carried only the serial made the caller
+    // go and ask `adb emu avd name` for it.
+    avdName: avdName ?? null,
+    deviceName: deviceName ?? avdName ?? null,
     fingerprint: fingerprint ?? null,
     // 'local' | 'remote' | false. Which LEVEL answered, not merely whether one
     // did: an agent reading `true` cannot tell a free install from one that
@@ -135,14 +330,29 @@ export function androidFacts({ serial, fingerprint, cacheHit, cacheSkipped = fal
     // unconditional `true` is what let an app sitting on the dev-launcher's
     // server picker read as a successful run.
     launched: launched === LAUNCH_UNVERIFIED ? LAUNCH_UNVERIFIED : Boolean(launched),
+    // Contract 6's two Android mechanisms, reported rather than merely
+    // attempted. debugHttpHost is `10.0.2.2:<port>` when the SharedPreferences
+    // write landed and null when it did not, and the note says why -- the
+    // launch survives either way on the adb reverse alone, so the difference
+    // is invisible without this. devClientUrl is the deep link that was sent
+    // (null for a plain launcher start), which is the exact command an
+    // `unverified` launch has to be re-driven with.
+    debugHttpHost: debugHttpHost ?? null,
+    debugHttpHostNote: debugHttpHostNote ?? null,
+    devClientUrl: devClientUrl ?? null,
     logs: logs ?? null,
   };
 }
 
 // PURE. Contract 4, the state.json.lastBuild record.
-export function lastBuildRecord({ fingerprint, cacheKey, cacheHit, cacheSkipped = false, durationMs, appPath, bundleId, startedAt, status, errorCode = null }) {
+export function lastBuildRecord({ fingerprint, cacheKey, cacheHit, cacheSkipped = false, durationMs, appPath, bundleId, startedAt, status, errorCode = null, avdName = null, deviceName = null }) {
   const record = {
     platform: PLATFORM,
+    // Which emulator this build went to, by name and not only by console-port
+    // slot -- see androidFacts. `status` reads state.json, and an agent
+    // driving the device after a build has nothing else to address it with.
+    avdName: avdName ?? null,
+    deviceName: deviceName ?? avdName ?? null,
     fingerprint: fingerprint ?? null,
     cacheKey: cacheKey ?? null,
     cacheHit: cacheLevel(cacheHit),
@@ -237,6 +447,7 @@ export async function runAndroid({
   build = buildAndroid,
   install = installAndroidApp,
   launch = launchAndroidApp,
+  resolveDevClientScheme = androidDevClientScheme,
   spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
   kill = (pid, signal) => process.kill(pid, signal),
   createWriter = createNdjsonWriter,
@@ -256,7 +467,7 @@ export async function runAndroid({
 
   // Failure state that lands in Contract 4 is accumulated as the run goes, so
   // a failure at any step after the fingerprint records what it knew.
-  const record = { fingerprint: null, cacheKey: null, cacheHit: false, appPath: null, bundleId: null };
+  const record = { fingerprint: null, cacheKey: null, cacheHit: false, appPath: null, bundleId: null, avdName: null, deviceName: null };
 
   const phase = (label, text) => out(phaseLine(label, text));
   // One formatter for every refusal, so a failed run reads the same whatever
@@ -351,6 +562,8 @@ export async function runAndroid({
     return fail(NO_DEVICE, booted.reason, 'Run `rn-iso status` to see what rn-iso thinks it owns; re-running `rn-iso android` creates a fresh owned AVD.');
   }
   const serial = booted.serial;
+  record.avdName = device.avdName ?? null;
+  record.deviceName = device.deviceName ?? device.avdName ?? null;
   phase('device', `${device.avdName || serial} (${serial}) booted`);
 
   // ---- fingerprint ----------------------------------------------------
@@ -515,8 +728,12 @@ export async function runAndroid({
       { lastBuildStatus: true }
     );
   }
+  // The scheme comes from the APK that was just installed, for the reason the
+  // iOS command gives: an app.json is not the truth on a project with a
+  // dynamic config, and the artifact is in hand.
+  const scheme = resolveDevClientScheme(root, apkPath);
   const launchedAt = now();
-  const launched = launch({ serial, packageName: androidPackage, metroPort });
+  const launched = launch({ serial, packageName: androidPackage, metroPort, devClientScheme: scheme });
   if (launched.failed) {
     return fail(launched.code || LAUNCH_FAILED, launched.reason, `Check the app installed correctly (\`adb -s ${serial} shell pm list packages ${androidPackage}\`).`, { lastBuildStatus: true });
   }
@@ -529,7 +746,33 @@ export async function runAndroid({
     marker: true,
     msg: `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`,
   });
-  phase('launch', `${androidPackage} (tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort})`);
+  // HOW it was launched, because on Android that is the difference between
+  // the app and the dev-launcher's server screen: `deep-link` lands on this
+  // workspace's bundle, `am-start` / `monkey` open whatever the launcher
+  // activity shows.
+  const launchMode = launched.mode === 'deep-link' ? 'expo-dev-client deep link' : launched.mode;
+  phase('launch', launchMode ? `${androidPackage} (${launchMode})` : androidPackage);
+
+  // Contract 6, reported. Both mechanisms ran before the launch and until now
+  // NOTHING consumed their result: launchAndroidApp has always returned
+  // debugHttpHost / debugHttpHostNote and every caller dropped them, so the
+  // months in which the prefs write could not have worked (it emitted an
+  // invalid script) looked exactly like the months in which it did.
+  if (launched.debugHttpHost) {
+    phase('wired', `debug_http_host ${launched.debugHttpHost} + adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}`);
+  } else {
+    phase('wired', chalk.yellow(`adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}; ${launched.debugHttpHostNote || 'debug_http_host not written'}`));
+    writer.write({
+      src: 'build',
+      level: 'warn',
+      event: 'debug_http_host_failed',
+      msg: `debug_http_host was not written for ${androidPackage} on ${serial}: ${launched.debugHttpHostNote || 'unknown reason'}`,
+    });
+  }
+  if (launched.devClientNote) {
+    phase('wired', chalk.yellow(launched.devClientNote));
+    writer.write({ src: 'build', level: 'warn', event: 'dev_client_link_failed', msg: launched.devClientNote });
+  }
 
   // ---- the upload, collected (it has been running since the build) -----
   if (uploadPending) {
@@ -587,6 +830,7 @@ export async function runAndroid({
       waitedMs: verification?.waitedMs,
       bundleId: androidPackage,
       serial,
+      devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort) : null,
       mode: isExpo ? MODE_EXPO : MODE_BARE,
     })) phase('', chalk.yellow(line));
   }
@@ -603,6 +847,11 @@ export async function runAndroid({
 
   const facts = androidFacts({
     serial,
+    avdName: record.avdName,
+    deviceName: record.deviceName,
+    debugHttpHost: launched.debugHttpHost ?? null,
+    debugHttpHostNote: launched.debugHttpHostNote ?? null,
+    devClientUrl: launched.devClientUrl ?? null,
     fingerprint: hash,
     cacheHit: record.cacheHit,
     cacheSkipped: !useBuildCache,
