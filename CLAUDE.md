@@ -24,12 +24,17 @@ State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
   20+ directly. No CommonJS, no `require()`. **The documented exception is the
   two cache packages** (`packages/expo-build-cache`, `packages/metro-cache`):
   they are CJS on purpose, because a `metro.config.js` and an Expo build-cache
-  provider are both loaded by `require()`. They reach rn-iso through a dynamic
-  `import('rn-iso/cache-manifest')` — a plain `require()` of an ESM module
-  throws `ERR_REQUIRE_ESM` on Node before 20.19, which silently turned
-  registration into a no-op on every one of those versions. Keep that import
-  dynamic and fire-and-forget: rn-iso is an optional peer, and a missing or old
-  one must never break a bundler config or a build.
+  provider are both loaded by `require()`. **They do not import rn-iso at
+  all** — they self-register by writing `<config dir>/caches.json` directly.
+  The history is why: they used to reach rn-iso through a dynamic
+  `import('rn-iso/cache-manifest')`, because a plain `require()` of an ESM
+  module throws `ERR_REQUIRE_ESM` on Node before 20.19, which silently turned
+  registration into a no-op on every one of those versions. Writing the
+  manifest file directly removes the dependency instead of guarding it. Keep it
+  that way: rn-iso is an optional peer, and a missing or old one must never
+  break a bundler config or a build. `rn-iso/cache-manifest` still exists as a
+  public export for consumers that DO have rn-iso; it is simply not how these
+  two packages register.
 - **Single exec wrapper.** All `child_process` calls go through
   `src/exec.js` (`getExecutor()`). Tests inject a mock via `setExecutor()`.
   Anywhere outside `exec.js` that imports `child_process` directly is a bug.
@@ -81,7 +86,10 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
     ports.js              # Metro port allocation, reclamation, and race-safe reservation
     metro.js              # port-to-process identity (resolveProjectMetro) and group killing
     worktree.js           # git worktree add/remove/list, base-ref resolution, carry-over
-    artifacts.js          # Xcode DerivedData discovery/classification, mounted-volume detection
+    fs-util.js            # volume utilities (volumeRootFor, isRealMount, listMountedVolumes,
+                          # isOnMountedVolume) and sizing (directorySize, formatBytes)
+    paths.js              # every path rn-iso writes: workspace-local under <root>/.rn-iso,
+                          # shared caches under getConfigDir(). Pure, no I/O.
     status.js             # pure shaping of the cross-project state `status` prints
     teardown.js           # THE owned-device teardown: resolve -> occupancy -> shutdown -> delete,
                           # with containment. Used by reclaim, release, shutdown, gc.
@@ -127,11 +135,22 @@ packages/metro-cache/       # @rn-iso/metro-cache. CJS (see conventions above).
   index.js                  # sharedCacheStores(): a FileStore outside any project, self-registered
 ```
 
-The two cache packages duplicate a little of `src/build-cache.js` on purpose:
-they must work with no rn-iso installed. `buildCacheKey` is the piece that
-matters — both entry points build the key the same way, so they address the
-same entries. Change one and you must change the other, or the CLI and the
-provider quietly stop sharing a cache.
+The two cache packages duplicate a little of `src/build-cache.js` and
+`src/paths.js` on purpose: they must work with no rn-iso installed, so neither
+may import either module. Two pieces matter, and both fail the same silent way.
+
+- **`buildCacheKey`** — both entry points build the key the same way, so they
+  address the same entries.
+- **The cache ROOT resolution** — `sharedBuildCache()` / `sharedMetroCache()` in
+  `src/paths.js`, repeated in each package's own `configDir()` / `cacheRoot()`.
+  The precedence is `RN_ISO_BUILD_CACHE` / `RN_ISO_METRO_CACHE` first, then
+  `RN_ISO_HOME` (or `~/.rn-iso`) plus `build-cache` / `metro-cache`.
+
+Change one copy and you must change all of them, or the CLI and the provider
+quietly stop sharing a cache: one stores a build in a directory the other never
+looks in, and neither says so. `test/cache-packages.test.js` is the only thing
+holding the three implementations together — it asserts the packages resolve
+exactly what `src/paths.js` does, with and without the env overrides.
 
 ## Particularities to remember
 
@@ -308,16 +327,25 @@ with `$(...)`.
 
 ### 8. The unmounted-volume guard always fails closed
 
-`classifyDerivedData` (`src/artifacts.js`) and the dead-project sweep in
-`src/commands/gc.js` both resolve ambiguity toward NOT deleting. A
-DerivedData entry whose `WorkspacePath` no longer exists on disk looks
-orphaned — but if it lives on a volume that simply is not mounted right
-now (this machine's repos live on an external SSD that gets unplugged), it
-is not actually gone, and deleting it would destroy live build output. Any
-point where the classifier cannot get a definite answer — an unmounted
-volume, an unreadable `info.plist`, an unresolvable symlinked ancestor —
-routes the entry into `skipped`, never `orphaned`. Preserve that direction
-if you touch this code: on doubt, skip, don't delete.
+What the guard protects is the **project registry**: `findReclaimablePort` in
+`src/ports.js` and the dead-project sweep in `src/commands/gc.js` both resolve
+ambiguity toward NOT deleting. A project whose path no longer exists on disk
+looks dead — but if it lives on a volume that simply is not mounted right now
+(this machine's repos live on an external SSD that gets unplugged), it is not
+actually gone, and dropping its entry takes its Metro port AND its device claim
+with it, leaving an owned simulator nothing references and nothing will ever
+reap. Any point where the check cannot get a definite answer — an unmounted
+volume, an unresolvable symlinked ancestor — leaves the entry alone. Preserve
+that direction if you touch this code: on doubt, skip, don't delete.
+
+The same rule now covers the cache migration in `src/commands/init.js`: a
+legacy cache directory moves only when the destination is free, and a rename
+that fails is reported rather than turned into a copy-and-delete.
+
+(This item used to open by naming `classifyDerivedData` in `src/artifacts.js`.
+That function and that file are gone — build output is workspace-local now, so
+there is no global DerivedData directory left to reverse-map to a workspace.
+The registry half of the guard did not go with it.)
 
 ### 9. Live-verify anything that touches a real dev-tool artifact
 

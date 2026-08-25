@@ -1,9 +1,9 @@
 import chalk from 'chalk';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { findProjectRoot } from '../project.js';
 import { projectFacts, renderDevScript, renderGitignoreAdditions, renderWorkflow, renderWorktreeExclude } from '../init.js';
-import { detectXcodeMajor, runDoctor } from '../doctor.js';
+import { detectXcodeMajor, pendingCacheMigrations, runDoctor } from '../doctor.js';
 
 // Bounded on purpose: far enough to clear a monorepo's apps/<name> nesting,
 // not so far that it starts reading a lockfile from an unrelated parent repo.
@@ -56,6 +56,31 @@ function readJson(path) {
   } catch {
     return null;
   }
+}
+
+// The shared caches moved under the config directory, and one left at its old
+// address is invisible: nothing looks there any more, so it costs the disk twice
+// and every project on the machine rebuilds cold once. They run to many GB, and
+// a rename within a volume is instantaneous whatever the size -- which is the
+// only reason this belongs inside a command people run casually.
+//
+// Two rules, both the standing fail-closed one:
+//   - move only when the destination is free. Merging two caches means deciding
+//     which copy of a colliding entry wins, and neither answer is knowable here.
+//   - a rename that cannot happen (a different volume, a permission) is
+//     reported, never turned into a copy-and-delete. The directory stays exactly
+//     where it is and `doctor` keeps naming it.
+export function migrateLegacyCaches(pending = pendingCacheMigrations()) {
+  return pending.map(entry => {
+    if (entry.destExists) return { ...entry, status: 'skipped' };
+    try {
+      mkdirSync(dirname(entry.dest), { recursive: true });
+      renameSync(entry.legacy, entry.dest);
+      return { ...entry, status: 'moved' };
+    } catch (e) {
+      return { ...entry, status: 'failed', error: e.message };
+    }
+  });
 }
 
 export default function initCommand(program) {
@@ -129,6 +154,20 @@ export default function initCommand(program) {
           `${facts.hasPodfile ? ', with an ios/Podfile' : ''}.`
         )
       );
+
+      // Before doctor, so its report describes the machine as it is once init
+      // has done what it can rather than flagging something init just fixed.
+      for (const moved of migrateLegacyCaches()) {
+        if (moved.status === 'moved') {
+          console.error(chalk.green(`Moved the ${moved.label} from ${moved.legacy} to ${moved.dest}`));
+        } else if (moved.status === 'skipped') {
+          console.error(chalk.yellow(`Left ${moved.legacy} where it is: ${moved.dest} already exists.`));
+          console.error(chalk.dim('  Merging two caches is not a decision init can make. Move or delete it by hand.'));
+        } else {
+          console.error(chalk.yellow(`Could not move ${moved.legacy} to ${moved.dest}: ${moved.error}`));
+          console.error(chalk.dim('  Nothing was copied and nothing was deleted; it is still readable where it is.'));
+        }
+      }
 
       // The generated document tells you what to do; doctor tells you what is
       // still wrong. Running it here means init ends on the truth about this

@@ -25,11 +25,31 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const CACHE_ROOT =
-  process.env.RN_ISO_BUILD_CACHE || path.join(os.homedir(), '.rn-iso-build-cache');
+// THIS RESOLUTION EXISTS THREE TIMES: here, in packages/metro-cache/index.js,
+// and in rn-iso's own src/paths.js (sharedBuildCache / sharedMetroCache). This
+// package cannot import that module -- it has to work on a machine with no
+// rn-iso installed at all -- so the duplication is deliberate, exactly like
+// buildCacheKey below. Change one and you must change all three: when they
+// drift, the CLI stores a build in one directory and this provider looks for it
+// in another, and neither of them says so. rn-iso's
+// test/cache-packages.test.js asserts all three agree.
+//
+// RN_ISO_BUILD_CACHE comes first because it did before the layout existed, and
+// quietly ignoring an override someone already set reads as an empty cache
+// rather than as an error.
+function configDir() {
+  return process.env.RN_ISO_HOME || path.join(os.homedir(), '.rn-iso');
+}
+
+// A function rather than a constant: resolving it at load time froze whatever
+// the environment was when a metro.config.js or an Expo config first required
+// this file, which is not necessarily what it is when a build runs.
+function cacheRoot() {
+  return process.env.RN_ISO_BUILD_CACHE || path.join(configDir(), 'build-cache');
+}
 
 function entryDir(platform, key) {
-  return path.join(CACHE_ROOT, platform, key);
+  return path.join(cacheRoot(), platform, key);
 }
 
 // A simulator udid is a canonical UUID. Apple's hardware identifiers are not:
@@ -116,7 +136,7 @@ function artifactIn(dir) {
 // contract, so writing it is the cheaper trade.
 function registerCache({ dir, name, prune, note, entriesDepth }) {
   try {
-    const home = process.env.RN_ISO_HOME || path.join(os.homedir(), '.rn-iso');
+    const home = configDir();
     const file = path.join(home, 'caches.json');
     let manifest = { version: 1, caches: [] };
     try {
@@ -140,12 +160,15 @@ function registerCache({ dir, name, prune, note, entriesDepth }) {
   }
 }
 
-let registered = false;
+// Keyed on the directory rather than a plain boolean, so a root that changes
+// under a long-lived process still reaches the manifest.
+let registeredDir = null;
 function registerOnce() {
-  if (registered) return;
-  registered = true;
+  const root = cacheRoot();
+  if (registeredDir === root) return;
+  registeredDir = root;
   registerCache({
-    dir: CACHE_ROOT,
+    dir: root,
     name: 'Expo build cache',
     // Every entry is an independent directory keyed by fingerprint, so old ones
     // can be trimmed individually. They sit two levels down --
@@ -202,4 +225,4 @@ async function uploadBuildCache({ platform, fingerprintHash, buildPath, runOptio
   return artifactIn(dest);
 }
 
-module.exports = { resolveBuildCache, uploadBuildCache, buildCacheKey, CACHE_ROOT };
+module.exports = { resolveBuildCache, uploadBuildCache, buildCacheKey, cacheRoot };

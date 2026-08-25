@@ -7,8 +7,9 @@
 //
 // These tests exercise the real packages, from this Node, through the real
 // manifest. Each package is imported exactly once per process (CommonJS caches
-// the module, and its cache root is read at load time), so each one gets a
-// single test and sets its environment before importing.
+// the module), but its cache root is resolved per call rather than at load
+// time -- which is what lets a test set the environment after importing, and
+// what keeps an override from being frozen into a long-lived Metro process.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
@@ -16,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readManifest } from '../src/cache-manifest.js';
+import { sharedBuildCache, sharedMetroCache } from '../src/paths.js';
 
 const PACKAGES = join(fileURLToPath(import.meta.url), '..', '..', '..');
 
@@ -38,7 +40,7 @@ test('the Expo build cache provider registers itself on this Node, at the right 
   process.env.RN_ISO_BUILD_CACHE = cacheRoot;
   try {
     const provider = await import('../../expo-build-cache/index.js');
-    assert.equal(provider.CACHE_ROOT, cacheRoot);
+    assert.equal(provider.cacheRoot(), cacheRoot);
 
     // A miss is enough: registration happens on every resolve, hit or not.
     await provider.resolveBuildCache({ platform: 'ios', fingerprintHash: 'nothing', runOptions: {} });
@@ -96,5 +98,38 @@ test('neither package reaches rn-iso as a module', () => {
     assert.doesNotMatch(source, /require\(\s*['"]rn-iso/, `${pkg} must not require rn-iso`);
     assert.doesNotMatch(source, /import\(\s*['"]rn-iso/, `${pkg} must not import rn-iso either`);
     assert.match(source, /caches\.json/, `${pkg} must write the manifest itself`);
+  }
+});
+
+// The three implementations of the cache-root resolution are duplicated on
+// purpose -- both packages have to work with no rn-iso installed, so neither
+// may import src/paths.js. Nothing but this test holds them together, and the
+// failure when they drift is silent: the CLI stores a build in one directory
+// and the provider looks in another, and neither says so.
+test('both packages resolve the same cache roots the CLI does', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'rn-iso-pkg-home3-'));
+  process.env.RN_ISO_HOME = home;
+  try {
+    const provider = await import('../../expo-build-cache/index.js');
+    const metro = await import('../../metro-cache/index.js');
+
+    assert.equal(provider.cacheRoot(), sharedBuildCache());
+    assert.equal(provider.cacheRoot(), join(home, 'build-cache'));
+    assert.equal(metro.cacheRoot(), sharedMetroCache());
+    assert.equal(metro.cacheRoot('demo'), sharedMetroCache('demo'));
+    assert.equal(metro.cacheRoot('demo'), join(home, 'metro-cache', 'demo'));
+
+    // The env overrides have to move all three together too.
+    process.env.RN_ISO_BUILD_CACHE = join(home, 'elsewhere-build');
+    process.env.RN_ISO_METRO_CACHE = join(home, 'elsewhere-metro');
+    assert.equal(provider.cacheRoot(), sharedBuildCache());
+    assert.equal(provider.cacheRoot(), join(home, 'elsewhere-build'));
+    assert.equal(metro.cacheRoot('demo'), sharedMetroCache('demo'));
+    assert.equal(metro.cacheRoot('demo'), join(home, 'elsewhere-metro'));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.RN_ISO_HOME;
+    delete process.env.RN_ISO_BUILD_CACHE;
+    delete process.env.RN_ISO_METRO_CACHE;
   }
 });

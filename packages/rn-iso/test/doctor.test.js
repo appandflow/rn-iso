@@ -6,10 +6,16 @@ import {
   checkCompilationCache,
   checkCcacheConflict,
   checkDevClient,
+  checkLegacyCaches,
   checkMetroCache,
   detectXcodeMajor,
   parseXcodeMajor,
+  pendingCacheMigrations,
 } from '../src/doctor.js';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { register } from '../src/cache-manifest.js';
 import { resetExecutor, setExecutor } from '../src/exec.js';
 
 // Where the key lives moved when the setting was promoted out of experiments,
@@ -229,4 +235,90 @@ test('the entry is recognised however it is written, and comments do not count',
     gitignoreSource: '/.rn-iso\n',
     worktreeExcludeSource: '.rn-iso\n',
   }), null);
+});
+
+// A cache left in its old location costs the disk twice AND a cold rebuild in
+// every project on the machine, and nothing else on the box will ever mention
+// it: the CLI and both packages have stopped looking there.
+test('a legacy cache directory is reported with its size and a remedy', () => {
+  const f = checkLegacyCaches([
+    { legacy: '/home/u/.rn-iso-build-cache', dest: '/home/u/.rn-iso/build-cache', label: 'build cache', destExists: false, bytes: 3 * 1024 ** 3 },
+  ]);
+  assert.equal(f.level, 'cost');
+  assert.match(f.detail, /\.rn-iso-build-cache/);
+  assert.match(f.detail, /3\.0G/, 'the size is the whole reason to care');
+  assert.match(f.fix, /rn-iso init/);
+});
+
+test('nothing left in a legacy location is no finding at all', () => {
+  assert.equal(checkLegacyCaches([]), null);
+  assert.equal(checkLegacyCaches(), null);
+});
+
+// A destination that already exists is not something `init` will resolve: the
+// rename is refused rather than merged, so the advice has to say so.
+test('a legacy cache whose destination is taken says so', () => {
+  const f = checkLegacyCaches([
+    { legacy: '/home/u/.demo-metro-cache', dest: '/home/u/.rn-iso/metro-cache/demo', label: 'Metro cache', destExists: true, bytes: 1024 ** 2 },
+  ]);
+  assert.match(f.fix, /by hand/);
+});
+
+// The legacy build cache is the sibling of the config dir rather than a literal
+// ~/.rn-iso-build-cache, so RN_ISO_HOME sandboxes the whole migration: a test
+// (or a live dry run) can never reach the real one.
+//
+// The Metro half cannot be derived that way -- the legacy directory was named
+// after the app, `~/.<name>-metro-cache` -- so the manifest is the only record
+// of where it actually is. Only the ones @rn-iso/metro-cache registered may
+// move: a FileStore someone wired up by hand still points at its own directory,
+// and moving that would take away a cache nothing else knows how to find.
+function withFakeHome(fn) {
+  const outer = mkdtempSync(join(tmpdir(), 'rn-iso-legacy-'));
+  const home = join(outer, '.rn-iso');
+  mkdirSync(home, { recursive: true });
+  const previous = process.env.RN_ISO_HOME;
+  process.env.RN_ISO_HOME = home;
+  try {
+    return fn(outer, home);
+  } finally {
+    if (previous === undefined) delete process.env.RN_ISO_HOME;
+    else process.env.RN_ISO_HOME = previous;
+    rmSync(outer, { recursive: true, force: true });
+  }
+}
+
+test('the legacy build cache is found next to the config dir', () => {
+  withFakeHome((outer, home) => {
+    const legacy = join(outer, '.rn-iso-build-cache');
+    assert.deepEqual(pendingCacheMigrations(), [], 'nothing to move when it is not there');
+    mkdirSync(legacy);
+    const pending = pendingCacheMigrations();
+    assert.deepEqual(pending.map(p => p.legacy), [legacy]);
+    assert.equal(pending[0].dest, join(home, 'build-cache'));
+    assert.equal(pending[0].destExists, false);
+  });
+});
+
+test('only the Metro caches @rn-iso/metro-cache registered are candidates', () => {
+  withFakeHome((outer, home) => {
+    const ours = join(outer, '.demo-metro-cache');
+    const handRolled = join(outer, '.other-metro-cache');
+    mkdirSync(ours);
+    mkdirSync(handRolled);
+    register({ dir: ours, name: 'Metro transform cache', prune: 'entries', entriesDepth: 2 });
+    register({ dir: handRolled, name: 'Metro transforms', prune: 'entries', entriesDepth: 2 });
+
+    const pending = pendingCacheMigrations();
+    assert.deepEqual(pending.map(p => p.legacy), [ours], 'a hand-wired FileStore keeps its directory');
+    assert.equal(pending[0].dest, join(home, 'metro-cache', 'demo'));
+  });
+});
+
+test('a destination that already exists is reported, not silently merged', () => {
+  withFakeHome((outer, home) => {
+    mkdirSync(join(outer, '.rn-iso-build-cache'));
+    mkdirSync(join(home, 'build-cache'));
+    assert.equal(pendingCacheMigrations()[0].destExists, true);
+  });
 });

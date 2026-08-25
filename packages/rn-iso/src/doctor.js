@@ -13,6 +13,12 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { getExecutor } from './exec.js';
+import { directorySize, formatBytes } from './fs-util.js';
+import { readManifest } from './cache-manifest.js';
+import {
+  METRO_CACHE_REGISTRATION_NAME, legacyBuildCache, legacyMetroCacheName,
+  sharedBuildCache, sharedMetroCache,
+} from './paths.js';
 import { detectIsExpo } from './project.js';
 
 // `xcodebuild -version` prints "Xcode 26.1" on its first line. Anything else --
@@ -185,6 +191,51 @@ export function checkArtifactLayout({ gitignoreSource, worktreeExcludeSource } =
   );
 }
 
+// --- caches left behind by the move into ~/.rn-iso ---------------------
+//
+// The I/O half. Every shared cache used to live in its own dotted directory in
+// $HOME; they now all sit under the config dir. A directory left at the old
+// address is invisible from here on -- nothing looks there any more -- so it
+// costs the disk twice AND a cold rebuild in every project on the machine.
+//
+// The build cache has one fixed old address. The Metro caches do not: each was
+// named after an app (`~/.<name>-metro-cache`), so the manifest is the only
+// record of where they are. Only the ones @rn-iso/metro-cache registered are
+// candidates -- a FileStore someone wired up by hand still points at its own
+// directory, and moving that would take away a cache nothing knows how to find.
+export function pendingCacheMigrations({ caches = null } = {}) {
+  const registered = caches || readManifest().caches;
+  const pairs = [
+    { legacy: legacyBuildCache(), dest: sharedBuildCache(), label: 'build cache' },
+  ];
+  for (const entry of registered) {
+    if (entry?.name !== METRO_CACHE_REGISTRATION_NAME) continue;
+    const name = legacyMetroCacheName(entry.dir);
+    if (name) pairs.push({ legacy: entry.dir, dest: sharedMetroCache(name), label: 'Metro cache' });
+  }
+  return pairs
+    .filter(p => p.legacy !== p.dest && existsSync(p.legacy))
+    .map(p => ({ ...p, destExists: existsSync(p.dest) }));
+}
+
+// The pure half. `bytes` is the whole reason this is worth a finding rather
+// than a silent tidy-up on some later run, so it is named first.
+export function checkLegacyCaches(entries = []) {
+  if (!entries.length) return null;
+  const stranded = entries
+    .map(e => `${e.legacy} (${formatBytes(e.bytes || 0)}) -> ${e.dest}`)
+    .join('; ');
+  const blocked = entries.some(e => e.destExists);
+  return finding(
+    'cost',
+    `${entries.length} cache(s) left in the old location`,
+    `Every shared cache now lives under the rn-iso config directory, and nothing looks at the old addresses any more. Left where they are they cost the disk twice, and the first build in every project on this machine is a cold one. ${stranded}.`,
+    blocked
+      ? 'Run `rn-iso init`: it renames the ones whose destination is free. A destination that already exists is left alone rather than merged, so move or delete that old directory by hand.'
+      : 'Run `rn-iso init`: it renames each one into place, which is instant on the same volume.'
+  );
+}
+
 // ccache and compilation caching are mutually exclusive in practice: the ccache
 // launcher is what disables explicitly built modules, which caching requires.
 export function checkCcacheConflict(podfileSource, podfileProperties) {
@@ -309,5 +360,9 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
     checkArtifactLayout({ gitignoreSource: gitignore, worktreeExcludeSource: worktreeExclude }),
     checkCcacheConflict(podfile, podfileProperties),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
+    // Machine-wide rather than project-shaped, but this is the command people
+    // run, and a cache nothing reads any more is exactly the kind of silent
+    // cost doctor exists for.
+    checkLegacyCaches(pendingCacheMigrations().map(e => ({ ...e, bytes: directorySize(e.legacy) }))),
   ].filter(Boolean);
 }

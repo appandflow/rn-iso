@@ -15,8 +15,34 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+// THIS RESOLUTION EXISTS THREE TIMES: here, in
+// packages/expo-build-cache/index.js, and in rn-iso's own src/paths.js
+// (sharedMetroCache / sharedBuildCache). This package cannot import that module
+// -- it has to work on a machine with no rn-iso installed at all -- so the
+// duplication is deliberate, the same way buildCacheKey is duplicated between
+// the build-cache implementations. Change one and you must change all three:
+// when they drift, one entry point writes a cache the other will never read,
+// and neither of them says so. rn-iso's test/cache-packages.test.js asserts all
+// three agree.
+//
+// RN_ISO_METRO_CACHE comes first because it did before the layout existed, and
+// quietly ignoring an override someone already set reads as an empty cache
+// rather than as an error. It names one directory, so it wins for a named cache
+// too -- otherwise half the stores on a machine would move and half would not.
+function configDir() {
+  return process.env.RN_ISO_HOME || path.join(os.homedir(), '.rn-iso');
+}
+
+// Anything that is not a plain path segment is replaced, and leading dots go, so
+// a scoped package name cannot climb out of the cache root.
+function cacheNameSegment(name) {
+  return String(name).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^\.+/, '') || 'app';
+}
+
 function cacheRoot(name) {
-  return process.env.RN_ISO_METRO_CACHE || path.join(os.homedir(), `.${name}-metro-cache`);
+  if (process.env.RN_ISO_METRO_CACHE) return process.env.RN_ISO_METRO_CACHE;
+  const root = path.join(configDir(), 'metro-cache');
+  return name === undefined || name === null || name === '' ? root : path.join(root, cacheNameSegment(name));
 }
 
 // Registering makes this cache visible to `rn-iso gc --caches`, which is the
@@ -32,7 +58,7 @@ function cacheRoot(name) {
 // A dynamic import fixes the second and not the first.
 function registerCache({ dir, name, prune, note, entriesDepth }) {
   try {
-    const home = process.env.RN_ISO_HOME || path.join(os.homedir(), '.rn-iso');
+    const home = configDir();
     const file = path.join(home, 'caches.json');
     let manifest = { version: 1, caches: [] };
     try {
@@ -69,9 +95,10 @@ function registerOnce(dir) {
   });
 }
 
-// `name` only distinguishes one app's cache from another's on the same machine.
-// Metro keys entries by content, so sharing a store between unrelated projects
-// would be correct but pointlessly large.
+// `name` only distinguishes one app's cache from another's on the same machine:
+// it is a subdirectory of the shared root, not a directory of its own. Metro
+// keys entries by content, so sharing one store between unrelated projects would
+// be correct but pointlessly large.
 function sharedCacheStores(name = 'app', { FileStore } = {}) {
   const Store = FileStore || require('metro-cache').FileStore;
   const root = cacheRoot(name);

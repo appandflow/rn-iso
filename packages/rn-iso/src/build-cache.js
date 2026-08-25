@@ -17,14 +17,18 @@
 // same rules (see buildCacheKey below); changing one without the other splits
 // the two entry points onto separate sets of entries.
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, utimesSync } from 'fs';
-import { homedir } from 'os';
 import { basename, dirname, join } from 'path';
 import { createRequire } from 'module';
 import { getExecutor } from './exec.js';
 import { register } from './cache-manifest.js';
+import { sharedBuildCache } from './paths.js';
 
+// One line, but the one that decides whether the CLI and the provider address
+// the same entries at all: src/paths.js owns the resolution, and
+// packages/expo-build-cache/index.js repeats it because it must run with no
+// rn-iso installed. See the note above sharedBuildCache.
 export function cacheRoot() {
-  return process.env.RN_ISO_BUILD_CACHE || join(homedir(), '.rn-iso-build-cache');
+  return sharedBuildCache();
 }
 
 export function entryDir(platform, key, root = cacheRoot()) {
