@@ -1,0 +1,6 @@
+--------- beginning of system
+08-21 17:51:19.507 I/vold    (  235): Vold 3.0 (the awakening) firing up
+08-21 17:51:19.507 D/vold    (  235): Detected support for: ext4 f2fs vfat
+08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183 - system/security/keystore2/src/security_level.rs:680
+08-21 17:51:19.669 W/vold    (  235): Failed to generate rollback-resistant key.  This is expected if keystore doesn't support rollback resistance.  Falling back to non-rollback-resistant key.
+08-21 17:51:27.207 V/Configuration(  446): Updating configuration, locales updated from [] to [en_US]
