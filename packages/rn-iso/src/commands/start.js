@@ -8,8 +8,8 @@
 // Health is `resolveProjectMetro`, never a bare /status probe. A port is not
 // identity: a foreign bundler answering /status on our reserved port would
 // send the agent's build at someone else's dev server, which is exactly what
-// the identity check exists to prevent -- and the reserved port moves instead,
-// as it does in `up`.
+// the identity check exists to prevent -- and the reserved port moves instead
+// of being reported as a conflict the caller can do nothing about.
 //
 // Two flags, and only ever two: --json and --wait. Anything a project needs
 // beyond that is the project's own bundler command, which is not rn-iso's
@@ -23,6 +23,7 @@ import { isPidAlive, resolveProjectMetro } from '../metro.js';
 import { supervisorLogFile, workspaceLogsDir } from '../paths.js';
 import { reserveMetroPort } from '../ports.js';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.js';
+import { installedSkillVersions, staleSkillCopies } from './skill.js';
 import { readWorkspaceState } from '../supervisor/run.js';
 
 const DEFAULT_WAIT_SECONDS = 60;
@@ -67,8 +68,8 @@ export function liveSupervisor({ state, project, port, isAlive = isPidAlive } = 
   return null;
 }
 
-// Pure shaping of the --json payload, the same contract `up` follows: one
-// line on stdout, everything else on stderr.
+// Pure shaping of the --json payload, under the contract every rn-iso command
+// with a --json flag follows: one line on stdout, everything else on stderr.
 //
 // supervisorPid and mode are null when a dev server answers on the port but
 // rn-iso did not start it -- an agent that ran the project's own `npm start`
@@ -99,11 +100,16 @@ export function readLogTail(file, n = LOG_TAIL_LINES) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export default function startCommand(program) {
-  registerStart(program);
+export default function startCommand(program, cliVersion) {
+  registerStart(program, cliVersion);
 }
 
-export function registerStart(program) {
+// `cliVersion` is optional: without it the skill-staleness check is skipped
+// rather than comparing against undefined, which would report every installed
+// copy as stale. Only bin/cli.js has the real version to pass. This check used
+// to live on `up`, which was the command every session ran first; `start` is
+// what took that place in the v3 lifecycle.
+export function registerStart(program, cliVersion = null) {
   program
     .command('start')
     .description(
@@ -120,6 +126,17 @@ export function registerStart(program) {
         note(chalk.red(message));
         process.exit(1);
       };
+
+      // The installed skill is a plain file copy, so upgrading rn-iso never
+      // refreshes it. A v2 skill against a v3 CLI describes commands that no
+      // longer exist, and nothing else says so. Never fatal, and never on
+      // stdout -- see the --json contract above.
+      for (const stale of cliVersion ? staleSkillCopies(installedSkillVersions(), cliVersion) : []) {
+        note(chalk.yellow(
+          `Installed rn-iso skill is ${stale.version ?? 'an unstamped older version'} but this CLI is ${cliVersion}. `
+          + 'Run `npx rn-iso skill install` so the docs your agent reads match the binary.'
+        ));
+      }
 
       const wait = parseWait(opts.wait);
       if (wait.error) return fail(wait.error);
@@ -233,10 +250,10 @@ export function registerStart(program) {
     });
 }
 
-// The reserved port, re-reserved when a FOREIGN process holds it. Same shape
-// as `up`: reporting the conflict instead would strand the project on a port
-// it can never use, while our own dev server answering there is the healthy
-// case and must not move.
+// The reserved port, re-reserved when a FOREIGN process holds it. Reporting
+// the conflict instead would strand the project on a port it can never use,
+// while our own dev server answering there is the healthy case and must not
+// move.
 async function resolvePort(root, note) {
   const project = getProject(root);
   const recorded = project?.metroPort;

@@ -11,18 +11,27 @@ description: Use when setting up a React Native or Expo repo so that multiple ag
 npx rn-iso init      # writes the docs and the run script, then reports what is left
 ```
 
-`init` writes what can be generated safely: a `WORKFLOW.md` describing the loop,
-an executable `scripts/dev` that reserves an environment and runs against it, and
-a `.worktreeexclude`. It adapts to the project — Expo or bare, which SDK, which
-package manager, and whether the repo has its own `ios`/`start` scripts to prefer
-over invented commands. It never overwrites an existing file without `--force`.
+`init` writes what can be generated safely: a `WORKFLOW.md` describing the v3
+loop (`worktree create` → `start` → `ios`/`android` → `logs --errors` → `stop`),
+an executable `scripts/dev` that is `rn-iso start` followed by `rn-iso
+<platform>`, and a `.worktreeexclude`. It also appends `.rn-iso/` to
+`.gitignore`. The generated document adapts to the project — Expo or bare, which
+SDK, whether `expo-dev-client` and `@expo/fingerprint` are installed — because
+those change what will actually work, not which command to run. It never
+overwrites an existing file without `--force`.
+
+`scripts/dev` is thin on purpose: rn-iso runs the dev server and the build
+itself now, so there is no bundler or build command left to reconstruct. It
+lives in the repo anyway, so anything the project needs *around* those two
+steps — a codegen pass, a workspace filter, an env file to source — has a home
+that is yours to edit.
 
 Then it runs `rn-iso doctor` and lists what it could not fix itself.
 
 ## What doctor reports, and what it does not
 
-`doctor` reads five things and nothing else. Every one of them is a file it can
-read statically:
+`doctor` reads a fixed handful of things and nothing else. Every one of them is
+a file it can read statically:
 
 | Finding | Read from |
 |---|---|
@@ -31,13 +40,14 @@ read statically:
 | Compilation caching off, or left at its default CAS path | `ios/Podfile` |
 | ccache and compilation caching both enabled | `ios/Podfile` + `ios/Podfile.properties.json` |
 | `buildCacheProvider` missing, or on the key this SDK ignores | `app.json` (an `app.config.ts` is code, so it says so instead of guessing) |
+| `.rn-iso/` missing from `.gitignore` or `.worktreeexclude` | those two files |
 
 **Everything else on this page is yours to check by hand.** doctor does not read
 `.fingerprintignore`, does not look at `CLANG_OTHER_PREFIX_MAPPINGS` or
 `SWIFT_ENABLE_COMPILE_CACHE`, and does not check the `EXDevMenu` Info.plist
 keys. A clean `doctor` run does not mean those are right — it means it had
-nothing to say about the five things it reads. Each section below says which
-kind it is.
+nothing to say about the things it reads. Each section below says which kind it
+is.
 
 The findings it does report are left to you rather than auto-fixed because each
 one edits a file the project already owns — a `metro.config.js` with its own
@@ -51,10 +61,11 @@ that fits, and re-run `rn-iso doctor` to confirm it landed.
 *doctor reports this.*
 
 **`expo-dev-client` must be installed** for a reserved Metro port to reach the
-app at all. `--port` is never compiled into the binary: it travels in the deep
-link `expo run:ios` opens, and with no dev client nothing handles that URL. The
-app then looks for Metro on 8081, finds nothing, and shows a red `No script URL
-provided` that names none of this.
+app at all. The port is never compiled into the binary: it travels in the
+`<scheme>://expo-development-client/?url=...` deep link `rn-iso ios` opens after
+launching, and with no dev client nothing handles that URL. The app then looks
+for Metro on 8081, finds nothing, and shows a red `No script URL provided` that
+names none of this.
 
 ```bash
 npx expo install expo-dev-client
@@ -88,9 +99,14 @@ A ticket that changes no native input should not compile anything. Expo's build
 cache provider keys a built `.app` on a fingerprint of the native inputs and
 installs it instead of building.
 
-**Use the packaged provider rather than writing one.** It is the same cache
-`rn-iso build-cache` uses, it registers itself with rn-iso so `gc` can report
-and trim it, and it works with no rn-iso installed:
+This matters for builds run **outside** rn-iso — `npx expo run:ios` by hand, or
+EAS. `rn-iso ios` / `rn-iso android` consult the same cache directly and need no
+provider at all; configuring one makes the two share artifacts instead of
+filling two caches with the same builds.
+
+**Use the packaged provider rather than writing one.** It addresses the same
+`~/.rn-iso/build-cache` that `rn-iso ios` does, it registers itself with rn-iso
+so `gc` can report and trim it, and it works with no rn-iso installed:
 
 ```bash
 npm i -D @rn-iso/expo-build-cache
@@ -127,16 +143,17 @@ checks this for you; a cache that never hits looks exactly like a cache that is
 not configured.
 
 **Bare React Native has no equivalent hook** — the community CLI never consults
-a provider. Ask rn-iso directly instead:
+a provider, so there is nothing to configure and nothing to write. Use `rn-iso
+ios` / `rn-iso android`: they do the fingerprint lookup, the store on a miss and
+the install themselves, on a bare project exactly as on an Expo one.
+
+Either way the repo needs `@expo/fingerprint`, which works on a project with no
+Expo in it at all. Without it `rn-iso ios` refuses with `RN_ISO_NO_FINGERPRINT`
+rather than silently compiling every time:
 
 ```bash
-APP=$(npx rn-iso build-cache resolve --platform ios) || {
-  npx react-native run-ios --udid "$UDID" --port "$PORT"
-  npx rn-iso build-cache store --platform ios --path "$BUILT_APP"
-}
+npm i -D @expo/fingerprint
 ```
-
-It needs `@expo/fingerprint`, which works on a project with no Expo in it at all.
 
 ## Share compiled output between workspaces
 
@@ -253,9 +270,10 @@ which is exactly what `@rn-iso/metro` and `@rn-iso/expo-build-cache` already do
 for you.
 
 The `caches` setting is the no-code alternative: a list of paths under `caches`
-in a committed `.rn-iso.json` is reported alongside the registered ones. It has
-no `rn-iso config` key of its own, and every path in it is treated as a flat
-store, so register from code for anything needing a depth or `atomic`.
+in a committed `.rn-iso.json` is reported alongside the registered ones. (There
+is no `rn-iso config` command — settings are files; see `rn-iso guide
+settings`.) Every path in it is treated as a flat store, so register from code
+for anything needing a depth or `atomic`.
 
 ```json
 { "caches": ["~/.myapp-metro-cache", "~/.myapp-build-cache"] }

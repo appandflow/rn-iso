@@ -267,10 +267,12 @@ describe('the other refusals', () => {
     assert.match(result.error.message, /bad app\.json/);
   });
 
+  // The boot now happens AFTER the Metro gate, so the gate has already passed
+  // by the time this fires -- the point is only that no build work follows.
   test('a device that cannot be booted refuses with RN_ISO_NO_DEVICE', async () => {
     const h = harness({
       ensureDeviceBooted: async () => ({ failed: true, reason: 'AVD rn-iso-app-412 no longer exists.' }),
-      resolveMetro: never('the metro probe'),
+      fingerprint: never('the fingerprint'),
       build: never('the build'),
     });
     const result = await h.run();

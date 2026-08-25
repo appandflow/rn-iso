@@ -20,7 +20,7 @@ function ensureDir() {
 //
 // Every mutator below is a read-modify-write of one JSON file, and several
 // rn-iso commands can run at once (a `worktree create` per agent, each
-// followed by its own `up`). Two of them interleaving lose one side's
+// followed by its own `start` and `ios`). Two of them interleaving lose one side's
 // device record entirely, so the read, the modify and the write happen
 // while this lock is held.
 //
@@ -210,7 +210,7 @@ export function removeProject(projectPath) {
 
 // Records `port` for this project only if the config, read under the lock,
 // still shows it unclaimed by another project. Returns the recorded port, or
-// null when another project claimed it in the meantime -- two `up` runs can
+// null when another project claimed it in the meantime -- two `start` runs can
 // probe the same free port at the same time, and the probe result is stale by
 // the time either writes. The caller allocates again on null, which sees the
 // winner's claim and moves on to the next port.
@@ -439,7 +439,7 @@ export function findProjectByMetroPort(port) {
   return null;
 }
 
-// Ownership (not claims/reservations) is the model now: `up` records a
+// Ownership (not claims/reservations) is the model now: `ios` / `android` record a
 // device directly on the owning project. The only thing that still needs a
 // cross-project view is avoiding console-port / physical-serial collisions
 // when creating a new owned Android device.

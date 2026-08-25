@@ -265,14 +265,12 @@ export async function runAndroid({
     );
   }
 
-  const booted = await ensureDeviceBooted({ platform: PLATFORM, device, out });
-  if (booted.failed) {
-    return fail(NO_DEVICE, booted.reason, 'Run `rn-iso status` to see what rn-iso thinks it owns; `rn-iso up android` creates a fresh owned AVD.');
-  }
-  const serial = booted.serial;
-  phase('device', `${device.avdName || serial} (${serial}) booted`);
-
-  // ---- metro (fail fast, before any build work) -----------------------
+  // ---- metro (fail fast, before the boot and before any build work) ----
+  //
+  // Placed after ensureDevice (whose record the rest of this command reads)
+  // but before ensureDeviceBooted, because waiting for an emulator to report
+  // boot completion is the first expensive thing here and there is no reason
+  // to pay it only to refuse afterwards.
   const reservedPort = project?.metroPort ?? null;
   if (metroCheck) {
     if (!reservedPort) {
@@ -290,6 +288,13 @@ export async function runAndroid({
     phase('metro', reservedPort ? `port ${reservedPort} (not checked)` : `no reservation; using ${DEFAULT_METRO_PORT} (not checked)`);
   }
   const metroPort = reservedPort ?? DEFAULT_METRO_PORT;
+
+  const booted = await ensureDeviceBooted({ platform: PLATFORM, device, out });
+  if (booted.failed) {
+    return fail(NO_DEVICE, booted.reason, 'Run `rn-iso status` to see what rn-iso thinks it owns; re-running `rn-iso android` creates a fresh owned AVD.');
+  }
+  const serial = booted.serial;
+  phase('device', `${device.avdName || serial} (${serial}) booted`);
 
   // ---- fingerprint ----------------------------------------------------
   let hash;

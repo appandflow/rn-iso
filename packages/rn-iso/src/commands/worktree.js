@@ -231,10 +231,17 @@ async function reclaimAll(rootPath) {
 
 export function registerRemove(worktree) {
   worktree
-    .command('remove <target>')
-    .description('Remove a worktree and reclaim its build artifacts, sim claim, and Metro port.')
+    .command('remove [target]')
+    .description('Remove a worktree and reclaim its build artifacts, owned devices, and Metro port. Defaults to the current workspace.')
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work')
     .action(async (target, opts) => {
+      // Defaults to the current workspace, like every other v3 command: an
+      // agent finishing a ticket is already standing in the worktree it is
+      // done with, and making it name a path it is inside of is the kind of
+      // ceremony the surface exists to remove. It is still refused on the main
+      // checkout (git reports that as worktree zero), so the default cannot
+      // become "delete the repo you are in".
+      target = target ?? process.cwd();
       // Canonicalize with realpath, matching how config keys are
       // canonicalized (CLAUDE.md item 7). A plain resolve() misses a
       // symlinked target (/tmp vs /private/tmp on macOS, or a home dir
@@ -348,7 +355,7 @@ export function registerRemove(worktree) {
         if (result.deletedDevices.length) console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
         for (const s of result.skippedDevices) console.error(chalk.dim(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
         for (const kept of result.keptEntries) {
-          console.error(chalk.dim(`  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso release ${kept}\` once the cause is fixed.`));
+          console.error(chalk.dim(`  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`));
         }
         process.exitCode = 1;
         return;
@@ -361,35 +368,18 @@ export function registerRemove(worktree) {
         console.log(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
       }
       for (const kept of result.keptEntries) {
-        console.log(chalk.yellow(`  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso release ${kept}\` once the cause is fixed.`));
+        console.log(chalk.yellow(`  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`));
       }
     });
 }
 
-export function registerList(worktree) {
-  worktree
-    .command('list')
-    .description("List this repository's worktrees. `rn-iso status` shows the same worktrees WITH their environments -- prefer it.")
-    .action(() => {
-      console.error(chalk.dim('`rn-iso status` lists worktrees alongside their devices, ports and what is running.'));
-      const entries = listWorktrees(process.cwd());
-      if (entries.length === 0) {
-        console.log(chalk.dim('Not a git repository.'));
-        return;
-      }
-      if (entries.length === 1) {
-        console.log(chalk.dim('No worktrees besides the main checkout.'));
-        return;
-      }
-      for (const entry of entries) {
-        console.log(`${entry.path}${entry.branch ? chalk.dim(` [${entry.branch}]`) : ''}`);
-      }
-    })
-}
+// There is no `worktree list`. Its own description read "`rn-iso status` shows
+// the same worktrees WITH their environments -- prefer it", and a command whose
+// purpose is to redirect to another command does not survive into v3.
+// `src/status.js` reports unprovisioned worktrees, so nothing is lost.
 
 export default function worktreeCommand(program) {
   const worktree = program.command('worktree').description('Create and remove isolated worktrees');
   registerCreate(worktree);
   registerRemove(worktree);
-  registerList(worktree);
 }

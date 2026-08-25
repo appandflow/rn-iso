@@ -14,8 +14,11 @@ import { join } from 'path';
 import { saveConfig, getProject } from '../src/config.js';
 import { supervisorPidFile, workspaceStateFile } from '../src/paths.js';
 import {
+  clearCollectorState,
   clearSupervisorState,
+  readCollectorState,
   readSupervisorState,
+  resolveCollectorTargets,
   resolveSupervisorTarget,
   runStop,
 } from '../src/commands/stop.js';
@@ -79,7 +82,7 @@ test('state.json and the global registry disagreeing on the pid is refused', () 
 });
 
 // The workspace's state.json can be deleted (or never written) while the global
-// registration survives -- that registration is precisely what `status --all`
+// registration survives -- that registration is precisely what `status`
 // and `worktree remove` use to find a supervisor whose workspace vanished.
 test('a registry record with no state.json is still actionable when the port matches', () => {
   const r = resolveSupervisorTarget({
@@ -108,11 +111,14 @@ test('no reservation left falls back to the in-workspace record', () => {
 // --- runStop: the sequence --------------------------------------------------
 
 function seams(over = {}) {
-  const calls = { signals: [], teardowns: [], freed: [], cleared: 0, stateCleared: 0, killedMetro: [] };
+  const calls = { signals: [], teardowns: [], freed: [], cleared: 0, stateCleared: 0, killedMetro: [], collectorSignals: [], collectorsCleared: 0 };
   const base = {
     root: '/proj/a',
     project: { metroPort: 8083, platforms: {} },
     state: null,
+    collectors: {},
+    signalCollector: (pid) => { calls.collectorSignals.push(pid); },
+    clearCollectors: () => { calls.collectorsCleared += 1; },
     isAlive: () => false,
     killGroup: (pid) => { calls.signals.push(pid); return true; },
     waitForDeath: async () => true,
@@ -137,7 +143,9 @@ test('nothing running anywhere is a clean success', async () => {
   assert.equal(r.outcomes.metro.status, 'missing');
   assert.equal(r.outcomes.device.ios, null);
   assert.equal(r.outcomes.port.status, 'freed');
+  assert.equal(r.outcomes.collectors.status, 'none');
   assert.deepEqual(calls.signals, []);
+  assert.deepEqual(calls.collectorSignals, []);
 });
 
 test('a live supervisor is SIGTERMed as a group and its Metro is left to it', async () => {
@@ -378,7 +386,7 @@ test('stopping frees the reserved port in the registry and keeps the device reco
   assert.equal(existsSync(supervisorPidFile(tmpRoot)), false);
 });
 
-// The global registration is what `status --all` and `worktree remove` use to
+// The global registration is what `status` and `worktree remove` use to
 // find a supervisor whose workspace is gone, so a stop that leaves one behind
 // leaves a permanent ghost.
 test('stopping clears the global supervisor registration', async () => {
@@ -404,4 +412,121 @@ test('stopping clears the global supervisor registration', async () => {
   assert.equal(r.ok, true);
   assert.equal(r.outcomes.supervisor.status, 'already-stopped');
   assert.equal(getProject(tmpRoot).supervisor, undefined, 'the registration is gone');
+});
+
+
+// --- Contract 5: the collectors ---------------------------------------------
+//
+// A collector is a detached `simctl log stream` / `adb logcat` this workspace
+// spawned. Nothing else on the machine can name it once state.json is gone, so
+// `stop` reaping it is the only thing standing between a workspace teardown and
+// a log stream that outlives the device it was reading.
+
+test('resolveCollectorTargets signals only live pids recorded for this workspace', () => {
+  const targets = resolveCollectorTargets({
+    collectors: { ios: { pid: 111 }, android: { pid: 222 } },
+    isAlive: (pid) => pid === 111,
+  });
+  assert.deepEqual(targets, [
+    { platform: 'ios', pid: 111, status: 'running' },
+    { platform: 'android', pid: 222, status: 'stale' },
+  ]);
+});
+
+test('resolveCollectorTargets refuses a record with no usable pid, and refuses our own', () => {
+  const targets = resolveCollectorTargets({
+    collectors: { ios: { pid: 'nope' }, android: { pid: process.pid } },
+    isAlive: () => true,
+  });
+  assert.deepEqual(targets.map((t) => t.status), ['invalid', 'invalid']);
+});
+
+test('stop SIGTERMs every recorded collector and clears the key', async () => {
+  const { calls, opts } = seams({
+    collectors: { ios: { pid: 111, startedAt: 'a' }, android: { pid: 222, startedAt: 'b' } },
+    isAlive: () => true,
+  });
+  const r = await runStop(opts);
+  assert.equal(r.ok, true);
+  assert.deepEqual(calls.collectorSignals, [111, 222]);
+  assert.equal(calls.collectorsCleared, 1);
+  assert.equal(r.outcomes.collectors.status, 'stopped');
+  assert.deepEqual(r.outcomes.collectors.entries, [
+    { platform: 'ios', pid: 111, status: 'stopped' },
+    { platform: 'android', pid: 222, status: 'stopped' },
+  ]);
+  assert.match(r.summary, /2 collectors stopped/);
+});
+
+// A dead collector pid is the NORMAL case: the app was killed, the collector
+// noticed and exited on its own. It must never make `stop` non-zero.
+test('an already-dead collector is a success, not a failure', async () => {
+  const { calls, opts } = seams({
+    collectors: { ios: { pid: 111 } },
+    isAlive: () => false,
+  });
+  const r = await runStop(opts);
+  assert.equal(r.ok, true);
+  assert.deepEqual(calls.collectorSignals, [], 'a dead pid must not be signalled');
+  assert.deepEqual(r.outcomes.collectors.entries, [{ platform: 'ios', pid: 111, status: 'already-stopped' }]);
+});
+
+test('a collector that exits between the liveness check and the signal is not an error', async () => {
+  const { opts } = seams({
+    collectors: { ios: { pid: 111 } },
+    isAlive: () => true,
+    signalCollector: () => { const e = new Error('ESRCH'); e.code = 'ESRCH'; throw e; },
+  });
+  const r = await runStop(opts);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.outcomes.collectors.entries, [{ platform: 'ios', pid: 111, status: 'already-stopped' }]);
+});
+
+// The device step is skipped while something still holds the port, but the
+// collectors are not: they hold nothing contended, and a stuck supervisor is
+// exactly the case where a leaked log stream would never be reaped by anything.
+test('collectors are still reaped when the supervisor could not be verified', async () => {
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8099 },
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+    collectors: { ios: { pid: 111 } },
+    isAlive: () => true,
+  });
+  const r = await runStop(opts);
+  assert.equal(r.ok, false, 'the unverified supervisor still fails the run');
+  assert.equal(r.outcomes.supervisor.status, 'unverified');
+  assert.deepEqual(calls.collectorSignals, [111]);
+  assert.equal(calls.collectorsCleared, 1);
+  assert.deepEqual(calls.teardowns, [], 'the device is still left alone');
+});
+
+test('nothing recorded means no clear and no signal', async () => {
+  const { calls, opts } = seams({ collectors: {} });
+  const r = await runStop(opts);
+  assert.equal(r.outcomes.collectors.status, 'none');
+  assert.equal(calls.collectorsCleared, 0, 'an untouched state file must not be rewritten');
+});
+
+test('readCollectorState reads the collectors block and tolerates corruption', () => {
+  assert.deepEqual(readCollectorState(tmpRoot), {});
+  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
+  writeFileSync(workspaceStateFile(tmpRoot), '{ not json');
+  assert.deepEqual(readCollectorState(tmpRoot), {}, 'a corrupt state file must not crash stop');
+  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ collectors: { ios: { pid: 9 } } }));
+  assert.deepEqual(readCollectorState(tmpRoot), { ios: { pid: 9 } });
+});
+
+// Same rule as clearSupervisorState: `lastBuild` lives in this file, and taking
+// the fingerprint away with a collector pid would make the next build a
+// guaranteed cache miss.
+test('clearCollectorState drops only the collectors key', () => {
+  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
+  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({
+    supervisor: { pid: 7 },
+    collectors: { ios: { pid: 9 } },
+    lastBuild: { fingerprint: 'abc' },
+  }));
+  clearCollectorState(tmpRoot);
+  const left = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  assert.deepEqual(left, { supervisor: { pid: 7 }, lastBuild: { fingerprint: 'abc' } });
 });

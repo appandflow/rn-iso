@@ -1,18 +1,21 @@
-// engine/device.js -- the booted guarantee.
+// engine/device.js -- the owned-device guarantee and the booted guarantee.
 //
-// ensureOwnedDevice itself moved here verbatim from commands/up.js and is
-// still covered by test/up.test.js through that module's re-export; what is
-// new, and tested here, is ensureBooted: the wait that `ios` / `android` need
-// because `simctl install` against a sim that is still "Booting" fails.
+// Both halves live here now. `ensureOwnedDevice` used to be covered through
+// commands/up.js and test/up.test.js; when v3 deleted that command, the
+// ownership behaviours it pinned (CLAUDE.md item 2) were re-pinned here
+// against the function directly, which is both the real home of the rule and
+// a far smaller harness than driving a command was.
 //
 // The rule under test throughout is the ownership rule: a device that is not
-// rn-iso's by name is never booted, only reported.
+// rn-iso's by name is never booted, only reported -- and, since v3 removed
+// physical-device support, no path here ever issues a command at hardware.
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ensureBooted } from '../src/engine/device.js';
+import { deviceTypeMismatch, ensureBooted, ensureOwnedDevice } from '../src/engine/device.js';
+import { getProject, setDevice, upsertProject } from '../src/config.js';
 import { resetExecutor, setExecutor } from '../src/exec.js';
 
 let tmpHome;
@@ -87,7 +90,7 @@ describe('ensureBooted: ios', () => {
     setExecutor({ run: () => simList([]), runQuiet: () => '', runFile: () => '', spawn: () => null });
     const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'GONE' } });
     assert.match(result.reason, /no longer exists/);
-    assert.match(result.reason, /rn-iso up ios/);
+    assert.match(result.reason, /rn-iso ios/);
   });
 
   test('times out with a reason instead of hanging when the sim never boots', async () => {
@@ -204,18 +207,230 @@ describe('ensureBooted: android', () => {
   });
 
   // Hardware cannot be spawned: a physical record is reported, never booted.
-  test('never boots a physical device, only reports whether it is connected', async () => {
+  // v3 removed physical-device support entirely. A legacy record that names a
+  // serial instead of an AVD must resolve to a refusal, and -- the part that
+  // matters -- must issue NOTHING at that serial: no adb probe, no boot.
+  test('refuses a legacy physical record without issuing a single command at it', async () => {
     setExecutor({
-      run: (cmd) => (cmd === 'adb devices' ? 'List of devices attached' : ''),
-      runQuiet: () => '',
-      runFile: () => '',
+      run: (cmd) => { throw new Error(`rn-iso must not run "${cmd}" for a physical record`); },
+      runQuiet: () => { throw new Error('rn-iso must not probe hardware'); },
+      runFile: () => { throw new Error('rn-iso must not probe hardware'); },
       spawn: () => { throw new Error('rn-iso must never try to boot hardware'); },
     });
     const result = await ensureBooted({ platform: 'android', device: { serial: 'R5CT10', kind: 'physical', owned: false } });
-    assert.match(result.reason, /never boots hardware/);
+    assert.equal(result.failed, true);
+    assert.match(result.reason, /No owned Android emulator is recorded/);
   });
 });
 
 test('ensureBooted reports an unknown platform rather than throwing', async () => {
   assert.match((await ensureBooted({ platform: 'web', device: {} })).reason, /Unknown platform/);
+});
+
+
+// --- deviceTypeMismatch: pure --------------------------------------------
+//
+// Honouring the requested device type on REUSE, not just on creation: before
+// this existed, asking for a different model against an existing environment
+// silently booted the old one and the setting looked broken.
+
+const TYPES = [
+  { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', name: 'iPhone 17 Pro' },
+  { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16', name: 'iPhone 16' },
+];
+
+test('deviceTypeMismatch returns null when nothing was requested', () => {
+  assert.equal(deviceTypeMismatch(TYPES[0].identifier, undefined, TYPES), null);
+});
+
+test('deviceTypeMismatch returns null when the recorded sim is the requested type', () => {
+  assert.equal(deviceTypeMismatch(TYPES[0].identifier, 'iPhone 17 Pro', TYPES), null);
+});
+
+test('deviceTypeMismatch describes the mismatch when the recorded sim is a different model', () => {
+  const msg = deviceTypeMismatch(TYPES[1].identifier, 'iPhone 17 Pro', TYPES);
+  assert.match(msg, /iPhone 16/);
+  assert.match(msg, /iPhone 17 Pro/);
+});
+
+test('deviceTypeMismatch returns null when the requested type is unknown, leaving creation to error', () => {
+  assert.equal(deviceTypeMismatch(TYPES[0].identifier, 'iPhone 99 Ultra', TYPES), null);
+});
+
+test('deviceTypeMismatch returns null when the recorded type is unknown', () => {
+  assert.equal(deviceTypeMismatch(undefined, 'iPhone 17 Pro', TYPES), null);
+});
+
+// --- ensureOwnedDevice: the ownership rule --------------------------------
+
+const DEVICE_TYPES_JSON = JSON.stringify({ devicetypes: TYPES });
+const RUNTIMES_JSON = JSON.stringify({
+  runtimes: [{
+    identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
+    name: 'iOS 26.2',
+    version: '26.2',
+    isAvailable: true,
+    platform: 'iOS',
+    supportedDeviceTypes: TYPES,
+  }],
+});
+
+function projectDir() {
+  const dir = mkdtempSync(join(tmpdir(), 'rn-iso-test-proj-'));
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'scratch-app' }));
+  upsertProject(dir, { bundleId: null, androidPackage: null, isExpo: false });
+  return dir;
+}
+
+function iosExecutor(devices) {
+  const run = [];
+  return {
+    run,
+    exec: {
+      run(cmd) {
+        run.push(cmd);
+        if (/simctl list devicetypes --json/.test(cmd)) return DEVICE_TYPES_JSON;
+        if (/simctl list runtimes --json/.test(cmd)) return RUNTIMES_JSON;
+        if (/simctl list devices --json/.test(cmd)) return simList(devices);
+        if (/simctl create/.test(cmd)) return 'NEW-UDID';
+        if (/simctl boot/.test(cmd)) return '';
+        throw new Error(`unexpected run: ${cmd}`);
+      },
+      runQuiet(cmd) { try { return this.run(cmd); } catch { return null; } },
+      runFile() { return ''; },
+      spawn() { return { pid: 1, unref() {} }; },
+    },
+  };
+}
+
+describe('ensureOwnedDevice: ios', () => {
+  test('an owned record renamed away from rn-iso- ownership is never booted; a fresh owned sim is created', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'rn-iso-old' });
+      const { run, exec } = iosExecutor([{ udid: 'U1', name: 'Renamed-By-User', state: 'Shutdown', isAvailable: true }]);
+      setExecutor(exec);
+      const notes = [];
+      const result = await ensureOwnedDevice({
+        platform: 'ios', project: getProject(root), projectPath: root, label: 'app',
+        settings: {}, note: (l) => notes.push(String(l)),
+      });
+      assert.equal(run.some(c => c === 'xcrun simctl boot U1'), false, 'must never boot a sim no longer rn-iso-owned by name');
+      assert.ok(run.some(c => /simctl create/.test(c)));
+      assert.equal(result.deviceUdid, 'NEW-UDID');
+      assert.equal(result.owned, true);
+      assert.ok(notes.some(n => /not rn-iso-owned by name/i.test(n)));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a legacy shut-down sim (no owned flag) is reported, never booted', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1' });
+      const { run, exec } = iosExecutor([{ udid: 'U1', name: 'iPhone 16', state: 'Shutdown', isAvailable: true }]);
+      setExecutor(exec);
+      const notes = [];
+      const result = await ensureOwnedDevice({
+        platform: 'ios', project: getProject(root), projectPath: root, label: 'app',
+        settings: {}, note: (l) => notes.push(String(l)),
+      });
+      assert.equal(run.some(c => /simctl boot/.test(c)), false, 'must never boot a legacy device');
+      assert.equal(run.some(c => /simctl create/.test(c)), false, 'a live legacy record is reused, not replaced');
+      assert.equal(result.deviceUdid, 'U1');
+      assert.ok(!result.owned);
+      assert.ok(notes.some(n => /not owned by rn-iso/i.test(n)));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('ensureOwnedDevice: android', () => {
+  let androidHome;
+  let prevAndroidHome;
+
+  beforeEach(() => {
+    androidHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-sdk-'));
+    mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'arm64-v8a'), { recursive: true });
+    prevAndroidHome = process.env.ANDROID_HOME;
+    process.env.ANDROID_HOME = androidHome;
+  });
+
+  afterEach(() => {
+    rmSync(androidHome, { recursive: true, force: true });
+    if (prevAndroidHome === undefined) delete process.env.ANDROID_HOME;
+    else process.env.ANDROID_HOME = prevAndroidHome;
+  });
+
+  function androidExecutor({ avds = [], createAvdError = null } = {}) {
+    const run = [];
+    const spawn = [];
+    return {
+      run,
+      spawn,
+      exec: {
+        run(cmd) {
+          run.push(cmd);
+          if (cmd === 'emulator -list-avds') return avds.length ? `${avds.join('\n')}\n` : '';
+          if (/create avd/.test(cmd)) {
+            if (createAvdError) throw new Error(createAvdError);
+            return '';
+          }
+          if (cmd === 'adb devices') return 'List of devices attached\n';
+          if (/emu avd name/.test(cmd)) return '';
+          if (/getprop sys\.boot_completed/.test(cmd)) return '1';
+          if (/getprop /.test(cmd)) return '';
+          throw new Error(`unexpected run: ${cmd}`);
+        },
+        runQuiet(cmd) { try { return this.run(cmd); } catch { return null; } },
+        runFile() { return ''; },
+        spawn(cmd, args, opts) { spawn.push({ cmd, args, opts }); return { pid: 9999, unref() {} }; },
+      },
+    };
+  }
+
+  // v3 removed physical-device support. A legacy `--serial` assignment must
+  // resolve toward creating an owned emulator -- never toward a command aimed
+  // at the hardware the record names.
+  test('a legacy physical assignment is reported and replaced by an owned AVD, with nothing issued at the serial', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'android', { serial: 'R5CT10', kind: 'physical', owned: false });
+      const { run, exec } = androidExecutor();
+      setExecutor(exec);
+      const notes = [];
+      const result = await ensureOwnedDevice({
+        platform: 'android', project: getProject(root), projectPath: root, label: 'app',
+        settings: {}, note: (l) => notes.push(String(l)),
+      });
+      assert.equal(run.some(c => c.includes('R5CT10')), false, 'no command may name the physical serial');
+      assert.equal(result.avdName, 'rn-iso-app');
+      assert.equal(result.owned, true);
+      assert.ok(notes.some(n => /no longer supports physical devices/i.test(n)));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an existing AVD owned by ANOTHER project errors instead of being hijacked', async () => {
+    const other = projectDir();
+    const root = projectDir();
+    try {
+      setDevice(other, 'android', { avdName: 'rn-iso-app', consolePort: 5554, owned: true });
+      const { exec } = androidExecutor({ avds: ['rn-iso-app'], createAvdError: 'Error: AVD rn-iso-app already exists.' });
+      setExecutor(exec);
+      await assert.rejects(
+        ensureOwnedDevice({
+          platform: 'android', project: getProject(root), projectPath: root, label: 'app',
+          settings: {},
+        }),
+        /owned by another project/
+      );
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

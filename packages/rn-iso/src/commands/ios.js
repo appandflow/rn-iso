@@ -459,17 +459,6 @@ export async function runIos(opts = {}, overrides = {}) {
     });
   }
 
-  const booted = await d.ensureBooted({ platform: PLATFORM, device, out: note });
-  if (!booted?.ok) {
-    return fail({
-      code: 'RN_ISO_NO_DEVICE',
-      message: booted?.reason || 'The owned simulator could not be booted.',
-      remedy: 'Run `rn-iso up ios` to re-establish an owned simulator for this workspace.',
-    });
-  }
-  const udid = booted.udid;
-  phase('device', `${deviceLabel(device, udid)} booted`);
-
   // ---- the Metro gate, BEFORE anything expensive ----
   //
   // A build that finishes without a dev server produces an app that opens to
@@ -477,6 +466,12 @@ export async function runIos(opts = {}, overrides = {}) {
   // IDENTITY, not just occupancy (resolveProjectMetro), because a foreign
   // bundler answering there would send this app's bundle requests at another
   // workspace's code.
+  //
+  // It sits AFTER ensureOwnedDevice (which needs to run for the device record
+  // the rest of this command reads) and BEFORE ensureBooted, which is the
+  // expensive half: booting a simulator is ~10s of polling, and there is no
+  // reason to pay it to then refuse at second twelve. The whole point of the
+  // gate is that the refusal is instant.
   const noMetro = (message) => fail({
     code: 'RN_ISO_NO_METRO',
     message,
@@ -500,6 +495,17 @@ export async function runIos(opts = {}, overrides = {}) {
     metroPort = DEFAULT_METRO_PORT;
     note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${metroPort}.`));
   }
+
+  const booted = await d.ensureBooted({ platform: PLATFORM, device, out: note });
+  if (!booted?.ok) {
+    return fail({
+      code: 'RN_ISO_NO_DEVICE',
+      message: booted?.reason || 'The owned simulator could not be booted.',
+      remedy: 'Run `rn-iso ios` again to re-establish an owned simulator for this workspace.',
+    });
+  }
+  const udid = booted.udid;
+  phase('device', `${deviceLabel(device, udid)} booted`);
 
   // ---- fingerprint and cache ----
   let fingerprint;

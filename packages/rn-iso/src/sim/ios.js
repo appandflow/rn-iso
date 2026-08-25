@@ -62,7 +62,7 @@ export function parseOccupyingApps(launchctlOutput) {
 }
 
 // Fails CLOSED: an unanswerable probe reports "occupied". The callers are the
-// shutdown paths -- `rn-iso shutdown`, and teardownOwnedIosSim when it is not
+// shutdown paths -- `rn-iso stop`, and teardownOwnedIosSim when it is not
 // deleting -- where the sim survives the command and a wrong "free" answer
 // pulls it out from under a foreign UI-test runner. Same direction as the
 // unmounted-volume guard: on doubt, skip, do not destroy.

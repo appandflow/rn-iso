@@ -55,7 +55,7 @@ const PORT_SCAN_LIMIT = 200;
 // free on the machine. The old implementation was max(registry)+1 with no
 // liveness check, which deterministically handed the same occupied port to
 // several projects in a row -- releasing a project lowered the max again, so
-// `release` then `up` returned the same bad number. Scanning also reuses gaps
+// two runs in a row returned the same bad number. Scanning also reuses gaps
 // left by released projects instead of climbing forever.
 export async function computeNextPort(isFree = isPortFree) {
   const taken = new Set(allMetroPorts());
@@ -112,7 +112,7 @@ export async function allocatePort(projectPath, probe = isMetroRunning, isFree =
 const RESERVE_ATTEMPTS = 5;
 
 // Allocation and recording are two steps with a gap between them: the probes
-// take hundreds of milliseconds, and a second `up` running in parallel can
+// take hundreds of milliseconds, and a second `start` running in parallel can
 // pick the same port in that window. claimMetroPort writes only if the config
 // still shows the port unclaimed, so a loser here simply allocates again --
 // and that second pass now sees the winner's record and skips its port.

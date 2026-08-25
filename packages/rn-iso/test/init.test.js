@@ -4,29 +4,91 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
-  detectPackageManager,
   projectFacts,
   renderDevScript,
   renderGitignoreAdditions,
   renderPodfileCasPin,
   renderWorkflow,
   renderWorktreeExclude,
-  runScript,
 } from '../src/init.js';
 import { appendGitignoreAdditions } from '../src/commands/init.js';
 
 const expoApp = { pkg: { name: 'demo', dependencies: { expo: '~57.0.0', 'react-native': '0.86.2' } } };
 const bareApp = { pkg: { name: 'bare', dependencies: { 'react-native': '0.86.2' } } };
 
-test('an Expo project and a bare one get different run commands', () => {
-  assert.equal(projectFacts(expoApp).runCommand, 'npx expo run:ios');
-  assert.equal(projectFacts(bareApp).runCommand, 'npx react-native run-ios');
+// v3 runs the build itself, so the facts no longer carry an invented run
+// command, the project's script table, or a package manager: nothing in the
+// templates reconstructs a command line any more.
+test('the facts describe the ecosystem and nothing about how to invoke it', () => {
+  const facts = projectFacts(expoApp);
+  assert.equal(facts.isExpo, true);
+  assert.equal(facts.runCommand, undefined);
+  assert.equal(facts.pm, undefined);
+  assert.equal(facts.scripts, undefined);
 });
 
 test('the SDK major is read from the expo range, and absent for a bare project', () => {
   assert.equal(projectFacts(expoApp).sdkMajor, 57);
   assert.equal(projectFacts(bareApp).sdkMajor, null);
   assert.equal(projectFacts(bareApp).isExpo, false);
+});
+
+test('@expo/fingerprint is detected in either dependency block', () => {
+  assert.equal(projectFacts(expoApp).hasFingerprint, false);
+  assert.equal(
+    projectFacts({ pkg: { dependencies: { expo: '~57.0.0' }, devDependencies: { '@expo/fingerprint': '^1.0.0' } } }).hasFingerprint,
+    true
+  );
+});
+
+// --- the workflow -----------------------------------------------------------
+//
+// It documents the v3 loop, so it must name the v3 commands and none of the v2
+// ones the CLI no longer has.
+
+test('the workflow teaches start -> ios/android -> logs -> stop, in that order', () => {
+  for (const facts of [projectFacts(expoApp), projectFacts(bareApp)]) {
+    const doc = renderWorkflow(facts);
+    const at = (needle) => {
+      const i = doc.indexOf(needle);
+      assert.notEqual(i, -1, `the workflow should mention ${needle}`);
+      return i;
+    };
+    assert.ok(at('rn-iso worktree create') < at('rn-iso start'));
+    assert.ok(at('rn-iso start') < at('rn-iso ios'));
+    assert.ok(at('rn-iso ios') < at('rn-iso logs --errors'));
+    assert.ok(at('rn-iso logs --errors') < at('rn-iso stop'));
+    assert.ok(at('rn-iso stop') < at('rn-iso worktree remove'));
+  }
+});
+
+// The commands that no longer exist. A generated document that teaches one of
+// them is worse than no document: the agent runs it and gets "unknown command".
+test('the workflow teaches no command the v3 binary does not have', () => {
+  for (const facts of [projectFacts(expoApp), projectFacts(bareApp)]) {
+    const doc = renderWorkflow(facts);
+    for (const gone of ['rn-iso up', 'rn-iso release', 'rn-iso shutdown', 'rn-iso config', 'build-cache resolve', '--wait-metro', '--no-bundler']) {
+      assert.ok(!doc.includes(gone), `the workflow must not teach ${gone}`);
+    }
+  }
+});
+
+// rn-iso never starts the bundler, and building before one answers is the
+// mistake the whole ordering exists to prevent -- so the document has to say
+// what happens instead of just naming the commands.
+test('the workflow says why start comes first, in terms of the refusal', () => {
+  const doc = renderWorkflow(projectFacts(expoApp));
+  assert.match(doc, /RN_ISO_NO_METRO/);
+  assert.match(doc, /never starts the bundler/);
+});
+
+// stop and worktree remove differ in exactly one way that matters, and reaching
+// for the wrong one costs either a rebuild or a lost branch.
+test('the workflow distinguishes the non-destructive stop from the destructive removal', () => {
+  const doc = renderWorkflow(projectFacts(expoApp));
+  assert.match(doc, /destroys nothing/);
+  assert.match(doc, /uncommitted changes/);
+  assert.match(doc, /Podfile\.lock/, 'the pod-install refusal fires after almost every iOS build');
 });
 
 // The build cache key moved when the setting left experiments, and naming the
@@ -38,16 +100,16 @@ test('the workflow names the build cache key this SDK reads', () => {
 
   const sdk57 = renderWorkflow(projectFacts(expoApp));
   assert.match(sdk57, /expo\.buildCacheProvider/);
-  assert.doesNotMatch(sdk57, /expo\.experiments\.buildCacheProvider.*Point/s);
 });
 
-// A bare project has no provider hook at all, so telling it where to put a key
-// would be nonsense; it gets the CLI route instead.
-test('a bare project is given the CLI build cache route, not an Expo provider', () => {
+// A bare project has no Expo provider hook at all, so telling it where to put a
+// key would be nonsense. It does not need one: `rn-iso ios` consults the shared
+// cache itself, and only needs the fingerprinter.
+test('a bare project is told about the fingerprinter, not about an Expo provider', () => {
   const doc = renderWorkflow(projectFacts(bareApp));
-  assert.match(doc, /rn-iso build-cache resolve/);
   assert.doesNotMatch(doc, /buildCacheProvider/);
-  assert.match(doc, /@expo\/fingerprint/, 'it still needs the fingerprinter, which works on a bare project');
+  assert.match(doc, /@expo\/fingerprint/);
+  assert.match(doc, /RN_ISO_NO_FINGERPRINT/, 'the refusal is what makes the missing dependency visible');
 });
 
 // The dev client is the difference between a reserved port working and a red
@@ -62,21 +124,16 @@ test('an Expo project that already has the dev client is told why it matters ins
     pkg: { dependencies: { expo: '~57.0.0', 'expo-dev-client': '~57.0.0' } },
   }));
   assert.doesNotMatch(doc, /Install `expo-dev-client` before/);
-  assert.match(doc, /only reaches the app because/);
+  assert.match(doc, /expo-development-client/);
 });
 
-// A bare project cannot use the dev client route, and compiling the port in
-// would poison a fingerprint-keyed cache -- so it is steered to the runtime one.
-test('a bare project is steered to the runtime port override, with the reason', () => {
+// A bare project gets neither: rn-iso wires the port at runtime itself, and the
+// reason it does NOT compile it in has to survive, or someone will.
+test('a bare project is told how the port reaches the app without being compiled in', () => {
   const doc = renderWorkflow(projectFacts(bareApp));
   assert.match(doc, /RCT_jsLocation/);
-  assert.match(doc, /does not include the port/, 'the reason has to survive, or someone will compile it in');
-});
-
-test('every generated workflow warns about --no-bundler, which is the easy mistake', () => {
-  for (const facts of [projectFacts(expoApp), projectFacts(bareApp)]) {
-    assert.match(renderWorkflow(facts), /--no-bundler/);
-  }
+  assert.match(doc, /adb reverse/);
+  assert.match(doc, /does not bake the port|Neither bakes/);
 });
 
 test('the worktree exclude file is patterns and comments only', () => {
@@ -85,125 +142,46 @@ test('the worktree exclude file is patterns and comments only', () => {
   assert.ok(lines.every(l => !l.includes(' ')), 'a pattern with a space in it would not match anything');
 });
 
-// The middle of the loop is a sequence, and getting the order wrong fails in
-// ways that do not name themselves -- build before Metro answers and the app
-// opens on a red screen.
-test('the dev script waits for Metro to answer before running the build', () => {
-  const script = renderDevScript(projectFacts(expoApp));
-  const bundlerAt = script.indexOf('expo start');
-  const readyAt = script.indexOf('packager-status:running', bundlerAt);
-  const runAt = script.indexOf('expo run:ios');
-  assert.ok(bundlerAt !== -1 && readyAt !== -1 && runAt !== -1);
-  assert.ok(readyAt < runAt, 'readiness must be established before the build starts');
+// --- the dev script ---------------------------------------------------------
+//
+// v2's script hand-started a bundler into /tmp, polled `/status`, and then ran
+// the project's build command. All three of those are now inside `rn-iso start`
+// and `rn-iso ios`, so the script is the sequence and nothing else.
+
+test('the dev script is start, then the platform command, in that order', () => {
+  const script = renderDevScript();
+  const startAt = script.indexOf('npx rn-iso start');
+  const runAt = script.indexOf('npx rn-iso "$PLATFORM"');
+  assert.ok(startAt !== -1 && runAt !== -1);
+  assert.ok(startAt < runAt, 'the dev server has to be up before the build runs');
 });
 
-test('the dev script polls rather than sleeping a fixed amount', () => {
-  const script = renderDevScript(projectFacts(expoApp));
-  assert.match(script, /for _ in \$\(seq/);
+test('the dev script defaults to ios and forwards the rest of its arguments', () => {
+  const script = renderDevScript();
+  assert.match(script, /PLATFORM="\$\{1:-ios\}"/);
+  assert.match(script, /npx rn-iso "\$PLATFORM" "\$@"/);
 });
 
-// --no-bundler is the mistake this script exists partly to prevent, so it must
-// not appear in an actual command -- only in the comment warning about it.
-test('no generated command uses --no-bundler', () => {
-  for (const facts of [projectFacts(expoApp), projectFacts(bareApp)]) {
-    const commands = renderDevScript(facts)
-      .split('\n')
-      .filter(l => l.trim() && !l.trim().startsWith('#'));
-    assert.equal(commands.filter(l => l.includes('--no-bundler')).length, 0);
+// Everything the script used to do by hand is now a command's own contract, so
+// none of the hand-rolled machinery may come back.
+test('the dev script hand-rolls no bundler, no poll loop and no log file', () => {
+  const script = renderDevScript();
+  for (const gone of ['packager-status:running', 'seq 1 60', '/tmp/rn-iso-metro', 'rn-iso up', '--wait-metro', '--no-bundler', 'RCT_jsLocation', '&']) {
+    assert.ok(!script.includes(gone), `the dev script must not contain ${gone}`);
   }
 });
 
-// A bare app has no dev client to receive the deep link, and compiling the port
-// in would poison a fingerprint-keyed build cache.
-test('only the bare script points the app at the bundler at runtime', () => {
-  assert.match(renderDevScript(projectFacts(bareApp)), /RCT_jsLocation/);
-  assert.doesNotMatch(renderDevScript(projectFacts(expoApp)), /RCT_jsLocation/);
+// It is one script for both platforms because `rn-iso ios` and `rn-iso android`
+// take the same (empty) option surface -- there is nothing left to specialise.
+test('the dev script is the same whatever the project is', () => {
+  assert.equal(renderDevScript(), renderDevScript());
 });
 
-// The port is what `up --json` and `status` both report, so a log named after it
-// can be found again without anything having to remember where it went.
-test('the Metro log is named after the port', () => {
-  assert.match(renderDevScript(projectFacts(expoApp)), /rn-iso-metro-\$\{PORT\}\.log/);
-});
-
-// The packageManager field is the declared answer and corepack enforces it, so
-// it outranks a lockfile that may just be stale.
-test('the packageManager field beats a lockfile, and a lockfile beats the default', () => {
-  assert.equal(detectPackageManager({ files: ['yarn.lock'], packageManagerField: 'pnpm@9.0.0' }), 'pnpm');
-  assert.equal(detectPackageManager({ files: ['pnpm-lock.yaml'] }), 'pnpm');
-  assert.equal(detectPackageManager({ files: ['yarn.lock'] }), 'yarn');
-  assert.equal(detectPackageManager({ files: ['bun.lockb'] }), 'bun');
-  assert.equal(detectPackageManager({ files: [] }), 'npm', 'npm is the fallback npx implies');
-});
-
-// npm and pnpm need `--` before flags meant for the script; yarn and bun would
-// pass a literal `--` through to it. Established by running all four.
-test('flags are forwarded the way each package manager actually wants them', () => {
-  assert.equal(runScript('npm', 'ios', ['--device', 'X']), 'npm run ios -- --device X');
-  assert.equal(runScript('pnpm', 'ios', ['--device', 'X']), 'pnpm run ios -- --device X');
-  assert.equal(runScript('yarn', 'ios', ['--device', 'X']), 'yarn run ios --device X');
-  assert.equal(runScript('bun', 'ios', ['--device', 'X']), 'bun run ios --device X');
-});
-
-test('a script with no extra flags gets no separator at all', () => {
-  assert.equal(runScript('npm', 'start'), 'npm run start');
-});
-
-// A project's own start script often carries flags that matter -- --client-logs,
-// a variant, a flavor -- and spawning the bundler directly drops them silently.
-test('the project script is preferred over a command we would invent', () => {
-  const facts = projectFacts({
-    pkg: { dependencies: { expo: '~57.0.0' }, scripts: { ios: 'expo run:ios', start: 'expo start --client-logs' } },
-    files: ['yarn.lock'],
-  });
-  const script = renderDevScript(facts);
-  assert.match(script, /yarn run start --port/);
-  assert.match(script, /yarn run ios --device/);
-  assert.doesNotMatch(script, /npx expo start/);
-});
-
-test('a project with no scripts falls back to a direct command rather than inventing a script', () => {
-  const script = renderDevScript(projectFacts({ pkg: { dependencies: { expo: '~57.0.0' } }, files: [] }));
-  assert.match(script, /npx expo start --port/);
-  assert.doesNotMatch(script, /run start/);
-});
-
-// The port must be passed exactly once: twice is not harmless, since the second
-// occurrence is what some CLIs actually read.
-test('the port is passed exactly once to the bundler', () => {
-  for (const files of [[], ['pnpm-lock.yaml']]) {
-    const facts = projectFacts({ pkg: { dependencies: { expo: '~57.0.0' }, scripts: { start: 'expo start' } }, files });
-    const line = renderDevScript(facts).split('\n').find(l => l.includes('$LOG') && l.includes('&'));
-    assert.equal((line.match(/--port/g) || []).length, 1, line);
-  }
-});
-
-// A monorepo keeps its lockfile at the workspace root, not in the app package.
-// Looking only in the project directory reports npm for a pnpm repo, and
-// `npm run ios -- --flag` is the wrong invocation there.
-test('a lockfile above the project directory is found', () => {
-  assert.equal(detectPackageManager({ files: ['package.json'], ancestorFiles: ['pnpm-lock.yaml'] }), 'pnpm');
-});
-
-test('a lockfile in the project directory still wins nothing over the declared field', () => {
-  assert.equal(
-    detectPackageManager({ files: ['yarn.lock'], ancestorFiles: ['pnpm-lock.yaml'], packageManagerField: 'bun@1.0.0' }),
-    'bun'
-  );
-});
-
-// `rn-iso init` writes scripts/dev next to WORKFLOW.md, and the document never
-// mentioned it -- so the generated instructions were the manual sequence the
-// script exists to replace.
 test('the workflow points at the script init writes alongside it', () => {
   for (const facts of [projectFacts(expoApp), projectFacts(bareApp)]) {
     const doc = renderWorkflow(facts);
     assert.match(doc, /\.\/scripts\/dev/);
-    const scriptAt = doc.indexOf('./scripts/dev');
-    const manualAt = doc.indexOf('npx rn-iso up ios --json');
-    assert.ok(scriptAt !== -1 && manualAt !== -1);
-    assert.ok(scriptAt < manualAt, 'the one command comes before the steps it stands for');
-    assert.match(doc, /what it does/, 'the manual commands stay, as the explanation of the script');
+    assert.match(doc, /Edit it freely/, 'the script is the repo\'s, not rn-iso\'s');
   }
 });
 

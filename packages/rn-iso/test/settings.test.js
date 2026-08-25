@@ -102,19 +102,29 @@ test('unknownSettingKeys tolerates empty and malformed input', () => {
   assert.deepEqual(unknownSettingKeys('nope'), []);
 });
 
-test('repo-layer caches set via the CLI parse path round-trips as a real array', async () => {
-  const { isAllowedRepoKey, parseSettingValue } = await import('../src/commands/config.js');
-  assert.equal(isAllowedRepoKey('caches'), true);
-  const parsed = parseSettingValue('caches', '["~/.myapp-metro-cache", "/tmp/build-cache"]');
-  assert.deepEqual(parsed, ['~/.myapp-metro-cache', '/tmp/build-cache']);
-  setRepoSetting('/repo/.git', 'caches', parsed);
-  const resolved = resolveSettings({ gitCommonDir: '/repo/.git' });
-  assert.deepEqual(resolved.caches, ['~/.myapp-metro-cache', '/tmp/build-cache']);
+// v3 deleted the `config` CLI, so a committed `.rn-iso.json` is the way an
+// array-valued setting is written by hand. These pin that the file's own JSON
+// types survive resolution -- there is no parse step left to convert them, so
+// a regression here would hand consumers a string where they expect an array.
+test('committed caches and device settings resolve with their JSON types intact', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'rn-iso-repo-'));
+  try {
+    writeFileSync(join(repo, '.rn-iso.json'), JSON.stringify({
+      caches: ['~/.myapp-metro-cache', '/tmp/build-cache'],
+      ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' },
+    }));
+    const resolved = resolveSettings({ repoRoot: repo });
+    assert.deepEqual(resolved.caches, ['~/.myapp-metro-cache', '/tmp/build-cache']);
+    assert.equal(resolved.ios.deviceType, 'iPhone 17 Pro');
+    assert.equal(resolved.ios.runtime, '26.2');
+    assert.deepEqual(unknownSettingKeys(resolved), []);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
 
-test('parseSettingValue leaves scalar values as strings and rejects malformed JSON', async () => {
-  const { parseSettingValue } = await import('../src/commands/config.js');
-  assert.equal(parseSettingValue('ios.runtime', '26.2'), '26.2');
-  assert.equal(parseSettingValue('ios.deviceType', 'iPhone 17 Pro'), 'iPhone 17 Pro');
-  assert.throws(() => parseSettingValue('caches', '["unterminated'), /does not parse/);
+test('a repo-layer array setting survives resolution as an array', () => {
+  setRepoSetting('/repo/.git', 'caches', ['~/.myapp-metro-cache', '/tmp/build-cache']);
+  const resolved = resolveSettings({ gitCommonDir: '/repo/.git' });
+  assert.deepEqual(resolved.caches, ['~/.myapp-metro-cache', '/tmp/build-cache']);
 });

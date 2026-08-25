@@ -12,7 +12,7 @@
 //
 // 1. THE RECORD IS WRITTEN BEFORE THE SERVER STARTS. The pid file, the
 //    workspace state.json and the global registration all land first, exactly
-//    the way `up` records a device before booting it. A supervisor that dies
+//    the way `ios` records a device before booting it. A supervisor that dies
 //    during startup must still be findable -- an unrecorded process holding a
 //    port is what nothing will ever clean up. The cost of the other order is
 //    not symmetric: a stale record is cheap to detect (the pid is not alive,
@@ -151,7 +151,7 @@ export async function runSupervisor({
   } catch (err) {
     // The global registration is the copy that survives the workspace being
     // deleted; the workspace copy above is the one `stop` reads first. Losing
-    // the global one degrades `status --all`, and is not worth refusing to
+    // the global one degrades `status`, and is not worth refusing to
     // serve a dev server over.
     writer.write({ src: 'metro', level: 'warn', event: 'supervisor_registration_failed', msg: `Could not record the supervisor in the global config: ${describeError(err)}` });
     stderr(`rn-iso supervisor: global registration failed: ${describeError(err)}`);

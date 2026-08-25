@@ -191,7 +191,7 @@ test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by
 
 // runQuiet returns null whenever the command fails, and `adb shell getprop`
 // fails ("device offline", "device not found") until the emulator registers.
-// Calling .trim() on that null threw a TypeError out of `up android`, reported
+// Calling .trim() on that null threw a TypeError out of the v2 `up` command, reported
 // as a bogus "Failed to ensure android device".
 test('waitForBoot keeps polling while adb still fails', async () => {
   let calls = 0;

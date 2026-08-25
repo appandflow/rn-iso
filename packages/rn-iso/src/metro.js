@@ -105,7 +105,7 @@ export async function resolveProjectMetro(port, projectPath, { probe = isMetroRu
 }
 
 // The process group rn-iso itself runs in. A Metro backgrounded by a
-// non-interactive script (`npm start & rn-iso up ios`) shares its shell's
+// non-interactive script (`npm start & rn-iso ios`) shares its shell's
 // process group with rn-iso, so signalling that group would kill the shell
 // and rn-iso along with it.
 function ownProcessGroup() {

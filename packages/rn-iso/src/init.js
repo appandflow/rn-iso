@@ -1,11 +1,15 @@
 // Generates the loop documentation a repo needs before several agents can work
 // in it at once.
 //
-// Deliberately not a scaffolder for scripts: `worktree create --carry-ignored`
-// and `worktree remove` already are the workspace lifecycle, so generating a
-// wrapper around them would be code to maintain in every consuming repo. What a
-// repo cannot get from `--help` is the ORDER, and the handful of traps that cost
-// an afternoon each -- so that is what gets written down.
+// What a repo cannot get from `--help` is the ORDER, and the handful of traps
+// that cost an afternoon each -- so that is what gets written down. The
+// generated `scripts/dev` is deliberately thin for the same reason: v3 runs the
+// dev server and the build itself, so the script sequences two rn-iso commands
+// instead of reconstructing a bundler and a build command the way v2's had to.
+// It still lives in the consuming repo rather than inside rn-iso, because
+// anything a project needs AROUND those two steps -- a codegen pass, a
+// workspace filter, an env file -- is the judgement rn-iso refuses to take
+// back, and a generated file is editable in a way a built-in command is not.
 //
 // Everything here is a pure function of facts about the project, so the template
 // can be tested without touching a filesystem.
@@ -16,7 +20,12 @@ import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.js';
 // Detected rather than assumed: the advice differs enough between an Expo app
 // and a bare one that guessing would produce a document that is wrong in the
 // places people actually get stuck.
-export function projectFacts({ pkg, appConfig, hasPodfile, files = [], ancestorFiles = [] }) {
+// v2's facts also carried the project's package manager and its own
+// start/ios scripts, because the generated script had to RECONSTRUCT a bundler
+// and a build command. v3 runs both itself, so the templates name `rn-iso
+// start` and `rn-iso ios` and there is nothing left to reconstruct: the package
+// manager, the script table and the invented run command all went with it.
+export function projectFacts({ pkg, appConfig, hasPodfile }) {
   const deps = { ...(pkg?.dependencies || {}), ...(pkg?.devDependencies || {}) };
   const expoRange = deps.expo || null;
   const sdkMajor = expoRange
@@ -28,77 +37,68 @@ export function projectFacts({ pkg, appConfig, hasPodfile, files = [], ancestorF
     sdkMajor,
     hasDevClient: Boolean(deps['expo-dev-client']),
     hasPodfile: Boolean(hasPodfile),
-    // The run command is the one thing rn-iso refuses to decide at runtime, so
-    // the template states the project's own rather than inventing one.
-    runCommand: expoRange ? 'npx expo run:ios' : 'npx react-native run-ios',
-    // Preferring the project's own scripts means inheriting flags it already
-    // decided on, which is the whole reason not to invent a command.
-    scripts: pkg?.scripts || {},
-    pm: detectPackageManager({ files, ancestorFiles, packageManagerField: pkg?.packageManager }),
+    hasFingerprint: Boolean(deps['@expo/fingerprint']),
   };
 }
 
+// How this workspace's reserved port reaches the app. rn-iso does the wiring
+// itself in `engine/app-install.js`; this section exists so the document says
+// what it did, because a red "No script URL provided" screen is the symptom of
+// the one case rn-iso cannot fix on its own (an Expo app with no dev client).
 function devClientSection(facts) {
   if (!facts.isExpo) {
-    return `A reserved port reaches a bare React Native app through \`RCT_METRO_PORT\`
-at build time or \`RCT_jsLocation\` at runtime. Prefer the runtime one: a build
-cache keys on the native fingerprint, which does not include the port, so a
-binary with a port compiled in can be handed to a workspace holding a different
-one and will silently talk to the wrong bundler.
-
-\`\`\`bash
-xcrun simctl spawn <udid> defaults write <bundle-id> RCT_jsLocation "localhost:<port>"
-\`\`\``;
+    return `Bare React Native: before launching, \`rn-iso ios\` writes
+\`RCT_jsLocation\` into the app's defaults on the simulator, and \`rn-iso
+android\` runs \`adb reverse tcp:8081\` onto the reserved port. Neither bakes
+the port into the binary, which is what lets one cached build serve several
+workspaces holding different ports.`;
   }
   if (facts.hasDevClient) {
-    return `A reserved port only reaches the app because \`expo-dev-client\` is installed:
-\`--port\` is never compiled into the binary, it travels in the deep link
-\`run:ios\` opens. Keeping the port out of the binary is also what lets one
-cached build serve workspaces holding different ports.`;
+    return `The port reaches the app through \`expo-dev-client\`: \`rn-iso ios\`
+launches it with a \`<scheme>://expo-development-client/?url=...\` deep link
+carrying this workspace's port, so nothing about the port is compiled in and one
+cached build serves every workspace.`;
   }
-  return `**Install \`expo-dev-client\` before anything else here works.** A reserved
-port cannot reach the app without it -- \`--port\` travels in the deep link
-\`run:ios\` opens, and with nothing handling that URL the app looks for Metro on
-8081, finds nothing, and shows a red \`No script URL provided\`.
+  return `**Install \`expo-dev-client\` before anything else here works.** The
+reserved port travels in the deep link \`rn-iso ios\` opens, and with nothing
+handling that URL the app looks for Metro on 8081, finds nothing, and shows a
+red \`No script URL provided\`.
 
 \`\`\`bash
 npx expo install expo-dev-client
 \`\`\``;
 }
 
+// The cache that decides whether a second workspace on the same commit compiles
+// at all. `rn-iso ios` / `rn-iso android` consult it themselves, so the only
+// thing a repo has to supply is the fingerprinter they key on.
 function buildCacheSection(facts) {
-  if (facts.isExpo) {
-    const key = facts.sdkMajor && facts.sdkMajor <= 53
-      ? 'expo.experiments.buildCacheProvider'
-      : 'expo.buildCacheProvider';
-    return `Most changes touch no native input, and those should not compile anything.
-\`@rn-iso/expo-build-cache\` keys a built \`.app\` on Expo's fingerprint of the
-native inputs and installs it instead of building.
+  const fingerprint = facts.hasFingerprint
+    ? `\`@expo/fingerprint\` is already a dependency here, so this works today.`
+    : `It needs \`@expo/fingerprint\`, which works on a bare project too:
+\`npm i -D @expo/fingerprint\`. Without it \`rn-iso ios\` refuses with
+\`RN_ISO_NO_FINGERPRINT\` rather than silently compiling every time.`;
 
-\`\`\`bash
-npm i -D @rn-iso/expo-build-cache
-\`\`\`
+  const key = facts.sdkMajor && facts.sdkMajor <= 53
+    ? 'expo.experiments.buildCacheProvider'
+    : 'expo.buildCacheProvider';
+  const provider = facts.isExpo
+    ? `
 
-Point \`${key}\` at it in app.json. That key matters: SDK 53 reads only the
-\`experiments\` one and ignores the top-level one in silence, while SDK 54+ reads
-the top-level one and falls back to \`experiments\`.
+Builds run OUTSIDE rn-iso -- \`npx expo run:ios\` by hand, or EAS -- can share
+the same artifacts through \`@rn-iso/expo-build-cache\`. Install it and point
+\`${key}\` at it in app.json. That key matters: SDK 53 reads only the
+\`experiments\` one and ignores the top-level one in silence, while SDK 54+
+reads the top-level one and falls back to \`experiments\`. \`rn-iso doctor\`
+checks this.`
+    : '';
 
-Watch for \`[build-cache] hit\` or \`miss\`. A miss means you changed something
-native -- or that you are the first workspace on this commit, in which case build
-once up front and the rest ride the cache.`;
-  }
   return `Most changes touch no native input, and those should not compile anything.
-The community CLI has no provider hook, so ask rn-iso directly:
+\`rn-iso ios\` fingerprints the native inputs before it builds, and a
+fingerprint another workspace has already built installs from
+\`~/.rn-iso/build-cache\` instead -- the \`fingerprint <hash> hit\` line.
 
-\`\`\`bash
-APP=$(npx rn-iso build-cache resolve --platform ios) || {
-  ${facts.runCommand} --udid "$UDID" --port "$PORT"
-  npx rn-iso build-cache store --platform ios --path "$BUILT_APP"
-}
-\`\`\`
-
-It needs \`@expo/fingerprint\` (which works on a bare project) to compute the key:
-\`npm i -D @expo/fingerprint\`.`;
+${fingerprint}${provider}`;
 }
 
 export function renderWorkflow(facts) {
@@ -125,56 +125,67 @@ The main checkout is never touched. Nothing in the loop runs there.
 Cloned dependencies match the source worktree, not this branch's manifests --
 the same contract as restoring a CI cache. Reinstall if the branch changes them.
 
-## 2. Device and Metro
+## 2. Dev server
 
 \`\`\`bash
-./scripts/dev
+npx rn-iso start
 \`\`\`
 
-\`rn-iso init\` wrote that script next to this file. It does sections 2 and 3 in
-one command, in the order they have to happen. Edit it freely -- it is this
-repo's build command, not rn-iso's.
+Reserves a collision-free Metro port, starts the dev server under a detached
+supervisor, and does not return until the server both answers and verifies as
+THIS workspace's. No backgrounding, no \`sleep\`, no poll loop -- and no chance
+of building against another worktree's bundler.
 
-The rest of section 2 and section 3 is what it does, and why each step is there.
+Nothing is ephemeral: every bundler event and every \`console.log\` from the app
+is written to \`.rn-iso/logs/\` as it happens, and \`rn-iso logs\` is how you
+read it back. There is no terminal to keep open and nothing to tee.
+
+Running it twice is a no-op. A dev server you started yourself, outside rn-iso,
+is left alone and reported with \`supervisorPid: null\`.
+
+## 3. Build, install, launch
 
 \`\`\`bash
-npx rn-iso up ios --json      # owned simulator + a reserved Metro port
-${bundlerCommand(facts, ['--port', '<port>'])} > /tmp/rn-iso-metro-<port>.log 2>&1 &
+./scripts/dev             # or: npx rn-iso ios
+./scripts/dev android
 \`\`\`
 
-rn-iso reserves the port; it does not start Metro. Start it yourself from inside
-the workspace, or teardown cannot identify it as yours. It is ready when
-\`curl -s localhost:<port>/status\` answers \`packager-status:running\`.
+\`rn-iso init\` wrote that script next to this file; it is \`start\` and then
+\`ios\`/\`android\`, in the order they have to happen. Edit it freely -- it is
+this repo's entry point, not rn-iso's.
 
-Starting it separately rather than letting the run command spawn it is the whole
-point: the output becomes a file you can grep at any time and that outlives the
-build, instead of console output interleaved into whichever shell launched it.
-The app's \`console.log\` arrives there over React Native's own logging channel,
-so nothing is lost by not letting the run command own the bundler.
+\`rn-iso ios\` boots this workspace's own simulator, checks the reserved port
+BEFORE doing anything expensive, fingerprints the native inputs, installs the
+cached build if there is one, and launches the app wired to that port.
 
-Name the log after the port, not the task: the port comes back from
-\`up --json\` and from \`rn-iso status\`, so anything can find the log again
-without being told where it went.
+It never starts the bundler. If nothing holds the reserved port it refuses in
+about a second with \`RN_ISO_NO_METRO\`, rather than spending four minutes
+building an app that cannot load a bundle.
 
-That file is also the app's console -- \`console.log\` from the running app
-lands there -- and it is the fastest instrument you have for anything you need
-to measure rather than look at.
+A failure prints the extracted compiler diagnostic and a log path, not the
+transcript. The transcript is still on disk in
+\`.rn-iso/logs/build-ios.ndjson\` for the rare time you want it.
 
 ${devClientSection(facts)}
-
-## 3. Run
-
-\`\`\`bash
-${runCommandFor(facts, facts.isExpo ? ['--device', '<udid>', '--port', '<port>'] : ['--udid', '<udid>', '--port', '<port>'])}
-\`\`\`
-
-Do not add \`--no-bundler\`, however reasonable it looks once you have started
-Metro yourself: it is mutually exclusive with \`--port\` and the command exits
-without building. The run command reuses a bundler already answering there.
 
 ${buildCacheSection(facts)}
 
 ## 4. Implement, validate, PR
+
+\`\`\`bash
+npx rn-iso logs --errors --json      # the crash, symbolicated to a source line
+\`\`\`
+
+Edit, let Fast Refresh apply it -- no rn-iso command is involved in editing JS
+-- then ask again:
+
+\`\`\`bash
+npx rn-iso logs --since 30s --level error
+\`\`\`
+
+Empty is the pass condition, and it exits rather than streaming. Reach for
+\`--follow\` only when you are watching a reproduction happen; \`--source
+device\` for a native crash that never reached JS.
 
 Validate on the device. Screenshots for anything visual, before-and-after for
 anything perceptual, both platforms when the task itself is cross-platform.
@@ -187,21 +198,30 @@ measure.
 ## 5. Finish
 
 \`\`\`bash
-npx rn-iso worktree remove "$WS"
+npx rn-iso stop                      # done for now: supervisor down, sim shut down, port freed
+npx rn-iso worktree remove "$WS"     # done with the branch
 \`\`\`
 
-Removes the worktree, its branch's environment, the owned simulator and this
-workspace's Metro. It refuses if the worktree holds uncommitted changes or
-commits that exist on no remote -- push first rather than forcing.
+\`stop\` is the inverse of \`start\` and destroys nothing -- the simulator stays
+assigned, so coming back costs a boot rather than a create and a reinstall. Use
+it to reclaim ~1.5 GB from a branch you are not finished with.
+
+\`worktree remove\` is the destructive one: it removes the worktree, deletes the
+owned simulator, and frees the port. It refuses if the worktree holds
+uncommitted changes or commits that exist on no remote -- push first rather than
+forcing. Note that an iOS build rewrites \`Podfile.lock\` and
+\`ios/*.xcodeproj/project.pbxproj\`, so that refusal fires after almost every
+one; it is correct, and the fix is to commit.
 
 ## Concurrency
 
-Two or three workspaces, not ten. Each holds a simulator (1-2 GB) and a Metro
-process; the binding constraint is RAM, and a machine that starts swapping is
-slower than one working in sequence.
+Two or three workspaces, not ten. Each holds a simulator (1-2 GB) and a dev
+server; the binding constraint is RAM, and a machine that starts swapping is
+slower than one working in sequence. \`npx rn-iso status\` says how many are
+already up -- it reports every workspace on the machine, not just this one.
 
-Builds do not need serialising: each workspace has its own derived data, and the
-shared caches are content-addressed and append-only.
+Builds do not need serialising: each workspace has its own derived data under
+\`.rn-iso/\`, and the shared caches are content-addressed and append-only.
 
 ## Keeping it fast
 
@@ -286,115 +306,28 @@ function rubyPathLiteral(path) {
 // It lives in the consuming repo rather than inside rn-iso on purpose. Which
 // build command a project needs is the judgement rn-iso refuses to take back,
 // and a generated script is editable in a way a built-in command is not.
-export function renderDevScript(facts) {
-  // --client-logs is a community-CLI flag and has no Expo equivalent; Expo's
-  // bundler already receives the app's console over React Native's own logging
-  // channel, whoever started it.
-  const startBundler = bundlerCommand(facts, ['--port', '"$PORT"']);
-  const runIos = runCommandFor(
-    facts,
-    facts.isExpo
-      ? ['--device', '"$UDID"', '--port', '"$PORT"']
-      : ['--udid', '"$UDID"', '--port', '"$PORT"']
-  );
-
-  // A bare app has no dev client to receive the deep link, so the port has to
-  // reach it at runtime instead. Compiling it in would poison a
-  // fingerprint-keyed build cache, which does not include the port.
-  const portOverride = facts.isExpo
-    ? ''
-    : `
-# Bare RN: the port is not compiled in and there is no dev client to receive it,
-# so point the app at this workspace's bundler at runtime.
-BUNDLE_ID=$(node -p "require('./app.json').expo?.ios?.bundleIdentifier || ''" 2>/dev/null || echo '')
-if [ -n "$BUNDLE_ID" ]; then
-  xcrun simctl spawn "$UDID" defaults write "$BUNDLE_ID" RCT_jsLocation "localhost:$PORT" || true
-fi
-`;
-
+export function renderDevScript() {
   return `#!/usr/bin/env bash
 # Generated by \`rn-iso init\`. Edit freely.
 #
-# Reserve an environment, start this workspace's bundler, wait for it, and run
-# against it. Order matters: build before Metro answers and the app opens on a
-# red screen instead of your app.
+# The two commands of the loop, in the order they have to happen: a verified dev
+# server on this workspace's reserved port, then the build/install/launch
+# against it. Building before the server answers gets you a red screen instead
+# of your app, which is why \`rn-iso ios\` refuses outright when the port is
+# empty.
+#
+# This lives in the repo rather than inside rn-iso so it stays yours to edit --
+# a pre-build codegen step, a workspace filter, an env file to source. Anything
+# rn-iso itself would have to guess at belongs here.
 set -euo pipefail
 
-FACTS=$(npx rn-iso up ios --json | tail -1)
-UDID=$(node -pe 'JSON.parse(process.argv[1]).udid' "$FACTS")
-PORT=$(node -pe 'JSON.parse(process.argv[1]).metroPort' "$FACTS")
+PLATFORM="\${1:-ios}"
+if [ "$#" -gt 0 ]; then shift; fi
 
-# Named after the port so anything can find it again from \`rn-iso status\`
-# without being told where it went. It is also the app's console.
-LOG="/tmp/rn-iso-metro-\${PORT}.log"
+# Idempotent: a healthy dev server on the reserved port is a no-op exit 0.
+npx rn-iso start
 
-if curl -sf "http://localhost:\${PORT}/status" 2>/dev/null | grep -q packager-status:running; then
-  echo "Metro already serving on \${PORT}" >&2
-else
-  # From inside the project directory, or teardown cannot prove the bundler is
-  # ours and will refuse to kill it.
-  ${startBundler} > "$LOG" 2>&1 &
-  # Poll rather than sleep: it is ready in a couple of seconds, and a fixed
-  # sleep is either a waste or a race.
-  for _ in $(seq 1 60); do
-    curl -sf "http://localhost:\${PORT}/status" 2>/dev/null | grep -q packager-status:running && break
-    sleep 1
-  done
-fi
-${portOverride}
-# No --no-bundler here, however reasonable it looks: it is mutually exclusive
-# with --port, and the command exits without building.
-${runIos}
-
-echo "" >&2
-echo "Metro log: \${LOG}" >&2
+# Remaining arguments are forwarded, so \`./scripts/dev ios --json\` works.
+npx rn-iso "$PLATFORM" "$@"
 `;
-}
-
-// Which package manager, and how it forwards flags to a script.
-//
-// The `packageManager` field wins when present: it is the declared answer, and
-// corepack enforces it. Otherwise the lockfile is the evidence. npm is the
-// fallback rather than a guess -- it is what `npx` implies and what a project
-// with no lockfile committed will get.
-export function detectPackageManager({ files = [], packageManagerField = null, ancestorFiles = [] } = {}) {
-  const declared = packageManagerField ? String(packageManagerField).split('@')[0] : null;
-  if (['npm', 'yarn', 'pnpm', 'bun'].includes(declared)) return declared;
-  // A monorepo keeps its lockfile at the workspace root, not in the app package,
-  // so looking only in the project directory reports npm for a pnpm repo -- and
-  // `npm run ios -- --flag` is the wrong invocation there.
-  const seen = [...files, ...ancestorFiles];
-  if (seen.includes('pnpm-lock.yaml')) return 'pnpm';
-  if (seen.includes('yarn.lock')) return 'yarn';
-  if (seen.includes('bun.lockb') || seen.includes('bun.lock')) return 'bun';
-  return 'npm';
-}
-
-// npm and pnpm need `--` before flags meant for the script rather than for
-// themselves; yarn and bun forward them directly and would pass a literal `--`
-// through to the script. Derived by running all four, not from documentation.
-export function runScript(pm, script, args = []) {
-  const needsSeparator = pm === 'npm' || pm === 'pnpm';
-  const parts = [pm, 'run', script];
-  if (args.length) {
-    if (needsSeparator) parts.push('--');
-    parts.push(...args);
-  }
-  return parts.join(' ');
-}
-
-// Prefer the project's own script over a command we invent. A `start` script
-// often carries flags that matter -- --client-logs, a variant, a flavor -- and
-// spawning the bundler directly drops them silently. Fall back only when the
-// script genuinely is not there.
-export function bundlerCommand(facts, args) {
-  if (facts.scripts?.start) return runScript(facts.pm, 'start', args);
-  const direct = facts.isExpo ? 'npx expo start' : 'npx react-native start --client-logs';
-  return `${direct} ${args.join(' ')}`.trim();
-}
-
-export function runCommandFor(facts, args) {
-  if (facts.scripts?.ios) return runScript(facts.pm, 'ios', args);
-  const direct = facts.isExpo ? 'npx expo run:ios' : 'npx react-native run-ios';
-  return `${direct} ${args.join(' ')}`.trim();
 }

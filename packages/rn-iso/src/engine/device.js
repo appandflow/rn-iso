@@ -1,14 +1,16 @@
 // src/engine/device.js -- the owned-device guarantee, shared by every command
 // that needs a device to install onto.
 //
-// `ensureOwnedDevice` moved here verbatim from `commands/up.js`: it is no
-// longer `up`'s alone once `ios` / `android` need the same guarantee, and two
-// copies of the ownership rule is exactly the drift CLAUDE.md item 2 warns
-// about. `up.js` re-exports it so nothing about that command changed.
+// `ensureOwnedDevice` moved here from the deleted `commands/up.js` when `ios`
+// and `android` came to need the same guarantee: two copies of the ownership
+// rule is exactly the drift CLAUDE.md item 2 warns about.
 //
 // The ownership rule (CLAUDE.md item 2) is the invariant everything below
 // enforces: rn-iso only ever creates, boots, or destroys a device it created
-// itself, named `rn-iso-<label>` and recorded with `owned: true`.
+// itself, named `rn-iso-<label>` and recorded with `owned: true`. v3 dropped
+// physical-device support, so that rule now has NO carve-out: there is no
+// path through this file that touches hardware, and every ambiguous record
+// resolves toward creating an owned emulator instead.
 import chalk from 'chalk';
 import {
   allConsolePortsAndSerials,
@@ -41,7 +43,10 @@ import {
 // already live; if it is shut down / not running we do NOT boot it -- we
 // print a note and leave it as-is (the port is still reserved by the
 // caller). A recorded device that no longer exists at all (deleted sim,
-// removed AVD) is dropped and falls through to creation.
+// removed AVD) is dropped and falls through to creation, as is a legacy
+// PHYSICAL Android assignment: v3 removed physical support, and the safe
+// direction for an unsupported record is a fresh owned emulator, never a
+// command aimed at somebody's phone.
 export async function ensureOwnedDevice({ platform, project, projectPath, label, settings, flags = {}, note = () => {}, out = () => {} }) {
   const record = project?.platforms?.[platform] || null;
   if (platform === 'ios') {
@@ -72,7 +77,7 @@ function ensureOwnedIosDevice({ record, projectPath, label, settings, flags, not
         if (mismatch) {
           throw new Error(
             `${mismatch}. rn-iso will not silently boot a different model. ` +
-            'Run `rn-iso release` to delete the current sim, then `up ios` again to create the requested one.'
+            'Run `rn-iso worktree remove` (or `rn-iso gc --delete`) to reap the current sim, then `rn-iso ios` again to create the requested one.'
           );
         }
         if (sim.state !== 'Booted') {
@@ -89,7 +94,7 @@ function ensureOwnedIosDevice({ record, projectPath, label, settings, flags, not
       if (sim) {
         if (sim.state !== 'Booted') {
           note(chalk.yellow(`Note: assigned sim ${sim.name} (${sim.udid}) is shut down and is not owned by rn-iso, so it will not be booted automatically.`));
-          note(chalk.dim('Boot it yourself, or run `rn-iso release` to switch this project to an owned device.'));
+          note(chalk.dim('Boot it yourself, or run `rn-iso gc --delete` to clear the assignment so rn-iso can create an owned sim.'));
         }
         return record;
       }
@@ -125,15 +130,6 @@ function findOtherProjectOwningAvd(avdName, projectPath) {
 }
 
 async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, flags, note, out }) {
-  // An explicit --serial short-circuits everything: the caller named a piece
-  // of hardware, so there is nothing to create, boot, or own.
-  if (flags.serial) {
-    const resolved = resolvePhysicalSerial(flags.serial, listAdbDevices());
-    if (resolved.error) throw new Error(resolved.error);
-    setDevice(projectPath, 'android', resolved.ok);
-    out(chalk.dim(`Assigned physical device ${resolved.ok.serial} (not owned: never booted or deleted by rn-iso)`));
-    return resolved.ok;
-  }
   if (record?.avdName) {
     if (record.owned) {
       // Verify identity against the LIVE adb list before deciding "ours is
@@ -174,21 +170,20 @@ async function ensureOwnedAndroidDevice({ record, projectPath, label, settings, 
         const running = adb.emulators.some(e => e.consolePort === record.consolePort);
         if (!running) {
           note(chalk.yellow(`Note: assigned AVD ${record.avdName} (emulator-${record.consolePort}) is shut down and is not owned by rn-iso, so it will not be booted automatically.`));
-          note(chalk.dim('Boot it yourself, or run `rn-iso release` to switch this project to an owned device.'));
+          note(chalk.dim('Boot it yourself, or run `rn-iso gc --delete` to clear the assignment so rn-iso can create an owned AVD.'));
         }
         return record;
       }
       // AVD was deleted out from under the record: fall through to creation.
     }
   } else if (record?.serial) {
-    // Legacy physical-device assignment: always reused as-is, never created
-    // or booted (we cannot boot hardware).
-    const adb = listAdbDevices();
-    const present = adb.physical.some(p => p.serial === record.serial);
-    if (!present) {
-      note(chalk.yellow(`Note: physical device ${record.serial} is not currently connected.`));
-    }
-    return record;
+    // A legacy PHYSICAL assignment from a v2 `up android --serial`. v3 removed
+    // physical support (spec, "Out of scope"), so there is nothing left that
+    // can honour this record. It is reported once and then ignored: the run
+    // falls through to creating an owned emulator, which is the direction that
+    // never sends a command at hardware rn-iso does not own.
+    note(chalk.yellow(`Note: this project is assigned physical device ${record.serial}, and rn-iso no longer supports physical devices.`));
+    note(chalk.dim('Creating an owned emulator instead. The serial is not touched, connected or not.'));
   }
 
   let created;
@@ -252,31 +247,11 @@ async function bootOwnedAvdOnFreshPort({ avdName, projectPath, deviceName, out }
   return newRecord;
 }
 
-// Pure. Validates an explicit --serial against what adb actually reports.
-// Hardware cannot be spawned, so this is the one documented exception to the
-// ownership rule: rn-iso assigns the serial and wires adb reverse, and never
-// boots, shuts down, or deletes it. owned:false keeps every teardown path on
-// the clear-only branch.
-export function resolvePhysicalSerial(serial, adb) {
-  const physical = adb?.physical || [];
-  const emulators = adb?.emulators || [];
-  if (emulators.some(e => e.serial === serial)) {
-    return { error: `${serial} is an emulator, not a physical device. Use \`up android\` without --serial to get an owned emulator.` };
-  }
-  if (physical.some(p => p.serial === serial)) {
-    return { ok: { serial, kind: 'physical', owned: false } };
-  }
-  if (physical.length === 0) {
-    return { error: `No physical device is connected. adb reports none; check the cable and \`adb devices\`.` };
-  }
-  return { error: `${serial} is not connected. Connected physical devices: ${physical.map(p => p.serial).join(', ')}.` };
-}
-
 // Pure. Answers "is the sim we already own the model the caller just asked
-// for?" -- returns a human-readable mismatch or null. Before this, flags.deviceType
-// was consulted only on CREATION, so `up ios --device-type X` against an
-// existing environment silently booted the old model and the flag looked
-// broken. Returns null when either side is unknown: an unrecognized requested
+// for?" -- returns a human-readable mismatch or null. Before this, the
+// requested device type was consulted only on CREATION, so asking for a
+// different model against an existing environment silently booted the old one
+// and the setting looked broken. Returns null when either side is unknown: an unrecognized requested
 // name is creation's error to report, not ours.
 export function deviceTypeMismatch(recordedTypeId, requestedName, deviceTypes) {
   if (!requestedName || !recordedTypeId) return null;
@@ -290,11 +265,9 @@ export function deviceTypeMismatch(recordedTypeId, requestedName, deviceTypes) {
 // --- the booted guarantee -------------------------------------------------
 //
 // `ensureOwnedDevice` records and STARTS a device; it does not wait for one.
-// That was enough for `up`, whose caller went on to run its own build (which
-// waits on its own). `ios` / `android` install onto the device in the very
-// next step, and `simctl install` against a sim that is still "Booting"
-// fails, so the wait has to happen somewhere -- here, once, rather than in
-// each command.
+// `ios` / `android` install onto the device in the very next step, and
+// `simctl install` against a sim that is still "Booting" fails, so the wait
+// has to happen somewhere -- here, once, rather than in each command.
 //
 // Returns the ready-to-install handle for the platform:
 //   ios     { ok: true, udid }
@@ -324,7 +297,7 @@ async function ensureIosBooted({ device, timeoutMs, pollMs, out }) {
     return { failed: true, reason: `Could not list simulators: ${e?.message || e}` };
   }
   if (resolved.missing) {
-    return { failed: true, reason: `Simulator ${udid} no longer exists. Run \`rn-iso up ios\` to create a fresh owned sim.` };
+    return { failed: true, reason: `Simulator ${udid} no longer exists. Run \`rn-iso ios\` again to create a fresh owned sim.` };
   }
   if (resolved.notOwned) {
     return { failed: true, reason: `Simulator ${udid} is now named "${resolved.notOwned}" and is not rn-iso-owned; refusing to boot it.` };
@@ -354,15 +327,11 @@ async function ensureIosBooted({ device, timeoutMs, pollMs, out }) {
 }
 
 async function ensureAndroidBooted({ device, timeoutMs, out }) {
-  // A physical device (legacy records only -- v3 drops --serial) is never
-  // booted by rn-iso: hardware cannot be spawned. It is either there or it
-  // is not.
+  // Every device this reaches is an owned AVD: ensureOwnedDevice creates one
+  // rather than ever handing back a physical record. A record with no avdName
+  // is therefore a bug or a legacy leftover, not a phone to go looking for.
   if (!device?.avdName) {
-    const serial = device?.serial;
-    if (!serial) return { failed: true, reason: 'No Android device is recorded for this project.' };
-    const present = listAdbDevices().physical.some(p => p.serial === serial);
-    if (!present) return { failed: true, reason: `Device ${serial} is not connected. rn-iso never boots hardware; plug it in and check \`adb devices\`.` };
-    return { ok: true, serial };
+    return { failed: true, reason: 'No owned Android emulator is recorded for this project.' };
   }
 
   // The recorded console port is a slot, not an identity: resolve the AVD
@@ -374,7 +343,7 @@ async function ensureAndroidBooted({ device, timeoutMs, out }) {
     return { failed: true, reason: `Could not list AVDs: ${e?.message || e}` };
   }
   if (resolved.missing) {
-    return { failed: true, reason: `AVD ${device.avdName} no longer exists. Run \`rn-iso up android\` to create a fresh owned AVD.` };
+    return { failed: true, reason: `AVD ${device.avdName} no longer exists. Run \`rn-iso android\` again to create a fresh owned AVD.` };
   }
   if (resolved.notOwned) {
     return { failed: true, reason: `AVD ${device.avdName} is not rn-iso-owned by name; refusing to boot it.` };

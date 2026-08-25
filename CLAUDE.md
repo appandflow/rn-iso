@@ -5,27 +5,38 @@ Quick orientation for AI assistants working in this repo.
 ## What this is
 
 A Node.js CLI that gives a React Native / Expo project (or git worktree) an
-isolated dev environment. It brokers the two contended resources — `rn-iso up
-<platform>` creates (or reuses) an **owned** simulator/emulator and reserves a
-Metro port, then prints the facts (UDID/serial, port, bundle id) — and, as of
-v3, it also **runs the dev server**: `rn-iso start` hosts it under a detached
-per-workspace supervisor (bare RN in-process with an NDJSON reporter; Expo as a
-child `expo start --port N`), `rn-iso logs` queries the captured NDJSON
-timeline under `<root>/.rn-iso/logs`, and `rn-iso stop` is the inverse of
-`start` (halt the supervisor, shut the owned device DOWN, free the port — it
-never deletes). rn-iso still never builds or installs.
+isolated dev environment, and runs the whole dev loop inside it. Three things,
+in the order an agent uses them:
 
-The v3 lifecycle is `worktree create` -> `start` -> `up <platform> --json` ->
-agent runs the project's build -> `logs --errors` -> `stop` / `worktree remove`
-(which reaps the owned device(s) along with the worktree).
+- **`rn-iso start`** hosts the dev server under a detached per-workspace
+  supervisor (bare RN in-process with an NDJSON reporter; Expo as a child
+  `expo start --port N`) on a reserved, collision-free Metro port, and blocks
+  until it verifies as this project's.
+- **`rn-iso ios` / `rn-iso android`** ensure an **owned** simulator/emulator,
+  gate on that dev server, fingerprint the native inputs, install from the
+  shared build cache or build (prebuild / pod-or-gradle sync / xcodebuild or
+  gradle), install, launch wired to the reserved port, and attach a device-log
+  collector.
+- **`rn-iso logs`** queries the merged NDJSON timeline under
+  `<root>/.rn-iso/logs`; **`rn-iso stop`** is the inverse of `start` (halt the
+  supervisor, reap the collectors, shut the owned device DOWN, free the port —
+  it never deletes).
 
-**Transition state.** v3's `ios` / `android` build commands do not exist yet, so
-the build step is still the agent's own command against `up`'s facts, and
-`up` / `device` / `release` / `shutdown` are all still registered. Document the
-surface the binary actually has, not the one the v3 spec describes.
+The v3 lifecycle is `worktree create` -> `start` -> `ios|android` ->
+`logs --errors` -> edit -> `logs` -> `stop` / `worktree remove` (which reaps the
+owned device(s) along with the worktree).
 
-State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
-`RN_ISO_HOME` env var redirects this for tests.
+**The surface is closed.** `init`, `doctor`, `worktree create|remove`, `start`,
+`stop`, `ios`, `android`, `logs`, `status`, `gc`, plus `guide` and `skill`. That
+is all of it, deliberately (spec: "Command surface"). v2's `up`, `device`,
+`release`, `shutdown`, `config`, `build-cache` and `worktree list` are deleted,
+along with `--serial` and all physical-device support. A project needing more
+wraps rn-iso in an npm script rather than rn-iso growing a flag.
+
+State lives in `~/.rn-iso/config.json`, keyed by absolute project path, plus
+per-workspace `<root>/.rn-iso/state.json` (the supervisor record, the collector
+records, and `lastBuild`). The `RN_ISO_HOME` env var redirects the global half
+for tests.
 
 ## Architecture conventions
 
@@ -65,13 +76,14 @@ State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
 - **Config writes are locked and atomic.** Every mutator in `src/config.js`
   runs its read-modify-write inside `withConfigLock()` and lands via
   `saveConfig`'s write-temp-then-rename. Several rn-iso commands genuinely do
-  run at once (a `worktree create` per agent, each followed by its own `up`),
-  and two interleaving unlocked writes lose one side's device record. Add new
+  run at once (a `worktree create` per agent, each followed by its own
+  `start` and `ios`), and two interleaving unlocked writes lose one side's
+  device record. Add new
   state-touching code inside the lock, not beside it. Port reservation follows
   the same rule from the other end: `claimMetroPort` writes only if the config
   still shows the port unclaimed, and `reserveMetroPort` re-allocates when it
-  does not, so two parallel `up` runs cannot both take a port they both probed
-  as free. And `loadConfig` THROWS on unparseable JSON rather than resetting —
+  does not, so two parallel `start` runs cannot both take a port they both
+  probed as free. And `loadConfig` THROWS on unparseable JSON rather than resetting —
   the file holds the record of every device rn-iso owns, so a silent reset
   would orphan all of them and hand `gc --delete` a machine full of live
   environments to destroy.
@@ -110,7 +122,7 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # shared caches under getConfigDir(). Pure, no I/O.
     status.js             # pure shaping of the cross-project state `status` prints
     teardown.js           # THE owned-device teardown: resolve -> occupancy -> shutdown -> delete,
-                          # with containment. Used by reclaim, release, shutdown, gc.
+                          # with containment. Used by reclaim, stop, gc.
     reclaim.js            # shared reclaim-a-project logic (used by gc and worktree remove):
                           # frees Metro/port, and -- with deleteOwnedDevices -- tears down
                           # owned devices via teardown.js
@@ -125,6 +137,25 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
     sim/
       ios.js              # simctl wrappers, owned-sim creation/selection, ownership verification
       android.js          # adb/emulator/avdmanager wrappers, owned-AVD creation/selection
+    engine/               # the reimplemented build operations. Pure decision logic separated
+                          # from invocation throughout; every module is injectable, so the
+                          # commands' own tests are about ORDER and OUTPUT, not about xcodebuild.
+      device.js           # ensureOwnedDevice (the ownership rule, item 2) + ensureBooted (the
+                          # wait `simctl install` needs). No path here touches hardware.
+      prebuild.js         # `expo prebuild -p <p> --no-install`, only when the native dir is absent
+      deps.js             # podsAreStale (pure: Podfile.lock vs Pods/Manifest.lock) + runPodInstall
+      xcode.js            # discoverXcodeProject / listSchemes / buildIos: xcodebuild into
+                          # <ws>/.rn-iso/derived-data, transcript streamed to the build log
+      gradle.js           # buildAndroid: ./gradlew assembleDebug, apk located by output listing
+      errors-xcode.js     # PURE: transcript -> {file, line, message} diagnostics, deduped, capped
+      errors-gradle.js    # the same for gradle/kotlin/aapt failures
+      app-install.js      # artifact -> device: simctl install/launch, adb install -r + am start,
+                          # and Contract 6's port wiring (RCT_jsLocation / dev-client deep link /
+                          # `adb reverse tcp:8081 tcp:<port>`). The port is NEVER baked into a build.
+    collector/            # the detached device-log collectors (Contract 5)
+      run.js              # the entry point: registers under state.json.collectors, unregisters
+                          # on SIGTERM, writes Contract-1 records to device.ndjson
+      ios.js  android.js  # PURE line parsers for `simctl log stream --style ndjson` / `adb logcat`
     supervisor/
       run.js              # the detached per-workspace supervisor: writes its records BEFORE
                           # serving, no silent exit path, plus the state.json/pid helpers
@@ -134,22 +165,23 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # its stdout into records (levels inferred, raw: true)
       errors.js           # {code, message, remedy}; separate so server-*.js never imports
                           # run.js back (that cycle deadlocked the first live run)
-    commands/
-      up.js               # the broker command: ensure owned device, reserve Metro port, print facts
-      device.js           # read-only facts query, no ensure side effects
+    commands/           # one file per registered command; bin/cli.js registers them in
+                        # lifecycle order, which is the order `--help` lists them
+      init.js             # write the generated files, then run doctor
+      doctor.js           # print the findings from src/doctor.js
+      worktree.js         # worktree create/remove (there is no `list`; `status` covers it)
       start.js            # spawn the detached supervisor, wait for identity-verified health
+      stop.js             # the inverse of start: supervisor halted, collectors reaped, owned
+                          # device shut down (never deleted), port freed. Identity-verified,
+                          # non-destructive
+      ios.js  android.js  # ORCHESTRATION ONLY over engine/: device -> metro gate -> fingerprint
+                          # -> cache/build -> install -> launch -> collector. THE ORDER IS THE
+                          # PRODUCT: the metro gate runs before the boot and before any build
+                          # work, so a dead port costs a second rather than four minutes
       logs.js             # query/follow the merged NDJSON timeline; empty result is exit 0
-      stop.js             # the inverse of start: supervisor halted, owned device shut down
-                          # (never deleted), port freed. Identity-verified, non-destructive
       status.js
-      release.js shutdown.js
-      worktree.js         # worktree create/remove/list
       gc.js               # report/reclaim dead project entries and orphaned devices, and
                           # report the shared caches (every run; there is no --caches flag)
-      config.js           # per-project / repo settings CRUD
-      build-cache.js      # build-cache resolve / store / path
-      doctor.js           # print the findings from src/doctor.js
-      init.js             # write the generated files, then run doctor
       guide.js            # version-matched reference topics, printed by the binary
       skill.js            # copy the bundled skills into ~/.claude and ~/.agents
   test/
@@ -193,13 +225,15 @@ you add a command, change a flag, change picker UX, or alter defaults — open
 `skill/SKILL.md` and update the relevant section in the same change. Quick
 checklist:
 
-- New command? Add it under "Command surface" or its own section if
-  meaty (like `worktree` or `gc`).
-- New / changed flag on `up`? Update "The env lifecycle" and the facts
-  contract / common-setups table if the flag matters for non-interactive
-  agent use.
-- Behavior change (e.g., a new `up --json` field, a new destructive
-  side effect)? Update both the relevant section and "When things go wrong".
+- New command? It goes in the "Command surface" list, which is pinned by
+  `test/guide.test.js` against `bin/cli.js` -- a command registered and not
+  listed fails the suite.
+- New / changed flag? Update "The flow" if it changes the order, and
+  `guide lifecycle`'s option-surface block, which is pinned against the
+  command sources the same way. Growing the surface at all is a decision the
+  spec argues against; make it deliberately.
+- Behavior change (e.g., a new `--json` field, a new destructive side effect)?
+  Update both the relevant section and "When things go wrong".
 
 Two skills ship in the package, and `skill install` copies both:
 `skill/SKILL.md` (how to drive the CLI) and `skill/rn-iso-init/SKILL.md`
@@ -213,13 +247,22 @@ plain file copy that upgrading rn-iso does not refresh.
 Every simulator or emulator rn-iso uses is one **rn-iso created**, named
 `rn-iso-<label>`, recorded with `owned: true` in config. rn-iso never
 allocates, boots, or destroys a device it did not create. Teardown of the
-owning project (`release`, `worktree remove`, or `gc` sweeping an orphan)
-destroys the device it owns, not just a claim on it. The one exception is
-physical devices: hardware cannot be spawned, so a physical Android device
-is still assigned by serial and never booted/shut down/deleted by rn-iso.
+owning project (`worktree remove`, or `gc` sweeping an orphan) destroys the
+device it owns, not just a claim on it.
+
+**The rule now has no carve-out.** It used to read "the one exception is
+physical devices: hardware cannot be spawned" — v3 deleted `--serial` and all
+physical support (spec: "Out of scope"), so every device rn-iso touches is one
+rn-iso created, and `teardown.js` lost its unowned branch. A legacy record
+naming a serial is reported once in `engine/device.js` and falls through to
+creating an owned emulator; nothing is ever issued at that serial. When
+resolving ambiguity here, fail toward creating an owned emulator, never toward
+touching hardware. (`parseAdbDevices` still buckets physical serials — it is a
+faithful parse of `adb devices`, and a connected phone has to land somewhere
+that is not `emulators`. Nothing consumes that bucket, and nothing may.)
 
 The record is the only thing that makes a device findable again, so it
-outlives a failed teardown: when a delete fails, `release` reports it, keeps
+outlives a failed teardown: when a delete fails, the command reports it, keeps
 the assignment, and exits 1. Clearing the record there is what turns a failed
 teardown into a simulator nothing references and nothing will ever reap.
 
@@ -227,7 +270,7 @@ History: this replaces an earlier invariant, "never auto-create
 simulators," which existed because early auto-creation accumulated junk
 sims. That was really a symptom of creation *without* a reaper — there was
 no command that ever destroyed a device rn-iso had booted for you. The
-reaper now exists (`release`, `worktree remove`, `gc`'s orphan sweep), so
+reaper now exists (`worktree remove`, `gc`'s orphan sweep), so
 creating a device and guaranteeing its eventual destruction is no longer
 the same hazard. Ownership is also stronger than the old claim model: it's
 provable (name prefix + config record), where claims and occupancy probes
@@ -236,56 +279,57 @@ device-selection or device-teardown logic, preserve this rule: create only
 `rn-iso-<label>`-named devices, verify that prefix before any destructive
 command, and never touch a device rn-iso didn't create.
 
-### 3. `up` is a broker, never a build wrapper -- and that now includes Metro
+### 3. Reimplementation, not reconstruction — and the option surface does not grow
 
-`commands/up.js` ensures an owned device and reserves a Metro port,
-then prints the facts (`buildFacts`) and stops. It never runs `expo
-run:ios` / `react-native run-android` or any equivalent, never installs an
-app, and never launches one. That judgment — which script, which CLI,
-which flags a given project needs — used to live in rn-iso (the deleted `runner.js`'s
-build dispatch, deleted) and was a maintenance burden that kept getting
-project idiosyncrasies wrong; a coding agent has that judgment natively
-from reading the repo, so the build step was handed to the caller
-entirely. If you're tempted to add install/launch/verification logic to
-`up` (e.g. a post-install `xcrun simctl launch` to work around some build
-CLI's rough edge), don't — that belongs in the agent's own build
-invocation or upstream in the build CLI, not in the broker. `up`'s only
-job is: device ensured, port reserved, facts printed.
+**The rule that is still load-bearing:** rn-iso must never RECONSTRUCT a command
+line that already exists in the project. That is what v1 did — the deleted
+`runner.js` inferred and rebuilt a build command, and every inference could be
+wrong, silently. The concrete failure that settled it: on `member-app`, whose
+own start script is `react-native start --client-logs`, rn-iso spawned
+`react-native start --port 8082` and silently dropped the project's flag.
 
-As of 0.8.0 this extends to Metro, and as of 0.9.0 the principle has NO
-exceptions left: `worktree create` no longer runs an install pipeline either
-(`runner.js` and the whole setup-status concept went with it). Deciding a
-repo's setup commands -- a plain install, a workspace filter, a codegen step
-after it -- is the same judgment call as choosing a build or bundler command.
+For two releases the conclusion drawn from that was "rn-iso is a broker and
+invokes no project tooling at all" (0.7.0 deleted build dispatch, 0.8.0 deleted
+bundler spawning, 0.9.0 deleted `worktree create`'s install pipeline).
 
-On Metro specifically: rn-iso reserves the port -- a genuinely
-contended, cross-project resource that only a broker can arbitrate. It also
-stopped spawning the bundler in 0.8.0, because choosing its command line was
-the same project-specific judgment that made build dispatch untenable. The
-concrete failure that settled it: on `member-app`, whose own start script is
-`react-native start --client-logs`, rn-iso spawned `react-native start --port
-8082` and silently dropped the project's flag.
+**v3 amends that conclusion for BOTH halves — the dev server and the build.**
+The reasoning was right about reconstruction and does not carry against
+REIMPLEMENTATION. `start` hosts a bare RN project's Metro in-process from the
+project's own `node_modules`, and for Expo runs `expo start --port <n>` and
+NOTHING else, ever. `ios` / `android` drive `xcodebuild` / `gradlew` directly
+with a fixed argument list this codebase composes, never one it inferred from a
+package.json script. Nothing reads `scripts.start` or `scripts.ios`; when v3's
+`init` templates stopped needing to, `bundlerCommand` / `runCommandFor` /
+`detectPackageManager` were deleted outright.
 
-**v3 amends the Metro half of this, and only that half.** `rn-iso start` runs
-the dev server again -- but by REIMPLEMENTING the operation, not by
-reconstructing someone's command line. The supervisor hosts a bare RN project's
-Metro in-process from the project's own `node_modules`, and for Expo it runs
-`expo start --port <n>` and NOTHING else, ever. The option surface is two flags
-(`--json`, `--wait`) and does not grow: `--client-logs` is the archetype of what
-is deleted rather than ported, because capture is unconditional and a queryable
-file has no terminal noise to manage. A project needing more wraps rn-iso in an
-npm script. The build half is unamended: `up` still never builds, installs or
-launches anything, and `worktree create` still runs no install pipeline.
+**What replaces the broker rule as the guard is the OPTION SURFACE.** It is
+fixed and it does not grow:
+
+    start           --json --wait
+    ios / android   --json --no-metro-check
+    logs            --source --level --since --grep --tail --follow --errors --json
+    stop            --json --force
+
+`--client-logs` is the archetype of what is deleted rather than ported: capture
+is unconditional, and a queryable file has no terminal noise to manage. Release
+builds, variants, device targets and `--serial` are all out of scope for the
+same reason. A project needing something outside this set wraps rn-iso in an npm
+script — which is what the generated `scripts/dev` exists to be.
+
+`worktree create` still runs NO install pipeline. Deciding a repo's setup
+commands -- a plain install, a workspace filter, a codegen step after it -- is
+still reconstruction, and is still refused. `--carry-ignored` clones the
+dependencies instead of guessing how to produce them.
 
 ### 4. Owned-device teardown is centralized and ownership-verified
 
 `src/teardown.js` is the ONE implementation: `teardownOwnedIosSim(udid, {
 del, label })` and `teardownOwnedAvd(avdName, { del })`. Every site
-that destroys an owned device — `reclaim.js` (and through it `gc` and
-`worktree remove`), `release.js`, `shutdown.js`, and `gc.js`'s orphan sweep —
-calls one of them. Until 0.10.0 this file said reclaim.js was "the one place"
-while admitting three others re-implemented the pattern inline; both could not
-be true, and the copies had begun to drift. Do not add a fifth copy.
+that touches an owned device — `reclaim.js` (and through it `gc` and
+`worktree remove`), `commands/stop.js`, and `gc.js`'s orphan sweep — calls one
+of them. Until 0.10.0 this file said reclaim.js was "the one place" while
+admitting three others re-implemented the pattern inline; both could not be
+true, and the copies had begun to drift. Do not add another copy.
 
 The invariants it enforces, in order: (1) re-resolve the device against the
 *live* sim/AVD list immediately before issuing any command at it
@@ -296,22 +340,23 @@ the mismatch at delete time would already have hit whatever real simulator
 that udid resolves to. (2) Check occupancy (`isSimOccupied`, iOS only —
 Android has no probe) **only when the device will survive**, i.e. `del` is
 false. Occupancy exists to spare a device you are coming back to, so
-`shutdown` honours it. A device being deleted is going away regardless: it is
+`stop` honours it. A device being deleted is going away regardless: it is
 one rn-iso created, for a project that is going away, and the process holding
 it is almost always the caller's own UI-test runner. Skipping there leaked
 booted sims and live `xcodebuild test-without-building` runners out of
 `worktree remove`, and "left for a later gc" only deferred the same decision
-to a command that made it the same way. So there is no override flag on this
-path at all: `release` takes no `--force`, because there is nothing left for
-it to override. (3) Only then shut down, and
-delete only when `del` is set (`shutdown` never deletes). (4) Contain
+to a command that made it the same way. So there is no override flag on the
+delete path at all: `worktree remove --force` overrides the DIRTY-TREE guard,
+not the occupancy one, because there is nothing left for it to override.
+(3) Only then shut down, and delete only when `del` is set (`stop` never
+deletes). (4) Contain
 failures: a throw becomes `{ status: 'failed' }`, never an exception that
 aborts a batch (`worktree remove` reaping several nested projects, `gc`
 sweeping many orphans).
 
 Outcomes are `torn-down` / `missing` / `skipped` / `failed`; skips carry a
 `kind` (`'not-owned'` or `'occupied'`) so callers branch on data rather than
-matching on prose — `shutdown` reports those two cases differently.
+matching on prose — `stop` reports those two cases differently.
 
 Project paths that no longer exist on disk are handled by `gc`,
 not by device selection: a deleted worktree's Metro port is reclaimable
@@ -361,9 +406,13 @@ worktree creation itself as failed and abort the session, when the worktree
 exists and is usable. Only a failure to produce a worktree belongs on that
 path.
 
-`build-cache resolve` has the same contract for the same reason — the path
-on stdout, every explanation on stderr — because it is meant to be captured
-with `$(...)`.
+The same one-thing-on-stdout discipline runs through every `--json` command
+for a related reason: `start`, `ios`, `android`, `logs --json` and `stop --json`
+each put exactly ONE parseable payload on stdout and send every progress line,
+warning and phase line to stderr, so a caller can capture the payload with
+`$(...)` while still watching a four-minute build. (The deleted
+`build-cache resolve` had the same contract; it is gone, but the rule outlived
+it.)
 
 ### 8. The unmounted-volume guard always fails closed
 

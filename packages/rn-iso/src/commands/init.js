@@ -1,29 +1,9 @@
 import chalk from 'chalk';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { findProjectRoot } from '../project.js';
 import { projectFacts, renderDevScript, renderGitignoreAdditions, renderWorkflow, renderWorktreeExclude } from '../init.js';
 import { detectXcodeMajor, pendingCacheMigrations, runDoctor } from '../doctor.js';
-
-// Bounded on purpose: far enough to clear a monorepo's apps/<name> nesting,
-// not so far that it starts reading a lockfile from an unrelated parent repo.
-function ancestorEntries(start, levels = 4) {
-  const seen = [];
-  let dir = start;
-  for (let i = 0; i < levels; i++) {
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-    try {
-      seen.push(...readdirSync(dir));
-    } catch {
-      break;
-    }
-    // A workspace root is the natural stopping point.
-    if (existsSync(join(dir, '.git'))) break;
-  }
-  return seen;
-}
 
 // The one generated thing that is appended rather than written: .gitignore
 // belongs to the repo, so init adds its entry to whatever is already there.
@@ -100,12 +80,6 @@ export default function initCommand(program) {
         pkg: readJson(join(root, 'package.json')),
         appConfig: readJson(join(root, 'app.json')),
         hasPodfile: existsSync(join(root, 'ios', 'Podfile')),
-        // Lockfiles are the evidence for which package manager this repo uses,
-        // so the generated commands invoke the one it actually has.
-        files: readdirSync(root),
-        // A monorepo's lockfile sits at the workspace root, above the app
-        // package. Walk up to find it rather than reporting npm for a pnpm repo.
-        ancestorFiles: ancestorEntries(root),
       });
 
       const files = [
@@ -113,7 +87,7 @@ export default function initCommand(program) {
         { path: join(root, '.worktreeexclude'), contents: renderWorktreeExclude() },
         // Executable: it is meant to be run, and a script you have to chmod
         // before it works is a papercut on every fresh clone.
-        { path: join(root, 'scripts', 'dev'), contents: renderDevScript(facts), mode: 0o755 },
+        { path: join(root, 'scripts', 'dev'), contents: renderDevScript(), mode: 0o755 },
       ];
 
       let wrote = 0;
@@ -149,9 +123,9 @@ export default function initCommand(program) {
       console.error(
         chalk.dim(
           `\nDetected: ${facts.isExpo ? `Expo${facts.sdkMajor ? ` SDK ${facts.sdkMajor}` : ''}` : 'bare React Native'}` +
-          `, ${facts.pm}` +
-          `${facts.scripts?.ios ? ", using this repo's own scripts" : ''}` +
-          `${facts.hasPodfile ? ', with an ios/Podfile' : ''}.`
+          `${facts.hasDevClient ? ', with expo-dev-client' : ''}` +
+          `${facts.hasPodfile ? ', with an ios/Podfile' : ''}` +
+          `${facts.hasFingerprint ? '' : ', WITHOUT @expo/fingerprint (builds cannot be cached until it is installed)'}.`
         )
       );
 

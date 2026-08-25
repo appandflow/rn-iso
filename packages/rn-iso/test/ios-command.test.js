@@ -184,13 +184,17 @@ function buildRecords() {
 // --- the order ------------------------------------------------------------
 
 describe('the Metro gate', () => {
-  test('fires before fingerprinting: a dead port costs a second, not a build', async () => {
+  // The gate sits between ensureOwnedDevice (whose record the rest of the
+  // command reads) and ensureBooted (the first expensive step). So a dead port
+  // costs the device RECORD, and not the ~10s boot poll behind it.
+  test('fires before the boot and before fingerprinting: a dead port costs a second, not a build', async () => {
     reserve();
     const { errs, exitCode, calls } = await run({}, {
       resolveProjectMetro: async () => ({ missing: true }),
     });
     assert.equal(exitCode, 1);
-    assert.ok(calls.order.includes('ensureBooted'), 'the device is still ensured first');
+    assert.ok(calls.order.includes('ensureOwnedDevice'), 'the device record is still established first');
+    assert.ok(!calls.order.includes('ensureBooted'), 'no simulator is booted for a run that cannot proceed');
     assert.ok(!calls.order.includes('fingerprintProject'), 'nothing is fingerprinted');
     assert.ok(!calls.order.includes('buildIos'));
     assert.match(errs.join('\n'), /RN_ISO_NO_METRO/);
@@ -393,13 +397,14 @@ describe('failure output', () => {
     assert.ok(lastBuild.startedAt);
   });
 
-  test('a device that will not boot never reaches the Metro gate or a build', async () => {
+  test('a device that will not boot is refused before anything is fingerprinted or built', async () => {
     reserve();
     const { errs, exitCode, calls } = await run({}, {
       ensureBooted: async () => ({ failed: true, reason: 'Simulator BF2A no longer exists.' }),
     });
     assert.equal(exitCode, 1);
-    assert.ok(!calls.order.includes('resolveProjectMetro'));
+    assert.ok(!calls.order.includes('fingerprintProject'));
+    assert.ok(!calls.order.includes('buildIos'));
     assert.match(errs.join('\n'), /no longer exists/);
   });
 

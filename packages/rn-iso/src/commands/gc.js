@@ -622,8 +622,8 @@ export async function runGc(opts = {}) {
   // Each device's teardown is wrapped in its own try/catch (the pattern
   // reclaim.js uses): one bad record or exec throw must not abort the
   // rest of the sweep. iOS is re-verified against the live sim list
-  // right before shutdown, the same way reclaim.js/release.js/
-  // shutdown.js all do: the udid came from the listing taken earlier in
+  // right before shutdown, the same way reclaim.js and commands/stop.js
+  // both do: the udid came from the listing taken earlier in
   // this run, and shutting down first on the strength of that snapshot
   // "would already have hit whatever real simulator that udid resolves
   // to" if it has since been renamed away from rn-iso ownership or

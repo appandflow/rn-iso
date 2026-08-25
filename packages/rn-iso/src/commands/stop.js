@@ -1,7 +1,8 @@
 // src/commands/stop.js
 //
 // v3's `stop` is the inverse of `start`, and nothing more: it halts the
-// supervisor, shuts the owned device DOWN, and frees the port. It is not
+// supervisor, reaps this workspace's device-log collectors, shuts the owned
+// device DOWN, and frees the port. It is not
 // destructive and it never deletes a device, because destruction lives in
 // exactly two commands -- `worktree remove` and `gc --delete`. An agent
 // reaching for `stop` to reclaim memory must not have a `--delete` within
@@ -56,25 +57,34 @@ export function readSupervisorState(root) {
   }
 }
 
-// Drops the supervisor block and the pid file. NOT a delete of state.json:
-// later steps write `lastBuild` beside `supervisor` in the same file, and
-// taking the build fingerprint away with the pid would turn every stop into a
-// guaranteed cache miss on the next build.
-export function clearSupervisorState(root) {
-  const pidFile = supervisorPidFile(root);
+// Contract 5. The same file, under its own key, written by `ios` / `android`'s
+// detached collectors. Read here rather than through src/collector/run.js for
+// the reason above the section: `stop` must work on a workspace whose
+// collectors are gone, or were never this rn-iso's.
+export function readCollectorState(root) {
+  const file = workspaceStateFile(root);
   try {
-    rmSync(pidFile, { force: true });
+    const parsed = JSON.parse(readFileSync(file, 'utf-8'));
+    const collectors = parsed?.collectors;
+    return collectors && typeof collectors === 'object' ? collectors : {};
   } catch {
-    // A read-only workspace is not a reason to fail a teardown.
+    return {};
   }
+}
+
+// Drops the named top-level keys from state.json. NOT a delete of the file:
+// `ios` / `android` write `lastBuild` beside `supervisor` and `collectors`,
+// and taking the build fingerprint away with a pid would turn every stop into
+// a guaranteed cache miss on the next build.
+function dropStateKeys(root, keys) {
   const file = workspaceStateFile(root);
   if (!existsSync(file)) return;
   let parsed;
   try {
     parsed = JSON.parse(readFileSync(file, 'utf-8'));
   } catch {
-    // Unparseable: the supervisor block cannot be preserved anyway, and a
-    // corrupt file left in place would fail every later read.
+    // Unparseable: nothing in it can be preserved anyway, and a corrupt file
+    // left in place would fail every later read.
     rmSync(file, { force: true });
     return;
   }
@@ -82,7 +92,7 @@ export function clearSupervisorState(root) {
     rmSync(file, { force: true });
     return;
   }
-  delete parsed.supervisor;
+  for (const key of keys) delete parsed[key];
   if (Object.keys(parsed).length === 0) {
     rmSync(file, { force: true });
     return;
@@ -91,6 +101,25 @@ export function clearSupervisorState(root) {
   const tmp = `${file}.tmp`;
   writeFileSync(tmp, JSON.stringify(parsed, null, 2));
   renameSync(tmp, file);
+}
+
+// Drops the supervisor block and the pid file.
+export function clearSupervisorState(root) {
+  const pidFile = supervisorPidFile(root);
+  try {
+    rmSync(pidFile, { force: true });
+  } catch {
+    // A read-only workspace is not a reason to fail a teardown.
+  }
+  dropStateKeys(root, ['supervisor']);
+}
+
+// Drops the collectors block. Separate from clearSupervisorState because it is
+// cleared at a different point in the sequence: collectors are reaped even
+// when the supervisor could not be stopped, so their record must go with them
+// rather than waiting on the bookkeeping step that a live process suppresses.
+export function clearCollectorState(root) {
+  dropStateKeys(root, ['collectors']);
 }
 
 // --- identity ---------------------------------------------------------------
@@ -154,6 +183,31 @@ function numberOrNull(v) {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
 }
 
+// Pure. Contract 5's collectors, turned into a signal list.
+//
+// The identity discipline is the supervisor's, minus the port half a collector
+// does not have: a pid is signalled only when it is recorded in THIS
+// workspace's state.json and is actually running. That record is the whole
+// proof, which is why nothing else -- not a pid file, not a process name -- is
+// consulted, and why our own pid is refused outright: a state file that
+// somehow named this process would otherwise make `stop` SIGTERM itself.
+//
+//   { platform, pid, status: 'running' }   alive and ours: signal it
+//   { platform, pid, status: 'stale' }     recorded, not running
+//   { platform, pid, status: 'invalid' }   unusable record (no pid, or ours)
+export function resolveCollectorTargets({ collectors, isAlive = isPidAlive, selfPid = process.pid } = {}) {
+  const targets = [];
+  for (const [platform, record] of Object.entries(collectors || {})) {
+    const pid = numberOrNull(Number(record?.pid));
+    if (!pid || pid === selfPid) {
+      targets.push({ platform, pid: pid ?? null, status: 'invalid' });
+      continue;
+    }
+    targets.push({ platform, pid, status: isAlive(pid) ? 'running' : 'stale' });
+  }
+  return targets;
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Polls rather than waiting on the process, because it is not our child: a
@@ -176,6 +230,7 @@ export async function waitForExit(pid, { timeoutMs = DEFAULT_WAIT_MS, intervalMs
 //
 // Outcomes, one per step, are the `--json` payload:
 //   supervisor { status: none | stopped | already-stopped | unverified | timeout | failed }
+//   collectors { status: none | stopped, entries: [{ platform, pid, status }] }
 //   metro      { status: none | missing | stopped | forced | refused | failed | skipped }
 //   device     { ios, android } each { status: shut-down | missing | skipped | failed } | null
 //   port       { status: none | freed | kept }
@@ -184,6 +239,9 @@ export async function runStop({
   force = false,
   project = undefined,
   state = undefined,
+  collectors = undefined,
+  signalCollector = (pid) => process.kill(pid, 'SIGTERM'),
+  clearCollectors = clearCollectorState,
   isAlive = isPidAlive,
   killGroup = killMetroTree,
   waitForDeath = undefined,
@@ -200,11 +258,13 @@ export async function runStop({
 } = {}) {
   const proj = project === undefined ? getProject(root) : project;
   const sup = state === undefined ? readSupervisorState(root) : state;
+  const collectorRecords = collectors === undefined ? readCollectorState(root) : collectors;
   const reservedPort = typeof proj?.metroPort === 'number' ? proj.metroPort : null;
   const waiter = waitForDeath ?? ((pid) => waitForExit(pid, { timeoutMs: waitMs, isAlive }));
 
   const outcomes = {
     supervisor: { status: 'none' },
+    collectors: { status: 'none', entries: [] },
     metro: { status: 'none' },
     device: { ios: null, android: null },
     port: { status: 'none', port: reservedPort },
@@ -235,7 +295,16 @@ export async function runStop({
     }
   }
 
-  // Step 2: Metro. Only when no live supervisor was involved -- the supervisor
+  // Step 2: the device-log collectors (Contract 5). Reaped whether or not the
+  // supervisor went down, and BEFORE the device is shut down: a collector is a
+  // `simctl log stream` / `adb logcat` attached to the device step 4 is about
+  // to stop, and one left running there outlives the workspace it belongs to
+  // with nothing left that can name it. They hold no contended resource, so
+  // unlike the device there is nothing for a stuck supervisor to make unsafe.
+  outcomes.collectors = reapCollectors(collectorRecords, { isAlive, signal: signalCollector, report });
+  if (outcomes.collectors.entries.length) clearCollectors(root);
+
+  // Step 3: Metro. Only when no live supervisor was involved -- the supervisor
   // hosts the dev server, so with one running (or refusing to die) the port is
   // accounted for, and racing a second killer at it can only take out the wrong
   // process.
@@ -255,7 +324,7 @@ export async function runStop({
     }
   }
 
-  // Step 3: the device. Shut down, never deleted, and only when rn-iso owns it.
+  // Step 4: the device. Shut down, never deleted, and only when rn-iso owns it.
   // Skipped entirely while something is still holding the port: the supervisor
   // that ignored our SIGTERM is very likely still driving that simulator.
   if (stillHolding) {
@@ -265,7 +334,7 @@ export async function runStop({
     if (outcomes.device.ios?.status === 'failed' || outcomes.device.android?.status === 'failed') ok = false;
   }
 
-  // Step 4: the port, and step 5: the records. Both are bookkeeping, and both
+  // Step 5: the port, and step 6: the records. Both are bookkeeping, and both
   // are wrong while a process this command failed to stop is still holding on.
   if (stillHolding) {
     outcomes.port = { status: 'kept', port: reservedPort, reason: stillHolding };
@@ -281,6 +350,44 @@ export async function runStop({
   }
 
   return { ok, outcomes, summary: summarize(root, outcomes, ok) };
+}
+
+// SIGTERM each recorded collector, tolerating a pid that is already gone.
+//
+// No wait, and deliberately no escalation: a collector's SIGTERM handler
+// closes its NDJSON writer and unregisters itself, which is exactly the work a
+// second signal would interrupt mid-file. A dead pid is the NORMAL case -- the
+// app was killed, the collector noticed and exited -- so ESRCH is not a
+// failure and never makes `stop` non-zero.
+function reapCollectors(collectors, { isAlive, signal, report }) {
+  const targets = resolveCollectorTargets({ collectors, isAlive });
+  const entries = [];
+  for (const target of targets) {
+    if (target.status === 'invalid') {
+      entries.push({ platform: target.platform, pid: target.pid, status: 'invalid' });
+      report(chalk.dim(`collectors: ignoring an unusable ${target.platform} record`));
+      continue;
+    }
+    if (target.status === 'stale') {
+      entries.push({ platform: target.platform, pid: target.pid, status: 'already-stopped' });
+      report(chalk.dim(`collectors: ${target.platform} pid ${target.pid} is already gone`));
+      continue;
+    }
+    try {
+      signal(target.pid);
+      entries.push({ platform: target.platform, pid: target.pid, status: 'stopped' });
+      report(chalk.green(`collectors: stopped ${target.platform} pid ${target.pid}`));
+    } catch {
+      // Raced with its own exit between the liveness check and the signal.
+      entries.push({ platform: target.platform, pid: target.pid, status: 'already-stopped' });
+      report(chalk.dim(`collectors: ${target.platform} pid ${target.pid} exited before it could be signalled`));
+    }
+  }
+  if (entries.length === 0) {
+    report(chalk.dim('collectors: none recorded'));
+    return { status: 'none', entries };
+  }
+  return { status: 'stopped', entries };
 }
 
 async function stopSupervisor(target, { killGroup, waiter, report }) {
@@ -396,6 +503,8 @@ function summarize(root, outcomes, ok) {
   if (outcomes.supervisor.status === 'timeout') parts.push(`supervisor pid ${outcomes.supervisor.pid} still running`);
   if (outcomes.supervisor.status === 'unverified') parts.push(`supervisor pid ${outcomes.supervisor.pid} unverified`);
   if (outcomes.supervisor.status === 'failed') parts.push(`supervisor pid ${outcomes.supervisor.pid} could not be signalled`);
+  const reaped = outcomes.collectors.entries.filter((e) => e.status === 'stopped').length;
+  if (reaped) parts.push(`${reaped} collector${reaped === 1 ? '' : 's'} stopped`);
   if (outcomes.metro.status === 'stopped') parts.push(`metro on port ${outcomes.metro.port} stopped`);
   if (outcomes.metro.status === 'forced') parts.push(`port ${outcomes.metro.port} killed (forced)`);
   if (outcomes.metro.status === 'refused') parts.push(`port ${outcomes.metro.port} refused`);
@@ -422,7 +531,7 @@ function defaultFreePort(root, _port) {
 }
 
 // The global registration is what makes a supervisor findable after its
-// workspace is gone (`status --all`, `worktree remove`), so it is the last
+// workspace is gone (`status`, `worktree remove`), so it is the last
 // thing dropped and only once the process is provably down. A failure to clear
 // it is contained: `status` then reports a stale supervisor record, which is
 // recoverable, whereas failing the stop over bookkeeping is not.

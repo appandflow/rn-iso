@@ -86,6 +86,12 @@ export function parseAvdList(text) {
     .filter(l => l && !l.startsWith('INFO') && !l.startsWith('WARNING'));
 }
 
+// v3 removed physical-device support, so NOTHING assigns, boots or installs
+// onto the `physical` bucket any more. It stays because this is a faithful
+// parse of `adb devices` rather than a device picker: a connected phone must
+// land somewhere that is not `emulators`, or console-port allocation and the
+// owned-AVD identity check would both count it as an emulator. Nothing may
+// grow a consumer for it -- an assignment path is what was deleted.
 export function parseAdbDevices(text) {
   const lines = text.split('\n').slice(1); // skip "List of devices attached"
   const emulators = [];
@@ -172,9 +178,11 @@ export function shutdownAndroidEmulator(serial) {
   getExecutor().runQuiet(`adb -s ${serial} emu kill`);
 }
 
-export function adbReverse(serial, port) {
-  getExecutor().run(`adb -s ${serial} reverse tcp:${port} tcp:${port}`);
-}
+// There is no adbReverse here any more. Contract 6's port wiring lives in
+// `engine/app-install.js` (`reverseMetroPorts`), which sets BOTH the
+// 8081 -> reserved mapping the app actually reads and the same-port one
+// tooling asks for. A second, simpler copy in this file is exactly the drift
+// CLAUDE.md item 4 warns about: it would map only one of the two, silently.
 
 export function getAvdNameForSerial(serial) {
   const out = getExecutor().runQuiet(`adb -s ${serial} emu avd name`);
