@@ -112,11 +112,22 @@ answer one question: *which workspace owns this
 gone or merely on an unplugged volume?* Directing DerivedData into the worktree
 via `-derivedDataPath` dissolves the question. Build output is inside the thing
 being removed, so `worktree remove` reclaims it definitionally, and no
-classifier has to guess. The orphaned-artifact sweep and the
-mounted-volume guard become unnecessary, and with them v2's top-level `gc`
-command. What survives is `cache gc`, which trims the *shared* caches under
-`~/.rn-iso/` — a genuinely different job, since those are content-addressed,
-never evict themselves, and are not owned by any one workspace.
+classifier has to guess. The orphaned-artifact sweep goes, and with it
+`classifyDerivedData`, `listDerivedDataEntries`, `findOrphanedDerivedData` and
+`findDerivedDataFor`.
+
+**The mounted-volume guard does not go with it**, and the first draft of this
+spec was wrong to say so. It protects two different things. Guarding
+*DerivedData classification* becomes unnecessary, because there is no longer a
+global directory to reverse-map to a workspace. Guarding the *project registry*
+does not: `findReclaimablePort` in `ports.js` still must not reclaim the port of
+a project whose volume is merely unplugged, since that removes the whole entry
+and drops its device claim. `isOnMountedVolume`, `listMountedVolumes`,
+`volumeRootFor` and `isRealMount` therefore stay. So do `directorySize` and
+`formatBytes`, which are generic and used by the cache reporting.
+
+What `artifacts.js` gets is a split, not a deletion: the volume and size
+utilities move to `src/fs-util.js`, and the DerivedData half is removed.
 
 ### Two interactions that must be got right
 
@@ -296,10 +307,10 @@ rn-iso start | stop [--delete]
 rn-iso ios | android
 rn-iso logs [--source --level --since --grep --tail --follow --errors]
 rn-iso status [--all]
-rn-iso cache [trim]
+rn-iso gc [--delete] [--older-than <days>]
 ```
 
-Twelve entry points against v2's twenty-two. Two removals are consolidations
+Eleven entry points against v2's twenty-two. Two removals are consolidations
 rather than lost capability, and both are recorded below: `worktree list`, and
 the `cache` sub-verbs. `guide` and `skill install` carry over unchanged and are
 not counted here; `config`, `build-cache` and `up` are gone, the first folded
@@ -405,20 +416,27 @@ already reports unprovisioned worktrees (`unprovisionedWorktrees` in
 `src/status.js`), so nothing is lost. Repo scoping, if wanted, is
 `status --repo` — a flag, not a command.
 
-### `cache` and `cache trim`
+### `gc`
 
-v2 spreads three ideas over six entry points: `cache register`, `cache forget`,
-`cache list`, `gc --caches`, bare `gc`, and `prune`. The artifact-layout change
-already removed the third idea (the orphan sweep), and v3 prescribes cache
-paths, so declaring them by hand is no longer necessary. Two verbs remain:
+An earlier draft replaced `gc` with `cache` / `cache trim`. That was wrong, and
+planning caught it: **build artifacts are not the only thing that orphans.** A
+project directory deleted by hand leaves a registry entry, a reserved port and
+an owned simulator behind, and with `prune` and `up` gone there would be nothing
+left on the machine that reaps them. Those are not caches and do not belong
+under a `cache` verb.
 
-- **`cache`** reports every cache, its size and age distribution, and what is
-  reclaimable. Read-only, always safe.
-- **`cache trim [--older-than <days>] [--all]`** is the single destructive
-  verb. `--all` empties. Caches that index their own data — the LLVM CAS — are
-  whole-or-nothing and report themselves as such rather than silently ignoring
-  `--older-than`.
+So `gc` survives, narrowed to what is still real:
 
+- **`gc`** reports, and is always safe: dead project entries, orphaned owned
+  devices (`findOrphanedDevices`), and the shared caches under `~/.rn-iso/`
+  with their sizes and age distribution.
+- **`gc --delete [--older-than <days>]`** acts. `--older-than` trims cache
+  entries by age; caches that index their own data — the LLVM CAS — are
+  whole-or-nothing and say so rather than silently ignoring the flag.
+
+What `gc` *loses* is the DerivedData sweep and its mounted-volume ambiguity,
+which the artifact layout made unnecessary. v2's `cache register` / `forget` /
+`list` verbs collapse into `gc`'s report, since v3 prescribes the cache paths.
 `rn-iso/cache-manifest` survives as a **programmatic** export, because that is
 how `@rn-iso/metro` and `build-cache.js` self-register. Only the CLI verbs go.
 
@@ -533,8 +551,8 @@ touches:
 | `rn-iso android` | The same ticket on the other platform, or a bug that only reproduces there. |
 | `rn-iso logs --source device` | A native crash that never reached JS, so `--errors` on the client stream is empty but `logcat` / `simctl log stream` is not. |
 | `rn-iso logs --follow` | Watching a manual reproduction in real time rather than querying after. |
-| `rn-iso cache` | Disk is filling. Reports what each cache costs and what is reclaimable. |
-| `rn-iso cache trim --older-than 14` | Reclaim without destroying the working set. Emptying costs every project on the machine its next build; trimming costs only what nothing has used. |
+| `rn-iso gc` | Disk is filling, or a machine has accumulated environments from deleted checkouts. Reports dead entries, orphaned devices and cache sizes. |
+| `rn-iso gc --delete --older-than 14` | Reclaim without destroying the working set. Emptying costs every project on the machine its next build; trimming costs only what nothing has used. |
 | `rn-iso stop --delete` | Done with an environment on a checkout that is not a worktree, so `worktree remove` cannot reap its device. |
 | `rn-iso doctor` | After an SDK upgrade, or when builds are unexpectedly slow — it names the cause instead of leaving the agent to guess. |
 
@@ -611,7 +629,7 @@ the metro-port check and the build-log destination. Steps 3 and 4 are
 independent of each other.
 
 The v2 command removals (`up`, `device`, `release`, `stop`, `shutdown`,
-`prune`, `gc`, `worktree list`, the `cache` sub-verbs, `--serial`) land with
+`prune`, `worktree list`, the `cache` sub-verbs, `--serial`) land with
 step 3, not before — the broker surface has to stay
 usable until the build path that replaces it actually works.
 
