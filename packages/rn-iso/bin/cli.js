@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 import deviceCommand from '../src/commands/device.js';
 import stopCommand from '../src/commands/stop.js';
-import pruneCommand from '../src/commands/prune.js';
 import gcCommand from '../src/commands/gc.js';
 import statusCommand from '../src/commands/status.js';
 import releaseCommand from '../src/commands/release.js';
@@ -14,7 +13,6 @@ import upCommand from '../src/commands/up.js';
 import guideCommand from '../src/commands/guide.js';
 import skillCommand from '../src/commands/skill.js';
 import doctorCommand from '../src/commands/doctor.js';
-import cacheCommand from '../src/commands/cache.js';
 import buildCacheCommand from '../src/commands/build-cache.js';
 import initCommand from '../src/commands/init.js';
 
@@ -29,7 +27,6 @@ program
 deviceCommand(program);
 upCommand(program, pkg.version);
 stopCommand(program);
-pruneCommand(program);
 gcCommand(program);
 statusCommand(program);
 releaseCommand(program);
@@ -39,7 +36,6 @@ worktreeCommand(program);
 guideCommand(program, pkg.version);
 skillCommand(program, pkg.version);
 doctorCommand(program);
-cacheCommand(program);
 buildCacheCommand(program);
 initCommand(program);
 

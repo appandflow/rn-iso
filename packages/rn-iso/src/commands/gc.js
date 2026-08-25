@@ -1,7 +1,25 @@
-import { existsSync, rmSync } from 'fs';
+// `gc` is the machine-hygiene command: it reports what rn-iso has left behind
+// and, with --delete, reclaims it.
+//
+// Three things still orphan, and none of them is a build artifact any more --
+// build output lives inside the workspace (`<root>/.rn-iso/`) and dies with the
+// directory that holds it, so the DerivedData sweep and its reverse-mapping
+// ambiguity are gone:
+//
+//   1. dead project entries   a directory deleted by hand leaves a registry
+//                             entry and a reserved Metro port behind
+//   2. owned devices          orphaned ones, plus (with --older-than) ones
+//                             whose project has gone untouched for weeks
+//   3. shared caches          alive by design, never dead, only bigger
+//
+// v2's `cache register` / `cache forget` / `cache list` verbs folded into the
+// report here: v3 prescribes the cache paths, so there is nothing left to
+// register by hand. The programmatic `rn-iso/cache-manifest` export stays --
+// that is how @rn-iso/metro-cache and src/build-cache.js self-register.
+import { existsSync, statSync } from 'fs';
 import chalk from 'chalk';
 import { InvalidArgumentError } from 'commander';
-import { loadConfig } from '../config.js';
+import { clearDevice, loadConfig } from '../config.js';
 import {
   formatBytes,
   isOnMountedVolume,
@@ -16,8 +34,10 @@ import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches } from '../c
 
 // Bounds each device listing so a wedged simctl/emulator daemon can't hang
 // `gc` forever -- see the comment above the listAllIosSims/listAvds calls
-// in the action below.
+// in collectGcReport below.
 const DEVICE_LIST_TIMEOUT_MS = 10000;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Pure. Finds rn-iso-owned simulators/AVDs that no live config entry
 // references. A device counts as "referenced" the moment ANY project in
@@ -95,16 +115,74 @@ export function findOrphanedDevices({ sims = [], avds = [], config, isMounted, d
   return { orphaned, kept };
 }
 
-// With no config, deleting is off the table -- an empty reference map makes
-// every rn-iso-* device look orphaned, including another RN_ISO_HOME's live
-// ones. But saying nothing was its own failure mode: a wiped config (or a
-// throwaway RN_ISO_HOME) orphaned simulators that nothing would ever surface
-// again. Report them by name so a human can judge; never act on them.
-export function describeUnverifiableDevices(simNames = [], avdNames = []) {
+// Pure. Owned devices whose project is still registered and still on disk, but
+// whose checkout nothing has touched in `olderThanDays`.
+//
+// This is not tidiness. `stop` has no --delete, and a checkout that is not a
+// git worktree cannot be `worktree remove`d, so for the main checkout of every
+// repo on the machine there is NO command that ever destroys the simulator
+// rn-iso created for it. Without this sweep they accumulate one per project,
+// forever. `worktree remove` covers worktrees; this covers everything else.
+//
+// It is deliberately narrower than the orphan sweep in three ways, because it
+// is proposing to destroy a device belonging to a project that is still alive:
+//   - only `owned: true` records (CLAUDE.md item 2: never touch a device
+//     rn-iso did not create),
+//   - only devices the LIVE listing confirms are on the machine, so a stale
+//     record can never turn into a delete aimed at whatever now answers to
+//     that identifier,
+//   - only projects the caller has NOT already classified as dead, so the
+//     orphan sweep and this one cannot both issue a delete at the same udid.
+//
+// `lastTouched(path)` returns a millisecond timestamp, or NaN when it cannot
+// be read. NaN is treated as "not proven stale" and skipped: an unreadable
+// timestamp is doubt, and doubt skips (CLAUDE.md item 8).
+export function findStaleProjectDevices({
+  config,
+  sims = [],
+  avds = [],
+  olderThanDays,
+  now = Date.now(),
+  lastTouched,
+  deadProjects = [],
+} = {}) {
+  if (!Number.isFinite(olderThanDays) || typeof lastTouched !== 'function') return [];
+  const cutoff = now - olderThanDays * DAY_MS;
+  const dead = new Set(deadProjects);
+
+  const liveSims = new Map(
+    sims.filter(s => s?.name?.startsWith('rn-iso-')).map(s => [s.udid, s.name])
+  );
+  const liveAvds = new Set(avds.filter(a => typeof a === 'string' && a.startsWith('rn-iso-')));
+
+  const stale = [];
+  for (const [path, proj] of Object.entries(config?.projects || {})) {
+    if (dead.has(path)) continue;
+    const touched = lastTouched(path);
+    if (!Number.isFinite(touched) || touched >= cutoff) continue;
+    const idleDays = Math.floor((now - touched) / DAY_MS);
+
+    const ios = proj?.platforms?.ios;
+    if (ios?.owned && ios.deviceUdid && liveSims.has(ios.deviceUdid)) {
+      stale.push({ kind: 'ios', id: ios.deviceUdid, name: liveSims.get(ios.deviceUdid), project: path, idleDays });
+    }
+    const android = proj?.platforms?.android;
+    if (android?.owned && android.avdName && liveAvds.has(android.avdName)) {
+      stale.push({ kind: 'android', id: android.avdName, name: android.avdName, project: path, idleDays });
+    }
+  }
+  return stale;
+}
+
+// The device sweep declined to run, for one of the two reasons below. Saying
+// nothing was its own failure mode: a wiped config (or a throwaway
+// RN_ISO_HOME) orphaned simulators that nothing would ever surface again.
+// Report them by name so a human can judge; never act on them.
+export function describeUnverifiableDevices(simNames = [], avdNames = [], { reason = 'no rn-iso config found' } = {}) {
   const ours = [...simNames, ...avdNames].filter(n => typeof n === 'string' && n.startsWith('rn-iso-'));
-  if (ours.length === 0) return ['no rn-iso config found; device sweep skipped'];
+  if (ours.length === 0) return [`${reason}; device sweep skipped`];
   return [
-    `no rn-iso config found, so ${ours.length} rn-iso-created device(s) cannot be verified as orphaned: ${ours.join(', ')}`,
+    `${reason}, so ${ours.length} rn-iso-created device(s) cannot be verified as orphaned: ${ours.join(', ')}`,
     'they were NOT touched. If they are stale, delete them with `xcrun simctl delete <udid>` or `avdmanager delete avd -n <name>`',
   ];
 }
@@ -113,12 +191,14 @@ export function formatGcReport({
   skipped = [],
   deadProjects = [],
   orphanedDevices = [],
+  staleDevices = [],
   deviceSweepNotices = [],
   caches = [],
+  olderThan = null,
 }) {
   const lines = [];
 
-  if (deadProjects.length === 0 && orphanedDevices.length === 0) {
+  if (deadProjects.length === 0 && orphanedDevices.length === 0 && staleDevices.length === 0) {
     const reasons = [];
     if (skipped.length > 0) {
       reasons.push(`${skipped.length} entr${skipped.length === 1 ? 'y' : 'ies'} could not be checked`);
@@ -143,6 +223,14 @@ export function formatGcReport({
     for (const d of orphanedDevices) lines.push(`  ${d.kind} ${d.name} (${d.id})`);
   }
 
+  if (staleDevices.length) {
+    lines.push(`Stale owned devices (${staleDevices.length}) - project untouched for ${olderThan ?? '?'}d or more:`);
+    for (const d of staleDevices) {
+      lines.push(`  ${d.kind} ${d.name} (${d.id})`);
+      lines.push(`              ${d.project} (idle ${d.idleDays}d)`);
+    }
+  }
+
   if (deviceSweepNotices.length) {
     lines.push(`Device sweep notices (${deviceSweepNotices.length}):`);
     for (const notice of deviceSweepNotices) lines.push(`  ${notice}`);
@@ -156,14 +244,18 @@ export function formatGcReport({
   // Shared caches are reported apart from everything above, and never counted
   // in the reclaim total: the rest of this report is dead weight, while these
   // are alive and load-bearing. Deleting one costs the next build the time the
-  // cache was saving -- it is a performance decision, not cleanup.
+  // cache was saving -- it is a performance decision, not cleanup. The
+  // registered/detected tag is what `cache list` used to exist for: without
+  // it, a report cannot say which rows a project described itself and which
+  // ones rn-iso guessed at.
   if (caches.length) {
     const total = caches.reduce((n, c) => n + c.bytes, 0);
     lines.push(`Shared build caches (${caches.length}) - alive, not garbage:`);
     for (const c of caches) {
-      lines.push(`  ${formatBytes(c.bytes).padStart(10)}  ${c.name}`);
+      const tag = c.source ? ` (${c.source})` : '';
+      lines.push(`  ${formatBytes(c.bytes).padStart(10)}  ${c.name}${tag}`);
       lines.push(`              ${c.dir}`);
-      lines.push(`              ${c.note}`);
+      if (c.note) lines.push(`              ${c.note}`);
     }
     lines.push(`  total: ${formatBytes(total)}`);
   }
@@ -171,13 +263,290 @@ export function formatGcReport({
   return lines;
 }
 
+// "Touched" is the project directory's own mtime. Config entries carry no
+// timestamp, so this is the cheapest honest proxy for "someone is still
+// working in this checkout", and it is coarse in the safe direction: a branch
+// switch, a build, or an editor writing into the root all bump it, so a
+// project in use reads as recent. A stat that throws returns NaN, which
+// findStaleProjectDevices treats as doubt and skips.
+function projectLastTouched(path) {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return NaN;
+  }
+}
+
+// RN_ISO_HOME scopes the CONFIG. Simulators and AVDs are machine-GLOBAL: there
+// is one CoreSimulator device set and one AVD home per machine, and no env var
+// redirects them. So a config read out of a non-default home describes, at
+// best, a subset of the machine's devices -- every rn-iso-* device belonging to
+// the real home reads as unreferenced, i.e. orphaned, and `--delete` destroys
+// live environments. That is not hypothetical: it destroyed two real
+// simulators during this branch's work.
+//
+// The invariant: a scoped config never sweeps global devices.
+//
+// This does NOT subsume the `cfg === null` guard below, and the reverse is
+// equally false -- they are two distinct holes. A throwaway RN_ISO_HOME stops
+// being null the moment any command writes to it, and from then on the sweep
+// looked perfectly well-informed while knowing nothing about the machine. Both
+// guards stay.
+//
+// There is deliberately no flag and no env var that lifts this from the
+// command line: anything that could turn it off is something an agent could
+// turn off. `runGc` takes the decision as a parameter instead, which commander
+// never supplies, so only the test suite (driving a mocked device listing) can
+// opt in.
+function deviceSweepIsScoped(unsafeAllowScopedDeviceSweep) {
+  return Boolean(process.env.RN_ISO_HOME) && !unsafeAllowScopedDeviceSweep;
+}
+
+// Everything gc knows, gathered without writing anything. `runGc` prints this
+// and then, only with --delete, acts on it.
+export async function collectGcReport({
+  olderThan = null,
+  now = Date.now(),
+  lastTouched = projectLastTouched,
+  unsafeAllowScopedDeviceSweep = false,
+} = {}) {
+  // Reported on every run now that v3 prescribes the cache paths: `cache list`
+  // was the only way to see a registered cache, and it is gone. Sizing walks
+  // the directories, which is the cost of the report being complete.
+  const caches = sizeCaches(discoverCaches({ declared: declaredCachePaths() }));
+
+  // A project path that no longer exists looks "dead" -- but if it lives
+  // on a volume that is simply not mounted right now (this machine's
+  // repos live on an external SSD), unregistering it would destroy its
+  // label, metroPort allocation, and device claims for good. Only prune
+  // entries whose volume is confirmed mounted; route the rest into
+  // skipped. isOnMountedVolume resolves symlinked ancestors first rather
+  // than checking the raw path text -- a config key recorded under a
+  // symlinked path (e.g. a home folder symlinked onto an external
+  // volume) must not be misread as always-mounted just because it
+  // textually starts under "/".
+  const mountedVolumes = listMountedVolumes();
+  const cfg = loadConfig();
+  const deadProjects = [];
+  const skipped = [];
+  for (const path of Object.keys(cfg?.projects || {})) {
+    if (existsSync(path)) continue;
+    if (!isOnMountedVolume(path, mountedVolumes)) {
+      const volume = volumeRootFor(path);
+      skipped.push({ dir: path, reason: `volume ${volume} is not mounted` });
+    } else {
+      deadProjects.push(path);
+    }
+  }
+
+  // Tolerate a missing/unresponsive simctl/emulator toolchain (Linux dev
+  // box with no Android SDK, or -- as happened on this machine -- a
+  // wedged simctl daemon that never answers) the same way `status`
+  // does: an unreadable device list means "skip the device sweep for
+  // this platform", not a crashed command. `gc` is advertised as the
+  // always-safe command for unattended agents, so it must always
+  // return promptly; DEVICE_LIST_TIMEOUT_MS bounds each listing so a
+  // wedged daemon can't hang it forever (bare execSync has no timeout
+  // by default). A skip is never treated as "no devices exist" (which
+  // would be indistinguishable from a clean sweep) -- it is recorded in
+  // deviceSweepNotices and surfaced in the report, never silently.
+  const deviceSweepNotices = [];
+  let orphanedDevices = [];
+  let staleDevices = [];
+
+  // A config file that does not exist at all means rn-iso has never
+  // registered a project under this home. findOrphanedDevices' reference map
+  // would come back empty, which classifies EVERY rn-iso-* sim/AVD on the
+  // machine as orphaned. Checked before the scoped-home guard only so its
+  // more specific message wins when both apply.
+  const unsweepableReason = cfg === null
+    ? 'no rn-iso config found'
+    : deviceSweepIsScoped(unsafeAllowScopedDeviceSweep)
+      ? 'RN_ISO_HOME scopes this config, but simulators and AVDs are machine-global'
+      : null;
+
+  if (unsweepableReason) {
+    // Name what it declined to judge, but never classify or act on it:
+    // orphanedDevices stays empty, so --delete has nothing to reach for.
+    let simNames = [];
+    let avdNames = [];
+    try {
+      simNames = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }).map(s => s.name);
+    } catch { /* toolchain unavailable: report what we can */ }
+    try {
+      avdNames = listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+    } catch { /* same */ }
+    deviceSweepNotices.push(...describeUnverifiableDevices(simNames, avdNames, { reason: unsweepableReason }));
+  } else {
+    let sims = [];
+    try {
+      sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+    } catch {
+      deviceSweepNotices.push(
+        `ios device sweep skipped: simulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
+      );
+    }
+    let avds = [];
+    try {
+      avds = listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+    } catch {
+      deviceSweepNotices.push(
+        `android device sweep skipped: emulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
+      );
+    }
+
+    const isMounted = path => isOnMountedVolume(path, mountedVolumes);
+    orphanedDevices = findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects }).orphaned;
+    if (olderThan !== null) {
+      staleDevices = findStaleProjectDevices({
+        config: cfg,
+        sims,
+        avds,
+        olderThanDays: olderThan,
+        now,
+        lastTouched,
+        deadProjects,
+      });
+    }
+  }
+
+  return { skipped, deadProjects, orphanedDevices, staleDevices, deviceSweepNotices, caches, olderThan };
+}
+
+// Report, then (only with --delete) act. Exported so the suite can drive the
+// device sweep with `unsafeAllowScopedDeviceSweep`; commander supplies only
+// the flags declared below.
+export async function runGc(opts = {}) {
+  const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
+  const report = await collectGcReport({
+    olderThan,
+    unsafeAllowScopedDeviceSweep: opts.unsafeAllowScopedDeviceSweep,
+  });
+  for (const line of formatGcReport(report)) console.log(line);
+
+  const { deadProjects, orphanedDevices, staleDevices, caches } = report;
+  // Caches only count as actionable with --older-than: emptying one whole is a
+  // performance decision aimed at a specific cache, not something a sweep
+  // should do on the way past.
+  const actionable = deadProjects.length > 0
+    || orphanedDevices.length > 0
+    || staleDevices.length > 0
+    || (olderThan !== null && caches.length > 0);
+
+  if (!opts.delete) {
+    if (actionable) console.log(chalk.dim('\nDry run. Re-run with --delete to reclaim.'));
+    else if (caches.length) console.log(chalk.dim('\nPass --delete --older-than <days> to trim the caches above.'));
+    return;
+  }
+
+  // No early return for "nothing actionable": every loop below is a no-op on
+  // an empty list, and falling through is what lets the cache hint at the end
+  // reach a machine whose only remaining weight IS the caches.
+  let deleteFailures = 0;
+  for (const path of deadProjects) {
+    const result = await reclaimProject(path);
+    console.log(chalk.green(`Pruned ${path}`));
+    if (result.killedPid) {
+      console.log(chalk.dim(`  killed orphaned Metro pid ${result.killedPid}`));
+    }
+  }
+
+  // Each device's teardown is wrapped in its own try/catch (the pattern
+  // reclaim.js uses): one bad record or exec throw must not abort the
+  // rest of the sweep. iOS is re-verified against the live sim list
+  // right before shutdown, the same way reclaim.js/release.js/
+  // shutdown.js all do: the udid came from the listing taken earlier in
+  // this run, and shutting down first on the strength of that snapshot
+  // "would already have hit whatever real simulator that udid resolves
+  // to" if it has since been renamed away from rn-iso ownership or
+  // deleted. A stale/renamed record is reported and left alone
+  // (notOwned), an already-gone one is reported as such without being
+  // treated as a failure (missing), and a probe that itself throws
+  // fails CLOSED -- caught below, reported, and left untouched, same as
+  // any other teardown failure. Occupancy no longer defers a delete: an
+  // orphaned sim referenced by no live project is going away, and leaving
+  // it "for a later gc" only asked the same question again forever.
+  // Every one of those guards lives in src/teardown.js and nowhere else
+  // (CLAUDE.md item 4): gc never issues simctl/avdmanager itself.
+  function reap(d) {
+    const r = d.kind === 'ios'
+      ? teardownOwnedIosSim(d.id, { del: true, label: d.name })
+      : teardownOwnedAvd(d.name, { del: true });
+    const what = d.kind === 'ios' ? `ios sim ${d.name} (${d.id})` : `android avd ${d.name}`;
+    if (r.status === 'torn-down') {
+      console.log(chalk.green(`Deleted ${what}`));
+    } else if (r.status === 'missing') {
+      console.log(chalk.dim(`${what} is already gone; nothing to delete.`));
+    } else if (r.status === 'skipped') {
+      console.log(chalk.yellow(`Skipped ${what}: ${r.reason} -- left for a later gc`));
+    } else {
+      deleteFailures++;
+      console.log(chalk.red(`Failed to delete ${d.kind} device ${d.name}: ${r.reason}`));
+    }
+    return r.status;
+  }
+
+  for (const d of orphanedDevices) reap(d);
+
+  // A stale device's project is still alive, so -- unlike the orphan sweep --
+  // its config entry stays. Only the device record goes, and only once the
+  // device is provably no longer on the machine ('torn-down' or 'missing').
+  // On a skip or a failure the record is what keeps the device findable, so
+  // it survives: dropping it is exactly what turns a failed teardown into a
+  // simulator nothing references and nothing will ever reap (CLAUDE.md item
+  // 2).
+  for (const d of staleDevices) {
+    const status = reap(d);
+    if (status === 'torn-down' || status === 'missing') {
+      clearDevice(d.project, d.kind);
+      console.log(chalk.dim(`  cleared the ${d.kind} record for ${d.project}`));
+    }
+  }
+
+  if (deleteFailures) {
+    console.log(chalk.red(`\n${deleteFailures} entr${deleteFailures === 1 ? 'y' : 'ies'} could not be deleted; see above.`));
+  }
+
+  // Trimmed last and reported apart from everything above: this is not
+  // reclaimed garbage, it is a cache someone will now have to refill. Only
+  // --older-than reaches them, and it trims ENTRIES rather than emptying the
+  // cache: a cache is worth keeping, it is only the entries nothing has
+  // touched in weeks that are not. A CAS is the exception -- its index would
+  // outlive the leaves -- and it says so rather than silently ignoring the
+  // flag.
+  if (olderThan === null) {
+    if (caches.length) {
+      console.log(chalk.dim('Shared caches left alone: pass --older-than <days> to trim them.'));
+    }
+    return;
+  }
+
+  let cacheBytes = 0;
+  for (const c of caches) {
+    const r = pruneCache(c, { olderThanDays: olderThan });
+    if (r.skipped) {
+      console.log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
+    } else if (r.removed) {
+      cacheBytes += r.bytes;
+      console.log(chalk.green(`Trimmed ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`));
+    } else {
+      console.log(chalk.dim(`${c.name}: nothing older than ${olderThan}d`));
+    }
+  }
+
+  if (cacheBytes) {
+    console.log(
+      chalk.dim(`Trimmed ${formatBytes(cacheBytes)} of shared cache. The next build that wanted those entries pays to rebuild them.`)
+    );
+  }
+}
+
 export default function gcCommand(program) {
   program
     .command('gc')
-    .description('Reclaim config entries and owned devices left behind by worktrees that no longer exist. Reports by default; pass --delete to act.')
+    .description('Report what rn-iso has left behind: dead project entries, orphaned owned devices, and the shared build caches. Reports by default; pass --delete to act.')
     .option('--delete', 'actually prune the reported entries and reap the reported devices')
-    .option('--caches', 'also report the shared build caches (Metro, Xcode compilation cache, and any declared in the `caches` setting)')
-    .option('--older-than <days>', 'with --caches, only trim cache entries untouched for this many days', v => {
+    .option('--older-than <days>', 'also reap owned devices whose project has been untouched this long, and trim shared cache entries nothing has used in that time', v => {
       const n = parseInt(v, 10);
       if (!Number.isFinite(n) || String(n) !== String(v).trim()) {
         throw new InvalidArgumentError('must be a whole number of days, e.g. --older-than 30');
@@ -185,190 +554,6 @@ export default function gcCommand(program) {
       return n;
     })
     .action(async opts => {
-      // Opt-in, and separate from everything else this command reclaims. These
-      // caches are shared by every project on the machine, so the blast radius
-      // is not "this dead worktree" -- it is every build that would have hit
-      // them. Sizing walks gigabytes, so only do it when asked.
-      const caches = opts.caches
-        ? sizeCaches(discoverCaches({ declared: declaredCachePaths() }))
-        : [];
-
-      // A project path that no longer exists looks "dead" -- but if it lives
-      // on a volume that is simply not mounted right now (the whole machine's
-      // repos live on an external SSD), unregistering it would destroy its
-      // label, metroPort allocation, and device claims for good. Only prune
-      // entries whose volume is confirmed mounted; route the rest into
-      // skipped. isOnMountedVolume resolves symlinked ancestors first rather
-      // than checking the raw path text -- a config key recorded under a
-      // symlinked path (e.g. a home folder symlinked onto an external
-      // volume) must not be misread as always-mounted just because it
-      // textually starts under "/".
-      const mountedVolumes = listMountedVolumes();
-      const cfg = loadConfig();
-      const deadProjects = [];
-      const allSkipped = [];
-      for (const path of Object.keys(cfg?.projects || {})) {
-        if (existsSync(path)) continue;
-        if (!isOnMountedVolume(path, mountedVolumes)) {
-          const volume = volumeRootFor(path);
-          allSkipped.push({ dir: path, reason: `volume ${volume} is not mounted` });
-        } else {
-          deadProjects.push(path);
-        }
-      }
-
-      // Tolerate a missing/unresponsive simctl/emulator toolchain (Linux dev
-      // box with no Android SDK, or -- as happened on this machine -- a
-      // wedged simctl daemon that never answers) the same way `status`
-      // does: an unreadable device list means "skip the device sweep for
-      // this platform", not a crashed command. `gc` is advertised as the
-      // always-safe command for unattended agents, so it must always
-      // return promptly; DEVICE_LIST_TIMEOUT_MS bounds each listing so a
-      // wedged daemon can't hang it forever (bare execSync has no timeout
-      // by default). A skip is never treated as "no devices exist" (which
-      // would be indistinguishable from a clean sweep) -- it is recorded in
-      // deviceSweepNotices and surfaced in the report, never silently.
-      const deviceSweepNotices = [];
-      let orphanedDevices = [];
-      if (cfg === null) {
-        // No config file at all means rn-iso has never registered a
-        // project on this machine (or RN_ISO_HOME points somewhere empty).
-        // findOrphanedDevices' reference map would come back empty in this
-        // case, which classifies EVERY rn-iso-* sim/AVD on the machine as
-        // orphaned -- including devices belonging to another rn-iso HOME,
-        // or ones a config read glitch merely failed to surface. Skip the
-        // sweep entirely rather than risk `--delete` destroying every live
-        // environment on the machine. orphanedDevices stays empty, so
-        // --delete cannot touch any of them -- but they are still named.
-        let simNames = [];
-        let avdNames = [];
-        try {
-          simNames = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }).map(s => s.name);
-        } catch { /* toolchain unavailable: report what we can */ }
-        try {
-          avdNames = listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-        } catch { /* same */ }
-        deviceSweepNotices.push(...describeUnverifiableDevices(simNames, avdNames));
-      } else {
-        let sims = [];
-        try {
-          sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-        } catch {
-          deviceSweepNotices.push(
-            `ios device sweep skipped: simulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
-          );
-        }
-        let avds = [];
-        try {
-          avds = listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-        } catch {
-          deviceSweepNotices.push(
-            `android device sweep skipped: emulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
-          );
-        }
-
-        const isMounted = path => isOnMountedVolume(path, mountedVolumes);
-        orphanedDevices = findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects }).orphaned;
-      }
-
-      for (const line of formatGcReport({ skipped: allSkipped, deadProjects, orphanedDevices, deviceSweepNotices, caches })) {
-        console.log(line);
-      }
-
-      // Caches count toward "is there anything to do": a machine with no dead
-      // worktrees can still be carrying gigabytes of shared cache, and that is
-      // the whole reason to ask for --caches.
-      const nothingToReclaim = deadProjects.length === 0 && orphanedDevices.length === 0;
-      if (nothingToReclaim && !caches.length) return;
-
-      if (!opts.delete) {
-        console.log(chalk.dim('\nDry run. Re-run with --delete to reclaim.'));
-        return;
-      }
-
-      let deleteFailures = 0;
-      for (const path of deadProjects) {
-        const result = await reclaimProject(path);
-        console.log(chalk.green(`Pruned ${path}`));
-        if (result.killedPid) {
-          console.log(chalk.dim(`  killed orphaned Metro pid ${result.killedPid}`));
-        }
-      }
-      // Each device's teardown is wrapped in its own try/catch (the pattern
-      // reclaim.js uses): one bad record or exec throw must not abort the
-      // rest of the sweep. iOS is re-verified against the live sim list
-      // right before shutdown, the same way reclaim.js/release.js/
-      // shutdown.js all do: the udid came from the listing taken earlier in
-      // this run, and shutting down first on the strength of that snapshot
-      // "would already have hit whatever real simulator that udid resolves
-      // to" if it has since been renamed away from rn-iso ownership or
-      // deleted. A stale/renamed record is reported and left alone
-      // (notOwned), an already-gone one is reported as such without being
-      // treated as a failure (missing), and a probe that itself throws
-      // fails CLOSED -- caught below, reported, and left untouched, same as
-      // any other teardown failure. Occupancy no longer defers a delete: an
-      // orphaned sim referenced by no live project is going away, and leaving
-      // it "for a later gc" only asked the same question again forever.
-      for (const d of orphanedDevices) {
-        // Every guard lives in the shared teardown helper: ownership
-        // re-resolve, occupancy (iOS only), and per-device containment so one
-        // bad record cannot abort the sweep.
-        const r = d.kind === 'ios'
-          ? teardownOwnedIosSim(d.id, { del: true, label: d.name })
-          : teardownOwnedAvd(d.name, { del: true });
-        const what = d.kind === 'ios' ? `ios sim ${d.name} (${d.id})` : `android avd ${d.name}`;
-        if (r.status === 'torn-down') {
-          console.log(chalk.green(`Deleted ${what}`));
-        } else if (r.status === 'missing') {
-          console.log(chalk.dim(`${what} is already gone; nothing to delete.`));
-        } else if (r.status === 'skipped') {
-          console.log(chalk.yellow(`Skipped ${what}: ${r.reason} -- left for a later gc`));
-        } else {
-          deleteFailures++;
-          console.log(chalk.red(`Failed to delete ${d.kind} device ${d.name}: ${r.reason}`));
-        }
-      }
-      if (deleteFailures) {
-        console.log(chalk.red(`\n${deleteFailures} entr${deleteFailures === 1 ? 'y' : 'ies'} could not be deleted; see above.`));
-      }
-      // Emptied last and reported apart from everything above: this is not
-      // reclaimed garbage, it is a cache someone will now have to refill.
-      let cacheBytes = 0;
-      for (const c of caches) {
-        // With --older-than, trim entries instead of emptying: a cache is worth
-        // keeping, it is only the entries nothing has touched in weeks that are
-        // not. The CAS is the exception -- its index would outlive the leaves.
-        if (opts.olderThan) {
-          const r = pruneCache(c, { olderThanDays: opts.olderThan });
-          if (r.skipped) {
-            console.log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
-          } else if (r.removed) {
-            cacheBytes += r.bytes;
-            console.log(chalk.green(`Trimmed ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`));
-          } else {
-            console.log(chalk.dim(`${c.name}: nothing older than ${opts.olderThan}d`));
-          }
-          continue;
-        }
-        try {
-          if (c.files) {
-            // `dir` here is the system temp directory, not a directory this
-            // cache owns. Only ever remove the files we listed inside it.
-            for (const f of c.files) rmSync(f, { force: true });
-          } else {
-            rmSync(c.dir, { recursive: true, force: true });
-          }
-          cacheBytes += c.bytes;
-          console.log(chalk.green(`Emptied ${c.name} (${formatBytes(c.bytes)})`));
-        } catch (e) {
-          console.log(chalk.yellow(`Could not empty ${c.name}: ${String(e?.message || e)}`));
-        }
-      }
-
-      if (cacheBytes) {
-        console.log(
-          chalk.dim(`Emptied ${formatBytes(cacheBytes)} of shared cache. The next build in each project pays to refill it.`)
-        );
-      }
+      await runGc(opts);
     });
 }
