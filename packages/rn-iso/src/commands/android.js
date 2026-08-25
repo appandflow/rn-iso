@@ -42,6 +42,15 @@ import { DEFAULT_METRO_PORT, installAndroidApp, launchAndroidApp } from '../engi
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.js';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.js';
 import { buildAndroid } from '../engine/gradle.js';
+import {
+  RESOLVE_TIMEOUT_MS,
+  UPLOAD_TIMEOUT_MS,
+  cacheLevel,
+  exitAfterFlush,
+  loadProjectProvider,
+  resolveRemote,
+  uploadRemote,
+} from '../engine/remote-cache.js';
 import { formatDiagnostic } from '../engine/errors-gradle.js';
 
 export const PLATFORM = 'android';
@@ -101,12 +110,18 @@ export function formatDuration(ms) {
 }
 
 // PURE. The --json payload.
-export function androidFacts({ serial, fingerprint, cacheHit, appPath, bundleId, launched, logs }) {
+export function androidFacts({ serial, fingerprint, cacheHit, cacheSkipped = false, appPath, bundleId, launched, logs }) {
   return {
     platform: PLATFORM,
     serial: serial ?? null,
     fingerprint: fingerprint ?? null,
-    cacheHit: Boolean(cacheHit),
+    // 'local' | 'remote' | false. Which LEVEL answered, not merely whether one
+    // did: an agent reading `true` cannot tell a free install from one that
+    // cost a download (see cacheLevel in engine/remote-cache.js).
+    cacheHit: cacheLevel(cacheHit),
+    // true only when --no-build-cache was passed: "nothing was looked up" is a
+    // different fact from "nothing was found".
+    cacheSkipped: Boolean(cacheSkipped),
     appPath: appPath ?? null,
     bundleId: bundleId ?? null,
     launched: Boolean(launched),
@@ -115,12 +130,13 @@ export function androidFacts({ serial, fingerprint, cacheHit, appPath, bundleId,
 }
 
 // PURE. Contract 4, the state.json.lastBuild record.
-export function lastBuildRecord({ fingerprint, cacheKey, cacheHit, durationMs, appPath, bundleId, startedAt, status, errorCode = null }) {
+export function lastBuildRecord({ fingerprint, cacheKey, cacheHit, cacheSkipped = false, durationMs, appPath, bundleId, startedAt, status, errorCode = null }) {
   const record = {
     platform: PLATFORM,
     fingerprint: fingerprint ?? null,
     cacheKey: cacheKey ?? null,
-    cacheHit: Boolean(cacheHit),
+    cacheHit: cacheLevel(cacheHit),
+    cacheSkipped: Boolean(cacheSkipped),
     durationMs: Number.isFinite(durationMs) ? durationMs : null,
     appPath: appPath ?? null,
     bundleId: bundleId ?? null,
@@ -163,6 +179,7 @@ export function registerAndroid(program) {
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option('--no-metro-check', 'Skip the reserved-port Metro health check (the app will load no bundle unless something else serves it)')
+    .option('--no-build-cache', 'Build fresh, ignoring cached artifacts (local and the project\'s build-cache provider); the fresh build still replaces the cache entry')
     .action(async (opts) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
@@ -170,7 +187,12 @@ export function registerAndroid(program) {
         process.exit(1);
         return;
       }
-      const result = await runAndroid({ root, json: Boolean(opts.json), metroCheck: opts.metroCheck !== false });
+      const result = await runAndroid({
+        root,
+        json: Boolean(opts.json),
+        metroCheck: opts.metroCheck !== false,
+        useBuildCache: opts.buildCache !== false,
+      });
       if (!result.ok) process.exit(1);
     });
 }
@@ -182,12 +204,19 @@ export async function runAndroid({
   root,
   json = false,
   metroCheck = true,
+  // --no-build-cache turns off every LOOKUP -- the local cache and the
+  // project's provider both -- and nothing else: the fresh build is still
+  // stored (over the entry it was told not to trust) and still uploaded.
+  useBuildCache = true,
   ensureDevice = ensureOwnedDevice,
   ensureDeviceBooted = ensureBooted,
   resolveMetro = resolveProjectMetro,
   fingerprint = fingerprintProject,
   resolveCached = resolveBuild,
   storeCached = storeBuild,
+  loadProvider = loadProjectProvider,
+  resolveRemoteBuild = resolveRemote,
+  uploadRemoteBuild = uploadRemote,
   needsPrebuildFor = needsPrebuild,
   prebuild = runPrebuild,
   build = buildAndroid,
@@ -314,13 +343,67 @@ export async function runAndroid({
   const cacheKey = buildCacheKey(PLATFORM, hash, {});
   record.cacheKey = cacheKey;
 
-  const cached = resolveCached(PLATFORM, cacheKey);
-  record.cacheHit = Boolean(cached);
-  phase('fingerprint', `${shortHash(hash)} ${cached ? 'hit' : 'miss'}`);
+  // ---- level one: this machine's shared cache --------------------------
+  // Instant, offline, shared by every worktree on the machine, and the only
+  // cache a bare React Native project has.
+  const cached = useBuildCache ? resolveCached(PLATFORM, cacheKey) : null;
+  record.cacheHit = cached ? 'local' : false;
+  record.cacheSkipped = !useBuildCache;
+  phase('fingerprint', `${shortHash(hash)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'}`);
 
-  // ---- build (only on a miss) ------------------------------------------
+  // ---- level two: the project's OWN Expo build-cache provider ----------
+  //
+  // Only on a local miss, and only on an Expo project -- the community CLI has
+  // no provider concept, so a bare project never reads a config and never
+  // reaches the network. The provider is loaded even when --no-build-cache
+  // turned the LOOKUP off, because the build that follows is still uploaded to
+  // it. Every failure here is a NOTE: the build below is still able to run.
   let apkPath = cached || null;
-  if (!cached) {
+  let remote = null;
+  // A call we stopped waiting for may still hold the child process the
+  // provider spawned; see the end of this function.
+  let abandonedRemote = false;
+  let uploadPending = null;
+  if (!apkPath) {
+    const loaded = await loadProvider(root, { isExpo });
+    if (loaded?.unavailable) {
+      phase('cache', chalk.yellow(`provider not usable: ${loaded.unavailable}`));
+    } else if (loaded?.provider) {
+      remote = loaded;
+    }
+  }
+
+  if (remote && useBuildCache) {
+    const hit = await resolveRemoteBuild({
+      provider: remote.provider,
+      platform: PLATFORM,
+      projectRoot: root,
+      fingerprintHash: hash,
+    });
+    if (hit?.appPath) {
+      // INTO the local cache on the way past: the download is paid once per
+      // machine rather than once per worktree.
+      let stored = null;
+      try {
+        stored = storeCached(PLATFORM, cacheKey, hit.appPath);
+      } catch (err) {
+        phase('cache', chalk.yellow(`remote hit could not be stored locally: ${err?.message || err}`));
+      }
+      apkPath = stored || hit.appPath;
+      record.cacheHit = 'remote';
+      phase('cache', `remote hit (${remote.name})${stored ? ' -> stored locally' : ''}`);
+    } else if (hit?.timedOut) {
+      abandonedRemote = true;
+      phase('cache', chalk.yellow(`${remote.name} did not answer within ${formatDuration(RESOLVE_TIMEOUT_MS)}; building instead`));
+    } else if (hit?.failed) {
+      phase('cache', chalk.yellow(`${remote.name} could not be used: ${hit.failed}; building instead`));
+    } else {
+      phase('cache', `remote miss (${remote.name})`);
+    }
+  }
+
+  // ---- build (only when neither level answered) ------------------------
+  if (!apkPath) {
     if (needsPrebuildFor(root, PLATFORM, isExpo)) {
       const pre = await prebuild(root, PLATFORM, writer, { isExpo });
       if (pre.failed) {
@@ -360,12 +443,27 @@ export async function runAndroid({
     apkPath = built.apkPath;
     phase('build', `${basename(apkPath)} (${formatDuration(built.durationMs)})`);
 
+    // `overwrite` only when --no-build-cache asked for a fresh build: the entry
+    // that is there is the one this run was told not to trust, and leaving it
+    // would mean the next run trusts it again.
     try {
-      storeCached(PLATFORM, cacheKey, apkPath);
+      storeCached(PLATFORM, cacheKey, apkPath, { overwrite: !useBuildCache });
     } catch (err) {
       // A cache that cannot be written still builds; it just costs the next
       // workspace a rebuild. Never a reason to fail a run that succeeded.
       phase('cache', chalk.yellow(`could not store the build: ${err?.message || err}`));
+    }
+
+    // STARTED here, collected after the launch, so the upload overlaps the
+    // install instead of being added to it. Nothing in this run depends on it.
+    if (remote) {
+      uploadPending = uploadRemoteBuild({
+        provider: remote.provider,
+        platform: PLATFORM,
+        projectRoot: root,
+        fingerprintHash: hash,
+        buildPath: apkPath,
+      });
     }
   }
   record.appPath = apkPath;
@@ -376,7 +474,7 @@ export async function runAndroid({
   if (installed.failed) {
     return fail(installed.code || INSTALL_FAILED, installed.reason, `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`, { lastBuildStatus: true });
   }
-  phase('install', `${cached ? 'from cache' : basename(apkPath)} (${formatDuration(now() - installStarted)})`);
+  phase('install', `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath)} (${formatDuration(now() - installStarted)})`);
 
   // ---- launch (Contract 6) ---------------------------------------------
   androidPackage = androidPackage || detectAndroidPackage(root);
@@ -404,6 +502,19 @@ export async function runAndroid({
   });
   phase('launch', `${androidPackage} (tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort})`);
 
+  // ---- the upload, collected (it has been running since the build) -----
+  if (uploadPending) {
+    const upload = await uploadPending;
+    if (upload?.uploaded) {
+      phase('cache', `uploaded (${remote.name})`);
+    } else if (upload?.timedOut) {
+      abandonedRemote = true;
+      phase('cache', chalk.yellow(`${remote.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`));
+    } else if (upload?.failed) {
+      phase('cache', chalk.yellow(`${remote.name} upload failed: ${upload.failed}`));
+    }
+  }
+
   // ---- Contract 4, then Contract 5 -------------------------------------
   //
   // lastBuild is written BEFORE the collector is spawned. Both writers
@@ -418,7 +529,8 @@ export async function runAndroid({
   const facts = androidFacts({
     serial,
     fingerprint: hash,
-    cacheHit: Boolean(cached),
+    cacheHit: record.cacheHit,
+    cacheSkipped: !useBuildCache,
     appPath: apkPath,
     bundleId: androidPackage,
     launched: true,
@@ -429,12 +541,25 @@ export async function runAndroid({
   if (json) {
     emit(JSON.stringify(facts));
   } else {
-    emit(chalk.green(`OK: ${androidPackage} launched on ${serial}, Metro port ${metroPort} (${cached ? 'cache hit' : 'built'})`));
+    emit(chalk.green(`OK: ${androidPackage} launched on ${serial}, Metro port ${metroPort} (${cacheOutcome(record.cacheHit, remote?.name)})`));
   }
+
+  // Everything this command does is done. If a provider call was abandoned at
+  // its bound, the child process it spawned may still be open and node will not
+  // exit while it is -- an agent's `rn-iso android` would sit there long after
+  // the app launched, waiting on a call whose result nothing reads.
+  if (abandonedRemote) exitAfterFlush(0);
   return { ok: true, facts };
 }
 
 // --- helpers ---------------------------------------------------------------
+
+// PURE. How the outcome line describes where the APK came from.
+export function cacheOutcome(cacheHit, providerName = null) {
+  if (cacheHit === 'remote') return `cache hit from ${providerName || 'the remote cache'}`;
+  if (cacheHit === 'local') return 'cache hit';
+  return 'built';
+}
 
 function persistLastBuild({ writeState, root, record, startedAt, durationMs, status, errorCode = null, out }) {
   const lastBuild = lastBuildRecord({ ...record, startedAt, durationMs, status, errorCode });

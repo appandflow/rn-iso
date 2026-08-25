@@ -24,6 +24,7 @@ import { readWorkspaceState, writeWorkspaceState } from '../src/supervisor/run.j
 import {
   appNameFromPath,
   buildLogFile,
+  cacheDescription,
   collectorEntry,
   deviceLabel,
   devClientScheme,
@@ -108,9 +109,23 @@ function harness(overrides = {}) {
       record('resolveBuild', { platform, key });
       return null;
     },
-    storeBuild: (platform, key, path) => {
-      record('storeBuild', { platform, key, path });
+    storeBuild: (platform, key, path, options) => {
+      record('storeBuild', { platform, key, path, options });
       return path;
+    },
+    // Level two. The default is the ordinary case: a project with no provider
+    // configured, which asks nothing and calls nothing.
+    loadProjectProvider: async (projectRoot, opts) => {
+      record('loadProjectProvider', { projectRoot, ...opts });
+      return { none: true };
+    },
+    resolveRemote: async (args) => {
+      record('resolveRemote', args);
+      return null;
+    },
+    uploadRemote: async (args) => {
+      record('uploadRemote', args);
+      return { uploaded: true };
     },
     needsPrebuild: () => false,
     runPrebuild: async (...args) => {
@@ -249,7 +264,7 @@ describe('the cache', () => {
     assert.ok(!calls.order.includes('storeBuild'), 'a hit has nothing to store');
     assert.equal(calls.args.installIosApp.appPath, cachedApp);
     const facts = JSON.parse(logs[0]);
-    assert.equal(facts.cacheHit, true);
+    assert.equal(facts.cacheHit, 'local');
     assert.equal(facts.appPath, cachedApp);
   });
 
@@ -287,6 +302,41 @@ describe('the cache', () => {
     assert.match(errs.join('\n'), /RN_ISO_NO_FINGERPRINT/);
   });
 
+  test('--no-build-cache looks nothing up: not the local cache, not the provider', async () => {
+    reserve();
+    const cachedApp = join(tmpHome, 'build-cache', 'ios', 'k', 'Fixture.app');
+    const { exitCode, calls, logs } = await run({ json: true, buildCache: false }, {
+      resolveBuild: () => { throw new Error('the local cache must not be consulted'); },
+      loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      resolveRemote: () => { throw new Error('the provider must not be consulted'); },
+    });
+    assert.equal(exitCode, null);
+    assert.ok(calls.order.includes('buildIos'), 'it builds fresh');
+    assert.ok(!calls.order.includes('resolveRemote'));
+    const facts = JSON.parse(logs[0]);
+    assert.equal(facts.cacheHit, false);
+    assert.equal(facts.cacheSkipped, true, 'an agent can tell "told not to look" from "found nothing"');
+    assert.ok(!facts.appPath.startsWith(cachedApp));
+  });
+
+  // The whole reason to opt out is a cache entry you no longer trust. Keeping
+  // the old entry would mean the very next run trusts it again.
+  test('--no-build-cache still STORES -- over the entry it was told not to trust -- and still uploads', async () => {
+    reserve();
+    const { exitCode, calls } = await run({ buildCache: false }, {
+      loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+    });
+    assert.equal(exitCode, null);
+    assert.deepEqual(calls.args.storeBuild.options, { overwrite: true });
+    assert.ok(calls.order.includes('uploadRemote'), '"do not trust the cache" is not "do not share my build"');
+  });
+
+  test('a default run stores without overwriting: two worktrees at the same fingerprint agree', async () => {
+    reserve();
+    const { calls } = await run({});
+    assert.deepEqual(calls.args.storeBuild.options, { overwrite: false });
+  });
+
   test('a cache store that fails does not fail a successful build', async () => {
     reserve();
     const { exitCode, errs, calls } = await run({}, {
@@ -295,6 +345,169 @@ describe('the cache', () => {
     assert.equal(exitCode, null);
     assert.ok(calls.order.includes('launchIosApp'), 'the app is still installed and launched');
     assert.match(errs.join('\n'), /Could not store the build/);
+  });
+});
+
+// --- level two: the project's own build cache provider --------------------
+//
+// rn-iso's local cache is level one. The project's OWN configured provider --
+// `"buildCacheProvider": "eas"`, or a module of its own -- is level two, and a
+// hit there is copied into level one on the way past so the NEXT worktree does
+// not pay for it either. The engine module is tested in
+// engine-remote-cache.test.js; what is pinned here is that the command asks in
+// the right order, and that nothing a provider does can fail or stall the run.
+describe('the remote cache', () => {
+  const provider = (name = 'eas') => ({ provider: { plugin: {}, options: {} }, name });
+
+  test('a LOCAL hit never consults the provider at all', async () => {
+    reserve();
+    const { calls } = await run({}, { resolveBuild: () => '/cache/Fixture.app' });
+    assert.ok(!calls.order.includes('loadProjectProvider'), 'level one answered; there is nothing to ask');
+    assert.ok(!calls.order.includes('resolveRemote'));
+  });
+
+  test('a bare RN project never has its config read: the community CLI has no provider concept', async () => {
+    reserve();
+    const { calls } = await run({}, { detectIsExpo: () => false });
+    assert.equal(calls.args.loadProjectProvider.isExpo, false, 'the engine is told, and it is what refuses');
+    assert.ok(!calls.order.includes('resolveRemote'), 'no network on a bare project');
+  });
+
+  test('an Expo project with no provider configured builds exactly as before', async () => {
+    reserve();
+    const { exitCode, calls, errs } = await run({}, { detectIsExpo: () => true });
+    assert.equal(exitCode, null);
+    assert.ok(!calls.order.includes('resolveRemote'), 'nothing configured, nothing called');
+    assert.ok(!calls.order.includes('uploadRemote'));
+    assert.ok(!/cache/.test(errs.join('\n')), 'and nothing is said about it: it is not a problem');
+  });
+
+  test('a remote HIT is stored into the local cache and installed, without building', async () => {
+    reserve();
+    const remoteApp = join(root, 'downloaded', 'Fixture.app');
+    const storedApp = join(tmpHome, 'build-cache', 'ios', 'key', 'Fixture.app');
+    const stored = [];
+    const { exitCode, calls, logs, errs } = await run({ json: true }, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => provider(),
+      resolveRemote: async () => ({ appPath: remoteApp }),
+      storeBuild: (platform, key, path, options) => {
+        stored.push({ platform, key, path, options });
+        return storedApp;
+      },
+    });
+    assert.equal(exitCode, null);
+    assert.ok(!calls.order.includes('buildIos'), 'a remote hit skips the build like a local one');
+    assert.ok(!calls.order.includes('runPrebuild'));
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].path, remoteApp, 'the download lands in the local cache');
+    assert.equal(stored[0].key, calls.args.resolveBuild.key, 'under the key the local miss looked for');
+    assert.equal(calls.args.installIosApp.appPath, storedApp, 'and the LOCAL copy is what gets installed');
+    assert.match(errs.join('\n'), /^cache {7}remote hit \(eas\) -> stored locally$/m);
+    const facts = JSON.parse(logs[0]);
+    assert.equal(facts.cacheHit, 'remote');
+    assert.equal(facts.appPath, storedApp);
+    assert.equal(readWorkspaceState(root).lastBuild.cacheHit, 'remote');
+  });
+
+  test('the provider is asked with this workspace\'s fingerprint and platform', async () => {
+    reserve();
+    const { calls } = await run({}, { detectIsExpo: () => true, loadProjectProvider: async () => provider('./p.cjs') });
+    assert.equal(calls.args.resolveRemote.platform, 'ios');
+    assert.equal(calls.args.resolveRemote.fingerprintHash, FINGERPRINT);
+    assert.equal(calls.args.resolveRemote.projectRoot, root);
+  });
+
+  test('a remote MISS builds, stores locally, and uploads the result', async () => {
+    reserve();
+    const { exitCode, calls, errs, appPath } = await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => provider(),
+    });
+    assert.equal(exitCode, null);
+    const relevant = calls.order.filter((c) => ['resolveBuild', 'resolveRemote', 'buildIos', 'storeBuild', 'uploadRemote', 'installIosApp'].includes(c));
+    assert.deepEqual(relevant, ['resolveBuild', 'resolveRemote', 'buildIos', 'storeBuild', 'uploadRemote', 'installIosApp'],
+      'local, then remote, then build; the upload starts before the install and is collected after it');
+    assert.equal(calls.args.uploadRemote.buildPath, appPath);
+    assert.equal(calls.args.uploadRemote.fingerprintHash, FINGERPRINT);
+    assert.match(errs.join('\n'), /^cache {7}uploaded \(eas\)$/m);
+  });
+
+  // Containment is the product here: a provider is someone else's network call
+  // running inside an agent's dev loop.
+  test('a provider that THROWS degrades to a local-only run with a note', async () => {
+    reserve();
+    const { exitCode, calls, errs } = await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => provider(),
+      resolveRemote: async () => ({ failed: 'EAS session expired' }),
+    });
+    assert.equal(exitCode, null, 'the run succeeds');
+    assert.ok(calls.order.includes('buildIos'), 'it just builds');
+    assert.match(errs.join('\n'), /cache.*EAS session expired.*building instead/);
+  });
+
+  test('a provider that TIMES OUT does not stall the loop, and the command stops holding the process open', async () => {
+    reserve();
+    const exits = [];
+    const originalExit = process.exit;
+    process.exit = (code) => { exits.push(code); };
+    let errs;
+    let calls;
+    try {
+      ({ errs, calls } = await run({}, {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => provider(),
+        resolveRemote: async () => ({ timedOut: true }),
+      }));
+      // The exit is scheduled behind a stdout flush.
+      await new Promise((r) => setTimeout(r, 20));
+    } finally {
+      process.exit = originalExit;
+    }
+    assert.ok(calls.order.includes('buildIos'));
+    assert.match(errs.join('\n'), /did not answer within 30s; building instead/);
+    assert.deepEqual(exits, [0], 'exit 0: everything this command does is done, and the abandoned call must not keep node alive');
+  });
+
+  test('a provider that cannot be loaded says so ONCE and builds', async () => {
+    reserve();
+    const { exitCode, calls, errs } = await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => ({ unavailable: 'the EAS build cache needs the `eas-build-cache-provider` package' }),
+    });
+    assert.equal(exitCode, null);
+    assert.ok(!calls.order.includes('resolveRemote'));
+    assert.ok(calls.order.includes('buildIos'));
+    const lines = errs.join('\n').split('\n').filter((l) => /provider not usable/.test(l));
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /eas-build-cache-provider/);
+  });
+
+  test('a remote hit that cannot be stored locally is still installed from where it landed', async () => {
+    reserve();
+    const remoteApp = join(root, 'downloaded', 'Fixture.app');
+    const { exitCode, calls, errs } = await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => provider(),
+      resolveRemote: async () => ({ appPath: remoteApp }),
+      storeBuild: () => { throw new Error('no space left on device'); },
+    });
+    assert.equal(exitCode, null);
+    assert.equal(calls.args.installIosApp.appPath, remoteApp);
+    assert.match(errs.join('\n'), /could not be stored locally/);
+  });
+
+  test('a failed upload is a note, never a failed run', async () => {
+    reserve();
+    const { exitCode, errs, logs } = await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => provider(),
+      uploadRemote: async () => ({ failed: '403 forbidden' }),
+    });
+    assert.equal(exitCode, null);
+    assert.equal(logs.length, 1, 'stdout still carries exactly one line');
+    assert.match(errs.join('\n'), /upload failed: 403 forbidden/);
   });
 });
 
@@ -688,14 +901,38 @@ describe('iosFacts', () => {
     assert.deepEqual(
       iosFacts({
         udid: UDID, deviceName: 'rn-iso-x', fingerprint: 'abc', cacheKey: 'abc-debug-sim',
-        cacheHit: true, appPath: '/a/b.app', bundleId: 'com.x', metroPort: 8082,
+        cacheHit: 'local', appPath: '/a/b.app', bundleId: 'com.x', metroPort: 8082,
         logsDir: '/w/.rn-iso/logs', durationMs: 1234,
       }),
       {
         platform: 'ios', udid: UDID, deviceName: 'rn-iso-x', fingerprint: 'abc',
-        cacheKey: 'abc-debug-sim', cacheHit: true, appPath: '/a/b.app', bundleId: 'com.x',
-        launched: true, metroPort: 8082, logs: { dir: '/w/.rn-iso/logs' }, durationMs: 1234,
+        cacheKey: 'abc-debug-sim', cacheHit: 'local', cacheSkipped: false, appPath: '/a/b.app',
+        bundleId: 'com.x', launched: true, metroPort: 8082, logs: { dir: '/w/.rn-iso/logs' },
+        durationMs: 1234,
       }
     );
+  });
+
+  // The enum is the point: an agent that reads `true` cannot tell a free
+  // install from one that cost a download, and those are not the same thing to
+  // plan around. Anything that is not a level rendered as `false`.
+  test('cacheHit is a LEVEL, and an unknown value is a miss rather than a truthy string', () => {
+    assert.equal(iosFacts({ cacheHit: 'remote' }).cacheHit, 'remote');
+    assert.equal(iosFacts({ cacheHit: true }).cacheHit, false);
+    assert.equal(iosFacts({ cacheHit: false }).cacheHit, false);
+  });
+
+  test('cacheSkipped separates "found nothing" from "was told not to look"', () => {
+    assert.equal(iosFacts({ cacheHit: false }).cacheSkipped, false);
+    assert.equal(iosFacts({ cacheHit: false, cacheSkipped: true }).cacheSkipped, true);
+  });
+});
+
+describe('cacheDescription', () => {
+  test('names the level the app came from, and the provider when it was the remote one', () => {
+    assert.equal(cacheDescription(false), 'built');
+    assert.equal(cacheDescription('local'), 'from cache');
+    assert.equal(cacheDescription('remote', 'eas'), 'from eas');
+    assert.equal(cacheDescription('remote', null), 'from the remote cache');
   });
 });

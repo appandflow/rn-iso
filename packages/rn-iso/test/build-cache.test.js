@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, statSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
@@ -101,6 +101,41 @@ test('storeBuild is idempotent: an entry that already exists is returned, not re
     spawn: () => {},
   });
   assert.equal(storeBuild('android', 'fp2', existing, root), existing);
+});
+
+// `--no-build-cache` exists for an entry you no longer trust, and keeping the
+// old one would mean the very next run trusts it again. The replacement is
+// atomic for the same reason the first write is: staging directory, then
+// rename over the destination.
+test('storeBuild with { overwrite } REPLACES an existing entry, so a poisoned one can be got rid of', () => {
+  const existing = seedEntry('ios', 'fp-overwrite', 'MyApp.app');
+  assert.equal(readFileSync(existing, 'utf-8'), 'binary');
+
+  const fresh = join(root, 'fresh', 'MyApp.app');
+  mkdirSync(join(root, 'fresh'), { recursive: true });
+  writeFileSync(fresh, 'rebuilt');
+  setExecutor({
+    run: () => { throw new Error('the copy must not go through a shell'); },
+    runFile: (file, args) => {
+      // Stand in for `cp -R`, which copies a file here.
+      writeFileSync(args[2], readFileSync(args[1], 'utf-8'));
+      return '';
+    },
+    runQuiet: () => '',
+    spawn: () => {},
+  });
+
+  const stored = storeBuild('ios', 'fp-overwrite', fresh, { root, overwrite: true });
+  assert.equal(readFileSync(stored, 'utf-8'), 'rebuilt', 'the entry now holds the fresh build');
+  assert.equal(existsSync(`${entryDir('ios', 'fp-overwrite', root)}.staging-${process.pid}`), false, 'staging must not survive');
+});
+
+// The fourth argument stayed a plain root string for every caller that already
+// passed one; options are the new form. Both must address the same directory.
+test('storeBuild accepts the cache root as a string or as { root }', () => {
+  const existing = seedEntry('android', 'fp-root-form', 'App.apk');
+  assert.equal(storeBuild('android', 'fp-root-form', existing, root), existing);
+  assert.equal(storeBuild('android', 'fp-root-form', existing, { root }), existing);
 });
 
 test('storeBuild refuses a path that is not there rather than creating an empty entry', () => {

@@ -32,8 +32,8 @@ test('the facts topic documents the fields each --json payload actually carries'
   };
   const fields = {
     start: ['port', 'supervisorPid', 'mode', 'logsDir', 'alreadyRunning'],
-    ios: ['udid', 'deviceName', 'fingerprint', 'cacheKey', 'cacheHit', 'appPath', 'bundleId', 'launched', 'metroPort'],
-    android: ['serial', 'fingerprint', 'cacheHit', 'appPath', 'bundleId', 'launched'],
+    ios: ['udid', 'deviceName', 'fingerprint', 'cacheKey', 'cacheHit', 'cacheSkipped', 'appPath', 'bundleId', 'launched', 'metroPort'],
+    android: ['serial', 'fingerprint', 'cacheHit', 'cacheSkipped', 'appPath', 'bundleId', 'launched'],
   };
   for (const [command, names] of Object.entries(fields)) {
     for (const f of names) {
@@ -50,7 +50,8 @@ test('the flags the guide advertises are the flags the commands define', () => {
   const lifecycle = renderTopic('lifecycle');
   const advertised = {
     'start.js': ['--json', '--wait'],
-    'ios.js': ['--json', '--no-metro-check'],
+    'ios.js': ['--json', '--no-metro-check', '--no-build-cache'],
+    'android.js': ['--json', '--no-metro-check', '--no-build-cache'],
     'stop.js': ['--json', '--force'],
     'logs.js': ['--errors', '--follow', '--since', '--grep', '--tail'],
     'gc.js': ['--delete', '--older-than', '--all'],

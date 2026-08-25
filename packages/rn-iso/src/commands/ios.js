@@ -30,6 +30,7 @@ import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.js';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.js';
 import { describeDiagnostic } from '../engine/errors-xcode.js';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.js';
+import { RESOLVE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, cacheLevel, exitAfterFlush, loadProjectProvider, resolveRemote, uploadRemote } from '../engine/remote-cache.js';
 import { buildIos, readBundleId } from '../engine/xcode.js';
 import { getExecutor } from '../exec.js';
 import { isPidAlive, resolveProjectMetro } from '../metro.js';
@@ -182,6 +183,7 @@ export function lastBuildRecord({
   fingerprint = null,
   cacheKey = null,
   cacheHit = false,
+  cacheSkipped = false,
   durationMs = 0,
   appPath = null,
   bundleId = null,
@@ -193,7 +195,8 @@ export function lastBuildRecord({
     platform: PLATFORM,
     fingerprint,
     cacheKey,
-    cacheHit: Boolean(cacheHit),
+    cacheHit: cacheLevel(cacheHit),
+    cacheSkipped: Boolean(cacheSkipped),
     durationMs,
     appPath,
     bundleId,
@@ -205,14 +208,18 @@ export function lastBuildRecord({
 }
 
 // PURE. The --json payload.
-export function iosFacts({ udid, deviceName, fingerprint, cacheKey, cacheHit, appPath, bundleId, metroPort, logsDir, durationMs }) {
+export function iosFacts({ udid, deviceName, fingerprint, cacheKey, cacheHit, cacheSkipped = false, appPath, bundleId, metroPort, logsDir, durationMs }) {
   return {
     platform: PLATFORM,
     udid,
     deviceName: deviceName ?? null,
     fingerprint,
     cacheKey,
-    cacheHit: Boolean(cacheHit),
+    // 'local' | 'remote' | false -- see cacheLevel.
+    cacheHit: cacheLevel(cacheHit),
+    // true only when --no-build-cache was passed: "nothing was looked up",
+    // which is a different fact from "nothing was found".
+    cacheSkipped: Boolean(cacheSkipped),
     appPath,
     bundleId,
     launched: true,
@@ -344,6 +351,9 @@ const DEFAULT_DEPS = {
   fingerprintProject,
   resolveBuild,
   storeBuild,
+  loadProjectProvider,
+  resolveRemote,
+  uploadRemote,
   needsPrebuild,
   runPrebuild,
   readPodState,
@@ -375,6 +385,7 @@ export function registerIos(program, deps = {}) {
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option('--no-metro-check', 'Skip the "is this workspace\'s dev server running?" gate and build anyway')
+    .option('--no-build-cache', 'Build fresh, ignoring cached artifacts (local and the project\'s build-cache provider); the fresh build still replaces the cache entry')
     .action(async (opts) => {
       await runIos(opts, deps);
     });
@@ -385,6 +396,12 @@ export async function runIos(opts = {}, overrides = {}) {
   const json = Boolean(opts.json);
   // commander's --no-metro-check leaves metroCheck true by default.
   const metroCheck = opts.metroCheck !== false;
+  // Same for --no-build-cache. It turns off every LOOKUP -- the local cache and
+  // the project's provider both -- and nothing else: the fresh build is still
+  // stored (over the entry that was there, see storeBuild's `overwrite`) and
+  // still uploaded. "Do not trust what is cached" is the request; "do not share
+  // what I built" is a different one nobody made.
+  const useBuildCache = opts.buildCache !== false;
 
   // Phase lines are progress, and progress is stderr in BOTH modes: stdout
   // carries one line, and which line it is is the only difference --json
@@ -525,20 +542,81 @@ export async function runIos(opts = {}, overrides = {}) {
   // Debug / simulator defaults: the same key `build-cache` and the Expo
   // provider derive, so an entry stored here answers either of them.
   const cacheKey = buildCacheKey(PLATFORM, fingerprint, {});
-  const cached = d.resolveBuild(PLATFORM, cacheKey);
-  const cacheHit = Boolean(cached);
-  phase('fingerprint', `${shortHash(fingerprint)} ${cacheHit ? 'hit' : 'miss'}`);
 
-  const buildFailure = { fingerprint, cacheKey, cacheHit };
+  // ---- level one: this machine's shared cache ----
+  // Instant, offline, and shared by every worktree on the machine. Always
+  // asked first, and the only thing asked at all on a bare RN project.
+  const cached = useBuildCache ? d.resolveBuild(PLATFORM, cacheKey) : null;
+  let cacheHit = cached ? 'local' : false;
+  phase('fingerprint', `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'}`);
+
   let appPath = cached;
   let bundleId = null;
 
-  if (cacheHit) {
-    // A hit skips prebuild, pods and xcodebuild ENTIRELY -- that is the whole
-    // point of the cache, and it is what makes a second worktree install in
-    // seconds. The bundle id comes from the cached .app's own Info.plist
-    // rather than from the project config: the binary is the truth about what
-    // is being installed.
+  // ---- level two: the project's OWN Expo build-cache provider ----
+  //
+  // Only on a local miss, and only on an Expo project: the community CLI has
+  // no provider concept, so a bare project has nothing configured and never
+  // reaches the network (engine/remote-cache.js). The provider is loaded even
+  // when --no-build-cache turned the LOOKUP off, because the build that
+  // follows is still uploaded to it.
+  let remote = null;
+  // A resolve or an upload we stopped waiting for may still hold the child
+  // process the provider spawned (eas-build-cache-provider shells out to
+  // eas-cli), and node will not exit while it is open. See the end of this
+  // function.
+  let abandonedRemote = false;
+  let uploadPending = null;
+  if (!appPath) {
+    const loaded = await d.loadProjectProvider(root, { isExpo });
+    if (loaded?.unavailable) {
+      // ONE line. A provider that is configured and unusable is worth saying
+      // once -- the alternative is a project that believes it has a remote
+      // cache and rebuilds forever without ever being told why.
+      note(chalk.yellow(phaseLine('cache', `provider not usable: ${loaded.unavailable}`)));
+    } else if (loaded?.provider) {
+      remote = loaded;
+    }
+  }
+
+  if (remote && useBuildCache) {
+    const hit = await d.resolveRemote({
+      provider: remote.provider,
+      platform: PLATFORM,
+      projectRoot: root,
+      fingerprintHash: fingerprint,
+    });
+    if (hit?.appPath) {
+      // INTO the local cache on the way past: the download is paid once per
+      // machine rather than once per worktree, and the next workspace to
+      // fingerprint this commit hits level one.
+      let stored = null;
+      try {
+        stored = d.storeBuild(PLATFORM, cacheKey, hit.appPath);
+      } catch (e) {
+        note(chalk.yellow(phaseLine('cache', `remote hit could not be stored locally: ${e?.message || e}`)));
+      }
+      appPath = stored || hit.appPath;
+      cacheHit = 'remote';
+      phase('cache', `remote hit (${remote.name})${stored ? ' -> stored locally' : ''}`);
+    } else if (hit?.timedOut) {
+      abandonedRemote = true;
+      note(chalk.yellow(phaseLine('cache', `${remote.name} did not answer within ${formatDuration(RESOLVE_TIMEOUT_MS)}; building instead`)));
+    } else if (hit?.failed) {
+      note(chalk.yellow(phaseLine('cache', `${remote.name} could not be used: ${hit.failed}; building instead`)));
+    } else {
+      phase('cache', `remote miss (${remote.name})`);
+    }
+  }
+
+  const buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache };
+
+  if (appPath) {
+    // A hit -- at either level -- skips prebuild, pods and xcodebuild
+    // ENTIRELY: that is the whole point of the cache, and it is what makes a
+    // second worktree install in seconds. The bundle id comes from the cached
+    // .app's own Info.plist rather than from the project config: the binary is
+    // the truth about what is being installed.
     bundleId = d.readBundleId(appPath) || d.detectBundleId(root);
     if (!bundleId) {
       return fail({
@@ -601,10 +679,27 @@ export async function runIos(opts = {}, overrides = {}) {
     // Storing is best-effort on purpose: the app is built and installable
     // either way, and a full disk must not turn a successful build into a
     // failed command.
+    //
+    // `overwrite` only when --no-build-cache asked for a fresh build: the
+    // entry that is there is the one the run was told not to trust, and
+    // leaving it would mean the next run trusts it again.
     try {
-      d.storeBuild(PLATFORM, cacheKey, appPath);
+      d.storeBuild(PLATFORM, cacheKey, appPath, { overwrite: !useBuildCache });
     } catch (e) {
       note(chalk.yellow(`Could not store the build in the shared cache: ${e?.message || e}`));
+    }
+
+    // The upload is STARTED here and collected after the launch, so it runs
+    // beside the install rather than being added to it. Nothing about this run
+    // depends on it.
+    if (remote) {
+      uploadPending = d.uploadRemote({
+        provider: remote.provider,
+        platform: PLATFORM,
+        projectRoot: root,
+        fingerprintHash: fingerprint,
+        buildPath: appPath,
+      });
     }
   }
 
@@ -657,12 +752,26 @@ export async function runIos(opts = {}, overrides = {}) {
     note,
   });
 
+  // ---- the upload, collected (it has been running since the build) ----
+  if (uploadPending) {
+    const upload = await uploadPending;
+    if (upload?.uploaded) {
+      phase('cache', `uploaded (${remote.name})`);
+    } else if (upload?.timedOut) {
+      abandonedRemote = true;
+      note(chalk.yellow(phaseLine('cache', `${remote.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`)));
+    } else if (upload?.failed) {
+      note(chalk.yellow(phaseLine('cache', `${remote.name} upload failed: ${upload.failed}`)));
+    }
+  }
+
   // ---- the record (Contract 4) ----
   const durationMs = elapsed();
   writeLastBuild(root, lastBuildRecord({
     fingerprint,
     cacheKey,
     cacheHit,
+    cacheSkipped: !useBuildCache,
     durationMs,
     appPath,
     bundleId,
@@ -678,6 +787,7 @@ export async function runIos(opts = {}, overrides = {}) {
     fingerprint,
     cacheKey,
     cacheHit,
+    cacheSkipped: !useBuildCache,
     appPath,
     bundleId,
     metroPort,
@@ -690,11 +800,25 @@ export async function runIos(opts = {}, overrides = {}) {
   } else {
     console.log(chalk.green(
       `OK: ${bundleId} on ${deviceLabel(device, udid)}, Metro port ${metroPort}`
-      + ` (${cacheHit ? 'from cache' : 'built'}, ${formatDuration(durationMs)})`
+      + ` (${cacheDescription(cacheHit, remote?.name)}, ${formatDuration(durationMs)})`
     ));
   }
+
+  // Everything this command does is done. If a provider call was abandoned,
+  // its own child process may still be open, and node will not exit while it
+  // is -- an agent's `rn-iso ios` would sit there long after the app launched,
+  // waiting on a network call whose result nothing reads any more.
+  if (abandonedRemote) exitAfterFlush(0);
   return facts;
 }
+
+// PURE. How the outcome line describes where the app came from.
+export function cacheDescription(cacheHit, providerName = null) {
+  if (cacheHit === 'remote') return `from ${providerName || 'the remote cache'}`;
+  if (cacheHit === 'local') return 'from cache';
+  return 'built';
+}
+
 
 // The extract, never the transcript. `truncated` and the log path are what
 // make the omission honest rather than silent.

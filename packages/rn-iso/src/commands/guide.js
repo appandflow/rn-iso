@@ -39,7 +39,14 @@ other line goes to stderr, so it is always safe to pipe.
   deviceName      its name, or null
   fingerprint     the @expo/fingerprint hash of the native inputs
   cacheKey        the shared-build-cache key derived from it
-  cacheHit        true when nothing was compiled
+  cacheHit        WHICH LEVEL answered, not a boolean:
+                    "local"   this machine's shared cache (free, instant)
+                    "remote"  the project's own Expo buildCacheProvider (a
+                              download; it is copied into the local cache on
+                              the way past, so the next workspace is "local")
+                    false     nothing answered, so it was compiled
+  cacheSkipped    true only when --no-build-cache was passed: "nothing was
+                  looked up", which is a different fact from "nothing was found"
   appPath         the .app that was installed
   bundleId        the iOS bundle id that was launched
   launched        true
@@ -51,7 +58,7 @@ other line goes to stderr, so it is always safe to pipe.
 
   platform        "android"
   serial          the owned emulator (always "emulator-<consolePort>")
-  fingerprint / cacheHit / appPath / launched   as above
+  fingerprint / cacheHit / cacheSkipped / appPath / launched   as above
   bundleId        the ANDROID PACKAGE NAME, not the iOS bundle id
   logs            { dir, device } -- device is the collector's own log file
 
@@ -443,9 +450,30 @@ and produces an app that cannot load a bundle.
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for.
 
+THE BUILD CACHE HAS TWO LEVELS
+  1. rn-iso's own, on this machine: a directory under ~/.rn-iso shared by
+     every worktree, keyed on the @expo/fingerprint hash of the native inputs.
+     Free, instant, offline, and the only level a bare React Native project
+     has.
+  2. On an EXPO project only, the provider the project ALREADY configured for
+     Expo (\`expo.buildCacheProvider\` -- "eas", or a module of its own).
+     Consulted only when level one misses, bounded so a slow or expired remote
+     cannot stall the loop, and a hit is copied into level one on the way past
+     so the next workspace on this machine gets it for free. After a build,
+     the result is stored locally AND handed to the provider.
+
+  rn-iso never configures a provider and never suggests changing one: a
+  project without one is a perfectly ordinary local-only project.
+
+  --no-build-cache looks nothing up -- not level one, not level two -- and
+  builds fresh. It still STORES the result, over the entry it was told not to
+  trust, and still uploads it. Use it when a cached artifact is suspect; the
+  --json payload reports cacheSkipped: true so a caller can tell that run
+  apart from a plain miss.
+
 THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds>
-  ios / android   --json --no-metro-check
+  ios / android   --json --no-metro-check --no-build-cache
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide; there is no --all)

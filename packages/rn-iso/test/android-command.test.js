@@ -70,6 +70,7 @@ function harness(overrides = {}) {
   const calls = {
     ensureDevice: [], booted: [], metro: [], fingerprint: [], resolveCached: [], storeCached: [],
     prebuild: [], build: [], install: [], launch: [], spawn: [], kill: [],
+    loadProvider: [], resolveRemoteBuild: [], uploadRemoteBuild: [],
   };
   const stderr = [];
   const stdout = [];
@@ -80,7 +81,12 @@ function harness(overrides = {}) {
     resolveMetro: async (port, path) => { calls.metro.push([port, path]); return { metro: { pid: 41233, leader: 41233, cwd: root } }; },
     fingerprint: async (path) => { calls.fingerprint.push(path); return FINGERPRINT; },
     resolveCached: (platform, key) => { calls.resolveCached.push([platform, key]); return null; },
-    storeCached: (platform, key, path) => { calls.storeCached.push([platform, key, path]); return path; },
+    storeCached: (platform, key, path, opts) => { calls.storeCached.push([platform, key, path, opts]); return path; },
+    // Level two. The default is the ordinary case: no provider configured, so
+    // nothing is asked and nothing is called.
+    loadProvider: async (projectRoot, opts) => { calls.loadProvider.push([projectRoot, opts]); return { none: true }; },
+    resolveRemoteBuild: async (args) => { calls.resolveRemoteBuild.push(args); return null; },
+    uploadRemoteBuild: async (args) => { calls.uploadRemoteBuild.push(args); return { uploaded: true }; },
     prebuild: async (...args) => { calls.prebuild.push(args); return { ok: true, durationMs: 12000 }; },
     build: async (args) => { calls.build.push(args); return { ok: true, apkPath: fakeApk(), durationMs: 161000 }; },
     install: (args) => { calls.install.push(args); return { ok: true }; },
@@ -112,10 +118,10 @@ describe('a cache hit', () => {
 
     assert.equal(result.ok, true);
     assert.equal(h.calls.install[0].apkPath, cached);
-    assert.equal(result.facts.cacheHit, true);
+    assert.equal(result.facts.cacheHit, 'local');
     assert.equal(result.facts.appPath, cached);
     assert.match(labelled(h.stderr, 'fingerprint')[0], /a3f9b1\.\. hit/);
-    assert.match(labelled(h.stderr, 'install')[0], /from cache/);
+    assert.match(labelled(h.stderr, 'install')[0], /from local cache/);
     assert.equal(labelled(h.stderr, 'build').length, 0);
   });
 
@@ -142,7 +148,8 @@ describe('a cache hit', () => {
       platform: 'android',
       serial: 'emulator-5584',
       fingerprint: FINGERPRINT,
-      cacheHit: true,
+      cacheHit: 'local',
+      cacheSkipped: false,
       appPath: '/cache/app-debug.apk',
       bundleId: 'com.example.app',
       launched: true,
@@ -372,6 +379,178 @@ describe('a failed build', () => {
   });
 });
 
+// --- level two: the project's own build cache provider ---------------------
+//
+// rn-iso's local cache is level one. The project's OWN configured provider
+// ("buildCacheProvider": "eas", or a module of its own) is level two, and a hit
+// there is copied into level one on the way past so the next worktree does not
+// pay for it either. engine-remote-cache.test.js covers the module; what is
+// pinned here is that the command asks in the right order and that nothing a
+// provider does can fail or stall the run.
+describe('the remote cache', () => {
+  const provider = (name = 'eas') => ({ provider: { plugin: {}, options: {} }, name });
+
+  test('a LOCAL hit never consults the provider at all', async () => {
+    const h = harness({ resolveCached: () => '/cache/app-debug.apk', build: never('the build') });
+    await h.run();
+    assert.equal(h.calls.loadProvider.length, 0, 'level one answered; there is nothing to ask');
+    assert.equal(h.calls.resolveRemoteBuild.length, 0);
+  });
+
+  test('a bare RN project never has its config read: the community CLI has no provider concept', async () => {
+    // The fixture package.json's `android` script is `react-native run-android`,
+    // which is what detectIsExpo reads.
+    const h = harness();
+    await h.run();
+    assert.deepEqual(h.calls.loadProvider[0][1], { isExpo: false }, 'the engine is told, and it is what refuses');
+    assert.equal(h.calls.resolveRemoteBuild.length, 0, 'no network on a bare project');
+  });
+
+  test('an Expo project with no provider configured builds exactly as before', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({
+      name: 'app', scripts: { ios: 'expo run:ios' }, dependencies: { expo: '54.0.0' },
+    }));
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+    const h = harness();
+    const result = await h.run();
+    assert.deepEqual(h.calls.loadProvider[0][1], { isExpo: true }, 'an Expo project IS asked');
+    assert.equal(result.ok, true);
+    assert.equal(h.calls.resolveRemoteBuild.length, 0);
+    assert.equal(h.calls.uploadRemoteBuild.length, 0);
+    assert.equal(labelled(h.stderr, 'cache').length, 0, 'and nothing is said: it is not a problem');
+  });
+
+  test('a remote HIT is stored into the local cache and installed, without building', async () => {
+    const downloaded = '/tmp/eas-download/app-debug.apk';
+    const stored = join(home, 'build-cache', 'android', CACHE_KEY, 'app-debug.apk');
+    const h = harness({
+      loadProvider: async () => provider(),
+      resolveRemoteBuild: async () => ({ appPath: downloaded }),
+      storeCached: (platform, key, path, opts) => { h_calls.push([platform, key, path, opts]); return stored; },
+      build: never('the build'),
+      prebuild: never('prebuild'),
+    });
+    const h_calls = [];
+    const result = await h.run();
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(h_calls[0].slice(0, 3), ['android', CACHE_KEY, downloaded], 'the download lands in the local cache under the key that just missed');
+    assert.equal(h.calls.install[0].apkPath, stored, 'and the LOCAL copy is what gets installed');
+    assert.equal(result.facts.cacheHit, 'remote');
+    assert.match(labelled(h.stderr, 'cache')[0], /remote hit \(eas\) -> stored locally/);
+    assert.equal(readState().lastBuild.cacheHit, 'remote');
+  });
+
+  test('the provider is asked with this workspace\'s fingerprint and platform', async () => {
+    const h = harness({ loadProvider: async () => provider('./p.cjs') });
+    await h.run();
+    assert.equal(h.calls.resolveRemoteBuild[0].platform, 'android');
+    assert.equal(h.calls.resolveRemoteBuild[0].fingerprintHash, FINGERPRINT);
+    assert.equal(h.calls.resolveRemoteBuild[0].projectRoot, root);
+  });
+
+  test('a remote MISS builds, stores locally, and uploads the result', async () => {
+    const h = harness({ loadProvider: async () => provider() });
+    const result = await h.run();
+    assert.equal(result.ok, true);
+    assert.equal(h.calls.build.length, 1);
+    assert.equal(h.calls.storeCached.length, 1);
+    assert.equal(h.calls.uploadRemoteBuild[0].buildPath, h.calls.storeCached[0][2]);
+    assert.equal(h.calls.uploadRemoteBuild[0].fingerprintHash, FINGERPRINT);
+    assert.match(labelled(h.stderr, 'cache').at(-1), /uploaded \(eas\)/);
+  });
+
+  test('a provider that THROWS degrades to a local-only run with a note', async () => {
+    const h = harness({
+      loadProvider: async () => provider(),
+      resolveRemoteBuild: async () => ({ failed: 'EAS session expired' }),
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true, 'the run succeeds');
+    assert.equal(h.calls.build.length, 1, 'it just builds');
+    assert.match(labelled(h.stderr, 'cache')[0], /EAS session expired.*building instead/);
+  });
+
+  test('a provider that TIMES OUT does not stall the loop, and the command stops holding the process open', async () => {
+    const exits = [];
+    const originalExit = process.exit;
+    process.exit = (code) => { exits.push(code); };
+    let h;
+    try {
+      h = harness({
+        loadProvider: async () => provider(),
+        resolveRemoteBuild: async () => ({ timedOut: true }),
+      });
+      await h.run();
+      await new Promise((r) => setTimeout(r, 20));
+    } finally {
+      process.exit = originalExit;
+    }
+    assert.equal(h.calls.build.length, 1);
+    assert.match(labelled(h.stderr, 'cache')[0], /did not answer within 30\.0s; building instead/);
+    assert.deepEqual(exits, [0], 'the abandoned call must not keep node alive after the app launched');
+  });
+
+  test('a provider that cannot be loaded says so ONCE and builds', async () => {
+    const h = harness({
+      loadProvider: async () => ({ unavailable: 'the EAS build cache needs the `eas-build-cache-provider` package' }),
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true);
+    assert.equal(h.calls.resolveRemoteBuild.length, 0);
+    assert.equal(h.calls.build.length, 1);
+    const lines = h.stderr.filter((l) => /provider not usable/.test(l));
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /eas-build-cache-provider/);
+  });
+
+  test('a failed upload is a note, never a failed run', async () => {
+    const h = harness({
+      loadProvider: async () => provider(),
+      uploadRemoteBuild: async () => ({ failed: '403 forbidden' }),
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true);
+    assert.equal(h.stdout.length, 1, 'stdout still carries exactly one line');
+    assert.match(labelled(h.stderr, 'cache').at(-1), /upload failed: 403 forbidden/);
+  });
+});
+
+describe('--no-build-cache', () => {
+  test('looks nothing up: not the local cache, not the provider', async () => {
+    const h = harness({
+      useBuildCache: false,
+      resolveCached: never('the local cache'),
+      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      resolveRemoteBuild: never('the provider'),
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true);
+    assert.equal(h.calls.build.length, 1, 'it builds fresh');
+    assert.equal(result.facts.cacheHit, false);
+    assert.equal(result.facts.cacheSkipped, true, 'an agent can tell "told not to look" from "found nothing"');
+    assert.match(labelled(h.stderr, 'fingerprint')[0], /miss \(--no-build-cache\)/);
+  });
+
+  // The whole reason to opt out is an entry you no longer trust. Keeping it
+  // would mean the next run trusts it again.
+  test('still STORES -- over the entry it was told not to trust -- and still uploads', async () => {
+    const h = harness({
+      useBuildCache: false,
+      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+    });
+    await h.run();
+    assert.deepEqual(h.calls.storeCached[0][3], { overwrite: true });
+    assert.equal(h.calls.uploadRemoteBuild.length, 1, '"do not trust the cache" is not "do not share my build"');
+  });
+
+  test('a default run stores without overwriting: two worktrees at the same fingerprint agree', async () => {
+    const h = harness();
+    await h.run();
+    assert.deepEqual(h.calls.storeCached[0][3], { overwrite: false });
+  });
+});
+
 // --- contracts 4, 5 and 1 --------------------------------------------------
 
 describe('Contract 4: state.json.lastBuild', () => {
@@ -488,11 +667,14 @@ describe('the pure parts', () => {
 
   test('androidFacts and lastBuildRecord fill every field of their contracts', () => {
     assert.deepEqual(androidFacts({}), {
-      platform: 'android', serial: null, fingerprint: null, cacheHit: false,
+      platform: 'android', serial: null, fingerprint: null, cacheHit: false, cacheSkipped: false,
       appPath: null, bundleId: null, launched: false, logs: null,
     });
+    // cacheHit is a LEVEL, not a boolean: 'local' | 'remote' | false.
+    assert.equal(androidFacts({ cacheHit: 'remote' }).cacheHit, 'remote');
+    assert.equal(androidFacts({ cacheHit: true }).cacheHit, false);
     const record = lastBuildRecord({ startedAt: 'now', status: 'ok' });
-    assert.deepEqual(Object.keys(record), ['platform', 'fingerprint', 'cacheKey', 'cacheHit', 'durationMs', 'appPath', 'bundleId', 'startedAt', 'status']);
+    assert.deepEqual(Object.keys(record), ['platform', 'fingerprint', 'cacheKey', 'cacheHit', 'cacheSkipped', 'durationMs', 'appPath', 'bundleId', 'startedAt', 'status']);
     assert.equal(lastBuildRecord({ startedAt: 'now', status: 'failed', errorCode: BUILD_ERROR }).errorCode, BUILD_ERROR);
   });
 

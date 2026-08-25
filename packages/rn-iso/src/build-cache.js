@@ -157,7 +157,26 @@ export function resolveBuild(platform, key, root = cacheRoot()) {
   return hit;
 }
 
-export function storeBuild(platform, key, buildPath, root = cacheRoot()) {
+// The fourth argument is the cache ROOT (a string, which is what every caller
+// passed before options existed) or an options object `{ root, overwrite }`.
+// Both forms are supported rather than one being migrated, because the string
+// form is how the tests address a temp cache and there is nothing wrong with
+// it.
+//
+// `overwrite` exists for `--no-build-cache`. Keeping an existing entry is right
+// by default -- two worktrees building the same fingerprint produce the same
+// app, and the first one there wins without a redundant copy. But it also
+// meant an entry could never be REPLACED, so a poisoned one (a build that
+// links a stale pod, a copy interrupted by something other than the staging
+// rename) survived every attempt to get rid of it short of `gc`. That is
+// exactly the situation "build it again without the cache" exists to fix, so
+// the flag that says so replaces the entry. The write is atomic either way:
+// the staging directory is renamed over the destination.
+export function storeBuild(platform, key, buildPath, rootOrOptions = {}) {
+  const options = typeof rootOrOptions === 'string' ? { root: rootOrOptions } : (rootOrOptions || {});
+  const root = options.root || cacheRoot();
+  const overwrite = Boolean(options.overwrite);
+
   if (!buildPath || !existsSync(buildPath)) {
     throw new Error(`No build to store at ${buildPath}`);
   }
@@ -165,7 +184,7 @@ export function storeBuild(platform, key, buildPath, root = cacheRoot()) {
 
   const dest = entryDir(platform, key, root);
   const existing = artifactIn(dest);
-  if (existing) return existing;
+  if (existing && !overwrite) return existing;
 
   // Stage in a sibling and rename into place: a copy interrupted halfway must
   // never be readable as a complete entry by a worktree building in parallel,
