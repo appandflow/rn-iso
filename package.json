@@ -7,6 +7,6 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "npm test --workspace rn-iso"
+    "test": "npm test --workspace rn-iso && npm test --workspace @rn-iso/expo-build-cache"
   }
 }

@@ -103,36 +103,54 @@ function artifactIn(dir) {
   return found ? path.join(dir, found) : null;
 }
 
-// Tell rn-iso this cache exists, so `gc --caches` can report and trim it. Every
-// entry is an independent directory keyed by fingerprint, hence prune: entries.
-// The entries sit two levels down -- <root>/<platform>/<key> -- so gc is told
-// that too, or it treats ios/ and android/ as the entries and one removal takes
-// a whole platform.
+// Registering makes this cache visible to `rn-iso gc --caches`, which is the
+// only thing that will ever trim it.
 //
-// rn-iso is an ES module, so this has to be a dynamic import: `require` of an
-// ESM module throws ERR_REQUIRE_ESM on Node before 20.19, which silently turned
-// registration into a no-op on every one of those versions.
-//
-// Fire and forget: this package is useful without rn-iso installed, a missing
-// peer must never break a build, and a build must never wait on the registry.
-// Registration is idempotent, so calling it on every resolve is fine.
+// The manifest is written directly rather than through rn-iso's own module, for
+// two reasons that both made the import silently do nothing:
+//   - the documented way to use the CLI is `npx rn-iso`, so it is usually not a
+//     dependency of the project and the specifier does not resolve at all
+//   - rn-iso is an ES module, so `require` of it throws ERR_REQUIRE_ESM on Node
+//     before 20.19
+// A dynamic import fixes the second and not the first. The format is a stable
+// contract, so writing it is the cheaper trade.
+function registerCache({ dir, name, prune, note }) {
+  try {
+    const home = process.env.RN_ISO_HOME || path.join(os.homedir(), '.rn-iso');
+    const file = path.join(home, 'caches.json');
+    let manifest = { version: 1, caches: [] };
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      if (Array.isArray(parsed?.caches)) manifest = { version: 1, caches: parsed.caches };
+    } catch {
+      // No manifest yet, or an unreadable one: start clean rather than fail.
+    }
+    // Keyed on the directory so repeated calls update rather than accumulate --
+    // these run on every build.
+    const others = manifest.caches.filter(c => c.dir !== dir);
+    others.push({ dir, name, prune, note, registeredBy: process.cwd() });
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ version: 1, caches: others }, null, 2));
+  } catch {
+    // A cache that cannot announce itself still works; it is just invisible.
+  }
+}
+
 let registered = false;
 function registerOnce() {
   if (registered) return;
   registered = true;
-  import('rn-iso/cache-manifest')
-    .then(({ register }) => {
-      register({
-        dir: CACHE_ROOT,
-        name: 'Expo build cache',
-        prune: 'entries',
-        entriesDepth: 2,
-        note: 'built .app/.apk keyed on the native fingerprint',
-      });
-    })
-    .catch(() => {
-      // rn-iso not installed, or too old to export the manifest. Nothing to do.
-    });
+  registerCache({
+    dir: CACHE_ROOT,
+    name: 'Expo build cache',
+    // Every entry is an independent directory keyed by fingerprint, so old ones
+    // can be trimmed individually. They sit two levels down --
+    // <root>/<platform>/<key> -- and gc has to be told, or it treats ios/ and
+    // android/ as the entries and one removal takes a whole platform.
+    prune: 'entries',
+    entriesDepth: 2,
+    note: 'built .app/.apk keyed on the native fingerprint',
+  });
 }
 
 // The hash the CLI passes is stable once .fingerprintignore excludes generated

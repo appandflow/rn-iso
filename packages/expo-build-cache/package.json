@@ -1,6 +1,6 @@
 {
   "name": "@rn-iso/expo-build-cache",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "Local Expo build cache provider: installs a cached .app/.apk instead of compiling when no native input changed.",
   "main": "index.js",
   "files": [
@@ -8,12 +8,7 @@
     "README.md"
   ],
   "license": "MIT",
-  "peerDependencies": {
-    "rn-iso": ">=0.14.0"
-  },
-  "peerDependenciesMeta": {
-    "rn-iso": {
-      "optional": true
-    }
+  "scripts": {
+    "test": "node --test test/*.test.js"
   }
 }

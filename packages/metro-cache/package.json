@@ -1,6 +1,6 @@
 {
   "name": "@rn-iso/metro-cache",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "One Metro transform cache shared by every worktree, registered with rn-iso so it can be trimmed.",
   "main": "index.js",
   "files": [
@@ -9,12 +9,6 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "metro-cache": "*",
-    "rn-iso": ">=0.14.0"
-  },
-  "peerDependenciesMeta": {
-    "rn-iso": {
-      "optional": true
-    }
+    "metro-cache": "*"
   }
 }
