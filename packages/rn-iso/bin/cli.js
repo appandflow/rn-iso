@@ -17,6 +17,8 @@ import buildCacheCommand from '../src/commands/build-cache.js';
 import initCommand from '../src/commands/init.js';
 import logsCommand from '../src/commands/logs.js';
 import startCommand from '../src/commands/start.js';
+import iosCommand from '../src/commands/ios.js';
+import androidCommand from '../src/commands/android.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 
@@ -42,6 +44,8 @@ buildCacheCommand(program);
 initCommand(program);
 logsCommand(program);
 startCommand(program);
+iosCommand(program);
+androidCommand(program);
 
 // parseAsync (not parse): several command actions (up, release, shutdown,
 // worktree) are async, and commander only awaits/propagates their errors
