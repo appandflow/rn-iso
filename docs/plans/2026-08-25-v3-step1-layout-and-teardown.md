@@ -607,6 +607,106 @@ git commit -m "fix: one cache root across the CLI and both providers, with migra
 
 ---
 
+---
+
+### Task 7: `gc --delete --all` empties the whole-or-nothing caches
+
+**Files:** `packages/rn-iso/src/commands/gc.js`, `packages/rn-iso/test/gc.test.js`
+
+**Why:** Task 5 dropped `--caches` and scoped cache reclamation to
+`--older-than`, which TRIMS entries by age. The Xcode compilation CAS is
+index-backed -- its `v4.actions` index addresses its `v9.*.leaf` data, so it can
+only be emptied whole. It is therefore now skipped by every path, and nothing
+can ever clear it. It grows unboundedly.
+
+**The verb:** `gc --delete --all` empties every cache, including the atomic
+ones. `--all` without `--delete` is a report. It reaches **caches only** and
+must never touch devices or project entries, so its blast radius is disk rather
+than live environments.
+
+**The guard `--all` makes mandatory.** `discoverCaches` returns DETECTED caches
+as well as registered ones, and the detected ones are machine-global: the Xcode
+CAS under `~/Library/Developer/Xcode/DerivedData/`, and Metro's file maps in
+`os.tmpdir()`. Neither moves with `RN_ISO_HOME`. So `--all` under a throwaway
+home would empty the real machine's caches -- structurally identical to the
+device blast radius Task 5 just fixed, aimed at disk. The same invariant
+applies:
+
+> `RN_ISO_HOME` scopes the config. Anything outside the config dir is
+> machine-global. A scoped config must never destroy machine-global state.
+
+When `RN_ISO_HOME` is set, `--all` must empty only caches that live INSIDE
+`getConfigDir()`, and report the machine-global ones as skipped with the reason.
+Reuse `deviceSweepIsScoped`'s shape; do not invent a second mechanism. As with
+that guard, no flag or env var may lift it.
+
+- [ ] **Step 1: Write the failing tests**
+
+```js
+test('--delete --all empties an index-backed cache that --older-than cannot trim', async () => {
+  // The CAS is the case that exists for: trimming by age skips it entirely.
+  const report = await collectGcReport({ all: true });
+  assert.ok(report.caches.some(c => c.prune === 'atomic' && c.willEmpty));
+});
+
+test('--all under a scoped home refuses machine-global caches', async () => {
+  process.env.RN_ISO_HOME = tmpHome;               // scoped
+  await runGc({ delete: true, all: true });
+  // A cache outside getConfigDir() must survive, and say why.
+  assert.ok(existsSync(machineGlobalCacheDir));
+});
+
+test('--all never reaches devices', async () => {
+  await runGc({ delete: true, all: true });
+  assert.strictEqual(shutdownCalls.length, 0);
+  assert.strictEqual(deleteCalls.length, 0);
+});
+```
+
+- [ ] **Step 2: Run to verify they fail.** Expect a link-time
+`SyntaxError` if an export is missing, or a failing assertion on `willEmpty`.
+
+- [ ] **Step 3: Implement**, reusing `pruneCache`'s existing `atomic` handling
+in `src/caches.js` rather than adding a second emptying path.
+
+- [ ] **Step 4: Run the tests, then the full suite.** `npm test` from the root.
+
+- [ ] **Step 5: Live-verify** per item 9, under a throwaway `RN_ISO_HOME`, and
+confirm the machine's real Xcode CAS SURVIVES -- that is the assertion that
+matters here, not that emptying works.
+
+- [ ] **Step 6: Commit**
+
+---
+
+### Task 8: Doc drift from the command removals
+
+**Why:** `CLAUDE.md` item 1 makes this mandatory, not optional: "Update
+`skill/SKILL.md` whenever user-facing behavior changes." Four commands were
+deleted (`prune`, `cache register/forget/list`) and one flag (`--caches`), and
+the docs still describe all of them.
+
+**Known sites**, from Task 5's sweep -- verify rather than trust the line
+numbers:
+
+- `packages/rn-iso/README.md` (~127, 131-132, 171-243)
+- `packages/rn-iso/skill/SKILL.md` (67, 82, 86)
+- `packages/rn-iso/skill/rn-iso-init/SKILL.md` (92, 227-252)
+- `packages/rn-iso/src/commands/guide.js` (192, 226, 250-251)
+- `packages/rn-iso/src/init.js` (209-210, the generated WORKFLOW template)
+- `packages/rn-iso/src/reclaim.js` header comment: still says "Shared by
+  `prune`, `gc`, and `worktree remove`"
+- `packages/rn-iso/src/cache-manifest.js` (~10) and
+  `packages/rn-iso/src/build-cache.js` (~123): both still say `gc --caches`
+- `packages/metro-cache/README.md`, `packages/expo-build-cache/README.md`
+- `CLAUDE.md` file-layout table: still lists `prune.js` and `cache.js`
+
+The final surface to document: `gc [--delete] [--older-than <days>] [--all]`.
+Caches are reported on every run. There is no `--caches`, no `prune`, and no
+`cache` command.
+
+---
+
 ## Out of scope for this step
 
 `start`, `stop`, `logs`, `ios`, `android`, the supervisor, the NDJSON reporter,
