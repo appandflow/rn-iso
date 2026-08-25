@@ -318,7 +318,10 @@ test('podfile pin puts the CAS outside DerivedData', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd packages/rn-iso && node --test test/init.test.js`
-Expected: FAIL, `renderGitignoreAdditions is not a function`
+Expected: FAIL at LINK time:
+`SyntaxError: The requested module '../src/init.js' does not provide an export
+named 'renderGitignoreAdditions'`. Static named imports in ESM fail when the
+graph is linked, not when the function is called.
 
 - [ ] **Step 3: Implement**
 
@@ -375,7 +378,11 @@ test('silent when both are wired', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd packages/rn-iso && node --test test/doctor.test.js`
-Expected: FAIL, `checkArtifactLayout is not a function`
+Expected: FAIL at LINK time, before any test body runs:
+`SyntaxError: The requested module '../src/doctor.js' does not provide an
+export named 'checkArtifactLayout'`. A static named import in ESM fails when
+the module graph is linked, not when the function is called, so "is not a
+function" is never the message you will see.
 
 - [ ] **Step 3: Implement**, and register the check in `runDoctor`'s findings array alongside `checkCompilationCache(podfile, xcodeMajor)`.
 
