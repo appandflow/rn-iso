@@ -291,17 +291,19 @@ change, and the inspector proxy exposes the same events through
 
 ```
 rn-iso init | doctor
-rn-iso worktree create | remove [--keep-dir]
-rn-iso start
+rn-iso worktree create | remove
+rn-iso start | stop [--delete]
 rn-iso ios | android
 rn-iso logs [--source --level --since --grep --tail --follow --errors]
 rn-iso status [--all]
 rn-iso cache [trim]
 ```
 
-Nine entry points, down from roughly fifteen in v2. Three removals are
-consolidations rather than lost capability, and each is recorded below:
-`worktree list`, the `cache` sub-verbs, and `down`.
+Twelve entry points against v2's twenty-two. Two removals are consolidations
+rather than lost capability, and both are recorded below: `worktree list`, and
+the `cache` sub-verbs. `guide` and `skill install` carry over unchanged and are
+not counted here; `config`, `build-cache` and `up` are gone, the first folded
+into settings files and the latter two into `ios`/`android`.
 
 ### `start`
 
@@ -313,8 +315,7 @@ port triggers re-reservation, as in v2. If a healthy supervisor already exists,
 `start` is a no-op exit 0. On failure to come up it exits non-zero with the
 extracted startup error and the log path — not the whole transcript.
 
-There is no `start --stop`. Teardown is `worktree remove --keep-dir`, so there
-is exactly one way to stop a supervisor.
+There is no `start --stop`: `stop` is its own command, below.
 
 ### `ios` / `android`
 
@@ -359,31 +360,41 @@ state, last build (fingerprint, cache hit or miss, duration), log paths, and
 error counts since the last build. `--all` reports every workspace on the
 machine.
 
-### `worktree remove [--keep-dir]`
+### `stop [--delete]`
 
-One teardown path, with a flag for whether the directory survives:
+The inverse of `start`, and named to say so. Bare `stop` halts the supervisor,
+shuts the owned device down, and frees the port. **It is not destructive**: the
+device survives shut down and stays assigned, so returning to the branch costs
+a boot rather than a create, a provision and a reinstall.
 
-- **`--keep-dir`** stops the supervisor, reaps the owned device through the
-  existing centralized teardown, and frees the port. The workspace stays. This
-  is how you reclaim ~1.5 GB from a branch you are not finished with, and the
-  only way to release the **main checkout**, which is not removable as a
-  worktree.
-- **bare** does all of that, then removes the git worktree.
+`--delete` additionally reaps the device through the centralized teardown in
+`src/teardown.js`.
 
-Both forms accept no path argument and default to the current workspace.
+The split exists because the name has to be honest about consequences. A verb
+that reads as the undo of `start` must not silently destroy a simulator; an
+agent reaching for `stop` to reclaim memory would not expect to lose its
+environment. This also collapses v2's `shutdown`-versus-`release` pair into one
+flag, and preserves the ability of the **main checkout** to delete its own
+device — the main checkout is not removable as a worktree, so without
+`stop --delete` its device could never be reaped by hand.
 
-**The uncommitted-changes guard applies only to the bare form.** v2 refuses
-removal on a dirty tree because removing a directory destroys work. Releasing
-an environment does not, and `src/commands/worktree.js` already records that
-`pod install` rewrites `Podfile.lock` and `project.pbxproj` "so this refusal
-fires after almost every iOS build". Inheriting the guard would make
-`--keep-dir` refuse in precisely the case it exists for: a dirty tree,
-mid-work, on a machine short of memory. `--force` likewise stays on the bare
-form only, since with `--keep-dir` there is nothing destructive to override.
+`stop` takes no path and acts on the current workspace. Being non-destructive,
+it is subject to no uncommitted-changes guard: `src/commands/worktree.js`
+records that `pod install` rewrites `Podfile.lock` and `project.pbxproj` "so
+this refusal fires after almost every iOS build", and a guard on `stop` would
+therefore refuse in precisely the case it exists for — a dirty tree, mid-work,
+on a machine short of memory.
 
-On the main checkout, the bare form refuses with a remedy naming `--keep-dir`.
-Git's own model makes this coherent: `git worktree list` reports the main
-checkout as entry zero, which is why `src/status.js` does `.slice(1)`.
+### `worktree remove`
+
+`stop --delete`, then remove the git worktree. Defaults to the current
+workspace.
+
+The uncommitted-changes guard and `--force` live here and only here, because
+this is the only command that destroys source. On the main checkout it refuses
+with a remedy naming `stop --delete`; git's own model makes that coherent,
+since `git worktree list` reports the main checkout as entry zero, which is why
+`src/status.js` does `.slice(1)`.
 
 ### `status`, and why there is no `worktree list`
 
@@ -506,7 +517,7 @@ Empty is the pass condition. Note it exits rather than streaming — principle 7
 ### Teardown
 
 ```
-$ rn-iso worktree remove --keep-dir     # env released, branch kept
+$ rn-iso stop                           # supervisor down, sim shut down, port freed
 $ rn-iso worktree remove                # done with the branch entirely
 ```
 
@@ -524,6 +535,7 @@ touches:
 | `rn-iso logs --follow` | Watching a manual reproduction in real time rather than querying after. |
 | `rn-iso cache` | Disk is filling. Reports what each cache costs and what is reclaimable. |
 | `rn-iso cache trim --older-than 14` | Reclaim without destroying the working set. Emptying costs every project on the machine its next build; trimming costs only what nothing has used. |
+| `rn-iso stop --delete` | Done with an environment on a checkout that is not a worktree, so `worktree remove` cannot reap its device. |
 | `rn-iso doctor` | After an SDK upgrade, or when builds are unexpectedly slow — it names the cause instead of leaving the agent to guess. |
 
 ### The failure paths, which are where the design earns its keep
@@ -587,7 +599,7 @@ state:
    `artifacts.js`, the mounted-volume guard, and top-level `gc`. Ships against
    the v2 command surface with no new commands, and is worth having on its own.
 2. **Supervisor and logs.** `@rn-iso/metro` reporter, the NDJSON streams,
-   `start`, `logs`, `status`, `worktree remove --keep-dir`. Bare RN in-process, Expo by child
+   `start`, `stop`, `logs`, `status`. Bare RN in-process, Expo by child
    process. This is where the agent-facing value concentrates.
 3. **`ios`.** Device provisioning folded in, fingerprint cache gate, prebuild,
    pod staleness, xcodebuild orchestration, diagnostic extraction, install and
