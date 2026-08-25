@@ -303,7 +303,7 @@ change, and the inspector proxy exposes the same events through
 ```
 rn-iso init | doctor
 rn-iso worktree create | remove
-rn-iso start | stop [--delete]
+rn-iso start | stop
 rn-iso ios | android
 rn-iso logs [--source --level --since --grep --tail --follow --errors]
 rn-iso status [--all]
@@ -371,23 +371,24 @@ state, last build (fingerprint, cache hit or miss, duration), log paths, and
 error counts since the last build. `--all` reports every workspace on the
 machine.
 
-### `stop [--delete]`
+### `stop`
 
-The inverse of `start`, and named to say so. Bare `stop` halts the supervisor,
-shuts the owned device down, and frees the port. **It is not destructive**: the
-device survives shut down and stays assigned, so returning to the branch costs
-a boot rather than a create, a provision and a reinstall.
+The inverse of `start`, and named to say so. It halts the supervisor, shuts the
+owned device down, and frees the port. **It is not destructive and takes no
+flags**: the device survives shut down and stays assigned, so returning to the
+branch costs a boot rather than a create, a provision and a reinstall.
 
-`--delete` additionally reaps the device through the centralized teardown in
-`src/teardown.js`.
+This follows from a rule the whole surface obeys:
 
-The split exists because the name has to be honest about consequences. A verb
-that reads as the undo of `start` must not silently destroy a simulator; an
-agent reaching for `stop` to reclaim memory would not expect to lose its
-environment. This also collapses v2's `shutdown`-versus-`release` pair into one
-flag, and preserves the ability of the **main checkout** to delete its own
-device — the main checkout is not removable as a worktree, so without
-`stop --delete` its device could never be reaped by hand.
+> **Destruction lives in exactly two commands — `worktree remove` and
+> `gc --delete` — and `stop` is never one of them.**
+
+`worktree remove` destroys the workspace you name; `gc --delete` sweeps the
+machine. A verb that reads as the undo of `start` must not destroy a simulator
+at all, even behind a flag: an agent reaching for `stop` to reclaim memory
+should not have a `--delete` within reach of a typo. This also collapses v2's
+`shutdown`-versus-`release` pair, with the destructive half moving to the two
+commands that own destruction rather than becoming an option here.
 
 `stop` takes no path and acts on the current workspace. Being non-destructive,
 it is subject to no uncommitted-changes guard: `src/commands/worktree.js`
@@ -398,12 +399,13 @@ on a machine short of memory.
 
 ### `worktree remove`
 
-`stop --delete`, then remove the git worktree. Defaults to the current
-workspace.
+`stop`, then reap the owned device through `src/teardown.js`, then remove the
+git worktree. Defaults to the current workspace. This is the destructive
+teardown path: it is where deleting a device lives.
 
 The uncommitted-changes guard and `--force` live here and only here, because
 this is the only command that destroys source. On the main checkout it refuses
-with a remedy naming `stop --delete`; git's own model makes that coherent,
+with a remedy naming `stop` (to release) and `gc --delete` (to reap); git's own model makes that coherent,
 since `git worktree list` reports the main checkout as entry zero, which is why
 `src/status.js` does `.slice(1)`.
 
@@ -432,7 +434,15 @@ So `gc` survives, narrowed to what is still real:
   with their sizes and age distribution.
 - **`gc --delete [--older-than <days>]`** acts. `--older-than` trims cache
   entries by age; caches that index their own data — the LLVM CAS — are
-  whole-or-nothing and say so rather than silently ignoring the flag.
+  whole-or-nothing and say so rather than silently ignoring the flag. It also
+  reaps owned devices belonging to projects untouched for `--older-than` days.
+
+That last clause closes the gap left by `stop` having no `--delete`. A checkout
+that is not a worktree cannot be `worktree remove`d, so without it the main
+checkout's simulator would be shut down but never reaped, accumulating one per
+project indefinitely. Sweeping stale devices is machine hygiene, which is
+already what `gc` is for — and it keeps destruction in two commands rather than
+three.
 
 What `gc` *loses* is the DerivedData sweep and its mounted-volume ambiguity,
 which the artifact layout made unnecessary. v2's `cache register` / `forget` /
@@ -553,7 +563,7 @@ touches:
 | `rn-iso logs --follow` | Watching a manual reproduction in real time rather than querying after. |
 | `rn-iso gc` | Disk is filling, or a machine has accumulated environments from deleted checkouts. Reports dead entries, orphaned devices and cache sizes. |
 | `rn-iso gc --delete --older-than 14` | Reclaim without destroying the working set. Emptying costs every project on the machine its next build; trimming costs only what nothing has used. |
-| `rn-iso stop --delete` | Done with an environment on a checkout that is not a worktree, so `worktree remove` cannot reap its device. |
+| `rn-iso stop` | Reclaim ~1.5 GB from a branch you are not finished with, or release the main checkout, which `worktree remove` cannot act on. |
 | `rn-iso doctor` | After an SDK upgrade, or when builds are unexpectedly slow — it names the cause instead of leaving the agent to guess. |
 
 ### The failure paths, which are where the design earns its keep
