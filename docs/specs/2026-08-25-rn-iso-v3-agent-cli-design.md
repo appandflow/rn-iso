@@ -249,29 +249,30 @@ Crucially, spawning costs nothing in log fidelity, because of the next section.
 
 ## The log pipeline
 
-**The reporter is a project-side Metro plugin, not a supervisor-side hook.**
-This is what makes structured logging work identically across both ecosystems
-and independent of who starts the server. It reuses the pattern
-`@rn-iso/metro-cache` already established:
+**Correction (2026-08-25, verified against both CLIs' source):** an earlier
+draft made the reporter a project-side `metro.config.js` plugin, on the theory
+that it would capture logs no matter who started the server. That is wrong.
+Both CLIs **discard** a config-set reporter: Expo's `instantiateMetro.ts`
+force-overrides `config.reporter` after loading the config, and RN's
+`runServer.js` assigns `metroConfig.reporter` unconditionally. A reporter wired
+into `metro.config.js` only survives when Metro is hosted programmatically.
 
-```js
-// metro.config.js — wired by `rn-iso init`
-const { sharedCacheStores, ndjsonReporter } = require('@rn-iso/metro');
-config.cacheStores = sharedCacheStores();
-config.reporter    = ndjsonReporter();
-```
+So capture follows the hosting split rather than fighting it:
 
-The package is the existing `@rn-iso/metro-cache` renamed to `@rn-iso/metro`
-and given a second export. It stays CJS for the reason recorded in `CLAUDE.md`:
-a `metro.config.js` is loaded by `require()`, and it must reach rn-iso through a
-dynamic `import()` so that a missing or old rn-iso can never break a bundler
-config.
+- **Bare RN:** the supervisor hosts Metro in-process and sets the NDJSON
+  reporter itself. Full structure — reporter events, `client_log` records via
+  `forwardClientLogs`, symbolication.
+- **Expo:** the supervisor parses its `expo start` child's stdout into NDJSON
+  records. Expo prints bundle progress and forwarded client logs to stdout, so
+  the content is there; the structure is inferred (level from the line's
+  prefix) rather than native. This is the accepted cost of shelling out, and
+  in-process hosting remains the recorded upgrade path if it proves too lossy.
 
-Both the RN and Expo CLIs force-override `metroConfig.reporter` and both handle
-`unstable_server_log`, so a single reporter implementation serves both. Because
-it lives inside Metro's config, logs are captured whether the server was
-started by v3's supervisor, by `expo start`, or by the project's own npm
-script.
+The `ndjsonReporter` implementation ships in `@rn-iso/metro` (the existing
+`@rn-iso/metro-cache` renamed, still CJS, now with a second export) so the
+supervisor and any project hosting Metro programmatically share one
+implementation. `init` does not wire it into `metro.config.js` — that would
+imply a capture path that does not exist.
 
 Three sources normalize into one timeline of `{ts, src, level, ...}` records:
 

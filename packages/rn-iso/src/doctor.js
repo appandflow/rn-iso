@@ -20,6 +20,7 @@ import {
   sharedBuildCache, sharedMetroCache,
 } from './paths.js';
 import { detectIsExpo } from './project.js';
+import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.js';
 
 // `xcodebuild -version` prints "Xcode 26.1" on its first line. Anything else --
 // no Xcode, command line tools only, a localized or future format -- is null,
@@ -146,7 +147,7 @@ export function checkCompilationCache(podfileSource, xcodeMajor) {
 // to a path the new worktree does not have and the pidfile names a supervisor
 // that is not running. Excluded but not gitignored is the other half: nothing
 // is carried, but every build offers its own DerivedData up for commit.
-const WORKSPACE_DIR = '.rn-iso';
+
 
 // gitignore and worktreeexclude are both line-oriented path lists, so the entry
 // is matched as a path and not as a substring: a commented-out line ignores

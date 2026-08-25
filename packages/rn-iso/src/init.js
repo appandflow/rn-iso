@@ -11,6 +11,7 @@
 // can be tested without touching a filesystem.
 import { homedir } from 'os';
 import { sharedCompilationCache } from './paths.js';
+import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.js';
 
 // Detected rather than assumed: the advice differs enough between an Expo app
 // and a bare one that guessing would produce a document that is wrong in the
@@ -235,7 +236,7 @@ ${WORKSPACE_DIR}/
 // bearing. Ignored but not excluded is the state in which --carry-ignored
 // clones the last workspace's build output into a fresh one; excluded but not
 // ignored means every build offers its own DerivedData up for commit.
-const WORKSPACE_DIR = '.rn-iso';
+
 
 // Appended rather than generated: .gitignore belongs to the repo, and by the
 // second week its contents are none of rn-iso's business.
