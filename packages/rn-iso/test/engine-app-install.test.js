@@ -25,6 +25,7 @@ import {
   launchIosApp,
   parseResolvedActivity,
   reverseMetroPorts,
+  writeDebugHttpHost,
 } from '../src/engine/app-install.js';
 
 // Records every runFile call as a flat argv array, and lets a test make a
@@ -190,9 +191,14 @@ describe('android: install and launch', () => {
     assert.deepEqual(exec.calls, [
       ['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8081', 'tcp:8082'],
       ['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:8082'],
+      // The debug_http_host write sits between the reverses and the launch:
+      // exact position pinned so neither mechanism can silently disappear.
+      exec.calls[2],
       ['adb', '-s', 'emulator-5554', 'shell', 'cmd', 'package', 'resolve-activity', '--brief', '-c', 'android.intent.category.LAUNCHER', 'com.example.app'],
       ['adb', '-s', 'emulator-5554', 'shell', 'am', 'start', '-n', 'com.example.app/.MainActivity'],
     ]);
+    assert.deepEqual(exec.calls[2].slice(0, 6), ['adb', '-s', 'emulator-5554', 'shell', 'run-as', 'com.example.app']);
+    assert.match(exec.calls[2].at(-1), /debug_http_host.*10\.0\.2\.2:8082/);
   });
 
   test('falls back to monkey when no launcher activity resolves', () => {
@@ -223,4 +229,32 @@ describe('android: install and launch', () => {
     const result = launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 }, { exec });
     assert.equal(result.mode, 'monkey');
   });
+});
+
+// --- debug_http_host (the react-native-worktree trick) ----------------------
+test('writeDebugHttpHost writes host:port via run-as and reports it', () => {
+  const calls = [];
+  const exec = { runFile: (cmd, args) => { calls.push([cmd, ...args]); return ''; } };
+  const r = writeDebugHttpHost({ serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082 }, { exec });
+  assert.equal(r.ok, true);
+  assert.equal(r.host, '10.0.2.2:8082');
+  const argv = calls[0];
+  assert.equal(argv[0], 'adb');
+  assert.deepEqual(argv.slice(1, 6), ['-s', 'emulator-5554', 'shell', 'run-as', 'com.x']);
+  assert.match(argv[8], /debug_http_host/);
+  assert.match(argv[8], /10\.0\.2\.2:8082/);
+});
+
+test('a failed prefs write does not fail the launch', () => {
+  const exec = {
+    runFile: (cmd, args) => {
+      if (args.includes('run-as')) { const e = new Error('run-as: package not debuggable'); throw e; }
+      return '';
+    },
+    runQuiet: () => 'com.x/.MainActivity',
+  };
+  const r = launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082 }, { exec });
+  assert.equal(r.ok, true, 'launch must proceed on the adb reverse path alone');
+  assert.equal(r.debugHttpHost, null);
+  assert.match(r.debugHttpHostNote, /relying on adb reverse/);
 });

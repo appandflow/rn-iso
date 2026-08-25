@@ -192,16 +192,46 @@ export function reverseMetroPorts({ serial, metroPort }, { exec = null } = {}) {
   return { ok: true, reversed: pairs.map(([device, host]) => `tcp:${device}->tcp:${host}`) };
 }
 
+// The Android analog of iOS's RCT_jsLocation, from react-native-worktree's
+// debug_http_host trick. PackagerConnectionSettings.kt reads the
+// "debug_http_host" key out of the app's default SharedPreferences and
+// returns it VERBATIM as host:port, ahead of every emulator-default fallback
+// (unlike the metro.host system property, which AndroidInfoHelpers uses as a
+// bare ip and then appends the BAKED dev-server port to -- it cannot carry a
+// workspace port). 10.0.2.2 is the emulator's route to the host loopback.
+//
+// Written via run-as, which works because this is always a debuggable build
+// on an owned emulator. Best-effort by design: any failure is reported and
+// launch proceeds -- the adb reverse mapping covers the 8081 path alone.
+export function writeDebugHttpHost({ serial, packageName, metroPort }, { exec = null } = {}) {
+  const e = exec || getExecutor();
+  const host = `10.0.2.2:${metroPort}`;
+  const prefs = `shared_prefs/${packageName}_preferences.xml`;
+  const script = [
+    `cd /data/data/${packageName} || exit 1`,
+    `if [ ! -f ${prefs} ]; then mkdir -p shared_prefs && printf '%s\n' "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" "<map>" "    <string name=\"debug_http_host\">${host}</string>" "</map>" > ${prefs};`,
+    `elif grep -q debug_http_host ${prefs}; then sed -i "s|<string name=\"debug_http_host\">[^<]*</string>|<string name=\"debug_http_host\">${host}</string>|" ${prefs};`,
+    `else sed -i "s|</map>|    <string name=\"debug_http_host\">${host}</string>\n</map>|" ${prefs}; fi`,
+  ].join(' ');
+  try {
+    e.runFile('adb', ['-s', serial, 'shell', 'run-as', packageName, 'sh', '-c', script]);
+    return { ok: true, host };
+  } catch (err) {
+    return { ok: false, reason: `debug_http_host not written (${describe(err)}); relying on adb reverse` };
+  }
+}
+
 export function launchAndroidApp({ serial, packageName, metroPort }, { exec = null } = {}) {
   const e = exec || getExecutor();
   const reversed = reverseMetroPorts({ serial, metroPort }, { exec: e });
   if (reversed.failed) return reversed;
+  const prefs = writeDebugHttpHost({ serial, packageName, metroPort }, { exec: e });
 
   const component = resolveLaunchActivity(serial, packageName, { exec: e });
   if (component) {
     try {
       e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component]);
-      return { ok: true, mode: 'am-start', component, reversed: reversed.reversed };
+      return { ok: true, mode: 'am-start', component, reversed: reversed.reversed, debugHttpHost: prefs.ok ? prefs.host : null, debugHttpHostNote: prefs.ok ? null : prefs.reason };
     } catch (err) {
       return { failed: true, code: LAUNCH_ERROR, reason: `am start -n ${component} failed on ${serial}: ${describe(err)}` };
     }
@@ -212,7 +242,7 @@ export function launchAndroidApp({ serial, packageName, metroPort }, { exec = nu
     // resolved, which covers apps whose manifest resolve-activity could not
     // read (a disabled-by-default alias, a package just installed).
     e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1']);
-    return { ok: true, mode: 'monkey', reversed: reversed.reversed };
+    return { ok: true, mode: 'monkey', reversed: reversed.reversed, debugHttpHost: prefs.ok ? prefs.host : null, debugHttpHostNote: prefs.ok ? null : prefs.reason };
   } catch (err) {
     return { failed: true, code: LAUNCH_ERROR, reason: `Could not launch ${packageName} on ${serial}: no launcher activity resolved and monkey failed: ${describe(err)}` };
   }
