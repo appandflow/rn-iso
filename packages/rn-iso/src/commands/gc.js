@@ -369,16 +369,33 @@ function isInsideConfigDir(dir) {
 // Annotates each cache with what --all would do to it, so the report and the
 // action agree by construction rather than by both re-deciding. Without --all
 // no cache is annotated at all, which is what keeps a bare `gc` a report.
+// Containment applies to EVERY destructive cache operation, not just --all.
+// Trimming is destructive too, and it reaches the same directories: Metro's
+// file maps are prune 'entries' living loose in os.tmpdir(), so --older-than
+// trims them by age, and os.tmpdir() does not move with RN_ISO_HOME. That hole
+// was live until this was pulled out of planCacheEmptying and applied to both
+// paths. (The Xcode CAS hid it: being index-backed, pruneCache refuses it by
+// design, so the obvious test passes vacuously.)
+function machineGlobalReason(cache) {
+  if (!cacheSweepIsScoped()) return null;
+  // A REGISTERED cache was declared into THIS config's own caches.json, so
+  // acting on it is in scope wherever it lives -- a Metro FileStore, an Expo
+  // provider's artifact directory or a relocated CAS all legitimately sit
+  // outside the config dir, and refusing them would break the case
+  // declaredCaches exists for. A scoped manifest only ever lists what that
+  // scope declared. DETECTED caches are the opposite: nobody declared them,
+  // rn-iso found them by probing machine-global locations.
+  if (cache.source === 'registered') return null;
+  if (isInsideConfigDir(cache.dir)) return null;
+  return `RN_ISO_HOME scopes this config, but ${cache.dir} is outside it and therefore machine-global`;
+}
+
 function planCacheEmptying(caches, all) {
-  if (!all) return caches;
-  const scoped = cacheSweepIsScoped();
-  return caches.map(c => {
-    if (scoped && !isInsideConfigDir(c.dir)) {
-      return {
-        ...c,
-        willEmpty: false,
-        emptySkipped: `RN_ISO_HOME scopes this config, but ${c.dir} is outside it and therefore machine-global`,
-      };
+  const annotated = caches.map(c => ({ ...c, machineGlobal: machineGlobalReason(c) }));
+  if (!all) return annotated;
+  return annotated.map(c => {
+    if (c.machineGlobal) {
+      return { ...c, willEmpty: false, emptySkipped: c.machineGlobal };
     }
     if (!ownsItsDirectory(c)) {
       return { ...c, willEmpty: false, emptySkipped: `${c.dir} is not a directory this cache owns` };
@@ -683,6 +700,10 @@ export async function runGc(opts = {}) {
 
   let cacheBytes = 0;
   for (const c of caches) {
+    if (c.machineGlobal) {
+      console.log(chalk.yellow(`Left ${c.name} alone: ${c.machineGlobal}`));
+      continue;
+    }
     const r = pruneCache(c, { olderThanDays: olderThan });
     if (r.skipped) {
       console.log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));

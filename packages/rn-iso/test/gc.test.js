@@ -567,8 +567,9 @@ test('a config scoped by RN_ISO_HOME never sweeps machine-global devices', async
   assert.equal(execCalls.some(c => c.startsWith('xcrun simctl delete')), false, 'no device may be deleted');
 });
 
-// The guard is scoped to DEVICES only: everything else gc does is
-// config-scoped by nature and stays fully functional under RN_ISO_HOME.
+// The guard spares DEVICES and machine-global CACHES. Dead-entry pruning is
+// genuinely config-scoped -- the entries live in the config being read -- so it
+// stays fully functional under RN_ISO_HOME.
 test('the RN_ISO_HOME guard does not disable dead-entry pruning', async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');
   saveConfig({ version: 2, projects: { [localDeadPath]: { metroPort: 8100 } }, repos: {} });
@@ -800,6 +801,31 @@ test('--delete --all under a scoped home refuses machine-global caches', async (
 
   assert.ok(existsSync(leaf), 'a machine-global cache must survive a scoped --all');
   assert.match(output, /RN_ISO_HOME/, 'the refusal must be reported with its reason, not silent');
+});
+
+// The SAME hole, one flag over. --older-than trims rather than empties, but
+// trimming is destructive too and reaches the identical machine-global
+// directories. Metro's file maps are the case that proves it: prune 'entries'
+// (so pruneCache WILL trim them by age, unlike the index-backed CAS) living
+// loose in os.tmpdir(), which does not move with RN_ISO_HOME.
+//
+// This test must use a trimmable cache. Pointing it at the Xcode CAS passes
+// vacuously -- the CAS survives because pruneCache refuses atomic caches by
+// design, not because any guard stopped it.
+test('--delete --older-than under a scoped home refuses machine-global caches', async () => {
+  // TMPDIR is redirected to fakeHome, which is OUTSIDE getConfigDir() (tmpHome)
+  // -- the same relationship the real os.tmpdir() has to the real ~/.rn-iso.
+  const map = join(fakeHome, 'metro-file-map-abc123');
+  writeFileSync(map, 'x'.repeat(1000));
+  const old = new Date(Date.now() - 400 * DAY_MS);
+  utimesSync(map, old, old);
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+
+  const output = await captureLog(() => cli(['--delete', '--older-than', '30']));
+
+  assert.ok(existsSync(map), 'a machine-global cache must survive a scoped --older-than trim');
+  assert.match(output, /machine-global/, 'the refusal must be reported with its reason, not silent');
 });
 
 // --all's blast radius is disk, never live environments. The device sweep is
