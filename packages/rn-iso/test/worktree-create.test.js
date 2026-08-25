@@ -236,3 +236,80 @@ test('create action: accepts --base head and --base fresh', async () => {
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+// --- action-level tests: a leftover branch must not silently void --base ----
+//
+// `git worktree add` attaches to an existing `worktree-<name>` branch and the
+// base ref means nothing on that path. A create/remove/create cycle leaves that
+// branch behind, so `--base <sha>` printed one dim line and handed back a
+// worktree at the STALE tip -- the flag reading as accepted and doing nothing.
+// Two facts cannot both be honoured here, so rn-iso refuses rather than picking.
+test('create action: refuses when a leftover branch would void an explicit --base', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-stale-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    git('git branch worktree-feat-stale');            // the leftover, at the old tip
+    writeFileSync(join(repo, 'NEW'), 'new');
+    git('git add NEW');
+    git('git commit -q -m second');
+    const newSha = git('git rev-parse HEAD').trim();
+
+    const { logs, errs } = await runCreateInRepo(repo, 'feat-stale', { base: newSha });
+
+    assert.deepEqual(logs, [], 'nothing on stdout: no worktree was produced');
+    assert.equal(process.exitCode, 1);
+    assert.equal(existsSync(join(defaultWorktreeDir(repo), 'feat-stale')), false);
+    const text = errs.join('\n');
+    assert.match(text, /worktree-feat-stale/);
+    assert.match(text, /branch -D worktree-feat-stale/, 'remedy: delete the leftover branch');
+    assert.match(text, /create <other-name>|different name/i, 'remedy: a new name');
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: a leftover branch already AT the base is attached to, not refused', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-samesha-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    git('git branch worktree-feat-same');
+    const headSha = git('git rev-parse HEAD').trim();
+
+    const { logs, errs } = await runCreateInRepo(repo, 'feat-same', { base: headSha });
+
+    assert.deepEqual(logs, [join(defaultWorktreeDir(repo), 'feat-same')]);
+    assert.notEqual(process.exitCode, 1);
+    assert.ok(errs.some(e => /Attached to the existing branch worktree-feat-same/.test(String(e))));
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// No --base means nothing was promised about the base, so attaching to whatever
+// the branch already is stays exactly as it was.
+test('create action: with no --base a leftover branch is still attached to', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-nobase-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    git('git branch worktree-feat-quiet');
+    writeFileSync(join(repo, 'NEW'), 'new');
+    git('git add NEW');
+    git('git commit -q -m second');
+
+    const { logs } = await runCreateInRepo(repo, 'feat-quiet', {});
+
+    assert.deepEqual(logs, [join(defaultWorktreeDir(repo), 'feat-quiet')]);
+    assert.notEqual(process.exitCode, 1);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});

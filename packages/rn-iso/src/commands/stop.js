@@ -34,6 +34,7 @@ import {
   resolveProjectMetro,
 } from '../metro.js';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
+import { getExecutor } from '../exec.js';
 
 const DEFAULT_WAIT_MS = 10_000;
 const POLL_MS = 100;
@@ -251,6 +252,7 @@ export async function runStop({
   findListener = findPidListeningOnPort,
   teardownIos = teardownOwnedIosSim,
   teardownAvd = teardownOwnedAvd,
+  simHolders = defaultSimHolders,
   freePort = defaultFreePort,
   clearRegistration = defaultClearRegistration,
   clearState = clearSupervisorState,
@@ -330,7 +332,7 @@ export async function runStop({
   if (stillHolding) {
     report(chalk.dim('device: left alone (something is still running)'));
   } else {
-    outcomes.device = shutDownDevices(proj, { teardownIos, teardownAvd, report });
+    outcomes.device = shutDownDevices(proj, { teardownIos, teardownAvd, simHolders, report });
     if (outcomes.device.ios?.status === 'failed' || outcomes.device.android?.status === 'failed') ok = false;
   }
 
@@ -450,10 +452,70 @@ async function stopMetro(port, root, { force, resolveMetro, killMetro, findListe
   return { status: 'forced', port, pid };
 }
 
+// --- who is holding an occupied sim ----------------------------------------
+//
+// teardownOwnedIosSim spares a sim something else is attached to (CLAUDE.md
+// item 4), and reported that as "in use by another process (occupied)": true,
+// and a dead end. The reader is left with a device that did not shut down and
+// no way to find out why without knowing about `simctl spawn ... launchctl
+// list` themselves.
+//
+// Naming it is cheap, because anything that attaches to a simulator has to
+// name the udid to do it -- an `xcodebuild test-without-building -destination
+// id=<udid>`, a device-automation tool, a stray `simctl` -- so the udid is on
+// the holder's own command line. When nothing can be named (a holder that
+// never took the udid as an argument, or a `ps` that could not run at all --
+// isSimOccupied also fails CLOSED, so "occupied" does not prove a holder
+// exists), the generic hint is still better than nothing: it is very nearly
+// always one of two things.
+const OCCUPANCY_HINT = 'often a UI-test runner or device tool still attached';
+
+// PURE. `ps` output -> the processes naming this udid, as "name (pid N)".
+//
+// rn-iso's own processes are dropped: this workspace's device-log collector is
+// a `simctl log stream <udid>`, i.e. a guaranteed match, and it is reaped in
+// step 2 of this very command -- naming it would send the reader after a
+// process that is already exiting, and away from the one that is not.
+export function parseSimHolders(psOutput, udid, { ignorePids = [process.pid], limit = 3 } = {}) {
+  if (typeof psOutput !== 'string' || !udid) return [];
+  const holders = [];
+  const seen = new Set();
+  for (const line of psOutput.split('\n')) {
+    if (!line.includes(udid)) continue;
+    const m = line.trim().match(/^(\d+)\s+(\S+)(.*)$/);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    if (ignorePids.includes(pid) || seen.has(pid)) continue;
+    const args = `${m[2]}${m[3]}`;
+    if (/(?:^|\/)rn-iso(?:\s|$)|collector\/run\.js/.test(args)) continue;
+    seen.add(pid);
+    holders.push(`${m[2].split('/').pop()} (pid ${pid})`);
+    if (holders.length >= limit) break;
+  }
+  return holders;
+}
+
+function defaultSimHolders(udid) {
+  // `ps` over every process rather than lsof over the device directory: lsof on
+  // a CoreSimulator device path returns the daemons that always hold it
+  // (launchd_sim, CoreSimulatorBridge), which name the sim rather than the
+  // holder. A command line carrying the udid is the thing that is actually
+  // specific to "someone else drove THIS device".
+  return parseSimHolders(getExecutor().runQuiet('ps -Ao pid=,args='), udid);
+}
+
+// PURE. The occupied skip, with whoever can be named appended to it.
+export function occupiedSkipReason(reason, holders) {
+  const named = (holders || []).filter(Boolean);
+  return named.length
+    ? `${reason} -- held by ${named.join(', ')}`
+    : `${reason} -- ${OCCUPANCY_HINT}`;
+}
+
 // Owned devices only, and always with del:false. `stop` shutting a device down
 // rather than deleting it is what makes returning to a branch cost a boot
 // instead of a create, a provision and a reinstall.
-function shutDownDevices(project, { teardownIos, teardownAvd, report }) {
+function shutDownDevices(project, { teardownIos, teardownAvd, simHolders, report }) {
   const device = { ios: null, android: null };
 
   const ios = project?.platforms?.ios;
@@ -462,7 +524,15 @@ function shutDownDevices(project, { teardownIos, teardownAvd, report }) {
       device.ios = { status: 'skipped', kind: 'not-owned', label: ios.deviceUdid, reason: 'rn-iso does not own this device' };
       report(chalk.dim(`ios: ${ios.deviceUdid} is not rn-iso-owned, leaving it running`));
     } else {
-      device.ios = reportDevice('ios', ios.deviceUdid, teardownIos(ios.deviceUdid, { del: false, label: ios.deviceName }), report);
+      device.ios = reportDevice(
+        'ios',
+        ios.deviceUdid,
+        teardownIos(ios.deviceUdid, { del: false, label: ios.deviceName }),
+        report,
+        // Only paid for when the sim was actually spared: the whole point of
+        // the occupancy check is that it almost never fires.
+        () => simHolders(ios.deviceUdid)
+      );
     }
   }
 
@@ -472,6 +542,8 @@ function shutDownDevices(project, { teardownIos, teardownAvd, report }) {
       device.android = { status: 'skipped', kind: 'not-owned', label: android.avdName, reason: 'rn-iso does not own this device' };
       report(chalk.dim(`android: ${android.avdName} is not rn-iso-owned, leaving it running`));
     } else {
+      // Android has no occupancy probe, so there is no occupied skip to
+      // explain -- see teardownOwnedAvd.
       device.android = reportDevice('android', android.avdName, teardownAvd(android.avdName, { del: false }), report);
     }
   }
@@ -479,7 +551,7 @@ function shutDownDevices(project, { teardownIos, teardownAvd, report }) {
   return device;
 }
 
-function reportDevice(platform, label, r, report) {
+function reportDevice(platform, label, r, report, holders = null) {
   if (r.status === 'torn-down') {
     report(chalk.green(`${platform}: shut down ${r.label ?? label}`));
     return { status: 'shut-down', label: r.label ?? label };
@@ -489,8 +561,9 @@ function reportDevice(platform, label, r, report) {
     return { status: 'missing', label };
   }
   if (r.status === 'skipped') {
-    report(chalk.yellow(`${platform}: skipped ${label}: ${r.reason}`));
-    return { status: 'skipped', kind: r.kind ?? null, label, reason: r.reason };
+    const reason = r.kind === 'occupied' && holders ? occupiedSkipReason(r.reason, holders()) : r.reason;
+    report(chalk.yellow(`${platform}: skipped ${label}: ${reason}`));
+    return { status: 'skipped', kind: r.kind ?? null, label, reason };
   }
   report(chalk.red(`${platform}: failed to shut down ${label}: ${r.reason}`));
   return { status: 'failed', label, reason: r.reason };

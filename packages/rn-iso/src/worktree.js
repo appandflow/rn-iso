@@ -244,8 +244,43 @@ export function hasUncommittedWork(dir) {
 export function dirtyPaths(dir, { limit = 10 } = {}) {
   const out = getExecutor().runQuiet(`git -C "${dir}" status --porcelain`);
   if (out === null) return [];
-  const lines = out.split('\n').map(l => l.trimEnd()).filter(Boolean);
+  const lines = out.split('\n').map(l => normalizePorcelainLine(l.trimEnd())).filter(Boolean);
   return lines.slice(0, limit);
+}
+
+// The executor trims the WHOLE command output (src/exec.js), which eats the
+// leading space of a first line whose status is unstaged-only: git's ` M
+// ios/Podfile.lock` arrives as `M ios/Podfile.lock`, one column short. Every
+// consumer of these lines slices a fixed two-character status field
+// (porcelainPath, isPodInstallChurn, the `??` test in removalRemedy), so the
+// damaged line silently mis-parsed -- `porcelainPath` returned `s/Podfile.lock`
+// for it, and the workspace-artifact and self-healed-gitignore filters could
+// never match the first line of a listing. Re-shape it here, once, rather than
+// teach every consumer about it.
+//
+// A well-formed porcelain line always has a space in column three; a damaged
+// one has the first character of the path there, and cannot itself start with a
+// space (it was trimmed). So the test is exact, not a guess.
+function normalizePorcelainLine(line) {
+  if (line === '' || line[2] === ' ') return line;
+  return ` ${line}`;
+}
+
+// The UNSTAGED diff of one path -- worktree against index, which is exactly the
+// change `git checkout -- <file>` would undo. Null when git could not answer,
+// which callers must read as "no idea", never as "no change".
+//
+// The path is interpolated into a shell command, so it is only ever passed one
+// the caller has already constrained (see SAFE_DIFF_PATH in commands/worktree.js);
+// `--` keeps a leading dash from being read as an option either way.
+export function unstagedDiff(dir, file) {
+  return getExecutor().runQuiet(`git -C "${dir}" diff -- "${file}"`);
+}
+
+// Restores one path from the index. False when git refused or could not run,
+// so a caller can say so rather than assume the file is back.
+export function restoreFile(dir, file) {
+  return getExecutor().runQuiet(`git -C "${dir}" checkout -- "${file}"`) !== null;
 }
 
 // Whether the dirty set is only the files a `pod install` rewrites. That is the

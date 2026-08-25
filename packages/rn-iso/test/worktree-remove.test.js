@@ -1,9 +1,21 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { excludeWorkspaceArtifacts, porcelainPath, removalBlockers, registerRemove, removalRemedy, workspaceArtifactPaths } from '../src/commands/worktree.js';
+import {
+  addsOnlyWorkspaceIgnoreBlock,
+  excludeSelfHealedIgnores,
+  excludeWorkspaceArtifacts,
+  matchWorktreeEntry,
+  porcelainPath,
+  removalBlockers,
+  registerRemove,
+  removalRemedy,
+  workspaceArtifactPaths,
+} from '../src/commands/worktree.js';
+import { renderWorkspaceIgnoreBlock } from '../src/engine/workspace.js';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { upsertProject, getProject } from '../src/config.js';
 
@@ -108,6 +120,16 @@ test('the remedy names the worktree when it is given one', () => {
   assert.match(removalRemedy(['?? x'], { worktree: '/tmp/wt' }).join('\n'), /git -C \/tmp\/wt clean -fd/);
 });
 
+// A remedy is a command to run, so it carries the paths it is about rather than
+// a `<path>...` the reader has to fill in from the listing above it.
+test('the remedy carries the paths themselves, capped, quoting what needs it', () => {
+  assert.match(removalRemedy([' M src/app.js', '?? scratch.txt'], { worktree: '/tmp/wt' }).join('\n'), /checkout -- src\/app\.js/);
+  assert.match(removalRemedy(['?? "we ird.txt"'], { worktree: '/tmp/wt' }).join('\n'), /clean -fd "we ird\.txt"/);
+  const many = removalRemedy([' M a', ' M b', ' M c', ' M d', ' M e', ' M f'], { worktree: '/tmp/wt' }).join('\n');
+  assert.match(many, /checkout -- a b c d e \.\.\./);
+  assert.ok(!many.includes('<path>'));
+});
+
 // --- action-level tests -----------------------------------------------
 //
 // The pure removalBlockers tests above cover the refusal *decision*, but not
@@ -159,7 +181,7 @@ function porcelain(entries) {
 // `occupied` maps udid -> true to simulate a foreign .xctrunner UI-test
 // runner still attached (isSimOccupied's `xcrun simctl spawn <udid>
 // launchctl list` probe -- see parseOccupyingApps in src/sim/ios.js).
-function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees = '', simctlList = '{"devices":{}}', occupied = {} } = {}) {
+function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees = '', simctlList = '{"devices":{}}', occupied = {}, diffs = {} } = {}) {
   const runCalls = [];
   const runQuietCalls = [];
   const exec = {
@@ -176,6 +198,9 @@ function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees 
     runQuiet(cmd) {
       runQuietCalls.push(cmd);
       if (/status --porcelain/.test(cmd)) return dirty;
+      const diffMatch = cmd.match(/ diff -- "(.+)"$/);
+      if (diffMatch) return diffs[diffMatch[1]] ?? '';
+      if (/ checkout -- /.test(cmd)) return '';
       if (/log --oneline HEAD --not --remotes/.test(cmd)) return unpushed;
       if (/worktree list --porcelain/.test(cmd)) return worktrees;
       if (/remote$/.test(cmd)) return remote;
@@ -542,4 +567,296 @@ test('action: a dirty path escaping the worktree is never removed', async () => 
   await run(wtDir, {});
 
   assert.equal(existsSync(outside), true, 'nothing outside the worktree is touched');
+});
+
+// --- item 1: rn-iso's own gitignore self-heal must not dead-end teardown ----
+//
+// `start` appends the `.rn-iso/` block to a TRACKED .gitignore (that is the
+// self-heal that replaced `init`), which shows up as ` M apps/x/.gitignore` and
+// refused the teardown -- the same class of dead end as `?? .rn-iso/`, one file
+// over: the loop's own write blocking the loop's own exit. It is only ignorable
+// when the diff is EXACTLY that block and nothing else, so the fixtures below
+// are built from renderWorkspaceIgnoreBlock rather than retyped.
+
+function ignoreDiff({ file = 'apps/x/.gitignore', added = [], removed = [], context = ['node_modules/'] } = {}) {
+  return [
+    `diff --git a/${file} b/${file}`,
+    'index c2658d7..2986a0a 100644',
+    `--- a/${file}`,
+    `+++ b/${file}`,
+    '@@ -1 +1,6 @@',
+    ...context.map(l => ` ${l}`),
+    ...removed.map(l => `-${l}`),
+    ...added.map(l => `+${l}`),
+    '',
+  ].join('\n');
+}
+
+// The exact lines ensureWorkspaceIgnored appends, blank separator included.
+function ourBlockLines() {
+  return ['', ...renderWorkspaceIgnoreBlock().split('\n').filter(l => l !== '')];
+}
+
+test('a .gitignore diff that adds only rn-iso own block is recognized as ours', () => {
+  assert.equal(addsOnlyWorkspaceIgnoreBlock(ignoreDiff({ added: ourBlockLines() })), true);
+});
+
+test('one user line beside our block is not ours', () => {
+  const added = [...ourBlockLines(), '.env.local'];
+  assert.equal(addsOnlyWorkspaceIgnoreBlock(ignoreDiff({ added })), false);
+});
+
+test('a removed line is never ours, whatever was added', () => {
+  const diff = ignoreDiff({ added: ourBlockLines(), removed: ['node_modules/'], context: [] });
+  assert.equal(addsOnlyWorkspaceIgnoreBlock(diff), false);
+});
+
+test('an empty, missing or entry-less diff is not ours', () => {
+  assert.equal(addsOnlyWorkspaceIgnoreBlock(''), false);
+  assert.equal(addsOnlyWorkspaceIgnoreBlock(null), false);
+  assert.equal(
+    addsOnlyWorkspaceIgnoreBlock(ignoreDiff({ added: ['# rn-iso: this workspace\'s build output, logs and supervisor pidfile.'] })),
+    false,
+    'the comment alone, without the entry itself, is not the block'
+  );
+});
+
+test('excludeSelfHealedIgnores drops only an unstaged .gitignore whose diff is ours', () => {
+  const ours = ignoreDiff({ added: ourBlockLines() });
+  const seen = [];
+  const diff = (file) => { seen.push(file); return ours; };
+
+  const clean = excludeSelfHealedIgnores([' M apps/x/.gitignore'], { diff });
+  assert.deepEqual(clean.lines, []);
+  assert.deepEqual(clean.healed, ['apps/x/.gitignore']);
+  assert.deepEqual(seen, ['apps/x/.gitignore']);
+
+  // A STAGED change to the same file is a different thing: `git checkout --`
+  // would not clear it and git would refuse anyway. Fail closed.
+  assert.deepEqual(
+    excludeSelfHealedIgnores(['M  apps/x/.gitignore'], { diff }).lines,
+    ['M  apps/x/.gitignore']
+  );
+  assert.deepEqual(
+    excludeSelfHealedIgnores([' M src/app.js'], { diff }).lines,
+    [' M src/app.js'],
+    'a file that is not a .gitignore is never asked about'
+  );
+});
+
+test('action: a worktree dirty only with rn-iso own gitignore append removes, restoring the file first', async () => {
+  upsertProject(wtDir, { metroPort: 8096 });
+  const exec = makeExecutor({
+    dirty: ' M apps/x/.gitignore\n',
+    diffs: { 'apps/x/.gitignore': ignoreDiff({ added: ourBlockLines() }) },
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  });
+  setExecutor(exec);
+
+  const errs = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  assert.notEqual(process.exitCode, 1);
+  assert.ok(exec.calls.run.some(c => /worktree remove/.test(c)), 'the worktree is actually removed');
+  assert.ok(!exec.calls.run.some(c => /worktree remove --force/.test(c)), 'and not by forcing');
+  // git runs its OWN cleanliness check, so the file has to be back before it
+  // looks -- proven against real git in the integration test below.
+  const restore = exec.calls.runQuiet.findIndex(c => /checkout -- "apps\/x\/\.gitignore"/.test(c));
+  assert.ok(restore >= 0, 'the file is restored');
+  assert.match(errs.join('\n'), /restoring apps\/x\/\.gitignore \(only rn-iso's own entry was added\)/);
+});
+
+test('action: our block plus a user line still refuses', async () => {
+  upsertProject(wtDir, { metroPort: 8097 });
+  const exec = makeExecutor({
+    dirty: ' M apps/x/.gitignore\n',
+    diffs: { 'apps/x/.gitignore': ignoreDiff({ added: [...ourBlockLines(), '.env.local'] }) },
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  });
+  setExecutor(exec);
+
+  const errs = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  assert.equal(process.exitCode, 1);
+  assert.ok(!exec.calls.run.some(c => /worktree remove/.test(c)));
+  assert.match(errs.join('\n'), /apps\/x\/\.gitignore/, 'and the file is named in the listing');
+});
+
+test('action: a removed line in the .gitignore still refuses', async () => {
+  upsertProject(wtDir, { metroPort: 8098 });
+  const exec = makeExecutor({
+    dirty: ' M apps/x/.gitignore\n',
+    diffs: {
+      'apps/x/.gitignore': ignoreDiff({ added: ourBlockLines(), removed: ['node_modules/'], context: [] }),
+    },
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  assert.equal(process.exitCode, 1);
+  assert.ok(!exec.calls.run.some(c => /worktree remove/.test(c)));
+});
+
+// --- item 2: the default path, the remedy placeholders, the dead reference --
+
+test('matchWorktreeEntry walks up to the enclosing worktree root', () => {
+  const entries = [{ path: '/repo' }, { path: '/repo-worktrees/feat-x' }];
+  assert.deepEqual(matchWorktreeEntry(entries, '/repo-worktrees/feat-x'), { index: 1, path: '/repo-worktrees/feat-x' });
+  assert.deepEqual(matchWorktreeEntry(entries, '/repo-worktrees/feat-x/apps/mobile'), { index: 1, path: '/repo-worktrees/feat-x' });
+  assert.deepEqual(matchWorktreeEntry(entries, '/repo/apps/mobile'), { index: 0, path: '/repo' }, 'the main checkout is still entry zero');
+  assert.equal(matchWorktreeEntry(entries, '/repo-worktrees/feat-xy'), null, 'a prefix match is not a segment match');
+  assert.equal(matchWorktreeEntry(entries, '/elsewhere'), null);
+  assert.equal(matchWorktreeEntry([], '/repo'), null);
+});
+
+test('action: run from a monorepo app dir, it removes the enclosing worktree', async () => {
+  const nestedDir = join(wtDir, 'apps', 'mobile');
+  mkdirSync(nestedDir, { recursive: true });
+  upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
+  upsertProject(nestedDir, { metroPort: 8099 });
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(nestedDir, {});
+
+  assert.notEqual(process.exitCode, 1);
+  assert.ok(exec.calls.run.some(c => c.includes(`worktree remove "${wtDir}"`)), 'git is asked for the ROOT, not the app dir');
+  assert.equal(getProject(wtDir), null);
+  assert.equal(getProject(nestedDir), null);
+});
+
+test('action: a path inside no worktree at all is still refused, pointing at git worktree list', async () => {
+  const exec = makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) });
+  setExecutor(exec);
+
+  const errs = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  assert.equal(process.exitCode, 1);
+  assert.ok(!exec.calls.run.some(c => /worktree remove/.test(c)));
+  const text = errs.join('\n');
+  assert.match(text, /git worktree list/);
+  assert.ok(!/rn-iso worktree list/.test(text), 'there is no `rn-iso worktree list` to point at');
+});
+
+test('action: the dirty-tree remedy names the real worktree, not a placeholder', async () => {
+  upsertProject(wtDir, { metroPort: 8100 });
+  setExecutor(makeExecutor({
+    dirty: ' M src/app.js\n?? scratch.txt\n',
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  }));
+
+  const errs = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  assert.equal(process.exitCode, 1);
+  const text = errs.join('\n');
+  assert.ok(!text.includes('<worktree>'), `placeholder left in: ${text}`);
+  assert.ok(!text.includes('git -C <path>'), `placeholder left in: ${text}`);
+  assert.match(text, new RegExp(`git -C ${wtDir} checkout --`));
+  assert.match(text, new RegExp(`git -C ${wtDir} clean -fd`));
+});
+
+// --- against real git (CLAUDE.md item 9) -------------------------------------
+//
+// Everything above runs on a mocked executor, which can prove we composed a
+// git-shaped command but not that git accepts it -- and this change turns on
+// two things only real git can settle: the exact shape of `git diff` for an
+// appended block, and that `git worktree remove` still refuses over the
+// modified .gitignore unless it is restored first (it does; that is why the
+// verdict is paired with a restore rather than left to die with the directory).
+test('against a real repo: removal from a monorepo app dir, dirty only with rn-iso own gitignore append', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-live-')));
+  const repo = join(base, 'repo');
+  const originalCwd = process.cwd();
+  const errs = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  try {
+    const bareRemote = join(base, 'remote.git');
+    mkdirSync(bareRemote, { recursive: true });
+    execSync(`git init -q --bare "${bareRemote}"`);
+    mkdirSync(join(repo, 'apps', 'x'), { recursive: true });
+    const git = (cmd) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    git(`git remote add origin "${bareRemote}"`);
+    writeFileSync(join(repo, 'apps', 'x', '.gitignore'), 'node_modules/\n');
+    git('git add -A');
+    git('git commit -q -m init');
+    // Without a remote every commit counts as unpushed and the removal is
+    // refused for a reason that has nothing to do with this test.
+    git('git push -q -u origin HEAD');
+    const wt = join(base, 'wt');
+    git(`git worktree add -q "${wt}" -b feat-live`);
+
+    // Exactly what `start` does, through the real writer: the workspace
+    // directory, and the gitignore entry that hides it.
+    const gitignore = join(wt, 'apps', 'x', '.gitignore');
+    writeFileSync(gitignore, `${readFileSync(gitignore, 'utf-8')}\n${renderWorkspaceIgnoreBlock()}`);
+    mkdirSync(join(wt, 'apps', 'x', '.rn-iso', 'logs'), { recursive: true });
+    writeFileSync(join(wt, 'apps', 'x', '.rn-iso', 'state.json'), '{}');
+    assert.equal(
+      execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim(),
+      'M apps/x/.gitignore',
+      'sanity: real git reports only the self-heal -- .rn-iso/ is hidden by the entry it just added'
+    );
+
+    // ...and the removal is run from the app dir, the way an agent does.
+    process.chdir(join(wt, 'apps', 'x'));
+    console.error = (m) => errs.push(String(m));
+    console.log = () => {};
+    const run = captureAction(registerRemove);
+    await run(undefined, {});
+    console.error = originalError;
+    console.log = originalLog;
+    process.chdir(originalCwd);
+
+    assert.notEqual(process.exitCode, 1, `refused: ${errs.join('\n')}`);
+    assert.equal(existsSync(wt), false, 'real git actually removed the worktree');
+    assert.match(errs.join('\n'), /restoring apps\/x\/\.gitignore/);
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+    process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
 });

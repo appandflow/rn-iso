@@ -434,3 +434,52 @@ describe('unverifiedLaunchLines', () => {
     assert.match(text, /DEVELOPMENT SERVERS/);
   });
 });
+
+// Field-proven on a fresh simulator: the iOS 26 "Open in <app>?" alert fires on
+// EVERY first launch, and the only imperative this block used to carry was
+// "retry the deep link" -- which re-raises the same alert forever. The action
+// that actually works (confirm the alert) appeared as a CAUSE, three lines up
+// from the command an agent would run. Order is the fix.
+describe('unverifiedLaunchLines: the action comes first', () => {
+  function iosLines() {
+    return unverifiedLaunchLines({
+      platform: 'ios',
+      metroPort: 8082,
+      waitedMs: 20000,
+      bundleId: 'io.tlon.groups',
+      udid: 'BF2A1C3D',
+      devClientUrl: devClientUrl('io.tlon.groups', 8082),
+    });
+  }
+
+  test('confirming the alert is step one, the picker is next, the retry is last', () => {
+    const lines = iosLines();
+    const alert = lines.findIndex(l => /confirm it with your device tool/.test(l));
+    const picker = lines.findIndex(l => /DEVELOPMENT SERVERS/.test(l));
+    const retry = lines.findIndex(l => /simctl openurl/.test(l));
+    assert.ok(alert !== -1 && picker !== -1 && retry !== -1, lines.join('\n'));
+    assert.ok(alert < picker, 'the alert action precedes the picker case');
+    assert.ok(picker < retry, 'and the deep-link retry is last');
+    assert.match(lines[alert], /every first launch/, 'it is not presented as an edge case');
+  });
+
+  test('the retry is conditioned on there being no alert, so it cannot loop', () => {
+    const retry = iosLines().find(l => /simctl openurl/.test(l));
+    assert.match(retry, /only if no alert is showing/i);
+  });
+
+  test('the picker line still carries THIS workspace port, from the facts', () => {
+    const picker = iosLines().find(l => /DEVELOPMENT SERVERS/.test(l));
+    assert.match(picker, /localhost:8082/);
+    assert.match(picker, /NOT another workspace/);
+  });
+
+  test('android has no such alert, so it leads with the picker', () => {
+    const lines = unverifiedLaunchLines({ platform: 'android', metroPort: 8082, bundleId: 'com.x', serial: 'emulator-5584' });
+    const picker = lines.findIndex(l => /DEVELOPMENT SERVERS/.test(l));
+    const relaunch = lines.findIndex(l => /monkey -p com\.x/.test(l));
+    assert.ok(picker !== -1 && relaunch !== -1);
+    assert.ok(picker < relaunch);
+    assert.ok(!lines.some(l => /Open in <app>/.test(l)), 'the iOS 26 alert is not an android case');
+  });
+});

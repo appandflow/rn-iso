@@ -51,9 +51,12 @@ other line goes to stderr, so it is always safe to pipe.
   bundleId        the iOS bundle id that was launched
   launched        true, or "unverified" when no bundle request from this app
                   reached this workspace's Metro within ~20s of the launch
-                  (a dev-client server picker awaiting a tap, or an iOS
-                  confirmation alert gating simctl openurl). The warning on
-                  stderr names the exact openurl command to retry.
+                  (an iOS 26 confirmation alert gating simctl openurl -- it
+                  appears on EVERY first launch on a fresh sim -- or a
+                  dev-client server picker awaiting a tap). The warning on
+                  stderr is a numbered list in the order that clears it:
+                  confirm the alert first, then the picker, and only with no
+                  alert showing, the openurl retry it prints.
   metroPort       the port the app was wired to
   logs            { dir }
   durationMs      wall time for the whole run
@@ -401,6 +404,19 @@ not on any remote"  (worktree remove)
   the paths the refusal actually named.
   Use --force only when you genuinely intend to discard work; it deletes
   uncommitted and untracked files permanently.
+  Two things rn-iso wrote itself never cause this refusal: the workspace's own
+  \`.rn-iso/\`, and a \`.gitignore\` whose only change is the \`.rn-iso/\` entry
+  \`start\`/\`ios\`/\`android\` add (verified line by line against what rn-iso
+  writes; any other added or removed line still refuses).
+
+"Refusing to create <name>: the branch worktree-<name> already exists at <sha>,
+but --base <ref> resolves to <sha>"  (worktree create)
+  \`git worktree add\` attaches to an existing branch and ignores the base, so
+  the worktree would not be based on what you asked for. An earlier
+  \`worktree remove\` left that branch behind -- removing a worktree never
+  deletes its branch. Either pick another name, or \`git branch -D
+  worktree-<name>\` and retry. Without --base, attaching is still the
+  behaviour: nothing was promised about the tip.
 
 "Carried <dir>/Pods does not match <dir>/Podfile.lock"  (worktree create)
   \`ios/Pods\` is gitignored, so --carry-ignored clones it; \`ios/Podfile.lock\`

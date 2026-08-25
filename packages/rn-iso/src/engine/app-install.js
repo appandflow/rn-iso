@@ -383,11 +383,17 @@ function readMetroRecords(logsDir) {
 }
 
 // PURE. The warning printed when the poll timed out. It is the whole value of
-// the check: an agent that reads "unverified" has to know what to do next, and
-// the two causes are both one action away.
+// the check: an agent that reads "unverified" has to know what to do next.
 //
-// `openUrl` is the exact command to re-deliver the deep link -- the one that
-// an iOS 26 confirmation alert may have swallowed the first time.
+// It is a NUMBERED LIST OF ACTIONS, in the order they resolve the state, and
+// that ordering is the field-tested part. It used to be a list of "likely
+// causes" whose only imperative was `Retry the deep link with: simctl openurl`
+// -- and on a fresh simulator iOS 26 raises the "Open in <app>?" alert on EVERY
+// first launch, in front of that exact command. So the one instruction the
+// block gave re-raised the alert it was stuck behind, forever, while the action
+// that clears it (confirm the alert) sat above it as a passive cause. Leading
+// with the confirmation, and conditioning the retry on there being no alert, is
+// what turns this from a loop into a sequence that terminates.
 export function unverifiedLaunchLines({
   platform,
   metroPort,
@@ -401,19 +407,25 @@ export function unverifiedLaunchLines({
   const seconds = Math.round(Number(waitedMs || 0) / 1000);
   const lines = [
     `The app was started, but nothing fetched a bundle from this workspace's Metro (port ${metroPort}) within ${seconds}s.`,
-    'The app is launched; what is unproven is that it is talking to THIS dev server. Likely causes:',
-    `  - expo-dev-launcher is showing its DEVELOPMENT SERVERS picker and waiting for a tap. Tap the entry for http://localhost:${metroPort} -- NOT another workspace's, which would load a different project's bundle onto this device.`,
+    'The app is launched; what is unproven is that it is talking to THIS dev server. Do this, in order:',
   ];
+  const picker = `If expo-dev-launcher's DEVELOPMENT SERVERS picker is showing, tap the entry for http://localhost:${metroPort} -- NOT another workspace's, which would load a different project's bundle onto this device.`;
+  let step = 0;
+  const push = (text) => lines.push(`  ${++step}. ${text}`);
   if (platform === 'ios') {
-    lines.push('  - iOS 26 puts an "Open in <app>?" confirmation alert in front of `xcrun simctl openurl`, so the deep link stalls until it is confirmed.');
+    push('If an "Open in <app>?" alert is showing, confirm it with your device tool (iOS 26 raises it on every first launch on a fresh simulator, in front of the deep link); the bundle loads immediately after.');
+    push(picker);
     if (url && udid) {
-      lines.push(`Retry the deep link with: xcrun simctl openurl ${udid} '${url}'`);
+      push(`Only if no alert is showing, retry the deep link: xcrun simctl openurl ${udid} '${url}'`);
     } else if (udid && bundleId) {
-      lines.push(`Re-launch with: xcrun simctl launch --console ${udid} ${bundleId}`);
+      push(`Only if no alert is showing, re-launch: xcrun simctl launch --console ${udid} ${bundleId}`);
     }
   } else {
+    // No confirmation alert on Android: `am start` delivers the deep link
+    // outright, so the picker is the first thing that can be waiting.
+    push(picker);
     if (serial && bundleId) {
-      lines.push(`  - the reverse mapping was not in place when the app started. Re-launch with: adb -s ${serial} shell monkey -p ${bundleId} 1`);
+      push(`Otherwise the reverse mapping was not in place when the app started. Re-launch: adb -s ${serial} shell monkey -p ${bundleId} 1`);
     }
   }
   lines.push(`Then check \`rn-iso logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);

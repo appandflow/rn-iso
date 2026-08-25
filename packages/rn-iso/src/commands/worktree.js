@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { resolveSettings, unknownSettingKeys } from '../settings.js';
 import { isPathPrefix, loadConfig, upsertProject } from '../config.js';
 import { reclaimProject } from '../reclaim.js';
+import { listsWorkspaceDir, renderWorkspaceIgnoreBlock } from '../engine/workspace.js';
 import {
   addWorktree,
   branchExists,
@@ -24,7 +25,9 @@ import {
   repoRoot,
   resolveBaseRef,
   resolveRef,
+  restoreFile,
   unpushedCommits,
+  unstagedDiff,
   worktreePath,
 } from '../worktree.js';
 
@@ -101,6 +104,28 @@ export function registerCreate(worktree) {
       const branch = `worktree-${name}`;
       const reusedBranch = branchExists(root, branch);
       const branchSha = reusedBranch ? resolveRef(root, branch) : null;
+
+      // ... and when the caller EXPLICITLY named a base, that attach is a
+      // contradiction rather than a detail. `--base <sha>` with a leftover
+      // `worktree-<name>` branch produced a worktree at the branch's stale tip,
+      // a single dim line to say so, and an exit 0 -- so the flag read as
+      // accepted and did nothing, which is the failure mode the whole `--base`
+      // validation exists to prevent. Two facts are in conflict here and rn-iso
+      // cannot pick one for you, so it refuses and names both ways out. A base
+      // that came from settings, or none at all, promises nothing about the tip
+      // and keeps the attach behaviour unchanged -- as does a branch that is
+      // already AT the requested base, where there is nothing to disagree about.
+      if (opts.base && reusedBranch && branchSha !== baseSha) {
+        console.error(chalk.red(`Refusing to create ${name}: the branch ${branch} already exists at ${branchSha || 'an unresolvable commit'}, but --base ${base} resolves to ${baseSha}.`));
+        console.error(chalk.dim('  `git worktree add` attaches to an existing branch and ignores the base, so this worktree would NOT be based on what you asked for.'));
+        console.error(chalk.dim('  Either create it under a different name:'));
+        console.error(chalk.dim(`    rn-iso worktree create <other-name> --base ${base}`));
+        console.error(chalk.dim('  or delete the leftover branch (it is what an earlier `worktree remove` left behind; removing a worktree never deletes its branch) and retry:'));
+        console.error(chalk.dim(`    git -C ${root} branch -D ${branch}`));
+        process.exitCode = 1;
+        return;
+      }
+
       try {
         addWorktree({ path: target, branch, baseRef, cwd: root });
       } catch (e) {
@@ -238,6 +263,101 @@ export function workspaceArtifactPaths(lines) {
   return paths;
 }
 
+// PURE. Whether a unified diff adds rn-iso's own gitignore block and NOTHING
+// else -- the second dead end of the same shape as `?? .rn-iso/`.
+//
+// `start` / `ios` / `android` append the block to the repo's .gitignore
+// (ensureWorkspaceIgnored, the self-heal that replaced `init`). On a repo whose
+// .gitignore is TRACKED that is ` M apps/x/.gitignore`, and `worktree remove`
+// refused over it: the loop's own write blocking the loop's own teardown, with
+// --force -- which also discards real work -- as the only way out.
+//
+// The rule is deliberately narrow and fails CLOSED, because .gitignore is a
+// file the repo owns and an edit to it can be real work:
+//   - not one removed line, ever (a diff that took something away is not ours,
+//     whatever it added);
+//   - every added line is one of the block's own, or the blank separator;
+//   - and the `.rn-iso` entry itself is among them, so a diff that only added
+//     the comments is not mistaken for the block.
+// The allowed set is derived from renderWorkspaceIgnoreBlock rather than
+// retyped, so the check cannot drift from the writer, and membership of the
+// entry line goes through listsWorkspaceDir, so `.rn-iso`, `/.rn-iso` and
+// `.rn-iso/` stay the one entry git treats them as.
+export function addsOnlyWorkspaceIgnoreBlock(diff) {
+  if (typeof diff !== 'string' || diff.trim() === '') return false;
+  const allowed = new Set(renderWorkspaceIgnoreBlock().split('\n').map(l => l.trim()));
+  allowed.add('');
+  let added = 0;
+  let sawEntry = false;
+  let inHunk = false;
+  for (const line of diff.split('\n')) {
+    // Everything before the first @@ is the file header, where `+++ b/path`
+    // would otherwise read as an added line.
+    if (line.startsWith('@@')) { inHunk = true; continue; }
+    if (!inHunk) continue;
+    if (line.startsWith('\\')) continue; // "\ No newline at end of file"
+    if (line.startsWith('-')) return false;
+    if (!line.startsWith('+')) continue; // context
+    const body = line.slice(1).trim();
+    if (!allowed.has(body)) return false;
+    if (listsWorkspaceDir(body)) sawEntry = true;
+    added += 1;
+  }
+  return added > 0 && sawEntry;
+}
+
+// A path this code is about to interpolate into a shell command. Anything
+// outside the set is not examined at all -- it stays dirty, which is the safe
+// direction, and no quoting question arises.
+const SAFE_DIFF_PATH = /^[A-Za-z0-9._/-]+$/;
+
+// Drops a `.gitignore` whose only change is rn-iso's own block from a dirty
+// listing, and reports which files that was. `diff` is injected (it is the one
+// impure step) so the decision above stays testable without git.
+//
+// Only an UNSTAGED modification (` M`) qualifies: a staged change is not what
+// `git diff` describes and not what `git checkout -- <file>` would undo, so it
+// is left to refuse.
+export function excludeSelfHealedIgnores(lines, { diff }) {
+  const kept = [];
+  const healed = [];
+  for (const line of lines || []) {
+    const path = porcelainPath(line);
+    const candidate = path
+      && String(line).startsWith(' M ')
+      && /(?:^|\/)\.gitignore$/.test(path)
+      && SAFE_DIFF_PATH.test(path);
+    if (candidate && addsOnlyWorkspaceIgnoreBlock(diff(path))) {
+      healed.push(path);
+      continue;
+    }
+    kept.push(line);
+  }
+  return { lines: kept, healed };
+}
+
+// PURE. The worktree entry a path belongs to: an exact match, or the enclosing
+// one when the path is somewhere inside it.
+//
+// `worktree remove` defaults to the current workspace, and in a monorepo the
+// directory an agent is standing in is the APP dir (`<worktree>/apps/mobile`),
+// which matches no worktree root and was refused outright -- from a command
+// whose whole point is that you do not have to name what you are inside of.
+// Returns the entry INDEX as well, because entry zero is the main checkout and
+// that refusal has to survive the walk up (standing in `<repo>/apps/mobile`
+// must still refuse, not remove the repo).
+//
+// Longest match wins, so a worktree nested inside another resolves to the
+// nearest enclosing one rather than the outermost.
+export function matchWorktreeEntry(entries, path) {
+  let best = null;
+  (entries || []).forEach((entry, index) => {
+    if (!entry?.path || !isPathPrefix(entry.path, path)) return;
+    if (!best || entry.path.length > best.path.length) best = { index, path: entry.path };
+  });
+  return best;
+}
+
 // PURE. The remedy lines for a dirty-tree refusal, named per CLASS of dirt.
 //
 // The old message offered `git checkout -- <path>` and nothing else, which is
@@ -261,16 +381,30 @@ export function removalRemedy(dirtyLines, { worktree = '<worktree>' } = {}) {
       lines.push(`  git -C ${worktree} checkout -- ios/Podfile.lock "ios/*.xcodeproj/project.pbxproj"`);
     } else {
       lines.push('Tracked files were modified -- if a build or a setup script did it, restore them and retry:');
-      lines.push(`  git -C ${worktree} checkout -- <path>...`);
+      lines.push(`  git -C ${worktree} checkout -- ${pathArgs(tracked)}`);
     }
   }
   if (untracked.length) {
     // Said explicitly: the previous advice was checkout, and a reader who tried
     // it on an untracked file got no error and no change.
     lines.push('Untracked files are also present -- `git checkout` cannot clear those. Delete them and retry:');
-    lines.push(`  git -C ${worktree} clean -fd <path>...        # or rm them yourself`);
+    lines.push(`  git -C ${worktree} clean -fd ${pathArgs(untracked)}        # or rm them yourself`);
   }
   return lines;
+}
+
+// The paths themselves, as arguments. A remedy carrying `<path>...` is one more
+// thing to work out before anything can be run, and this function already has
+// the answer in its hand. Capped, because a remedy is a thing to read: past the
+// cap it ends in `...`, which is the reader's cue to use the status listing
+// above it.
+function pathArgs(lines, limit = 5) {
+  const paths = (lines || []).map(porcelainPath).filter(Boolean);
+  const shown = paths.slice(0, limit)
+    // porcelainPath strips the quoting git adds around an awkward path; it goes
+    // back on before the path is printed as part of a command to run.
+    .map(p => (/[\s"'\\$`]/.test(p) ? JSON.stringify(p) : p));
+  return `${shown.join(' ')}${paths.length > shown.length ? ' ...' : ''}`;
 }
 
 // Pure: takes the already-computed dirty/unpushed facts and turns them into
@@ -410,15 +544,53 @@ export function registerRemove(worktree) {
         return;
       }
 
+      // Resolve to the worktree ROOT before anything reads git or config,
+      // because every step below is keyed to it: `git status` from an app dir
+      // reports the whole worktree anyway, `reclaimAll` keys on the root, and
+      // `git worktree remove` takes nothing else.
+      //
+      // Walking up is what makes the default target usable in a monorepo: an
+      // agent finishing a ticket is standing in `<worktree>/apps/tlon-mobile`
+      // -- the directory `rn-iso ios` runs in -- and that matched no worktree
+      // root, so the command that defaults to "where you are" refused to run
+      // where you are. It is still a refusal when the path is inside no linked
+      // worktree at all, and entry zero (the main checkout) is still refused
+      // however deep inside it you were standing.
+      const entries = listWorktrees(path);
+      const entry = matchWorktreeEntry(entries, path);
+      if (!entry) {
+        console.error(chalk.red(`Refusing to remove ${path}: it is not inside any worktree known to git.`));
+        console.error(chalk.dim('  Run it from inside the worktree, or pass the worktree root path, e.g. as printed by `git worktree list`.'));
+        process.exitCode = 1;
+        return;
+      }
+      if (entry.index === 0) {
+        console.error(chalk.red(`Refusing to remove ${entry.path}: it is the main checkout, not a linked worktree.`));
+        process.exitCode = 1;
+        return;
+      }
+      if (entry.path !== path) {
+        console.error(chalk.dim(`${path} is inside the worktree ${entry.path}; removing that.`));
+        path = entry.path;
+      }
+
       // The workspace's own `.rn-iso/` is excluded from the verdict, not just
       // from the printed list: it is the one dirty path this command created
       // itself and the one it is definitely about to delete. hasUncommittedWork
       // is still what distinguishes "clean" from "git could not answer" (null),
       // which must stay a blocker of its own; the line listing then decides
       // whether anything that is NOT ours is dirty.
+      //
+      // A .gitignore carrying nothing but rn-iso's own block is the same
+      // exclusion one file over (addsOnlyWorkspaceIgnoreBlock above): rn-iso
+      // wrote it, and it is checked line by line against what rn-iso writes
+      // rather than assumed.
       const gitAnswered = hasUncommittedWork(path);
       const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
-      const dirtyLines = excludeWorkspaceArtifacts(allDirty);
+      const { lines: dirtyLines, healed: selfHealedIgnores } = excludeSelfHealedIgnores(
+        excludeWorkspaceArtifacts(allDirty),
+        { diff: (file) => unstagedDiff(path, file) }
+      );
       const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
       const unpushed = unpushedCommits(path);
       const blockers = removalBlockers({ dirty, unpushed });
@@ -449,36 +621,25 @@ export function registerRemove(worktree) {
         const shown = dirtyLines.slice(0, 10);
         if (shown.length) {
           for (const line of shown) console.error(chalk.dim(`      ${line}`));
-          console.error(chalk.dim('  (git -C <worktree> status -s for the full list)'));
+          console.error(chalk.dim(`  (git -C ${path} status -s for the full list)`));
         }
-        for (const line of removalRemedy(dirtyLines)) console.error(chalk.dim(line));
+        // With the real path, not the `<worktree>` placeholder the default
+        // argument prints: the remedy is meant to be a command a reader can
+        // paste, and one carrying a literal `<worktree>` is a command that
+        // fails in a way that reads like the tool being broken.
+        for (const line of removalRemedy(dirtyLines, { worktree: path })) console.error(chalk.dim(line));
         console.error(chalk.dim('Otherwise: commit or push the branch. --force is a last resort -- it discards'));
         console.error(chalk.dim('uncommitted changes and untracked files permanently; committed work stays on the branch.'));
         process.exitCode = 1;
         return;
       }
 
-      // Confirm the target actually is a linked worktree of this repo --
-      // not the main checkout, and not some unrelated path -- before doing
-      // anything that mutates state. Without this, `worktree remove` run
-      // against the main checkout (clean, pushed -- the blockers check above
-      // passes) would SIGTERM its Metro and drop its sim/AVD claim via
-      // reclaimProject below, and only then fail at `git worktree remove`
-      // with "is a main working tree" -- silently de-registering a running
-      // project that the command never actually removed.
-      const entries = listWorktrees(path);
-      const entryIndex = entries.findIndex(e => e.path === path);
-      if (entryIndex === -1) {
-        console.error(chalk.red(`Refusing to remove ${path}: it does not match any worktree root known to git.`));
-        console.error(chalk.dim('  Pass the worktree root path, e.g. as printed by `rn-iso worktree list`.'));
-        process.exitCode = 1;
-        return;
-      }
-      if (entryIndex === 0) {
-        console.error(chalk.red(`Refusing to remove ${path}: it is the main checkout, not a linked worktree.`));
-        process.exitCode = 1;
-        return;
-      }
+      // (The target was confirmed to be a linked worktree of this repo, and not
+      // the main checkout, before any of the above ran -- see matchWorktreeEntry
+      // at the top of the action. Doing it there rather than here is what keeps
+      // `worktree remove` on the main checkout from SIGTERMing its Metro and
+      // dropping its sim claim via reclaimProject, only to fail at `git worktree
+      // remove` with "is a main working tree".)
 
       // Release rn-iso's own state before the directory disappears. Reclaims
       // the worktree root AND every nested registered project under it (see
@@ -494,6 +655,34 @@ export function registerRemove(worktree) {
       // supervisor writing into .rn-iso/logs is stopped by then.
       for (const purged of purgeWorkspaceArtifacts(path, allDirty)) {
         console.error(chalk.dim(`  removed ${purged} (this workspace's own output)`));
+      }
+
+      // ... and the same step for a .gitignore rn-iso wrote to itself, for the
+      // same reason and no other: git's cleanliness check counts a modified
+      // tracked file, so leaving it to die with the directory is not actually
+      // an option -- verified against real git, which refuses with "contains
+      // modified or untracked files" and offers only --force. Restoring is the
+      // narrowest way through: the only change being undone is one rn-iso made,
+      // the file is inside a directory that is about to be deleted anyway, and
+      // the line says exactly what was decided and why.
+      for (const file of selfHealedIgnores) {
+        if (restoreFile(path, file)) {
+          console.error(chalk.dim(`  restoring ${file} (only rn-iso's own entry was added)`));
+        } else {
+          console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
+        }
+      }
+      // Undoing that entry un-ignores what it was ignoring: `.rn-iso/` was
+      // invisible to the listing above precisely BECAUSE the self-heal had
+      // added the entry, and the moment it is restored the directory is
+      // untracked again -- which is the exact thing git refuses over. Found
+      // against real git, where the removal failed here with "contains
+      // modified or untracked files" after a clean verdict. So ask git once
+      // more, and only when something was actually restored.
+      if (selfHealedIgnores.length) {
+        for (const purged of purgeWorkspaceArtifacts(path, dirtyPaths(path, { limit: Infinity }))) {
+          console.error(chalk.dim(`  removed ${purged} (this workspace's own output)`));
+        }
       }
 
       try {
