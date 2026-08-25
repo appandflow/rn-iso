@@ -16,6 +16,7 @@ import doctorCommand from '../src/commands/doctor.js';
 import buildCacheCommand from '../src/commands/build-cache.js';
 import initCommand from '../src/commands/init.js';
 import logsCommand from '../src/commands/logs.js';
+import startCommand from '../src/commands/start.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 
@@ -40,6 +41,7 @@ doctorCommand(program);
 buildCacheCommand(program);
 initCommand(program);
 logsCommand(program);
+startCommand(program);
 
 // parseAsync (not parse): several command actions (up, release, shutdown,
 // worktree) are async, and commander only awaits/propagates their errors
