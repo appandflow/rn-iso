@@ -425,6 +425,30 @@ git commit -m "feat: doctor reports an unwired artifact layout"
   project forever. Reap through `src/teardown.js`; never delete a device
   directly.
 
+**Fix the device-sweep blast radius while you are in here.** This is not
+optional: it destroyed two real simulators during Task 2's live verification.
+
+`gc.js` guards the device sweep with `cfg === null`, and its own comment names
+the exact hazard ("including devices belonging to another rn-iso HOME"). But a
+throwaway `RN_ISO_HOME` stops being null the moment any command writes to it.
+After that, `findOrphanedDevices` builds its reference map from a config that
+knows nothing about the machine's real simulators, so EVERY `rn-iso-*` device
+classifies as orphaned and `--delete` destroys all of them.
+
+The invariant the guard actually needs:
+
+> `RN_ISO_HOME` scopes the config. Simulators and AVDs are machine-global. A
+> scoped config must never sweep global devices.
+
+So: when `process.env.RN_ISO_HOME` is set, skip the device sweep entirely and
+report through the existing `deviceSweepNotices` channel, exactly as the
+`cfg === null` path already does. Keep the `cfg === null` guard as well -- these
+are two different holes. Cache trimming and dead-entry reporting are unaffected,
+because those are scoped to the config by nature.
+
+Test both holes explicitly: a null config, and a populated config under a
+non-default `RN_ISO_HOME` that references none of the machine's devices.
+
 **What changes and why:** `gc` loses the DerivedData sweep, because build output
 now lives inside the workspace and `worktree remove` reclaims it by
 construction. It **keeps** dead project entries and orphaned owned devices: a
@@ -554,12 +578,21 @@ permissions), do NOT copy and do NOT delete -- report the legacy path and let
 Add a `doctor` finding for a legacy directory that is still present, naming its
 size and the remedy.
 
-- [ ] **Step 5: Update CLAUDE.md**
+- [ ] **Step 5: Update CLAUDE.md -- three separate corrections**
 
-The "two cache packages duplicate a little of `src/build-cache.js` on purpose"
-paragraph currently names only `buildCacheKey`. It must now also name the cache
-ROOT resolution, with the same warning: change one and you must change the
-others, or the CLI and the providers quietly stop sharing a cache.
+1. The "two cache packages duplicate a little of `src/build-cache.js` on
+   purpose" paragraph names only `buildCacheKey`. It must also name the cache
+   ROOT resolution, with the same warning: change one and you must change the
+   others, or the CLI and the providers quietly stop sharing a cache.
+2. The **file layout table still lists `src/artifacts.js`**, which no longer
+   exists. Replace it with `src/fs-util.js`, described as the volume and size
+   utilities.
+3. **Item 8 is now factually wrong.** It opens by naming
+   `classifyDerivedData (src/artifacts.js)` as one of the two places the
+   unmounted-volume guard fails closed. That function is gone. Reword item 8
+   onto what the guard still protects: the project registry -- specifically
+   `findReclaimablePort` in `ports.js` and the dead-project sweep in `gc.js`.
+   The principle ("on doubt, skip, don't delete") is unchanged and must stay.
 
 - [ ] **Step 6: Run the full suite**
 
