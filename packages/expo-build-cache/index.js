@@ -114,7 +114,7 @@ function artifactIn(dir) {
 //     before 20.19
 // A dynamic import fixes the second and not the first. The format is a stable
 // contract, so writing it is the cheaper trade.
-function registerCache({ dir, name, prune, note }) {
+function registerCache({ dir, name, prune, note, entriesDepth }) {
   try {
     const home = process.env.RN_ISO_HOME || path.join(os.homedir(), '.rn-iso');
     const file = path.join(home, 'caches.json');
@@ -128,7 +128,11 @@ function registerCache({ dir, name, prune, note }) {
     // Keyed on the directory so repeated calls update rather than accumulate --
     // these run on every build.
     const others = manifest.caches.filter(c => c.dir !== dir);
-    others.push({ dir, name, prune, note, registeredBy: process.cwd() });
+    const record = { dir, name, prune, note, registeredBy: process.cwd() };
+    // Only written when the caller sets it: an absent depth means the entries
+    // are the directory's immediate children, which is the common case.
+    if (entriesDepth) record.entriesDepth = entriesDepth;
+    others.push(record);
     fs.mkdirSync(home, { recursive: true });
     fs.writeFileSync(file, JSON.stringify({ version: 1, caches: others }, null, 2));
   } catch {

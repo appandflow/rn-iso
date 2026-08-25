@@ -85,14 +85,16 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
   }
 });
 
-// The tests above run on whatever Node this machine has, and on 20.19 and newer
-// `require` of an ES module works -- so they cannot tell the two forms apart.
-// This one can, and the versions it protects (20.0 through 20.18) are inside the
-// range both packages declare support for.
-test('neither package reaches rn-iso through require', () => {
+// Reaching rn-iso at all was the bug. `require` of it throws ERR_REQUIRE_ESM on
+// Node before 20.19, and a dynamic import fixes only that half: the documented
+// way to use the CLI is `npx rn-iso`, so it is usually not a dependency of the
+// project and the specifier does not resolve on any Node version. Both packages
+// write the manifest themselves, so neither may name rn-iso as a module.
+test('neither package reaches rn-iso as a module', () => {
   for (const pkg of ['expo-build-cache', 'metro-cache']) {
     const source = readFileSync(join(PACKAGES, pkg, 'index.js'), 'utf-8');
-    assert.doesNotMatch(source, /require\(\s*['"]rn-iso/, `${pkg} must import the manifest, not require it`);
-    assert.match(source, /import\(\s*['"]rn-iso\/cache-manifest['"]\s*\)/, `${pkg} must import the manifest`);
+    assert.doesNotMatch(source, /require\(\s*['"]rn-iso/, `${pkg} must not require rn-iso`);
+    assert.doesNotMatch(source, /import\(\s*['"]rn-iso/, `${pkg} must not import rn-iso either`);
+    assert.match(source, /caches\.json/, `${pkg} must write the manifest itself`);
   }
 });
