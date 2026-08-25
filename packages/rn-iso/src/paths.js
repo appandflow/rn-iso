@@ -38,6 +38,13 @@ export function workspaceStateFile(projectRoot) {
   return join(workspaceDir(projectRoot), 'state.json');
 }
 
+// The supervisor's own stdio, raw rather than NDJSON: it is what a spawn that
+// died before it could write a single structured record leaves behind, so it
+// is the one file `start` quotes when a supervisor never comes up.
+export function supervisorLogFile(projectRoot) {
+  return join(workspaceLogsDir(projectRoot), 'supervisor.log');
+}
+
 // Shared caches derive from getConfigDir() rather than homedir() so that
 // RN_ISO_HOME redirects them along with the registry, which is what lets a
 // test run against a temp directory without touching the real machine.

@@ -250,6 +250,44 @@ export function clearDevice(projectPath, platform) {
   });
 }
 
+// --- The supervisor registration --------------------------------------
+//
+// The workspace already records its supervisor in <root>/.rn-iso/state.json,
+// which is where `stop` and `status` read it from. This second copy is the
+// GLOBAL one, and it exists for the case the workspace copy cannot cover: a
+// worktree deleted out from under a running supervisor takes state.json with
+// it, and without an entry here the process is unfindable -- it keeps holding
+// a port and a watchman subscription with nothing left that names it. Same
+// reasoning as the device records: the registry outlives the workspace.
+//
+// Unlike setDevice, an unregistered project is CREATED rather than rejected.
+// The registration is written before the server starts, so refusing it because
+// nobody ran a broker command first would trade the one record that makes a
+// crashed supervisor findable for a consistency rule with nothing behind it.
+// metroPort is deliberately left alone: the port belongs to the reservation
+// logic (claimMetroPort), and inventing a claim here could take a port another
+// project already reserved.
+export function setSupervisor(projectPath, { pid, port, startedAt }) {
+  return withConfigLock(() => {
+    const cfg = ensureConfig();
+    if (!cfg.projects[projectPath]) {
+      cfg.projects[projectPath] = { metroPort: null, platforms: {} };
+    }
+    cfg.projects[projectPath].supervisor = { pid, port, startedAt };
+    saveConfig(cfg);
+    return cfg.projects[projectPath].supervisor;
+  });
+}
+
+export function clearSupervisor(projectPath) {
+  withConfigLock(() => {
+    const cfg = loadConfig();
+    if (!cfg?.projects?.[projectPath]?.supervisor) return;
+    delete cfg.projects[projectPath].supervisor;
+    saveConfig(cfg);
+  });
+}
+
 // --- Per-project settings (scripts, package manager, ...) ---
 
 export function getProjectSettings(projectPath) {
