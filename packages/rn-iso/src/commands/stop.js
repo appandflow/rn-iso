@@ -1,160 +1,460 @@
 // src/commands/stop.js
+//
+// v3's `stop` is the inverse of `start`, and nothing more: it halts the
+// supervisor, shuts the owned device DOWN, and frees the port. It is not
+// destructive and it never deletes a device, because destruction lives in
+// exactly two commands -- `worktree remove` and `gc --delete`. An agent
+// reaching for `stop` to reclaim memory must not have a `--delete` within
+// reach of a typo, so there is no flag here that could become one.
+//
+// What survives from v2 is the identity discipline, in two places:
+//   1. A supervisor pid is signalled only when it is ALIVE and PROVABLY ours --
+//      recorded in this workspace's state.json (or in the global registration
+//      for this exact path) and holding the port this project reserved. A pid
+//      is a number the OS reuses; a port is a slot anyone can occupy. Neither
+//      alone is proof.
+//   2. With no supervisor, the fallback is v2's `resolveProjectMetro` check
+//      before killing whatever answers the reserved port, with `--force` still
+//      the only way past an unproven listener. That flag guards THAT case; it
+//      has nothing to do with the supervisor, and it destroys nothing.
+//
+// Already-stopped is a success at every step. `stop` runs after a crash as
+// often as after a session, and an agent that reads a non-zero exit as "still
+// running" would loop on a workspace where nothing is left to stop.
 import chalk from 'chalk';
-import prompts from 'prompts';
-import { resolveRegisteredProject } from '../project.js';
-import { findProjectByMetroPort, loadConfig, isPathPrefix } from '../config.js';
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { clearSupervisor, getProject, upsertProject } from '../config.js';
+import { findProjectRoot } from '../project.js';
+import { supervisorPidFile, workspaceStateFile } from '../paths.js';
 import {
-  resolveProjectMetro,
-  killMetroTree,
   findPidListeningOnPort,
-  processGroupLeader,
+  isPidAlive,
+  killMetroTree,
+  resolveProjectMetro,
 } from '../metro.js';
+import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
 
-// Pure: decides what to do with a resolution, so the decision is testable
-// without a live process. Order matters -- `missing` is checked before `force`,
-// because forcing must never turn "nothing is there" into a kill attempt.
-export function stopAction({ resolution, force }) {
-  if (resolution.metro) {
-    return { action: 'killed', pid: resolution.metro.pid, leader: resolution.metro.leader };
+const DEFAULT_WAIT_MS = 10_000;
+const POLL_MS = 100;
+
+// --- workspace state (Contract 2) -------------------------------------------
+//
+// Reading and clearing live here rather than in src/supervisor/ so that `stop`
+// and `status` depend on nothing the supervisor half owns: both must work on a
+// workspace whose supervisor died, or was never started by this rn-iso at all.
+
+export function readSupervisorState(root) {
+  const file = workspaceStateFile(root);
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf-8'));
+    const sup = parsed?.supervisor;
+    return sup && typeof sup === 'object' ? sup : null;
+  } catch {
+    // No file, or a half-written one from a supervisor killed mid-rename.
+    // Neither is a reason to refuse to stop anything.
+    return null;
   }
-  if (resolution.missing) return { action: 'missing' };
-  if (force) return { action: 'forced', pid: resolution.pid ?? null };
-  return { action: 'refused', reason: resolution.notOurs };
 }
 
-// Pure: maps a CLI target to what should be stopped. Port targeting lives here
-// rather than on `release` because the port is the resource `stop` owns --
-// `release` frees the DEVICE. Lookups are injected so this is testable without
-// touching config.
-export function resolveStopTarget(target, { byPort, byShortcut }) {
-  if (target && /^\d+$/.test(target)) {
-    const port = parseInt(target, 10);
-    const project = byPort(port);
-    if (project) return { project, port };
-    return { unownedPort: port };
+// Drops the supervisor block and the pid file. NOT a delete of state.json:
+// later steps write `lastBuild` beside `supervisor` in the same file, and
+// taking the build fingerprint away with the pid would turn every stop into a
+// guaranteed cache miss on the next build.
+export function clearSupervisorState(root) {
+  const pidFile = supervisorPidFile(root);
+  try {
+    rmSync(pidFile, { force: true });
+  } catch {
+    // A read-only workspace is not a reason to fail a teardown.
   }
-  const { found, error } = byShortcut(target);
-  if (!found) return { error };
-  return { project: found, port: null };
+  const file = workspaceStateFile(root);
+  if (!existsSync(file)) return;
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf-8'));
+  } catch {
+    // Unparseable: the supervisor block cannot be preserved anyway, and a
+    // corrupt file left in place would fail every later read.
+    rmSync(file, { force: true });
+    return;
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    rmSync(file, { force: true });
+    return;
+  }
+  delete parsed.supervisor;
+  if (Object.keys(parsed).length === 0) {
+    rmSync(file, { force: true });
+    return;
+  }
+  // Same temp-then-rename as saveConfig: a reader must never see a partial file.
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, JSON.stringify(parsed, null, 2));
+  renameSync(tmp, file);
 }
 
-// Pure. A worktree root carries the label but owns no port -- `up` registers
-// the app DIRECTORY, whose shortcut is "<label>/<basename>". So `stop <label>`
-// used to resolve the root, find no port, and exit 0 while Metro kept running.
-// Fall through to every registered project underneath the target.
-export function stopTargets(targetPath, projects) {
-  const own = projects?.[targetPath];
-  if (own?.metroPort) return [{ path: targetPath, port: own.metroPort }];
-  const nested = [];
-  for (const [path, proj] of Object.entries(projects || {})) {
-    if (path === targetPath) continue;
-    if (!isPathPrefix(targetPath, path)) continue;
-    if (proj?.metroPort) nested.push({ path, port: proj.metroPort });
+// --- identity ---------------------------------------------------------------
+
+// Pure. Decides whether a recorded supervisor may be signalled at all, given
+// the two records that describe it and the port this project actually reserved.
+//
+//   { status: 'none' }                    nothing recorded
+//   { status: 'stale', pid }              recorded, not running: already stopped
+//   { status: 'unverified', pid, reason } running but not proven ours: never signalled
+//   { status: 'ours', pid, port, mode, startedAt }
+export function resolveSupervisorTarget({ state, record, reservedPort, isAlive = isPidAlive } = {}) {
+  const statePid = numberOrNull(state?.pid);
+  const recordPid = numberOrNull(record?.pid);
+  const pid = statePid ?? recordPid;
+  if (!pid) return { status: 'none' };
+
+  // Two records naming different pids means one of them outlived its process
+  // and the number has since been reused. There is no way to tell which, so
+  // neither is signalled.
+  if (statePid && recordPid && statePid !== recordPid) {
+    return {
+      status: 'unverified',
+      pid,
+      reason: `workspace state.json records supervisor pid ${statePid} but the registry records pid ${recordPid}`,
+    };
   }
-  return nested;
+
+  if (!isAlive(pid)) return { status: 'stale', pid };
+
+  const port = numberOrNull(state?.port) ?? numberOrNull(record?.port);
+  // The port is the second half of the proof. When this project holds no
+  // reservation at all -- an earlier stop freed it and then failed -- the
+  // in-workspace record is what is left, and it is still a record written
+  // inside THIS workspace.
+  if (reservedPort !== null && reservedPort !== undefined && port !== null && port !== reservedPort) {
+    return {
+      status: 'unverified',
+      pid,
+      reason: `supervisor pid ${pid} records port ${port}, but this project reserved port ${reservedPort}`,
+    };
+  }
+  if (reservedPort !== null && reservedPort !== undefined && port === null) {
+    return {
+      status: 'unverified',
+      pid,
+      reason: `supervisor pid ${pid} has no recorded port, so it cannot be matched against reserved port ${reservedPort}`,
+    };
+  }
+
+  return {
+    status: 'ours',
+    pid,
+    port,
+    mode: state?.mode ?? record?.mode ?? null,
+    startedAt: state?.startedAt ?? record?.startedAt ?? null,
+  };
+}
+
+function numberOrNull(v) {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Polls rather than waiting on the process, because it is not our child: a
+// detached supervisor is reparented to init, so there is no exit event to
+// listen for.
+export async function waitForExit(pid, { timeoutMs = DEFAULT_WAIT_MS, intervalMs = POLL_MS, isAlive = isPidAlive } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return true;
+    await sleep(intervalMs);
+  }
+  return !isAlive(pid);
+}
+
+// --- the sequence -----------------------------------------------------------
+
+// Every side effect is injected so the ORDER -- which is the part that can
+// strand a live process or free a port out from under one -- is testable
+// without signalling anything.
+//
+// Outcomes, one per step, are the `--json` payload:
+//   supervisor { status: none | stopped | already-stopped | unverified | timeout | failed }
+//   metro      { status: none | missing | stopped | forced | refused | failed | skipped }
+//   device     { ios, android } each { status: shut-down | missing | skipped | failed } | null
+//   port       { status: none | freed | kept }
+export async function runStop({
+  root,
+  force = false,
+  project = undefined,
+  state = undefined,
+  isAlive = isPidAlive,
+  killGroup = killMetroTree,
+  waitForDeath = undefined,
+  waitMs = DEFAULT_WAIT_MS,
+  resolveMetro = resolveProjectMetro,
+  killMetro = killMetroTree,
+  findListener = findPidListeningOnPort,
+  teardownIos = teardownOwnedIosSim,
+  teardownAvd = teardownOwnedAvd,
+  freePort = defaultFreePort,
+  clearRegistration = defaultClearRegistration,
+  clearState = clearSupervisorState,
+  report = (line) => console.error(line),
+} = {}) {
+  const proj = project === undefined ? getProject(root) : project;
+  const sup = state === undefined ? readSupervisorState(root) : state;
+  const reservedPort = typeof proj?.metroPort === 'number' ? proj.metroPort : null;
+  const waiter = waitForDeath ?? ((pid) => waitForExit(pid, { timeoutMs: waitMs, isAlive }));
+
+  const outcomes = {
+    supervisor: { status: 'none' },
+    metro: { status: 'none' },
+    device: { ios: null, android: null },
+    port: { status: 'none', port: reservedPort },
+  };
+  let ok = true;
+  // Set when something this command could not stop is still holding the port.
+  // The reservation is then KEPT: it is the only record a retry can find that
+  // process by, and dropping it strands a live supervisor no command can name.
+  let stillHolding = null;
+
+  // Step 1: the supervisor.
+  const target = resolveSupervisorTarget({ state: sup, record: proj?.supervisor ?? null, reservedPort, isAlive });
+  if (target.status === 'none') {
+    report(chalk.dim('supervisor: none recorded'));
+  } else if (target.status === 'stale') {
+    outcomes.supervisor = { status: 'already-stopped', pid: target.pid, reason: `recorded pid ${target.pid} is not running` };
+    report(chalk.dim(`supervisor: pid ${target.pid} is already gone (stale record)`));
+  } else if (target.status === 'unverified') {
+    outcomes.supervisor = { status: 'unverified', pid: target.pid, reason: target.reason };
+    report(chalk.yellow(`supervisor: refusing to signal pid ${target.pid}: ${target.reason}`));
+    ok = false;
+    stillHolding = `supervisor pid ${target.pid} could not be verified`;
+  } else {
+    outcomes.supervisor = await stopSupervisor(target, { killGroup, waiter, report });
+    if (outcomes.supervisor.status !== 'stopped') {
+      ok = false;
+      stillHolding = outcomes.supervisor.reason;
+    }
+  }
+
+  // Step 2: Metro. Only when no live supervisor was involved -- the supervisor
+  // hosts the dev server, so with one running (or refusing to die) the port is
+  // accounted for, and racing a second killer at it can only take out the wrong
+  // process.
+  const supervisorHandled = outcomes.supervisor.status === 'stopped'
+    || outcomes.supervisor.status === 'timeout'
+    || outcomes.supervisor.status === 'unverified'
+    || outcomes.supervisor.status === 'failed';
+  if (supervisorHandled) {
+    outcomes.metro = { status: 'skipped', reason: 'the supervisor owns the dev server on this port' };
+  } else if (reservedPort === null) {
+    report(chalk.dim('metro: no port reserved'));
+  } else {
+    outcomes.metro = await stopMetro(reservedPort, root, { force, resolveMetro, killMetro, findListener, report });
+    if (outcomes.metro.status === 'refused' || outcomes.metro.status === 'failed') {
+      ok = false;
+      stillHolding = outcomes.metro.reason;
+    }
+  }
+
+  // Step 3: the device. Shut down, never deleted, and only when rn-iso owns it.
+  // Skipped entirely while something is still holding the port: the supervisor
+  // that ignored our SIGTERM is very likely still driving that simulator.
+  if (stillHolding) {
+    report(chalk.dim('device: left alone (something is still running)'));
+  } else {
+    outcomes.device = shutDownDevices(proj, { teardownIos, teardownAvd, report });
+    if (outcomes.device.ios?.status === 'failed' || outcomes.device.android?.status === 'failed') ok = false;
+  }
+
+  // Step 4: the port, and step 5: the records. Both are bookkeeping, and both
+  // are wrong while a process this command failed to stop is still holding on.
+  if (stillHolding) {
+    outcomes.port = { status: 'kept', port: reservedPort, reason: stillHolding };
+    report(chalk.yellow(`port: keeping reservation ${reservedPort ?? '(none)'} -- ${stillHolding}`));
+  } else {
+    if (reservedPort !== null) {
+      freePort(root, reservedPort);
+      outcomes.port = { status: 'freed', port: reservedPort };
+      report(chalk.dim(`port: released ${reservedPort}`));
+    }
+    clearState(root);
+    await clearRegistration(root);
+  }
+
+  return { ok, outcomes, summary: summarize(root, outcomes, ok) };
+}
+
+async function stopSupervisor(target, { killGroup, waiter, report }) {
+  report(chalk.dim(`supervisor: sending SIGTERM to process group ${target.pid}`));
+  let signalled = false;
+  try {
+    signalled = killGroup(target.pid);
+  } catch (e) {
+    signalled = false;
+    report(chalk.red(`supervisor: could not signal pid ${target.pid}: ${String(e?.message || e)}`));
+  }
+  if (!signalled) {
+    const reason = `could not signal supervisor pid ${target.pid}`;
+    report(chalk.red(`supervisor: ${reason}`));
+    return { status: 'failed', pid: target.pid, port: target.port ?? null, reason };
+  }
+  const died = await waiter(target.pid);
+  if (died) {
+    report(chalk.green(`supervisor: stopped (pid ${target.pid})`));
+    return { status: 'stopped', pid: target.pid, port: target.port ?? null, mode: target.mode ?? null };
+  }
+  // Deliberately NOT escalating to SIGKILL. A supervisor mid-write on the log
+  // files is exactly what SIGTERM handling exists to finish, and a second
+  // signal from here would corrupt the timeline the agent is about to read.
+  // Escalation is the caller's call, so it gets the pid and the reason.
+  const reason = `supervisor pid ${target.pid} did not exit within ${Math.round(DEFAULT_WAIT_MS / 1000)}s of SIGTERM`;
+  report(chalk.red(`supervisor: ${reason}`));
+  report(chalk.dim(`  inspect it with \`ps -p ${target.pid}\`, or signal it yourself: kill -9 -${target.pid}`));
+  return { status: 'timeout', pid: target.pid, port: target.port ?? null, reason };
+}
+
+async function stopMetro(port, root, { force, resolveMetro, killMetro, findListener, report }) {
+  const resolution = await resolveMetro(port, root);
+  if (resolution.missing) {
+    report(chalk.dim(`metro: nothing listening on port ${port}`));
+    return { status: 'missing', port };
+  }
+  if (resolution.notOurs && !force) {
+    report(chalk.yellow(`metro: refusing to kill port ${port}: ${resolution.notOurs}`));
+    report(chalk.dim('  pass --force to kill it anyway'));
+    return { status: 'refused', port, reason: resolution.notOurs };
+  }
+  const identified = Boolean(resolution.metro);
+  const pid = identified ? resolution.metro.pid : findListener(port);
+  const leader = identified ? (resolution.metro.leader ?? pid) : pid;
+  if (!leader) {
+    report(chalk.dim(`metro: nothing listening on port ${port}`));
+    return { status: 'missing', port };
+  }
+  if (!killMetro(leader)) {
+    const reason = `could not kill the process on port ${port}`;
+    report(chalk.red(`metro: ${reason}`));
+    return { status: 'failed', port, pid, reason };
+  }
+  if (identified) {
+    report(chalk.green(`metro: stopped (pid ${pid} on port ${port})`));
+    return { status: 'stopped', port, pid };
+  }
+  report(chalk.yellow(`metro: killed pid ${pid} on port ${port} (forced, identity unverified)`));
+  return { status: 'forced', port, pid };
+}
+
+// Owned devices only, and always with del:false. `stop` shutting a device down
+// rather than deleting it is what makes returning to a branch cost a boot
+// instead of a create, a provision and a reinstall.
+function shutDownDevices(project, { teardownIos, teardownAvd, report }) {
+  const device = { ios: null, android: null };
+
+  const ios = project?.platforms?.ios;
+  if (ios?.deviceUdid) {
+    if (!ios.owned) {
+      device.ios = { status: 'skipped', kind: 'not-owned', label: ios.deviceUdid, reason: 'rn-iso does not own this device' };
+      report(chalk.dim(`ios: ${ios.deviceUdid} is not rn-iso-owned, leaving it running`));
+    } else {
+      device.ios = reportDevice('ios', ios.deviceUdid, teardownIos(ios.deviceUdid, { del: false, label: ios.deviceName }), report);
+    }
+  }
+
+  const android = project?.platforms?.android;
+  if (android?.avdName) {
+    if (!android.owned) {
+      device.android = { status: 'skipped', kind: 'not-owned', label: android.avdName, reason: 'rn-iso does not own this device' };
+      report(chalk.dim(`android: ${android.avdName} is not rn-iso-owned, leaving it running`));
+    } else {
+      device.android = reportDevice('android', android.avdName, teardownAvd(android.avdName, { del: false }), report);
+    }
+  }
+
+  return device;
+}
+
+function reportDevice(platform, label, r, report) {
+  if (r.status === 'torn-down') {
+    report(chalk.green(`${platform}: shut down ${r.label ?? label}`));
+    return { status: 'shut-down', label: r.label ?? label };
+  }
+  if (r.status === 'missing') {
+    report(chalk.dim(`${platform}: ${label} is already gone`));
+    return { status: 'missing', label };
+  }
+  if (r.status === 'skipped') {
+    report(chalk.yellow(`${platform}: skipped ${label}: ${r.reason}`));
+    return { status: 'skipped', kind: r.kind ?? null, label, reason: r.reason };
+  }
+  report(chalk.red(`${platform}: failed to shut down ${label}: ${r.reason}`));
+  return { status: 'failed', label, reason: r.reason };
+}
+
+function summarize(root, outcomes, ok) {
+  const parts = [];
+  if (outcomes.supervisor.status === 'stopped') parts.push(`supervisor pid ${outcomes.supervisor.pid} stopped`);
+  if (outcomes.supervisor.status === 'already-stopped') parts.push('supervisor already stopped');
+  if (outcomes.supervisor.status === 'timeout') parts.push(`supervisor pid ${outcomes.supervisor.pid} still running`);
+  if (outcomes.supervisor.status === 'unverified') parts.push(`supervisor pid ${outcomes.supervisor.pid} unverified`);
+  if (outcomes.supervisor.status === 'failed') parts.push(`supervisor pid ${outcomes.supervisor.pid} could not be signalled`);
+  if (outcomes.metro.status === 'stopped') parts.push(`metro on port ${outcomes.metro.port} stopped`);
+  if (outcomes.metro.status === 'forced') parts.push(`port ${outcomes.metro.port} killed (forced)`);
+  if (outcomes.metro.status === 'refused') parts.push(`port ${outcomes.metro.port} refused`);
+  if (outcomes.metro.status === 'failed') parts.push(`port ${outcomes.metro.port} could not be freed`);
+  for (const [platform, o] of [['ios', outcomes.device.ios], ['android', outcomes.device.android]]) {
+    if (!o) continue;
+    if (o.status === 'shut-down') parts.push(`${platform} ${o.label} shut down`);
+    if (o.status === 'skipped') parts.push(`${platform} ${o.label} skipped`);
+    if (o.status === 'failed') parts.push(`${platform} ${o.label} failed`);
+  }
+  if (outcomes.port.status === 'freed') parts.push(`port ${outcomes.port.port} freed`);
+  if (outcomes.port.status === 'kept') parts.push(`port ${outcomes.port.port} kept`);
+  const what = parts.length ? parts.join(', ') : 'nothing was running';
+  return `${ok ? 'Stopped' : 'Stopped with problems'}: ${what} (${root})`;
+}
+
+// upsertProject spreads its fields over the existing record inside the config
+// lock, so this clears the reservation the same race-safe way claimMetroPort
+// takes it. There is no dedicated releaseMetroPort mutator in config.js; if one
+// is added, this is the single site to move onto it.
+function defaultFreePort(root, _port) {
+  if (!getProject(root)) return;
+  upsertProject(root, { metroPort: null });
+}
+
+// The global registration is what makes a supervisor findable after its
+// workspace is gone (`status --all`, `worktree remove`), so it is the last
+// thing dropped and only once the process is provably down. A failure to clear
+// it is contained: `status` then reports a stale supervisor record, which is
+// recoverable, whereas failing the stop over bookkeeping is not.
+async function defaultClearRegistration(root) {
+  try {
+    clearSupervisor(root);
+  } catch {
+    // See above: a registry that cannot be written is not this command's
+    // failure to report.
+  }
 }
 
 export default function stopCommand(program) {
   program
-    .command('stop [target]')
-    .description("Kill this project's Metro. rn-iso does not start Metro, so it verifies the process on the reserved port belongs to this project before killing it. [target] is a Metro port (e.g. 8083), a project shortcut, or an absolute path. Defaults to the current project.")
-    .option('--force', "Kill whatever listens on the port even if it cannot be identified as this project's Metro (destructive: ask the user first)")
-    .action(async (target, opts) => {
-      const force = Boolean(opts.force);
-      const resolved = resolveStopTarget(target, {
-        byPort: findProjectByMetroPort,
-        byShortcut: resolveRegisteredProject,
-      });
-
-      if (resolved.error) {
-        console.error(chalk.red(resolved.error));
+    .command('stop')
+    .description('The inverse of `start`: halt this workspace\'s supervisor, shut the owned device down (never deleted), and free the reserved port. Non-destructive -- the device stays assigned, so coming back costs a boot. Acts on the current workspace.')
+    .option('--force', "Kill whatever listens on the reserved port even if it cannot be identified as this project's dev server (only reachable when no supervisor is recorded)")
+    .option('--json', 'print the per-step outcomes as JSON')
+    .action(async (opts) => {
+      const root = findProjectRoot(process.cwd());
+      if (!root) {
+        console.error(chalk.red('Not inside a project (no package.json found above the current directory).'));
         process.exit(1);
       }
 
-      // A port no registered project owns: there is no project to prove
-      // identity against, so this is only ever an explicit, confirmed kill.
-      if (resolved.unownedPort !== undefined) {
-        await killUnownedPort(resolved.unownedPort, force);
-        return;
+      const { ok, outcomes, summary } = await runStop({ root, force: Boolean(opts.force) });
+
+      if (opts.json) {
+        console.log(JSON.stringify({ root, ok, ...outcomes }, null, 2));
+      } else {
+        console.log(ok ? chalk.green(summary) : chalk.yellow(summary));
       }
-
-      const targets = resolved.port
-        ? [{ path: resolved.project, port: resolved.port }]
-        : stopTargets(resolved.project, loadConfig()?.projects || {});
-
-      if (targets.length === 0) {
-        // Exit NON-ZERO: an agent reads exit 0 as "stopped", and silently
-        // doing nothing here stranded live Metros in the field.
-        console.error(chalk.red(`No Metro port assigned to ${resolved.project}, and no registered project under it owns one.`));
-        console.error(chalk.dim('Run `rn-iso status` to see which projects hold ports.'));
-        process.exit(1);
-      }
-
-      let failed = false;
-      for (const t of targets) {
-        const resolution = await resolveProjectMetro(t.port, t.path);
-        if (resolution.notOurs && force) resolution.pid = findPidListeningOnPort(t.port);
-
-        const result = stopAction({ resolution, force });
-        if (result.action === 'missing') {
-          console.log(chalk.dim(`No Metro running on port ${t.port} (${t.path}).`));
-          continue;
-        }
-        if (result.action === 'refused') {
-          console.error(chalk.yellow(`Refusing to kill port ${t.port}: ${result.reason}.`));
-          console.error(chalk.dim('Pass --force to kill it anyway.'));
-          failed = true;
-          continue;
-        }
-        const leader = result.leader ?? result.pid;
-        if (!leader || !killMetroTree(leader)) {
-          console.error(chalk.red(`Could not kill the process on port ${t.port}.`));
-          failed = true;
-          continue;
-        }
-        const how = result.action === 'forced' ? ' (forced, identity unverified)' : '';
-        console.log(chalk.green(`Killed Metro on port ${t.port}${how} (${t.path})`));
-      }
-      if (failed) process.exit(1);
+      if (!ok) process.exit(1);
     });
-}
-
-// Moved here from `release`, where it was the one path that killed an
-// unregistered process -- odd on the command whose job is device teardown.
-async function killUnownedPort(port, force) {
-  const pid = findPidListeningOnPort(port);
-  if (!pid) {
-    console.error(chalk.red(`No registered project has Metro port ${port}, and nothing is listening on that port.`));
-    process.exit(1);
-  }
-  console.error(chalk.dim(`No registered project has Metro port ${port}, but pid ${pid} is listening.`));
-
-  // Nothing can vouch for this process, so it takes an explicit confirmation
-  // (or --force). Under a non-TTY there is no way to ask, so refuse.
-  if (!force) {
-    if (!process.stdin.isTTY) {
-      console.error(chalk.red('Refusing to kill an unrecognized process under non-TTY (no way to confirm).'));
-      console.error(chalk.dim('Pass --force if you are sure.'));
-      process.exit(1);
-    }
-    const ok = await prompts({
-      type: 'confirm',
-      name: 'ok',
-      message: `Kill pid ${pid} on port ${port}?`,
-      initial: false,
-    });
-    if (!ok.ok) {
-      console.error(chalk.red('Cancelled.'));
-      process.exit(1);
-    }
-  }
-
-  // Take the whole group: lsof reports the socket holder, which for a bundler
-  // started through a package manager is the node child, not its wrapper.
-  const leader = processGroupLeader(pid) ?? pid;
-  if (!killMetroTree(leader)) {
-    console.error(chalk.red(`Could not kill pid ${pid} on port ${port}.`));
-    process.exit(1);
-  }
-  console.log(chalk.green(`Killed pid ${pid} on port ${port}.`));
 }

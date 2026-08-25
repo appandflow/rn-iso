@@ -118,3 +118,79 @@ test('a nearly full disk is flagged before a build discovers it', () => {
   assert.equal(diskIsTight({ availableMb: 190 * 1024, totalMb: 900 * 1024 }), false);
   assert.equal(diskIsTight(null), false);
 });
+
+// --- v3: the supervisor and the log timeline --------------------------------
+//
+// Both arrive as facts the caller gathered, keeping this module pure: `healthy`
+// is already the answer to "pid alive AND resolveProjectMetro says the thing on
+// its port is ours", not something re-derived here.
+
+test('a healthy supervisor is reported with its pid, mode and start time', () => {
+  const s = environmentState(project(), {
+    simsByUdid: { U1: BOOTED },
+    metro: { metro: { pid: 42, leader: 42, cwd: '/proj/a' } },
+    supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: 1700000000000, alive: true, healthy: true },
+  });
+  assert.deepEqual(s.supervisor, { pid: 4242, mode: 'bare-inproc', startedAt: 1700000000000, healthy: true });
+  assert.equal(s.warnings.join(' ').includes('stale supervisor'), false);
+});
+
+// A registration whose process is gone is what `start` would otherwise treat as
+// "already running", and what `worktree remove` would go looking for. Nothing
+// else on the machine reports it.
+test('a supervisor record whose pid is dead is warned about as stale', () => {
+  const s = environmentState(project(), {
+    simsByUdid: { U1: SHUTDOWN },
+    metro: { missing: true },
+    supervisor: { pid: 4242, mode: 'expo-child', startedAt: 5, alive: false, healthy: false },
+  });
+  assert.equal(s.supervisor.healthy, false);
+  assert.match(s.warnings.join(' '), /stale supervisor record for \/proj\/a/);
+});
+
+// Alive but not answering on its port is a supervisor that is starting up or
+// wedged -- reported as unhealthy, but NOT as a stale record, because the pid
+// is real and killing it is still `stop`'s job.
+test('a live supervisor that is not answering is unhealthy but not stale', () => {
+  const s = environmentState(project(), {
+    metro: { missing: true },
+    supervisor: { pid: 4242, mode: 'expo-child', startedAt: 5, alive: true, healthy: false },
+  });
+  assert.equal(s.supervisor.healthy, false);
+  assert.equal(s.warnings.join(' ').includes('stale supervisor'), false);
+});
+
+test('no supervisor recorded reports null, not an absent field', () => {
+  const s = environmentState(project(), { metro: { missing: true } });
+  assert.equal(s.supervisor, null);
+  assert.equal('supervisor' in s, true);
+});
+
+test('the log timeline is reported with the error count since the last marker', () => {
+  const s = environmentState(project(), {
+    metro: { missing: true },
+    logs: { dir: '/proj/a/.rn-iso/logs', errorsSinceMarker: 3 },
+  });
+  assert.deepEqual(s.logs, { dir: '/proj/a/.rn-iso/logs', errorsSinceMarker: 3 });
+});
+
+test('a workspace with no log directory reports logs as null', () => {
+  const s = environmentState(project(), { metro: { missing: true } });
+  assert.equal(s.logs, null);
+});
+
+// The existing payload is a contract other tooling reads. Adding fields must
+// not move or drop one.
+test('every pre-v3 field survives the extension', () => {
+  const s = environmentState(project(), {
+    simsByUdid: { U1: BOOTED },
+    metro: { metro: { pid: 42, leader: 42, cwd: '/proj/a' } },
+    supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: 5, alive: true, healthy: true },
+    logs: { dir: '/proj/a/.rn-iso/logs', errorsSinceMarker: 0 },
+  });
+  for (const key of ['path', 'live', 'memoryMb', 'warnings', 'ios', 'android', 'metro', 'worktree']) {
+    assert.equal(key in s, true, `${key} must still be reported`);
+  }
+  assert.equal(s.metro.port, 8082);
+  assert.equal(s.ios.udid, 'U1');
+});

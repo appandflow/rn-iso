@@ -22,7 +22,15 @@ const METRO_MB = 700;
 // (simctl missing, or a failing simctl). An empty map then says nothing about
 // any recorded sim, so this reports the state as unknown instead of claiming
 // every recorded device is gone.
-export function environmentState(project, { simsByUdid = {}, metro = null, worktrees = [], simsAvailable = true } = {}) {
+//
+// `supervisor` and `logs` arrive the same way as `metro`: already resolved.
+// `supervisor` is `{ pid, mode, startedAt, alive, healthy }` -- `alive` is
+// "the pid exists", `healthy` is "and resolveProjectMetro proves the thing on
+// its port is ours". The two differ for a supervisor that is still coming up
+// or has wedged, and only the first distinguishes a record whose process is
+// gone. `logs` is `{ dir, errorsSinceMarker }` or null when the workspace has
+// no log directory yet.
+export function environmentState(project, { simsByUdid = {}, metro = null, worktrees = [], simsAvailable = true, supervisor = null, logs = null } = {}) {
   const ios = project.platforms?.ios;
   const android = project.platforms?.android;
   const sim = ios ? simsByUdid[ios.deviceUdid] : null;
@@ -50,6 +58,13 @@ export function environmentState(project, { simsByUdid = {}, metro = null, workt
   if (simBooted && project.metroPort && !metroRunning) {
     warnings.push('simulator is booted with no Metro serving it');
   }
+  // A registration whose process is gone is what `start` would read as "already
+  // running" and what `worktree remove` would go looking for. Nothing else on
+  // the machine reports it. An unhealthy but LIVE supervisor is not this: the
+  // pid is real, so stopping it is still `stop`'s job, not a cleanup.
+  if (supervisor && supervisor.alive === false) {
+    warnings.push(`stale supervisor record for ${project.__path}`);
+  }
 
   return {
     path: project.__path,
@@ -70,6 +85,15 @@ export function environmentState(project, { simsByUdid = {}, metro = null, workt
     metro: project.metroPort
       ? { port: project.metroPort, running: metroRunning, pid: metro?.metro?.pid ?? null }
       : null,
+    supervisor: supervisor
+      ? {
+        pid: supervisor.pid ?? null,
+        mode: supervisor.mode ?? null,
+        startedAt: supervisor.startedAt ?? null,
+        healthy: Boolean(supervisor.healthy),
+      }
+      : null,
+    logs: logs ? { dir: logs.dir, errorsSinceMarker: logs.errorsSinceMarker ?? 0 } : null,
     // A worktree whose environment is registered is the normal case; one without
     // is a workspace nobody has provisioned yet, which is worth seeing.
     worktree: worktrees.find(w => w.path === project.__path) ?? null,

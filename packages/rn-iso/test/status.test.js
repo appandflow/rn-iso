@@ -7,9 +7,10 @@
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { createServer } from 'http';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import {saveConfig} from '../src/config.js';
@@ -149,4 +150,134 @@ test('status still warns about a recorded sim missing from a readable listing', 
   const logs = await runStatus();
 
   assert.ok(logs.some(l => /recorded sim UDID-GONE no longer exists/.test(l)));
+});
+
+// --- v3: supervisor and logs ------------------------------------------------
+
+async function runStatusJson() {
+  const program = new Command();
+  statusCommand(program);
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(msg);
+  try {
+    await program.parseAsync(['node', 'rn-iso', 'status', '--json']);
+  } finally {
+    console.log = originalLog;
+  }
+  return JSON.parse(logs.join('\n'));
+}
+
+function writeLogs(root, records) {
+  mkdirSync(join(root, '.rn-iso', 'logs'), { recursive: true });
+  writeFileSync(
+    join(root, '.rn-iso', 'logs', 'metro.ndjson'),
+    records.map((r) => JSON.stringify(r)).join('\n') + '\n'
+  );
+}
+
+function writeState(root, supervisor) {
+  mkdirSync(join(root, '.rn-iso'), { recursive: true });
+  writeFileSync(join(root, '.rn-iso', 'state.json'), JSON.stringify({ supervisor }));
+}
+
+// Health is Contract 3: the identity check, never a bare /status probe. This
+// stands up a real server on a real port and mocks only the process lookups, so
+// the HTTP half is genuinely exercised.
+test('status reports a supervisor whose port answers as this project as healthy', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
+  const server = createServer((req, res) => res.end('packager-status:running'));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    setExecutor({
+      run: () => '',
+      runQuiet(cmd) {
+        if (cmd.includes(`-iTCP:${port}`)) return String(process.pid);
+        if (cmd.includes('-d cwd -Fn')) return `p${process.pid}\nfcwd\nn${root}`;
+        if (cmd.startsWith('ps -o pgid=')) return String(process.pid);
+        return null;
+      },
+      spawn() { throw new Error('spawn should not be called from status'); },
+    });
+    writeState(root, { pid: process.pid, port, mode: 'bare-inproc', startedAt: 1700000000000 });
+    writeLogs(root, [
+      { ts: 1, src: 'metro', level: 'error', msg: 'before the marker' },
+      { ts: 2, src: 'metro', level: 'info', msg: 'bundle built', marker: true },
+      { ts: 3, src: 'metro', level: 'error', msg: 'after the marker' },
+    ]);
+    saveConfig({
+      version: 2,
+      projects: {
+        [root]: {
+          label: 'agent-1',
+          metroPort: port,
+          supervisor: { pid: process.pid, port, startedAt: 1700000000000 },
+          platforms: {},
+        },
+      },
+    });
+
+    const payload = await runStatusJson();
+    const env = payload.environments[0];
+    assert.deepEqual(env.supervisor, {
+      pid: process.pid,
+      mode: 'bare-inproc',
+      startedAt: 1700000000000,
+      healthy: true,
+    });
+    assert.equal(env.logs.errorsSinceMarker, 1, 'only errors since the last marker count');
+    assert.match(env.logs.dir, /\.rn-iso\/logs$/);
+    assert.deepEqual(env.warnings, []);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status warns about a supervisor record whose process is gone', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
+  try {
+    writeState(root, { pid: 999999, port: 8083, mode: 'expo-child', startedAt: 5 });
+    saveConfig({
+      version: 2,
+      projects: { [root]: { label: 'agent-1', metroPort: 8083, supervisor: { pid: 999999, port: 8083 }, platforms: {} } },
+    });
+
+    const logs = await runStatus();
+    assert.ok(logs.some(l => /stale supervisor record/.test(l)), 'the dead record is surfaced');
+
+    const payload = await runStatusJson();
+    assert.equal(payload.environments[0].supervisor.healthy, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a workspace with no supervisor and no logs reports both as null', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
+  try {
+    saveConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } });
+    const payload = await runStatusJson();
+    assert.equal(payload.environments[0].supervisor, null);
+    assert.equal(payload.environments[0].logs, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The human output is what an agent reads when it does not ask for --json.
+test('the printed lines name the supervisor and the error count', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
+  try {
+    writeState(root, { pid: 999999, port: 8083, mode: 'expo-child', startedAt: 5 });
+    writeLogs(root, [{ ts: 3, src: 'metro', level: 'error', msg: 'boom' }]);
+    saveConfig({ version: 2, projects: { [root]: { label: 'agent-1', metroPort: 8083, platforms: {} } } });
+
+    const logs = await runStatus();
+    assert.ok(logs.some(l => /supervisor: pid 999999/.test(l)), 'expected a supervisor line');
+    assert.ok(logs.some(l => /1 error/.test(l)), 'expected the error count beside the log path');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
