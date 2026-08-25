@@ -404,6 +404,13 @@ git commit -m "feat: doctor reports an unwired artifact layout"
 **Interfaces:**
 - Consumes: `findOrphanedDevices` (already in `gc.js`), `discoverCaches`/`sizeCaches`/`pruneCache` from `src/caches.js`, `teardownOwnedIosSim`/`teardownOwnedAvd` from `src/teardown.js`.
 - Produces: `gc [--delete] [--older-than <days>]`. Bare `gc` reports and never writes.
+- `--delete --older-than <days>` must ALSO reap owned devices whose project has
+  not been touched in that many days, not only fully orphaned ones. This is not
+  optional polish: `stop` has no `--delete`, and a checkout that is not a
+  worktree cannot be `worktree remove`d, so without this sweep the main
+  checkout's simulator is shut down but never reaped and accumulates one per
+  project forever. Reap through `src/teardown.js`; never delete a device
+  directly.
 
 **What changes and why:** `gc` loses the DerivedData sweep, because build output
 now lives inside the workspace and `worktree remove` reclaims it by
@@ -453,6 +460,103 @@ Expected: PASS.
 ```bash
 git add -A packages/rn-iso
 git commit -m "refactor: narrow gc to dead entries, orphaned devices and caches"
+```
+
+---
+
+---
+
+### Task 6: Reconcile the cache paths across all three implementations
+
+**Files:**
+- Modify: `packages/rn-iso/src/paths.js`, `packages/rn-iso/src/build-cache.js`
+- Modify: `packages/metro-cache/index.js`, `packages/expo-build-cache/index.js`
+- Modify: `packages/rn-iso/src/commands/init.js`, `packages/rn-iso/src/doctor.js`
+- Modify: `CLAUDE.md`
+- Test: `packages/rn-iso/test/paths.test.js`, `packages/rn-iso/test/cache-packages.test.js`
+
+**The problem.** Task 1 declared shared paths that disagree with reality:
+
+| | today | `paths.js` |
+|---|---|---|
+| build cache | `~/.rn-iso-build-cache` | `~/.rn-iso/build-cache` |
+| metro cache | `~/.<name>-metro-cache` | `~/.rn-iso/metro-cache` |
+
+Three separate things follow, and missing any one of them ships a bug.
+
+1. **`paths.js` ignores the existing env overrides.** `RN_ISO_BUILD_CACHE` and
+   `RN_ISO_METRO_CACHE` are honoured by the current implementations. `paths.js`
+   must honour them too, or setting one silently stops working.
+2. **The two CJS packages duplicate this logic ON PURPOSE.** `CLAUDE.md`
+   records why: they must work with no rn-iso installed. Changing only
+   `paths.js` splits the CLI and the providers onto different directories, so
+   they stop sharing a cache -- the identical failure `CLAUDE.md` already warns
+   about for `buildCacheKey`. All three move together or none do.
+3. **Existing caches must not be silently orphaned.** They can be many GB, and
+   leaving them stranded costs disk AND a cold rebuild in every project.
+
+- [ ] **Step 1: Write the failing tests**
+
+```js
+test('shared paths honour the legacy env overrides', () => {
+  process.env.RN_ISO_BUILD_CACHE = '/tmp/custom-build';
+  assert.strictEqual(sharedBuildCache(), '/tmp/custom-build');
+  delete process.env.RN_ISO_BUILD_CACHE;
+
+  process.env.RN_ISO_METRO_CACHE = '/tmp/custom-metro';
+  assert.strictEqual(sharedMetroCache(), '/tmp/custom-metro');
+  delete process.env.RN_ISO_METRO_CACHE;
+});
+
+test('the CJS providers resolve the same root the CLI does', () => {
+  // The whole point of this test: if these two ever disagree, the CLI stores
+  // builds somewhere the Expo provider will never look for them.
+  assert.strictEqual(require('../../expo-build-cache/index.js').cacheRoot(),
+                     sharedBuildCache());
+});
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `cd packages/rn-iso && node --test test/paths.test.js test/cache-packages.test.js`
+Expected: FAIL -- `sharedBuildCache()` returns the `getConfigDir()`-derived path, ignoring the env var.
+
+- [ ] **Step 3: Make all three agree**
+
+`paths.js` reads `RN_ISO_BUILD_CACHE` / `RN_ISO_METRO_CACHE` first and falls
+back to the `getConfigDir()` layout. Update `packages/metro-cache/index.js` and
+`packages/expo-build-cache/index.js` to compute the identical path with the
+identical precedence. They cannot import `paths.js` (they must work with rn-iso
+absent), so this is a deliberate duplication -- add a comment in each pointing
+at the other two, exactly as the existing `buildCacheKey` comment does.
+
+- [ ] **Step 4: Migrate on init, do not strand**
+
+`init` renames a legacy cache directory into its new location when the legacy
+one exists and the destination does not. A rename on the same volume is
+instantaneous regardless of size. If the rename fails (cross-device, or
+permissions), do NOT copy and do NOT delete -- report the legacy path and let
+`gc` list it as reclaimable. Failing closed is the standing rule.
+
+Add a `doctor` finding for a legacy directory that is still present, naming its
+size and the remedy.
+
+- [ ] **Step 5: Update CLAUDE.md**
+
+The "two cache packages duplicate a little of `src/build-cache.js` on purpose"
+paragraph currently names only `buildCacheKey`. It must now also name the cache
+ROOT resolution, with the same warning: change one and you must change the
+others, or the CLI and the providers quietly stop sharing a cache.
+
+- [ ] **Step 6: Run the full suite**
+
+Run: `npm test` from the repo root. Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add -A packages/rn-iso packages/metro-cache packages/expo-build-cache CLAUDE.md
+git commit -m "fix: one cache root across the CLI and both providers, with migration"
 ```
 
 ---
