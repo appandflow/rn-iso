@@ -1,9 +1,9 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { removalBlockers, registerRemove } from '../src/commands/worktree.js';
+import { excludeWorkspaceArtifacts, porcelainPath, removalBlockers, registerRemove, removalRemedy, workspaceArtifactPaths } from '../src/commands/worktree.js';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { upsertProject, getProject } from '../src/config.js';
 
@@ -35,6 +35,77 @@ test('reports an indeterminate-status blocker instead of treating it as clean', 
   assert.equal(removalBlockers({ dirty: null, unpushed: [] }).length, 1);
   assert.equal(removalBlockers({ dirty: false, unpushed: null }).length, 1);
   assert.match(removalBlockers({ dirty: null, unpushed: null })[0], /could not determine/i);
+});
+
+// --- the dirty listing: what counts, and what to do about it ----------
+
+test('porcelainPath reads the path out of each status form', () => {
+  assert.equal(porcelainPath('?? .rn-iso/'), '.rn-iso/');
+  assert.equal(porcelainPath(' M ios/Podfile.lock'), 'ios/Podfile.lock');
+  assert.equal(porcelainPath('R  old/name.js -> new/name.js'), 'new/name.js', 'a rename is about where the file is NOW');
+  assert.equal(porcelainPath('?? "we\u00e4rd path"'), 'we\u00e4rd path', 'git quotes non-ASCII paths');
+  assert.equal(porcelainPath('   '), null);
+});
+
+// Two real e2e runs dead-ended on `?? .rn-iso/`, with `--force` -- which also
+// discards real work -- as the only documented escape. The directory dies with
+// the worktree by design, so it never counts.
+test('the workspace directory never counts as dirty work, at any depth', () => {
+  assert.deepEqual(excludeWorkspaceArtifacts(['?? .rn-iso/']), []);
+  assert.deepEqual(excludeWorkspaceArtifacts(['?? apps/mobile/.rn-iso/']), []);
+  assert.deepEqual(excludeWorkspaceArtifacts([' M .rn-iso/state.json']), []);
+  assert.deepEqual(
+    excludeWorkspaceArtifacts(['?? .rn-iso/', ' M src/app.js']),
+    [' M src/app.js'],
+    'real work beside it still counts'
+  );
+  assert.deepEqual(
+    excludeWorkspaceArtifacts(['?? .rn-isolation/']),
+    ['?? .rn-isolation/'],
+    'a prefix match is not a segment match'
+  );
+});
+
+// `git worktree remove` runs its OWN cleanliness check, so filtering .rn-iso/
+// out of rn-iso's verdict only moved the dead end one step: git then refused
+// over the same untracked directory, with --force as its only answer.
+test('workspaceArtifactPaths is the complement of the filter, so the two cover every line', () => {
+  const lines = ['?? .rn-iso/', ' M src/app.js', '?? apps/mobile/.rn-iso/'];
+  assert.deepEqual(workspaceArtifactPaths(lines), ['.rn-iso/', 'apps/mobile/.rn-iso/']);
+  assert.deepEqual(excludeWorkspaceArtifacts(lines), [' M src/app.js']);
+  assert.equal(workspaceArtifactPaths(lines).length + excludeWorkspaceArtifacts(lines).length, lines.length);
+});
+
+// The refusal used to offer `git checkout -- <path>` whatever the dirt was.
+// That does nothing to an untracked file, so following it produced the identical
+// refusal and taught the reader that --force was the only way out.
+test('the remedy names the right command for each class of dirt', () => {
+  const untracked = removalRemedy(['?? scratch.txt']).join('\n');
+  assert.match(untracked, /clean -fd/);
+  assert.doesNotMatch(untracked, /checkout --/);
+
+  const modified = removalRemedy([' M src/app.js']).join('\n');
+  assert.match(modified, /checkout --/);
+  assert.doesNotMatch(modified, /clean -fd/);
+
+  const both = removalRemedy(['?? scratch.txt', ' M src/app.js']).join('\n');
+  assert.match(both, /checkout --/);
+  assert.match(both, /clean -fd/);
+
+  assert.deepEqual(removalRemedy([]), []);
+});
+
+// The one case where "restore and retry" is a complete instruction keeps its
+// specific command.
+test('pod-install churn keeps its exact restore command', () => {
+  const lines = removalRemedy([' M ios/Podfile.lock', ' M ios/App.xcodeproj/project.pbxproj']).join('\n');
+  assert.match(lines, /pod install` rewrites/);
+  assert.match(lines, /ios\/Podfile\.lock/);
+  assert.doesNotMatch(lines, /clean -fd/, 'nothing untracked, so nothing to clean');
+});
+
+test('the remedy names the worktree when it is given one', () => {
+  assert.match(removalRemedy(['?? x'], { worktree: '/tmp/wt' }).join('\n'), /git -C \/tmp\/wt clean -fd/);
 });
 
 // --- action-level tests -----------------------------------------------
@@ -376,4 +447,99 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
   // Nothing is reported as kept: there is no occupied-skip path left for a
   // device being deleted, so no "kept ..." line should appear at all.
   assert.ok(!logs.some(l => /kept/i.test(l)), `unexpected kept line: ${logs.join(' | ')}`);
+});
+
+// The whole field-test failure, end to end: a workspace whose ONLY dirty path is
+// its own `.rn-iso/` must remove without --force. Before this it refused, and
+// the printed remedy (`git checkout -- <path>`) could not clear an untracked
+// directory, so there was no non-destructive way forward at all.
+test('action: a tree dirty only with .rn-iso/ removes without --force', async () => {
+  upsertProject(wtDir, { metroPort: 8090 });
+  const exec = makeExecutor({
+    dirty: '?? .rn-iso/\n',
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  assert.notEqual(process.exitCode, 1);
+  assert.ok(exec.calls.run.some(c => /worktree remove/.test(c)), 'the worktree is actually removed');
+  assert.ok(!exec.calls.run.some(c => /worktree remove --force/.test(c)), 'and not by forcing');
+  assert.equal(getProject(wtDir), null, 'rn-iso tracking is released with it');
+});
+
+test('action: real work beside .rn-iso/ still refuses, and names both remedies', async () => {
+  upsertProject(wtDir, { metroPort: 8091 });
+  const exec = makeExecutor({
+    dirty: '?? .rn-iso/\n M src/app.js\n?? scratch.txt\n',
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  });
+  setExecutor(exec);
+
+  const errs = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  assert.equal(process.exitCode, 1);
+  assert.ok(!exec.calls.run.some(c => /worktree remove/.test(c)));
+  const text = errs.join('\n');
+  assert.match(text, /checkout --/);
+  assert.match(text, /clean -fd/);
+  assert.ok(!text.includes('.rn-iso/'), 'the listing does not show what it just decided to ignore');
+});
+
+// Filtering `.rn-iso/` out of rn-iso's own verdict was only half the fix: `git
+// worktree remove` refuses on "modified or untracked files" too, so the
+// directory has to be gone before git looks. Verified against real git in the
+// live smoke run recorded with this change (CLAUDE.md item 9); this pins the
+// wiring.
+test('action: the workspace directory is deleted before git worktree remove is called', async () => {
+  upsertProject(wtDir, { metroPort: 8092 });
+  mkdirSync(join(wtDir, '.rn-iso', 'logs'), { recursive: true });
+  writeFileSync(join(wtDir, '.rn-iso', 'state.json'), '{}');
+  const exec = makeExecutor({
+    dirty: '?? .rn-iso/\n',
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  });
+  // Fail the removal the way real git does when the directory is still there,
+  // so the assertion is about ORDER rather than about our own rmSync.
+  const originalRun = exec.run;
+  exec.run = function (cmd) {
+    if (/worktree remove/.test(cmd) && existsSync(join(wtDir, '.rn-iso'))) {
+      throw new Error('fatal: contains modified or untracked files, use --force to delete it');
+    }
+    return originalRun.call(this, cmd);
+  };
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  assert.equal(existsSync(join(wtDir, '.rn-iso')), false, 'the workspace directory is gone');
+  assert.notEqual(process.exitCode, 1, 'and git therefore did not refuse');
+});
+
+// Containment: a path out of `git status` is relative to the worktree, and
+// anything that resolves outside it is left alone whatever it says.
+test('action: a dirty path escaping the worktree is never removed', async () => {
+  upsertProject(wtDir, { metroPort: 8093 });
+  const outside = join(mainDir, '.rn-iso');
+  mkdirSync(outside, { recursive: true });
+  setExecutor(makeExecutor({
+    dirty: '?? ../rn-iso-test-main-escape/.rn-iso/\n',
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+  }));
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  assert.equal(existsSync(outside), true, 'nothing outside the worktree is touched');
 });

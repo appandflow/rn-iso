@@ -7,6 +7,7 @@ import {
   checkCcacheConflict,
   checkDevClient,
   checkMetroCache,
+  metroConfigDelegate,
   detectXcodeMajor,
   parseXcodeMajor,
 } from '../src/doctor.js';
@@ -185,7 +186,7 @@ test('a project that does not ignore .rn-iso is told what ends up in git status'
   assert.ok(f, 'expected a finding');
   assert.match(f.title, /not gitignored/);
   assert.match(f.detail, /commit/i);
-  assert.match(f.fix, /rn-iso init/);
+  assert.match(f.fix, /add it themselves/i);
 });
 
 test('a missing .gitignore is the same diagnosis as one that does not mention it', () => {
@@ -238,6 +239,49 @@ test('a cacheStores set inside an if is a note for the same reason', () => {
 test('an unconditional cacheStores stays silent', () => {
   assert.equal(checkMetroCache("config.cacheStores = [new FileStore({ root: '/x' })];"), null);
   assert.equal(checkMetroCache("const { sharedCacheStores } = require('@rn-iso/metro');\nconfig.cacheStores = sharedCacheStores('app');"), null);
+});
+
+// A metro.config.js that is one line of delegation decides NOTHING here, and
+// the per-project cost finding it used to produce was a confident measurement
+// of a file that does not hold the answer. Taken verbatim from a real
+// yarn-workspaces repo, commented-out require and all.
+test('a metro config that delegates to a workspace package is reported as uninspectable', () => {
+  const source = [
+    '// RN CLI checks for this to make sure the config is valid :/',
+    "// const { getDefaultConfig } = require('@react-native/metro-config');",
+    '',
+    "module.exports = require('@th3rdwave/react-native-app-scripts/metro-config')(",
+    '  __dirname,',
+    ');',
+  ].join('\n');
+  assert.equal(metroConfigDelegate(source), '@th3rdwave/react-native-app-scripts/metro-config');
+  const f = checkMetroCache(source);
+  assert.equal(f.level, 'note', 'a cost nobody can act on is worse than a note');
+  assert.match(f.title, /delegates to @th3rdwave\/react-native-app-scripts\/metro-config; rn-iso cannot inspect it/);
+  assert.doesNotMatch(f.title, /per-project/);
+});
+
+test('the ESM and plain forms of the same delegation are recognized too', () => {
+  assert.equal(metroConfigDelegate("module.exports = require('@acme/metro');"), '@acme/metro');
+  assert.equal(metroConfigDelegate("export { default } from '@acme/metro';"), '@acme/metro');
+  assert.equal(metroConfigDelegate("export default require('./tools/metro-config');"), './tools/metro-config');
+});
+
+test('an ordinary config that BUILDS on a metro package is not a delegation', () => {
+  // The distinction that matters: requiring expo/metro-config and then
+  // configuring it is a config doctor can read, and it must still get the
+  // real finding.
+  assert.equal(metroConfigDelegate("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);"), null);
+  assert.equal(metroConfigDelegate("const { getDefaultConfig } = require('@react-native/metro-config');\nconst config = getDefaultConfig(__dirname);\nmodule.exports = config;"), null);
+  assert.equal(checkMetroCache("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);").level, 'cost');
+});
+
+test('a delegating config that DOES mention cacheStores is read normally', () => {
+  // Delegation is only interesting because the file says nothing about the
+  // cache. One that does is inspectable after all.
+  const source = "const base = require('@acme/metro');\nbase.cacheStores = [new FileStore({ root: '/x' })];\nmodule.exports = base;";
+  assert.equal(metroConfigDelegate(source), null);
+  assert.equal(checkMetroCache(source), null);
 });
 
 // The two settings only do anything inside a loop that defines `config`. A real

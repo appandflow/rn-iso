@@ -23,8 +23,9 @@ import { isPidAlive, resolveProjectMetro } from '../metro.js';
 import { supervisorLogFile, workspaceLogsDir } from '../paths.js';
 import { reserveMetroPort } from '../ports.js';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.js';
-import { installedSkillVersions, staleSkillCopies } from './skill.js';
+import { installedSkillVersions, staleSkillWarning } from './skill.js';
 import { readWorkspaceState } from '../supervisor/run.js';
+import { ensureWorkspaceIgnored } from '../engine/workspace.js';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
@@ -85,6 +86,17 @@ export function startFacts({ port, supervisor, logsDir, alreadyRunning }) {
   };
 }
 
+// Pure shaping of the FAILURE payload, the other half of the same contract:
+// one parseable line on stdout either way. `start --json` used to print nothing
+// at all when it failed, so a caller doing `facts=$(rn-iso start --json)` got an
+// empty string and had to fall back to scraping stderr prose -- exactly what
+// `guide facts` promises the build commands never make you do. The shape is
+// theirs: a stable code to branch on, a message, and a remedy (null when there
+// is nothing to suggest beyond what was already printed).
+export function startError({ code, message, remedy = null }) {
+  return { code, message, remedy: remedy ?? null };
+}
+
 export function tailLines(text, n = LOG_TAIL_LINES) {
   const lines = String(text || '').split('\n').filter((l) => l.trim() !== '');
   return lines.slice(-n);
@@ -122,27 +134,55 @@ export function registerStart(program, cliVersion = null) {
       const json = Boolean(opts.json);
       const out = (line) => { if (json) console.error(line); else console.log(line); };
       const note = (line) => console.error(line);
-      const fail = (message) => {
+      // Every failure exits the same way: the diagnostic, whatever evidence
+      // there is for it, the remedy, and -- under --json -- the error contract
+      // as the single line on stdout. Same shape `ios` / `android` use, because
+      // an agent branching on `code` must not have to know which command it
+      // called.
+      const fail = ({ code, message, remedy = null, lines = [] }) => {
         note(chalk.red(message));
+        for (const line of lines) note(chalk.dim(`  ${line}`));
+        if (remedy) note(chalk.dim(remedy));
+        note(chalk.red(`failed: ${code}`));
+        if (json) console.log(JSON.stringify(startError({ code, message, remedy })));
         process.exit(1);
       };
 
       // The installed skill is a plain file copy, so upgrading rn-iso never
       // refreshes it. A v2 skill against a v3 CLI describes commands that no
       // longer exist, and nothing else says so. Never fatal, and never on
-      // stdout -- see the --json contract above.
-      for (const stale of cliVersion ? staleSkillCopies(installedSkillVersions(), cliVersion) : []) {
-        note(chalk.yellow(
-          `Installed rn-iso skill is ${stale.version ?? 'an unstamped older version'} but this CLI is ${cliVersion}. `
-          + 'Run `npx rn-iso skill install` so the docs your agent reads match the binary.'
-        ));
-      }
+      // stdout -- see the --json contract above. ONE line however many copies
+      // are installed: both targets normally hold the same file, and the
+      // warning names neither, so a per-copy loop just said it twice.
+      const skillWarning = cliVersion ? staleSkillWarning(installedSkillVersions(), cliVersion) : null;
+      if (skillWarning) note(chalk.yellow(skillWarning));
 
       const wait = parseWait(opts.wait);
-      if (wait.error) return fail(wait.error);
+      if (wait.error) {
+        return fail({
+          code: 'RN_ISO_BAD_ARG',
+          message: wait.error,
+          remedy: 'Pass a whole number of seconds, e.g. --wait 90.',
+        });
+      }
 
       const root = findProjectRoot(process.cwd());
-      if (!root) return fail('Not in a React Native project (no package.json found).');
+      if (!root) {
+        return fail({
+          code: 'RN_ISO_NO_PROJECT',
+          message: 'Not in a React Native project (no package.json found).',
+          remedy: 'Run this from the app directory -- the one holding package.json.',
+        });
+      }
+
+      // `start` is the first command of the loop, so it is where the workspace
+      // directory first appears. Ensuring git ignores it here rather than in a
+      // setup command is what removes the step a repo had to remember: `ios` and
+      // `android` call the same function for the same reason, since either can
+      // be the first to write into `<root>/.rn-iso`.
+      const ignored = ensureWorkspaceIgnored(root);
+      if (ignored.added) note(chalk.dim('note   added .rn-iso/ to .gitignore'));
+      else if (ignored.error) note(chalk.yellow(`note   could not update ${ignored.path}: ${ignored.error}`));
 
       upsertProject(root, {
         bundleId: detectBundleId(root),
@@ -175,11 +215,12 @@ export function registerStart(program, cliVersion = null) {
         note(chalk.dim(`Supervisor pid ${supervisor.pid} is already running for this workspace; waiting for it to answer on port ${port}...`));
         const healthy = await waitForMetro({ root, port, seconds: wait.seconds });
         if (!healthy) {
-          note(chalk.red(`Supervisor pid ${supervisor.pid} did not serve port ${port} within ${wait.seconds}s.`));
-          printLogTail(note, logFile);
-          note(chalk.dim('Run `rn-iso stop` to halt it, then `rn-iso start` again.'));
-          process.exit(1);
-          return;
+          return fail({
+            code: 'RN_ISO_METRO_TIMEOUT',
+            message: `Supervisor pid ${supervisor.pid} did not serve port ${port} within ${wait.seconds}s.`,
+            lines: logTailLines(logFile),
+            remedy: 'Run `rn-iso stop` to halt it, then `rn-iso start` again.',
+          });
         }
         supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) || supervisor;
         return report({ json, out, port, supervisor, logsDir, alreadyRunning: true });
@@ -228,20 +269,22 @@ export function registerStart(program, cliVersion = null) {
         // as a timeout. The exit event is the better evidence; the liveness
         // check catches the case where the process died without us seeing it.
         const gone = childExit !== null || (child.pid ? !isPidAlive(child.pid) : false);
-        if (gone) {
-          const how = childExit
-            ? (childExit.signal ? `signal ${childExit.signal}` : `code ${childExit.code}`)
-            : 'without being observed';
-          note(chalk.red(`The supervisor exited (${how}) before the dev server came up on port ${port}.`));
-        } else {
-          note(chalk.red(`The dev server did not answer on port ${port} within ${wait.seconds}s.`));
-        }
-        printLogTail(note, logFile);
-        note(chalk.dim(gone
-          ? 'Fix the error above and run `rn-iso start` again.'
-          : 'It may still be starting. Run `rn-iso stop` to halt it, or `rn-iso logs` to follow along.'));
-        process.exit(1);
-        return;
+        const how = childExit
+          ? (childExit.signal ? `signal ${childExit.signal}` : `code ${childExit.code}`)
+          : 'without being observed';
+        return fail(gone
+          ? {
+            code: 'RN_ISO_SUPERVISOR_EXITED',
+            message: `The supervisor exited (${how}) before the dev server came up on port ${port}.`,
+            lines: logTailLines(logFile),
+            remedy: 'Fix the error above and run `rn-iso start` again.',
+          }
+          : {
+            code: 'RN_ISO_METRO_TIMEOUT',
+            message: `The dev server did not answer on port ${port} within ${wait.seconds}s.`,
+            lines: logTailLines(logFile),
+            remedy: 'It may still be starting. Run `rn-iso stop` to halt it, or `rn-iso logs` to follow along.',
+          });
       }
 
       supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port })
@@ -280,10 +323,12 @@ async function waitForMetro({ root, port, seconds, aborted = () => false, probe 
   return Boolean(last.metro);
 }
 
-function printLogTail(note, logFile) {
-  const tail = readLogTail(logFile);
-  for (const line of tail) note(chalk.dim(`  ${line}`));
-  note(chalk.dim(`Supervisor log: ${logFile}`));
+// The evidence a start failure carries: the last lines of the supervisor's raw
+// stdio, then the path to the rest of it. That file is the ONLY record of a
+// supervisor that died before it could write a structured one, which is why
+// every failure quotes it.
+function logTailLines(logFile) {
+  return [...readLogTail(logFile), `Supervisor log: ${logFile}`];
 }
 
 function report({ json, out, port, supervisor, logsDir, alreadyRunning }) {

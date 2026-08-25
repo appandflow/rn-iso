@@ -90,6 +90,19 @@ export function checkMetroCache(metroConfigSource) {
       'Add a metro.config.js with a FileStore cacheStore pointing outside the project.'
     );
   }
+  // A config that is nothing but a re-export cannot be read here at all: the
+  // store, if there is one, lives in the package it delegates to. Saying so is
+  // the honest answer; the confident per-project finding below would be a
+  // measurement of a file that decides nothing.
+  const delegate = metroConfigDelegate(metroConfigSource);
+  if (delegate) {
+    return finding(
+      'note',
+      `metro config delegates to ${delegate}; rn-iso cannot inspect it`,
+      `metro.config.js is a re-export of ${delegate} and doctor reads this file rather than executing it, so whether a shared cacheStore is configured is decided somewhere rn-iso cannot see. This is a note, not a cost: the store may well be there.`,
+      `Check ${delegate} for a cacheStores/FileStore rooted outside every project (rn-iso's own is @rn-iso/metro's sharedCacheStores()).`
+    );
+  }
   const lines = String(metroConfigSource).split('\n');
   const mentions = lines.filter(line => /cacheStores/.test(line));
   if (mentions.length) {
@@ -108,6 +121,45 @@ export function checkMetroCache(metroConfigSource) {
     'Without a shared cacheStore each worktree transforms the whole module graph from cold -- thousands of modules, every time.',
     "config.cacheStores = [new FileStore({ root: path.join(os.homedir(), '.<app>-metro-cache') })]"
   );
+}
+
+// PURE. The package a metro.config.js hands its whole job to, or null.
+//
+// A real monorepo's app had this as its entire config:
+//
+//   module.exports = require('@acme/app-scripts/metro-config')(__dirname);
+//
+// Every text check below it -- and the "Metro cache is per-project" finding it
+// would otherwise emit -- is blind on a file like that, and reporting a cost
+// nobody can act on is worse than reporting nothing. The rule: no mention of
+// cacheStores anywhere, and the file's only statement is a re-export of a
+// module that is not one of Metro's own config packages (a config that
+// requires `expo/metro-config` and then builds on it is an ordinary config,
+// not a delegation).
+const METRO_CORE_MODULES = /^(?:metro|metro-config|metro-cache|@react-native\/metro-config|@expo\/metro-config|expo\/metro-config|expo\/metro-config\/.*|@react-native\/metro-babel-transformer|path|node:path|fs|node:fs|os|node:os)$/;
+
+export function metroConfigDelegate(source) {
+  const text = String(source || '');
+  if (/cacheStores/.test(text)) return null;
+  const code = text
+    // Comments first: the delegating config in the wild carried a commented-out
+    // `getDefaultConfig` require, and counting that as a statement would hide
+    // every real delegation behind it.
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map(line => line.replace(/\/\/.*$/, '').trim())
+    .filter(line => line !== '' && line !== "'use strict';" && line !== '"use strict";')
+    .join(' ');
+  const m = /^module\.exports\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)[^;]*;?$/.exec(code)
+    || /^export\s+(?:\*|\{\s*default[^}]*\})\s+from\s+['"]([^'"]+)['"];?$/.exec(code)
+    || /^export\s+default\s+require\(\s*['"]([^'"]+)['"]\s*\)[^;]*;?$/.exec(code);
+  if (!m) return null;
+  const pkg = m[1];
+  const base = pkg.startsWith('@') ? pkg.split('/').slice(0, 2).join('/') : pkg.split('/')[0];
+  if (METRO_CORE_MODULES.test(pkg) || METRO_CORE_MODULES.test(base)) return null;
+  // A relative path is still this repo's own code, and naming it is still the
+  // honest answer -- doctor cannot follow it either.
+  return pkg;
 }
 
 // Deliberately crude, because the alternative is evaluating the file: an env
@@ -200,7 +252,7 @@ export function checkArtifactLayout({ gitignoreSource } = {}) {
     'note',
     '.rn-iso/ is not gitignored',
     'It holds this workspace\'s build output, logs and supervisor pidfile -- location-addressed, meaningful only to the checkout that produced it. Unignored, every build offers its own DerivedData up for commit and git status stops being readable.',
-    `Add ${WORKSPACE_DIR}/ to .gitignore, or run \`rn-iso init\`.`
+    `Add ${WORKSPACE_DIR}/ to .gitignore. (start/ios/android add it themselves on first use; this only appears when that write failed or was reverted.)`
   );
 }
 

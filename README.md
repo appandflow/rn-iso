@@ -18,7 +18,7 @@ the ownership model, worktrees, settings, and cache housekeeping all live there.
 Each cache package documents its own wiring in its own README.
 
 ```bash
-npx rn-iso init              # set a repo up for parallel agents
+npx rn-iso doctor            # what is silently costing this repo build time
 npx rn-iso start             # dev server on a reserved port, under a supervisor
 npx rn-iso ios               # build (or install from cache), launch, capture logs
 npx rn-iso logs --errors     # what broke, symbolicated; empty is the pass condition

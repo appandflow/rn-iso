@@ -143,6 +143,45 @@ export function diskIsTight(disk) {
   return Boolean(disk && disk.availableMb < 25 * 1024);
 }
 
+// Pure. Free space at the scale it is being read at: whole GB up to a terabyte,
+// one decimal past it. The memory summary keeps its own one-decimal GB, because
+// there the interesting range is 8-64 and a rounded "16 GB of 16 GB" hides the
+// margin this report exists to show.
+export function formatSpace(mb) {
+  if (!Number.isFinite(mb)) return '?';
+  if (mb >= 1024 * 1024) return `${(mb / (1024 * 1024)).toFixed(1)} TB`;
+  if (mb >= 1024) return `${Math.round(mb / 1024)} GB`;
+  return `${Math.round(mb)} MB`;
+}
+
+// Pure. The disk summary, over however many volumes are actually in play.
+//
+// It reported the boot volume and only the boot volume, which on this machine
+// is the wrong number twice over: the repos live on an external SSD, so the
+// figure printed described a volume nothing was building on, and the volume
+// that could actually fill up went unmentioned. Build output is workspace-local
+// (`<root>/.rn-iso/derived-data`), so the project's volume is where a build
+// runs out of room; the boot volume still matters because the shared caches and
+// the simulator device set live under $HOME.
+//
+// One volume keeps the free-of-total form -- there is room for it, and the
+// total is what makes "38 GB" mean something. Two get free space each, named by
+// volume, because that is the comparison being made.
+export function diskLine(volumes) {
+  const usable = (volumes || []).filter(v => v && v.disk);
+  if (usable.length === 0) return null;
+  if (usable.length === 1) {
+    const { disk } = usable[0];
+    return `${formatSpace(disk.availableMb)} free of ${formatSpace(disk.totalMb)} on disk.`;
+  }
+  return `${usable.map(v => `${formatSpace(v.disk.availableMb)} free on ${v.volume}`).join(', ')}.`;
+}
+
+// Pure. Which of the reported volumes are tight enough to fail a build partway.
+export function tightVolumes(volumes) {
+  return (volumes || []).filter(v => v && diskIsTight(v.disk));
+}
+
 // Worktrees rn-iso knows nothing about: a workspace someone created by hand, or
 // one whose environment was released. Listing them is what makes this a
 // replacement for `worktree list` rather than a second thing to check.

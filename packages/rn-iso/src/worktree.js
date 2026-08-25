@@ -296,6 +296,22 @@ export function branchExists(cwd, branch) {
   return Boolean(out);
 }
 
+// The short sha `ref` names, or null when this repo cannot resolve it to a
+// commit at all. One call does both jobs `worktree create --base` needs: it
+// VALIDATES the ref (an unresolvable one must not reach `git worktree add`,
+// which would leave a half-made worktree behind) and produces the sha the
+// command prints, so a tester can tell what the branch was actually cut from.
+//
+// `^{commit}` rather than the bare ref: a tag object resolves to itself under a
+// plain rev-parse, and `git worktree add` wants the commit. --quiet keeps a
+// miss at exit 1 with no stderr, which runQuiet turns into null.
+export function resolveRef(cwd, ref) {
+  const out = getExecutor().runQuiet(
+    `git -C "${cwd}" rev-parse --verify --quiet --short "${ref}^{commit}"`
+  );
+  return out && out.trim() ? out.trim() : null;
+}
+
 export function addWorktree({ path, branch, baseRef, cwd }) {
   mkdirSync(dirname(path), { recursive: true });
   // Name reuse is likely from phone/agent-spawned sessions ("fix-login",
@@ -339,10 +355,12 @@ export function listWorktrees(cwd) {
   return entries;
 }
 
-// `baseRef` here is one of the sentinel strings callers pass ('fresh' or
-// 'head'), not a git ref itself. 'head' means "branch from the current
-// HEAD"; anything else (in practice always 'fresh') means "branch from the
-// repository's default branch on the remote", resolved via origin/HEAD.
+// `baseRef` here is one of the two SENTINEL strings callers pass, not a git ref
+// itself. 'head' means "branch from the current HEAD"; 'fresh' means "branch
+// from the repository's default branch on the remote", resolved via origin/HEAD.
+// A caller passing a real ref does not come through here at all -- see
+// registerCreate, which only translates the sentinels and hands anything else
+// to git as written.
 export function resolveBaseRef(cwd, baseRef) {
   if (baseRef === 'head') return 'HEAD';
   const head = getExecutor().runQuiet(`git -C "${cwd}" rev-parse --abbrev-ref origin/HEAD`);

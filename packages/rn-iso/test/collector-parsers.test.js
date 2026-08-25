@@ -21,17 +21,22 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   appNameFromBundleId,
+  levelForEvent,
   levelFromMessageType,
   logStreamArgs,
+  noiseRuleId,
   parseLogStreamLine,
   procFromImagePath,
+  NOISE_RULES,
 } from '../src/collector/ios.js';
 import {
+  levelForLogcat,
   levelFromLogcatLetter,
   logcatArgs,
   parseLogcatLine,
   parseLogcatTimestamp,
   parsePidof,
+  NOISE_TAGS,
 } from '../src/collector/android.js';
 import { LEVELS, SOURCES } from '../src/ndjson.js';
 
@@ -135,6 +140,116 @@ describe('ios: log stream ndjson', () => {
   });
 });
 
+// --- the demotion list ---------------------------------------------------
+//
+// FIELD CASE. On a healthy Expo app on an iOS 26.5 simulator, `rn-iso logs
+// --errors` returned 3,004 records and `status` said "3004 errors since the
+// last marker". None of them were the app's: they were Apple's own frameworks
+// logging at messageType Error from inside the app's process, plus the UIScene
+// deprecation notice, which ships as a Fault and was therefore reported as
+// FATAL on an app that was working.
+//
+// The events below are written in the log-stream ndjson shape, with the
+// subsystem/category/message combinations the capture actually carried.
+describe('ios: demoting device noise', () => {
+  const app = '/Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/ABC/MyApp.app/MyApp';
+  const event = (over) => ({
+    eventType: 'logEvent',
+    messageType: 'Error',
+    subsystem: '',
+    category: '',
+    processImagePath: app,
+    timestamp: '2026-08-24 16:03:54.196749-0400',
+    ...over,
+  });
+
+  // The flood: ~2/3 of the 3,004 lines. An RN app holds a websocket to Metro
+  // and HTTP to the dev server, so com.apple.network never stops complaining.
+  test('the nw_socket flood is captured at info, not reported as an error', () => {
+    const flood = [
+      event({ subsystem: 'com.apple.network', category: 'connection', eventMessage: 'nw_socket_handle_socket_event [C1.1.1:2] Socket SO_ERROR [54: Connection reset by peer]' }),
+      event({ subsystem: 'com.apple.network', category: 'boringssl', eventMessage: 'boringssl_context_handle_fatal_alert(1938) [C4.1.1:2][0x10c0a4b60] read alert, level: fatal, description: certificate unknown' }),
+      // The same emitter through CFNetwork's legacy path: no subsystem at all,
+      // so there is nothing but the message to match on.
+      event({ eventMessage: 'nw_connection_copy_connected_local_endpoint_block_invoke [C2] Client called nw_connection_copy_connected_local_endpoint on unconnected nw_connection' }),
+      event({ eventMessage: 'nw_read_request_report [C3] Receive failed with error "Socket is not connected"' }),
+    ];
+    for (const e of flood) {
+      const record = parseLogStreamLine(JSON.stringify(e));
+      assert.equal(record.level, 'info', e.eventMessage);
+      // Captured, not dropped: `logs` still shows it, `--errors` does not.
+      assert.equal(record.msg, e.eventMessage);
+      assert.equal(record.src, 'device');
+      assert.equal(record.proc, 'MyApp');
+    }
+  });
+
+  // The one record the field capture classified FATAL on a healthy app.
+  test('the UIScene deprecation notice is a notice, not a fatal', () => {
+    const record = parseLogStreamLine(JSON.stringify(event({
+      messageType: 'Fault',
+      subsystem: 'com.apple.UIKit',
+      category: 'lifecycle',
+      eventMessage: 'BUG IN CLIENT OF UIKIT: UIScene lifecycle will soon be required. Please update your app to adopt UIScene lifecycle.',
+    })));
+    assert.equal(record.level, 'info');
+    assert.equal(noiseRuleId(JSON.parse(JSON.stringify(event({ eventMessage: 'The app must migrate to UIScene lifecycle before iOS 27.' })))), 'uiscene-deprecation');
+  });
+
+  test('the rest of the proven offenders are demoted, each by its own rule', () => {
+    const cases = [
+      ['sectrust', event({ subsystem: 'com.apple.securityd', category: 'SecTrust', eventMessage: 'SecTrustEvaluateIfNecessary' })],
+      ['sectrust-default-subsystem', event({ eventMessage: 'SecTrustReportNetworkingAnalytics: Failed to acquire the trust result' })],
+      ['webkit', event({ subsystem: 'com.apple.WebKit', category: 'Process', eventMessage: 'Failed to terminate process: Error Domain=com.apple.extensionKit.errorDomain Code=18' })],
+      ['webkit-default-subsystem', event({ eventMessage: 'WebPrivacy: Failed to acquire the WebPrivacy resource' })],
+      ['audio-factory', event({ eventMessage: 'AddInstanceForFactory: No factory registered for id <CFUUID 0x600000284840> F8BB1C28-BAE8-11D6-9C31-00039315CD46' })],
+      ['coreui', event({ subsystem: 'com.apple.coreui', category: 'default', eventMessage: 'Invalid asset name supplied: (null)' })],
+      ['coreui-default-subsystem', event({ eventMessage: 'CUICatalog: Invalid asset name supplied: (null)' })],
+    ];
+    for (const [id, e] of cases) {
+      assert.equal(noiseRuleId(e), id, e.eventMessage);
+      assert.equal(levelForEvent(e), 'info', e.eventMessage);
+    }
+    // Every rule in the list is exercised above or in the tests around it.
+    const covered = new Set([...cases.map(([id]) => id), 'network', 'network-default-subsystem', 'uiscene-deprecation']);
+    assert.deepEqual(NOISE_RULES.map((r) => r.id).filter((id) => !covered.has(id)), [], 'every rule needs a captured shape');
+  });
+
+  // The direction that matters: the list is an allowlist for DEMOTION, not a
+  // filter for what counts as an error. Anything not on it keeps its level.
+  test('the app\'s own error is untouched, and so is an unlisted system one', () => {
+    const own = event({ eventMessage: '[Error: Exception in HostFunction]' });
+    assert.equal(noiseRuleId(own), null);
+    assert.equal(parseLogStreamLine(JSON.stringify(own)).level, 'error');
+
+    // From the real fixture: pairedsync and locationd are not on the list.
+    const unlisted = event({ subsystem: 'com.apple.pairedsync', category: 'daemon', eventMessage: 'Fatal error: pairing store path was nil for PSDFileManager.' });
+    assert.equal(levelForEvent(unlisted), 'error');
+    assert.equal(levelForEvent({ ...unlisted, messageType: 'Fault' }), 'fatal');
+  });
+
+  // A rule can only ever demote. A subsystem on the list that logs at Default
+  // must not be pushed up, and a demotion must not change anything else.
+  test('demotion never promotes, and never fires below error', () => {
+    const chatty = event({ messageType: 'Default', subsystem: 'com.apple.network', eventMessage: 'nw_socket ordinary chatter' });
+    assert.equal(levelForEvent(chatty), 'info');
+    assert.equal(levelForEvent({ ...chatty, messageType: 'Debug' }), 'debug');
+  });
+
+  // A subsystem rule matches the subsystem and its children, not a prefix that
+  // merely starts the same way -- com.apple.networkextension is a different
+  // component and keeps its errors.
+  test('a subsystem rule matches dotted children, not lookalike names', () => {
+    assert.equal(noiseRuleId(event({ subsystem: 'com.apple.network.tcp' })), 'network');
+    assert.equal(noiseRuleId(event({ subsystem: 'com.apple.networkextension', eventMessage: 'provider failed to start' })), null);
+  });
+
+  test('an event with no subsystem, category or message at all is not noise', () => {
+    assert.equal(noiseRuleId({}), null);
+    assert.equal(noiseRuleId(null), null);
+  });
+});
+
 describe('android: logcat -v time', () => {
   const lines = fixture('android-logcat-time.txt').split('\n').filter(Boolean);
 
@@ -208,5 +323,48 @@ describe('android: logcat -v time', () => {
     assert.equal(parsePidof(null), null);
     // Without -s, pidof can print several; the first is still a real pid.
     assert.equal(parsePidof('3132 3155\n'), 3132);
+  });
+
+  // Android never produced the iOS storm, because --pid already excludes the
+  // system daemons. What it does let through is the system code running INSIDE
+  // the app process: the emulator's graphics stack and the zip loader, at E,
+  // on a launch that worked.
+  describe('demoting device noise', () => {
+    test('the emulator graphics and loader tags are captured at info', () => {
+      const noisy = [
+        '08-21 17:51:19.669 E/libEGL  ( 9182): called unimplemented OpenGL ES API',
+        '08-21 17:51:19.669 E/EGL_emulation( 9182): tid 9182: eglSurfaceAttrib(1376): error 0x3009 (EGL_BAD_MATCH)',
+        '08-21 17:51:19.669 E/eglCodecCommon( 9182): glUtilsParamSize: unknow param 0x00008cdf',
+        '08-21 17:51:19.669 E/OpenGLRenderer( 9182): Unable to match the desired swap behavior.',
+        '08-21 17:51:19.669 E/ziparchive( 9182): Unable to open \'/data/app/~~x==/com.example.app-1/base.dm\': No such file or directory',
+        '08-21 17:51:19.669 E/vulkan  ( 9182): unknown gralloc4 metadata type',
+      ];
+      for (const line of noisy) {
+        const record = parseLogcatLine(line);
+        assert.equal(record.level, 'info', line);
+        assert.ok(record.msg.length > 0, 'still captured, just not an error');
+      }
+    });
+
+    test('an unlisted tag keeps its E, including the app\'s own', () => {
+      assert.equal(parseLogcatLine('08-21 17:51:19.669 E/ReactNativeJS( 9182): [Error: Exception in HostFunction]').level, 'error');
+      // From the real fixture.
+      assert.equal(parseLogcatLine('08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183').level, 'error');
+    });
+
+    // There is no benign F inside an app process: it is libc reporting a
+    // signal or ART aborting. A noisy tag does not buy an exemption from that.
+    test('F is never demoted, even from a listed tag', () => {
+      assert.equal(levelForLogcat('F', 'libEGL'), 'fatal');
+      assert.equal(parseLogcatLine('08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182').level, 'fatal');
+      assert.ok(!NOISE_TAGS.has('libc'), 'libc must never be demotable');
+    });
+
+    test('levelForLogcat leaves everything below error alone', () => {
+      assert.equal(levelForLogcat('W', 'libEGL'), 'warn');
+      assert.equal(levelForLogcat('I', 'libEGL'), 'info');
+      assert.equal(levelForLogcat('E', 'libEGL'), 'info');
+      assert.equal(levelForLogcat('E', 'MyApp'), 'error');
+    });
   });
 });

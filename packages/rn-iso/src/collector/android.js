@@ -33,6 +33,38 @@ export function levelFromLogcatLetter(letter) {
   return LEVEL_BY_LETTER[String(letter || '').toUpperCase()] ?? 'info';
 }
 
+// --- the demotion list ---------------------------------------------------
+//
+// The iOS side of this collector had to demote 3,004 records from a HEALTHY
+// app (see the field note in collector/ios.js). Android did not produce
+// anything of the sort, and the reason is structural: `--pid` filters to the
+// app's own process, so the system daemons that make up the bulk of a device
+// log never arrive. What still gets through is the system code running INSIDE
+// the app process -- the emulator's graphics stack and the asset/zip loaders
+// -- which logs at E on a launch that worked. Same treatment as iOS, a much
+// shorter list, and the same rule: a tag not listed keeps its priority.
+//
+// Only E is demoted, never F. A fatal line inside an app process is libc
+// reporting a signal or ART aborting, and there is no benign version of that.
+export const NOISE_TAGS = new Set([
+  // Emulator graphics: the goldfish/ranchu GLES and Vulkan bridge logs at E
+  // for unimplemented entry points and for buffer metadata it does not know.
+  'libEGL', 'EGL_emulation', 'eglCodecCommon', 'emuglGLESv2_enc', 'HostConnection',
+  'OpenGLRenderer', 'gralloc4', 'Gralloc4', 'vulkan', 'GraphicBufferAllocator',
+  'BufferQueueProducer', 'Surface',
+  // Loaders: ziparchive reports every optional entry it did not find in the
+  // apk (`.dm`, per-abi libs) at E, on every cold start.
+  'ziparchive',
+  // logcat's own throttling notice ("uid=... expire N lines").
+  'chatty',
+]);
+
+export function levelForLogcat(letter, tag) {
+  const level = levelFromLogcatLetter(letter);
+  if (level !== 'error') return level;
+  return NOISE_TAGS.has(String(tag || '').trim()) ? 'info' : level;
+}
+
 // `-v time` lines, captured verbatim from a live emulator (Android 16):
 //   08-25 13:17:32.222 D/WifiNative(  658): Scan result ready event
 //   08-25 13:17:34.441 I/bdee    ( 1670): (REDACTED) getHotwordActive...
@@ -73,7 +105,7 @@ export function parseLogcatLine(line, { now = Date.now } = {}) {
       minute: Number(minute), second: Number(second), millis: Number(millis),
     }, now()),
     src: 'device',
-    level: levelFromLogcatLetter(letter),
+    level: levelForLogcat(letter, tag),
     msg,
     proc: `${tag.trim()}(${pid})`,
   };

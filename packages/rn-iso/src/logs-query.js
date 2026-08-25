@@ -8,11 +8,19 @@
 //
 // The query that has to be exactly right is `--errors`, because it is what an
 // agent loop polls after a build and its EMPTY result is the pass condition.
-// Its window is "level error|fatal, at a ts after the last marker:true record
-// ACROSS ALL SOURCES". Merging the marker search across sources is the whole
-// point: a launch marker written to build-ios.ndjson has to reset the window
-// for client.ndjson too, or the previous run's redbox reads as this run's
-// failure forever.
+// It has to be right in BOTH directions, and a field test caught it wrong in
+// both at once: it returned 3,004 iOS syslog lines on a healthy app while
+// hiding a real `[Error: Exception in HostFunction]`. Two rules come from
+// that, and they are the two things to not undo:
+//
+//   SCOPE  --errors reports metro, client and build by default (ERROR_SOURCES).
+//          Device errors are the OS talking, not the app; the app's own
+//          crashes reach the client and metro streams. `--source device` (or
+//          `--source all`) opts back in, and a plain `logs` still shows
+//          everything.
+//   WINDOW A marker records which window it closes, by its source. See
+//          markerWindow below: a finished bundle is not evidence that the
+//          app which loaded it is fine.
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'fs';
 import { join } from 'path';
 import { StringDecoder } from 'string_decoder';
@@ -47,33 +55,86 @@ export function compileGrep(pattern) {
   }
 }
 
-export function lastMarkerTs(records) {
-  let last = null;
+// The sources `--errors` reports when the caller named none. Device is out on
+// purpose: `simctl log stream` is predicated on the app's PROCESS, and inside
+// that process Apple's own frameworks log thousands of Error-typed lines that
+// have nothing to do with the app (collector/ios.js demotes the proven ones;
+// this is the second half of the same fix, for the ones nobody has curated
+// yet). A native crash that never reached JS is still findable -- `logs
+// --errors --source device`, `--source all`, or a plain `logs`.
+export const ERROR_SOURCES = ['metro', 'client', 'build'];
+
+// THE MARKER WINDOW, and why it is two numbers rather than one.
+//
+// FIELD CASE. A real startup crash was reported at 16:03:54 on client, and
+// Metro wrote its bundle_build_done marker at 16:03:55 -- one second LATER,
+// because the bundler finishes accounting for a build after the app has
+// already evaluated it. Under a single "last marker across all sources"
+// cutoff that marker retroactively swallowed the crash, and `--errors` said
+// the app was fine while it was sitting on a redbox.
+//
+// The rule now: a marker closes the window for the sources it can actually
+// speak for.
+//   * A BUNDLE marker (src metro: the reporter's bundle_build_done, or the
+//     "Bundled 812ms" line in expo-child mode) means the BUNDLER is happy. It
+//     resets metro-source errors -- a resolve failure you fixed and rebuilt is
+//     history -- and says nothing about the app, so client, device and build
+//     errors survive it.
+//   * A LAUNCH marker (src build: `ios`/`android` after a successful launch)
+//     means a new run of the app starts here. It resets everything, which is
+//     what stops the previous run's redbox from being reported forever.
+//
+// Chosen over the alternative (a settle delay plus a [marker-5s, marker]
+// startup-crash window for client records) because that one is two tunable
+// constants deciding whether a crash is reported, and because a 5s window
+// applied to a LAUNCH marker would resurrect the previous run's errors --
+// exactly the bug the marker exists to prevent. The cost of this rule is the
+// opposite, safe direction: a client redbox that Fast Refresh already fixed
+// keeps being reported until the next launch marker.
+//
+// Classification is by `src`, not by event name, because the two bundle
+// markers have different event names (bundle_build_done / expo_stdout) and
+// the same source. An unrecognised marker source resets everything, which is
+// the conservative reading -- it shows more, never less.
+export function markerWindow(records) {
+  let launchTs = null;
+  let bundleTs = null;
   for (const r of records) {
     if (r?.marker !== true) continue;
     const ts = tsOf(r);
     if (ts === null) continue;
-    if (last === null || ts > last) last = ts;
+    if (r.src === 'metro') {
+      if (bundleTs === null || ts > bundleTs) bundleTs = ts;
+    } else if (launchTs === null || ts > launchTs) {
+      launchTs = ts;
+    }
   }
-  return last;
+  return { launchTs, bundleTs };
 }
 
 // Pure predicate shared by queryLogs and followLogs, so a follow stream and a
 // one-shot query can never disagree about what matches.
 export function recordMatches(record, criteria = {}) {
   if (!record) return false;
-  const { sources, minLevel, grep, sinceTs, errorsOnly, markerTs } = criteria;
+  const { sources, minLevel, grep, sinceTs, errorsOnly, markerTs, bundleMarkerTs } = criteria;
 
   if (sources && sources.length > 0 && !sources.includes(record.src)) return false;
   if (minLevel && levelRank(record.level) < levelRank(minLevel)) return false;
 
   if (errorsOnly) {
     if (record.level !== 'error' && record.level !== 'fatal') return false;
+    // markerTs is the LAUNCH cutoff and applies to every source;
+    // bundleMarkerTs is the bundle cutoff and applies to metro only. A metro
+    // error has to clear both, which makes its cutoff the later of the two.
     if (typeof markerTs === 'number') {
       const ts = tsOf(record);
       // Strictly after: a record stamped at the same millisecond as the marker
       // describes the state the marker closes off, not the one it opens.
       if (ts === null || ts <= markerTs) return false;
+    }
+    if (typeof bundleMarkerTs === 'number' && record.src === 'metro') {
+      const ts = tsOf(record);
+      if (ts === null || ts <= bundleMarkerTs) return false;
     }
   }
 
@@ -95,11 +156,15 @@ export function recordMatches(record, criteria = {}) {
 // Turns CLI-shaped options into the criteria recordMatches wants, resolving
 // `since` against `now` and compiling `grep` once. Throws on bad input --
 // callers that want to report it politely call parseSince/compileGrep first.
-export function buildCriteria({ sources, minLevel, since, grep, errorsOnly, markerTs, now } = {}) {
+export function buildCriteria({ sources, minLevel, since, grep, errorsOnly, markerTs, bundleMarkerTs, now } = {}) {
   const criteria = { errorsOnly: Boolean(errorsOnly) };
+  // The default scope lives here rather than in queryLogs so the one-shot
+  // query and the --follow stream cannot disagree about what --errors means.
   if (sources && sources.length > 0) criteria.sources = sources;
+  else if (criteria.errorsOnly) criteria.sources = ERROR_SOURCES;
   if (minLevel) criteria.minLevel = minLevel;
   if (typeof markerTs === 'number') criteria.markerTs = markerTs;
+  if (typeof bundleMarkerTs === 'number') criteria.bundleMarkerTs = bundleMarkerTs;
   if (since !== undefined && since !== null && since !== '') {
     const parsed = parseSince(since);
     if (parsed.error) throw new Error(parsed.error);
@@ -163,7 +228,7 @@ export function queryLogs({ dir, sources, minLevel, since, grep, tail, errorsOnl
 
   // The marker scan runs over the UNFILTERED merge on purpose: --source client
   // must still see the build marker that closes the previous window.
-  const markerTs = errorsOnly ? lastMarkerTs(all) : null;
+  const { launchTs, bundleTs } = errorsOnly ? markerWindow(all) : { launchTs: null, bundleTs: null };
   const criteria = buildCriteria({
     sources,
     minLevel,
@@ -171,7 +236,8 @@ export function queryLogs({ dir, sources, minLevel, since, grep, tail, errorsOnl
     grep,
     errorsOnly,
     now,
-    markerTs: markerTs === null ? undefined : markerTs,
+    markerTs: launchTs === null ? undefined : launchTs,
+    bundleMarkerTs: bundleTs === null ? undefined : bundleTs,
   });
 
   const matched = all.filter((r) => recordMatches(r, criteria));

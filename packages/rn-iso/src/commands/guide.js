@@ -49,7 +49,11 @@ other line goes to stderr, so it is always safe to pipe.
                   looked up", which is a different fact from "nothing was found"
   appPath         the .app that was installed
   bundleId        the iOS bundle id that was launched
-  launched        true
+  launched        true, or "unverified" when no bundle request from this app
+                  reached this workspace's Metro within ~20s of the launch
+                  (a dev-client server picker awaiting a tap, or an iOS
+                  confirmation alert gating simctl openurl). The warning on
+                  stderr names the exact openurl command to retry.
   metroPort       the port the app was wired to
   logs            { dir }
   durationMs      wall time for the whole run
@@ -63,8 +67,8 @@ other line goes to stderr, so it is always safe to pipe.
   logs            { dir, device } -- device is the collector's own log file
 
 ON FAILURE
-  Both build commands print the error contract instead, still one line on
-  stdout, and exit 1:
+  \`start\`, \`ios\` and \`android\` all print the error contract instead,
+  still one line on stdout, and exit 1:
 
     { "code": "RN_ISO_NO_METRO", "message": "...", "remedy": "..." }
 
@@ -174,30 +178,58 @@ pass condition of a build loop, so an empty result must never read as a
 failure. The only exit-1 paths are a malformed query and no project.
 
 FLAGS
-  --source <s...>  metro, client, device, build (one or more). An unknown
-                   value is REJECTED rather than quietly matching nothing.
+  --source <s...>  metro, client, device, build (one or more), or all. An
+                   unknown value is REJECTED rather than quietly matching
+                   nothing.
   --level <l>      minimum level: debug, info, warn, error, fatal
   --since <d>      only records newer than this: 30s, 5m, 2h
   --grep <re>      only records whose msg matches this regular expression
   --tail <n>       only the last n MATCHING records (applied after filtering,
                    so --level error --tail 5 is the last five ERRORS)
-  --errors         errors and fatals since the last marker -- the agent query
+  --errors         errors and fatals since the last marker, from metro, client
+                   and build -- the agent query. Capped at 20 printed records.
   --follow         keep streaming until interrupted (Ctrl+C is exit 0)
   --json           the raw records, one per line, so stdout is valid NDJSON
 
 --ERRORS, PRECISELY
-  Level error or fatal, timestamped strictly AFTER the most recent record
-  carrying marker: true. The marker is searched across every source, not just
-  the ones being reported, so a marker in one file closes the window for all of
-  them. A marker is written when a bundle build finishes: it means everything
-  before it is history, which is what stops a redbox you already fixed from
-  being reported forever.
+  Level error or fatal, from metro, client and build, timestamped strictly
+  AFTER the marker that closes their window. Three rules, and a field test
+  caught all three wrong at once -- it returned 3,004 iOS syslog lines on a
+  healthy app while hiding a real startup crash.
+
+  SCOPE. device is NOT in the default scope. A device log is the OS talking:
+  \`simctl log stream\` is predicated on the app's PROCESS, and inside that
+  process Apple's frameworks log thousands of Error-typed lines (nw_socket,
+  SecTrust, WebKit, CoreUI) that have nothing to do with your app. The proven
+  ones are demoted to info by the collector; the scope rule covers the rest.
+  The app's own crashes reach client and metro either way. Opt back in with
+  \`--source device\` or \`--source all\`; a plain \`logs\` with no --errors
+  has always shown everything.
+
+  THE WINDOW. A marker closes the window for the sources it can speak for:
+    a BUNDLE marker (src metro: bundle_build_done, or Expo's "Bundled" line)
+      resets METRO errors -- a resolve failure you fixed and rebuilt is
+      history -- and nothing else.
+    a LAUNCH marker (src build, written by \`ios\` / \`android\`) resets
+      EVERYTHING: a new run of the app starts there.
+  A finished bundle is not evidence that the app which loaded it is fine.
+  In the field case the app threw at 16:03:54 and Metro wrote its marker at
+  16:03:55, one second later, because the bundler finishes accounting for a
+  build after the client has already evaluated it. Under one marker for all
+  sources that crash was reported as nothing at all. The cost of the rule is
+  the safe direction: a client redbox that Fast Refresh already fixed keeps
+  being reported until the next launch.
+
+  OUTPUT. --errors prints at most 20 records and then a "... and N more" line.
+  N is exactly what \`--tail N\` prints, because what was held back IS the
+  tail. --json is never capped, and neither is an explicit --tail.
 
   In --follow mode the marker window is dropped -- every error arriving from
   then on is by definition after the last marker seen.
 
   \`rn-iso status\` reports the same count per workspace, as
-  logs.errorsSinceMarker.
+  logs.errorsSinceMarker: the same query, the same scope, so the two can never
+  disagree about whether this workspace is failing.
 
 THE RECORD
   { ts, src, level, msg } always. ts is epoch milliseconds; src is one of
@@ -218,7 +250,11 @@ WHAT WRITES WHAT
   device.ndjson        the device-log collector \`ios\` / \`android\` attaches
                        after launch: \`simctl log stream\` predicated on the
                        app, or \`adb logcat\` filtered to the app's pid. This
-                       is where a native crash that never reached JS shows up.
+                       is where a native crash that never reached JS shows up
+                       -- and, on iOS, where every Apple framework running in
+                       the app's process also logs. The proven noise sources
+                       are recorded at info rather than error; the rest is why
+                       --errors leaves this source out unless asked.
   build-ios.ndjson     the xcodebuild / gradle transcript at level debug, the
   build-android.ndjson extracted diagnostics at level error, and the launch as
                        a marker record.
@@ -304,15 +340,22 @@ RN_ISO_BARE_DEPS / RN_ISO_BARE_LOAD / RN_ISO_BARE_API  (bare RN)
 RN_ISO_EXPO_BIN  (Expo)
   node_modules/.bin/expo does not exist. Install the project's dependencies.
 
-"The dev server did not answer on port <n> within <s>s."
+RN_ISO_METRO_TIMEOUT
+  "The dev server did not answer on port <n> within <s>s."
   The supervisor is alive, but nothing is serving yet. \`start\` has already
   printed the last lines of .rn-iso/logs/supervisor.log above this -- read
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`rn-iso stop\`, then \`start\`.
 
-"The supervisor exited (<code|signal>) before the dev server came up"
+RN_ISO_SUPERVISOR_EXITED
+  "The supervisor exited (<code|signal>) before the dev server came up"
   The dev server failed outright, and the quoted supervisor.log tail is the
   real error. Fix that and run \`start\` again; nothing is left running.
+
+RN_ISO_BAD_ARG / RN_ISO_NO_PROJECT
+  \`start\` refused before doing anything: an unusable --wait value, or a
+  working directory with no package.json above it. Both are caught before the
+  port is reserved and before anything is spawned, so nothing was started.
 
 "@rn-iso/metro is not installed ... so bundler and client logs will not be
 captured"  (in metro.ndjson, bare RN)
@@ -543,6 +586,15 @@ nothing, always safe) reports those; \`gc --delete\` reaps them, and in the same
 run drops the dead config ENTRIES those projects left behind and frees their
 Metro ports.
 
+THE MIRROR IMAGE: A STALE DEVICE RECORD
+  A device deleted out from under a LIVE project (by hand, or by Xcode) leaves
+  the opposite problem: the record points at a sim that is not on the machine,
+  and \`rn-iso status\` warns about it on every run. \`gc\` reports these under
+  "Stale device records", and \`gc --delete\` clears the RECORD -- only the
+  record. There is no device left to shut down or delete, so nothing is issued
+  at simctl or avdmanager, and the project keeps its entry, its label and its
+  Metro port. The next \`ios\` / \`android\` creates a fresh owned device.
+
 THE ONE CASE GC WILL NOT REAP
   If the config is gone entirely (deleted ~/.rn-iso, or a throwaway
   RN_ISO_HOME), gc cannot tell your stale devices from another config's LIVE
@@ -555,6 +607,15 @@ DISK
   Build output is workspace-local -- <worktree>/.rn-iso/derived-data and
   gradle-build -- so \`worktree remove\` reclaims it definitionally and there
   is no global DerivedData sweep to run.
+
+  So are the logs, and one of them is not small: build-ios.ndjson /
+  build-android.ndjson hold the whole xcodebuild or gradle transcript at debug
+  level, which for a cold build is tens of megabytes (74 MB measured on one
+  first iOS build of a real app). They are worth that -- a build that fails at
+  minute nine is unreadable any other way -- and they are per workspace, not
+  global, so \`worktree remove\` reclaims them along with everything else in
+  <worktree>/.rn-iso. Nothing else prunes them; a workspace you keep building
+  in keeps appending.
 
   Simulators are large and live in the CoreSimulator device set, not in your
   project. If the disk is filling up, rn-iso's own devices are usually not the

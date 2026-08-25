@@ -33,8 +33,14 @@ import {
   lastBuildRecord,
   phaseLine,
   podAction,
+  ensureWorkspaceIgnoredSafely,
   registerIos,
   replaceCollector,
+  resolveMetroWithRetry,
+  gateShouldRetry,
+  noMetroMessage,
+  pickDevClientScheme,
+  schemesFromInfoPlist,
   shortHash,
   shortUdid,
   writeLastBuild,
@@ -160,6 +166,16 @@ function harness(overrides = {}) {
       record('replaceCollector', args);
       return { killed: null, pid: 5150 };
     },
+    // The gate's retry is REAL here (it is the thing under test in one case
+    // below); only its sleep is removed, so a refusal costs no wall time.
+    resolveMetroWithRetry: (resolve, port, path, opts) => resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
+    // The default is a launch that verified: the app fetched a bundle from
+    // this workspace's Metro. The unverified path has its own tests.
+    verifyLaunch: async (args) => {
+      record('verifyLaunch', args);
+      return { verified: true, waitedMs: 2500, record: { event: 'bundle_build_started' } };
+    },
+    ensureWorkspaceIgnored: async (dir) => { record('ensureWorkspaceIgnored', dir); },
     ...overrides,
   };
   return { deps, calls, appPath };
@@ -245,6 +261,183 @@ describe('the Metro gate', () => {
     const { exitCode, calls } = await run({ metroCheck: false });
     assert.equal(exitCode, null);
     assert.equal(calls.args.launchIosApp.metroPort, 8081);
+  });
+
+  test('--no-metro-check does not poll for a bundle it was told not to expect -- and does not claim one', async () => {
+    reserve();
+    const { logs, calls, errs } = await run({ json: true, metroCheck: false });
+    assert.ok(!calls.order.includes('verifyLaunch'), 'no 20-second wait for a gate that was waived');
+    assert.equal(JSON.parse(logs[0]).launched, 'unverified');
+    assert.match(errs.join('\n'), /skipped \(--no-metro-check\)/);
+  });
+});
+
+// The start -> ios race, seen on a yarn-workspaces monorepo: `start` returns
+// when the server is LISTENING, and the bare in-process Metro then blocks its
+// event loop for ~20s crawling the file map. The single 2s /status probe timed
+// out inside that window and the gate refused with "run rn-iso start first" --
+// about a supervisor `start` had just spawned.
+describe('the Metro gate retries an indexing Metro', () => {
+  test('a port that verifies on the third attempt is not refused', async () => {
+    reserve();
+    let attempts = 0;
+    const { exitCode, calls } = await run({}, {
+      resolveProjectMetro: async () => {
+        attempts += 1;
+        // Listening, event loop blocked by the file-map crawl.
+        if (attempts < 3) return { notOurs: 'pid 42 on port 8082 does not answer Metro\'s /status', kind: 'unresponsive' };
+        return { metro: { pid: 42, leader: 42, cwd: root } };
+      },
+    });
+    assert.equal(exitCode, null, 'the run proceeds');
+    assert.equal(attempts, 3);
+    assert.ok(calls.order.includes('buildIos'));
+  });
+
+  test('a FOREIGN listener is refused immediately: waiting cannot make it ours', async () => {
+    reserve();
+    let attempts = 0;
+    const { exitCode, errs } = await run({}, {
+      resolveProjectMetro: async () => {
+        attempts += 1;
+        return { notOurs: 'pid 42 on port 8082 runs from /elsewhere, outside ' + root, kind: 'foreign-cwd' };
+      },
+    });
+    assert.equal(exitCode, 1);
+    assert.equal(attempts, 1, 'no backoff is spent on an answer that cannot change');
+    assert.match(errs.join('\n'), /NOT this workspace's dev server/);
+  });
+
+  test('gateShouldRetry is the rule, stated once', () => {
+    assert.equal(gateShouldRetry({ missing: true }), true);
+    assert.equal(gateShouldRetry({ notOurs: 'x', kind: 'unresponsive' }), true);
+    assert.equal(gateShouldRetry({ notOurs: 'x', kind: 'unreadable-cwd' }), true);
+    assert.equal(gateShouldRetry({ notOurs: 'x', kind: 'foreign-cwd' }), false);
+    assert.equal(gateShouldRetry({ metro: { pid: 1 } }), false);
+  });
+
+  test('the refusal distinguishes "our supervisor is still indexing" from a foreign listener', async () => {
+    reserve();
+    writeWorkspaceState(root, { supervisor: { pid: process.pid, port: 8082, mode: 'bare-inproc', startedAt: 'now' } });
+    const { errs, exitCode } = await run({}, {
+      resolveProjectMetro: async () => ({ notOurs: 'pid 4242 on port 8082 does not answer Metro\'s /status', kind: 'unresponsive' }),
+    });
+    assert.equal(exitCode, 1);
+    const text = errs.join('\n');
+    assert.match(text, /A supervisor record exists for port 8082/);
+    assert.match(text, /still be indexing/);
+    // And the remedy is the one that helps: wait, do not start a second one.
+    assert.match(text, /rn-iso start --wait/);
+    assert.doesNotMatch(text, /Run `rn-iso start` first/);
+  });
+
+  test('with no supervisor record the refusal is the plain one', async () => {
+    reserve();
+    const { errs } = await run({}, { resolveProjectMetro: async () => ({ missing: true }) });
+    const text = errs.join('\n');
+    assert.match(text, /Nothing is serving this workspace's dev server on port 8082/);
+    assert.match(text, /Run `rn-iso start` first/);
+  });
+
+  test('noMetroMessage names a supervisor only when it is for THIS port and alive', () => {
+    const supervisor = { pid: 7, port: 8082, mode: 'expo-child' };
+    assert.match(noMetroMessage({ port: 8082, resolution: { missing: true }, supervisor, supervisorAlive: true }), /supervisor record exists/);
+    assert.match(noMetroMessage({ port: 8082, resolution: { missing: true }, supervisor, supervisorAlive: false }), /Nothing is serving/);
+    assert.match(noMetroMessage({ port: 8099, resolution: { missing: true }, supervisor, supervisorAlive: true }), /Nothing is serving/);
+  });
+});
+
+// The launch is not the proof. rn-iso reported launched: true while the app
+// sat on expo-dev-launcher's DEVELOPMENT SERVERS picker listing every other
+// workspace's Metro -- one tap from loading another project's bundle onto
+// this device.
+describe('launch verification', () => {
+  test('a verified launch reports launched: true and says what it saw', async () => {
+    reserve();
+    const { logs, errs, exitCode, calls } = await run({ json: true });
+    assert.equal(exitCode, null);
+    assert.equal(JSON.parse(logs[0]).launched, true);
+    assert.match(errs.join('\n'), /verify.*bundle requested from Metro port 8082/);
+    // It polls THIS workspace's timeline, from the launch onwards.
+    assert.equal(calls.args.verifyLaunch.logsDir, workspaceLogsDir(root));
+    assert.ok(Number.isFinite(calls.args.verifyLaunch.since));
+  });
+
+  test('the picker: an unverified launch is launched: "unverified", exit 0, and a loud warning', async () => {
+    reserve();
+    const { logs, errs, exitCode } = await run({ json: true }, {
+      verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
+      detectIsExpo: () => true,
+    });
+    // Exit 0: the app IS launched, and refusing here would break every slow
+    // launch. What changes is the FACT, which is what an agent branches on.
+    assert.equal(exitCode, null);
+    assert.equal(JSON.parse(logs[0]).launched, 'unverified');
+    const text = errs.join('\n');
+    assert.match(text, /UNVERIFIED/);
+    assert.match(text, /DEVELOPMENT SERVERS/);
+    assert.match(text, /localhost:8082/);
+  });
+
+  test('the alert stall: the warning carries the exact openurl to retry', async () => {
+    reserve();
+    writeFileSync(join(root, 'package.json'), JSON.stringify({
+      name: 'fixture', dependencies: { expo: '52.0.0', 'expo-dev-client': '5.0.0' },
+    }));
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { scheme: 'fixture' } }));
+    const { errs, logs } = await run({ json: true }, {
+      devClientScheme,
+      verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
+    });
+    const text = errs.join('\n');
+    assert.match(text, /Open in/, 'the iOS 26 confirmation alert is named');
+    assert.match(text, new RegExp(`xcrun simctl openurl ${UDID}`));
+    assert.match(text, /fixture:\/\/expo-development-client/);
+    assert.equal(JSON.parse(logs[0]).launched, 'unverified');
+  });
+
+  test('the collector is attached BEFORE the poll: its 20s are the ones worth logging', async () => {
+    reserve();
+    const { calls } = await run({});
+    assert.ok(calls.order.indexOf('replaceCollector') < calls.order.indexOf('verifyLaunch'));
+  });
+
+  test('the outcome lands in the timeline, not only on stderr', async () => {
+    reserve();
+    await run({}, { verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) });
+    const record = buildRecords().find((r) => r.event === 'launch_unverified');
+    assert.ok(record, 'an agent reading `rn-iso logs` must find it there too');
+    assert.equal(record.level, 'warn');
+    assert.match(record.msg, /no bundle request .* reached this workspace's Metro on port 8082/);
+
+    // And the verified case says so at info.
+    const fresh = await run({});
+    assert.equal(fresh.exitCode, null);
+    assert.ok(buildRecords().some((r) => r.event === 'launch_verified' && r.level === 'info'));
+  });
+
+  test('the outcome line on stdout says UNVERIFIED rather than a plain OK', async () => {
+    reserve();
+    const { logs } = await run({}, { verifyLaunch: async () => ({ verified: false, timedOut: true }) });
+    assert.match(logs[0], /UNVERIFIED/);
+  });
+});
+
+describe('the workspace directory is gitignored before anything is written into it', () => {
+  test('ensureWorkspaceIgnored runs before the device, the gate or the build log', async () => {
+    reserve();
+    const { calls } = await run({});
+    assert.equal(calls.args.ensureWorkspaceIgnored, root);
+    assert.equal(calls.order[0], 'ensureWorkspaceIgnored');
+  });
+
+  test('the default seam tolerates a module that is missing or a file it cannot write', async () => {
+    // It is one line of repo hygiene: a build must not fail over it, and the
+    // wrapper is what guarantees that whether engine/workspace.js is there or
+    // not.
+    const notes = [];
+    const result = await ensureWorkspaceIgnoredSafely('/definitely/not/a/checkout', { note: (l) => notes.push(l) });
+    assert.ok(result === null || typeof result === 'object');
   });
 });
 
@@ -894,9 +1087,70 @@ describe('devClientScheme', () => {
   test('is undefined without expo-dev-client', () => {
     assert.equal(devClientScheme(project({ expo: { scheme: 'myapp' } }, { name: 'x' })), undefined);
   });
+
+  // The BUILT app is the truth. app.json alone was the source, and a project
+  // with a dynamic config (app.config.ts) has no scheme there at all -- so the
+  // deep link was skipped and the app opened the dev-launcher's server picker.
+  test('prefers the built app\'s Info.plist over app.json', () => {
+    const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
+    const exec = {
+      runFile: (cmd, args) => {
+        assert.equal(cmd, 'plutil');
+        assert.deepEqual(args.slice(0, 4), ['-convert', 'json', '-o', '-']);
+        assert.match(args[4], /Fixture\.app\/Info\.plist$/);
+        return JSON.stringify({ CFBundleURLTypes: [{ CFBundleURLSchemes: ['io.tlon.groups'] }] });
+      },
+    };
+    assert.equal(devClientScheme(dir, '/b/Fixture.app', { exec }), 'io.tlon.groups');
+  });
+
+  test('falls back to app.json when the bundle cannot be read', () => {
+    const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
+    const exec = { runFile: () => { throw new Error('plutil: file does not exist'); } };
+    assert.equal(devClientScheme(dir, '/b/Fixture.app', { exec }), 'from-app-json');
+  });
+
+  test('reads CFBundleURLTypes the way @expo/config-plugins does', () => {
+    assert.deepEqual(
+      schemesFromInfoPlist({ CFBundleURLTypes: [{ CFBundleURLSchemes: ['a'] }, { CFBundleTypeRole: 'Editor' }, { CFBundleURLSchemes: ['b', 'c'] }] }),
+      ['a', 'b', 'c']
+    );
+    assert.deepEqual(schemesFromInfoPlist({}), []);
+    assert.deepEqual(schemesFromInfoPlist(null), []);
+  });
+
+  describe('pickDevClientScheme', () => {
+    test('prefers exp+<slug>, as Expo\'s own CLI does', () => {
+      assert.equal(pickDevClientScheme(['myapp', 'exp+my-app']), 'exp+my-app');
+    });
+
+    test('drops third-party callback schemes rather than deep-linking through them', () => {
+      // Verbatim from a real app's Info.plist. Expo's rule (longest wins)
+      // picks the Google one; `fb...` is also declared by the Facebook app, so
+      // which app iOS opens depends on what else is installed.
+      const real = ['th3rdwave', 'fb555544564655381', 'com.googleusercontent.apps.869857856617-96dju1hh2u2361k8o6becusfvq74tv80'];
+      assert.equal(pickDevClientScheme(real), 'th3rdwave');
+    });
+
+    test('otherwise the longest, which is Expo\'s uniqueness tie-break', () => {
+      assert.equal(pickDevClientScheme(['a', 'io.tlon.groups']), 'io.tlon.groups');
+      assert.equal(pickDevClientScheme(['https', 'mailto']), null);
+      assert.equal(pickDevClientScheme([]), null);
+      assert.equal(pickDevClientScheme(null), null);
+    });
+  });
 });
 
 describe('iosFacts', () => {
+  test('launched is three-valued: true, or the string "unverified"', () => {
+    const base = {
+      udid: UDID, fingerprint: 'abc', cacheKey: 'k', cacheHit: false, appPath: '/a.app',
+      bundleId: 'com.x', metroPort: 8082, logsDir: '/l', durationMs: 1,
+    };
+    assert.equal(iosFacts(base).launched, true);
+    assert.equal(iosFacts({ ...base, launched: 'unverified' }).launched, 'unverified');
+  });
+
   test('is the shape an agent parses', () => {
     assert.deepEqual(
       iosFacts({

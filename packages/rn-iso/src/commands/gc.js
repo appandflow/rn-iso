@@ -1,7 +1,7 @@
 // `gc` is the machine-hygiene command: it reports what rn-iso has left behind
 // and, with --delete, reclaims it.
 //
-// Three things still orphan, and none of them is a build artifact any more --
+// Four things still orphan, and none of them is a build artifact any more --
 // build output lives inside the workspace (`<root>/.rn-iso/`) and dies with the
 // directory that holds it, so the DerivedData sweep and its reverse-mapping
 // ambiguity are gone:
@@ -10,7 +10,9 @@
 //                             entry and a reserved Metro port behind
 //   2. owned devices          orphaned ones, plus (with --older-than) ones
 //                             whose project has gone untouched for weeks
-//   3. shared caches          alive by design, never dead, only bigger
+//   3. stale device records   the mirror image of 2: the DEVICE is gone and the
+//                             live project's record still points at it
+//   4. shared caches          alive by design, never dead, only bigger
 //
 // v2's `cache register` / `cache forget` / `cache list` verbs folded into the
 // report here: v3 prescribes the cache paths, so there is nothing left to
@@ -176,6 +178,66 @@ export function findStaleProjectDevices({
   return stale;
 }
 
+// Pure. The mirror image of the orphan sweep: a LIVE project whose recorded
+// device is no longer on the machine.
+//
+// This is the gap two field-test runs fell into. `status` warns "recorded sim
+// <udid> no longer exists" on every run, forever, and `gc` said nothing about
+// it -- the project's path is alive so the dead-entry sweep skips it, and the
+// device is gone so the orphan sweep (which starts from the LISTING) cannot see
+// it at all. Nothing on the machine could clear the warning except editing
+// config.json by hand.
+//
+// What is stale here is the RECORD, and only the record. There is no device to
+// tear down -- that is the premise -- so `--delete` clears the config entry and
+// issues nothing at any device, which is why this is safe to act on where the
+// orphan sweep needs the ownership guard.
+//
+// Two directions of doubt, both skipping:
+//   - `checked` is false for a platform whose listing could not be read. An
+//     absent simctl or a wedged daemon must never be read as "every recorded
+//     sim is gone", which would propose clearing every device record on the
+//     machine. Same distinction `status` draws with simsAvailable.
+//   - projects the caller already classified as dead are excluded: their whole
+//     entry is about to go, so proposing a second action on part of it would
+//     only report the same thing twice.
+//
+// Ownership is deliberately NOT required. `owned` gates destruction, and this
+// destroys nothing; a legacy record pointing at a simulator that no longer
+// exists is exactly as useless as an owned one, and leaving it in place keeps
+// `status` warning about a device nothing can ever resolve.
+export function findStaleDeviceRecords({
+  config,
+  sims = [],
+  avds = [],
+  deadProjects = [],
+  simsChecked = true,
+  avdsChecked = true,
+} = {}) {
+  const dead = new Set(deadProjects);
+  const liveSims = new Set(sims.map(s => s?.udid).filter(Boolean));
+  const liveAvds = new Set(avds.filter(a => typeof a === 'string'));
+
+  const stale = [];
+  for (const [path, proj] of Object.entries(config?.projects || {})) {
+    if (dead.has(path)) continue;
+
+    const ios = proj?.platforms?.ios;
+    if (simsChecked && ios?.deviceUdid && !liveSims.has(ios.deviceUdid)) {
+      stale.push({ kind: 'ios', id: ios.deviceUdid, project: path, owned: Boolean(ios.owned) });
+    }
+    // `avdName`, never `serial`: a legacy physical record names hardware rn-iso
+    // never created and cannot check against an AVD listing, so it is not
+    // something this can call stale (CLAUDE.md item 2 -- nothing consumes the
+    // physical bucket, and nothing may).
+    const android = proj?.platforms?.android;
+    if (avdsChecked && android?.avdName && !liveAvds.has(android.avdName)) {
+      stale.push({ kind: 'android', id: android.avdName, project: path, owned: Boolean(android.owned) });
+    }
+  }
+  return stale;
+}
+
 // The device sweep declined to run, for one of the two reasons below. Saying
 // nothing was its own failure mode: a wiped config (or a throwaway
 // RN_ISO_HOME) orphaned simulators that nothing would ever surface again.
@@ -194,13 +256,15 @@ export function formatGcReport({
   deadProjects = [],
   orphanedDevices = [],
   staleDevices = [],
+  staleDeviceRecords = [],
   deviceSweepNotices = [],
   caches = [],
   olderThan = null,
 }) {
   const lines = [];
 
-  if (deadProjects.length === 0 && orphanedDevices.length === 0 && staleDevices.length === 0) {
+  if (deadProjects.length === 0 && orphanedDevices.length === 0 && staleDevices.length === 0
+    && staleDeviceRecords.length === 0) {
     const reasons = [];
     if (skipped.length > 0) {
       reasons.push(`${skipped.length} entr${skipped.length === 1 ? 'y' : 'ies'} could not be checked`);
@@ -231,6 +295,19 @@ export function formatGcReport({
       lines.push(`  ${d.kind} ${d.name} (${d.id})`);
       lines.push(`              ${d.project} (idle ${d.idleDays}d)`);
     }
+  }
+
+  // Reported apart from the two device sweeps above because the action is
+  // different in kind: there is no device left to delete, only a config entry
+  // pointing at one. Named so the reader can match it to the warning `status`
+  // has been printing on every run.
+  if (staleDeviceRecords.length) {
+    lines.push(`Stale device records (${staleDeviceRecords.length}) - the device is gone, the project is not:`);
+    for (const r of staleDeviceRecords) {
+      lines.push(`  ${r.kind} ${r.id} is not on this machine`);
+      lines.push(`              recorded by ${r.project}`);
+    }
+    lines.push('              --delete clears the RECORD only; there is no device left to touch.');
   }
 
   if (deviceSweepNotices.length) {
@@ -513,6 +590,7 @@ export async function collectGcReport({
   const deviceSweepNotices = [];
   let orphanedDevices = [];
   let staleDevices = [];
+  let staleDeviceRecords = [];
 
   // A config file that does not exist at all means rn-iso has never
   // registered a project under this home. findOrphanedDevices' reference map
@@ -538,18 +616,27 @@ export async function collectGcReport({
     } catch { /* same */ }
     deviceSweepNotices.push(...describeUnverifiableDevices(simNames, avdNames, { reason: unsweepableReason }));
   } else {
+    // Whether each listing was actually READ matters twice over. The orphan
+    // sweep reads an unread listing as "no devices", which is harmless (it
+    // proposes nothing); the stale-RECORD sweep would read it as "every
+    // recorded device is gone", which is the opposite of harmless. So the two
+    // flags are tracked rather than inferred from an empty array.
     let sims = [];
+    let simsChecked = true;
     try {
       sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
     } catch {
+      simsChecked = false;
       deviceSweepNotices.push(
         `ios device sweep skipped: simulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
       );
     }
     let avds = [];
+    let avdsChecked = true;
     try {
       avds = listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
     } catch {
+      avdsChecked = false;
       deviceSweepNotices.push(
         `android device sweep skipped: emulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
       );
@@ -557,6 +644,14 @@ export async function collectGcReport({
 
     const isMounted = path => isOnMountedVolume(path, mountedVolumes);
     orphanedDevices = findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects }).orphaned;
+    staleDeviceRecords = findStaleDeviceRecords({
+      config: cfg,
+      sims,
+      avds,
+      deadProjects,
+      simsChecked,
+      avdsChecked,
+    });
     if (olderThan !== null) {
       staleDevices = findStaleProjectDevices({
         config: cfg,
@@ -570,7 +665,17 @@ export async function collectGcReport({
     }
   }
 
-  return { skipped, deadProjects, orphanedDevices, staleDevices, deviceSweepNotices, caches, olderThan, all };
+  return {
+    skipped,
+    deadProjects,
+    orphanedDevices,
+    staleDevices,
+    staleDeviceRecords,
+    deviceSweepNotices,
+    caches,
+    olderThan,
+    all,
+  };
 }
 
 // Report, then (only with --delete) act. Exported so the suite can drive the
@@ -589,13 +694,14 @@ export async function runGc(opts = {}) {
   });
   for (const line of formatGcReport(report)) console.log(line);
 
-  const { deadProjects, orphanedDevices, staleDevices, caches } = report;
+  const { deadProjects, orphanedDevices, staleDevices, staleDeviceRecords, caches } = report;
   // Caches only count as actionable with --older-than: emptying one whole is a
   // performance decision aimed at a specific cache, not something a sweep
   // should do on the way past.
   const actionable = deadProjects.length > 0
     || orphanedDevices.length > 0
     || staleDevices.length > 0
+    || staleDeviceRecords.length > 0
     || ((olderThan !== null || all) && caches.length > 0);
 
   if (!opts.delete) {
@@ -669,6 +775,17 @@ export async function runGc(opts = {}) {
       clearDevice(d.project, d.kind);
       console.log(chalk.dim(`  cleared the ${d.kind} record for ${d.project}`));
     }
+  }
+
+  // The record, and nothing else. There is no device to resolve, no ownership
+  // to re-verify and nothing to shut down -- the premise of this list is that
+  // the device is already gone -- so this issues no simctl/avdmanager command
+  // at all. clearDevice does its read-modify-write inside withConfigLock, which
+  // is what keeps it safe beside a `start` or an `ios` running in another
+  // worktree (CLAUDE.md: config writes are locked and atomic).
+  for (const r of staleDeviceRecords) {
+    clearDevice(r.project, r.kind);
+    console.log(chalk.green(`Cleared the ${r.kind} record for ${r.project} (${r.id} is not on this machine)`));
   }
 
   if (deleteFailures) {
@@ -755,7 +872,7 @@ function emptyCaches(caches) {
 export default function gcCommand(program) {
   program
     .command('gc')
-    .description('Report what rn-iso has left behind: dead project entries, orphaned owned devices, and the shared build caches. Reports by default; pass --delete to act.')
+    .description('Report what rn-iso has left behind: dead project entries, orphaned owned devices, records of devices that no longer exist, and the shared build caches. Reports by default; pass --delete to act.')
     .option('--delete', 'actually prune the reported entries and reap the reported devices')
     .option('--older-than <days>', 'also reap owned devices whose project has been untouched this long, and trim shared cache entries nothing has used in that time', v => {
       const n = parseInt(v, 10);

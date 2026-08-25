@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { capacity, diskIsTight, environmentState, parseDfFree, unprovisionedWorktrees } from '../src/status.js';
+import { capacity, diskIsTight, diskLine, environmentState, formatSpace, parseDfFree, tightVolumes, unprovisionedWorktrees } from '../src/status.js';
 
 const BOOTED = { udid: 'U1', name: 'rn-iso-app', state: 'Booted' };
 const SHUTDOWN = { udid: 'U1', name: 'rn-iso-app', state: 'Shutdown' };
@@ -193,4 +193,49 @@ test('every pre-v3 field survives the extension', () => {
   }
   assert.equal(s.metro.port, 8082);
   assert.equal(s.ios.udid, 'U1');
+});
+
+// The disk line reported the boot volume and only the boot volume. On a machine
+// whose repos live on an external SSD that is the wrong number twice: it
+// describes a volume nothing is building on, and the volume that can actually
+// fill up (build output is workspace-local) goes unmentioned.
+test('one volume keeps the free-of-total form', () => {
+  assert.equal(
+    diskLine([{ volume: '/', disk: { availableMb: 38 * 1024, totalMb: 926 * 1024 } }]),
+    '38 GB free of 926 GB on disk.'
+  );
+});
+
+test('a project on another volume gets both volumes, named', () => {
+  assert.equal(
+    diskLine([
+      { volume: '/', disk: { availableMb: 38 * 1024, totalMb: 926 * 1024 } },
+      { volume: '/Volumes/ExternalSSD', disk: { availableMb: Math.round(1.5 * 1024 * 1024), totalMb: 2 * 1024 * 1024 } },
+    ]),
+    '38 GB free on /, 1.5 TB free on /Volumes/ExternalSSD.'
+  );
+});
+
+test('an unreadable df prints no disk line at all rather than a broken one', () => {
+  assert.equal(diskLine([]), null);
+  assert.equal(diskLine(null), null);
+  assert.equal(diskLine([{ volume: '/', disk: null }]), null);
+});
+
+test('formatSpace changes scale where the number stops being readable', () => {
+  assert.equal(formatSpace(512), '512 MB');
+  assert.equal(formatSpace(38 * 1024), '38 GB');
+  assert.equal(formatSpace(1024 * 1024), '1.0 TB');
+  assert.equal(formatSpace(NaN), '?');
+});
+
+// The warning has to name WHICH volume is tight, or a two-volume line leaves
+// the reader guessing which of the two numbers it is about.
+test('tightVolumes names only the volumes that are actually tight', () => {
+  const volumes = [
+    { volume: '/', disk: { availableMb: 5 * 1024, totalMb: 926 * 1024 } },
+    { volume: '/Volumes/ExternalSSD', disk: { availableMb: 900 * 1024, totalMb: 2048 * 1024 } },
+  ];
+  assert.deepEqual(tightVolumes(volumes).map(v => v.volume), ['/']);
+  assert.deepEqual(tightVolumes([]), []);
 });

@@ -10,6 +10,8 @@ import {
   processGroupLeader,
   resolveProjectMetro,
   killMetroTree,
+  NOT_OURS_FOREIGN_CWD,
+  NOT_OURS_UNRESPONSIVE,
 } from '../src/metro.js';
 import { spawn as realSpawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -60,6 +62,10 @@ test('resolveProjectMetro refuses a listener that does not answer /status', asyn
   const r = await resolveProjectMetro(8082, '/a/b', { probe: async () => false });
   assert.match(r.notOurs, /does not answer/);
   assert.equal(r.metro, undefined);
+  // TRANSIENT: this is exactly what a bare Metro looks like while it crawls a
+  // monorepo's file map with its event loop blocked, seconds after `start`
+  // returned. The build gate branches on this rather than on the prose.
+  assert.equal(r.kind, NOT_OURS_UNRESPONSIVE);
   resetExecutor();
 });
 
@@ -75,6 +81,9 @@ test('resolveProjectMetro refuses a Metro running from another directory', async
   });
   const r = await resolveProjectMetro(8082, '/a/b', { probe: async () => true });
   assert.match(r.notOurs, /outside/);
+  // Terminal: another workspace's bundler does not become ours by waiting, so
+  // the gate refuses immediately instead of retrying for ten seconds.
+  assert.equal(r.kind, NOT_OURS_FOREIGN_CWD);
   resetExecutor();
 });
 

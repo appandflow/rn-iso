@@ -84,21 +84,36 @@ export function isInsideProject(cwd, projectPath) {
 // repeats that mistake, so identity is proven before anything dies.
 //   { metro: {pid, leader, cwd} }  proven to be this project's Metro
 //   { missing: true }              nothing listening; already gone, not an error
-//   { notOurs: <reason> }          listening but unproven; report, never kill
+//   { notOurs: <reason>, kind }    listening but unproven; report, never kill
+//
+// `kind` exists so callers branch on data rather than on the prose of
+// `notOurs` (the same reason teardown.js's skips carry one):
+//   'unresponsive'   holds the port but did not answer /status. TRANSIENT --
+//                    a bare Metro blocks its event loop for ~20s crawling the
+//                    file map right after it starts listening, which is
+//                    exactly when `rn-iso start` returns and `rn-iso ios`
+//                    probes. The build gate retries this one.
+//   'unreadable-cwd' answered, but its working directory could not be read
+//   'foreign-cwd'    answered from OUTSIDE this project. Terminal: another
+//                    workspace's bundler will not become ours by waiting.
+export const NOT_OURS_UNRESPONSIVE = 'unresponsive';
+export const NOT_OURS_UNREADABLE_CWD = 'unreadable-cwd';
+export const NOT_OURS_FOREIGN_CWD = 'foreign-cwd';
+
 export async function resolveProjectMetro(port, projectPath, { probe = isMetroRunning } = {}) {
   const pids = parseLsofPids(getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`));
   if (pids.length === 0) return { missing: true };
   const pid = pids[0];
 
   if (!(await probe(port))) {
-    return { notOurs: `pid ${pid} on port ${port} does not answer Metro's /status` };
+    return { notOurs: `pid ${pid} on port ${port} does not answer Metro's /status`, kind: NOT_OURS_UNRESPONSIVE, pid };
   }
   const cwd = processCwd(pid);
   if (!cwd) {
-    return { notOurs: `pid ${pid} on port ${port}: working directory could not be read` };
+    return { notOurs: `pid ${pid} on port ${port}: working directory could not be read`, kind: NOT_OURS_UNREADABLE_CWD, pid };
   }
   if (!isInsideProject(cwd, projectPath)) {
-    return { notOurs: `pid ${pid} on port ${port} runs from ${cwd}, outside ${projectPath}` };
+    return { notOurs: `pid ${pid} on port ${port} runs from ${cwd}, outside ${projectPath}`, kind: NOT_OURS_FOREIGN_CWD, pid };
   }
   const leader = processGroupLeader(pid) ?? pid;
   return { metro: { pid, leader, cwd } };

@@ -11,6 +11,7 @@ import gcCommand, {
   collectGcReport,
   describeUnverifiableDevices,
   findOrphanedDevices,
+  findStaleDeviceRecords,
   findStaleProjectDevices,
   formatGcReport,
   runGc,
@@ -149,6 +150,86 @@ function staleConfig(extra = {}) {
     },
   };
 }
+
+// --- stale device RECORDS ---------------------------------------------
+//
+// The gap two field-test runs fell into: `status` warns "recorded sim <udid> no
+// longer exists" forever, and `gc` said nothing -- the path is alive so the
+// dead-entry sweep skips it, and the device is gone so the orphan sweep, which
+// starts from the live listing, cannot see it at all.
+
+test('findStaleDeviceRecords reports a live project pointing at a device that is gone', () => {
+  const stale = findStaleDeviceRecords({
+    config: {
+      projects: {
+        '/a': { platforms: { ios: { deviceUdid: 'GONE', owned: true } } },
+        '/b': { platforms: { ios: { deviceUdid: 'HERE', owned: true } } },
+        '/c': { platforms: { android: { avdName: 'rn-iso-gone', owned: true } } },
+        '/d': { platforms: { android: { avdName: 'rn-iso-here', owned: true } } },
+      },
+    },
+    sims: [{ udid: 'HERE', name: 'rn-iso-b' }],
+    avds: ['rn-iso-here'],
+  });
+  assert.deepEqual(stale.map(r => [r.kind, r.id, r.project]), [
+    ['ios', 'GONE', '/a'],
+    ['android', 'rn-iso-gone', '/c'],
+  ]);
+});
+
+// A listing that could not be READ is not evidence that anything is gone.
+// Reading it as such would propose clearing every device record on the machine
+// the first time simctl is missing or wedged.
+test('findStaleDeviceRecords proposes nothing for a platform whose listing failed', () => {
+  const config = {
+    projects: {
+      '/a': { platforms: { ios: { deviceUdid: 'GONE' }, android: { avdName: 'rn-iso-gone' } } },
+    },
+  };
+  assert.deepEqual(findStaleDeviceRecords({ config, sims: [], avds: [], simsChecked: false }).map(r => r.kind), ['android']);
+  assert.deepEqual(findStaleDeviceRecords({ config, sims: [], avds: [], avdsChecked: false }).map(r => r.kind), ['ios']);
+  assert.deepEqual(findStaleDeviceRecords({ config, simsChecked: false, avdsChecked: false }), []);
+});
+
+test('findStaleDeviceRecords skips a project the dead-entry sweep already claimed', () => {
+  const stale = findStaleDeviceRecords({
+    config: { projects: { '/dead': { platforms: { ios: { deviceUdid: 'GONE' } } } } },
+    sims: [],
+    deadProjects: ['/dead'],
+  });
+  assert.deepEqual(stale, []);
+});
+
+// Ownership gates DESTRUCTION, and this destroys nothing. A legacy record
+// pointing at a simulator that no longer exists is exactly as useless as an
+// owned one, and leaving it keeps `status` warning about it forever.
+test('findStaleDeviceRecords covers a non-owned record too, and reports its ownership', () => {
+  const stale = findStaleDeviceRecords({
+    config: { projects: { '/a': { platforms: { ios: { deviceUdid: 'GONE' } } } } },
+    sims: [],
+  });
+  assert.deepEqual(stale.map(r => r.owned), [false]);
+});
+
+// A legacy physical record names hardware rn-iso never created; there is no AVD
+// listing it could be checked against, and nothing may consume it.
+test('findStaleDeviceRecords never calls a physical serial record stale', () => {
+  assert.deepEqual(findStaleDeviceRecords({
+    config: { projects: { '/a': { platforms: { android: { serial: 'R58M1234' } } } } },
+    avds: [],
+  }), []);
+});
+
+test('the report names stale device records and says the delete touches no device', () => {
+  const lines = formatGcReport({
+    staleDeviceRecords: [{ kind: 'ios', id: 'GONE', project: '/a' }],
+  }).join('\n');
+  assert.match(lines, /Stale device records \(1\)/);
+  assert.match(lines, /ios GONE is not on this machine/);
+  assert.match(lines, /recorded by \/a/);
+  assert.match(lines, /RECORD only/);
+  assert.doesNotMatch(lines, /Nothing to reclaim/, 'a stale record is something to reclaim');
+});
 
 test('findStaleProjectDevices reaps an owned device whose project has not been touched', () => {
   const now = Date.now();
@@ -603,6 +684,49 @@ test('--delete --older-than reaps an owned device whose project went untouched, 
   const cfg = loadConfig();
   assert.ok(cfg.projects[stalePath], 'the project itself is alive and must keep its entry');
   assert.equal(cfg.projects[stalePath].platforms?.ios, undefined, 'the record of a deleted device must be cleared');
+});
+
+// The whole field-test complaint, end to end: a live project whose recorded sim
+// is gone warned in `status` on every run and `gc` proposed nothing about it.
+test('gc reports a live project whose recorded sim is gone, and --delete clears the record only', async () => {
+  const livePath = join(fakeHome, 'live-project');
+  touchedDaysAgo(livePath, 1);
+  saveConfig({
+    version: 2,
+    projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-VANISHED', owned: true } } } },
+    repos: {},
+  });
+  const execCalls = [];
+  installDeviceExecutor({ devices: [], execCalls });
+
+  const report = await captureLog(() => sweepingGc({ delete: false }));
+  assert.match(report, /Stale device records \(1\)/);
+  assert.match(report, /UDID-VANISHED/);
+  assert.ok(loadConfig().projects[livePath].platforms.ios, 'a report must not clear the record');
+
+  const output = await captureLog(() => sweepingGc({ delete: true }));
+  assert.match(output, /Cleared the ios record/);
+  const cfg = loadConfig();
+  assert.ok(cfg.projects[livePath], 'the project is alive and keeps its entry');
+  assert.equal(cfg.projects[livePath].platforms?.ios, undefined, 'only the record goes');
+  // Never touches devices: the premise is that there is none left to touch.
+  assert.equal(execCalls.some(c => /simctl (shutdown|delete)/.test(c)), false);
+  assert.equal(execCalls.some(c => /avdmanager delete/.test(c)), false);
+});
+
+test('a recorded sim that IS on the machine is not a stale record', async () => {
+  const livePath = join(fakeHome, 'live-project');
+  touchedDaysAgo(livePath, 1);
+  saveConfig({
+    version: 2,
+    projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-HERE', owned: true } } } },
+    repos: {},
+  });
+  installDeviceExecutor({ devices: [{ udid: 'UDID-HERE', name: 'rn-iso-live' }], execCalls: [] });
+
+  const output = await captureLog(() => sweepingGc({ delete: true }));
+  assert.doesNotMatch(output, /Stale device records/);
+  assert.ok(loadConfig().projects[livePath].platforms.ios, 'the record stays');
 });
 
 test('--older-than without --delete only reports the stale device', async () => {

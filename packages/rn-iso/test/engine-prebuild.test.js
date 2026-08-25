@@ -156,14 +156,17 @@ describe('runPrebuild', () => {
     assert.equal(result.error.code, PREBUILD_ERROR);
   });
 
-  test('reports a project whose expo binary was never installed', async () => {
+  test('reports a project from which expo cannot be resolved', async () => {
     const result = await runPrebuild(root, 'ios', collectingWriter(), {
       isExpo: true,
       spawnFn: () => { throw new Error('must not spawn'); },
     });
     assert.equal(result.failed, true);
-    assert.match(result.reason, /does not exist/);
-    assert.match(result.remedy, /npm install/);
+    assert.match(result.reason, /not resolvable/);
+    // Never "run npm install" again: on a hoisted monorepo the dependencies
+    // ARE installed and that remedy is a wrong answer stated confidently.
+    assert.doesNotMatch(result.remedy, /^Run `npm install`/);
+    assert.match(result.remedy, /workspace root/);
   });
 
   test('a spawn error is a failure, not a hang', async () => {

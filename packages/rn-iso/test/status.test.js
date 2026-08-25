@@ -14,7 +14,7 @@ import { createServer } from 'http';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import {saveConfig} from '../src/config.js';
-import statusCommand from '../src/commands/status.js';
+import statusCommand, { readVolumes } from '../src/commands/status.js';
 
 let tmpHome;
 
@@ -235,6 +235,35 @@ test('status reports a supervisor whose port answers as this project as healthy'
   }
 });
 
+// FIELD CASE. `status` reported "3004 errors since the last marker" on an app
+// that was working: every one of those records was iOS syslog from inside the
+// app's process. status counts with queryLogs({ errorsOnly: true }), the same
+// call `logs --errors` makes, so it inherits the same scope -- which is the
+// point: the two must never disagree about whether this workspace is failing.
+test('status counts a device-only noise storm as zero errors', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
+  try {
+    mkdirSync(join(root, '.rn-iso', 'logs'), { recursive: true });
+    const storm = [];
+    for (let i = 0; i < 3004; i += 1) {
+      storm.push({ ts: 1700000000000 + i, src: 'device', level: 'error', proc: 'MyApp', msg: `nw_socket_handle_socket_event [C${i}:1] Socket SO_ERROR [54: Connection reset by peer]` });
+    }
+    writeFileSync(
+      join(root, '.rn-iso', 'logs', 'device.ndjson'),
+      storm.map((r) => JSON.stringify(r)).join('\n') + '\n'
+    );
+    saveConfig({
+      version: 2,
+      projects: { [root]: { label: 'agent-1', metroPort: 8099, platforms: {} } },
+    });
+
+    const payload = await runStatusJson();
+    assert.equal(payload.environments[0].logs.errorsSinceMarker, 0, 'this was the 3004');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('status warns about a supervisor record whose process is gone', async () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
   try {
@@ -280,4 +309,58 @@ test('the printed lines name the supervisor and the error count', async () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// --- the disk report --------------------------------------------------
+//
+// It read `df -k /` and nothing else. On a machine whose repos live on an
+// external SSD that number describes a volume nothing is building on, while the
+// volume that can actually fill up -- build output is workspace-local -- went
+// unmentioned. `volumeRootFor` decides which volumes are in play, so this is
+// checked with an explicit path rather than against wherever the suite runs.
+function dfOutput({ totalKb, availableKb }) {
+  const usedKb = totalKb - availableKb;
+  const capacity = Math.round((usedKb / totalKb) * 100);
+  return `Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on\n`
+    + `/dev/disk3s5 ${totalKb} ${usedKb} ${availableKb} ${capacity}% 100 200 1% /somewhere\n`;
+}
+
+function dfExecutor(byVolume) {
+  const asked = [];
+  setExecutor({
+    run() { return ''; },
+    runQuiet(cmd) {
+      const m = /^df -k '(.*)'$/.exec(cmd);
+      if (!m) return null;
+      asked.push(m[1]);
+      return byVolume[m[1]] ?? null;
+    },
+    spawn() { throw new Error('spawn should not be called from status'); },
+  });
+  return asked;
+}
+
+test('a project on the boot volume reports one volume', async () => {
+  const asked = dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });
+  const volumes = readVolumes('/Users/someone/code/app');
+  assert.deepEqual(asked, ['/']);
+  assert.deepEqual(volumes.map(v => v.volume), ['/']);
+});
+
+test('a project on another volume reports that volume alongside the boot one', async () => {
+  const asked = dfExecutor({
+    '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }),
+    '/Volumes/ExternalSSD': dfOutput({ totalKb: 2048 * 1024 * 1024, availableKb: 1536 * 1024 * 1024 }),
+  });
+  const volumes = readVolumes('/Volumes/ExternalSSD/Developer/app');
+  assert.deepEqual(asked, ['/', '/Volumes/ExternalSSD']);
+  assert.deepEqual(volumes.map(v => v.volume), ['/', '/Volumes/ExternalSSD']);
+  assert.equal(volumes[1].disk.availableMb, 1536 * 1024);
+});
+
+// A df that cannot be read is a missing line, never a crash and never a zero.
+test('a volume df cannot answer for is dropped, not reported as empty', async () => {
+  dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });
+  const volumes = readVolumes('/Volumes/Unplugged/app');
+  assert.deepEqual(volumes.map(v => v.volume), ['/']);
 });

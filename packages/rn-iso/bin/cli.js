@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
-import initCommand from '../src/commands/init.js';
 import doctorCommand from '../src/commands/doctor.js';
 import worktreeCommand from '../src/commands/worktree.js';
 import startCommand from '../src/commands/start.js';
@@ -24,9 +23,16 @@ program
 
 // Registration order is the order `--help` lists them, and that listing is the
 // surface a new agent reads first: the lifecycle in the order it is run
-// (init/doctor once per repo, then worktree -> start -> ios/android -> logs ->
+// (doctor once per repo, then worktree -> start -> ios/android -> logs ->
 // stop), then the whole-machine commands, then the two meta commands.
-initCommand(program);
+//
+// There is no `init`. Setting a repo up is not a generator's job: every edit it
+// would make lands in a file the project already owns (a metro.config.js with
+// its own transformer, a Podfile with existing post_install logic), and the one
+// thing it could write safely -- the `.rn-iso/` gitignore entry -- is now
+// self-ensured by the commands that create the directory (engine/workspace.js).
+// What is left is judgement, which is the rn-iso-init SKILL's job: doctor
+// reports, an agent applies each fix in the repo's own style.
 doctorCommand(program);
 worktreeCommand(program);
 startCommand(program, pkg.version);

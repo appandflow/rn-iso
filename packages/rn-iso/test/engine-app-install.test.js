@@ -13,11 +13,19 @@
 // EXDevLauncherURLHelperTests.swift line 15.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { isBundleActivityLine } from '../src/supervisor/server-expo.js';
 import {
   DEFAULT_METRO_PORT,
   INSTALL_ERROR,
   LAUNCH_ERROR,
+  VERIFY_TIMEOUT_MS,
   devClientUrl,
+  isBundleProof,
+  unverifiedLaunchLines,
+  verifyLaunch,
   installAndroidApp,
   installIosApp,
   jsLocationValue,
@@ -257,4 +265,172 @@ test('a failed prefs write does not fail the launch', () => {
   assert.equal(r.ok, true, 'launch must proceed on the adb reverse path alone');
   assert.equal(r.debugHttpHost, null);
   assert.match(r.debugHttpHostNote, /relying on adb reverse/);
+});
+
+// --- launch verification ---------------------------------------------------
+//
+// `simctl launch` returning a pid proves a process started. It does NOT prove
+// the app loaded a bundle from this workspace's Metro: the observed failure
+// was an app sitting on expo-dev-launcher's DEVELOPMENT SERVERS picker,
+// listing every other workspace's bundler, while rn-iso reported
+// launched: true. These tests pin the three paths that matter -- verified,
+// the picker (nothing ever arrives), and the iOS 26 alert stall (something
+// arrives, but only after the deadline).
+
+// A fake clock, so a 20-second poll costs no wall time. `sleep` advances it
+// instead of waiting, which is the only reason these can assert real
+// timeouts.
+function fakeClock(start = 1000) {
+  let t = start;
+  return {
+    now: () => t,
+    sleep: async (ms) => { t += ms; },
+    advance: (ms) => { t += ms; },
+    at: () => t,
+  };
+}
+
+describe('isBundleProof', () => {
+  test('a Metro reporter bundle event after the launch is proof', () => {
+    assert.equal(isBundleProof({ ts: 100, event: 'bundle_build_started', src: 'metro' }, 100), true);
+    assert.equal(isBundleProof({ ts: 150, event: 'bundle_build_done', src: 'metro' }, 100), true);
+    // A bundling error still proves the request reached THIS server.
+    assert.equal(isBundleProof({ ts: 150, event: 'bundling_error', src: 'metro' }, 100), true);
+  });
+
+  test('an expo-child stdout line is the same proof by another route', () => {
+    assert.equal(isBundleProof({ ts: 150, src: 'metro', raw: true, event: 'expo_stdout', msg: 'iOS Bundling complete 812ms' }, 100), true);
+    assert.equal(isBundleProof({ ts: 150, src: 'metro', raw: true, event: 'expo_stdout', msg: 'iOS Bundled 812ms index.js (1150 modules)' }, 100), true);
+    // The predicate the supervisor exports and the one this module keeps must
+    // not drift apart.
+    assert.equal(isBundleActivityLine('Android Bundling failed 91ms'), true);
+    assert.equal(isBundleProof({ ts: 150, src: 'metro', msg: 'Android Bundling failed 91ms' }, 100), true);
+  });
+
+  test('a record from BEFORE the launch is not proof of this launch', () => {
+    // The previous run's bundle build is still in the same file. Trusting it
+    // would verify a launch that loaded nothing.
+    assert.equal(isBundleProof({ ts: 99, event: 'bundle_build_done' }, 100), false);
+    assert.equal(isBundleProof({ event: 'bundle_build_done' }, 100), false, 'no timestamp is no proof');
+  });
+
+  test('server chatter is not proof', () => {
+    assert.equal(isBundleProof({ ts: 150, src: 'metro', event: 'supervisor_started', msg: 'supervisor pid 1 starting' }, 100), false);
+    assert.equal(isBundleProof({ ts: 150, src: 'metro', event: 'expo_stdout', msg: 'Waiting on http://localhost:8082' }, 100), false);
+    assert.equal(isBundleProof(null, 100), false);
+  });
+});
+
+describe('verifyLaunch', () => {
+  test('verified: the poll returns as soon as a bundle request lands', async () => {
+    const clock = fakeClock();
+    const records = [];
+    let reads = 0;
+    const result = await verifyLaunch({
+      since: clock.at(),
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => {
+        reads += 1;
+        // Nothing for the first two polls, then the bundle request.
+        if (reads === 3) records.push({ ts: clock.at(), event: 'bundle_build_started' });
+        return records;
+      },
+    });
+    assert.equal(result.verified, true);
+    assert.equal(result.record.event, 'bundle_build_started');
+    assert.ok(result.waitedMs > 0 && result.waitedMs < VERIFY_TIMEOUT_MS);
+  });
+
+  test('the picker: an app that fetches nothing times out as UNVERIFIED, not as a failure', async () => {
+    const clock = fakeClock();
+    const result = await verifyLaunch({
+      since: clock.at(),
+      now: clock.now,
+      sleep: clock.sleep,
+      // The dev launcher is showing its server list. The dev server logs its
+      // own startup and nothing else -- no bundle is ever requested.
+      readRecords: () => [
+        { ts: clock.at(), src: 'metro', event: 'supervisor_started', msg: 'supervisor pid 3 starting the expo-child dev server on port 8082' },
+      ],
+    });
+    assert.equal(result.verified, false);
+    assert.equal(result.timedOut, true);
+    assert.ok(result.waitedMs >= VERIFY_TIMEOUT_MS, `waited ${result.waitedMs}`);
+  });
+
+  test('the alert stall: a bundle that arrives after the deadline does not retroactively verify', async () => {
+    // iOS 26 gates `simctl openurl` behind an "Open in <app>?" system alert.
+    // Somebody taps it 30 seconds later; the run has long since reported.
+    const clock = fakeClock();
+    const result = await verifyLaunch({
+      since: clock.at(),
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => (clock.at() > 1000 + 30000
+        ? [{ ts: clock.at(), event: 'bundle_build_started' }]
+        : []),
+    });
+    assert.equal(result.verified, false);
+    assert.equal(result.timedOut, true);
+  });
+
+  test('a missing metro.ndjson is a miss, never a throw', async () => {
+    const clock = fakeClock();
+    const result = await verifyLaunch({
+      logsDir: '/nope/does/not/exist',
+      since: clock.at(),
+      now: clock.now,
+      sleep: clock.sleep,
+      timeoutMs: 1000,
+    });
+    assert.equal(result.verified, false);
+  });
+
+  test('reads the workspace\'s own metro.ndjson, half-written last line and all', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rn-iso-verify-'));
+    try {
+      const clock = fakeClock();
+      writeFileSync(join(dir, 'metro.ndjson'),
+        `${JSON.stringify({ ts: clock.at() - 5, event: 'bundle_build_done' })}\n`
+        + `${JSON.stringify({ ts: clock.at() + 10, event: 'bundle_build_started' })}\n`
+        + '{"ts":123,"event":"half-writ');
+      const result = await verifyLaunch({ logsDir: dir, since: clock.at(), now: clock.now, sleep: clock.sleep });
+      assert.equal(result.verified, true);
+      assert.equal(result.record.ts, clock.at() + 10, 'the stale record from before the launch was skipped');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('unverifiedLaunchLines', () => {
+  test('iOS names the picker, the iOS 26 alert, and the exact command to retry', () => {
+    const url = devClientUrl('io.tlon.groups', 8082);
+    const text = unverifiedLaunchLines({
+      platform: 'ios',
+      metroPort: 8082,
+      waitedMs: 20000,
+      bundleId: 'io.tlon.groups',
+      udid: 'BF2A1C3D',
+      devClientUrl: url,
+    }).join('\n');
+    assert.match(text, /DEVELOPMENT SERVERS/);
+    assert.match(text, /localhost:8082/);
+    assert.match(text, /Open in/, 'the iOS 26 confirmation alert is named');
+    assert.match(text, /xcrun simctl openurl BF2A1C3D/);
+    assert.ok(text.includes(url), 'the retry command carries the real deep link');
+  });
+
+  test('with no scheme it offers the launch command instead of a deep link', () => {
+    const text = unverifiedLaunchLines({ platform: 'ios', metroPort: 8082, bundleId: 'com.x', udid: 'U1' }).join('\n');
+    assert.match(text, /xcrun simctl launch --console U1 com\.x/);
+  });
+
+  test('Android names its own re-launch, not simctl', () => {
+    const text = unverifiedLaunchLines({ platform: 'android', metroPort: 8082, bundleId: 'com.x', serial: 'emulator-5584' }).join('\n');
+    assert.doesNotMatch(text, /simctl/);
+    assert.match(text, /adb -s emulator-5584 shell monkey -p com\.x 1/);
+    assert.match(text, /DEVELOPMENT SERVERS/);
+  });
 });

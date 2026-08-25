@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseNdjsonLine } from '../src/ndjson.js';
 import logsCommand, {
+  ERRORS_PRINT_CAP,
   formatRecord,
   formatTime,
   formatStackFrame,
@@ -136,6 +137,14 @@ describe('option validation', () => {
     assert.equal(r.sources, undefined);
     assert.match(r.error, /metrro/);
     assert.match(r.error, /metro, client, device, build/);
+  });
+
+  // `all` exists because --errors has a default scope now: without a word for
+  // "everything", asking for the device stream back means typing the list.
+  test('validateSources expands all to every Contract-1 source', () => {
+    assert.deepEqual(validateSources(['all']), { sources: ['metro', 'client', 'device', 'build'] });
+    assert.deepEqual(validateSources(['client', 'all']), { sources: ['metro', 'client', 'device', 'build'] });
+    assert.match(validateSources(['metrro']).error, /or all/);
   });
 
   test('validateLevel accepts the Contract-1 levels and names the valid set otherwise', () => {
@@ -316,5 +325,93 @@ describe('logs command', () => {
     ]);
     run({ since: '30s', json: true });
     assert.deepEqual(out.map((l) => parseNdjsonLine(l).msg), ['a second ago']);
+  });
+
+  // --- the field case ------------------------------------------------------
+  //
+  // `rn-iso logs --errors` returned 3,004 iOS syslog lines on a healthy app.
+  // Two things had to change for that number to be 0: the device stream is not
+  // in the default scope of --errors, and what IS printed is bounded.
+  describe('--errors, after the field test', () => {
+    test('the device stream is out of scope by default', () => {
+      writeLog('device.ndjson', [
+        { ts: 1, src: 'device', level: 'error', msg: 'nw_socket_handle_socket_event [C1:2] Socket SO_ERROR [54]' },
+        { ts: 2, src: 'device', level: 'fatal', msg: 'UIScene lifecycle will soon be required' },
+      ]);
+      run({ errors: true });
+      assert.equal(exitCode, null);
+      assert.deepEqual(out, [], 'a healthy app reports nothing');
+    });
+
+    test('--source device puts it back, and so does --source all', () => {
+      writeLog('device.ndjson', [{ ts: 1, src: 'device', level: 'error', msg: 'native crash' }]);
+      writeLog('client.ndjson', [{ ts: 2, src: 'client', level: 'error', msg: 'js crash' }]);
+
+      run({ errors: true, source: ['device'], json: true });
+      assert.deepEqual(out.map((l) => parseNdjsonLine(l).msg), ['native crash']);
+
+      out.length = 0;
+      run({ errors: true, source: ['all'], json: true });
+      assert.deepEqual(out.map((l) => parseNdjsonLine(l).msg), ['native crash', 'js crash']);
+    });
+
+    test('a plain logs (no --errors) still prints the device stream', () => {
+      writeLog('device.ndjson', [{ ts: 1, src: 'device', level: 'error', msg: 'device line' }]);
+      run({});
+      assert.equal(out.length, 1);
+      assert.match(out[0], /device line$/);
+    });
+
+    test(`--errors prints at most ${ERRORS_PRINT_CAP} records and says how many are left`, () => {
+      const many = [];
+      for (let i = 0; i < 3004; i += 1) {
+        many.push({ ts: 1000 + i, src: 'client', level: 'error', msg: `boom ${i}` });
+      }
+      writeLog('client.ndjson', many);
+      run({ errors: true });
+      assert.equal(out.length, ERRORS_PRINT_CAP + 1, 'the cap plus one trailer line');
+      // The HEAD survives: the first error in a window is usually the cause.
+      assert.match(out[0], /boom 0$/);
+      assert.match(out[ERRORS_PRINT_CAP - 1], /boom 19$/);
+      const hidden = 3004 - ERRORS_PRINT_CAP;
+      assert.match(out[ERRORS_PRINT_CAP], new RegExp(`and ${hidden} more`));
+      // The count in the trailer is exactly what --tail N would print, because
+      // what was hidden IS the tail.
+      assert.match(out[ERRORS_PRINT_CAP], new RegExp(`--tail ${hidden}`));
+      assert.match(out[ERRORS_PRINT_CAP], /--json/);
+    });
+
+    test('the cap does not apply to --json, or to an explicit --tail', () => {
+      const many = [];
+      for (let i = 0; i < 25; i += 1) many.push({ ts: 1000 + i, src: 'client', level: 'error', msg: `boom ${i}` });
+      writeLog('client.ndjson', many);
+
+      run({ errors: true, json: true });
+      assert.equal(out.length, 25, 'a machine reader asked for the set');
+
+      out.length = 0;
+      run({ errors: true, tail: '25' });
+      assert.equal(out.length, 25, 'an explicit length is the caller choosing');
+    });
+
+    test('a result at the cap prints no trailer', () => {
+      const many = [];
+      for (let i = 0; i < ERRORS_PRINT_CAP; i += 1) many.push({ ts: 1000 + i, src: 'client', level: 'error', msg: `boom ${i}` });
+      writeLog('client.ndjson', many);
+      run({ errors: true });
+      assert.equal(out.length, ERRORS_PRINT_CAP);
+      assert.ok(!out.join('\n').includes('more'));
+    });
+
+    // The field sequence: the crash at 16:03:54 and the bundle_build_done
+    // marker that landed at 16:03:55 and used to swallow it.
+    test('a bundle marker one second after a startup crash does not hide it', () => {
+      const at = (sec) => Date.parse(`2026-08-24T16:03:${sec}Z`);
+      writeLog('build-ios.ndjson', [{ ts: at(50), src: 'build', level: 'info', msg: 'launched', marker: true }]);
+      writeLog('client.ndjson', [{ ts: at(54), src: 'client', level: 'error', msg: '[Error: Exception in HostFunction]' }]);
+      writeLog('metro.ndjson', [{ ts: at(55), src: 'metro', level: 'info', msg: 'bundle build done (1)', marker: true }]);
+      run({ errors: true, json: true });
+      assert.deepEqual(out.map((l) => parseNdjsonLine(l).msg), ['[Error: Exception in HostFunction]']);
+    });
   });
 });

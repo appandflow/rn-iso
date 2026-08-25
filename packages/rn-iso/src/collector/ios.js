@@ -35,6 +35,95 @@ export function levelFromMessageType(messageType) {
   return MESSAGE_TYPE_LEVEL[messageType] ?? 'info';
 }
 
+// --- the demotion list ---------------------------------------------------
+//
+// FIELD PROVENANCE. On a healthy Expo app running on an iOS 26.5 simulator,
+// `rn-iso logs --errors` returned 3,004 records and `status` reported "3004
+// errors since the last marker". Not one of them was the app's: they were
+// system frameworks logging at messageType Error from INSIDE the app process
+// (nw_socket / SecTrust / WebKit / CoreUI / AddInstanceForFactory), plus
+// Apple's UIScene deprecation notice, which ships as a Fault and was
+// therefore classified FATAL on an app that was working.
+//
+// The stream predicate cannot exclude them -- they genuinely are in the app's
+// process, and that is the same predicate that catches every NSLog the app
+// makes. So capture stays unconditional and the level is what changes: these
+// records are kept, at info, where `logs` still shows them and `--errors`
+// does not. Anything NOT listed keeps the level messageType gave it; an
+// unknown Error stays an error, which is the direction that matters.
+//
+// A rule matches on subsystem (exact, or a dotted parent of it), category,
+// message prefix, or message substring -- whichever of those the offender is
+// actually identifiable by. Message rules exist because the same emitters
+// also reach the DEFAULT subsystem (an empty `subsystem` field) through
+// CFNetwork's and AudioToolbox's older logging paths, where there is nothing
+// but the text to match on.
+export const NOISE_RULES = [
+  // ~2/3 of the 3,004. com.apple.network logs at Error for every socket that
+  // is reset, retried or torn down, and an RN app holds a websocket to Metro
+  // plus HTTP to the dev server, so it never stops.
+  { id: 'network', subsystem: 'com.apple.network' },
+  { id: 'network-default-subsystem', messagePrefix: [
+    'nw_socket', 'nw_connection', 'nw_protocol', 'nw_endpoint', 'nw_path',
+    'nw_resolver', 'nw_flow', 'nw_read_request', 'nw_write_request', 'tcp_input',
+  ] },
+  // Trust evaluation: one Error-typed line per TLS handshake whose trust
+  // result is not already cached -- i.e. per cold launch, per host.
+  { id: 'sectrust', subsystem: 'com.apple.securityd' },
+  { id: 'sectrust-default-subsystem', messagePrefix: ['SecTrust', 'SecOSStatus', 'TrustResultType'] },
+  // WebKit's GPU process and its WebPrivacy resource loader chatter at Error
+  // whenever a WKWebView exists at all (expo-web-browser, any embedded view).
+  { id: 'webkit', subsystem: 'com.apple.WebKit' },
+  { id: 'webkit-default-subsystem', messagePrefix: ['WebPrivacy', 'GPUProcessProxy', 'WebProcessProxy'] },
+  // AudioToolbox's plugin loader says this on every launch of every app that
+  // links AVFoundation, and has since iOS 13. It is not a failure.
+  { id: 'audio-factory', messageIncludes: ['AddInstanceForFactory'] },
+  // Asset-catalog lookups that fall back: CoreUI logs the miss at Error even
+  // when the fallback is the intended asset.
+  { id: 'coreui', subsystem: 'com.apple.coreui' },
+  { id: 'coreui-default-subsystem', messagePrefix: ['CUICatalog:', 'CoreUI:', 'CoreThemeDefinition'] },
+  // The single record the field capture called FATAL. iOS 26 ships the
+  // UIScene migration notice as a Fault; it is a deprecation notice with a
+  // deadline, not a crash. Matched on the notice's sentence rather than on
+  // "UIScene", so a real UIScene fault is still a fault.
+  { id: 'uiscene-deprecation', messageIncludes: [
+    'UIScene lifecycle will soon be required',
+    'must migrate to UIScene',
+    'migrate to UIScene lifecycle',
+  ] },
+];
+
+function ruleMatches(rule, { subsystem, category, message }) {
+  if (rule.subsystem && subsystem !== rule.subsystem && !subsystem.startsWith(`${rule.subsystem}.`)) return false;
+  if (rule.category && category !== rule.category) return false;
+  if (rule.messagePrefix && !rule.messagePrefix.some((p) => message.startsWith(p))) return false;
+  if (rule.messageIncludes && !rule.messageIncludes.some((p) => message.includes(p))) return false;
+  return true;
+}
+
+// PURE. The id of the rule that says this event is device noise, or null.
+// Returning the id rather than a boolean is what makes the list auditable
+// from a test: a rule that stops matching the shape it was written for fails
+// by name.
+export function noiseRuleId(event) {
+  const subsystem = typeof event?.subsystem === 'string' ? event.subsystem : '';
+  const category = typeof event?.category === 'string' ? event.category : '';
+  const message = typeof event?.eventMessage === 'string' ? event.eventMessage : '';
+  for (const rule of NOISE_RULES) {
+    if (ruleMatches(rule, { subsystem, category, message })) return rule.id;
+  }
+  return null;
+}
+
+// PURE. The level this event is recorded at. Demotion only ever applies to
+// error and fatal: a rule cannot promote, and demoting a Default-typed line
+// to info would be a no-op anyway.
+export function levelForEvent(event) {
+  const level = levelFromMessageType(event?.messageType);
+  if (level !== 'error' && level !== 'fatal') return level;
+  return noiseRuleId(event) ? 'info' : level;
+}
+
 // PURE. `log stream` writes the process image path with the executable last:
 //   .../RuntimeRoot/usr/libexec/backboardd
 //   .../Containers/Bundle/Application/<uuid>/MyApp.app/MyApp
@@ -68,7 +157,7 @@ export function recordFromLogEvent(event, { now = Date.now } = {}) {
   const record = {
     ts: tsFromEvent(event, now),
     src: 'device',
-    level: levelFromMessageType(event.messageType),
+    level: levelForEvent(event),
     msg,
   };
   const proc = procFromImagePath(event.processImagePath);

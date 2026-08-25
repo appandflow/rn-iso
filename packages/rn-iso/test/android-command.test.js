@@ -16,6 +16,7 @@ import { upsertProject } from '../src/config.js';
 import { parseNdjsonText } from '../src/ndjson.js';
 import { workspaceLogsDir, workspaceStateFile } from '../src/paths.js';
 import { writeWorkspaceState } from '../src/supervisor/run.js';
+import { resolveMetroWithRetry } from '../src/commands/ios.js';
 import {
   NO_DEVICE,
   NO_FINGERPRINT,
@@ -71,6 +72,7 @@ function harness(overrides = {}) {
     ensureDevice: [], booted: [], metro: [], fingerprint: [], resolveCached: [], storeCached: [],
     prebuild: [], build: [], install: [], launch: [], spawn: [], kill: [],
     loadProvider: [], resolveRemoteBuild: [], uploadRemoteBuild: [],
+    verify: [], ensureIgnored: [],
   };
   const stderr = [];
   const stdout = [];
@@ -93,6 +95,13 @@ function harness(overrides = {}) {
     launch: (args) => { calls.launch.push(args); return { ok: true, mode: 'am-start' }; },
     spawn: (cmd, args, opts) => { calls.spawn.push({ cmd, args, opts }); return { pid: 9001, unref: () => { calls.spawn.at(-1).unrefed = true; } }; },
     kill: (pid, signal) => { calls.kill.push([pid, signal]); },
+    // The retry is real (one test below is about it); only the sleep is
+    // removed, so a refusal costs no wall time.
+    resolveMetroRetrying: (resolve, port, path, opts) => resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
+    // The default is a launch that verified -- the app fetched a bundle from
+    // THIS workspace's Metro. The picker case has its own tests.
+    verifyLaunched: async (args) => { calls.verify.push(args); return { verified: true, waitedMs: 3100 }; },
+    ensureIgnored: async (dir) => { calls.ensureIgnored.push(dir); },
     out: (line) => stderr.push(line),
     emit: (line) => stdout.push(line),
     ...overrides,
@@ -217,7 +226,7 @@ describe('metro is verified before any build work', () => {
 
     assert.equal(result.ok, false);
     assert.equal(result.error.code, NO_METRO);
-    assert.match(result.error.message, /reserved port 8082/);
+    assert.match(result.error.message, /port 8082/);
     assert.match(result.error.remedy, /rn-iso start/);
     assert.match(result.error.remedy, /--no-metro-check/);
     assert.match(h.stderr.at(-2), /RN_ISO_NO_METRO/);
@@ -226,10 +235,39 @@ describe('metro is verified before any build work', () => {
   });
 
   test('a foreign holder of the port is named rather than built against', async () => {
-    const h = harness({ resolveMetro: async () => ({ notOurs: 'pid 900 runs from /elsewhere' }), build: never('the build') });
+    const h = harness({ resolveMetro: async () => ({ notOurs: 'pid 900 runs from /elsewhere', kind: 'foreign-cwd' }), build: never('the build') });
     const result = await h.run();
     assert.equal(result.error.code, NO_METRO);
     assert.match(result.error.message, /pid 900 runs from \/elsewhere/);
+  });
+
+  // Same race as iOS: `start` returns at listening, and a bare Metro then
+  // blocks its event loop crawling a monorepo's file map for ~20s.
+  test('an indexing Metro is retried rather than refused', async () => {
+    let attempts = 0;
+    const h = harness({
+      resolveMetro: async () => {
+        attempts += 1;
+        if (attempts < 3) return { notOurs: 'pid 42 on port 8082 does not answer Metro\'s /status', kind: 'unresponsive' };
+        return { metro: { pid: 42, leader: 42, cwd: root } };
+      },
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true);
+    assert.equal(attempts, 3);
+  });
+
+  test('a refusal names our own supervisor when there is a record for this port', async () => {
+    writeWorkspaceState(root, { supervisor: { pid: process.pid, port: 8082, mode: 'bare-inproc', startedAt: 'now' } });
+    const h = harness({
+      resolveMetro: async () => ({ notOurs: 'pid 4242 on port 8082 does not answer Metro\'s /status', kind: 'unresponsive' }),
+      build: never('the build'),
+    });
+    const result = await h.run();
+    assert.equal(result.error.code, NO_METRO);
+    assert.match(result.error.message, /A supervisor record exists for port 8082/);
+    assert.match(result.error.message, /still be indexing/);
+    assert.match(result.error.remedy, /--wait/);
   });
 
   test('no reservation at all is the same refusal', async () => {
@@ -686,5 +724,54 @@ describe('the pure parts', () => {
     assert.equal(killPreviousCollector(root, { collectors: {}, kill: () => { throw new Error('must not be called'); } }), null);
     // Never our own pid: the collector helpers share this process in tests.
     assert.equal(killPreviousCollector(root, { collectors: { android: { pid: process.pid } }, kill: () => { throw new Error('must not be called'); } }), null);
+  });
+});
+
+
+// The launch is not the proof: an expo-dev-client app that opens its
+// DEVELOPMENT SERVERS picker has fetched nothing, and `am start` returned 0
+// all the same.
+describe('launch verification', () => {
+  test('a verified launch reports launched: true and polls this workspace\'s timeline', async () => {
+    const h = harness();
+    const result = await h.run();
+    assert.equal(result.facts.launched, true);
+    assert.equal(h.calls.verify[0].logsDir, workspaceLogsDir(root));
+    assert.ok(Number.isFinite(h.calls.verify[0].since));
+    assert.ok(h.stderr.some(l => /verify.*bundle requested from Metro port 8082/.test(l)));
+  });
+
+  test('the picker: no bundle request makes it launched: "unverified", still exit ok', async () => {
+    const h = harness({ verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) });
+    const result = await h.run();
+    // ok stays true: the app IS launched. What changes is the fact an agent
+    // branches on, and the warning that says what to do about it.
+    assert.equal(result.ok, true);
+    assert.equal(result.facts.launched, 'unverified');
+    const text = h.stderr.join('\n');
+    assert.match(text, /UNVERIFIED/);
+    assert.match(text, /DEVELOPMENT SERVERS/);
+    assert.match(text, /adb -s emulator-5584 shell monkey -p com\.example\.app 1/);
+    assert.doesNotMatch(text, /simctl/, 'the iOS remedies belong to the other platform');
+    assert.match(h.stdout.join('\n'), /UNVERIFIED/);
+  });
+});
+
+describe('the launch outcome reaches the timeline', () => {
+  test('an unverified launch is a warn record in the build log', async () => {
+    const h = harness({ verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) });
+    await h.run();
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
+    const record = records.find(r => r.event === 'launch_unverified');
+    assert.ok(record);
+    assert.equal(record.level, 'warn');
+  });
+});
+
+describe('the workspace directory is gitignored first', () => {
+  test('ensureWorkspaceIgnored runs before the build log is opened', async () => {
+    const h = harness();
+    await h.run();
+    assert.deepEqual(h.calls.ensureIgnored, [root]);
   });
 });

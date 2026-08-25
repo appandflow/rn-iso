@@ -25,7 +25,7 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.js';
 import { getProject, upsertProject } from '../config.js';
-import { DEFAULT_METRO_PORT, installIosApp, launchIosApp } from '../engine/app-install.js';
+import { DEFAULT_METRO_PORT, LAUNCH_UNVERIFIED, devClientUrl, installIosApp, launchIosApp, unverifiedLaunchLines, verifyLaunch } from '../engine/app-install.js';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.js';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.js';
 import { describeDiagnostic } from '../engine/errors-xcode.js';
@@ -33,12 +33,12 @@ import { needsPrebuild, runPrebuild } from '../engine/prebuild.js';
 import { RESOLVE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, cacheLevel, exitAfterFlush, loadProjectProvider, resolveRemote, uploadRemote } from '../engine/remote-cache.js';
 import { buildIos, readBundleId } from '../engine/xcode.js';
 import { getExecutor } from '../exec.js';
-import { isPidAlive, resolveProjectMetro } from '../metro.js';
+import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.js';
 import { createNdjsonWriter } from '../ndjson.js';
 import { workspaceLogsDir } from '../paths.js';
-import { detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../project.js';
+import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.js';
 import { resolveSettings, unknownSettingKeys } from '../settings.js';
-import { readWorkspaceState, writeWorkspaceState } from '../supervisor/run.js';
+import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/run.js';
 import { gitCommonDir, repoRoot } from '../worktree.js';
 
 export const PLATFORM = 'ios';
@@ -143,37 +143,191 @@ export function podAction(podState, verdict) {
   return { install: false };
 }
 
-// PURE-ish (one file read). The dev-client scheme, ONLY when it is trivially
-// available: `expo.scheme` in app.json, or a top-level `scheme`. An
-// app.config.js is a program whose value comes from evaluating the config
-// plugin pipeline, and rn-iso does not run that -- a wrong guess here sends
-// `simctl openurl` at a scheme nothing handles, which fails silently with the
-// app never launching. No scheme means undefined, and launchIosApp falls back
-// to a plain launch plus RCT_jsLocation, which works for every RN app.
+// The dev-client scheme, read from THE BUILT APP first.
 //
-// expo-dev-client is required as well as a scheme: the deep link is handled
-// by expo-dev-launcher, so a project without it would get an openurl no
-// process answers. An Expo app without the dev client reads RCT_jsLocation
-// through the ordinary RN provider, which the plain launch already sets.
-export function devClientScheme(root) {
+// This used to read app.json and nothing else, and app.json is the wrong
+// source: a project with a dynamic config (app.config.ts) has no scheme there
+// at all, so the openurl was skipped and the app opened straight into
+// expo-dev-launcher's DEVELOPMENT SERVERS picker, listing every other
+// workspace's Metro. The BUILT .app is the truth for both kinds of project --
+// whatever the config pipeline computed, or whatever a committed native
+// project declares, ends up as CFBundleURLSchemes in the bundle's Info.plist
+// (verified on a repo with a dynamic config: ios/<Target>/Info.plist carries
+// io.tlon.groups even though no app.json exists). The path is in hand at
+// install time, so there is nothing to guess.
+//
+// app.json stays as the fallback for the case where the plist cannot be read.
+// Note what is NOT claimed any more: the old comment said a plain launch
+// "works for every RN app". It does not -- for a dev-client app a plain
+// launch is precisely the picker.
+//
+// expo-dev-client is still required: the deep link is handled by
+// expo-dev-launcher, so an app without it would get an openurl no process
+// answers. `resolvable` as well as `in dependencies`, because a monorepo
+// hoists it out of the app's own node_modules.
+export function devClientScheme(root, appPath = null, { exec = null } = {}) {
+  if (!hasDevClient(root)) return undefined;
+  const fromBundle = pickDevClientScheme(readBundleSchemes(appPath, { exec }));
+  if (fromBundle) return fromBundle;
   const app = readJson(join(root, 'app.json'));
   const raw = app?.expo?.scheme ?? app?.scheme ?? null;
   const scheme = Array.isArray(raw) ? raw.find((s) => typeof s === 'string' && s.trim() !== '') : raw;
   if (typeof scheme !== 'string' || scheme.trim() === '') return undefined;
-  if (!hasDevClient(root)) return undefined;
   return scheme.trim();
+}
+
+// PURE. CFBundleURLTypes[].CFBundleURLSchemes, flattened -- the same read
+// @expo/config-plugins does (ios/Scheme.ts, getSchemesFromPlist).
+export function schemesFromInfoPlist(plist) {
+  const types = plist?.CFBundleURLTypes;
+  if (!Array.isArray(types)) return [];
+  const out = [];
+  for (const type of types) {
+    const schemes = type?.CFBundleURLSchemes;
+    if (Array.isArray(schemes)) out.push(...schemes.filter((s) => typeof s === 'string' && s.trim() !== ''));
+  }
+  return out;
+}
+
+// The built app's Info.plist, through plutil (a built bundle's plist is
+// BINARY, so it cannot simply be read as text). Empty on any failure: the
+// app.json fallback is behind this, and a missing scheme is survivable where a
+// wrong one is not.
+export function readBundleSchemes(appPath, { exec = null } = {}) {
+  if (typeof appPath !== 'string' || appPath.trim() === '') return [];
+  const e = exec || getExecutor();
+  let out;
+  try {
+    out = e.runFile('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')]);
+  } catch {
+    return [];
+  }
+  try {
+    return schemesFromInfoPlist(JSON.parse(String(out)));
+  } catch {
+    return [];
+  }
+}
+
+// Schemes that belong to a third-party SDK rather than to the app. An app
+// declares them so an OAuth callback comes home, and they are NOT safe to
+// open a dev client with: `fb<digits>` is also declared by the Facebook app,
+// so which app iOS routes it to depends on what else is installed.
+//
+// This is the one place rn-iso goes further than Expo's own CLI, which sorts
+// by length and takes the longest (src/utils/scheme.ts,
+// resolveExpoOrLongestScheme). On a real repo the longest is
+// `com.googleusercontent.apps.869857856617-...` and the app's own scheme is
+// `th3rdwave` -- the shortest of the three.
+const THIRD_PARTY_SCHEME = /^(?:fb\d+|com\.googleusercontent\.apps\.|msauth\.|msauthv2|twitterkit-|db-[a-z0-9]+$|spotify|snapchat|com\.facebook)/i;
+
+// PURE. Which of an app's schemes to deep-link with.
+//
+// `exp+<slug>` first, exactly as Expo's CLI does: expo-dev-client adds it for
+// this purpose, so when it is present it is unambiguously the right one.
+// Otherwise the app's own schemes, third-party callbacks dropped, longest
+// first (Expo's tie-break: longer is likelier to be unique to this app).
+export function pickDevClientScheme(schemes) {
+  const all = (Array.isArray(schemes) ? schemes : [])
+    .filter((s) => typeof s === 'string' && s.trim() !== '')
+    .map((s) => s.trim())
+    .filter((s) => !/^(?:https?|mailto|tel|sms|itms(?:-apps)?)$/i.test(s));
+  const expo = all.filter((s) => s.startsWith('exp+'));
+  const pool = expo.length ? expo : all.filter((s) => !THIRD_PARTY_SCHEME.test(s));
+  const sorted = [...pool].sort((a, b) => b.length - a.length);
+  return sorted[0] ?? null;
 }
 
 function hasDevClient(root) {
   const pkg = readJson(join(root, 'package.json'));
   const deps = { ...(pkg?.dependencies || {}), ...(pkg?.devDependencies || {}) };
-  return 'expo-dev-client' in deps;
+  if ('expo-dev-client' in deps) return true;
+  // Hoisted: a monorepo installs it at the workspace root, where the app's
+  // own package.json is still the one that declares it -- but not always, and
+  // Node resolution is the question that actually matters.
+  return isPackageResolvable(root, 'expo-dev-client');
 }
 
 function readJson(file) {
   try {
     return JSON.parse(readFileSync(file, 'utf-8'));
   } catch {
+    return null;
+  }
+}
+
+// --- the Metro gate's retry (the start -> ios race) ------------------------
+//
+// `rn-iso start` returns when the server is LISTENING. A bare in-process Metro
+// then crawls the project's file map, and on a monorepo that blocks its event
+// loop for ~20 seconds -- during which the socket accepts and /status never
+// answers. The single 2s probe `ios` used to make timed out inside that
+// window and the gate refused with "run rn-iso start first", about a
+// supervisor `start` itself had just spawned two seconds earlier.
+//
+// So the resolve is retried. The backoff spans the crawl without adding a
+// pause to the ordinary case, where the first attempt answers immediately.
+export const GATE_RETRY_DELAYS_MS = [3000, 7000];
+
+// PURE. Whether waiting could change this answer. A port held by a bundler
+// running OUTSIDE this project will not become ours; anything else (nothing
+// listening yet, or listening and not answering /status) is exactly what an
+// indexing Metro looks like.
+export function gateShouldRetry(resolution) {
+  if (resolution?.metro) return false;
+  return resolution?.kind !== NOT_OURS_FOREIGN_CWD;
+}
+
+// Resolve, retrying while the answer could still change. Returns the LAST
+// resolution, so the refusal describes what was actually seen.
+export async function resolveMetroWithRetry(resolve, port, root, {
+  delays = GATE_RETRY_DELAYS_MS,
+  sleep: wait = sleep,
+  onRetry = () => {},
+} = {}) {
+  let resolution = await resolve(port, root);
+  for (let i = 0; i < delays.length && gateShouldRetry(resolution); i++) {
+    onRetry({ attempt: i + 1, delayMs: delays[i], resolution });
+    await wait(delays[i]);
+    resolution = await resolve(port, root);
+  }
+  return resolution;
+}
+
+// PURE. The refusal text, which has to separate two cases an agent acts on
+// differently: a supervisor record for THIS port (retry, or raise --wait --
+// the dev server exists and is probably still indexing) from a genuinely
+// foreign or absent listener (start one).
+export function noMetroMessage({ port, resolution, supervisor, supervisorAlive }) {
+  const foreign = resolution?.notOurs;
+  if (supervisor && supervisor.port === port && supervisorAlive) {
+    const mode = supervisor.mode ? `${supervisor.mode} ` : '';
+    return `A supervisor record exists for port ${port} (pid ${supervisor.pid}, ${mode}dev server) but it did not verify as this workspace's Metro`
+      + `${foreign ? `: ${foreign}` : ' -- nothing answered /status'}.`
+      + ' Metro may still be indexing this project (a monorepo file-map crawl blocks its event loop for ~20s after the port opens).';
+  }
+  if (foreign) return `Port ${port} is in use but is NOT this workspace's dev server: ${foreign}.`;
+  return `Nothing is serving this workspace's dev server on port ${port}.`;
+}
+
+// PURE. The remedy that goes with it.
+export function noMetroRemedy({ port, supervisor, supervisorAlive }) {
+  if (supervisor && supervisor.port === port && supervisorAlive) {
+    return 'Re-run `rn-iso ios` in a few seconds, or give the dev server longer to verify with `rn-iso start --wait <seconds>`.';
+  }
+  return 'Run `rn-iso start` first, or pass --no-metro-check.';
+}
+
+// `<root>/.rn-iso` must be git-ignored before this command writes a build log,
+// a state file or a derived-data tree into it. Imported dynamically and
+// tolerantly: it is one repo-hygiene write, and a build must not fail because
+// of it.
+export async function ensureWorkspaceIgnoredSafely(root, { note = () => {} } = {}) {
+  try {
+    const mod = await import('../engine/workspace.js');
+    return mod.ensureWorkspaceIgnored?.(root) ?? null;
+  } catch (err) {
+    note(chalk.dim(`Could not ensure ${root}/.gitignore lists the rn-iso workspace directory: ${err?.message || err}`));
     return null;
   }
 }
@@ -208,7 +362,13 @@ export function lastBuildRecord({
 }
 
 // PURE. The --json payload.
-export function iosFacts({ udid, deviceName, fingerprint, cacheKey, cacheHit, cacheSkipped = false, appPath, bundleId, metroPort, logsDir, durationMs }) {
+//
+// `launched` is THREE-valued on purpose: true when a bundle request from this
+// workspace's Metro was observed after the launch, and the string
+// 'unverified' when it was not. It was an unconditional `true` while the app
+// was demonstrably sitting on the dev-launcher's server picker having loaded
+// nothing -- a fact an agent branches on must not be a constant.
+export function iosFacts({ udid, deviceName, fingerprint, cacheKey, cacheHit, cacheSkipped = false, appPath, bundleId, metroPort, logsDir, durationMs, launched = true }) {
   return {
     platform: PLATFORM,
     udid,
@@ -222,7 +382,7 @@ export function iosFacts({ udid, deviceName, fingerprint, cacheKey, cacheHit, ca
     cacheSkipped: Boolean(cacheSkipped),
     appPath,
     bundleId,
-    launched: true,
+    launched: launched === LAUNCH_UNVERIFIED ? LAUNCH_UNVERIFIED : Boolean(launched),
     metroPort,
     logs: { dir: logsDir },
     durationMs,
@@ -348,6 +508,9 @@ const DEFAULT_DEPS = {
   ensureOwnedDevice,
   ensureBooted,
   resolveProjectMetro,
+  resolveMetroWithRetry,
+  readWorkspaceState,
+  isPidAlive,
   fingerprintProject,
   resolveBuild,
   storeBuild,
@@ -363,6 +526,8 @@ const DEFAULT_DEPS = {
   readBundleId,
   installIosApp,
   launchIosApp,
+  verifyLaunch,
+  ensureWorkspaceIgnored: ensureWorkspaceIgnoredSafely,
   replaceCollector,
   writeWorkspaceState,
   createWriter: createNdjsonWriter,
@@ -419,6 +584,10 @@ export async function runIos(opts = {}, overrides = {}) {
     process.exit(1);
     return null;
   }
+
+  // Before ANY write into <root>/.rn-iso -- the build log below, the state
+  // file, the derived-data tree -- make sure git ignores the directory.
+  await d.ensureWorkspaceIgnored(root, { note });
 
   const logsDir = workspaceLogsDir(root);
   const logFile = buildLogFile(root);
@@ -489,22 +658,30 @@ export async function runIos(opts = {}, overrides = {}) {
   // expensive half: booting a simulator is ~10s of polling, and there is no
   // reason to pay it to then refuse at second twelve. The whole point of the
   // gate is that the refusal is instant.
-  const noMetro = (message) => fail({
-    code: 'RN_ISO_NO_METRO',
-    message,
-    remedy: 'Run `rn-iso start` first, or pass --no-metro-check.',
-  });
-
   let metroPort = proj?.metroPort ?? null;
   if (metroCheck) {
     if (!metroPort) {
-      return noMetro('No Metro port is reserved for this workspace, so there is no dev server to build against.');
+      return fail({
+        code: 'RN_ISO_NO_METRO',
+        message: 'No Metro port is reserved for this workspace, so there is no dev server to build against.',
+        remedy: 'Run `rn-iso start` first, or pass --no-metro-check.',
+      });
     }
-    const resolution = await d.resolveProjectMetro(metroPort, root);
+    // Retried, because `start` returns at listening and a monorepo's file-map
+    // crawl then blocks Metro's event loop for ~20s (see
+    // resolveMetroWithRetry). ~10s of backoff, only when waiting could change
+    // the answer.
+    const resolution = await d.resolveMetroWithRetry(d.resolveProjectMetro, metroPort, root, {
+      onRetry: ({ delayMs }) => note(chalk.dim(phaseLine('metro', `port ${metroPort} did not verify yet; retrying in ${Math.round(delayMs / 1000)}s (Metro may still be indexing)`))),
+    });
     if (!resolution?.metro) {
-      return noMetro(resolution?.notOurs
-        ? `Port ${metroPort} is in use but is NOT this workspace's dev server: ${resolution.notOurs}.`
-        : `Nothing is serving this workspace's dev server on port ${metroPort}.`);
+      const supervisor = d.readWorkspaceState(root)?.supervisor ?? null;
+      const supervisorAlive = Boolean(supervisor?.pid && d.isPidAlive(supervisor.pid));
+      return fail({
+        code: 'RN_ISO_NO_METRO',
+        message: noMetroMessage({ port: metroPort, resolution, supervisor, supervisorAlive }),
+        remedy: noMetroRemedy({ port: metroPort, supervisor, supervisorAlive }),
+      });
     }
   } else if (!metroPort) {
     // --no-metro-check with no reservation: the app has to be told SOME
@@ -716,11 +893,17 @@ export async function runIos(opts = {}, overrides = {}) {
   phase('install', `-> ${deviceLabel(device, udid)}`);
 
   // ---- launch, wired to THIS workspace's port (Contract 6) ----
+  //
+  // The scheme comes from the BUILT app, which is why appPath is passed: a
+  // dev-client app launched without its deep link opens the dev-launcher's
+  // server picker, and the picker lists every workspace on the machine.
+  const scheme = d.devClientScheme(root, appPath);
+  const launchedAt = d.now();
   const launched = d.launchIosApp({
     udid,
     bundleId,
     metroPort,
-    devClientScheme: d.devClientScheme(root),
+    devClientScheme: scheme,
   });
   if (launched?.failed) {
     return fail({
@@ -744,12 +927,63 @@ export async function runIos(opts = {}, overrides = {}) {
   });
 
   // ---- collector (Contract 5) ----
+  //
+  // BEFORE the launch verification below, not after: the poll can take 20
+  // seconds, and those are exactly the seconds whose device log says why the
+  // app did not load a bundle.
   await d.replaceCollector({
     root,
     udid,
     bundleId,
     appName: appNameFromPath(appPath),
     note,
+  });
+
+  // ---- proof, not assertion: did the app actually fetch a bundle from US? --
+  //
+  // See verifyLaunch in engine/app-install.js. A timeout is not a failure --
+  // the exit code stays 0 -- but the FACT changes, and the warning names the
+  // two things that produce it (a picker awaiting a tap, an iOS 26
+  // confirmation alert in front of `simctl openurl`).
+  //
+  // Skipped under --no-metro-check: the gate that proves there is a dev server
+  // to fetch from was waived, so there is nothing to poll for and no reason to
+  // spend 20 seconds proving it. The fact still is not `true` -- nothing was
+  // verified -- it is simply reported in one line instead of a warning block.
+  const verification = metroCheck
+    ? await d.verifyLaunch({ logsDir, since: launchedAt, mode: isExpo ? MODE_EXPO : MODE_BARE })
+    : { verified: false, skipped: true };
+  let launchState = true;
+  if (verification?.verified) {
+    phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
+  } else if (verification?.skipped) {
+    launchState = LAUNCH_UNVERIFIED;
+    phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
+  } else {
+    launchState = LAUNCH_UNVERIFIED;
+    const lines = unverifiedLaunchLines({
+      platform: PLATFORM,
+      metroPort,
+      waitedMs: verification?.waitedMs,
+      bundleId,
+      udid,
+      devClientUrl: scheme ? devClientUrl(scheme, metroPort) : null,
+      mode: isExpo ? MODE_EXPO : MODE_BARE,
+    });
+    phase('verify', chalk.yellow('UNVERIFIED: no bundle request reached this workspace\'s Metro'));
+    for (const line of lines) note(chalk.yellow(phaseLine('', line)));
+  }
+
+  // The outcome, in the timeline as well as on stderr: `rn-iso logs` is where
+  // an agent looks when the app is not behaving, and "the launch was never
+  // verified" is the first thing it should find there.
+  logWriter().write({
+    src: 'build',
+    level: launchState === LAUNCH_UNVERIFIED ? 'warn' : 'info',
+    event: launchState === LAUNCH_UNVERIFIED ? 'launch_unverified' : 'launch_verified',
+    msg: launchState === LAUNCH_UNVERIFIED
+      ? `no bundle request from ${bundleId} reached this workspace's Metro on port ${metroPort}`
+      : `${bundleId} fetched a bundle from this workspace's Metro on port ${metroPort}`,
   });
 
   // ---- the upload, collected (it has been running since the build) ----
@@ -793,15 +1027,19 @@ export async function runIos(opts = {}, overrides = {}) {
     metroPort,
     logsDir,
     durationMs,
+    launched: launchState,
   });
 
   if (json) {
     console.log(JSON.stringify(facts));
   } else {
-    console.log(chalk.green(
-      `OK: ${bundleId} on ${deviceLabel(device, udid)}, Metro port ${metroPort}`
-      + ` (${cacheDescription(cacheHit, remote?.name)}, ${formatDuration(durationMs)})`
-    ));
+    const summary = `OK: ${bundleId} on ${deviceLabel(device, udid)}, Metro port ${metroPort}`
+      + ` (${cacheDescription(cacheHit, remote?.name)}, ${formatDuration(durationMs)})`;
+    // The outcome line says which kind of OK this is. "OK" alone, over an app
+    // that loaded nothing, is the claim this whole check exists to stop.
+    console.log(launchState === LAUNCH_UNVERIFIED
+      ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
+      : chalk.green(summary));
   }
 
   // Everything this command does is done. If a provider call was abandoned,

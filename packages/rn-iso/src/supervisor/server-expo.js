@@ -20,14 +20,93 @@
 //
 // `expo start --port <n>` and NOTHING else, ever. Which flags a project needs
 // is the project's judgment, the same reason rn-iso stopped wrapping builds.
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
+import { dirname, join, parse } from 'node:path';
 import { getExecutor } from '../exec.js';
 import { createNdjsonWriter } from '../ndjson.js';
+import { resolvePackageJson } from '../project.js';
 import { supervisorError } from './errors.js';
 
+// THE PROJECT'S OWN expo binary, found by NODE RESOLUTION rather than by path
+// joining. `<root>/node_modules/.bin/expo` does not exist on a hoisted
+// monorepo -- neither a pnpm workspace nor a yarn-workspaces one puts it
+// there -- and this used to refuse to start with "run npm install" on
+// projects whose dependencies were installed perfectly well. Order:
+//
+//   1. require.resolve('expo/package.json', { paths: [root] }), then the
+//      package's OWN `bin` field. That is the same lookup `import 'expo'`
+//      from the project performs, so it finds the hoisted copy the project
+//      actually loads, and the bin field is where the package says which file
+//      to run (expo's is { expo: "bin/cli", ... }).
+//   2. node_modules/.bin/expo walking UP from the project. Covers a package
+//      whose package.json cannot be resolved (an exports map without
+//      ./package.json) but whose shim the installer still linked.
+//
+// Never `npx expo`: npx on a project without expo installed downloads
+// whatever version is newest and runs THAT against the app -- a dev server,
+// or a prebuild, from an SDK the project never chose.
 export function expoBinPath(root) {
-  return join(root, 'node_modules', '.bin', 'expo');
+  const fromPackage = expoBinFromPackage(resolvePackageJson(root, 'expo'));
+  if (fromPackage) return fromPackage;
+  return findBinUpward(root, 'expo');
+}
+
+// PURE-ish (reads the package.json it is given the path to). The executable a
+// package's `bin` field names, or null. Both shapes are handled: a string
+// ("bin/cli") and a map ({ expo: "bin/cli" }).
+export function expoBinFromPackage(packageJsonPath, binName = 'expo') {
+  if (!packageJsonPath) return null;
+  let pkg;
+  try {
+    pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+  } catch {
+    return null;
+  }
+  const bin = pkg?.bin;
+  const rel = typeof bin === 'string' ? bin : (bin && typeof bin === 'object' ? bin[binName] : null);
+  if (typeof rel !== 'string' || rel.trim() === '') return null;
+  const file = join(dirname(packageJsonPath), rel);
+  return isExecutableFile(file) ? file : null;
+}
+
+// The .bin shim, from the project up to the filesystem root. A hoisted
+// install puts it at the workspace root; stopping at the project would miss
+// every monorepo, which is the bug this exists for. Bounded by the root
+// directory, and it stops at the first hit, so the nearest copy wins.
+export function findBinUpward(startDir, name, { exists = existsSync } = {}) {
+  let dir = startDir;
+  const stop = parse(startDir).root;
+  while (true) {
+    const candidate = join(dir, 'node_modules', '.bin', name);
+    if (exists(candidate)) return candidate;
+    if (dir === stop) return null;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+// A bin file that is not executable would fail at spawn time with EACCES,
+// which reads as "expo is broken" rather than "this copy is not the one to
+// run". Falling through to the .bin shim is the better answer.
+function isExecutableFile(file) {
+  try {
+    accessSync(file, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The refusal when no expo binary can be found. Its remedy has to be true on
+// a monorepo: "run npm install" was printed at two repos whose dependencies
+// were installed, and it sent the reader looking in the wrong place.
+export function expoBinRefusal(root, what = 'start an Expo dev server for') {
+  return {
+    message: `Cannot ${what} ${root}: the \`expo\` package is not resolvable from it`
+      + ' (require.resolve("expo/package.json") failed, and no node_modules/.bin/expo exists in it or in any parent).',
+    remedy: 'Install the project\'s dependencies (in a monorepo, from the workspace root), or check that this package really depends on `expo`.',
+  };
 }
 
 // CSI sequences (colour, cursor moves) and OSC sequences (window titles,
@@ -68,6 +147,17 @@ export function inferLevel(line) {
 // as current.
 export function isBundleMarker(line) {
   return /\bBundled\b/.test(String(line));
+}
+
+// PURE. Proof that SOMETHING asked this dev server for a bundle: Expo prints
+// "iOS Bundling complete 812ms", "Android Bundling failed 91ms" and
+// "iOS Bundled 812ms index.js (1150 modules)" only in response to a bundle
+// request. It is the expo-child equivalent of the bare path's
+// bundle_build_started event, and it is what `ios` / `android` poll for after
+// a launch: an app sitting on expo-dev-launcher's server picker has fetched
+// nothing, and the picker looks identical to a loaded app from the outside.
+export function isBundleActivityLine(line) {
+  return /\bBundl(?:ing|ed)\b/.test(String(line));
 }
 
 // A terminal shows only what follows the last carriage return, which is how
@@ -122,12 +212,9 @@ export async function startExpoServer({
   killTimeoutMs = 5000,
 }) {
   const bin = expoBinPath(root);
-  if (!existsSync(bin)) {
-    throw supervisorError(
-      'RN_ISO_EXPO_BIN',
-      `Cannot start an Expo dev server for ${root}: ${bin} does not exist.`,
-      'Run `npm install` in the project so the `expo` package installs its binary.'
-    );
+  if (!bin) {
+    const refusal = expoBinRefusal(root);
+    throw supervisorError('RN_ISO_EXPO_BIN', refusal.message, refusal.remedy);
   }
 
   const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'));

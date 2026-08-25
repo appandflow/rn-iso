@@ -15,7 +15,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.js';
 import { detectIsExpo } from '../project.js';
-import { createLineReader, expoBinPath, stripAnsi } from '../supervisor/server-expo.js';
+import { createLineReader, expoBinPath, expoBinRefusal, stripAnsi } from '../supervisor/server-expo.js';
 // One implementation of the both-endings wait, not two: a spawn that fails
 // emits `error` and never `exit`, and awaiting `exit` alone hangs forever on
 // exactly the failure these modules exist to report.
@@ -60,12 +60,13 @@ export function prebuildRefusal({ isExpo, platform, nativeDirExists }) {
   };
 }
 
-// `<project>/node_modules/.bin/expo prebuild -p <platform> --no-install`.
+// `<the project's own expo binary> prebuild -p <platform> --no-install`.
 //
 // THE PROJECT'S OWN expo binary, never `npx expo`: npx on a project without
 // expo installed silently downloads whatever version is newest and prebuilds
-// with it, producing a native project that does not match the app's SDK. The
-// same reasoning as server-expo.js, which is where expoBinPath comes from.
+// with it, producing a native project that does not match the app's SDK. It is
+// found by Node resolution, not by joining node_modules/.bin -- see
+// expoBinPath in server-expo.js, which is where it comes from.
 //
 // `--no-install`, because installing dependencies is the caller's judgment
 // (CLAUDE.md item 3): prebuild's job here is to generate the native project,
@@ -85,12 +86,13 @@ export async function runPrebuild(root, platform, logWriter, { spawnFn = null, n
   }
 
   const bin = expoBinPath(root);
-  if (!existsSync(bin)) {
+  if (!bin) {
+    const refusal = expoBinRefusal(root, 'prebuild');
     return {
       failed: true,
       code: PREBUILD_ERROR,
-      reason: `Cannot prebuild ${root}: ${bin} does not exist.`,
-      remedy: 'Run `npm install` in the project so the `expo` package installs its binary.',
+      reason: refusal.message,
+      remedy: refusal.remedy,
       lastLines: [],
     };
   }

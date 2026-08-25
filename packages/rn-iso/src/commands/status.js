@@ -12,7 +12,8 @@ import { readSupervisorState } from './stop.js';
 import { findProjectRoot, projectShortcut } from '../project.js';
 import { listAllIosSims } from '../sim/ios.js';
 import { listWorktrees } from '../worktree.js';
-import { capacity, diskIsTight, environmentState, parseDfFree, unprovisionedWorktrees } from '../status.js';
+import { volumeRootFor } from '../fs-util.js';
+import { capacity, diskLine, environmentState, parseDfFree, tightVolumes, unprovisionedWorktrees } from '../status.js';
 
 export default function statusCommand(program) {
   program
@@ -151,10 +152,23 @@ export default function statusCommand(program) {
       );
       // RAM was the only resource reported, and disk is the one that actually
       // ran out. Bounded and failure-tolerant: an unreadable df prints nothing.
-      const disk = parseDfFree(getExecutor().runQuiet('df -k /', { timeoutMs: 5000 }));
-      if (disk) {
-        const line = `${gb(disk.availableMb)} free of ${gb(disk.totalMb)} on disk.`;
-        console.log(diskIsTight(disk) ? chalk.yellow(`${line} A single iOS build can exhaust that -- run \`rn-iso gc\` before starting another environment.`) : chalk.dim(line));
+      //
+      // Both volumes when the project is not on the boot one. Reporting only
+      // `/` described a volume nothing was building on: this machine's repos
+      // live on an external SSD, and build output is workspace-local, so the
+      // volume that fills up is the project's. The boot volume stays in the
+      // report because the shared caches and the simulator device set are on it
+      // whatever the project's path.
+      const volumes = readVolumes(cwdRoot || process.cwd());
+      const line = diskLine(volumes);
+      if (line) {
+        const tight = tightVolumes(volumes);
+        if (tight.length) {
+          const which = tight.map(v => v.volume).join(' and ');
+          console.log(chalk.yellow(`${line} A single iOS build can exhaust ${which} -- run \`rn-iso gc\` before starting another environment.`));
+        } else {
+          console.log(chalk.dim(line));
+        }
       }
       if (cap.overCapacity) {
         console.log(
@@ -162,6 +176,27 @@ export default function statusCommand(program) {
         );
       }
     });
+}
+
+// The volumes worth reporting: the boot volume, plus the project's own when it
+// is a different one. `volumeRootFor` is the same mapping `gc` uses to name an
+// unmounted volume, so the two commands label a volume identically.
+//
+// Single-quoted rather than run through runFile: the whole suite's mock
+// executors implement `runQuiet` and nothing else, and a status line is not
+// worth making every one of them grow a method. Single quotes make a space, a
+// `$` and a `"` in a volume name all literal.
+export function readVolumes(projectPath) {
+  const roots = ['/'];
+  const projectVolume = volumeRootFor(projectPath);
+  if (projectVolume !== '/') roots.push(projectVolume);
+  const volumes = [];
+  for (const volume of roots) {
+    const quoted = `'${volume.replace(/'/g, "'\\''")}'`;
+    const disk = parseDfFree(getExecutor().runQuiet(`df -k ${quoted}`, { timeoutMs: 5000 }));
+    if (disk) volumes.push({ volume, disk });
+  }
+  return volumes;
 }
 
 // Resolving Metro's identity costs an lsof, which is why it only runs for a

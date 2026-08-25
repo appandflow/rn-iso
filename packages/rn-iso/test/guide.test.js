@@ -141,14 +141,14 @@ test('the skill advertises exactly the commands bin/cli.js registers', () => {
   const registered = [...cli.matchAll(/^import (\w+)Command from '\.\.\/src\/commands\/([\w-]+)\.js';$/gm)].map((m) => m[2]);
   assert.deepEqual(
     registered.sort(),
-    ['android', 'doctor', 'gc', 'guide', 'init', 'ios', 'logs', 'skill', 'start', 'status', 'stop', 'worktree'],
-    'the target v3 surface'
+    ['android', 'doctor', 'gc', 'guide', 'ios', 'logs', 'skill', 'start', 'status', 'stop', 'worktree'],
+    'the target v3 surface: eleven commands, and `init` is not one of them'
   );
   const surface = skill.slice(skill.indexOf('## Command surface'), skill.indexOf('## When things go wrong'));
   for (const command of registered) {
     assert.ok(surface.includes(`\`${command}\``) || surface.includes(`\`${command} `), `the surface list should name ${command}`);
   }
-  for (const gone of ['up', 'release', 'shutdown', 'config', 'build-cache']) {
+  for (const gone of ['up', 'release', 'shutdown', 'config', 'build-cache', 'init']) {
     assert.ok(surface.includes(`no \`${gone}\``), `the surface list should record that ${gone} is gone`);
   }
 });

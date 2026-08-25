@@ -66,12 +66,18 @@ export function parseTail(value) {
 // An unknown source would just match nothing, and "nothing" is the answer
 // this CLI must never get wrong: `logs --errors --source metrro` exiting 0
 // with no output is indistinguishable from a clean build. So it fails.
+//
+// `all` is spelled out rather than left implicit because --errors now has a
+// DEFAULT scope (metro, client, build -- see ERROR_SOURCES): without a word
+// for "everything", asking for the device stream back would mean typing the
+// whole list.
 export function validateSources(sources) {
   if (sources === undefined || sources === null) return { sources: undefined };
   const list = Array.isArray(sources) ? sources : [sources];
+  if (list.includes('all')) return { sources: [...SOURCES] };
   const unknown = list.filter((s) => !SOURCES.includes(s));
   if (unknown.length > 0) {
-    return { error: `Unknown --source value(s): ${unknown.join(', ')}. Use one or more of: ${SOURCES.join(', ')}.` };
+    return { error: `Unknown --source value(s): ${unknown.join(', ')}. Use one or more of: ${SOURCES.join(', ')}, or all.` };
   }
   return { sources: list };
 }
@@ -80,6 +86,18 @@ export function validateLevel(level) {
   if (LEVELS.includes(level)) return { level };
   return { error: `Invalid --level value ${JSON.stringify(level)}. Use one of: ${LEVELS.join(', ')}.` };
 }
+
+// How many records `--errors` prints before it stops and says how many are
+// left. The field case was 3,004 records of iOS syslog: a report that long is
+// not a report, and the agent reading it pays for every line. The cap is on
+// the PRINTED output only -- the query itself, and `status`, still count them
+// all, and --json is never capped because a machine reader asked for the set.
+//
+// The head is what survives, not the tail: the first error in a window is
+// usually the cause and the rest is cascade. That also makes the trailer's
+// count exact -- what was hidden IS the tail, so `--tail N` prints precisely
+// the records that were left out.
+export const ERRORS_PRINT_CAP = 20;
 
 const LEVEL_COLOURS = {
   debug: chalk.dim,
@@ -93,12 +111,12 @@ export default function logsCommand(program) {
   program
     .command('logs')
     .description("Query this workspace's merged NDJSON log timeline (bundler, client, device, build). Prints and exits; nothing matching is a successful, empty result. Use --follow to stream.")
-    .option('--source <s...>', 'Only these sources: metro, client, device, build')
+    .option('--source <s...>', 'Only these sources: metro, client, device, build, or all')
     .option('--level <l>', `Minimum level: ${LEVELS.join(', ')}`)
     .option('--since <d>', 'Only records newer than this, e.g. 30s, 5m, 2h')
     .option('--grep <re>', 'Only records whose message matches this regular expression')
     .option('--tail <n>', 'Only the last n matching records')
-    .option('--errors', 'Only errors and fatals since the last build or reload marker (the agent-loop query)')
+    .option('--errors', 'Only errors and fatals since the last marker, from metro, client and build (the agent-loop query). Device errors are the OS talking, not the app -- the app\'s own crashes reach the client and metro streams -- so add --source device or --source all to include them.')
     .option('--follow', 'Keep streaming new records until interrupted')
     .option('--json', 'Emit the raw records, one per line (valid NDJSON)')
     .action((opts) => {
@@ -165,7 +183,15 @@ export default function logsCommand(program) {
       const offsets = opts.follow ? fileSizes(dir) : null;
 
       const records = queryLogs(query);
-      for (const record of records) emit(record);
+      // An explicit --tail is the caller choosing a length, so it wins.
+      const capped = opts.errors && !opts.json && tail === undefined && records.length > ERRORS_PRINT_CAP
+        ? records.slice(0, ERRORS_PRINT_CAP)
+        : records;
+      for (const record of capped) emit(record);
+      const hidden = records.length - capped.length;
+      if (hidden > 0) {
+        console.log(chalk.dim(`… and ${hidden} more (rerun with --tail ${hidden} or --json)`));
+      }
 
       if (!opts.follow) {
         if (records.length === 0 && !opts.json) {

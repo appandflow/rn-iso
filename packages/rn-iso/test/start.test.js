@@ -10,7 +10,7 @@
 //   - a failure prints the supervisor log's tail and its path, not a stack.
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -352,7 +352,15 @@ describe('action: spawning the supervisor', () => {
     const result = await runAction({ json: true, wait: '1' });
 
     assert.equal(result.exitCode, 1);
-    assert.deepEqual(result.logs, [], 'a failure prints no facts');
+    // The error contract, not an empty stdout. A caller doing
+    // `facts=$(rn-iso start --json)` got an empty string on every failure and
+    // had to scrape stderr prose, which `guide facts` promises it never has to.
+    assert.equal(result.logs.length, 1, 'exactly one parseable line on stdout');
+    assert.deepEqual(JSON.parse(result.logs[0]), {
+      code: 'RN_ISO_METRO_TIMEOUT',
+      message: 'The dev server did not answer on port 8155 within 1s.',
+      remedy: 'It may still be starting. Run `rn-iso stop` to halt it, or `rn-iso logs` to follow along.',
+    });
     const stderr = result.errs.join('\n');
     assert.match(stderr, /did not answer on port 8155 within 1s/);
     assert.match(stderr, /RN_ISO_BARE_DEPS/);
@@ -382,6 +390,75 @@ describe('action: spawning the supervisor', () => {
     assert.equal(result.exitCode, 1);
     assert.ok(elapsed < 5000, `expected a fast failure, took ${elapsed}ms`);
     assert.match(result.errs.join('\n'), /supervisor exited \(code 1\) before the dev server came up/);
+    // A supervisor that DIED and one that is merely slow need different next
+    // steps, so they carry different codes rather than one generic failure.
+    const facts = JSON.parse(result.logs.at(-1));
+    assert.equal(facts.code, 'RN_ISO_SUPERVISOR_EXITED');
+    assert.match(facts.remedy, /start` again/);
+  });
+});
+
+describe('the error contract', () => {
+  test('a refusal before anything runs still puts one JSON line on stdout', async () => {
+    setExecutor(metroExecutor({ listeners: {} }));
+    const result = await runAction({ json: true, wait: 'soon' });
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.logs.length, 1);
+    const facts = JSON.parse(result.logs[0]);
+    assert.equal(facts.code, 'RN_ISO_BAD_ARG');
+    assert.match(facts.message, /Invalid --wait/);
+    assert.ok(facts.remedy);
+  });
+
+  test('without --json a failure keeps stdout free of JSON and names the code', async () => {
+    setExecutor(metroExecutor({ listeners: {} }));
+    const result = await runAction({ wait: 'soon' });
+    assert.equal(result.exitCode, 1);
+    for (const line of result.logs) assert.throws(() => JSON.parse(line));
+    assert.match(result.errs.join('\n'), /RN_ISO_BAD_ARG/);
+  });
+});
+
+// `.rn-iso/` used to be gitignored by `rn-iso init`, which made it a step a
+// repo had to remember before its first build -- and forgetting it dead-ended
+// `worktree remove` on `?? .rn-iso/`. `start` is the first command of the loop,
+// so it ensures the entry itself.
+describe('the workspace gitignore', () => {
+  test('adds the entry on a repo that has none, and says so once on stderr', async () => {
+    const port = 8161;
+    const server = await metroListener(port);
+    setExecutor(metroExecutor({ listeners: { [port]: 4242 } }));
+    upsertProject(root, { metroPort: port });
+    try {
+      const result = await runAction({ json: true, wait: '5' });
+      assert.equal(result.exitCode, null);
+      const gitignore = readFileSync(join(root, '.gitignore'), 'utf-8');
+      assert.match(gitignore, /^\.rn-iso\/$/m);
+      const notes = result.errs.filter((l) => /added \.rn-iso\/ to \.gitignore/.test(l));
+      assert.equal(notes.length, 1);
+      assert.match(notes[0], /note {3}added/);
+      // The note is stderr, never the --json payload's line.
+      assert.equal(result.logs.length, 1);
+      assert.ok(JSON.parse(result.logs[0]).port);
+    } finally {
+      server.close();
+    }
+  });
+
+  test('a repo that already ignores it is left alone and says nothing', async () => {
+    const port = 8162;
+    const server = await metroListener(port);
+    setExecutor(metroExecutor({ listeners: { [port]: 4242 } }));
+    upsertProject(root, { metroPort: port });
+    writeFileSync(join(root, '.gitignore'), 'node_modules\n/.rn-iso\n');
+    try {
+      const result = await runAction({ json: true, wait: '5' });
+      assert.equal(result.exitCode, null);
+      assert.equal(readFileSync(join(root, '.gitignore'), 'utf-8'), 'node_modules\n/.rn-iso\n');
+      assert.deepEqual(result.errs.filter((l) => /gitignore/.test(l)), []);
+    } finally {
+      server.close();
+    }
   });
 });
 

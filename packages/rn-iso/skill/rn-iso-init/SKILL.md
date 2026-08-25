@@ -8,40 +8,51 @@ description: Use when setting up a React Native or Expo repo so that multiple ag
 ## Start here
 
 ```bash
-npx rn-iso init      # writes the run script and the gitignore entry, then reports what is left
+npx rn-iso doctor    # read-only: what is silently costing this repo build time
 ```
 
-`init` writes only what can be generated safely: an executable `scripts/dev`
-that is `rn-iso start` followed by `rn-iso <platform>`, and an entry for
-`.rn-iso/` appended to the project's `.gitignore`. That is the whole list, and
-it never overwrites an existing file without `--force`.
+**This page is a playbook you apply by hand.** There is no `rn-iso init`. It was
+removed, along with the `scripts/dev` it generated, because almost nothing here
+can be generated safely: every fix lands in a file the project already owns -- a
+`metro.config.js` with its own transformer, a `Podfile` with existing
+`post_install` logic, an app config that may be TypeScript -- and a generator
+that rewrites those is a generator that eventually corrupts one.
 
-**It does not write a `.worktreeexclude`, and it does not need to.** `.rn-iso/`
-holds a workspace's own derived data, its logs and the supervisor pidfile —
-build output keyed to a path a new worktree does not have, and a pidfile for a
-process that is not running — so `worktree create --carry-ignored` skips it
-unconditionally, at any depth (a monorepo has one per app directory). That lives
-in code, not in a pattern file: there is no repo for which carrying it is right,
-and a rule kept in a generated file is a rule that goes missing. A
-`.worktreeexclude` at the **repo root** (`git rev-parse --show-toplevel`, which
-is where `worktree create` reads it) still works for a repo's own additions —
-`bench/results`, a fixture tree — and only ever *adds* to the skip list; nothing
-in it can bring `.rn-iso/` back.
+So the loop is:
 
-`scripts/dev` is thin on purpose: rn-iso runs the dev server and the build
-itself now, so there is no bundler or build command left to reconstruct. It
-lives in the repo anyway, so anything the project needs *around* those two
-steps — a codegen pass, a workspace filter, an env file to source — has a home
-that is yours to edit.
+1. **Run `rn-iso doctor`.** It reports; it changes nothing and always exits 0.
+2. **For each finding, open the file it names and read what is already there.**
+   The correct edit is the smallest one that fits the code in front of you, not
+   the snippet on this page pasted over it.
+3. **Re-run `rn-iso doctor`** to confirm the finding is gone.
+4. **Then work through the sections below that doctor cannot check at all.** A
+   clean `doctor` run does not mean this repo is set up; it means doctor had
+   nothing to say about the handful of things it reads. Each section says which
+   kind it is.
 
-Earlier versions also generated a `WORKFLOW.md`. They no longer do: v3 *is* the
-build command, so the document had become an unmanaged copy of `rn-iso guide
-lifecycle` that went stale in the places the repo moved on. Read `npx rn-iso
-guide lifecycle` for the loop. A `WORKFLOW.md` a previous version wrote is left
-exactly where it is — it belongs to the repo now, and neither `init` nor
-`doctor` touches it.
+### What you do NOT have to do
 
-Then it runs `rn-iso doctor` and lists what it could not fix itself.
+- **`.rn-iso/` in `.gitignore`.** `start`, `ios` and `android` each add the entry
+  themselves if it is missing, and say so once on stderr (`note   added .rn-iso/
+  to .gitignore`). It was the one edit safe to generate, so it stopped being a
+  setup step. (doctor still reports a missing entry, because doctor is read-only
+  and runs on repos no rn-iso command has touched yet.)
+- **A `.worktreeexclude` for it.** `.rn-iso/` holds a workspace's own derived
+  data, its logs and the supervisor pidfile -- build output keyed to a path a new
+  worktree does not have, and a pidfile for a process that is not running -- so
+  `worktree create --carry-ignored` skips it unconditionally, at any depth (a
+  monorepo has one per app directory). That lives in code, not in a pattern file:
+  there is no repo for which carrying it is right, and a rule kept in a generated
+  file is a rule that goes missing. A `.worktreeexclude` at the **repo root**
+  (`git rev-parse --show-toplevel`, which is where `worktree create` reads it)
+  still works for a repo's own additions -- `bench/results`, a fixture tree --
+  and only ever *adds* to the skip list; nothing in it can bring `.rn-iso/` back.
+- **A run script.** rn-iso runs the dev server and the build itself, so there is
+  no bundler or build command left to wrap. Write one only if this repo needs
+  something *around* those two steps -- a codegen pass, a workspace filter, an
+  env file to source. A `scripts/dev` or `WORKFLOW.md` an older version generated
+  belongs to the repo now; neither describes this version, and nothing here
+  touches them.
 
 ## What doctor reports, and what it does not
 
@@ -64,12 +75,8 @@ keys. A clean `doctor` run does not mean those are right — it means it had
 nothing to say about the things it reads. Each section below says which kind it
 is.
 
-The findings it does report are left to you rather than auto-fixed because each
-one edits a file the project already owns — a `metro.config.js` with its own
-transformer, a `Podfile` with existing `post_install` logic, an app config that
-may be TypeScript. A generator that rewrites those is a generator that
-eventually corrupts one, so read the current contents, make the smallest edit
-that fits, and re-run `rn-iso doctor` to confirm it landed.
+Findings carry a `fix` line naming what to change. Treat it as the *intent* of
+the edit, not its text: apply it in the style of the file you are editing.
 
 ## The one that blocks, not just slows
 
@@ -218,14 +225,31 @@ reason to turn it on. Set it somewhere fixed, in the Podfile's `post_install` --
 ```ruby
 post_install do |installer|
   # ... whatever is already here ...
+
+  # rn-iso: share compiled output between workspaces (Xcode 26+).
+  # The default CAS path is inside DerivedData, which is per-workspace, so
+  # leaving it there shares nothing. Pin it outside instead.
   installer.pods_project.targets.each do |target|
     target.build_configurations.each do |config|
       config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES'
-      config.build_settings['COMPILATION_CACHE_CAS_PATH'] = File.expand_path('~/Library/Caches/<app>-compilation-cache')
+      config.build_settings['COMPILATION_CACHE_CAS_PATH'] = File.expand_path('~/.rn-iso/compilation-cache')
     end
   end
 end
 ```
+
+Paste the whole block **inside** the existing `post_install do |installer|`,
+adding a `post_install` if the Podfile has none. It brings its own loop on
+purpose (see below). Write the path relative to `$HOME` and expand it at
+`pod install` time, as above: a Podfile is committed, and every machine's home
+directory is a different absolute path.
+
+`~/.rn-iso/compilation-cache` is a suggestion, not a requirement -- anywhere
+fixed and outside DerivedData works. It is the useful default because it sits
+beside rn-iso's other caches; a relocated CAS is not one of the two locations
+`gc` knows how to detect, so tell it where this one went (see "Keep it from
+growing forever" below) or `gc` will report every cache on the machine except
+the one this repo just created.
 
 The loop is the part that gets skipped. A `post_install` whose only iteration is
 over resource bundles (the Xcode 14 code-signing workaround, which many Expo

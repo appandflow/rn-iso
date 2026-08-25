@@ -33,9 +33,12 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function fakeBin() {
-  const bin = expoBinPath(root);
-  mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
+// The .bin shim, where a NON-hoisted install puts it. expoBinPath has to find
+// this one by walking up (it is in the project itself here), and the hoisted
+// case is covered in the monorepo-resolution suite.
+function fakeBin(dir = root) {
+  const bin = join(dir, 'node_modules', '.bin', 'expo');
+  mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true });
   writeFileSync(bin, '#!/bin/sh\n');
   chmodSync(bin, 0o755);
   return bin;
@@ -126,14 +129,17 @@ describe('createLineReader', () => {
 });
 
 describe('startExpoServer', () => {
-  test('a project with no expo binary fails with a named code and a remedy', async () => {
+  test('a project with no resolvable expo fails with a named code and a remedy', async () => {
     const err = await startExpoServer({ root, port: 8110, logsDir: join(root, 'logs') }).then(
       () => null,
       (e) => e
     );
     assert.equal(err.code, 'RN_ISO_EXPO_BIN');
-    assert.match(err.message, /node_modules\/\.bin\/expo/);
-    assert.match(err.remedy, /npm install/);
+    assert.match(err.message, /not resolvable/);
+    // The remedy must NOT be the old "run npm install": it was printed at two
+    // monorepos whose dependencies were fully installed, and it sent the
+    // reader looking in the wrong place.
+    assert.match(err.remedy, /workspace root/);
   });
 
   test('spawns `expo start --port <n>` and NOTHING else, from the project root', async () => {

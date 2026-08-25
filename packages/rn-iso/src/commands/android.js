@@ -31,14 +31,20 @@ import { getProject, upsertProject } from '../config.js';
 import { getExecutor } from '../exec.js';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.js';
 import { createNdjsonWriter } from '../ndjson.js';
-import { resolveProjectMetro } from '../metro.js';
+import { isPidAlive, resolveProjectMetro } from '../metro.js';
 import { workspaceLogsDir } from '../paths.js';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../project.js';
+import {
+  ensureWorkspaceIgnoredSafely,
+  noMetroMessage,
+  noMetroRemedy,
+  resolveMetroWithRetry,
+} from './ios.js';
 import { resolveSettings } from '../settings.js';
 import { gitCommonDir, repoRoot } from '../worktree.js';
 import { readCollectors } from '../collector/run.js';
-import { writeWorkspaceState } from '../supervisor/run.js';
-import { DEFAULT_METRO_PORT, installAndroidApp, launchAndroidApp } from '../engine/app-install.js';
+import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/run.js';
+import { DEFAULT_METRO_PORT, LAUNCH_UNVERIFIED, installAndroidApp, launchAndroidApp, unverifiedLaunchLines, verifyLaunch } from '../engine/app-install.js';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.js';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.js';
 import { buildAndroid } from '../engine/gradle.js';
@@ -124,7 +130,11 @@ export function androidFacts({ serial, fingerprint, cacheHit, cacheSkipped = fal
     cacheSkipped: Boolean(cacheSkipped),
     appPath: appPath ?? null,
     bundleId: bundleId ?? null,
-    launched: Boolean(launched),
+    // Three-valued, like the iOS payload: 'unverified' is what a launch that
+    // produced no bundle request from this workspace's Metro reports. An
+    // unconditional `true` is what let an app sitting on the dev-launcher's
+    // server picker read as a successful run.
+    launched: launched === LAUNCH_UNVERIFIED ? LAUNCH_UNVERIFIED : Boolean(launched),
     logs: logs ?? null,
   };
 }
@@ -211,6 +221,11 @@ export async function runAndroid({
   ensureDevice = ensureOwnedDevice,
   ensureDeviceBooted = ensureBooted,
   resolveMetro = resolveProjectMetro,
+  resolveMetroRetrying = resolveMetroWithRetry,
+  readState = readWorkspaceState,
+  pidAlive = isPidAlive,
+  verifyLaunched = verifyLaunch,
+  ensureIgnored = ensureWorkspaceIgnoredSafely,
   fingerprint = fingerprintProject,
   resolveCached = resolveBuild,
   storeCached = storeBuild,
@@ -232,6 +247,9 @@ export async function runAndroid({
 } = {}) {
   const started = now();
   const startedAt = new Date(started).toISOString();
+  // Before ANY write into <root>/.rn-iso -- the build log opened on the next
+  // line, the state file, the APK paths recorded in it.
+  await ensureIgnored(root, { note: out });
   const logsDir = workspaceLogsDir(root);
   const buildLog = join(logsDir, 'build-android.ndjson');
   const writer = createWriter(buildLog);
@@ -305,12 +323,22 @@ export async function runAndroid({
     if (!reservedPort) {
       return fail(NO_METRO, 'No Metro port is reserved for this workspace.', 'Run `rn-iso start` first, or pass --no-metro-check.');
     }
-    const held = await resolveMetro(reservedPort, root);
+    // Retried: `start` returns when the server is LISTENING, and a bare
+    // in-process Metro then blocks its event loop crawling a monorepo's file
+    // map for ~20s, during which /status never answers. See
+    // resolveMetroWithRetry in commands/ios.js -- one implementation, both
+    // platforms.
+    const held = await resolveMetroRetrying(resolveMetro, reservedPort, root, {
+      onRetry: ({ delayMs }) => phase('metro', `port ${reservedPort} did not verify yet; retrying in ${Math.round(delayMs / 1000)}s (Metro may still be indexing)`),
+    });
     if (!held.metro) {
-      const detail = held.notOurs
-        ? `Port ${reservedPort} is held by something that is not this project's Metro: ${held.notOurs}.`
-        : `No Metro server holds reserved port ${reservedPort}.`;
-      return fail(NO_METRO, detail, 'Run `rn-iso start` first, or pass --no-metro-check.');
+      const supervisor = readState(root)?.supervisor ?? null;
+      const supervisorAlive = Boolean(supervisor?.pid && pidAlive(supervisor.pid));
+      return fail(
+        NO_METRO,
+        noMetroMessage({ port: reservedPort, resolution: held, supervisor, supervisorAlive }),
+        noMetroRemedy({ port: reservedPort, supervisor, supervisorAlive })
+      );
     }
     phase('metro', `port ${reservedPort} (pid ${held.metro.pid})`);
   } else {
@@ -487,6 +515,7 @@ export async function runAndroid({
       { lastBuildStatus: true }
     );
   }
+  const launchedAt = now();
   const launched = launch({ serial, packageName: androidPackage, metroPort });
   if (launched.failed) {
     return fail(launched.code || LAUNCH_FAILED, launched.reason, `Check the app installed correctly (\`adb -s ${serial} shell pm list packages ${androidPackage}\`).`, { lastBuildStatus: true });
@@ -523,8 +552,54 @@ export async function runAndroid({
   // carries lastBuild forward rather than racing it.
   persistLastBuild({ writeState, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
 
+  // The collector is attached BEFORE the launch verification below: that poll
+  // can take 20 seconds, and those are the seconds whose logcat says why the
+  // app did not load a bundle.
   const collectorPid = startCollector({ root, serial, packageName: androidPackage, spawn, kill, out });
   phase('logs', `${displayPath(root, logsDir)}${collectorPid ? ` (collector pid ${collectorPid})` : ''}`);
+
+  // ---- proof, not assertion (see verifyLaunch in engine/app-install.js) ----
+  //
+  // `am start` returning 0 proves an activity was started. It does not prove
+  // the app loaded a bundle from THIS workspace's Metro -- an expo-dev-client
+  // app opens its DEVELOPMENT SERVERS picker instead, listing every other
+  // workspace on the machine. A timeout leaves the exit code at 0 and reports
+  // launched: 'unverified'.
+  //
+  // Skipped under --no-metro-check, for the reason given in commands/ios.js:
+  // the gate was waived, so there is nothing to poll for. The fact still is
+  // not `true`.
+  const verification = metroCheck
+    ? await verifyLaunched({ logsDir, since: launchedAt, mode: isExpo ? MODE_EXPO : MODE_BARE })
+    : { verified: false, skipped: true };
+  let launchState = true;
+  if (verification?.verified) {
+    phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
+  } else if (verification?.skipped) {
+    launchState = LAUNCH_UNVERIFIED;
+    phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
+  } else {
+    launchState = LAUNCH_UNVERIFIED;
+    phase('verify', chalk.yellow('UNVERIFIED: no bundle request reached this workspace\'s Metro'));
+    for (const line of unverifiedLaunchLines({
+      platform: PLATFORM,
+      metroPort,
+      waitedMs: verification?.waitedMs,
+      bundleId: androidPackage,
+      serial,
+      mode: isExpo ? MODE_EXPO : MODE_BARE,
+    })) phase('', chalk.yellow(line));
+  }
+
+  // The outcome in the timeline too, where `rn-iso logs` will find it.
+  writer.write({
+    src: 'build',
+    level: launchState === LAUNCH_UNVERIFIED ? 'warn' : 'info',
+    event: launchState === LAUNCH_UNVERIFIED ? 'launch_unverified' : 'launch_verified',
+    msg: launchState === LAUNCH_UNVERIFIED
+      ? `no bundle request from ${androidPackage} reached this workspace's Metro on port ${metroPort}`
+      : `${androidPackage} fetched a bundle from this workspace's Metro on port ${metroPort}`,
+  });
 
   const facts = androidFacts({
     serial,
@@ -533,7 +608,7 @@ export async function runAndroid({
     cacheSkipped: !useBuildCache,
     appPath: apkPath,
     bundleId: androidPackage,
-    launched: true,
+    launched: launchState,
     logs: logsDir,
   });
   writer.close();
@@ -541,7 +616,8 @@ export async function runAndroid({
   if (json) {
     emit(JSON.stringify(facts));
   } else {
-    emit(chalk.green(`OK: ${androidPackage} launched on ${serial}, Metro port ${metroPort} (${cacheOutcome(record.cacheHit, remote?.name)})`));
+    const summary = `OK: ${androidPackage} launched on ${serial}, Metro port ${metroPort} (${cacheOutcome(record.cacheHit, remote?.name)})`;
+    emit(launchState === LAUNCH_UNVERIFIED ? chalk.yellow(`${summary} -- launch UNVERIFIED`) : chalk.green(summary));
   }
 
   // Everything this command does is done. If a provider call was abandoned at

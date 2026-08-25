@@ -14,7 +14,10 @@
 // runFile (argv array, no shell) everywhere a path or a URL is involved: an
 // app path with a space in it, and a dev-client URL full of `&` and `%`, both
 // reach the tool as one literal argument that way. CLAUDE.md's exec rule.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { getExecutor } from '../exec.js';
+import { parseNdjsonText } from '../ndjson.js';
 
 export const INSTALL_ERROR = 'RN_ISO_INSTALL_FAILED';
 export const LAUNCH_ERROR = 'RN_ISO_LAUNCH_FAILED';
@@ -255,4 +258,164 @@ function describe(err) {
   const stderr = err?.stderr ? String(err.stderr).trim() : '';
   const message = err?.message ? String(err.message).trim() : String(err);
   return stderr ? `${message}: ${stderr}` : message;
+}
+
+// --- launch VERIFICATION (the launch is not the proof) --------------------
+//
+// The bug this exists for: rn-iso reported `launched: true` while the app sat
+// on expo-dev-launcher's DEVELOPMENT SERVERS picker, listing every OTHER
+// workspace's Metro on the machine. One tap there loads another project's
+// bundle onto this workspace's simulator -- the exact cross-workspace
+// contamination v3 exists to prevent -- and from the outside a picker looks
+// identical to a loaded app. `simctl launch` returning a pid proves a process
+// started, and nothing more.
+//
+// Two things make the picker likely rather than exotic:
+//   - a dev-client app with no deep link opens straight into it;
+//   - on iOS 26 `simctl openurl` is gated behind an "Open in <app>?" system
+//     alert, so even a CORRECT deep link stalls until somebody taps Open.
+//
+// So the launch is followed by a poll for PROOF: a record in this workspace's
+// own metro.ndjson, written after the launch, showing that a bundle was
+// requested from THIS Metro. It is the only evidence that names the right
+// server -- an app on the picker, or one that loaded a neighbour's bundle,
+// produces none of it.
+//
+// A timeout is NOT a failure: the app may well be fine, and refusing here
+// would break every legitimate slow launch. The run stays exit 0 and reports
+// `launched: 'unverified'` instead of `true`, with a warning that says what to
+// check. Saying "launched" when we did not see a bundle request is the thing
+// that must not happen.
+
+export const LAUNCH_VERIFIED = 'verified';
+export const LAUNCH_UNVERIFIED = 'unverified';
+
+// ~20s: a cold dev-client fetches the manifest, then requests the bundle. On
+// the repos this was measured against the first bundle_build_started lands
+// 3-8s after launch; 20 is generous without being a wait anybody notices when
+// something is wrong.
+export const VERIFY_TIMEOUT_MS = 20000;
+export const VERIFY_POLL_MS = 500;
+
+// Bare path (@rn-iso/metro's ndjsonReporter): Metro's own event names. Any of
+// them proves a client asked THIS server for a bundle -- including the
+// failures, because a bundling error is still a request that arrived here.
+const BUNDLE_EVENTS = new Set([
+  'bundle_build_started',
+  'bundle_build_done',
+  'bundle_build_failed',
+  'bundling_error',
+  'transformer_error',
+]);
+
+// PURE. Does this Contract-1 record prove a bundle was requested from this
+// workspace's dev server at or after `since`?
+//
+// Records with no usable timestamp are NOT proof: the whole question is
+// whether the fetch happened after THIS launch, and a previous run's bundle
+// build sitting in the same file would otherwise verify a launch that never
+// loaded anything.
+export function isBundleProof(record, since = 0) {
+  if (!record || typeof record !== 'object') return false;
+  const ts = Number(record.ts);
+  if (!Number.isFinite(ts) || ts < Number(since || 0)) return false;
+  if (typeof record.event === 'string' && BUNDLE_EVENTS.has(record.event)) return true;
+  // Expo child: the structure is inferred from stdout (raw: true), so the
+  // line itself is the event. See isBundleActivityLine in server-expo.js.
+  if (record.src === 'metro' && typeof record.msg === 'string' && expoBundleLine(record.msg)) return true;
+  return false;
+}
+
+// Kept as a local copy of the ONE regex rather than an import, so this module
+// (which every install path loads) does not pull in the supervisor. The
+// predicate is exported from server-expo.js as isBundleActivityLine and a test
+// asserts the two agree.
+function expoBundleLine(msg) {
+  return /\bBundl(?:ing|ed)\b/.test(msg);
+}
+
+// Poll <logsDir>/metro.ndjson for the proof above.
+//
+// Reading the file rather than subscribing: the dev server is a DETACHED
+// supervisor in another process, and its NDJSON timeline is the only channel
+// between it and this command. Contract 1 already promises reading never
+// throws on a half-written line (parseNdjsonText drops it), which is what
+// makes tailing a live file safe here.
+export async function verifyLaunch({
+  logsDir,
+  since,
+  // Which dev server produced the timeline. Carried through to the result
+  // (and into the warning) rather than used to choose a predicate: a bare
+  // workspace never writes expo stdout records and an expo one never writes
+  // Metro reporter events, so one predicate covers both without a branch.
+  mode = null,
+  timeoutMs = VERIFY_TIMEOUT_MS,
+  pollMs = VERIFY_POLL_MS,
+  readRecords = null,
+  now = Date.now,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+} = {}) {
+  const read = readRecords || (() => readMetroRecords(logsDir));
+  const startedAt = now();
+  const deadline = startedAt + Math.max(0, timeoutMs);
+  while (true) {
+    for (const record of read()) {
+      if (isBundleProof(record, since)) {
+        return { verified: true, record, mode, waitedMs: now() - startedAt };
+      }
+    }
+    if (now() >= deadline) {
+      return { verified: false, timedOut: true, mode, waitedMs: now() - startedAt };
+    }
+    await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+  }
+}
+
+function readMetroRecords(logsDir) {
+  if (!logsDir) return [];
+  try {
+    return parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
+  } catch {
+    // No dev-server log yet is the ordinary case in the first second of a
+    // poll, and an unreadable one is not worth failing a launched app over.
+    return [];
+  }
+}
+
+// PURE. The warning printed when the poll timed out. It is the whole value of
+// the check: an agent that reads "unverified" has to know what to do next, and
+// the two causes are both one action away.
+//
+// `openUrl` is the exact command to re-deliver the deep link -- the one that
+// an iOS 26 confirmation alert may have swallowed the first time.
+export function unverifiedLaunchLines({
+  platform,
+  metroPort,
+  waitedMs = VERIFY_TIMEOUT_MS,
+  bundleId = null,
+  udid = null,
+  serial = null,
+  devClientUrl: url = null,
+  mode = null,
+}) {
+  const seconds = Math.round(Number(waitedMs || 0) / 1000);
+  const lines = [
+    `The app was started, but nothing fetched a bundle from this workspace's Metro (port ${metroPort}) within ${seconds}s.`,
+    'The app is launched; what is unproven is that it is talking to THIS dev server. Likely causes:',
+    `  - expo-dev-launcher is showing its DEVELOPMENT SERVERS picker and waiting for a tap. Tap the entry for http://localhost:${metroPort} -- NOT another workspace's, which would load a different project's bundle onto this device.`,
+  ];
+  if (platform === 'ios') {
+    lines.push('  - iOS 26 puts an "Open in <app>?" confirmation alert in front of `xcrun simctl openurl`, so the deep link stalls until it is confirmed.');
+    if (url && udid) {
+      lines.push(`Retry the deep link with: xcrun simctl openurl ${udid} '${url}'`);
+    } else if (udid && bundleId) {
+      lines.push(`Re-launch with: xcrun simctl launch --console ${udid} ${bundleId}`);
+    }
+  } else {
+    if (serial && bundleId) {
+      lines.push(`  - the reverse mapping was not in place when the app started. Re-launch with: adb -s ${serial} shell monkey -p ${bundleId} 1`);
+    }
+  }
+  lines.push(`Then check \`rn-iso logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);
+  return lines;
 }

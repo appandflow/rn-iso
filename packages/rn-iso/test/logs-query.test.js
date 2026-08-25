@@ -13,8 +13,10 @@ import {
   parseSince,
   compileGrep,
   recordMatches,
-  lastMarkerTs,
+  markerWindow,
   queryLogs,
+  readLogRecords,
+  ERROR_SOURCES,
   logFiles,
   fileSizes,
   tailRead,
@@ -31,6 +33,10 @@ afterEach(() => {
 
 function writeLog(name, records) {
   writeFileSync(join(dir, name), records.map((r) => `${JSON.stringify(r)}\n`).join(''));
+}
+
+function readAll() {
+  return readLogRecords(dir);
 }
 
 describe('parseSince', () => {
@@ -72,23 +78,42 @@ describe('compileGrep', () => {
   });
 });
 
-describe('lastMarkerTs', () => {
-  test('finds the highest marker ts across every source', () => {
+// A marker closes the window for the sources it can speak for, so the scan
+// returns two numbers: the last LAUNCH (src build -- a new run of the app
+// starts here, everything before it is history) and the last BUNDLE (src
+// metro -- the bundler is happy, which says nothing about the app).
+describe('markerWindow', () => {
+  test('separates the launch marker from the bundle marker', () => {
     const records = [
-      { ts: 1, src: 'metro', level: 'info', msg: 'a', marker: true },
+      { ts: 1, src: 'metro', level: 'info', msg: 'bundle build done', marker: true },
       { ts: 9, src: 'build', level: 'info', msg: 'launched', marker: true },
+      { ts: 11, src: 'metro', level: 'info', msg: 'bundle build done', marker: true },
       { ts: 5, src: 'client', level: 'error', msg: 'boom' },
     ];
-    assert.equal(lastMarkerTs(records), 9);
+    assert.deepEqual(markerWindow(records), { launchTs: 9, bundleTs: 11 });
   });
 
-  test('returns null when nothing is marked', () => {
-    assert.equal(lastMarkerTs([{ ts: 1, msg: 'a' }]), null);
-    assert.equal(lastMarkerTs([]), null);
+  test('each one is the highest of its own kind, not the last seen', () => {
+    assert.deepEqual(markerWindow([
+      { ts: 30, src: 'metro', level: 'info', msg: 'b2', marker: true },
+      { ts: 10, src: 'metro', level: 'info', msg: 'b1', marker: true },
+      { ts: 20, src: 'build', level: 'info', msg: 'launch', marker: true },
+    ]), { launchTs: 20, bundleTs: 30 });
+  });
+
+  test('returns nulls when nothing is marked', () => {
+    assert.deepEqual(markerWindow([{ ts: 1, msg: 'a' }]), { launchTs: null, bundleTs: null });
+    assert.deepEqual(markerWindow([]), { launchTs: null, bundleTs: null });
   });
 
   test('ignores a marker with no usable ts', () => {
-    assert.equal(lastMarkerTs([{ src: 'metro', msg: 'a', marker: true }]), null);
+    assert.deepEqual(markerWindow([{ src: 'metro', msg: 'a', marker: true }]), { launchTs: null, bundleTs: null });
+  });
+
+  // Conservative on purpose: an unrecognised marker source resets EVERYTHING,
+  // so a producer added later shows more rather than silently less.
+  test('a marker from any source other than metro counts as a launch', () => {
+    assert.deepEqual(markerWindow([{ ts: 4, src: 'device', level: 'info', msg: 'x', marker: true }]), { launchTs: 4, bundleTs: null });
   });
 });
 
@@ -298,6 +323,133 @@ describe('queryLogs', () => {
         queryLogs({ dir, errorsOnly: true, since: '5s', now: 33000 }).map((r) => r.msg),
         [],
       );
+    });
+  });
+
+  // --- the field sequences -------------------------------------------------
+  //
+  // Two real e2e runs against a real app produced these. They are written with
+  // wall-clock timestamps because the ORDER and the GAP are the whole bug: one
+  // second between a crash and the marker that swallowed it.
+  describe('errorsOnly, against the field capture', () => {
+    const at = (sec, ms = 0) => Date.parse(`2026-08-24T16:03:${String(sec).padStart(2, '0')}.${String(ms).padStart(3, '0')}Z`);
+
+    // THE bug. The app threw at 16:03:54 while evaluating the bundle; Metro
+    // wrote bundle_build_done at 16:03:55, one second LATER, because the
+    // bundler finishes accounting for a build after the client has already run
+    // it. A single "last marker across all sources" cutoff read that marker as
+    // "everything before me is history" and reported a healthy app.
+    test('a bundle marker 1s after a startup crash does not hide it', () => {
+      writeLog('build-ios.ndjson', [
+        { ts: at(50), src: 'build', level: 'info', msg: 'launched com.example.app', marker: true },
+      ]);
+      writeLog('client.ndjson', [
+        { ts: at(54), src: 'client', level: 'error', msg: '[Error: Exception in HostFunction]' },
+      ]);
+      writeLog('metro.ndjson', [
+        { ts: at(55), src: 'metro', level: 'info', msg: 'bundle build done (1)', marker: true },
+      ]);
+
+      // The marker IS later than the error -- this is not a sorting accident.
+      const window = markerWindow(readAll());
+      assert.ok(window.bundleTs > at(54));
+      assert.equal(window.launchTs, at(50));
+
+      assert.deepEqual(
+        queryLogs({ dir, errorsOnly: true }).map((r) => r.msg),
+        ['[Error: Exception in HostFunction]'],
+      );
+    });
+
+    // The other direction, which the same rule has to keep: a bundle marker is
+    // exactly the right thing to retire a METRO error with, because a bundle
+    // that built is proof the resolve failure was fixed.
+    test('a bundle marker still retires the metro error the rebuild fixed', () => {
+      writeLog('metro.ndjson', [
+        { ts: at(40), src: 'metro', level: 'error', msg: 'iOS Bundling failed 3122ms\nUnable to resolve "./tailwind.json" from "global.css"' },
+        { ts: at(55), src: 'metro', level: 'info', msg: 'bundle build done (2)', marker: true },
+      ]);
+      assert.deepEqual(queryLogs({ dir, errorsOnly: true }), []);
+    });
+
+    // And a launch marker retires everything, which is what stops the previous
+    // run's redbox from being reported forever.
+    test('a launch marker retires a client error that preceded it', () => {
+      writeLog('client.ndjson', [{ ts: at(40), src: 'client', level: 'error', msg: 'last run redbox' }]);
+      writeLog('build-ios.ndjson', [{ ts: at(50), src: 'build', level: 'info', msg: 'launched', marker: true }]);
+      assert.deepEqual(queryLogs({ dir, errorsOnly: true }), []);
+    });
+
+    // Metro errors clear both cutoffs: the later of the two wins, so a bundle
+    // error from BEFORE this run's launch is history even with no rebuild.
+    test('a metro error before the launch marker is history too', () => {
+      writeLog('metro.ndjson', [{ ts: at(40), src: 'metro', level: 'error', msg: 'stale bundling error' }]);
+      writeLog('build-ios.ndjson', [{ ts: at(50), src: 'build', level: 'info', msg: 'launched', marker: true }]);
+      assert.deepEqual(queryLogs({ dir, errorsOnly: true }), []);
+    });
+
+    // The tailwind failure as it was ACTUALLY stored during the field test:
+    // level info, because the supervisor's expo-child vocabulary did not know
+    // "Bundling failed" / "Unable to resolve" yet (that fix is elsewhere).
+    // Neither of this file's fixes invents it as an error, and neither hides
+    // it from a plain query -- so whichever way that lands, this is correct.
+    test('a bundling failure stored at info is not an error, but is still in the timeline', () => {
+      writeLog('metro.ndjson', [
+        { ts: at(40), src: 'metro', level: 'info', raw: true, msg: 'iOS Bundling failed 3122ms\nUnable to resolve "./tailwind.json" from "global.css"' },
+      ]);
+      assert.deepEqual(queryLogs({ dir, errorsOnly: true }), []);
+      assert.equal(queryLogs({ dir }).length, 1);
+      // ...and the moment its level is right, the window rule reports it.
+      writeLog('metro.ndjson', [
+        { ts: at(40), src: 'metro', level: 'error', raw: true, msg: 'iOS Bundling failed 3122ms\nUnable to resolve "./tailwind.json" from "global.css"' },
+      ]);
+      assert.equal(queryLogs({ dir, errorsOnly: true }).length, 1);
+    });
+  });
+
+  // --- the default scope ---------------------------------------------------
+  //
+  // The same field run returned 3,004 records from `--errors`, every one of
+  // them iOS syslog from inside the app's process. collector/ios.js demotes
+  // the proven offenders; this is the other half, for the ones nobody has
+  // curated yet: device is not in the default scope of --errors at all.
+  describe('errorsOnly, scope', () => {
+    test('ERROR_SOURCES is metro, client and build -- the app talking, not the OS', () => {
+      assert.deepEqual(ERROR_SOURCES, ['metro', 'client', 'build']);
+    });
+
+    test('a device-only noise storm is zero errors', () => {
+      const storm = [];
+      for (let i = 0; i < 3004; i += 1) {
+        storm.push({ ts: 1000 + i, src: 'device', level: 'error', proc: 'MyApp', msg: `nw_socket_handle_socket_event [C${i}:1] Socket SO_ERROR [54: Connection reset by peer]` });
+      }
+      writeLog('device.ndjson', storm);
+      assert.deepEqual(queryLogs({ dir, errorsOnly: true }), [], 'this was the 3004');
+      // Nothing was dropped from the capture: they are one flag away.
+      assert.equal(queryLogs({ dir, errorsOnly: true, sources: ['device'] }).length, 3004);
+      assert.equal(queryLogs({ dir }).length, 3004);
+    });
+
+    test('the app\'s own error is still reported while the device is excluded', () => {
+      writeLog('device.ndjson', [{ ts: 1, src: 'device', level: 'fatal', msg: 'UIScene lifecycle will soon be required' }]);
+      writeLog('client.ndjson', [{ ts: 2, src: 'client', level: 'error', msg: '[Error: Exception in HostFunction]' }]);
+      assert.deepEqual(queryLogs({ dir, errorsOnly: true }).map((r) => r.msg), ['[Error: Exception in HostFunction]']);
+    });
+
+    test('an explicit --source device (or all) opts back in', () => {
+      writeLog('device.ndjson', [{ ts: 1, src: 'device', level: 'error', msg: 'native crash' }]);
+      writeLog('client.ndjson', [{ ts: 2, src: 'client', level: 'error', msg: 'js crash' }]);
+      assert.deepEqual(queryLogs({ dir, errorsOnly: true, sources: ['device'] }).map((r) => r.msg), ['native crash']);
+      assert.deepEqual(
+        queryLogs({ dir, errorsOnly: true, sources: ['metro', 'client', 'device', 'build'] }).map((r) => r.msg),
+        ['native crash', 'js crash'],
+      );
+    });
+
+    test('a plain query (no --errors) still shows every source', () => {
+      writeLog('device.ndjson', [{ ts: 1, src: 'device', level: 'error', msg: 'device line' }]);
+      assert.deepEqual(queryLogs({ dir }).map((r) => r.msg), ['device line']);
+      assert.deepEqual(queryLogs({ dir, minLevel: 'error' }).map((r) => r.msg), ['device line']);
     });
   });
 });

@@ -1,11 +1,12 @@
-import { existsSync, realpathSync } from 'fs';
-import { resolve } from 'path';
+import { existsSync, realpathSync, rmSync } from 'fs';
+import { isAbsolute, relative, resolve } from 'path';
 import chalk from 'chalk';
 import { resolveSettings, unknownSettingKeys } from '../settings.js';
 import { isPathPrefix, loadConfig, upsertProject } from '../config.js';
 import { reclaimProject } from '../reclaim.js';
 import {
   addWorktree,
+  branchExists,
   carryOverFiles,
   cloneIgnoredEntries,
   defaultWorktreeDir,
@@ -14,6 +15,7 @@ import {
   hasRemote,
   hasUncommittedWork,
   isPodInstallChurn,
+  isWorkspaceArtifact,
   listWorktrees,
   podsOutOfSync,
   readWorktreeExclude,
@@ -21,6 +23,7 @@ import {
   removeWorktree,
   repoRoot,
   resolveBaseRef,
+  resolveRef,
   unpushedCommits,
   worktreePath,
 } from '../worktree.js';
@@ -29,7 +32,7 @@ export function registerCreate(worktree) {
   worktree
     .command('create <name>')
     .description('Create a git worktree with its environment set up. Prints the worktree path on stdout.')
-    .option('--base <ref>', 'base ref: "fresh" (origin/HEAD, default) or "head"')
+    .option('--base <ref>', 'base ref: "fresh" (origin/HEAD, default), "head", or any ref this repo resolves (branch, tag, sha)')
     .option('--label <label>', 'rn-iso shortcut for the worktree (defaults to the worktree name)')
     .option('--carry-ignored', 'clone every gitignored path (node_modules, Pods, build output) except those in .worktreeexclude')
     .action(async (name, opts) => {
@@ -56,17 +59,16 @@ export function registerCreate(worktree) {
         console.error(chalk.yellow(`Warning: setting "${key}" is not read by rn-iso and will be ignored.`));
       }
 
-      // `--base` reaches here as a raw string -- commander does not
-      // validate `.option()` values against an enum. resolveBaseRef treats
-      // anything other than the 'head' sentinel as 'fresh', so a typo like
-      // `--base=orign/HEAD` used to resolve silently instead of erroring.
-      // Nothing has been created yet, so exit 1 here is correct.
+      // `--base` reaches here as a raw string -- commander does not validate
+      // `.option()` values against an enum -- and it is checked below rather
+      // than against a two-name enum. It used to accept ONLY the two sentinels,
+      // which was the wrong shape of guard: the plumbing has always passed the
+      // resolved ref straight to `git worktree add`, so branching from a tag, a
+      // release branch or a sha needed nothing but permission, and refusing
+      // them bought nothing. What the enum was really catching -- a typo like
+      // `--base=orign/HEAD` resolving silently to 'fresh' -- is caught better by
+      // asking git, which rejects the typo AND accepts every ref that is real.
       const base = opts.base || settings?.worktree?.baseRef || 'fresh';
-      if (base !== 'fresh' && base !== 'head') {
-        console.error(chalk.red(`Invalid --base: "${base}". Use "fresh" or "head".`));
-        process.exitCode = 1;
-        return;
-      }
 
       const dir = settings.worktreeDir || defaultWorktreeDir(root);
       const target = worktreePath({ worktreeDir: dir, name });
@@ -78,14 +80,41 @@ export function registerCreate(worktree) {
         return;
       }
 
-      const baseRef = resolveBaseRef(root, base);
+      // The sentinels are translated; anything else is a ref and goes to git as
+      // written. Resolving it here both validates it and yields the sha the
+      // command reports -- and it happens BEFORE `git worktree add`, so an
+      // unresolvable ref leaves nothing behind to clean up.
+      const baseRef = base === 'fresh' || base === 'head' ? resolveBaseRef(root, base) : base;
+      const baseSha = resolveRef(root, baseRef);
+      if (!baseSha) {
+        console.error(chalk.red(`Invalid --base: "${base}". This repo cannot resolve ${JSON.stringify(baseRef)} to a commit.`));
+        console.error(chalk.dim('  Use "fresh" (origin/HEAD), "head", or any branch, tag or sha `git rev-parse` accepts.'));
+        process.exitCode = 1;
+        return;
+      }
+
+      // `git worktree add` attaches to an existing branch rather than cutting a
+      // new one when the name is already taken (a create/remove/create cycle
+      // leaves the branch behind), and the base ref means nothing on that path.
+      // Asked before the add, so the line below reports what happened rather
+      // than what was requested.
+      const branch = `worktree-${name}`;
+      const reusedBranch = branchExists(root, branch);
+      const branchSha = reusedBranch ? resolveRef(root, branch) : null;
       try {
-        addWorktree({ path: target, branch: `worktree-${name}`, baseRef, cwd: root });
+        addWorktree({ path: target, branch, baseRef, cwd: root });
       } catch (e) {
         console.error(String(e?.message || e));
         process.exitCode = 1;
         return;
       }
+
+      // Testers could not tell what the worktree had been cut from -- which is
+      // the one fact `--base` exists to control. stdout carries only the path
+      // (item 7 in CLAUDE.md), so this is stderr like every other status line.
+      console.error(chalk.dim(reusedBranch
+        ? `Attached to the existing branch ${branch}${branchSha ? ` (${branchSha})` : ''}; --base does not apply.`
+        : `Branched ${branch} from ${baseRef} (${baseSha}).`));
 
       // Fall back to settings on emptiness, not just on null: a
       // `.worktreeinclude` that exists but is blank/comment-only returns
@@ -148,6 +177,100 @@ export function registerCreate(worktree) {
       // else may be written here.
       console.log(target);
     });
+}
+
+// PURE. The path a `git status --porcelain` line is about.
+//
+// The format is two status characters, a space, then the path -- except for a
+// rename, which is `old -> new`. The NEW path is the one on disk, so that is
+// the one a remedy has to name. Quoting (git quotes paths with non-ASCII or
+// control characters) is stripped so the comparison below sees the real path;
+// the remedy prints the line as git wrote it.
+export function porcelainPath(line) {
+  const raw = String(line).slice(3).trim();
+  if (raw === '') return null;
+  const renamed = raw.includes(' -> ') ? raw.slice(raw.lastIndexOf(' -> ') + 4) : raw;
+  return renamed.replace(/^"(.*)"$/, '$1');
+}
+
+// PURE. Drops the workspace's own `.rn-iso/` from a dirty listing.
+//
+// Unconditional, and this is the field-tested reason: two real e2e runs
+// dead-ended here. A workspace that has ever been started holds `.rn-iso/`, and
+// on a repo that does not gitignore it `git status` reports `?? .rn-iso/`, which
+// `worktree remove` counted as untracked work and refused over -- with the only
+// documented escape being `--force`, a flag that ALSO discards real uncommitted
+// changes. There was no non-destructive way out of a refusal caused entirely by
+// rn-iso's own output.
+//
+// It is safe because the directory dies with the worktree by design: it holds
+// derived data, logs and a supervisor pidfile, all keyed to a path that is about
+// to stop existing. `worktree create --carry-ignored` refuses to carry it for
+// the same reason (isWorkspaceArtifact, src/worktree.js), so the two ends of the
+// lifecycle agree. `start` now adds the gitignore entry itself, which stops the
+// `??` line appearing at all -- this is the guard for every workspace that
+// predates that, and for a repo whose .gitignore cannot be written.
+export function excludeWorkspaceArtifacts(lines) {
+  return (lines || []).filter(line => {
+    const path = porcelainPath(line);
+    return path === null || !isWorkspaceArtifact(path);
+  });
+}
+
+// PURE. The workspace directories in a dirty listing -- the complement of
+// excludeWorkspaceArtifacts, and the reason that filter alone was not the whole
+// fix. `git worktree remove` runs its OWN cleanliness check and refuses on
+// "modified or untracked files", so a `?? .rn-iso/` that rn-iso has decided to
+// ignore still stops git one step later, with `--force` as git's only answer --
+// which lands the reader right back in the dead end this was meant to remove.
+//
+// So the directory is deleted first, from the listing git itself produced. That
+// is not destruction: it is rn-iso's own output, inside a worktree the command
+// is about to delete wholesale, already reclaimed by the time this runs. Taken
+// from the listing rather than from a glob so nothing is removed that git did
+// not just name.
+export function workspaceArtifactPaths(lines) {
+  const paths = [];
+  for (const line of lines || []) {
+    const path = porcelainPath(line);
+    if (path && isWorkspaceArtifact(path)) paths.push(path);
+  }
+  return paths;
+}
+
+// PURE. The remedy lines for a dirty-tree refusal, named per CLASS of dirt.
+//
+// The old message offered `git checkout -- <path>` and nothing else, which is
+// wrong for half the cases it was printed for: checkout restores tracked files
+// and cannot clear an untracked one, so a reader following it saw the identical
+// refusal again and concluded the only way out was --force. Untracked files need
+// `git clean -fd` (or an rm); tracked ones need checkout; a tree with both needs
+// to be told both.
+export function removalRemedy(dirtyLines, { worktree = '<worktree>' } = {}) {
+  const tracked = [];
+  const untracked = [];
+  for (const line of dirtyLines || []) {
+    if (porcelainPath(line) === null) continue;
+    (String(line).startsWith('??') ? untracked : tracked).push(line);
+  }
+
+  const lines = [];
+  if (tracked.length) {
+    if (isPodInstallChurn(tracked)) {
+      lines.push('That is only the files `pod install` rewrites. Restore them and retry:');
+      lines.push(`  git -C ${worktree} checkout -- ios/Podfile.lock "ios/*.xcodeproj/project.pbxproj"`);
+    } else {
+      lines.push('Tracked files were modified -- if a build or a setup script did it, restore them and retry:');
+      lines.push(`  git -C ${worktree} checkout -- <path>...`);
+    }
+  }
+  if (untracked.length) {
+    // Said explicitly: the previous advice was checkout, and a reader who tried
+    // it on an untracked file got no error and no change.
+    lines.push('Untracked files are also present -- `git checkout` cannot clear those. Delete them and retry:');
+    lines.push(`  git -C ${worktree} clean -fd <path>...        # or rm them yourself`);
+  }
+  return lines;
 }
 
 // Pure: takes the already-computed dirty/unpushed facts and turns them into
@@ -229,6 +352,32 @@ async function reclaimAll(rootPath) {
   return { dereferenced, killedPids, deletedDevices, skippedDevices, keptEntries };
 }
 
+// Deletes the workspace directories `git status` reported inside `root`, and
+// returns the relative paths actually removed.
+//
+// Containment first, every time: a path from git is relative to the worktree,
+// but resolving it and checking it still lands inside is what keeps a `..` in
+// the listing (or a path this code mis-parsed) from reaching outside the
+// directory that is about to be deleted anyway. A removal that fails is
+// skipped, not thrown: `git worktree remove` is about to report the same
+// problem in better words.
+function purgeWorkspaceArtifacts(root, dirtyLines) {
+  const removed = [];
+  for (const rel of workspaceArtifactPaths(dirtyLines)) {
+    const target = resolve(root, rel);
+    const inside = relative(root, target);
+    if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) continue;
+    if (!existsSync(target)) continue;
+    try {
+      rmSync(target, { recursive: true, force: true });
+      removed.push(rel);
+    } catch {
+      // Left for `git worktree remove` to complain about by name.
+    }
+  }
+  return removed;
+}
+
 export function registerRemove(worktree) {
   worktree
     .command('remove [target]')
@@ -261,7 +410,16 @@ export function registerRemove(worktree) {
         return;
       }
 
-      const dirty = hasUncommittedWork(path);
+      // The workspace's own `.rn-iso/` is excluded from the verdict, not just
+      // from the printed list: it is the one dirty path this command created
+      // itself and the one it is definitely about to delete. hasUncommittedWork
+      // is still what distinguishes "clean" from "git could not answer" (null),
+      // which must stay a blocker of its own; the line listing then decides
+      // whether anything that is NOT ours is dirty.
+      const gitAnswered = hasUncommittedWork(path);
+      const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
+      const dirtyLines = excludeWorkspaceArtifacts(allDirty);
+      const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
       const unpushed = unpushedCommits(path);
       const blockers = removalBlockers({ dirty, unpushed });
       if (blockers.length && !opts.force) {
@@ -288,18 +446,12 @@ export function registerRemove(worktree) {
         // tracked assets produces the same refusal, and the CocoaPods restore
         // command does nothing for it, so printing that unconditionally sends
         // the reader down the wrong path.
-        const paths = dirty ? dirtyPaths(path) : [];
-        if (paths.length) {
-          for (const line of paths) console.error(chalk.dim(`      ${line}`));
+        const shown = dirtyLines.slice(0, 10);
+        if (shown.length) {
+          for (const line of shown) console.error(chalk.dim(`      ${line}`));
           console.error(chalk.dim('  (git -C <worktree> status -s for the full list)'));
         }
-        if (isPodInstallChurn(paths)) {
-          console.error(chalk.dim('That is only the files `pod install` rewrites. Restore them and retry:'));
-          console.error(chalk.dim('  git -C <worktree> checkout -- ios/Podfile.lock "ios/*.xcodeproj/project.pbxproj"'));
-        } else {
-          console.error(chalk.dim('If a build or a setup script rewrote tracked files, restore those paths and retry:'));
-          console.error(chalk.dim('  git -C <worktree> checkout -- <path>...'));
-        }
+        for (const line of removalRemedy(dirtyLines)) console.error(chalk.dim(line));
         console.error(chalk.dim('Otherwise: commit or push the branch. --force is a last resort -- it discards'));
         console.error(chalk.dim('uncommitted changes and untracked files permanently; committed work stays on the branch.'));
         process.exitCode = 1;
@@ -335,6 +487,14 @@ export function registerRemove(worktree) {
       // worktree's build output needs no separate step: it lives inside the
       // directory `git worktree remove` deletes.
       const result = await reclaimAll(path);
+
+      // ... and now the workspace directories themselves, so git's own
+      // cleanliness check does not refuse over the one thing rn-iso just
+      // decided was not work. Ordered after reclaimAll on purpose: the
+      // supervisor writing into .rn-iso/logs is stopped by then.
+      for (const purged of purgeWorkspaceArtifacts(path, allDirty)) {
+        console.error(chalk.dim(`  removed ${purged} (this workspace's own output)`));
+      }
 
       try {
         removeWorktree(path, { force: opts.force });

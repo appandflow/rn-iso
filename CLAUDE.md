@@ -26,12 +26,27 @@ The v3 lifecycle is `worktree create` -> `start` -> `ios|android` ->
 `logs --errors` -> edit -> `logs` -> `stop` / `worktree remove` (which reaps the
 owned device(s) along with the worktree).
 
-**The surface is closed.** `init`, `doctor`, `worktree create|remove`, `start`,
-`stop`, `ios`, `android`, `logs`, `status`, `gc`, plus `guide` and `skill`. That
-is all of it, deliberately (spec: "Command surface"). v2's `up`, `device`,
-`release`, `shutdown`, `config`, `build-cache` and `worktree list` are deleted,
-along with `--serial` and all physical-device support. A project needing more
-wraps rn-iso in an npm script rather than rn-iso growing a flag.
+**The surface is closed, at eleven commands.** `doctor`, `worktree
+create|remove`, `start`, `stop`, `ios`, `android`, `logs`, `status`, `gc`, plus
+`guide` and `skill`. That is all of it, deliberately (spec: "Command surface").
+v2's `up`, `device`, `release`, `shutdown`, `config`, `build-cache` and
+`worktree list` are deleted, along with `--serial` and all physical-device
+support. A project needing more wraps rn-iso in an npm script rather than
+rn-iso growing a flag.
+
+**`init` went too, and it is the most recent deletion — do not bring it back.**
+Repo setup is not a generator's job: every edit it would make lands in a file
+the project already owns (a `metro.config.js` with its own transformer, a
+`Podfile` with existing `post_install` logic, an app config that may be
+TypeScript), which is judgement, not templating. `doctor` reports the findings
+read-only and `skill/rn-iso-init/SKILL.md` is the playbook an agent follows to
+apply each one by hand. The generated `scripts/dev` went with it: v3 IS the
+build command, so there was no bundler or build command left to wrap. The one
+edit that never needed judgement — `.rn-iso/` in `.gitignore` — is now
+SELF-ENSURED by the commands that create the directory
+(`ensureWorkspaceIgnored` in `src/engine/workspace.js`, called by `start`,
+`ios` and `android`), which is what removed the setup step rather than moving
+it.
 
 State lives in `~/.rn-iso/config.json`, keyed by absolute project path, plus
 per-workspace `<root>/.rn-iso/state.json` (the supervisor record, the collector
@@ -135,12 +150,6 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # API change.
     build-cache.js        # the CLI-side build cache: key derivation, resolve/store, self-registration
     doctor.js             # the checks behind `doctor` -- each a pure function of the text it is given
-    init.js               # the scripts/dev / .gitignore / Podfile-pin templates, all pure.
-                          # It generated a WORKFLOW.md and a .worktreeexclude too: the first went
-                          # because v3 IS the build command and the document had decayed into a
-                          # stale copy of `guide lifecycle`; the second because carrying `.rn-iso/`
-                          # into a worktree is refused in code now (isWorkspaceArtifact in
-                          # worktree.js), not by a file a repo has to remember to keep
     sim/
       ios.js              # simctl wrappers, owned-sim creation/selection, ownership verification
       android.js          # adb/emulator/avdmanager wrappers, owned-AVD creation/selection
@@ -149,6 +158,11 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # commands' own tests are about ORDER and OUTPUT, not about xcodebuild.
       device.js           # ensureOwnedDevice (the ownership rule, item 2) + ensureBooted (the
                           # wait `simctl install` needs). No path here touches hardware.
+      workspace.js        # ensureWorkspaceIgnored: the `.rn-iso/` gitignore entry, self-ensured
+                          # by start / ios / android. Idempotent and content-based (`/.rn-iso`,
+                          # `.rn-iso` and `.rn-iso/` are ONE entry to git), creates the file when
+                          # there is none, and reports an unwritable .gitignore rather than
+                          # throwing -- no dev server dies over a read-only checkout
       prebuild.js         # `expo prebuild -p <p> --no-install`, only when the native dir is absent
       deps.js             # podsAreStale (pure: Podfile.lock vs Pods/Manifest.lock) + runPodInstall
       xcode.js            # discoverXcodeProject / listSchemes / buildIos: xcodebuild into
@@ -174,7 +188,6 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # run.js back (that cycle deadlocked the first live run)
     commands/           # one file per registered command; bin/cli.js registers them in
                         # lifecycle order, which is the order `--help` lists them
-      init.js             # write the generated files, then run doctor
       doctor.js           # print the findings from src/doctor.js
       worktree.js         # worktree create/remove (there is no `list`; `status` covers it)
       start.js            # spawn the detached supervisor, wait for identity-verified health
@@ -187,7 +200,10 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # work, so a dead port costs a second rather than four minutes
       logs.js             # query/follow the merged NDJSON timeline; empty result is exit 0
       status.js
-      gc.js               # report/reclaim dead project entries and orphaned devices, and
+      gc.js               # report/reclaim dead project entries, orphaned devices and STALE DEVICE
+                          # RECORDS (a live project pointing at a sim/AVD that is gone -- the
+                          # mirror image of an orphan, and the one `status` warned about forever
+                          # with nothing able to clear it; --delete clears the RECORD only), and
                           # report the shared caches (every run; there is no --caches flag)
       guide.js            # version-matched reference topics, printed by the binary
       skill.js            # copy the bundled skills into ~/.claude and ~/.agents
@@ -234,7 +250,9 @@ checklist:
 
 - New command? It goes in the "Command surface" list, which is pinned by
   `test/guide.test.js` against `bin/cli.js` -- a command registered and not
-  listed fails the suite.
+  listed fails the suite, and a DELETED command must be recorded as gone in the
+  same list (that test asserts the surface says "no `init`" the same way it says
+  "no `up`").
 - New / changed flag? Update "The flow" if it changes the order, and
   `guide lifecycle`'s option-surface block, which is pinned against the
   command sources the same way. Growing the surface at all is a decision the
@@ -244,8 +262,10 @@ checklist:
 
 Two skills ship in the package, and `skill install` copies both:
 `skill/SKILL.md` (how to drive the CLI) and `skill/rn-iso-init/SKILL.md`
-(how to make a repo fast for parallel agents). A change to caching,
-`doctor`, or `init` usually belongs in the second one, not the first.
+(how to make a repo fast for parallel agents). The second one is now the whole
+of repo setup -- it is a PLAYBOOK an agent applies by hand, not a description of
+a command -- so a change to caching or to `doctor` belongs there, not in the
+first.
 Staleness breaks agent guidance, and the copy on a user's machine is a
 plain file copy that upgrading rn-iso does not refresh.
 
@@ -307,7 +327,9 @@ NOTHING else, ever. `ios` / `android` drive `xcodebuild` / `gradlew` directly
 with a fixed argument list this codebase composes, never one it inferred from a
 package.json script. Nothing reads `scripts.start` or `scripts.ios`; when v3's
 `init` templates stopped needing to, `bundlerCommand` / `runCommandFor` /
-`detectPackageManager` were deleted outright.
+`detectPackageManager` were deleted outright — and `init` itself followed them
+when the templates it was left holding turned out to be judgement calls rather
+than files.
 
 **What replaces the broker rule as the guard is the OPTION SURFACE.** It is
 fixed and it does not grow:
@@ -320,8 +342,16 @@ fixed and it does not grow:
 `--client-logs` is the archetype of what is deleted rather than ported: capture
 is unconditional, and a queryable file has no terminal noise to manage. Release
 builds, variants, device targets and `--serial` are all out of scope for the
-same reason. A project needing something outside this set wraps rn-iso in an npm
-script — which is what the generated `scripts/dev` exists to be.
+same reason. A project needing something outside this set wraps rn-iso in a
+script of its own — one the repo writes and owns, since rn-iso no longer
+generates one.
+
+`--base` is the counter-example worth remembering: it accepted only the two
+sentinels `fresh` and `head`, and widening it to any ref `git rev-parse`
+resolves is NOT the surface growing. The flag already existed, the plumbing
+already passed the resolved ref to `git worktree add`, and the enum was refusing
+inputs it could have accepted. Removing an arbitrary restriction on an existing
+option is not the same move as adding an option.
 
 `worktree create` still runs NO install pipeline. Deciding a repo's setup
 commands -- a plain install, a workspace filter, a codegen step after it -- is
