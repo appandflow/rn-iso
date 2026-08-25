@@ -1,6 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectPackageManager, projectFacts, renderDevScript, renderWorkflow, renderWorktreeExclude, runScript } from '../src/init.js';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import {
+  detectPackageManager,
+  projectFacts,
+  renderDevScript,
+  renderGitignoreAdditions,
+  renderPodfileCasPin,
+  renderWorkflow,
+  renderWorktreeExclude,
+  runScript,
+} from '../src/init.js';
+import { appendGitignoreAdditions } from '../src/commands/init.js';
 
 const expoApp = { pkg: { name: 'demo', dependencies: { expo: '~57.0.0', 'react-native': '0.86.2' } } };
 const bareApp = { pkg: { name: 'bare', dependencies: { 'react-native': '0.86.2' } } };
@@ -191,5 +204,68 @@ test('the workflow points at the script init writes alongside it', () => {
     assert.ok(scriptAt !== -1 && manualAt !== -1);
     assert.ok(scriptAt < manualAt, 'the one command comes before the steps it stands for');
     assert.match(doc, /what it does/, 'the manual commands stay, as the explanation of the script');
+  }
+});
+
+// `.rn-iso/` has to land in BOTH files, and missing either one fails silently.
+// Not worktree-excluded is the worse half: `worktree create --carry-ignored`
+// then hands a fresh worktree the previous one's DerivedData, stale logs and a
+// pidfile for a process that is not running.
+test('worktreeExclude excludes the workspace dir', () => {
+  assert.match(renderWorktreeExclude(), /^\.rn-iso\/$/m);
+});
+
+test('gitignore additions cover the workspace dir', () => {
+  assert.match(renderGitignoreAdditions(), /^\.rn-iso\/$/m);
+});
+
+test('podfile pin puts the CAS outside DerivedData', () => {
+  const out = renderPodfileCasPin();
+  assert.match(out, /COMPILATION_CACHE_ENABLE_CACHING/);
+  assert.match(out, /COMPILATION_CACHE_CAS_PATH/);
+  // The whole point: it must not land anywhere under a workspace-local
+  // derived-data tree, or it is shared with nothing.
+  assert.doesNotMatch(out, /\.rn-iso\/derived-data/);
+});
+
+// .gitignore belongs to the repo, so init appends to it rather than generating
+// it -- and init is re-run after an upgrade, so a second copy of the block
+// would be noise that survives forever.
+test('the gitignore additions are appended at most once', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rn-iso-init-'));
+  try {
+    writeFileSync(join(dir, '.gitignore'), 'node_modules\n');
+    assert.equal(appendGitignoreAdditions(dir).changed, true);
+    assert.equal(appendGitignoreAdditions(dir).changed, false);
+    const source = readFileSync(join(dir, '.gitignore'), 'utf-8');
+    assert.equal(source.split('\n').filter(l => l.trim() === '.rn-iso/').length, 1);
+    assert.match(source, /^node_modules$/m, 'what the repo already ignored has to survive');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// gitignore is a path list, so `/.rn-iso`, `.rn-iso` and `.rn-iso/` are one
+// entry. Matching on the literal template would append beside an entry that
+// already covers it.
+test('an entry the repo already had is recognised whatever form it takes', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rn-iso-init-'));
+  try {
+    writeFileSync(join(dir, '.gitignore'), '# build output\n/.rn-iso\n');
+    assert.equal(appendGitignoreAdditions(dir).changed, false);
+    assert.equal(readFileSync(join(dir, '.gitignore'), 'utf-8'), '# build output\n/.rn-iso\n');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A .gitignore that is not there yet is the ordinary case in a fresh bare repo.
+test('a missing gitignore is created rather than skipped', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rn-iso-init-'));
+  try {
+    assert.equal(appendGitignoreAdditions(dir).changed, true);
+    assert.match(readFileSync(join(dir, '.gitignore'), 'utf-8'), /^\.rn-iso\/$/m);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

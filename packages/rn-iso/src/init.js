@@ -9,6 +9,8 @@
 //
 // Everything here is a pure function of facts about the project, so the template
 // can be tested without touching a filesystem.
+import { homedir } from 'os';
+import { sharedCompilationCache } from './paths.js';
 
 // Detected rather than assumed: the advice differs enough between an Expo app
 // and a bare one that guessing would produce a document that is wrong in the
@@ -221,7 +223,56 @@ export function renderWorktreeExclude() {
 # Per-run output: large, and meaningless in a fresh workspace.
 **/*.log
 coverage
+
+# This workspace's own build output, logs and supervisor pidfile. Carrying them
+# is worse than starting cold: the build output is keyed to a path the new
+# worktree does not have, and the pidfile names a process that is not running.
+${WORKSPACE_DIR}/
 `;
+}
+
+// The workspace directory is ignored AND excluded, and both halves are load
+// bearing. Ignored but not excluded is the state in which --carry-ignored
+// clones the last workspace's build output into a fresh one; excluded but not
+// ignored means every build offers its own DerivedData up for commit.
+const WORKSPACE_DIR = '.rn-iso';
+
+// Appended rather than generated: .gitignore belongs to the repo, and by the
+// second week its contents are none of rn-iso's business.
+export function renderGitignoreAdditions() {
+  return `# rn-iso: this workspace's build output, logs and supervisor pidfile.
+# Location-addressed -- meaningful only to the checkout that produced it, so it
+# dies with the worktree instead of being reverse-mapped out of a global cache.
+${WORKSPACE_DIR}/
+`;
+}
+
+// The lines that enable Xcode's content-addressed compilation cache and pin
+// where it lives, for the \`post_install\` block of an ios/Podfile.
+//
+// The pin is the entire point. The default CAS path is INSIDE DerivedData, and
+// rn-iso gives every workspace its own DerivedData -- so left at its default
+// the cache follows DerivedData into the worktree, becomes per-worktree, and
+// shares with nothing, which is the only reason to turn it on. Pinning it to
+// the shared directory is what makes a second workspace's build partial rather
+// than full.
+export function renderPodfileCasPin(casPath = sharedCompilationCache()) {
+  return `# rn-iso: share compiled output between workspaces (Xcode 26+).
+# The default CAS path is inside DerivedData, which is per-workspace, so
+# leaving it there shares nothing. Pin it outside instead.
+config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES'
+config.build_settings['COMPILATION_CACHE_CAS_PATH'] = ${rubyPathLiteral(casPath)}
+`;
+}
+
+// A Podfile is committed and every machine's home directory is a different
+// absolute path, so a path under $HOME is written relative to it and expanded
+// at pod install time. Anything else is already machine-specific by choice
+// (RN_ISO_HOME), and is emitted as given.
+function rubyPathLiteral(path) {
+  const home = homedir();
+  const relative = path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
+  return relative ? `File.expand_path('~/${relative}')` : `'${path}'`;
 }
 
 // The one script worth generating. `worktree create` and `worktree remove` are

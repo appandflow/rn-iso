@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { findProjectRoot } from '../project.js';
-import { projectFacts, renderDevScript, renderWorkflow, renderWorktreeExclude } from '../init.js';
+import { projectFacts, renderDevScript, renderGitignoreAdditions, renderWorkflow, renderWorktreeExclude } from '../init.js';
 import { detectXcodeMajor, runDoctor } from '../doctor.js';
 
 // Bounded on purpose: far enough to clear a monorepo's apps/<name> nesting,
@@ -23,6 +23,31 @@ function ancestorEntries(start, levels = 4) {
     if (existsSync(join(dir, '.git'))) break;
   }
   return seen;
+}
+
+// The one generated thing that is appended rather than written: .gitignore
+// belongs to the repo, so init adds its entry to whatever is already there.
+//
+// Appending has to be idempotent -- init is re-run after an upgrade, and a
+// duplicated block is noise that survives forever. The entry is matched as a
+// path rather than as the literal template text, because `/.rn-iso`, `.rn-iso`
+// and `.rn-iso/` are one entry to git and a repo that already has any of them
+// needs nothing added. `src/doctor.js` reads the same file the same way.
+export function appendGitignoreAdditions(root) {
+  const path = join(root, '.gitignore');
+  const existing = existsSync(path) ? readFileSync(path, 'utf-8') : '';
+  const listed = existing
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'))
+    .some(line => line.replace(/^\/+/, '').replace(/\/+$/, '') === '.rn-iso');
+  if (listed) return { path, changed: false };
+
+  // A blank line before the block when there is something to separate it from,
+  // and a newline first if the file did not end with one.
+  const separator = existing === '' ? '' : existing.endsWith('\n') ? '\n' : '\n\n';
+  writeFileSync(path, existing + separator + renderGitignoreAdditions());
+  return { path, changed: true };
 }
 
 function readJson(path) {
@@ -83,6 +108,17 @@ export default function initCommand(program) {
         if (file.mode) chmodSync(file.path, file.mode);
         console.error(chalk.green(`Wrote ${file.path}`));
         wrote++;
+      }
+
+      // Both halves of the layout land here: `.worktreeexclude` above, and the
+      // matching .gitignore entry now. Missing either one is silent -- see
+      // checkArtifactLayout in src/doctor.js, which runs a few lines below.
+      const gitignore = appendGitignoreAdditions(root);
+      if (gitignore.changed) {
+        console.error(chalk.green(`Updated ${gitignore.path}`));
+        wrote++;
+      } else {
+        console.error(chalk.dim(`Kept existing ${gitignore.path} (it already ignores .rn-iso/)`));
       }
 
       console.error(
