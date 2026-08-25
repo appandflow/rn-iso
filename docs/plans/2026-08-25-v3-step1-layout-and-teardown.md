@@ -28,11 +28,17 @@
 | `packages/rn-iso/src/paths.js` | **New.** Every path rn-iso writes: workspace-local under `<root>/.rn-iso/`, shared under `getConfigDir()`. Pure functions, no I/O. |
 | `packages/rn-iso/src/fs-util.js` | **New.** The half of `artifacts.js` that survives: volume detection (`volumeRootFor`, `isRealMount`, `listMountedVolumes`, `isOnMountedVolume`) and sizing (`directorySize`, `formatBytes`). |
 | `packages/rn-iso/src/artifacts.js` | **Deleted.** Its DerivedData classification has no consumer once build output is workspace-local. |
-| `packages/rn-iso/src/init.js` | Templates gain `.rn-iso/` in `.gitignore` and `.worktreeexclude`, plus the xcconfig and Podfile redirection. |
+| `packages/rn-iso/src/init.js` | Templates gain `.rn-iso/` in `.gitignore` and `.worktreeexclude`, plus the Podfile compilation-cache pin. **No xcconfig** -- `-derivedDataPath` is an xcodebuild argument, not a build setting. |
 | `packages/rn-iso/src/doctor.js` | Gains `checkArtifactLayout`. |
 | `packages/rn-iso/src/commands/gc.js` | Narrowed: dead entries, orphaned devices, shared caches. DerivedData sweep removed. |
 | `packages/rn-iso/src/commands/prune.js` | **Deleted.** Its behavior is `gc --delete` restricted to one project. |
 | `packages/rn-iso/src/commands/cache.js` | **Deleted.** `register`/`forget`/`list` fold into `gc`'s report. |
+
+**Known follow-up, do not fix mid-task:** the string `.rn-iso` now exists in
+three places -- `WORKSPACE_DIR_NAME` in `src/paths.js`, `WORKSPACE_DIR` in
+`src/doctor.js`, and `WORKSPACE_DIR` in `src/init.js`. Each was written under a
+scope that forbade touching the others. Consolidate onto the `paths.js` export
+once Tasks 2, 3 and 4 have all landed, as its own commit.
 
 **Do not touch in this step:** `up.js`, `device.js`, `release.js`, `stop.js`, `shutdown.js`. They keep working against the v2 surface until step 3 replaces them. This step must leave `npm test` green and the CLI usable.
 
