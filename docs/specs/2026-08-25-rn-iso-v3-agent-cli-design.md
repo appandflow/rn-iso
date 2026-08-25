@@ -1,0 +1,454 @@
+# rn-iso v3 — the RN / Expo CLI for AI agents
+
+Date: 2026-08-25
+Status: draft
+Supersedes: `2026-08-20-metro-handoff-design.md` (partially — see "Reversing the
+metro handoff" below). Amends `2026-08-16-spawn-and-reap-broker-design.md`.
+
+## Purpose
+
+The React Native and Expo CLIs are built for a human at a terminal. That shows
+up everywhere in their surface: interactive device pickers, TTY progress bars,
+ephemeral colored output, and a long tail of flags whose only job is to manage
+terminal noise. An AI agent driving a build loop has close to the opposite
+needs — never prompt, print little, capture everything, expose state as data,
+and let long-running things run in the background where they can be polled.
+
+rn-iso v2 answered part of this by becoming a pure *broker*: it arbitrates the
+two genuinely contended resources on a machine (an owned simulator/emulator and
+a Metro port) and refuses to invoke project tooling. That was the right call
+against the alternative available at the time, which was reconstructing other
+people's command lines. It leaves the agent to run the bundler and the build by
+hand, which is where most of the remaining friction and most of the token cost
+now live.
+
+v3 takes the other road: rn-iso reimplements the operations an agent needs —
+`start`, `ios`, `android`, `logs` — with a deliberately small option surface,
+optimized end to end for an agent loop rather than a terminal.
+
+## Reversing the metro handoff
+
+The 2026-08-20 spec deleted `start` and `logs`, on this reasoning: *how to
+invoke a project's tooling is project-specific judgment, and encoding it
+centrally means perpetually chasing idiosyncrasies.* The evidence was concrete
+— on `member-app`, whose own start script is `react-native start
+--client-logs`, rn-iso composed `react-native start --port 8082` and silently
+dropped the project's flag.
+
+That reasoning was correct about **reconstruction** and is not load-bearing
+against **reimplementation**. v1 failed because it tried to infer and rebuild a
+command line that already existed elsewhere; any inference it made could be
+wrong, and silently. v3 infers nothing. It implements the operation directly
+with a fixed, small set of options, and a project needing something outside
+that set composes it in an npm script that wraps rn-iso, rather than rn-iso
+guessing at the project.
+
+The `--client-logs` example is the clearest illustration of why the option
+surface shrinks rather than grows. That flag exists in the RN CLI because
+forwarding client logs to a human's terminal is noisy; `metro-config` defaults
+`server.forwardClientLogs` to `true` and the RN CLI turns it *off* unless the
+flag is passed. v3's destination is always a queryable file, so noise costs
+nothing and the flag has no reason to exist: client logs are captured
+unconditionally. A large fraction of both CLIs' options are in this category
+and are deleted wholesale, not reimplemented.
+
+What does **not** change is the broker principle for contended resources. Ports
+and devices still need an arbiter, for exactly the reasons the spawn-and-reap
+spec gave. v3 keeps that machinery essentially intact and builds on top of it.
+
+## Design principles
+
+These are the "for agents" claim, stated concretely enough to be violated.
+
+1. **Never interactive.** No prompt, ever, under any condition. Ambiguity is a
+   structured error with a remedy, not a picker. The `prompts` dependency is
+   removed from the package.
+2. **Small stdout, complete files.** Every command prints on the order of ten
+   lines of outcome. Bundler, xcodebuild and gradle output goes to a log file
+   referenced by path. A failing build prints the *extracted* error, not four
+   thousand lines of transcript.
+3. **Capture is unconditional.** Nothing is ephemeral. Every flag that exists
+   to control terminal verbosity is deleted rather than ported.
+4. **`--json` everywhere**, with a stable documented schema.
+5. **Idempotent and resumable.** Running a command twice does the right thing:
+   `start` against a healthy supervisor is a no-op exit 0; `ios` against an
+   unchanged fingerprint installs from cache.
+6. **Semantic exit codes and structured errors.** Every failure carries
+   `{code, message, remedy}`.
+7. **Blocking is opt-in.** Long-running operations return immediately;
+   `--follow` / `--wait` is always explicit.
+
+## Artifact layout
+
+The organizing rule:
+
+> **Content-addressed artifacts are shared. Location-addressed artifacts are
+> workspace-local.**
+
+```
+<worktree>/.rn-iso/                  # dies with the worktree, by construction
+  derived-data/                      # -derivedDataPath for THIS checkout
+  gradle-build/                      # android build dirs, .cxx
+  logs/
+    metro.ndjson  client.ndjson  device.ndjson  build-{ios,android}.ndjson
+  supervisor.pid
+  state.json                         # last build, fingerprint, cache result
+
+~/.rn-iso/                           # keyed by content hash, outlives worktrees
+  config.json                        # the broker registry (unchanged from v2)
+  metro-cache/                       # transform cache (exists today)
+  build-cache/<platform>/<key>/      # .app/.apk by fingerprint (exists today)
+  compilation-cache/                 # COMPILATION_CACHE_CAS_PATH (LLVM CAS)
+  gradle/                            # dependency cache
+  pods/                              # CocoaPods cache + spec repo
+```
+
+### Why this deletes code
+
+rn-iso today carries `src/artifacts.js` (~350 lines) plus the unmounted-volume
+guard recorded as item 8 in `CLAUDE.md`, and effectively all of it exists to
+answer one question: *which workspace owns this
+`~/Library/Developer/Xcode/DerivedData/<hash>`, and is that workspace actually
+gone or merely on an unplugged volume?* Directing DerivedData into the worktree
+via `-derivedDataPath` dissolves the question. Build output is inside the thing
+being removed, so `worktree remove` reclaims it definitionally, and no
+classifier has to guess. The orphaned-artifact sweep and the
+mounted-volume guard become unnecessary, and with them v2's top-level `gc`
+command. What survives is `cache gc`, which trims the *shared* caches under
+`~/.rn-iso/` — a genuinely different job, since those are content-addressed,
+never evict themselves, and are not owned by any one workspace.
+
+### Two interactions that must be got right
+
+- **`init` must add `.rn-iso/` to both `.gitignore` and `.worktreeexclude`.**
+  Missing the second means `worktree create --carry-ignored` clones another
+  workspace's DerivedData, logs and pidfile into the new worktree — strictly
+  worse than starting cold.
+- **The supervisor pidfile is workspace-local, but a record of it stays
+  global.** `~/.rn-iso/config.json` records that a workspace has a supervisor
+  at pid N, or deleting a worktree out from under a running supervisor orphans
+  a Metro process nothing can find. Same shape as the existing device records,
+  and it keeps the existing reapers working.
+
+### Compilation caching, not ccache
+
+v3 supports Xcode compilation caching (`COMPILATION_CACHE_ENABLE_CACHING`,
+LLVM CAS) and drops ccache support entirely. `doctor.js` already records the
+decisive reason: ccache keys on absolute paths, so it misses across worktrees —
+which makes it not merely redundant for this tool but wrong. Dropping it also
+removes the mutual-exclusion check, since the ccache launcher script disables
+the explicitly-built modules that compilation caching requires.
+
+This interacts with the layout above and must be handled explicitly: **the
+default CAS path is inside DerivedData.** Redirecting DerivedData into the
+worktree would drag the CAS in with it, making it per-worktree and sharing
+nothing — defeating the only reason to enable it. v3 therefore pins
+`COMPILATION_CACHE_CAS_PATH` to `~/.rn-iso/compilation-cache/`. `doctor`
+already flags this exact misconfiguration.
+
+## Architecture
+
+Three layers, with the existing code concentrated in the first.
+
+### 1. Broker — kept from v2, largely unchanged
+
+`config.js` (locked, atomic writes), `ports.js` (race-safe reservation),
+`sim/ios.js` + `sim/android.js` (owned-device lifecycle), `worktree.js`,
+`teardown.js`, `reclaim.js`, `caches.js`, `build-cache.js`, `cache-manifest.js`.
+This code is battle-tested and its invariants carry forward verbatim — in
+particular the ownership rule and centralized, ownership-verified teardown.
+
+One simplification falls out of dropping physical-device support (below): the
+ownership rule loses its only carve-out. Today `CLAUDE.md` item 2 reads *"the
+one exception is physical devices: hardware cannot be spawned."* With `--serial`
+gone, **every device v3 touches is one v3 created**, and teardown loses its
+unowned branch entirely.
+
+### 2. Engine — new
+
+The reimplemented operations, each a narrow module with pure decision logic
+separated from invocation, following the existing convention:
+
+```
+src/engine/
+  server/         bare.js  expo.js        # dev server hosting per ecosystem
+  build/          ios.js  android.js      # xcodebuild / gradle orchestration
+  deps.js                                 # pod install / gradle sync staleness
+  prebuild.js                             # CNG native project generation
+  install.js  launch.js                   # artifact -> device
+  errors/         xcode.js  gradle.js     # transcript -> structured diagnostics
+```
+
+### 3. Supervisor — new
+
+One detached process per workspace. It hosts the dev server, runs the
+device-log collectors, writes the NDJSON streams, and exposes state through the
+pidfile plus a control socket. It is not a machine-wide daemon: there is no
+cross-project supervisor, no IPC beyond the workspace, and no service to
+install or upgrade.
+
+## Dependency strategy
+
+v3 depends on **neither** ecosystem's packages. It resolves them from the
+project's own `node_modules` at runtime, via
+`createRequire(join(projectRoot, 'package.json'))` — the pattern
+`loadFingerprinter()` in `src/build-cache.js` already uses for
+`@expo/fingerprint`, generalized.
+
+Every Expo project already has `@expo/cli` through `expo`; every bare RN
+project already has `metro`, `@react-native/dev-middleware` and
+`@react-native-community/cli-server-api`. So this costs nothing to install, and
+more importantly it is **version-matched by construction**: v3 drives the exact
+Metro the project builds with. A plugin package (`@rn-iso/plugin-expo`) could
+only pin one version, and would drift from any project on a different SDK — the
+decisive argument against that alternative, given that an SDK 53 and an SDK 55
+project routinely share a machine.
+
+The consequence is that v3's own dependency list gets *shorter* than v2's:
+`commander` and `chalk`, with `prompts` deleted under principle 1.
+
+## Dev server hosting
+
+The two ecosystems are not symmetric, and pretending otherwise is the main way
+this design could fail.
+
+**Bare RN** is thin. `runServer.js` in `@react-native/community-cli-plugin` is
+roughly sixty lines over `Metro.runServer` plus `createDevMiddleware` and the
+community middleware. v3's supervisor hosts it **in-process**, which buys
+deterministic shutdown, no wrapper process in the tree, and direct port
+binding.
+
+**Expo is protocol-bearing and cannot be rehosted.** Its dev server also serves
+`ManifestMiddleware`, `ExpoGoManifestHandlerMiddleware`,
+`InterstitialPageMiddleware`, `DevToolsPluginMiddleware`, expo-router route
+serving and DOM components. Those *are* the protocol `expo-dev-client` speaks;
+reimplementing them is forking Expo, not trimming fluff. Expo also exposes no
+reporter-injection hook — there is no `customLogReporterPath` equivalent.
+
+**v3 therefore spawns the project's own `expo start --port N` as a child**, and
+passes nothing else. This is the pragmatic starting point: it works on every
+SDK, adds no imports, and is measured in production before anything more
+invasive is attempted. Hosting Expo in-process by deep-importing
+`MetroBundlerDevServer` remains a possible later optimization; it is explicitly
+deferred, because those are unversioned build artifacts of an internal TS
+module and would break across SDK releases with no semver signal. If it is ever
+adopted, the child-spawn path stays as the fallback.
+
+Crucially, spawning costs nothing in log fidelity, because of the next section.
+
+## The log pipeline
+
+**The reporter is a project-side Metro plugin, not a supervisor-side hook.**
+This is what makes structured logging work identically across both ecosystems
+and independent of who starts the server. It reuses the pattern
+`@rn-iso/metro-cache` already established:
+
+```js
+// metro.config.js — wired by `rn-iso init`
+const { sharedCacheStores, ndjsonReporter } = require('@rn-iso/metro');
+config.cacheStores = sharedCacheStores();
+config.reporter    = ndjsonReporter();
+```
+
+The package is the existing `@rn-iso/metro-cache` renamed to `@rn-iso/metro`
+and given a second export. It stays CJS for the reason recorded in `CLAUDE.md`:
+a `metro.config.js` is loaded by `require()`, and it must reach rn-iso through a
+dynamic `import()` so that a missing or old rn-iso can never break a bundler
+config.
+
+Both the RN and Expo CLIs force-override `metroConfig.reporter` and both handle
+`unstable_server_log`, so a single reporter implementation serves both. Because
+it lives inside Metro's config, logs are captured whether the server was
+started by v3's supervisor, by `expo start`, or by the project's own npm
+script.
+
+Three sources normalize into one timeline of `{ts, src, level, ...}` records:
+
+- **Bundler and client** — from the reporter. Because
+  `server.forwardClientLogs` defaults to `true` and v3 never disables it,
+  in-app `console.log` and redboxes arrive through the same channel as bundle
+  progress and transform errors. Stacks are symbolicated through Metro's
+  `/symbolicate` at capture time, so they point at source rather than bundle
+  offsets.
+- **Device native** — `xcrun simctl spawn <udid> log stream --style ndjson`
+  predicated on the app's bundle id; `adb -s <serial> logcat` filtered to the
+  app process. Filtered at the source, so the stream is the app's output rather
+  than the whole system's.
+- **Build** — xcodebuild and gradle transcripts, with diagnostics extracted
+  into structured records by `engine/errors/`.
+
+### Known risk
+
+`runServer.js` carries `TODO(T214991636): Remove legacy Metro log forwarding`.
+Client-log forwarding through the reporter is slated for replacement by
+CDP-based logging via the inspector proxy. This is a dated, concrete risk to
+the client-log source specifically; the mitigation is that
+`engine/server/bare.js` and the reporter package are the only places that would
+change, and the inspector proxy exposes the same events through
+`DeviceEventReporter`.
+
+## Command surface
+
+```
+rn-iso init | doctor
+rn-iso worktree create|remove|list
+rn-iso start [--stop]
+rn-iso ios | android
+rn-iso logs [--source --level --since --grep --tail --follow --errors]
+rn-iso status [--all]
+rn-iso down
+rn-iso cache list|trim|gc
+```
+
+### `start`
+
+Reserves or reuses the workspace's Metro port, spawns the detached supervisor,
+waits for the server to answer `/status` with `packager-status:running` *and*
+to verify as this project's (v2's `resolveProjectMetro` identity check, not a
+bare probe), then exits 0 printing the facts. A foreign holder of the reserved
+port triggers re-reservation, as in v2. If a healthy supervisor already exists,
+`start` is a no-op exit 0. On failure to come up it exits non-zero with the
+extracted startup error and the log path — not the whole transcript.
+
+### `ios` / `android`
+
+```
+ensure owned device booted
+  -> verify Metro holds the reserved port      (fail fast — see below)
+  -> fingerprint (@expo/fingerprint)
+  -> cache hit? install cached artifact, skip the build entirely
+  -> miss: prebuild if native dir absent
+           sync pods / gradle if stale
+           build
+           store in build cache
+  -> install -> launch
+  -> attach the device-log collector
+```
+
+Per the metro handoff spec, these **never start the bundler**. But if no
+healthy Metro holds the reserved port, `ios` fails immediately with
+`RN_ISO_NO_METRO` rather than spending four minutes producing an app that
+cannot load a bundle; `--no-metro-check` overrides. Failing at second zero is
+worth more to an agent loop than tolerance here.
+
+Fingerprinting before prebuild is correct and deliberate: `@expo/fingerprint`
+hashes config and dependencies on a CNG project, not the generated native
+directory, so the cache is consulted before any generation cost is paid.
+
+Note the `pod install` interaction already documented in `SKILL.md`: it rewrites
+tracked files (`Podfile.lock`, `project.pbxproj`), which is what makes a later
+`worktree remove` refuse. That refusal is correct and must not be softened.
+
+### `logs`
+
+Queries the merged NDJSON timeline. Non-blocking by default (principle 7);
+`--follow` streams. `--errors` returns the structured error set since the most recent
+app reload or build, whichever is later — redboxes with symbolicated stacks, Metro resolution failures, native
+crashes — which is the query an agent loop actually issues.
+
+### `status`
+
+One payload: supervisor pid and health, reserved port, device udid/serial and
+state, last build (fingerprint, cache hit or miss, duration), log paths, and
+error counts since the last build. `--all` reports every workspace on the
+machine.
+
+### `down`
+
+Stops the supervisor, reaps the owned device through the existing centralized
+teardown, frees the port. `worktree remove` does this and removes the worktree.
+
+### `init` / `doctor`
+
+`init` wires the repo: the reporter and shared cache stores into
+`metro.config.js`, the build-cache provider, `COMPILATION_CACHE_ENABLE_CACHING`
+with a CAS path outside DerivedData, DerivedData redirection into
+`<worktree>/.rn-iso/`, and `.rn-iso/` into `.gitignore` and `.worktreeexclude`.
+`doctor` reports the same findings read-only, plus the resolved server adapter
+and its version, so an ecosystem mismatch is visible before a build hits it.
+
+## Error contract
+
+```json
+{ "code": "RN_ISO_NO_METRO",
+  "message": "No Metro server holds reserved port 8082.",
+  "remedy": "Run `rn-iso start` first, or pass --no-metro-check." }
+```
+
+Codes are stable identifiers an agent can branch on. Every refusal in the CLI
+carries one, and `guide errors` enumerates them — extending the existing
+convention of branching on data rather than matching prose.
+
+## Out of scope
+
+- **Release / configurable-variant builds.** Debug only. `buildCacheKey`
+  retains its variant field for forward compatibility, but no release path
+  ships. This removes Android signing configuration entirely.
+- **Physical devices, both platforms.** `--serial` is deleted along with
+  physical Android support; physical iOS was never supported and code signing
+  has no agent-loop payoff. This is what removes the ownership carve-out.
+- **ccache.**
+- **A machine-wide daemon or TUI dashboard.** The supervisor is per-workspace.
+- **Web / `expo start --web`.**
+- **Locking or mutexes around device usage.** The premise remains dedicated
+  devices per workspace.
+
+## Implementation sequencing
+
+This spec is deliberately larger than one implementation plan. It decomposes
+into four, each independently shippable and each leaving the CLI in a working
+state:
+
+1. **Layout and teardown.** `<worktree>/.rn-iso/`, DerivedData redirection, the
+   CAS path pin, `init`/`doctor` updates, `.worktreeexclude` wiring. Deletes
+   `artifacts.js`, the mounted-volume guard, and top-level `gc`. Ships against
+   the v2 command surface with no new commands, and is worth having on its own.
+2. **Supervisor and logs.** `@rn-iso/metro` reporter, the NDJSON streams,
+   `start`, `logs`, `status`, `down`. Bare RN in-process, Expo by child
+   process. This is where the agent-facing value concentrates.
+3. **`ios`.** Device provisioning folded in, fingerprint cache gate, prebuild,
+   pod staleness, xcodebuild orchestration, diagnostic extraction, install and
+   launch.
+4. **`android`.** The same shape over gradle and adb.
+
+Order matters: 2 depends on 1 for its log paths, and 3 and 4 depend on 2 for
+the metro-port check and the build-log destination. Steps 3 and 4 are
+independent of each other.
+
+The v2 command removals (`up`, `device`, `release`, `stop`, `prune`, `gc`,
+`--serial`) land with step 3, not before — the broker surface has to stay
+usable until the build path that replaces it actually works.
+
+## Risks
+
+1. **Reimplementing xcodebuild and gradle orchestration is the bulk of the
+   work** and where defects will concentrate. Mitigated by the existing
+   convention (`CLAUDE.md` item 9) that anything touching a real toolchain
+   artifact must be live-verified, not merely mock-tested — a mocked executor
+   proves the right call was made, never that the toolchain accepts it.
+2. **Version matrix across RN 0.7x–0.8x and Expo SDK 51+.** Mitigated by
+   runtime resolution from the project (no pinning), a `compatibility.json`, and
+   a fresh-init CI matrix, nightly or label-gated. Reanimated is the only real
+   prior art for this shape and its approach is the model.
+3. **Metro internals used by `engine/server/bare.js`** (`Metro.runServer`,
+   `unstable_extraMiddleware`) are semi-private. Contained to one file, with the
+   child-spawn path available as a fallback there too.
+4. **Client-log forwarding deprecation** (T214991636), above.
+
+## Testing strategy
+
+- Pure decision logic (fingerprint keying, staleness detection, diagnostic
+  extraction, log query filtering) unit-tested under `node --test`, following
+  the existing split between pure functions and thin I/O wrappers.
+- `RN_ISO_HOME` continues to redirect all state for tests.
+- A fixture matrix of real projects — bare RN, Expo CNG, Expo with committed
+  native dirs, a monorepo — exercised end to end against real toolchains, since
+  item 9 applies to every new engine module.
+- Diagnostic extraction tested against recorded real xcodebuild and gradle
+  failure transcripts.
+
+## Open questions
+
+None blocking. Two deferred decisions are recorded above rather than resolved:
+whether to eventually host Expo in-process by deep import, and how to migrate
+the client-log source when T214991636 lands.
