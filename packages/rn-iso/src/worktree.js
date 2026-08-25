@@ -1,6 +1,21 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { getExecutor } from './exec.js';
+import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.js';
+
+// `.rn-iso/` is never carried into a new worktree, at any depth and whatever
+// any pattern file says. It holds THIS workspace's derived data, its logs and
+// the supervisor pidfile: build output keyed to a path the new worktree does
+// not have, and a pidfile naming a process that is not running. Carrying that
+// is strictly worse than starting cold, so it is code rather than
+// configuration -- `.worktreeexclude` extends this list and cannot shorten it.
+//
+// Matched segment-wise rather than by prefix because a monorepo has one of
+// these per app directory (`apps/mobile/.rn-iso`), and because the entry `git
+// ls-files --directory` collapses to is the directory itself.
+export function isWorkspaceArtifact(rel) {
+  return String(rel).split('/').includes(WORKSPACE_DIR);
+}
 
 export function gitCommonDir(cwd) {
   const out = getExecutor().runQuiet(`git -C "${cwd}" rev-parse --path-format=absolute --git-common-dir`);
@@ -99,6 +114,7 @@ export function carryOverFiles({ root, target, patterns }) {
   const copied = [];
   const failed = [];
   for (const rel of listGitignoredFiles(root)) {
+    if (isWorkspaceArtifact(rel)) continue;
     if (!matchesInclude(rel, patterns)) continue;
     const from = join(root, rel);
     const to = join(target, rel);
@@ -132,6 +148,10 @@ export function listGitignoredEntries(root) {
 // surfaces as a confusing build error, whereas the failure mode of naming what
 // to skip is a directory copied needlessly.
 //
+// `patterns` are the caller's additions on top of the built-in exclusion of
+// `.rn-iso/` (see isWorkspaceArtifact): they extend it, and cannot un-exclude
+// it.
+//
 // `cloned` is false when `cp -c` was refused and the entry had to be copied for
 // real -- APFS clonefiles only work same-volume, and that is the difference
 // between ~40 MB and several GB per worktree, so the caller warns about it.
@@ -140,6 +160,7 @@ export function cloneIgnoredEntries({ root, target, patterns }) {
   const failed = [];
   let cloned = true;
   for (const rel of listGitignoredEntries(root)) {
+    if (isWorkspaceArtifact(rel)) continue;
     if (matchesInclude(rel, patterns)) continue;
     const from = join(root, rel);
     const to = join(target, rel);

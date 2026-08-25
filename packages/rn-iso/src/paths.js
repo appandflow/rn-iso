@@ -9,7 +9,7 @@
 // build directory back to a workspace.
 //
 // Pure: nothing here creates a directory. Callers mkdir when they write.
-import { basename, dirname, join } from 'path';
+import { join } from 'path';
 import { getConfigDir } from './config.js';
 
 export const WORKSPACE_DIR_NAME = '.rn-iso';
@@ -92,34 +92,3 @@ export function sharedPods() {
   return join(getConfigDir(), 'pods');
 }
 
-// --- where the caches used to live ------------------------------------
-//
-// Nothing reads a cache from these any more. They exist so `init` can rename
-// one into place and `doctor` can report one that is still sitting there: they
-// run to many GB, and stranding one costs the disk twice AND a cold rebuild in
-// every project on the machine.
-//
-// The build cache is expressed as the SIBLING of the config dir rather than as
-// a literal ~/.rn-iso-build-cache. In production the two are the same thing --
-// getConfigDir() is ~/.rn-iso -- but it also means RN_ISO_HOME sandboxes the
-// whole migration, so a test or a dry run can never reach the real one.
-export function legacyBuildCache() {
-  return join(dirname(getConfigDir()), '.rn-iso-build-cache');
-}
-
-// The Metro half cannot be derived the same way: the old directory was named
-// after the app (`~/.<name>-metro-cache`), so the only record of where it
-// actually is comes from the cache manifest. This maps such a directory back to
-// the name, and returns null for anything that is not one.
-const LEGACY_METRO_DIR = /^\.(.+)-metro-cache$/;
-
-export function legacyMetroCacheName(dir) {
-  const m = LEGACY_METRO_DIR.exec(basename(String(dir || '')));
-  return m ? m[1] : null;
-}
-
-// The `name` @rn-iso/metro registers itself under. A hand-wired FileStore
-// registered through `rn-iso/cache-manifest` carries whatever name its owner
-// chose, and must never be moved: its metro.config.js still points at the old
-// directory, so moving it would take away a cache nothing knows how to find.
-export const METRO_CACHE_REGISTRATION_NAME = 'Metro transform cache';

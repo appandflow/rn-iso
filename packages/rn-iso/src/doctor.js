@@ -13,12 +13,6 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { getExecutor } from './exec.js';
-import { directorySize, formatBytes } from './fs-util.js';
-import { readManifest } from './cache-manifest.js';
-import {
-  METRO_CACHE_REGISTRATION_NAME, legacyBuildCache, legacyMetroCacheName,
-  sharedBuildCache, sharedMetroCache,
-} from './paths.js';
 import { detectIsExpo } from './project.js';
 import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.js';
 
@@ -79,6 +73,14 @@ export function checkDevClient(pkg, isExpo = true) {
 
 // Metro's default cache is per-project, so every worktree re-transforms the
 // whole module graph. One FileStore outside any project fixes it.
+//
+// This reads the file and never evaluates it -- a metro.config.js runs project
+// code, and a diagnostic may not. That is why a mention of `cacheStores` is not
+// the same as a cacheStore: on a real repo the store was built behind
+// `process.env.X === '1' ? [...] : undefined` and spread in, so it was off for
+// everyone who had not opted in, and a substring match called that a pass.
+// Unreadable stays unreadable; the finding says so instead of guessing either
+// way.
 export function checkMetroCache(metroConfigSource) {
   if (metroConfigSource == null) {
     return finding(
@@ -88,13 +90,46 @@ export function checkMetroCache(metroConfigSource) {
       'Add a metro.config.js with a FileStore cacheStore pointing outside the project.'
     );
   }
-  if (/cacheStores/.test(metroConfigSource)) return null;
+  const lines = String(metroConfigSource).split('\n');
+  const mentions = lines.filter(line => /cacheStores/.test(line));
+  if (mentions.length) {
+    // One unconditional mention is enough: the store is wired for everybody.
+    if (!lines.every((line, i) => !/cacheStores/.test(line) || isConditional(lines, i))) return null;
+    return finding(
+      'note',
+      'metro.config.js mentions cacheStores, but not unconditionally',
+      `Every line naming it is inside a conditional, and doctor reads this file rather than executing it, so it cannot tell whether the store is installed on a plain \`rn-iso start\`. A cacheStores that is off by default costs exactly what having none costs: ${mentions.map(l => l.trim()).join(' / ')}`,
+      'Confirm it applies without env vars -- a store behind an opt-in flag is not shared until every workspace sets the flag.'
+    );
+  }
   return finding(
     'cost',
     'Metro cache is per-project',
     'Without a shared cacheStore each worktree transforms the whole module graph from cold -- thousands of modules, every time.',
     "config.cacheStores = [new FileStore({ root: path.join(os.homedir(), '.<app>-metro-cache') })]"
   );
+}
+
+// Deliberately crude, because the alternative is evaluating the file: an env
+// var, a ternary or an `if` on the line means the wiring depends on something
+// this cannot see. The window is the line itself plus -- only when the line is
+// indented, i.e. it is somebody's block body -- the line that opens the block,
+// which is what catches `if (process.env.X) { config.cacheStores = ... }`
+// written across two lines. It stops there on purpose: chasing an arbitrary
+// nesting is parsing, and the wrong answer here costs a note, not a cost.
+function isConditional(lines, index) {
+  const line = lines[index];
+  if (isConditionalLine(line)) return true;
+  if (!/^\s+\S/.test(line)) return false;
+  for (let i = index - 1; i >= 0; i--) {
+    if (lines[i].trim() === '') continue;
+    return isConditionalLine(lines[i]);
+  }
+  return false;
+}
+
+function isConditionalLine(line) {
+  return /process\.env/.test(line) || line.includes('?') || /(^|[^\w])if([^\w]|$)/.test(line);
 }
 
 // Xcode's compilation cache defaults to the DerivedData root. DerivedData is
@@ -120,7 +155,7 @@ export function checkCompilationCache(podfileSource, xcodeMajor) {
       'note',
       'Xcode compilation caching is not enabled',
       `${version} a content-addressed cache can carry compiled output between workspaces, which is the difference between a full build and a partial one in a fresh worktree.`,
-      "Set COMPILATION_CACHE_ENABLE_CACHING = YES in the Podfile's post_install, with COMPILATION_CACHE_CAS_PATH outside DerivedData."
+      "In the Podfile's post_install, inside an `installer.pods_project.targets.each { |t| t.build_configurations.each { |config| ... } }` loop -- adding one if post_install has none, or has only a loop over resource bundles -- set config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES' and COMPILATION_CACHE_CAS_PATH to a path outside DerivedData."
     );
   }
   if (!path) {
@@ -136,22 +171,20 @@ export function checkCompilationCache(podfileSource, xcodeMajor) {
 
 // `.rn-iso/` holds this workspace's build output, its logs and the supervisor
 // pidfile: everything that is meaningful only to the checkout that produced it.
-// It has to be listed in TWO files, and the failure mode of missing either one
-// is silent.
 //
-// The asymmetric case is the one worth naming. Gitignored but not
-// worktree-excluded is exactly the state in which `worktree create
-// --carry-ignored` copies the previous workspace's DerivedData, its stale logs
-// and a pidfile pointing at a dead process into a brand new worktree -- which
-// is worse than starting with an empty cache, because the build output is keyed
-// to a path the new worktree does not have and the pidfile names a supervisor
-// that is not running. Excluded but not gitignored is the other half: nothing
-// is carried, but every build offers its own DerivedData up for commit.
+// This used to check two files. The other half -- whether `.rn-iso/` was listed
+// in a `.worktreeexclude` -- is gone because it cannot be wrong any more:
+// `worktree create --carry-ignored` skips the directory unconditionally, in
+// code (isWorkspaceArtifact in src/worktree.js), at any depth and whatever any
+// pattern file says. Checking a guarantee is how doctor ends up confirming a
+// file nothing reads, which is exactly what it did in a monorepo, where the
+// `.worktreeexclude` it read sat next to package.json and `worktree create`
+// read the repo root's.
 
 
-// gitignore and worktreeexclude are both line-oriented path lists, so the entry
-// is matched as a path and not as a substring: a commented-out line ignores
-// nothing, and `/.rn-iso`, `.rn-iso` and `.rn-iso/` are the same entry.
+// gitignore is a line-oriented path list, so the entry is matched as a path and
+// not as a substring: a commented-out line ignores nothing, and `/.rn-iso`,
+// `.rn-iso` and `.rn-iso/` are the same entry.
 function listsWorkspaceDir(source) {
   if (source == null) return false;
   return String(source)
@@ -161,79 +194,13 @@ function listsWorkspaceDir(source) {
     .some(line => line.replace(/^\/+/, '').replace(/\/+$/, '') === WORKSPACE_DIR);
 }
 
-export function checkArtifactLayout({ gitignoreSource, worktreeExcludeSource } = {}) {
-  const gitignored = listsWorkspaceDir(gitignoreSource);
-  const excluded = listsWorkspaceDir(worktreeExcludeSource);
-  if (gitignored && excluded) return null;
-
-  if (gitignored && !excluded) {
-    return finding(
-      'cost',
-      '.rn-iso/ is gitignored but not worktree-excluded',
-      'It is ignored files that `worktree create --carry-ignored` carries, so this is the state in which a new worktree is handed the previous one\'s DerivedData, stale logs and a pidfile for a process that is not running. That is worse than starting with an empty cache: the build output is keyed to a path the new worktree does not have.',
-      `Add ${WORKSPACE_DIR}/ to .worktreeexclude, or run \`rn-iso init\`.`
-    );
-  }
-
-  if (excluded && !gitignored) {
-    return finding(
-      'note',
-      '.rn-iso/ is worktree-excluded but not gitignored',
-      'Nothing is carried into a new worktree, but this workspace offers its own build output, logs and pidfile up for commit, and git status stops being readable.',
-      `Add ${WORKSPACE_DIR}/ to .gitignore, or run \`rn-iso init\`.`
-    );
-  }
-
+export function checkArtifactLayout({ gitignoreSource } = {}) {
+  if (listsWorkspaceDir(gitignoreSource)) return null;
   return finding(
     'note',
-    '.rn-iso/ is neither gitignored nor worktree-excluded',
-    'It holds this workspace\'s build output, logs and supervisor pidfile. Unignored, they are offered up for commit; not excluded, `worktree create --carry-ignored` would carry them into a fresh worktree once they are ignored.',
-    `Add ${WORKSPACE_DIR}/ to both .gitignore and .worktreeexclude, or run \`rn-iso init\`.`
-  );
-}
-
-// --- caches left behind by the move into ~/.rn-iso ---------------------
-//
-// The I/O half. Every shared cache used to live in its own dotted directory in
-// $HOME; they now all sit under the config dir. A directory left at the old
-// address is invisible from here on -- nothing looks there any more -- so it
-// costs the disk twice AND a cold rebuild in every project on the machine.
-//
-// The build cache has one fixed old address. The Metro caches do not: each was
-// named after an app (`~/.<name>-metro-cache`), so the manifest is the only
-// record of where they are. Only the ones @rn-iso/metro registered are
-// candidates -- a FileStore someone wired up by hand still points at its own
-// directory, and moving that would take away a cache nothing knows how to find.
-export function pendingCacheMigrations({ caches = null } = {}) {
-  const registered = caches || readManifest().caches;
-  const pairs = [
-    { legacy: legacyBuildCache(), dest: sharedBuildCache(), label: 'build cache' },
-  ];
-  for (const entry of registered) {
-    if (entry?.name !== METRO_CACHE_REGISTRATION_NAME) continue;
-    const name = legacyMetroCacheName(entry.dir);
-    if (name) pairs.push({ legacy: entry.dir, dest: sharedMetroCache(name), label: 'Metro cache' });
-  }
-  return pairs
-    .filter(p => p.legacy !== p.dest && existsSync(p.legacy))
-    .map(p => ({ ...p, destExists: existsSync(p.dest) }));
-}
-
-// The pure half. `bytes` is the whole reason this is worth a finding rather
-// than a silent tidy-up on some later run, so it is named first.
-export function checkLegacyCaches(entries = []) {
-  if (!entries.length) return null;
-  const stranded = entries
-    .map(e => `${e.legacy} (${formatBytes(e.bytes || 0)}) -> ${e.dest}`)
-    .join('; ');
-  const blocked = entries.some(e => e.destExists);
-  return finding(
-    'cost',
-    `${entries.length} cache(s) left in the old location`,
-    `Every shared cache now lives under the rn-iso config directory, and nothing looks at the old addresses any more. Left where they are they cost the disk twice, and the first build in every project on this machine is a cold one. ${stranded}.`,
-    blocked
-      ? 'Run `rn-iso init`: it renames the ones whose destination is free. A destination that already exists is left alone rather than merged, so move or delete that old directory by hand.'
-      : 'Run `rn-iso init`: it renames each one into place, which is instant on the same volume.'
+    '.rn-iso/ is not gitignored',
+    'It holds this workspace\'s build output, logs and supervisor pidfile -- location-addressed, meaningful only to the checkout that produced it. Unignored, every build offers its own DerivedData up for commit and git status stops being readable.',
+    `Add ${WORKSPACE_DIR}/ to .gitignore, or run \`rn-iso init\`.`
   );
 }
 
@@ -282,9 +249,10 @@ export function checkBuildCacheProvider(appConfig, sdkMajor, isExpo = true, dyna
       'note',
       `Cannot check the build cache provider in ${dynamicConfig}`,
       'This config is code, so it is not readable without executing it. Confirm by hand that a buildCacheProvider is set, and that it is on the key this SDK reads.',
-      sdkMajor && sdkMajor <= 53
+      `${sdkMajor && sdkMajor <= 53
         ? `SDK ${sdkMajor} reads expo.experiments.buildCacheProvider and ignores the top-level key in silence.`
         : 'Use the top-level expo.buildCacheProvider; the experiments key still works as a fallback.'
+      } Run \`npx expo config --json\` and look for buildCacheProvider. If one is already set -- including "eas" -- that satisfies this; rn-iso never replaces it.`
     );
   }
   if (!appConfig) return null;
@@ -350,7 +318,6 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
   const podfile = read(join('ios', 'Podfile'));
   const metroConfig = read('metro.config.js');
   const gitignore = read('.gitignore');
-  const worktreeExclude = read('.worktreeexclude');
 
   // Same detector `status` uses, so one project never reads as expo in one
   // command and bare in another. It weighs the `ios` script above the presence
@@ -364,12 +331,8 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
     checkCompilationCache(podfile, xcodeMajor),
-    checkArtifactLayout({ gitignoreSource: gitignore, worktreeExcludeSource: worktreeExclude }),
+    checkArtifactLayout({ gitignoreSource: gitignore }),
     checkCcacheConflict(podfile, podfileProperties),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
-    // Machine-wide rather than project-shaped, but this is the command people
-    // run, and a cache nothing reads any more is exactly the kind of silent
-    // cost doctor exists for.
-    checkLegacyCaches(pendingCacheMigrations().map(e => ({ ...e, bytes: directorySize(e.legacy) }))),
   ].filter(Boolean);
 }

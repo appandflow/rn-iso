@@ -4,11 +4,12 @@
 // already there -- including none.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
-import initCommand, { migrateLegacyCaches } from '../src/commands/init.js';
+import initCommand from '../src/commands/init.js';
 
 // Stub of the commander `Command` API, the same shape test/worktree-remove.js
 // uses: capturing the action is the only way to run it without commander's own
@@ -51,6 +52,20 @@ function mode(path) {
   return statSync(path).mode & 0o777;
 }
 
+// init reports on stderr (stdout is reserved across this CLI for parseable
+// payloads), so what it TELLS you is only readable by capturing it.
+function captureStderr(fn) {
+  const original = console.error;
+  const lines = [];
+  console.error = (...args) => lines.push(args.join(' '));
+  try {
+    fn();
+  } finally {
+    console.error = original;
+  }
+  return lines.join('\n');
+}
+
 test('init writes an executable scripts/dev', () => {
   captureAction(initCommand)({});
   assert.equal(mode(join(project, 'scripts', 'dev')), 0o755);
@@ -67,79 +82,122 @@ test('init --force restores the executable bit on a scripts/dev that lost it', (
 });
 
 test('init without --force keeps a file someone has edited', () => {
-  const workflow = join(project, 'WORKFLOW.md');
+  const script = join(project, 'scripts', 'dev');
   captureAction(initCommand)({});
-  writeFileSync(workflow, 'mine');
+  writeFileSync(script, 'mine');
 
   captureAction(initCommand)({});
 
-  assert.equal(readFileSync(workflow, 'utf-8'), 'mine');
+  assert.equal(readFileSync(script, 'utf-8'), 'mine');
 });
 
-// A cache left behind in its old location costs the disk twice and a cold
-// rebuild in every project on the machine, and they run to many GB -- so `init`
-// moves them. A rename on the same volume is instantaneous whatever the size,
-// which is the only reason this is safe to do inside a command people run
-// casually.
+// v3 generates no WORKFLOW.md. v2 needed one because rn-iso refused to know a
+// project's build commands; v3 IS the build command, so the document had become
+// an unmanaged copy of `rn-iso guide lifecycle` -- stale in exactly the places
+// the repo had moved on, which is how it came to tell a repo already pointing
+// buildCacheProvider at "eas" to install another provider over it.
+test('init writes no WORKFLOW.md', () => {
+  captureAction(initCommand)({});
+  assert.equal(existsSync(join(project, 'WORKFLOW.md')), false);
+});
+
+// One a previous version wrote is the repo's now: init neither refreshes it nor
+// deletes it, and doctor says nothing about it.
+test('a WORKFLOW.md an older version generated is left exactly as it is', () => {
+  const stale = join(project, 'WORKFLOW.md');
+  writeFileSync(stale, '# ours now\n');
+  captureAction(initCommand)({ force: true });
+  assert.equal(readFileSync(stale, 'utf-8'), '# ours now\n');
+});
+
+// --- where the generated files land in a monorepo ----------------------------
 //
-// RN_ISO_HOME is nested inside a throwaway directory here on purpose: the
-// legacy build cache resolves as the sibling of the config dir, so this can
-// never reach the real ~/.rn-iso-build-cache.
-function withFakeHome(fn) {
-  const outer = mkdtempSync(join(tmpdir(), 'rn-iso-migrate-'));
-  const home = join(outer, '.rn-iso');
-  mkdirSync(home, { recursive: true });
-  const previous = process.env.RN_ISO_HOME;
-  process.env.RN_ISO_HOME = home;
-  try {
-    return fn(outer, home);
-  } finally {
-    if (previous === undefined) delete process.env.RN_ISO_HOME;
-    else process.env.RN_ISO_HOME = previous;
-    rmSync(outer, { recursive: true, force: true });
-  }
+// `worktree create` reads `.worktreeexclude` at the GIT REPO ROOT, so a file
+// written next to the app's package.json excludes nothing -- and on the run
+// that found this, doctor then confirmed the no-op file. .gitignore is the
+// opposite case and stays where it is: git reads the one in the directory it
+// applies to.
+//
+// Real git, because the location under test is the one `git rev-parse
+// --show-toplevel` reports rather than one this code composes.
+function monorepo() {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), 'rn-iso-initcmd-repo-')));
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const app = join(repo, 'packages', 'app');
+  mkdirSync(app, { recursive: true });
+  writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '~57.0.0' } }));
+  return { repo, app };
 }
 
-test('init renames a legacy cache into its new home', () => {
-  withFakeHome((outer, home) => {
-    const legacy = join(outer, '.rn-iso-build-cache');
-    mkdirSync(join(legacy, 'ios', 'abc'), { recursive: true });
-    writeFileSync(join(legacy, 'ios', 'abc', 'App.apk'), 'binary');
-
+test('init writes into the app package, and no .worktreeexclude anywhere', () => {
+  const { repo, app } = monorepo();
+  try {
+    resetExecutor();
+    process.chdir(app);
     captureAction(initCommand)({});
 
-    assert.equal(existsSync(legacy), false, 'the old directory is gone, not copied');
-    assert.equal(readFileSync(join(home, 'build-cache', 'ios', 'abc', 'App.apk'), 'utf-8'), 'binary');
-  });
+    assert.equal(existsSync(join(app, 'scripts', 'dev')), true, 'the script belongs to the app that runs it');
+    assert.equal(existsSync(join(app, '.gitignore')), true, 'gitignore stays project-local');
+    // Carrying `.rn-iso/` into a fresh worktree is prevented in code, so there
+    // is no generated pattern file at either root -- and no way for one written
+    // in the wrong place to look like it is doing something.
+    assert.equal(existsSync(join(app, '.worktreeexclude')), false);
+    assert.equal(existsSync(join(repo, '.worktreeexclude')), false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
 
-test('a legacy cache whose destination exists is left alone, not merged', () => {
-  withFakeHome((outer, home) => {
-    const legacy = join(outer, '.rn-iso-build-cache');
-    mkdirSync(join(legacy, 'ios'), { recursive: true });
-    mkdirSync(join(home, 'build-cache', 'ios'), { recursive: true });
-    writeFileSync(join(home, 'build-cache', 'ios', 'keep'), 'newer');
+// A `.worktreeexclude` the repo wrote for itself is the repo's: init neither
+// generates one nor touches one.
+test('a .worktreeexclude the repo already has is left alone', () => {
+  const { repo, app } = monorepo();
+  try {
+    resetExecutor();
+    writeFileSync(join(repo, '.worktreeexclude'), 'coverage\n');
+    process.chdir(app);
+    captureAction(initCommand)({ force: true });
 
-    const results = migrateLegacyCaches();
-
-    assert.deepEqual(results.map(r => r.status), ['skipped']);
-    assert.ok(existsSync(legacy), 'nothing is deleted on the refused path');
-    assert.equal(readFileSync(join(home, 'build-cache', 'ios', 'keep'), 'utf-8'), 'newer');
-  });
+    assert.equal(readFileSync(join(repo, '.worktreeexclude'), 'utf-8'), 'coverage\n');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
 
-// Fail closed: a rename that cannot happen (a different volume, a permission)
-// must not turn into a copy-and-delete. The directory stays where it is, the
-// failure is reported, and doctor keeps naming it.
-test('a rename that cannot happen leaves the legacy directory untouched', () => {
-  withFakeHome((outer, home) => {
-    const legacy = join(outer, '.rn-iso-build-cache');
-    mkdirSync(legacy);
-    const results = migrateLegacyCaches([
-      { legacy, dest: join('/dev/null/nope', 'build-cache'), label: 'build cache', destExists: false },
-    ]);
-    assert.deepEqual(results.map(r => r.status), ['failed']);
-    assert.ok(results[0].error, 'the reason has to survive to the report');
-    assert.ok(existsSync(legacy), 'a failed move never deletes');
-  });
+// A pnpm monorepo told to run `npm i -D` gets a second lockfile and a
+// dependency in the wrong place. The lockfile is at the repo root, not next to
+// the app -- and in a monorepo @expo/fingerprint is usually hoisted, so the
+// app's own dependency table is not where an installed one shows up either.
+test('the fingerprint remedy names the package manager the repo actually uses', () => {
+  const { repo, app } = monorepo();
+  try {
+    resetExecutor();
+    writeFileSync(join(repo, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+    process.chdir(app);
+
+    const out = captureStderr(() => captureAction(initCommand)({}));
+
+    assert.match(out, /pnpm add -D @expo\/fingerprint/);
+    assert.doesNotMatch(out, /npm i -D @expo\/fingerprint/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('a hoisted @expo/fingerprint is not reported as missing', () => {
+  const { repo, app } = monorepo();
+  try {
+    resetExecutor();
+    const fp = join(repo, 'node_modules', '@expo', 'fingerprint');
+    mkdirSync(fp, { recursive: true });
+    writeFileSync(join(fp, 'package.json'), JSON.stringify({ name: '@expo/fingerprint', version: '1.0.0', main: 'index.js' }));
+    writeFileSync(join(fp, 'index.js'), 'module.exports = {};\n');
+    process.chdir(app);
+
+    const out = captureStderr(() => captureAction(initCommand)({}));
+
+    assert.doesNotMatch(out, /WITHOUT @expo\/fingerprint/, 'it resolves from here, so builds can be cached today');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });

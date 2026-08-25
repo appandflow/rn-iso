@@ -6,16 +6,10 @@ import {
   checkCompilationCache,
   checkCcacheConflict,
   checkDevClient,
-  checkLegacyCaches,
   checkMetroCache,
   detectXcodeMajor,
   parseXcodeMajor,
-  pendingCacheMigrations,
 } from '../src/doctor.js';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { register } from '../src/cache-manifest.js';
 import { resetExecutor, setExecutor } from '../src/exec.js';
 
 // Where the key lives moved when the setting was promoted out of experiments,
@@ -178,147 +172,98 @@ test('the dev client finding still fires for a project that builds with expo run
   assert.equal(checkDevClient(pkg, true).level, 'cost');
 });
 
-// .rn-iso/ holds this workspace's build output, logs and supervisor pidfile.
-// Gitignored but not worktree-excluded is the asymmetry that matters: it is
-// exactly the state in which `worktree create --carry-ignored` copies another
-// workspace's DerivedData, stale logs and a dead pidfile into a fresh worktree,
-// which is strictly worse than starting with an empty cache.
-test('reports when .rn-iso is gitignored but not worktree-excluded', () => {
-  const f = checkArtifactLayout({
-    gitignoreSource: '.rn-iso/\n',
-    worktreeExcludeSource: '**/*.log\n',
-  });
-  assert.ok(f, 'expected a finding');
-  assert.match(f.detail, /carry/i);
+// `.rn-iso/` holds this workspace's build output, logs and supervisor pidfile,
+// and the only thing that can still be wrong about it is the .gitignore entry:
+// carrying it into a fresh worktree is prevented in code now, not by a second
+// file that has to say so (isWorkspaceArtifact in src/worktree.js).
+test('silent when .rn-iso is gitignored', () => {
+  assert.equal(checkArtifactLayout({ gitignoreSource: '.rn-iso/\n' }), null);
 });
 
-test('silent when both are wired', () => {
-  assert.equal(checkArtifactLayout({
-    gitignoreSource: '.rn-iso/\n',
-    worktreeExcludeSource: '.rn-iso/\n',
-  }), null);
-});
-
-// Worktree-excluded but not gitignored is the other half: nothing is carried,
-// but every build commits its own DerivedData.
-test('reports when .rn-iso is worktree-excluded but not gitignored', () => {
-  const f = checkArtifactLayout({
-    gitignoreSource: 'node_modules\n',
-    worktreeExcludeSource: '.rn-iso/\n',
-  });
+test('a project that does not ignore .rn-iso is told what ends up in git status', () => {
+  const f = checkArtifactLayout({ gitignoreSource: 'node_modules\n' });
   assert.ok(f, 'expected a finding');
   assert.match(f.title, /not gitignored/);
   assert.match(f.detail, /commit/i);
+  assert.match(f.fix, /rn-iso init/);
 });
 
-// A missing file is not a different diagnosis from a file that does not mention
-// the directory: both mean the layout was never wired up, and both are fixed by
-// the same command.
-test('reports when neither file mentions the workspace directory', () => {
-  const f = checkArtifactLayout({ gitignoreSource: null, worktreeExcludeSource: null });
-  assert.ok(f, 'expected a finding');
-  assert.match(f.fix, /rn-iso init/);
+test('a missing .gitignore is the same diagnosis as one that does not mention it', () => {
+  assert.match(checkArtifactLayout({ gitignoreSource: null }).title, /not gitignored/);
+  assert.equal(checkArtifactLayout().title, checkArtifactLayout({ gitignoreSource: '' }).title);
 });
 
 // The entry is a path, not a substring: leading and trailing slashes and
 // comments are all the forms a real .gitignore is written in.
 test('the entry is recognised however it is written, and comments do not count', () => {
+  assert.equal(checkArtifactLayout({ gitignoreSource: '/.rn-iso\n' }), null);
+  assert.equal(checkArtifactLayout({ gitignoreSource: '.rn-iso\n' }), null);
   assert.match(
-    checkArtifactLayout({
-      gitignoreSource: '# ignore .rn-iso/ one day\nnode_modules\n',
-      worktreeExcludeSource: '.rn-iso/\n',
-    }).title,
+    checkArtifactLayout({ gitignoreSource: '# ignore .rn-iso/ one day\nnode_modules\n' }).title,
     /not gitignored/,
     'a commented-out entry ignores nothing'
   );
-  assert.equal(checkArtifactLayout({
-    gitignoreSource: '/.rn-iso\n',
-    worktreeExcludeSource: '.rn-iso\n',
-  }), null);
 });
 
-// A cache left in its old location costs the disk twice AND a cold rebuild in
-// every project on the machine, and nothing else on the box will ever mention
-// it: the CLI and both packages have stopped looking there.
-test('a legacy cache directory is reported with its size and a remedy', () => {
-  const f = checkLegacyCaches([
-    { legacy: '/home/u/.rn-iso-build-cache', dest: '/home/u/.rn-iso/build-cache', label: 'build cache', destExists: false, bytes: 3 * 1024 ** 3 },
-  ]);
-  assert.equal(f.level, 'cost');
-  assert.match(f.detail, /\.rn-iso-build-cache/);
-  assert.match(f.detail, /3\.0G/, 'the size is the whole reason to care');
-  assert.match(f.fix, /rn-iso init/);
-});
-
-test('nothing left in a legacy location is no finding at all', () => {
-  assert.equal(checkLegacyCaches([]), null);
-  assert.equal(checkLegacyCaches(), null);
-});
-
-// A destination that already exists is not something `init` will resolve: the
-// rename is refused rather than merged, so the advice has to say so.
-test('a legacy cache whose destination is taken says so', () => {
-  const f = checkLegacyCaches([
-    { legacy: '/home/u/.demo-metro-cache', dest: '/home/u/.rn-iso/metro-cache/demo', label: 'Metro cache', destExists: true, bytes: 1024 ** 2 },
-  ]);
-  assert.match(f.fix, /by hand/);
-});
-
-// The legacy build cache is the sibling of the config dir rather than a literal
-// ~/.rn-iso-build-cache, so RN_ISO_HOME sandboxes the whole migration: a test
-// (or a live dry run) can never reach the real one.
+// --- cacheStores that is only wired some of the time ------------------------
 //
-// The Metro half cannot be derived that way -- the legacy directory was named
-// after the app, `~/.<name>-metro-cache` -- so the manifest is the only record
-// of where it actually is. Only the ones @rn-iso/metro registered may
-// move: a FileStore someone wired up by hand still points at its own directory,
-// and moving that would take away a cache nothing else knows how to find.
-function withFakeHome(fn) {
-  const outer = mkdtempSync(join(tmpdir(), 'rn-iso-legacy-'));
-  const home = join(outer, '.rn-iso');
-  mkdirSync(home, { recursive: true });
-  const previous = process.env.RN_ISO_HOME;
-  process.env.RN_ISO_HOME = home;
-  try {
-    return fn(outer, home);
-  } finally {
-    if (previous === undefined) delete process.env.RN_ISO_HOME;
-    else process.env.RN_ISO_HOME = previous;
-    rmSync(outer, { recursive: true, force: true });
+// The real shape from a field run: the store is built behind an env var that is
+// off by default, and spread into the config. A substring match on
+// `cacheStores` read that as a pass, so doctor confirmed a cache that was never
+// installed. doctor still does not evaluate the file -- it says it cannot tell.
+test('a cacheStores behind an env-var conditional is downgraded to a note, not a pass', () => {
+  const source = [
+    'const sharedCacheStores =',
+    "  process.env.TLON_METRO_SHARED_CACHE_ENABLED === '1'",
+    '    ? [new FileStore({ root: sharedCacheRoot })]',
+    '    : undefined;',
+    'const config = {',
+    '  ...(sharedCacheStores ? { cacheStores: sharedCacheStores } : {}),',
+    '};',
+  ].join('\n');
+  const f = checkMetroCache(source);
+  assert.ok(f, 'expected a finding');
+  assert.equal(f.level, 'note', 'doctor cannot evaluate the file, so it cannot call this a cost either');
+  assert.match(f.title, /cacheStores/);
+  assert.match(f.fix, /env var/i);
+});
+
+test('a cacheStores set inside an if is a note for the same reason', () => {
+  const source = 'if (process.env.SHARED) {\n  config.cacheStores = [new FileStore({})];\n}\n';
+  assert.equal(checkMetroCache(source).level, 'note');
+});
+
+// The plain shape is the one this check exists to reward: unconditional wiring
+// stays silent, exactly as before.
+test('an unconditional cacheStores stays silent', () => {
+  assert.equal(checkMetroCache("config.cacheStores = [new FileStore({ root: '/x' })];"), null);
+  assert.equal(checkMetroCache("const { sharedCacheStores } = require('@rn-iso/metro');\nconfig.cacheStores = sharedCacheStores('app');"), null);
+});
+
+// The two settings only do anything inside a loop that defines `config`. A real
+// Podfile's post_install had no such loop (only one over resource bundles), so
+// the advice as written produced a Podfile that compiled and cached nothing.
+test('the compilation cache advice names the loop the settings have to live in', () => {
+  const f = checkCompilationCache('post_install do |installer|\nend\n', 26);
+  assert.match(f.fix, /post_install/);
+  assert.match(f.fix, /targets\.each/);
+  assert.match(f.fix, /build_configurations/);
+  assert.match(f.fix, /adding one if/i);
+});
+
+// A dynamic config is the one case where doctor cannot answer its own question,
+// so it has to hand over the command that can -- and say that an existing
+// provider, "eas" included, already satisfies the check.
+test('the dynamic-config note carries the command that answers it', () => {
+  const f = checkBuildCacheProvider(null, 57, true, 'app.config.ts');
+  assert.match(f.fix, /npx expo config --json/);
+  assert.match(f.fix, /buildCacheProvider/);
+});
+
+test('the dynamic-config note says an existing provider is kept, as the static one does', () => {
+  for (const sdk of [53, 57]) {
+    const f = checkBuildCacheProvider(null, sdk, true, 'app.config.ts');
+    assert.match(f.fix, /"eas"/, `SDK ${sdk}`);
+    assert.match(f.fix, /never replaces it/, `SDK ${sdk}`);
   }
-}
-
-test('the legacy build cache is found next to the config dir', () => {
-  withFakeHome((outer, home) => {
-    const legacy = join(outer, '.rn-iso-build-cache');
-    assert.deepEqual(pendingCacheMigrations(), [], 'nothing to move when it is not there');
-    mkdirSync(legacy);
-    const pending = pendingCacheMigrations();
-    assert.deepEqual(pending.map(p => p.legacy), [legacy]);
-    assert.equal(pending[0].dest, join(home, 'build-cache'));
-    assert.equal(pending[0].destExists, false);
-  });
-});
-
-test('only the Metro caches @rn-iso/metro registered are candidates', () => {
-  withFakeHome((outer, home) => {
-    const ours = join(outer, '.demo-metro-cache');
-    const handRolled = join(outer, '.other-metro-cache');
-    mkdirSync(ours);
-    mkdirSync(handRolled);
-    register({ dir: ours, name: 'Metro transform cache', prune: 'entries', entriesDepth: 2 });
-    register({ dir: handRolled, name: 'Metro transforms', prune: 'entries', entriesDepth: 2 });
-
-    const pending = pendingCacheMigrations();
-    assert.deepEqual(pending.map(p => p.legacy), [ours], 'a hand-wired FileStore keeps its directory');
-    assert.equal(pending[0].dest, join(home, 'metro-cache', 'demo'));
-  });
-});
-
-test('a destination that already exists is reported, not silently merged', () => {
-  withFakeHome((outer, home) => {
-    mkdirSync(join(outer, '.rn-iso-build-cache'));
-    mkdirSync(join(home, 'build-cache'));
-    assert.equal(pendingCacheMigrations()[0].destExists, true);
-  });
 });

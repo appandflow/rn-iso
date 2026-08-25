@@ -7,7 +7,7 @@ import {
   workspaceDir, workspaceLogsDir, workspaceDerivedData, workspaceGradleBuild,
   supervisorPidFile, workspaceStateFile,
   sharedMetroCache, sharedBuildCache, sharedCompilationCache,
-  sharedGradle, sharedPods, legacyBuildCache, legacyMetroCacheName,
+  sharedGradle, sharedPods,
 } from '../src/paths.js';
 
 describe('workspace paths', () => {
@@ -94,11 +94,5 @@ describe('shared cache roots', () => {
     assert.strictEqual(sharedMetroCache('demo'), join(tmpHome, 'metro-cache', 'demo'));
     assert.strictEqual(sharedMetroCache('@scope/app'), join(tmpHome, 'metro-cache', '-scope-app'));
     assert.strictEqual(sharedMetroCache('..'), join(tmpHome, 'metro-cache', 'app'));
-  });
-
-  test('the legacy locations are siblings of the config dir, so RN_ISO_HOME sandboxes them', () => {
-    assert.strictEqual(legacyBuildCache(), join(dirname(tmpHome), '.rn-iso-build-cache'));
-    assert.strictEqual(legacyMetroCacheName('/home/u/.demo-metro-cache'), 'demo');
-    assert.strictEqual(legacyMetroCacheName('/home/u/.rn-iso/metro-cache'), null);
   });
 });

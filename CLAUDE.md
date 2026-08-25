@@ -115,7 +115,9 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
     logs-query.js         # reading the timeline back: k-way merge over <logs>/*.ndjson,
                           # recordMatches / queryLogs / followLogs, and the --errors
                           # marker window
-    worktree.js           # git worktree add/remove/list, base-ref resolution, carry-over
+    worktree.js           # git worktree add/remove/list, base-ref resolution, carry-over.
+                          # `.rn-iso/` is excluded from carry-over unconditionally, at any depth
+                          # (isWorkspaceArtifact); `.worktreeexclude` only ADDS to that list
     fs-util.js            # volume utilities (volumeRootFor, isRealMount, listMountedVolumes,
                           # isOnMountedVolume) and sizing (directorySize, formatBytes)
     paths.js              # every path rn-iso writes: workspace-local under <root>/.rn-iso,
@@ -133,7 +135,12 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # API change.
     build-cache.js        # the CLI-side build cache: key derivation, resolve/store, self-registration
     doctor.js             # the checks behind `doctor` -- each a pure function of the text it is given
-    init.js               # the WORKFLOW.md / scripts/dev / .worktreeexclude templates, all pure
+    init.js               # the scripts/dev / .gitignore / Podfile-pin templates, all pure.
+                          # It generated a WORKFLOW.md and a .worktreeexclude too: the first went
+                          # because v3 IS the build command and the document had decayed into a
+                          # stale copy of `guide lifecycle`; the second because carrying `.rn-iso/`
+                          # into a worktree is refused in code now (isWorkspaceArtifact in
+                          # worktree.js), not by a file a repo has to remember to keep
     sim/
       ios.js              # simctl wrappers, owned-sim creation/selection, ownership verification
       android.js          # adb/emulator/avdmanager wrappers, owned-AVD creation/selection
@@ -426,10 +433,6 @@ with it, leaving an owned simulator nothing references and nothing will ever
 reap. Any point where the check cannot get a definite answer — an unmounted
 volume, an unresolvable symlinked ancestor — leaves the entry alone. Preserve
 that direction if you touch this code: on doubt, skip, don't delete.
-
-The same rule now covers the cache migration in `src/commands/init.js`: a
-legacy cache directory moves only when the destination is free, and a rename
-that fails is reported rather than turned into a copy-and-delete.
 
 (This item used to open by naming `classifyDerivedData` in `src/artifacts.js`.
 That function and that file are gone — build output is workspace-local now, so

@@ -1,29 +1,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
+  installCommand,
   projectFacts,
   renderDevScript,
   renderGitignoreAdditions,
   renderPodfileCasPin,
-  renderWorkflow,
-  renderWorktreeExclude,
 } from '../src/init.js';
 import { appendGitignoreAdditions } from '../src/commands/init.js';
 
 const expoApp = { pkg: { name: 'demo', dependencies: { expo: '~57.0.0', 'react-native': '0.86.2' } } };
 const bareApp = { pkg: { name: 'bare', dependencies: { 'react-native': '0.86.2' } } };
 
-// v3 runs the build itself, so the facts no longer carry an invented run
-// command, the project's script table, or a package manager: nothing in the
-// templates reconstructs a command line any more.
+// v3 runs the build itself, so the facts carry no invented run command and no
+// copy of the project's script table: nothing here reconstructs a command line.
+// (`packageManager` is not one of those -- it names a repo's own installer in
+// one line of advice, and never composes a build or a bundler command.)
 test('the facts describe the ecosystem and nothing about how to invoke it', () => {
   const facts = projectFacts(expoApp);
   assert.equal(facts.isExpo, true);
   assert.equal(facts.runCommand, undefined);
-  assert.equal(facts.pm, undefined);
   assert.equal(facts.scripts, undefined);
 });
 
@@ -39,107 +38,6 @@ test('@expo/fingerprint is detected in either dependency block', () => {
     projectFacts({ pkg: { dependencies: { expo: '~57.0.0' }, devDependencies: { '@expo/fingerprint': '^1.0.0' } } }).hasFingerprint,
     true
   );
-});
-
-// --- the workflow -----------------------------------------------------------
-//
-// It documents the v3 loop, so it must name the v3 commands and none of the v2
-// ones the CLI no longer has.
-
-test('the workflow teaches start -> ios/android -> logs -> stop, in that order', () => {
-  for (const facts of [projectFacts(expoApp), projectFacts(bareApp)]) {
-    const doc = renderWorkflow(facts);
-    const at = (needle) => {
-      const i = doc.indexOf(needle);
-      assert.notEqual(i, -1, `the workflow should mention ${needle}`);
-      return i;
-    };
-    assert.ok(at('rn-iso worktree create') < at('rn-iso start'));
-    assert.ok(at('rn-iso start') < at('rn-iso ios'));
-    assert.ok(at('rn-iso ios') < at('rn-iso logs --errors'));
-    assert.ok(at('rn-iso logs --errors') < at('rn-iso stop'));
-    assert.ok(at('rn-iso stop') < at('rn-iso worktree remove'));
-  }
-});
-
-// The commands that no longer exist. A generated document that teaches one of
-// them is worse than no document: the agent runs it and gets "unknown command".
-test('the workflow teaches no command the v3 binary does not have', () => {
-  for (const facts of [projectFacts(expoApp), projectFacts(bareApp)]) {
-    const doc = renderWorkflow(facts);
-    for (const gone of ['rn-iso up', 'rn-iso release', 'rn-iso shutdown', 'rn-iso config', 'build-cache resolve', '--wait-metro', '--no-bundler']) {
-      assert.ok(!doc.includes(gone), `the workflow must not teach ${gone}`);
-    }
-  }
-});
-
-// rn-iso never starts the bundler, and building before one answers is the
-// mistake the whole ordering exists to prevent -- so the document has to say
-// what happens instead of just naming the commands.
-test('the workflow says why start comes first, in terms of the refusal', () => {
-  const doc = renderWorkflow(projectFacts(expoApp));
-  assert.match(doc, /RN_ISO_NO_METRO/);
-  assert.match(doc, /never starts the bundler/);
-});
-
-// stop and worktree remove differ in exactly one way that matters, and reaching
-// for the wrong one costs either a rebuild or a lost branch.
-test('the workflow distinguishes the non-destructive stop from the destructive removal', () => {
-  const doc = renderWorkflow(projectFacts(expoApp));
-  assert.match(doc, /destroys nothing/);
-  assert.match(doc, /uncommitted changes/);
-  assert.match(doc, /Podfile\.lock/, 'the pod-install refusal fires after almost every iOS build');
-});
-
-// The build cache key moved when the setting left experiments, and naming the
-// wrong one produces a silent no-op -- so the generated document has to name the
-// one this SDK actually reads.
-test('the workflow names the build cache key this SDK reads', () => {
-  const sdk53 = renderWorkflow(projectFacts({ pkg: { dependencies: { expo: '~53.0.0' } } }));
-  assert.match(sdk53, /expo\.experiments\.buildCacheProvider/);
-
-  const sdk57 = renderWorkflow(projectFacts(expoApp));
-  assert.match(sdk57, /expo\.buildCacheProvider/);
-});
-
-// A bare project has no Expo provider hook at all, so telling it where to put a
-// key would be nonsense. It does not need one: `rn-iso ios` consults the shared
-// cache itself, and only needs the fingerprinter.
-test('a bare project is told about the fingerprinter, not about an Expo provider', () => {
-  const doc = renderWorkflow(projectFacts(bareApp));
-  assert.doesNotMatch(doc, /buildCacheProvider/);
-  assert.match(doc, /@expo\/fingerprint/);
-  assert.match(doc, /RN_ISO_NO_FINGERPRINT/, 'the refusal is what makes the missing dependency visible');
-});
-
-// The dev client is the difference between a reserved port working and a red
-// screen, so an Expo project without it must be told first, not reassured.
-test('an Expo project without the dev client is told to install it before anything else', () => {
-  const doc = renderWorkflow(projectFacts(expoApp));
-  assert.match(doc, /Install `expo-dev-client` before anything else/);
-});
-
-test('an Expo project that already has the dev client is told why it matters instead', () => {
-  const doc = renderWorkflow(projectFacts({
-    pkg: { dependencies: { expo: '~57.0.0', 'expo-dev-client': '~57.0.0' } },
-  }));
-  assert.doesNotMatch(doc, /Install `expo-dev-client` before/);
-  assert.match(doc, /expo-development-client/);
-});
-
-// A bare project gets neither: rn-iso wires the port at runtime itself, and the
-// reason it does NOT compile it in has to survive, or someone will.
-test('a bare project is told how the port reaches the app without being compiled in', () => {
-  const doc = renderWorkflow(projectFacts(bareApp));
-  assert.match(doc, /RCT_jsLocation/);
-  assert.match(doc, /adb reverse/);
-  assert.match(doc, /does not bake the port|Neither bakes/);
-});
-
-test('the worktree exclude file is patterns and comments only', () => {
-  const lines = renderWorktreeExclude().split('\n').filter(l => l.trim() && !l.startsWith('#'));
-  assert.ok(lines.length > 0);
-  assert.ok(lines.every(l => !l.includes(' ')), 'a pattern with a space in it would not match anything');
 });
 
 // --- the dev script ---------------------------------------------------------
@@ -177,22 +75,10 @@ test('the dev script is the same whatever the project is', () => {
   assert.equal(renderDevScript(), renderDevScript());
 });
 
-test('the workflow points at the script init writes alongside it', () => {
-  for (const facts of [projectFacts(expoApp), projectFacts(bareApp)]) {
-    const doc = renderWorkflow(facts);
-    assert.match(doc, /\.\/scripts\/dev/);
-    assert.match(doc, /Edit it freely/, 'the script is the repo\'s, not rn-iso\'s');
-  }
-});
-
-// `.rn-iso/` has to land in BOTH files, and missing either one fails silently.
-// Not worktree-excluded is the worse half: `worktree create --carry-ignored`
-// then hands a fresh worktree the previous one's DerivedData, stale logs and a
-// pidfile for a process that is not running.
-test('worktreeExclude excludes the workspace dir', () => {
-  assert.match(renderWorktreeExclude(), /^\.rn-iso\/$/m);
-});
-
+// `.rn-iso/` needs exactly one entry now. It used to need a second one in a
+// generated `.worktreeexclude`, and missing that was silent; `worktree create
+// --carry-ignored` skips the directory in code instead (isWorkspaceArtifact,
+// covered in test/worktree.test.js), so there is no second file to generate.
 test('gitignore additions cover the workspace dir', () => {
   assert.match(renderGitignoreAdditions(), /^\.rn-iso\/$/m);
 });
@@ -246,4 +132,57 @@ test('a missing gitignore is created rather than skipped', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- the fingerprint remedy -------------------------------------------------
+//
+// In a pnpm monorepo @expo/fingerprint is hoisted and transitive: absent from
+// the app's dependency table, resolvable from it. The dep table alone had init
+// announce "builds cannot be cached until it is installed" about a repo where
+// they already could -- and prescribe `npm i -D` to a pnpm workspace.
+test('@expo/fingerprint is detected by resolution when the dep table does not list it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rn-iso-fp-'));
+  try {
+    const pkgDir = join(dir, 'node_modules', '@expo', 'fingerprint');
+    mkdirSync(pkgDir, { recursive: true });
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@expo/fingerprint', version: '1.0.0', main: 'index.js' }));
+    writeFileSync(join(pkgDir, 'index.js'), 'module.exports = {};\n');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '~57.0.0' } }));
+
+    const facts = projectFacts({ pkg: { dependencies: { expo: '~57.0.0' } }, projectRoot: dir });
+    assert.equal(facts.hasFingerprint, true, 'a hoisted copy resolves, so the build cache works today');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('without a root, the dependency table is still the answer', () => {
+  assert.equal(projectFacts(expoApp).hasFingerprint, false);
+  assert.equal(projectFacts({ ...expoApp, packageManager: 'pnpm' }).packageManager, 'pnpm');
+});
+
+// `npm i -D` in a pnpm workspace writes a second lockfile and installs into a
+// directory nothing resolves from.
+test('the install command is the one this repo is actually managed with', () => {
+  assert.equal(installCommand('pnpm', '@expo/fingerprint'), 'pnpm add -D @expo/fingerprint');
+  assert.equal(installCommand('yarn', '@expo/fingerprint'), 'yarn add -D @expo/fingerprint');
+  assert.equal(installCommand('npm', '@expo/fingerprint'), 'npm i -D @expo/fingerprint');
+});
+
+test('an undetectable package manager produces no command at all, rather than npm', () => {
+  assert.equal(installCommand(null, '@expo/fingerprint'), null);
+  assert.equal(installCommand('bun', '@expo/fingerprint'), null, 'a manager whose flags are not known is not guessed at');
+});
+
+// A snippet that has to find a loop that is already there is what went wrong on
+// a real Podfile: its post_install had no target loop at all (only one over
+// resource bundles), so the two settings compiled into nothing and cached
+// nothing, silently.
+test('the podfile pin brings its own target and configuration loop', () => {
+  const out = renderPodfileCasPin();
+  assert.match(out, /installer\.pods_project\.targets\.each/);
+  assert.match(out, /build_configurations\.each/);
+  const enable = out.indexOf('COMPILATION_CACHE_ENABLE_CACHING');
+  assert.ok(out.indexOf('targets.each') < enable, 'the settings go inside the loop');
+  assert.match(out, /^end$/m);
 });

@@ -9,6 +9,7 @@ import {
   defaultWorktreeDir,
   worktreePath,
   matchesInclude,
+  isWorkspaceArtifact,
   unpushedCommits,
   hasUncommittedWork,
   listWorktrees,
@@ -562,4 +563,100 @@ test('pod-install churn is recognised so the restore advice only fires when it w
   assert.equal(isPodInstallChurn([' M ios/Podfile.lock', ' M config.json']), false, 'a brand asset is not pod churn');
   assert.equal(isPodInstallChurn([' M App/Images/ic_app_ios.png']), false);
   assert.equal(isPodInstallChurn([]), false, 'nothing dirty is not pod churn');
+});
+
+// --- .rn-iso/ is never carried, and that is not configurable -----------------
+//
+// It holds this workspace's derived data, its logs and the supervisor pidfile:
+// build output keyed to a path the new worktree does not have, and a pidfile
+// for a process that is not running. There is no repo for which carrying that
+// is right, so it is code rather than a line in a file someone has to remember
+// to write. A monorepo has one per app directory, hence the depth cases.
+test('isWorkspaceArtifact matches the workspace dir at any depth, and nothing else', () => {
+  for (const rel of ['.rn-iso', '.rn-iso/logs/metro.ndjson', 'apps/mobile/.rn-iso', 'apps/mobile/.rn-iso/derived-data']) {
+    assert.equal(isWorkspaceArtifact(rel), true, rel);
+  }
+  for (const rel of ['node_modules', 'apps/mobile/.rn-isotope', 'docs/rn-iso.md', 'apps/.rn-iso-old']) {
+    assert.equal(isWorkspaceArtifact(rel), false, rel);
+  }
+});
+
+test('cloneIgnoredEntries skips every .rn-iso with no pattern file anywhere', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
+  const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
+  try {
+    setExecutor({
+      run: () => '',
+      runQuiet: (cmd) => {
+        if (cmd.startsWith('git ')) return 'node_modules/\n.rn-iso/\napps/mobile/.rn-iso/\napps/mobile/ios/Pods/';
+        return '';
+      },
+      spawn: () => {},
+    });
+
+    const { copied } = cloneIgnoredEntries({ root, target, patterns: [] });
+
+    assert.deepEqual(copied, ['node_modules', 'apps/mobile/ios/Pods']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+// The pattern file extends the built-in list. It cannot shorten it: a pattern
+// that names .rn-iso -- or a negation someone hopes will re-include it -- has
+// no effect, because the exclusion is not implemented with patterns at all.
+test('.worktreeexclude patterns add to the built-in exclusion and cannot undo it', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
+  const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
+  try {
+    setExecutor({
+      run: () => '',
+      runQuiet: (cmd) => {
+        if (cmd.startsWith('git ')) return 'node_modules/\ncoverage/\napps/mobile/.rn-iso/';
+        return '';
+      },
+      spawn: () => {},
+    });
+
+    const extended = cloneIgnoredEntries({ root, target, patterns: ['coverage'] });
+    assert.deepEqual(extended.copied, ['node_modules'], 'the file adds coverage to the skip list');
+
+    const attemptedReinclude = cloneIgnoredEntries({ root, target, patterns: ['!.rn-iso', '!**/.rn-iso'] });
+    assert.deepEqual(
+      attemptedReinclude.copied,
+      ['node_modules', 'coverage'],
+      'nothing in the file can bring the workspace directory back'
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+// The file-by-file half of carry-over (.worktreeinclude) reaches individual
+// gitignored files, which is how a `**/*.json`-shaped pattern could otherwise
+// pick up a workspace's own state.json.
+test('carryOverFiles never carries a file from inside a workspace directory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
+  const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
+  try {
+    mkdirSync(join(root, 'apps/mobile/.rn-iso'), { recursive: true });
+    writeFileSync(join(root, 'apps/mobile/.rn-iso/state.json'), '{"supervisorPid":123}');
+    mkdirSync(join(root, 'config'), { recursive: true });
+    writeFileSync(join(root, 'config/local.json'), '{}');
+    setExecutor({
+      run: () => '',
+      runQuiet: () => 'apps/mobile/.rn-iso/state.json\nconfig/local.json',
+      spawn: () => {},
+    });
+
+    const { copied } = carryOverFiles({ root, target, patterns: ['**/*.json'] });
+
+    assert.deepEqual(copied, ['config/local.json']);
+    assert.equal(existsSync(join(target, 'apps/mobile/.rn-iso/state.json')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+  }
 });

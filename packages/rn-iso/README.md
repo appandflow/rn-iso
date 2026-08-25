@@ -77,14 +77,17 @@ The order is not optional: `ios` / `android` never start the bundler, so with no
 Each command takes `--json` and then prints exactly one line of JSON on stdout, with every other line on stderr:
 
 ```json
-{"platform":"ios","udid":"BF2A-...","deviceName":"rn-iso-myproject","fingerprint":"a3f9b1...","cacheKey":"...","cacheHit":true,"appPath":"/...","bundleId":"com.example.app","launched":true,"metroPort":8082,"logs":{"dir":"/path/.rn-iso/logs"},"durationMs":9412}
+{"platform":"ios","udid":"BF2A-...","deviceName":"rn-iso-myproject","fingerprint":"a3f9b1...","cacheKey":"...","cacheHit":"local","cacheSkipped":false,"appPath":"/...","bundleId":"com.example.app","launched":true,"metroPort":8082,"logs":{"dir":"/path/.rn-iso/logs"},"durationMs":9412}
 ```
+
+`cacheHit` is a LEVEL, not a boolean: `"local"` (this machine's shared cache), `"remote"` (the project's own Expo `buildCacheProvider`, whose artifact is copied into the local cache on the way past) or `false` (it was compiled). `cacheSkipped` is true only when `--no-build-cache` was passed, which is "nothing was looked up" rather than "nothing was found".
 
 In a different worktree of the same app, the same two commands get a *different* owned sim and Metro port, so both run side by side.
 
-To set a repo up for that in the first place, `rn-iso init` writes the loop
-documentation and a `scripts/dev` runner, then reports what is still slow, and
-`rn-iso doctor` reports the same findings on their own:
+To set a repo up for that in the first place, `rn-iso init` writes a
+`scripts/dev` runner and the `.gitignore` entry a parallel workspace needs,
+then reports what is still slow, and `rn-iso doctor` reports the same findings
+on their own:
 
 ```bash
 npx rn-iso init
@@ -133,13 +136,13 @@ All commands below take the same `npx rn-iso` prefix.
 |---|---|
 | `start [--json] [--wait <seconds>]` | Start this workspace's dev server on the reserved port under a detached supervisor, and block until it answers *and* verifies as this project's (default 60s). Idempotent: a healthy dev server on the port is a no-op. Bare RN is hosted in-process with rn-iso's NDJSON reporter; Expo runs the project's own `expo start --port <n>` as a child. Structured logs land in `<root>/.rn-iso/logs`. |
 | `logs [--source <s...>] [--level <l>] [--since <d>] [--grep <re>] [--tail <n>] [--errors] [--follow] [--json]` | Query the merged NDJSON timeline in `<root>/.rn-iso/logs`. Prints and exits; nothing matching is a successful, empty result (exit 0). `--errors` is the agent-loop query: errors and fatals since the last marker. `--follow` streams. |
-| `ios [--json] [--no-metro-check]` | Boot this workspace's owned simulator, verify the reserved port holds *this project's* dev server, fingerprint the native inputs, install the cached `.app` if that fingerprint has one (otherwise prebuild / `pod install` / `xcodebuild` and store the result), install, launch wired to the reserved port, and attach a device-log collector. Refuses with `RN_ISO_NO_METRO` in about a second when nothing holds the port; `--no-metro-check` overrides. Debug / simulator only. |
-| `android [--json] [--no-metro-check]` | The same over `gradlew assembleDebug` and `adb`, on this workspace's owned emulator, with `adb reverse tcp:8081 tcp:<port>` doing the port wiring. |
+| `ios [--json] [--no-metro-check] [--no-build-cache]` | Boot this workspace's owned simulator, verify the reserved port holds *this project's* dev server, fingerprint the native inputs, install the cached `.app` if that fingerprint has one (otherwise prebuild / `pod install` / `xcodebuild` and store the result), install, launch wired to the reserved port, and attach a device-log collector. Refuses with `RN_ISO_NO_METRO` in about a second when nothing holds the port; `--no-metro-check` overrides. On an Expo project a local miss also asks the provider the project already configured (`expo.buildCacheProvider`), time-bounded, and a hit is stored locally on the way past. `--no-build-cache` looks nothing up and builds fresh -- it still stores (replacing the entry) and still uploads. Debug / simulator only. |
+| `android [--json] [--no-metro-check] [--no-build-cache]` | The same over `gradlew assembleDebug` and `adb`, on this workspace's owned emulator, with `adb reverse tcp:8081 tcp:<port>` doing the port wiring. |
 | `stop [--force] [--json]` | The inverse of `start`: halt this workspace's supervisor, reap its device-log collectors, shut the owned device **down** (never deleted, so it stays assigned), and free the reserved port. Non-destructive and takes no target -- it acts on the current workspace. With no supervisor recorded it falls back to killing an identity-verified Metro on the reserved port; `--force` is only for an unproven listener there. Already-stopped is a success at every step. |
 | `status [--json]` | Show every registered project (machine-wide by default; there is no `--all`): device assignments (owned/legacy), Metro state, supervisor pid / mode / health, last build (fingerprint, cache hit, duration), log directory and error count since the last marker, plus machine capacity and disk. |
 | `gc [--delete] [--older-than <days>] [--all]` | Report what rn-iso has left behind: entries for projects whose directory no longer exists, orphaned `rn-iso-*` devices, and every shared build cache with its size. Reports and writes nothing by default; `--delete` reclaims the dead entries (freeing their Metro ports) and reaps the orphaned devices. `--older-than <days>` additionally reaps owned devices whose *project* has gone untouched that long, and trims cache entries nothing has used in that time. `--all` (with `--delete`) empties the caches whole -- see below. |
 | `doctor [--json]` | Report the configuration that makes a second workspace slower than it needs to be: a missing dev client, a per-project Metro cache, a compilation cache left at its default path, a ccache conflict, a build-cache provider on the key this SDK ignores. Read-only, and always exits 0. |
-| `init [--force]` | Write `WORKFLOW.md`, an executable `scripts/dev` (`rn-iso start` then `rn-iso <platform>`), and `.worktreeexclude` for this repo, add `.rn-iso/` to `.gitignore`, then run `doctor`. Never overwrites an existing file without `--force`. |
+| `init [--force]` | Write an executable `scripts/dev` (`rn-iso start` then `rn-iso <platform>`), add `.rn-iso/` to the project's `.gitignore`, then run `doctor`. Never overwrites an existing file without `--force`. |
 | `worktree create <name> [--base fresh\|head] [--label <name>] [--carry-ignored]` | Create an isolated git worktree: carries over gitignored files, prints the worktree path. Does not install dependencies unless `--carry-ignored` clones them. |
 | `worktree remove [<path>] [--force]` | Remove a worktree, reclaiming its build artifacts, Metro port, and owned devices (deleted, not just freed). Defaults to the current workspace. Refuses if it has uncommitted or unpushed work unless `--force`. |
 | `guide [topic]` | Print reference docs for the installed version (topics: facts, metro, logs, errors, lifecycle, cleanup, settings). Generated by the binary, so it cannot drift. |
@@ -355,9 +358,10 @@ Only files that are both gitignored and pattern-matched are copied -- tracked fi
 
 #### `--carry-ignored`
 
-That carry-over is file-by-file, which suits a handful of small config files but not the multi-gigabyte trees a worktree needs in order to build without reinstalling. `worktree create --carry-ignored` instead clones **every** gitignored path -- `node_modules`, `ios/Pods`, `ios/build` (React Native codegen output, without which `xcodebuild` fails on a missing `States.cpp` until `pod install` regenerates it) -- minus anything matching:
+That carry-over is file-by-file, which suits a handful of small config files but not the multi-gigabyte trees a worktree needs in order to build without reinstalling. `worktree create --carry-ignored` instead clones **every** gitignored path -- `node_modules`, `ios/Pods`, `ios/build` (React Native codegen output, without which `xcodebuild` fails on a missing `States.cpp` until `pod install` regenerates it) -- minus:
 
-- `.worktreeexclude` at the repo root, same gitignore-style syntax as `.worktreeinclude`, e.g.:
+- `.rn-iso/`, at any depth, **always**. It holds the workspace's own derived data, logs and supervisor pidfile: build output keyed to a path the new worktree does not have, and a pidfile for a process that is not running. That exclusion is in code, and no pattern file can turn it off.
+- anything matching `.worktreeexclude` at the repo root, same gitignore-style syntax as `.worktreeinclude`, e.g.:
   ```
   bench/results/logs
   ```
