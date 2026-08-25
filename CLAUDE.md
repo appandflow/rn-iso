@@ -4,16 +4,25 @@ Quick orientation for AI assistants working in this repo.
 
 ## What this is
 
-A Node.js CLI that acts as an environment broker for React Native / Expo:
-`rn-iso up <platform>` creates (or reuses) an **owned** simulator/emulator and
-reserves a Metro port for the current project (or git worktree), then prints
-the facts — UDID/serial, port, bundle id — so an agent can start Metro and run
-the project's own build against them. rn-iso itself never builds, installs, or
-starts a bundler. The
-lifecycle is `worktree create` -> `up <platform> --json` -> agent starts Metro
-on the reserved port -> agent runs the
-project's build -> work -> `worktree remove` (which reaps the owned
-device(s) along with the worktree).
+A Node.js CLI that gives a React Native / Expo project (or git worktree) an
+isolated dev environment. It brokers the two contended resources — `rn-iso up
+<platform>` creates (or reuses) an **owned** simulator/emulator and reserves a
+Metro port, then prints the facts (UDID/serial, port, bundle id) — and, as of
+v3, it also **runs the dev server**: `rn-iso start` hosts it under a detached
+per-workspace supervisor (bare RN in-process with an NDJSON reporter; Expo as a
+child `expo start --port N`), `rn-iso logs` queries the captured NDJSON
+timeline under `<root>/.rn-iso/logs`, and `rn-iso stop` is the inverse of
+`start` (halt the supervisor, shut the owned device DOWN, free the port — it
+never deletes). rn-iso still never builds or installs.
+
+The v3 lifecycle is `worktree create` -> `start` -> `up <platform> --json` ->
+agent runs the project's build -> `logs --errors` -> `stop` / `worktree remove`
+(which reaps the owned device(s) along with the worktree).
+
+**Transition state.** v3's `ios` / `android` build commands do not exist yet, so
+the build step is still the agent's own command against `up`'s facts, and
+`up` / `device` / `release` / `shutdown` are all still registered. Document the
+surface the binary actually has, not the one the v3 spec describes.
 
 State lives in `~/.rn-iso/config.json`, keyed by absolute project path. The
 `RN_ISO_HOME` env var redirects this for tests.
@@ -89,6 +98,11 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
     project.js            # project root walk, bundle-id detection (incl. native fallbacks), shortcut resolution
     ports.js              # Metro port allocation, reclamation, and race-safe reservation
     metro.js              # port-to-process identity (resolveProjectMetro) and group killing
+    ndjson.js             # Contract 1: the log record. LEVELS/SOURCES, the parser, and
+                          # createNdjsonWriter (writing never throws; drops are counted)
+    logs-query.js         # reading the timeline back: k-way merge over <logs>/*.ndjson,
+                          # recordMatches / queryLogs / followLogs, and the --errors
+                          # marker window
     worktree.js           # git worktree add/remove/list, base-ref resolution, carry-over
     fs-util.js            # volume utilities (volumeRootFor, isRealMount, listMountedVolumes,
                           # isOnMountedVolume) and sizing (directorySize, formatBytes)
@@ -111,10 +125,22 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
     sim/
       ios.js              # simctl wrappers, owned-sim creation/selection, ownership verification
       android.js          # adb/emulator/avdmanager wrappers, owned-AVD creation/selection
+    supervisor/
+      run.js              # the detached per-workspace supervisor: writes its records BEFORE
+                          # serving, no silent exit path, plus the state.json/pid helpers
+      server-bare.js      # bare RN: hosts Metro in-process from the PROJECT's node_modules
+                          # and attaches @rn-iso/metro's ndjsonReporter
+      server-expo.js      # expo: spawns the project's own `expo start --port N` and parses
+                          # its stdout into records (levels inferred, raw: true)
+      errors.js           # {code, message, remedy}; separate so server-*.js never imports
+                          # run.js back (that cycle deadlocked the first live run)
     commands/
       up.js               # the broker command: ensure owned device, reserve Metro port, print facts
       device.js           # read-only facts query, no ensure side effects
-      stop.js             # kill this project's Metro, identity-verified
+      start.js            # spawn the detached supervisor, wait for identity-verified health
+      logs.js             # query/follow the merged NDJSON timeline; empty result is exit 0
+      stop.js             # the inverse of start: supervisor halted, owned device shut down
+                          # (never deleted), port freed. Identity-verified, non-destructive
       status.js
       release.js shutdown.js
       worktree.js         # worktree create/remove/list
@@ -233,15 +259,23 @@ repo's setup commands -- a plain install, a workspace filter, a codegen step
 after it -- is the same judgment call as choosing a build or bundler command.
 
 On Metro specifically: rn-iso reserves the port -- a genuinely
-contended, cross-project resource that only a broker can arbitrate -- but no
-longer spawns the bundler, because choosing its command line is the same
-project-specific judgment that made build dispatch untenable. The concrete
-failure that settled it: on `member-app`, whose own start script is
+contended, cross-project resource that only a broker can arbitrate. It also
+stopped spawning the bundler in 0.8.0, because choosing its command line was
+the same project-specific judgment that made build dispatch untenable. The
+concrete failure that settled it: on `member-app`, whose own start script is
 `react-native start --client-logs`, rn-iso spawned `react-native start --port
-8082` and silently dropped the project's flag. If you are tempted to re-add
-spawning, note that it also never bought what it appeared to: the agent still
-had to pass `--port` to its own build, so a forgotten flag produced a second
-bundler on 8081 either way.
+8082` and silently dropped the project's flag.
+
+**v3 amends the Metro half of this, and only that half.** `rn-iso start` runs
+the dev server again -- but by REIMPLEMENTING the operation, not by
+reconstructing someone's command line. The supervisor hosts a bare RN project's
+Metro in-process from the project's own `node_modules`, and for Expo it runs
+`expo start --port <n>` and NOTHING else, ever. The option surface is two flags
+(`--json`, `--wait`) and does not grow: `--client-logs` is the archetype of what
+is deleted rather than ported, because capture is unconditional and a queryable
+file has no terminal noise to manage. A project needing more wraps rn-iso in an
+npm script. The build half is unamended: `up` still never builds, installs or
+launches anything, and `worktree create` still runs no install pipeline.
 
 ### 4. Owned-device teardown is centralized and ownership-verified
 

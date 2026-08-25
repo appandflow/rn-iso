@@ -1,6 +1,6 @@
 # rn-iso
 
-An environment broker for React Native / Expo: `rn-iso up <platform>` creates (or reuses) a dedicated, **owned** simulator/emulator and reserves a Metro port for the current project, then hands you the facts -- UDID/serial, port, bundle id -- so you (or your coding agent) can start Metro and run the project's own build. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
+Isolated React Native / Expo dev environments, one per project or worktree. `rn-iso up <platform>` creates (or reuses) a dedicated, **owned** simulator/emulator and reserves a Metro port, then hands you the facts -- UDID/serial, port, bundle id -- to run the project's own build against. `rn-iso start` runs the dev server on that port under a detached supervisor and captures everything it prints, so `rn-iso logs --errors` can answer "did that build work" without scraping a terminal. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
 
 > **Experimental.** APIs, flags, and on-disk state may change. File issues if anything breaks.
 
@@ -24,11 +24,14 @@ else's Metro. When an agent is killed mid-run it leaves a simulator booted, a
 Metro squatting on a port, and an `xcodebuild` test runner pinning a device
 nothing can now delete.
 
-That is the whole job of this tool: arbitrate the contended resources, and
-reclaim them when the agent that owned them dies badly. Everything else --
-which build command, which bundler flags, when to install -- is judgment a
-coding agent already has from reading the repo, and rn-iso deliberately does
-not take it back.
+That is the first job of this tool: arbitrate the contended resources, and
+reclaim them when the agent that owned them dies badly. The second is the dev
+server, which every agent otherwise backgrounds by hand and then scrapes a log
+file for: `start` runs it on the reserved port and captures its output as
+structured records, so `logs --errors` replaces the scraping. What stays out is
+the build -- which command, which flags, when to install -- because that is
+judgment a coding agent already has from reading the repo, and rn-iso
+deliberately does not take it back.
 
 ### Where local honestly loses
 
@@ -56,11 +59,13 @@ npx rn-iso up ios --json     # ensure an owned sim + Metro port; print the facts
 {"platform":"ios","owned":true,"metroPort":8082,"metroHealthy":false,"metroConflict":null,"bundleId":"io.tlon.groups","udid":"ABC-...","deviceName":"rn-iso-myproject"}
 ```
 
-`up` never builds or installs anything -- run the project's own build against the printed facts:
+`up` never builds or installs anything -- start the dev server, run the project's own build against the printed facts, then ask what went wrong:
 
 ```bash
-npx expo run:ios --device ABC-... --port 8082
-# or: npx react-native run-ios --udid ABC-... --port 8082
+npx rn-iso start                                  # dev server on 8082, supervised; blocks until healthy
+npx expo run:ios --device ABC-... --port 8082     # or: npx react-native run-ios --udid ABC-... --port 8082
+npx rn-iso logs --errors                          # no output + exit 0 = nothing is broken
+npx rn-iso stop                                   # supervisor down, sim shut down, port freed
 ```
 
 In a different worktree of the same app, `up` creates a *different* owned sim and Metro port, so both run side by side:
@@ -106,7 +111,7 @@ A pre-pivot assignment without `owned: true` ("legacy") is reused only while it 
 
 **A delete is not occupancy-guarded.** An owned sim goes away even if another tool is still attached to it. It is a device rn-iso created, for a project that is going away, and the process holding it is almost always the caller's own UI-test runner, which has nothing to return to. Skipping occupied sims there leaked booted sims and live `xcodebuild test-without-building` runners out of `worktree remove`, and "left for a later gc" only asked the same question again forever.
 
-`shutdown` is the occupancy-guarded path, because the device it spares survives the call and is still there to come back to: an iOS sim actively driven by a foreign UI-test runner is left running and reported instead of shut down. (Android has no occupancy probe, so an owned, identity-verified AVD is always eligible.)
+`shutdown` is the occupancy-guarded path (and `stop` uses the same one), because the device it spares survives the call and is still there to come back to: an iOS sim actively driven by a foreign UI-test runner is left running and reported instead of shut down. (Android has no occupancy probe, so an owned, identity-verified AVD is always eligible.)
 
 If a delete fails, the failure is reported, the config record is **kept** so the device stays tracked, and `release` exits 1. Dropping the record on a failed teardown is exactly what turns it into a simulator nothing references.
 
@@ -116,10 +121,12 @@ All commands below take the same `npx rn-iso` prefix.
 
 | Command | Purpose |
 |---|---|
-| `up <ios\|android> [--json] [--wait-metro [seconds]] [--device-type <name>] [--runtime <ver>] [--system-image <pkg>] [--serial <serial>]` | Ensure an owned device and reserve a Metro port for the current project; print the facts. `--wait-metro` blocks until *this project's* Metro answers on the reserved port (default 60s). `--serial` assigns a connected physical Android device instead of creating an emulator. Never builds, never starts Metro. |
+| `start [--json] [--wait <seconds>]` | Start this workspace's dev server on the reserved port under a detached supervisor, and block until it answers *and* verifies as this project's (default 60s). Idempotent: a healthy dev server on the port is a no-op. Bare RN is hosted in-process with rn-iso's NDJSON reporter; Expo runs the project's own `expo start --port <n>` as a child. Structured logs land in `<root>/.rn-iso/logs`. |
+| `logs [--source <s...>] [--level <l>] [--since <d>] [--grep <re>] [--tail <n>] [--errors] [--follow] [--json]` | Query the merged NDJSON timeline in `<root>/.rn-iso/logs`. Prints and exits; nothing matching is a successful, empty result (exit 0). `--errors` is the agent-loop query: errors and fatals since the last marker. `--follow` streams. |
+| `up <ios\|android> [--json] [--wait-metro [seconds]] [--device-type <name>] [--runtime <ver>] [--system-image <pkg>] [--serial <serial>]` | Ensure an owned device and reserve a Metro port for the current project; print the facts. `--wait-metro` blocks until *this project's* Metro answers on the reserved port (default 60s). `--serial` assigns a connected physical Android device instead of creating an emulator. Never builds, and never starts the dev server -- that is `start`. |
 | `device [--platform ios\|android] [--json]` | Print the current device assignment (no ensure/create side effects). |
-| `stop [<port>\|<shortcut>\|<path>] [--force]` | Kill this project's Metro, after proving the process on the reserved port is ours. `--force` kills an unidentified listener. Pass a port to target it directly; a port no project owns prompts first. No arg = current project. |
-| `status [--json]` | Show all projects' device assignments (owned/legacy) and Metro state. |
+| `stop [--force] [--json]` | The inverse of `start`: halt this workspace's supervisor, shut the owned device **down** (never deleted, so it stays assigned), and free the reserved port. Non-destructive and takes no target -- it acts on the current workspace. With no supervisor recorded it falls back to killing an identity-verified Metro on the reserved port; `--force` is only for an unproven listener there. Already-stopped is a success at every step. |
+| `status [--json]` | Show every registered project: device assignments (owned/legacy), Metro state, supervisor pid / mode / health, log directory and error count since the last marker, plus machine capacity and disk. |
 | `release [<port>\|<shortcut>\|<path>] [--platform <p>]` | Free a project's device assignment. Deletes the device if owned, without checking occupancy (see above); clears it if legacy/physical. On a failed delete it keeps the record and exits 1. |
 | `shutdown [<shortcut>\|<path>] [-y] [--keep-sims]` | Kill Metro, shut down (never delete) owned sims/emulators, skipping any that are occupied. Owned device records stay recorded so `up` can reuse them; legacy/physical assignments are cleared. No arg = every registered project. |
 | `gc [--delete] [--older-than <days>] [--all]` | Report what rn-iso has left behind: entries for projects whose directory no longer exists, orphaned `rn-iso-*` devices, and every shared build cache with its size. Reports and writes nothing by default; `--delete` reclaims the dead entries (freeing their Metro ports) and reaps the orphaned devices. `--older-than <days>` additionally reaps owned devices whose *project* has gone untouched that long, and trims cache entries nothing has used in that time. `--all` (with `--delete`) empties the caches whole -- see below. |
@@ -132,7 +139,7 @@ All commands below take the same `npx rn-iso` prefix.
 | `worktree create <name> [--base fresh\|head] [--label <name>] [--carry-ignored]` | Create an isolated git worktree: carries over gitignored files, prints the worktree path. Does not install dependencies unless `--carry-ignored` clones them. |
 | `worktree remove <path> [--force]` | Remove a worktree, reclaiming its build artifacts, Metro port, and owned devices (deleted, not just freed). Refuses if it has uncommitted or unpushed work unless `--force`. |
 | `worktree list` | List this repo's worktrees and their branches. |
-| `guide [topic]` | Print reference docs for the installed version (topics: facts, metro, errors, lifecycle, cleanup, settings). Generated by the binary, so it cannot drift. |
+| `guide [topic]` | Print reference docs for the installed version (topics: facts, metro, logs, errors, lifecycle, cleanup, settings). Generated by the binary, so it cannot drift. |
 | `skill install [--print]` | Copy this version's agent skills into `~/.claude/skills` and `~/.agents/skills`. Run after upgrading. |
 
 ## How it works
@@ -141,9 +148,40 @@ All commands below take the same `npx rn-iso` prefix.
 - **Port allocation:** `up` scans upward from 8082 for a port that is both unclaimed in the registry and actually free on the machine, reclaiming ports from dead projects on the way. Claiming is race-safe: the write only lands if the config still shows the port unclaimed, so two parallel `up` runs that probe the same free port cannot both take it. A project whose directory only *looks* gone because its volume is unmounted keeps its port.
 - **Owned device creation:** on iOS, `up` creates the newest iPhone device type -- highest generation number, base model rather than Pro/Pro Max -- on the newest installed runtime by default (or reuses the project's already-recorded owned sim, booting it if shut down). On Android, it creates an AVD via `avdmanager create avd` against the newest installed arm64 system image (rn-iso never installs system images itself -- it errors with install instructions if none is found). Override the defaults with `--device-type`/`--runtime`/`--system-image`, or persist them via `rn-iso config ios.deviceType|ios.runtime|android.systemImage`.
 - **rn-iso never runs a build.** `up` only provisions the device, Metro port, and (on Android) `adb reverse`; you run the project's own `expo run:*` / `react-native run-*` (or its wrapping script) against the printed facts.
-- **rn-iso reserves the Metro port; you start Metro.** Which bundler command a project needs is project-specific judgment -- the same reason rn-iso stopped wrapping builds -- so `up` allocates and records a collision-free port and leaves the invocation to you. Both Expo and the RN CLI probe the target port and skip spawning a second bundler when Metro already answers `/status`, which is what makes it safe to start Metro yourself and then build against it. Teardown (`stop`, `release`, `worktree remove`, `gc`) finds Metro by port via `lsof`, but only kills it after confirming it answers `/status` **and** runs from inside the project -- a port is not identity, so an unidentified listener is reported instead of killed.
+- **rn-iso reserves the Metro port, and `start` hosts the dev server on it.** See "The dev server and logs" below. Starting the bundler yourself against the reserved port still works -- both Expo and the RN CLI probe the port and skip spawning a second bundler when one already answers `/status` -- but nothing is captured that way. Teardown (`stop`, `release`, `worktree remove`, `gc`) finds Metro by port via `lsof` and only kills it after confirming it answers `/status` **and** runs from inside the project: a port is not identity, so an unidentified listener is reported instead of killed.
 
 If you need a single shared sim with a mutex instead of one owned device per project, see [`react-native-worktree`](https://github.com/aleqsio/react-native-worktree).
+
+## The dev server and logs
+
+`rn-iso start` runs the dev server for you, on the port `up` reserves, under a **detached per-workspace supervisor**. It blocks until the server both answers and verifies as this project's (the same identity check teardown uses, never a bare port probe), then exits leaving it running:
+
+```bash
+npx rn-iso start --json
+# {"port":8082,"supervisorPid":41233,"mode":"bare-inproc","logsDir":"/path/.rn-iso/logs","alreadyRunning":false}
+```
+
+It has two flags and will not grow more: `--json` and `--wait <seconds>` (default 60). Anything a project needs beyond that belongs in its own bundler command. Running `start` twice leaves one supervisor -- a healthy dev server on the port is a no-op, including one you started yourself, which is reported with `supervisorPid: null` and left alone rather than fought over.
+
+There is no machine-wide daemon: one supervisor process per workspace, recorded in `<root>/.rn-iso/state.json` and in the registry before it starts serving, and gone (with its records) on any exit path. Two modes:
+
+- **`bare-inproc`** -- bare React Native: Metro is hosted *inside* the supervisor, loaded from the project's own `node_modules`, with `@rn-iso/metro`'s NDJSON reporter attached. Bundler events, in-app `console.log` and redboxes all arrive structured. Hosting is the only way to get them: both CLIs overwrite `config.reporter` after loading `metro.config.js`, so a reporter wired in there is discarded.
+- **`expo-child`** -- Expo: the project's own `expo start --port <n>` runs as a child and its stdout is parsed into the same records. Expo's dev server is protocol-bearing (manifest, dev-client and expo-router middleware), so reimplementing it would be forking Expo; the cost is that levels are *inferred* from each line, which those records mark with `raw: true`.
+
+Everything lands as one JSON object per line under `<root>/.rn-iso/logs`, and `rn-iso logs` queries the files merged into one timeline:
+
+```bash
+npx rn-iso logs --errors            # errors since the last marker; empty + exit 0 = healthy
+npx rn-iso logs --source client --since 5m --grep 'Profile'
+npx rn-iso logs --follow --level warn
+npx rn-iso logs --errors --json     # raw records, so stdout is valid NDJSON
+```
+
+**Nothing matching is exit 0.** `logs --errors` returning nothing is the pass condition of a build loop, so an empty result must never read as a failure; the only exit-1 paths are a malformed query and no project. `--errors` means level `error` or `fatal` strictly after the most recent record carrying `marker: true`, and the marker is searched across every source, so a marker in one file closes the window for all of them. Markers are written when a bundle build finishes -- which is what stops an error you already fixed from being reported forever. `rn-iso status` reports the same count per workspace.
+
+The record is `{ ts, src, level, msg }` plus optional `event`, `stack`, `marker` and `raw`. `src` is one of `metro`, `client`, `device`, `build`; today the supervisor writes `metro` (both modes) and `client` (bare only -- in `expo-child` mode Expo's client output arrives on the bundler stream). `.rn-iso/logs/supervisor.log` is deliberately *not* part of the timeline: it is the supervisor's raw stdio, and it is what `start` quotes when a supervisor dies before it can write a structured record.
+
+`rn-iso stop` is the inverse: it halts the supervisor (identity-verified: a pid is only signalled when it is alive, recorded for this workspace, and holding the port this project reserved), shuts the owned device down without deleting it, and frees the port. It never escalates to `SIGKILL` -- a supervisor mid-write on the log files is exactly what `SIGTERM` handling exists to finish -- so a supervisor that will not exit is reported with its pid instead.
 
 ## Per-project settings (`rn-iso config`)
 
@@ -285,12 +323,12 @@ store is the one a matching lookup finds.
 
 ## Project shortcuts (--label)
 
-Every project has a "shortcut" you can pass to `stop` / `release` / `config --project` instead of the full path: its `label` if one was set (e.g. via `worktree create --label`), else inherited from the enclosing worktree's label, else the directory basename.
+Every project has a "shortcut" you can pass to `release` / `shutdown` / `config --project` instead of the full path: its `label` if one was set (e.g. via `worktree create --label`), else inherited from the enclosing worktree's label, else the directory basename.
 
 ```bash
 npx rn-iso worktree create feature-x --label agent-1
-npx rn-iso stop agent-1
 npx rn-iso release agent-1
+npx rn-iso shutdown agent-1
 ```
 
 Shortcut collisions (two projects sharing the same basename with no distinguishing label) error out and list the candidates so you can disambiguate with the absolute path.
