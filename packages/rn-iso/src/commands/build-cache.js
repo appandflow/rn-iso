@@ -2,8 +2,7 @@ import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { findProjectRoot } from '../project.js';
 import { buildCacheKey, cacheRoot, fingerprintProject, loadFingerprinter, resolveBuild, storeBuild } from '../build-cache.js';
-import { formatBytes } from '../artifacts.js';
-import { directorySize } from '../artifacts.js';
+import { directorySize, formatBytes } from '../fs-util.js';
 
 const PLATFORMS = new Set(['ios', 'android']);
 

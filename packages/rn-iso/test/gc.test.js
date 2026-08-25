@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
@@ -8,53 +8,24 @@ import { setExecutor, resetExecutor } from '../src/exec.js';
 import { saveConfig, loadConfig } from '../src/config.js';
 import gcCommand, { findOrphanedDevices, formatGcReport, describeUnverifiableDevices } from '../src/commands/gc.js';
 
-test('reports orphans with sizes and a total', () => {
-  const lines = formatGcReport({
-    orphaned: [{ dir: '/dd/App-abc', workspacePath: '/gone/App.xcworkspace', bytes: 4617089843 }],
-    skipped: [],
-    deadProjects: [],
-    totalBytes: 4617089843,
-  }).join('\n');
-  assert.match(lines, /App-abc/);
-  assert.match(lines, /4\.3G/);
-});
-
 test('names skipped entries and why they were skipped', () => {
   const lines = formatGcReport({
-    orphaned: [],
-    skipped: [{ dir: '/dd/X', reason: 'volume /Volumes/ExternalSSD is not mounted' }],
+    skipped: [{ dir: '/Volumes/ExternalSSD/proj', reason: 'volume /Volumes/ExternalSSD is not mounted' }],
     deadProjects: [],
-    totalBytes: 0,
   }).join('\n');
   assert.match(lines, /not mounted/);
   assert.match(lines, /skipped/i);
 });
 
 test('says nothing to reclaim when everything is clean', () => {
-  const lines = formatGcReport({ orphaned: [], skipped: [], deadProjects: [], totalBytes: 0 }).join('\n');
+  const lines = formatGcReport({ skipped: [], deadProjects: [] }).join('\n');
   assert.match(lines, /nothing to reclaim/i);
-});
-
-test('marks an unmeasured entry instead of printing a misleading 0K', () => {
-  const lines = formatGcReport({
-    orphaned: [
-      { dir: '/dd/App-def', workspacePath: '/gone/App2.xcworkspace', bytes: 0, measured: false },
-    ],
-    skipped: [],
-    deadProjects: [],
-    totalBytes: 0,
-  }).join('\n');
-  assert.match(lines, /App-def/);
-  assert.match(lines, /unmeasured/i);
-  assert.match(lines, /lower bound/i);
 });
 
 test('lists dead project entries', () => {
   const lines = formatGcReport({
-    orphaned: [],
     skipped: [],
     deadProjects: ['/gone/proj'],
-    totalBytes: 0,
   }).join('\n');
   assert.match(lines, /\/gone\/proj/);
   assert.match(lines, /Dead project entries/);
@@ -62,10 +33,8 @@ test('lists dead project entries', () => {
 
 test('headline does not claim "nothing to reclaim" without flagging unchecked entries', () => {
   const lines = formatGcReport({
-    orphaned: [],
-    skipped: [{ dir: '/dd/X', reason: 'volume /Volumes/ExternalSSD is not mounted' }],
+    skipped: [{ dir: '/Volumes/ExternalSSD/proj', reason: 'volume /Volumes/ExternalSSD is not mounted' }],
     deadProjects: [],
-    totalBytes: 0,
   }).join('\n');
   const headline = lines.split('\n')[0];
   assert.doesNotMatch(headline, /^Nothing to reclaim\.$/);
@@ -140,59 +109,24 @@ test('a device owned only by a dead project is orphaned when that project is pas
 
 // --- Action-level tests -----------------------------------------------
 //
-// The tests above only exercise the pure formatter. Nothing above pins the
-// most important property of this command: a bare `gc` (no --delete) must
-// never reach an rmSync. These drive the real Commander action against a
-// tmpdir HOME (derivedDataRoot() honors $HOME via os.homedir()) and a
-// tmpdir RN_ISO_HOME (config.js), with the du/plutil shellouts mocked via
-// setExecutor.
+// The tests above only exercise the pure formatter. These drive the real
+// Commander action against a tmpdir RN_ISO_HOME (config.js) plus a tmpdir
+// HOME, so a "dead" project path resolves to a real, mounted boot-volume
+// ancestor rather than to the developer's own repos.
 
 let tmpHome;
 let fakeHome;
-let ddRoot;
 let originalHome;
 
-function makeDdEntry(name, { workspacePath, kb } = {}) {
-  const dir = join(ddRoot, name);
-  mkdirSync(dir, { recursive: true });
-  const plistPath = join(dir, 'info.plist');
-  writeFileSync(plistPath, 'placeholder, only existence is checked directly');
-  return { dir, plistPath, workspacePath, kb };
-}
-
-function installExecutor(entries) {
-  const plists = {};
-  const sizes = {};
-  for (const e of entries) {
-    if (e.workspacePath !== undefined) {
-      plists[e.plistPath] = { workspacePath: e.workspacePath, lastAccessed: '2026-01-01T00:00:00Z' };
-    }
-    if (e.kb !== undefined) sizes[e.dir] = e.kb;
-  }
+// No device tooling and no shellouts of any kind: any `run` is a bug, and
+// runQuiet answers the lsof port lookup reclaimProject makes with "no live
+// pid". Tests that need a live simctl listing use installDeviceExecutor.
+function installExecutor() {
   setExecutor({
     run(cmd) {
       throw new Error(`unexpected run: ${cmd}`);
     },
-    runQuiet(cmd) {
-      // Mirrors the real plutil binary's per-key -extract, which
-      // listDerivedDataEntries uses instead of a whole-file -convert json
-      // (that fails on a real info.plist because LastAccessedDate is a
-      // plist <date>, which JSON cannot represent).
-      const extractMatch = cmd.match(/^plutil -extract (\w+) raw -o - "(.+)"$/);
-      if (extractMatch) {
-        const [, key, path] = extractMatch;
-        const entry = plists[path];
-        if (!entry) return null;
-        if (key === 'WorkspacePath') return entry.workspacePath;
-        if (key === 'LastAccessedDate') return entry.lastAccessed;
-        return null;
-      }
-      const duMatch = cmd.match(/^du -sk "(.+)"$/);
-      if (duMatch) {
-        const kb = sizes[duMatch[1]];
-        return kb !== undefined ? `${kb}\t${duMatch[1]}` : null;
-      }
-      // e.g. lsof port lookups from reclaimProject: no live pid.
+    runQuiet() {
       return null;
     },
     spawn(cmd) {
@@ -214,8 +148,6 @@ beforeEach(() => {
   originalHome = process.env.HOME;
   fakeHome = mkdtempSync(join(tmpdir(), 'rn-iso-fakehome-'));
   process.env.HOME = fakeHome;
-  ddRoot = join(fakeHome, 'Library', 'Developer', 'Xcode', 'DerivedData');
-  mkdirSync(ddRoot, { recursive: true });
 });
 
 afterEach(() => {
@@ -227,45 +159,21 @@ afterEach(() => {
   else process.env.HOME = originalHome;
 });
 
-test('a bare gc deletes nothing, even with orphans present', async () => {
-  const liveWorkspace = join(fakeHome, 'live-project');
-  mkdirSync(liveWorkspace, { recursive: true });
-
-  const orphan = makeDdEntry('App-orphan', {
-    workspacePath: join(fakeHome, 'gone', 'App.xcworkspace'),
-    kb: 1024,
+// A bare `gc` must never write. The unmounted-volume entry is the one that
+// matters: an unplugged external SSD makes a live project look dead, and
+// unregistering it would drop its device claim (CLAUDE.md item 8).
+test('a bare gc leaves every registered entry in place', async () => {
+  const localDeadPath = join(fakeHome, 'no-longer-here');
+  saveConfig({
+    version: 2,
+    projects: { [localDeadPath]: { metroPort: 8101 } },
+    repos: {},
   });
-  const live = makeDdEntry('App-live', { workspacePath: liveWorkspace, kb: 512 });
-  installExecutor([orphan, live]);
+  installExecutor();
 
   await runGc();
 
-  assert.equal(existsSync(orphan.dir), true);
-  assert.equal(existsSync(live.dir), true);
-});
-
-test('--delete removes orphaned entries but leaves skipped and live directories on disk', async () => {
-  const liveWorkspace = join(fakeHome, 'live-project');
-  mkdirSync(liveWorkspace, { recursive: true });
-
-  const orphan = makeDdEntry('App-orphan', {
-    workspacePath: join(fakeHome, 'gone', 'App.xcworkspace'),
-    kb: 2048,
-  });
-  const live = makeDdEntry('App-live', { workspacePath: liveWorkspace, kb: 512 });
-  // A workspace path on a volume that is (almost certainly) not attached to
-  // this machine: classified as skipped, not orphaned, and must survive.
-  const skipped = makeDdEntry('App-skipped', {
-    workspacePath: '/Volumes/RnIsoTestVolumeThatDoesNotExist/gone/App.xcworkspace',
-    kb: 4096,
-  });
-  installExecutor([orphan, live, skipped]);
-
-  await runGc(['--delete']);
-
-  assert.equal(existsSync(orphan.dir), false);
-  assert.equal(existsSync(live.dir), true);
-  assert.equal(existsSync(skipped.dir), true);
+  assert.ok(loadConfig().projects[localDeadPath], 'a bare gc must not prune anything');
 });
 
 test('a dead project on an unmounted volume is not unregistered', async () => {
@@ -281,7 +189,7 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
     },
     repos: {},
   });
-  installExecutor([]);
+  installExecutor();
 
   await runGc(['--delete']);
 
@@ -297,11 +205,10 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
 
 // --- Device-delete integration -----------------------------------------
 //
-// The action tests above never exercise the device-delete path: the
-// artifact-focused installExecutor() throws on any `run` it doesn't
-// recognize, so listAllIosSims() always throws and orphanedDevices is
-// always []. These seed a live simctl listing so a real rn-iso-* sim goes
-// through resolveOwnedIosSim -> occupancy -> shutdown -> delete.
+// The action tests above never exercise the device-delete path:
+// installExecutor() throws on any `run`, so listAllIosSims() always throws
+// and orphanedDevices is always []. These seed a live simctl listing so a
+// real rn-iso-* sim goes through resolveOwnedIosSim -> shutdown -> delete.
 
 function iosListJson(devices) {
   return JSON.stringify({

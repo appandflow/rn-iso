@@ -50,9 +50,10 @@ test('reclaimProject removes the config entry', async () => {
   assert.equal(getProject('/proj'), null);
 });
 
-// The DerivedData scan shells one `plutil` per directory and one `du` walk per
-// match. A caller that never reads the sizes must not pay for them.
-test('reclaimProject does not scan or size artifacts unless the caller asks', async () => {
+// Build output is workspace-local now, so reclaiming an entry has no external
+// artifacts to find or measure: it must not walk a global DerivedData tree
+// (one `plutil` per directory) or size anything (one `du` walk per match).
+test('reclaimProject scans and sizes no build output at all', async () => {
   const calls = [];
   setExecutor({
     run: (cmd) => { calls.push(cmd); return ''; },
@@ -62,24 +63,9 @@ test('reclaimProject does not scan or size artifacts unless the caller asks', as
   const { reclaimProject } = await import('../src/reclaim.js');
   upsertProject('/proj', { metroPort: 8082 });
 
-  const result = await reclaimProject('/proj', { deleteArtifacts: false });
-  assert.deepEqual(result.artifacts, []);
-  assert.equal(calls.some(c => c.startsWith('du -sk')), false, 'no du walk when nothing reads the sizes');
-  assert.equal(calls.some(c => c.startsWith('plutil')), false, 'no plutil scan when nothing reads the list');
-});
-
-test("reclaimProject lists artifact dirs without measuring them in 'list' mode", async () => {
-  const calls = [];
-  setExecutor({
-    run: (cmd) => { calls.push(cmd); return ''; },
-    runQuiet: (cmd) => { calls.push(cmd); return null; },
-    spawn: () => {},
-  });
-  const { reclaimProject } = await import('../src/reclaim.js');
-  upsertProject('/proj', { metroPort: 8082 });
-
-  await reclaimProject('/proj', { deleteArtifacts: false, artifacts: 'list' });
-  assert.equal(calls.some(c => c.startsWith('du -sk')), false, "'list' must not shell a du walk");
+  await reclaimProject('/proj');
+  assert.equal(calls.some(c => c.startsWith('du -sk')), false, 'no du walk');
+  assert.equal(calls.some(c => c.startsWith('plutil')), false, 'no DerivedData scan');
 });
 
 // A device whose delete FAILED is still on the machine. Dropping the entry

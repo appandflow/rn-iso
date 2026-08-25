@@ -11,7 +11,7 @@
 import { existsSync, readdirSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { join, resolve } from 'path';
-import { derivedDataRoot, directorySize } from './artifacts.js';
+import { directorySize } from './fs-util.js';
 import { registeredCaches } from './cache-manifest.js';
 import { findProjectRoot } from './project.js';
 import { resolveSettings } from './settings.js';
@@ -22,8 +22,17 @@ import { gitCommonDir, repoRoot } from './worktree.js';
 // a project that points COMPILATION_CACHE_CAS_PATH elsewhere (the only way to
 // share it when DerivedData is per-workspace) lands somewhere we cannot guess,
 // which is what the `caches` setting is for.
+// Xcode's default DerivedData root. Spelled out here rather than imported
+// because the derivedDataRoot() helper went with the DerivedData classifier:
+// nothing reverse-maps this directory to a workspace any more. It is still
+// the only place Xcode's default CAS can be, so a project that has not been
+// pointed at COMPILATION_CACHE_CAS_PATH has its cache here and nowhere else.
+function xcodeDerivedDataRoot() {
+  return join(homedir(), 'Library', 'Developer', 'Xcode', 'DerivedData');
+}
+
 function compilationCache() {
-  const dir = join(derivedDataRoot(), 'CompilationCache.noindex');
+  const dir = join(xcodeDerivedDataRoot(), 'CompilationCache.noindex');
   if (!existsSync(dir)) return null;
   // An LLVM CAS: `v4.actions` indexes the `v9.*.leaf` data files. Removing
   // leaves individually would leave the index pointing at data that is gone,

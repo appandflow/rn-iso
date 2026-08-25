@@ -1,8 +1,6 @@
-import { rmSync } from 'fs';
 import { getProject, removeProject } from './config.js';
 import { resolveProjectMetro, killMetroTree } from './metro.js';
 import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.js';
-import { directorySize, findDerivedDataFor } from './artifacts.js';
 
 // The devices this project's entry stops referencing. Dropping the reference
 // is all that happens to them here: destroying a device is the separate,
@@ -76,40 +74,18 @@ function reclaimOwnedDevices(project) {
   return { deletedDevices, skippedDevices, failedDevices };
 }
 
-// Drop a project's rn-iso state and, optionally, its external build output
-// and its owned devices. Shared by `prune`, `gc`, and `worktree remove` so
-// the three cannot drift.
+// Drop a project's rn-iso state and, optionally, its owned devices. Shared by
+// `prune`, `gc`, and `worktree remove` so the three cannot drift.
 //
-// `artifacts` selects how much the DerivedData scan does, because it is not
-// free: listing shells one `plutil` per DerivedData directory and measuring
-// shells a `du` walk per match.
-//   'skip'    do not scan at all (the caller ignores the artifact list)
-//   'list'    report the directories, with `bytes: null`
-//   'measure' report the directories and their sizes
-//
-// Callers who also delete the project directory itself (e.g. `worktree
-// remove`) must call this first: findDerivedDataFor matches on WorkspacePath
-// prefixes, which only resolve while the project directory still exists.
+// There is no build-output step here any more. Build output lives inside the
+// workspace (`<root>/.rn-iso/`), so it is reclaimed by whatever removes the
+// directory itself and never needs to be found by reverse-mapping a global
+// DerivedData tree back to a project.
 export async function reclaimProject(path, {
-  deleteArtifacts = false,
   deleteOwnedDevices = false,
-  artifacts: artifactMode = deleteArtifacts ? 'measure' : 'skip',
 } = {}) {
   const project = getProject(path);
   const dereferenced = describeDereferenced(project);
-
-  const artifacts = artifactMode === 'skip'
-    ? []
-    : findDerivedDataFor(path).map(entry => ({
-      dir: entry.dir,
-      bytes: artifactMode === 'measure' ? directorySize(entry.dir) : null,
-    }));
-
-  if (deleteArtifacts) {
-    for (const artifact of artifacts) {
-      rmSync(artifact.dir, { recursive: true, force: true });
-    }
-  }
 
   const { deletedDevices, skippedDevices, failedDevices } = deleteOwnedDevices
     ? reclaimOwnedDevices(project)
@@ -141,7 +117,6 @@ export async function reclaimProject(path, {
   return {
     path,
     dereferenced,
-    artifacts,
     killedPid,
     skippedMetro,
     metroPort: project?.metroPort ?? null,

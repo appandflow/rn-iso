@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { register, unregister } from '../cache-manifest.js';
 import { declaredCachePaths, discoverCaches, sizeCaches } from '../caches.js';
-import { formatBytes } from '../artifacts.js';
+import { formatBytes } from '../fs-util.js';
 
 export default function cacheCommand(program) {
   const cache = program

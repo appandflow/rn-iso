@@ -1,9 +1,8 @@
-import { existsSync, realpathSync, rmSync } from 'fs';
+import { existsSync, realpathSync } from 'fs';
 import { resolve } from 'path';
 import chalk from 'chalk';
 import { resolveSettings, unknownSettingKeys } from '../settings.js';
 import { isPathPrefix, loadConfig, upsertProject } from '../config.js';
-import { formatBytes } from '../artifacts.js';
 import { reclaimProject } from '../reclaim.js';
 import {
   addWorktree,
@@ -187,8 +186,8 @@ export function removalBlockers({ dirty, unpushed }) {
 // Reclaims `rootPath` itself plus every registered key that is a
 // path-segment prefix match under it (reusing isPathPrefix from config.js,
 // the same helper findEnclosingWorktreeRoot uses for the inverse lookup),
-// and aggregates the de-referenced devices, killed pids, artifacts, and
-// owned-device deletions across all of them. The environment dies whole:
+// and aggregates the de-referenced devices, killed pids, and owned-device
+// deletions across all of them. The environment dies whole:
 // `deleteOwnedDevices` is always on here, so every owned iOS sim / AVD
 // registered under the worktree (including nested monorepo app-dir keys) is
 // reaped along with it, occupied or not. A device rn-iso does not own, and one
@@ -216,26 +215,18 @@ async function reclaimAll(rootPath) {
   }
   const dereferenced = [];
   const killedPids = [];
-  const artifacts = [];
   const deletedDevices = [];
   const skippedDevices = [];
   const keptEntries = [];
   for (const key of keys) {
-    // 'measure': this command prints how much build output it reclaimed, so
-    // the du walk behind artifact.bytes is a number the user actually sees.
-    const r = await reclaimProject(key, {
-      deleteArtifacts: false,
-      deleteOwnedDevices: true,
-      artifacts: 'measure',
-    });
+    const r = await reclaimProject(key, { deleteOwnedDevices: true });
     dereferenced.push(...r.dereferenced);
     if (r.killedPid) killedPids.push(r.killedPid);
-    artifacts.push(...r.artifacts);
     deletedDevices.push(...r.deletedDevices);
     skippedDevices.push(...r.skippedDevices);
     if (r.keptEntry) keptEntries.push(key);
   }
-  return { dereferenced, killedPids, artifacts, deletedDevices, skippedDevices, keptEntries };
+  return { dereferenced, killedPids, deletedDevices, skippedDevices, keptEntries };
 }
 
 export function registerRemove(worktree) {
@@ -330,12 +321,12 @@ export function registerRemove(worktree) {
         return;
       }
 
-      // Find artifacts before the directory disappears; findDerivedDataFor
-      // (inside reclaimProject) matches on WorkspacePath prefixes that only
-      // resolve while the path still exists on disk. Reclaims the worktree
-      // root AND every nested registered project under it (see reclaimAll
-      // above) so a monorepo's Metro/device claim -- registered under a
-      // nested app dir, not the root -- is not left leaking.
+      // Release rn-iso's own state before the directory disappears. Reclaims
+      // the worktree root AND every nested registered project under it (see
+      // reclaimAll above) so a monorepo's Metro/device claim -- registered
+      // under a nested app dir, not the root -- is not left leaking. The
+      // worktree's build output needs no separate step: it lives inside the
+      // directory `git worktree remove` deletes.
       const result = await reclaimAll(path);
 
       try {
@@ -371,29 +362,6 @@ export function registerRemove(worktree) {
       }
       for (const kept of result.keptEntries) {
         console.log(chalk.yellow(`  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso release ${kept}\` once the cause is fixed.`));
-      }
-
-      // directorySize (behind result.artifacts[].bytes) returns 0 both for a
-      // genuinely empty directory and for one it could not measure, so a
-      // per-artifact 0 is not safe to print as "0K reclaimed". Sum first and
-      // only report a total when it is actually positive.
-      let bytes = 0;
-      for (const artifact of result.artifacts) {
-        // force:true only suppresses ENOENT. EACCES/EPERM/EBUSY still throw,
-        // and by this point the worktree itself is already gone -- a
-        // failure to delete one leftover artifact dir must not crash an
-        // otherwise-successful removal with a raw stack trace.
-        try {
-          rmSync(artifact.dir, { recursive: true, force: true });
-          bytes += artifact.bytes;
-        } catch (e) {
-          console.error(chalk.yellow(`  could not remove ${artifact.dir}: ${String(e?.message || e)}`));
-        }
-      }
-      if (bytes > 0) {
-        console.log(chalk.dim(`  reclaimed ${formatBytes(bytes)} of build artifacts`));
-      } else if (result.artifacts.length > 0) {
-        console.log(chalk.dim(`  removed ${result.artifacts.length} build artifact dir(s) (size unknown)`));
       }
     });
 }

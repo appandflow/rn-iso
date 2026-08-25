@@ -2,7 +2,7 @@ import { request } from 'http';
 import { connect } from 'net';
 import { existsSync } from 'fs';
 import { loadConfig, allMetroPorts, removeProject, claimMetroPort } from './config.js';
-import { isOnMountedVolume, listMountedVolumes } from './artifacts.js';
+import { isOnMountedVolume, listMountedVolumes } from './fs-util.js';
 
 export function isMetroRunning(port) {
   return new Promise((resolve) => {

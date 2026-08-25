@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { isOnMountedVolume } from './artifacts.js';
+import { isOnMountedVolume } from './fs-util.js';
 
 export function getConfigDir() {
   return process.env.RN_ISO_HOME || join(homedir(), '.rn-iso');

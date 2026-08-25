@@ -1,15 +1,13 @@
-import { existsSync, readdirSync, rmSync } from 'fs';
+import { existsSync, rmSync } from 'fs';
 import chalk from 'chalk';
 import { InvalidArgumentError } from 'commander';
 import { loadConfig } from '../config.js';
 import {
-  directorySize,
-  findOrphanedDerivedData,
   formatBytes,
   isOnMountedVolume,
   listMountedVolumes,
   volumeRootFor,
-} from '../artifacts.js';
+} from '../fs-util.js';
 import { reclaimProject } from '../reclaim.js';
 import { listAllIosSims } from '../sim/ios.js';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
@@ -21,21 +19,6 @@ import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches } from '../c
 // in the action below.
 const DEVICE_LIST_TIMEOUT_MS = 10000;
 
-// directorySize() returns 0 both for a genuinely empty directory and for one
-// it could not measure (the du shellout failed, or the directory vanished
-// between listing and measuring). We must not print a bare "0K" as if it
-// were a real measurement in the second case. A directory readdirSync finds
-// non-empty with a measured size of 0 -- or one that no longer exists at
-// all -- can only mean the measurement failed, never that it is truly empty.
-export function isMeasured(dir, bytes) {
-  if (bytes > 0) return true;
-  try {
-    return readdirSync(dir).length === 0;
-  } catch {
-    return false;
-  }
-}
-
 // Pure. Finds rn-iso-owned simulators/AVDs that no live config entry
 // references. A device counts as "referenced" the moment ANY project in
 // `config` has ANY platform record naming it -- owned or not, and
@@ -44,8 +27,8 @@ export function isMeasured(dir, bytes) {
 // record too (e.g. a stale/mid-transition record, or one written before an
 // `owned` flag update lands) -- treating only owned records as references
 // would let this sweep propose deleting a device an unowned record still
-// points at. This is the same fail-closed direction as the artifact sweep
-// (CLAUDE.md item 9): a project entry whose directory looks gone only
+// points at. This is the same fail-closed direction the dead-entry sweep
+// takes (CLAUDE.md item 8): a project entry whose directory looks gone only
 // because its volume is unplugged right now must not cause its device to
 // be swept out from under it, so a reference is honored unconditionally
 // rather than gated on existence.
@@ -127,20 +110,18 @@ export function describeUnverifiableDevices(simNames = [], avdNames = []) {
 }
 
 export function formatGcReport({
-  orphaned,
-  skipped,
-  deadProjects,
-  totalBytes,
+  skipped = [],
+  deadProjects = [],
   orphanedDevices = [],
   deviceSweepNotices = [],
   caches = [],
 }) {
   const lines = [];
 
-  if (orphaned.length === 0 && deadProjects.length === 0 && orphanedDevices.length === 0) {
+  if (deadProjects.length === 0 && orphanedDevices.length === 0) {
     const reasons = [];
     if (skipped.length > 0) {
-      reasons.push(`${skipped.length} director${skipped.length === 1 ? 'y' : 'ies'} could not be checked`);
+      reasons.push(`${skipped.length} entr${skipped.length === 1 ? 'y' : 'ies'} could not be checked`);
     }
     if (deviceSweepNotices.length > 0) {
       reasons.push('device sweep incomplete');
@@ -150,21 +131,6 @@ export function formatGcReport({
     } else {
       lines.push('Nothing to reclaim.');
     }
-  }
-
-  if (orphaned.length) {
-    lines.push(`Orphaned build artifacts (${orphaned.length}):`);
-    let unmeasuredCount = 0;
-    for (const entry of orphaned) {
-      const label = entry.measured === false ? 'unmeasured' : formatBytes(entry.bytes);
-      if (entry.measured === false) unmeasuredCount++;
-      lines.push(`  ${label.padStart(10)}  ${entry.dir}`);
-      lines.push(`              was: ${entry.workspacePath}`);
-    }
-    const totalSuffix = unmeasuredCount
-      ? ` (lower bound; ${unmeasuredCount} entr${unmeasuredCount === 1 ? 'y' : 'ies'} unmeasured)`
-      : '';
-    lines.push(`  total: ${formatBytes(totalBytes)}${totalSuffix}`);
   }
 
   if (deadProjects.length) {
@@ -183,7 +149,7 @@ export function formatGcReport({
   }
 
   if (skipped.length) {
-    lines.push(`Skipped (${skipped.length}) - not classified as orphaned:`);
+    lines.push(`Skipped (${skipped.length}) - not classified as dead:`);
     for (const entry of skipped) lines.push(`  ${entry.dir}: ${entry.reason}`);
   }
 
@@ -208,10 +174,10 @@ export function formatGcReport({
 export default function gcCommand(program) {
   program
     .command('gc')
-    .description('Reclaim build artifacts and config entries left behind by worktrees that no longer exist. Reports by default; pass --delete to act.')
-    .option('--delete', 'actually delete the reported artifacts and entries')
+    .description('Reclaim config entries and owned devices left behind by worktrees that no longer exist. Reports by default; pass --delete to act.')
+    .option('--delete', 'actually prune the reported entries and reap the reported devices')
     .option('--caches', 'also report the shared build caches (Metro, Xcode compilation cache, and any declared in the `caches` setting)')
-    .option('--older-than <days>', 'only consider artifacts not accessed in this many days', v => {
+    .option('--older-than <days>', 'with --caches, only trim cache entries untouched for this many days', v => {
       const n = parseInt(v, 10);
       if (!Number.isFinite(n) || String(n) !== String(v).trim()) {
         throw new InvalidArgumentError('must be a whole number of days, e.g. --older-than 30');
@@ -219,8 +185,6 @@ export default function gcCommand(program) {
       return n;
     })
     .action(async opts => {
-      const { orphaned, skipped } = findOrphanedDerivedData({ olderThanDays: opts.olderThan });
-
       // Opt-in, and separate from everything else this command reclaims. These
       // caches are shared by every project on the machine, so the blast radius
       // is not "this dead worktree" -- it is every build that would have hit
@@ -229,27 +193,20 @@ export default function gcCommand(program) {
         ? sizeCaches(discoverCaches({ declared: declaredCachePaths() }))
         : [];
 
-      const sized = orphaned.map(entry => {
-        const bytes = directorySize(entry.dir);
-        return { ...entry, bytes, measured: isMeasured(entry.dir, bytes) };
-      });
-      const totalBytes = sized.reduce((sum, e) => sum + e.bytes, 0);
-
       // A project path that no longer exists looks "dead" -- but if it lives
       // on a volume that is simply not mounted right now (the whole machine's
       // repos live on an external SSD), unregistering it would destroy its
       // label, metroPort allocation, and device claims for good. Only prune
       // entries whose volume is confirmed mounted; route the rest into
-      // skipped, same as the artifact half of this command already does.
-      // isOnMountedVolume resolves symlinked ancestors first (the same way
-      // the artifact sweep above does) rather than checking the raw path
-      // text -- a config key recorded under a symlinked path (e.g. a home
-      // folder symlinked onto an external volume) must not be misread as
-      // always-mounted just because it textually starts under "/".
+      // skipped. isOnMountedVolume resolves symlinked ancestors first rather
+      // than checking the raw path text -- a config key recorded under a
+      // symlinked path (e.g. a home folder symlinked onto an external
+      // volume) must not be misread as always-mounted just because it
+      // textually starts under "/".
       const mountedVolumes = listMountedVolumes();
       const cfg = loadConfig();
       const deadProjects = [];
-      const allSkipped = [...skipped];
+      const allSkipped = [];
       for (const path of Object.keys(cfg?.projects || {})) {
         if (existsSync(path)) continue;
         if (!isOnMountedVolume(path, mountedVolumes)) {
@@ -314,14 +271,14 @@ export default function gcCommand(program) {
         orphanedDevices = findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects }).orphaned;
       }
 
-      for (const line of formatGcReport({ orphaned: sized, skipped: allSkipped, deadProjects, totalBytes, orphanedDevices, deviceSweepNotices, caches })) {
+      for (const line of formatGcReport({ skipped: allSkipped, deadProjects, orphanedDevices, deviceSweepNotices, caches })) {
         console.log(line);
       }
 
       // Caches count toward "is there anything to do": a machine with no dead
       // worktrees can still be carrying gigabytes of shared cache, and that is
       // the whole reason to ask for --caches.
-      const nothingToReclaim = sized.length === 0 && deadProjects.length === 0 && orphanedDevices.length === 0;
+      const nothingToReclaim = deadProjects.length === 0 && orphanedDevices.length === 0;
       if (nothingToReclaim && !caches.length) return;
 
       if (!opts.delete) {
@@ -329,26 +286,9 @@ export default function gcCommand(program) {
         return;
       }
 
-      let reclaimedBytes = 0;
-      let reclaimedUnmeasured = 0;
       let deleteFailures = 0;
-      for (const entry of sized) {
-        try {
-          rmSync(entry.dir, { recursive: true, force: true });
-          console.log(chalk.green(`Deleted ${entry.dir}`));
-          if (entry.measured === false) {
-            reclaimedUnmeasured++;
-          } else {
-            reclaimedBytes += entry.bytes;
-          }
-        } catch (err) {
-          deleteFailures++;
-          console.log(chalk.red(`Failed to delete ${entry.dir}: ${err.message}`));
-        }
-      }
       for (const path of deadProjects) {
-        // Artifacts for these were already covered by the orphan sweep above.
-        const result = await reclaimProject(path, { deleteArtifacts: false });
+        const result = await reclaimProject(path);
         console.log(chalk.green(`Pruned ${path}`));
         if (result.killedPid) {
           console.log(chalk.dim(`  killed orphaned Metro pid ${result.killedPid}`));
@@ -391,10 +331,7 @@ export default function gcCommand(program) {
       if (deleteFailures) {
         console.log(chalk.red(`\n${deleteFailures} entr${deleteFailures === 1 ? 'y' : 'ies'} could not be deleted; see above.`));
       }
-      const reclaimedSuffix = reclaimedUnmeasured
-        ? ` (${reclaimedUnmeasured} entr${reclaimedUnmeasured === 1 ? 'y' : 'ies'} unmeasured)`
-        : '';
-      // Emptied last and counted apart from `reclaimedBytes`: this is not
+      // Emptied last and reported apart from everything above: this is not
       // reclaimed garbage, it is a cache someone will now have to refill.
       let cacheBytes = 0;
       for (const c of caches) {
@@ -428,9 +365,6 @@ export default function gcCommand(program) {
         }
       }
 
-      console.log(
-        chalk.dim(`\nReclaimed ${reclaimedUnmeasured ? 'at least ' : ''}${formatBytes(reclaimedBytes)}${reclaimedSuffix}.`)
-      );
       if (cacheBytes) {
         console.log(
           chalk.dim(`Emptied ${formatBytes(cacheBytes)} of shared cache. The next build in each project pays to refill it.`)
