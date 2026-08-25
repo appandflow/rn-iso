@@ -291,14 +291,17 @@ change, and the inspector proxy exposes the same events through
 
 ```
 rn-iso init | doctor
-rn-iso worktree create|remove|list
-rn-iso start [--stop]
+rn-iso worktree create | remove [--keep-dir]
+rn-iso start
 rn-iso ios | android
 rn-iso logs [--source --level --since --grep --tail --follow --errors]
 rn-iso status [--all]
-rn-iso down
-rn-iso cache list|trim|gc
+rn-iso cache [trim]
 ```
+
+Nine entry points, down from roughly fifteen in v2. Three removals are
+consolidations rather than lost capability, and each is recorded below:
+`worktree list`, the `cache` sub-verbs, and `down`.
 
 ### `start`
 
@@ -309,6 +312,9 @@ bare probe), then exits 0 printing the facts. A foreign holder of the reserved
 port triggers re-reservation, as in v2. If a healthy supervisor already exists,
 `start` is a no-op exit 0. On failure to come up it exits non-zero with the
 extracted startup error and the log path — not the whole transcript.
+
+There is no `start --stop`. Teardown is `worktree remove --keep-dir`, so there
+is exactly one way to stop a supervisor.
 
 ### `ios` / `android`
 
@@ -353,10 +359,57 @@ state, last build (fingerprint, cache hit or miss, duration), log paths, and
 error counts since the last build. `--all` reports every workspace on the
 machine.
 
-### `down`
+### `worktree remove [--keep-dir]`
 
-Stops the supervisor, reaps the owned device through the existing centralized
-teardown, frees the port. `worktree remove` does this and removes the worktree.
+One teardown path, with a flag for whether the directory survives:
+
+- **`--keep-dir`** stops the supervisor, reaps the owned device through the
+  existing centralized teardown, and frees the port. The workspace stays. This
+  is how you reclaim ~1.5 GB from a branch you are not finished with, and the
+  only way to release the **main checkout**, which is not removable as a
+  worktree.
+- **bare** does all of that, then removes the git worktree.
+
+Both forms accept no path argument and default to the current workspace.
+
+**The uncommitted-changes guard applies only to the bare form.** v2 refuses
+removal on a dirty tree because removing a directory destroys work. Releasing
+an environment does not, and `src/commands/worktree.js` already records that
+`pod install` rewrites `Podfile.lock` and `project.pbxproj` "so this refusal
+fires after almost every iOS build". Inheriting the guard would make
+`--keep-dir` refuse in precisely the case it exists for: a dirty tree,
+mid-work, on a machine short of memory. `--force` likewise stays on the bare
+form only, since with `--keep-dir` there is nothing destructive to override.
+
+On the main checkout, the bare form refuses with a remedy naming `--keep-dir`.
+Git's own model makes this coherent: `git worktree list` reports the main
+checkout as entry zero, which is why `src/status.js` does `.slice(1)`.
+
+### `status`, and why there is no `worktree list`
+
+v2 shipped both, and `worktree list`'s own description reads "`rn-iso status`
+shows the same worktrees WITH their environments -- prefer it." A command whose
+purpose is to redirect to another command does not survive into v3. `status`
+already reports unprovisioned worktrees (`unprovisionedWorktrees` in
+`src/status.js`), so nothing is lost. Repo scoping, if wanted, is
+`status --repo` — a flag, not a command.
+
+### `cache` and `cache trim`
+
+v2 spreads three ideas over six entry points: `cache register`, `cache forget`,
+`cache list`, `gc --caches`, bare `gc`, and `prune`. The artifact-layout change
+already removed the third idea (the orphan sweep), and v3 prescribes cache
+paths, so declaring them by hand is no longer necessary. Two verbs remain:
+
+- **`cache`** reports every cache, its size and age distribution, and what is
+  reclaimable. Read-only, always safe.
+- **`cache trim [--older-than <days>] [--all]`** is the single destructive
+  verb. `--all` empties. Caches that index their own data — the LLVM CAS — are
+  whole-or-nothing and report themselves as such rather than silently ignoring
+  `--older-than`.
+
+`rn-iso/cache-manifest` survives as a **programmatic** export, because that is
+how `@rn-iso/metro` and `build-cache.js` self-register. Only the CLI verbs go.
 
 ### `init` / `doctor`
 
@@ -366,6 +419,136 @@ with a CAS path outside DerivedData, DerivedData redirection into
 `<worktree>/.rn-iso/`, and `.rn-iso/` into `.gitignore` and `.worktreeexclude`.
 `doctor` reports the same findings read-only, plus the resolved server adapter
 and its version, so an ecosystem mismatch is visible before a build hits it.
+
+## Worked example: an agent fixing a bug ticket
+
+*APP-412 — "Tapping Save on the profile screen crashes on iOS."* This is the
+path every command has to justify itself against.
+
+### Once per repo, not per ticket
+
+```
+$ rn-iso doctor
+  compilation caching   OFF          costs ~4m per cold native build
+  metro cache           per-project  each worktree re-transforms the graph
+  build cache provider  absent
+  server adapter        expo 54.0.1 (child process)
+
+$ rn-iso init
+  wrote  metro.config.js       reporter + sharedCacheStores
+  wrote  ios/Podfile           COMPILATION_CACHE_ENABLE_CACHING, CAS -> ~/.rn-iso
+  wrote  .gitignore            .rn-iso/
+  wrote  .worktreeexclude      .rn-iso/
+```
+
+`doctor` is the read-only half and `init` the writing half of one question:
+what is silently costing build time? Splitting them matters because an agent
+must be able to *inspect* a repo it does not own without modifying it.
+
+### The ticket
+
+```
+$ cd "$(rn-iso worktree create app-412)"
+```
+
+Isolation, so this ticket cannot collide with whatever else is on the machine.
+stdout is the path and nothing else — the `WorktreeCreate` hook contract from
+`CLAUDE.md` item 7. On APFS, `--carry-ignored` clones `node_modules` and
+`ios/Pods` instead of reinstalling them.
+
+```
+$ rn-iso start
+  port       8082 (reserved)
+  supervisor pid 41233
+  logs       .rn-iso/logs/
+```
+
+Reserves a collision-free port, spawns the detached supervisor, waits until the
+server both answers `/status` **and** verifies as this project's, then exits.
+The agent gets its shell back — no backgrounding idiom, no `sleep`, no poll
+loop, and no chance of building against another worktree's bundler.
+
+```
+$ rn-iso ios
+  device      rn-iso-app-412 (BF2A..) booted
+  fingerprint a3f9b1.. hit
+  install     from cache (3.1s)
+  launch      com.example.app
+```
+
+The fingerprint is unchanged from a build another workspace already did, so
+**nothing compiles**. This is the payoff of the shared build cache: the second
+workspace on a commit costs a simulator boot, not four minutes of xcodebuild.
+
+```
+$ rn-iso logs --errors --json
+{"ts":"..","src":"client","level":"fatal",
+ "message":"TypeError: Cannot read property 'id' of undefined",
+ "stack":[{"file":"src/screens/Profile.tsx","line":142,"fn":"onSave"}]}
+```
+
+The crash, symbolicated to a source file and line, from the merged timeline.
+The agent did not have to attach a debugger, scrape a terminal, or know that
+client logs and bundler logs come from different places. **This is the command
+the whole design exists to make possible** — everything upstream is
+infrastructure for it.
+
+The agent edits `Profile.tsx`. Fast Refresh applies it; no rn-iso command is
+involved, because editing JS is not an rn-iso concern.
+
+```
+$ rn-iso logs --since 30s --level error
+  (no matching records)
+```
+
+Empty is the pass condition. Note it exits rather than streaming — principle 7.
+
+### Teardown
+
+```
+$ rn-iso worktree remove --keep-dir     # env released, branch kept
+$ rn-iso worktree remove                # done with the branch entirely
+```
+
+### The other commands, and what invokes them
+
+Every remaining entry point earns its place on a path this happy sequence never
+touches:
+
+| Command | Invoked when |
+|---|---|
+| `rn-iso status` | Session start, to orient: what is already running on this machine, which ports and devices are taken, is anything wedged. Also the answer to "the build is slow" — it reports RAM over-commitment and tight disk, the two causes nothing else surfaces. |
+| `rn-iso status --all` | Several agents share the Mac and one needs to know whether it is the fourth environment on a 16 GB box. |
+| `rn-iso android` | The same ticket on the other platform, or a bug that only reproduces there. |
+| `rn-iso logs --source device` | A native crash that never reached JS, so `--errors` on the client stream is empty but `logcat` / `simctl log stream` is not. |
+| `rn-iso logs --follow` | Watching a manual reproduction in real time rather than querying after. |
+| `rn-iso cache` | Disk is filling. Reports what each cache costs and what is reclaimable. |
+| `rn-iso cache trim --older-than 14` | Reclaim without destroying the working set. Emptying costs every project on the machine its next build; trimming costs only what nothing has used. |
+| `rn-iso doctor` | After an SDK upgrade, or when builds are unexpectedly slow — it names the cause instead of leaving the agent to guess. |
+
+### The failure paths, which are where the design earns its keep
+
+```
+$ rn-iso ios                                   # supervisor never came up
+  error  RN_ISO_NO_METRO: no Metro server holds reserved port 8082.
+  remedy Run `rn-iso start` first, or pass --no-metro-check.
+```
+
+Two seconds, not four minutes followed by an app that cannot load a bundle.
+
+```
+$ rn-iso ios                                   # native change, cache miss
+  fingerprint 7c02de.. miss
+  pods        out of sync with Podfile.lock -> installed (18s)
+  build       FAILED after 2m41s
+  error       ios/App/AppDelegate.swift:42:8: cannot find 'Foo' in scope
+  log         .rn-iso/logs/build-ios.ndjson
+```
+
+Six lines and the actual compiler diagnostic. `expo run:ios` emits several
+thousand lines here, and the agent pays for all of them on success as well as
+failure. The full transcript is still on disk when it is wanted — which is
+rarely, and never as tokens.
 
 ## Error contract
 
@@ -404,7 +587,7 @@ state:
    `artifacts.js`, the mounted-volume guard, and top-level `gc`. Ships against
    the v2 command surface with no new commands, and is worth having on its own.
 2. **Supervisor and logs.** `@rn-iso/metro` reporter, the NDJSON streams,
-   `start`, `logs`, `status`, `down`. Bare RN in-process, Expo by child
+   `start`, `logs`, `status`, `worktree remove --keep-dir`. Bare RN in-process, Expo by child
    process. This is where the agent-facing value concentrates.
 3. **`ios`.** Device provisioning folded in, fingerprint cache gate, prebuild,
    pod staleness, xcodebuild orchestration, diagnostic extraction, install and
@@ -415,8 +598,9 @@ Order matters: 2 depends on 1 for its log paths, and 3 and 4 depend on 2 for
 the metro-port check and the build-log destination. Steps 3 and 4 are
 independent of each other.
 
-The v2 command removals (`up`, `device`, `release`, `stop`, `prune`, `gc`,
-`--serial`) land with step 3, not before — the broker surface has to stay
+The v2 command removals (`up`, `device`, `release`, `stop`, `shutdown`,
+`prune`, `gc`, `worktree list`, the `cache` sub-verbs, `--serial`) land with
+step 3, not before — the broker surface has to stay
 usable until the build path that replaces it actually works.
 
 ## Risks
