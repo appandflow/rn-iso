@@ -272,7 +272,15 @@ git commit -m "refactor: split artifacts.js, keep volume and size utils in fs-ut
 
 **Interfaces:**
 - Consumes: `workspaceDerivedData`, `sharedCompilationCache` from `src/paths.js` (Task 1).
-- Produces: `renderGitignoreAdditions()` returning the lines `init` appends to `.gitignore`; `renderXcconfig(projectRoot)` returning the xcconfig that redirects DerivedData.
+- Produces: `renderGitignoreAdditions()` returning the lines `init` appends to `.gitignore`; `renderPodfileCasPin()` returning the `post_install` lines that pin the compilation cache.
+
+**Do NOT try to redirect DerivedData from an xcconfig.** `-derivedDataPath` is
+an `xcodebuild` command-line argument, not a build setting; `SYMROOT` and
+`OBJROOT` control where build *products* land, which is a different and
+narrower thing. The redirection is applied by the `ios` command passing
+`-derivedDataPath $(workspaceDerivedData(root))` at build time, which lands in
+step 3. `init` has nothing to write for it, because `src/paths.js` already
+derives the path from the project root -- there is no configuration to store.
 
 **The two interactions that must not be missed:**
 
@@ -297,11 +305,13 @@ test('gitignore additions cover the workspace dir', () => {
   assert.match(renderGitignoreAdditions(), /^\.rn-iso\/$/m);
 });
 
-test('xcconfig redirects DerivedData into the workspace and pins the CAS outside it', () => {
-  const out = renderXcconfig('/repo/wt');
-  assert.match(out, /SYMROOT = \/repo\/wt\/\.rn-iso\/derived-data/);
-  assert.doesNotMatch(out, /COMPILATION_CACHE_CAS_PATH = .*\.rn-iso\/derived-data/);
-  assert.match(out, /COMPILATION_CACHE_CAS_PATH = /);
+test('podfile pin puts the CAS outside DerivedData', () => {
+  const out = renderPodfileCasPin();
+  assert.match(out, /COMPILATION_CACHE_ENABLE_CACHING/);
+  assert.match(out, /COMPILATION_CACHE_CAS_PATH/);
+  // The whole point: it must not land anywhere under a workspace-local
+  // derived-data tree, or it is shared with nothing.
+  assert.doesNotMatch(out, /\.rn-iso\/derived-data/);
 });
 ```
 
@@ -340,7 +350,7 @@ git commit -m "feat: init redirects DerivedData into the workspace, pins the CAS
 
 **Interfaces:**
 - Consumes: `finding(level, title, detail, fix)` from `src/doctor.js` line 38.
-- Produces: `checkArtifactLayout({ gitignoreSource, worktreeExcludeSource, xcconfigSource })` returning a finding or `null`. Pure — it is a function of the text it is given, matching every other check in the file.
+- Produces: `checkArtifactLayout({ gitignoreSource, worktreeExcludeSource })` returning a finding or `null`. Pure — it is a function of the text it is given, matching every other check in the file.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -349,7 +359,6 @@ test('reports when .rn-iso is gitignored but not worktree-excluded', () => {
   const f = checkArtifactLayout({
     gitignoreSource: '.rn-iso/\n',
     worktreeExcludeSource: '**/*.log\n',
-    xcconfigSource: '',
   });
   assert.ok(f, 'expected a finding');
   assert.match(f.detail, /carry/i);
@@ -359,7 +368,6 @@ test('silent when both are wired', () => {
   assert.strictEqual(checkArtifactLayout({
     gitignoreSource: '.rn-iso/\n',
     worktreeExcludeSource: '.rn-iso/\n',
-    xcconfigSource: 'SYMROOT = /x/.rn-iso/derived-data\n',
   }), null);
 });
 ```
