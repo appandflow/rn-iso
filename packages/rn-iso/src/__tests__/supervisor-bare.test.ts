@@ -18,14 +18,17 @@ import {
   resolveBareDeps,
   startBareServer,
 } from '../supervisor/server-bare.ts';
+import { asRequire, makeError, makeWriter } from './_factories.ts';
 
 // assert.throws does not hand back the error, and every assertion below is
 // about the error's contents.
-function caught(fn) {
+function caught(fn: () => unknown): Error & Record<string, unknown> {
   try {
     fn();
   } catch (err) {
-    return err;
+    // The thrown value is unknown; every assertion below reads a coded-error
+    // property, so the single cast for that is centralized in this helper.
+    return err as Error & Record<string, unknown>;
   }
   throw new Error('expected a throw');
 }
@@ -45,21 +48,17 @@ function fakeRequire(modules, { throwOnLoad = {} } = {}) {
   const require_ = (id) => {
     if (throwOnLoad[id]) throw new Error(throwOnLoad[id]);
     if (!(id in modules)) {
-      const err = new Error(`Cannot find module '${id}'`);
-      err.code = 'MODULE_NOT_FOUND';
-      throw err;
+      throw makeError(`Cannot find module '${id}'`, { code: 'MODULE_NOT_FOUND' });
     }
     return modules[id];
   };
   require_.resolve = (id) => {
     if (!(id in modules) && !(id in throwOnLoad)) {
-      const err = new Error(`Cannot find module '${id}'`);
-      err.code = 'MODULE_NOT_FOUND';
-      throw err;
+      throw makeError(`Cannot find module '${id}'`, { code: 'MODULE_NOT_FOUND' });
     }
     return id;
   };
-  return () => require_;
+  return () => asRequire(require_);
 }
 
 const OK_MODULES = () => ({
@@ -196,7 +195,7 @@ describe('loadNdjsonReporter', () => {
         throw new Error(`Cannot find module '${id}'`);
       };
       req.resolve = req;
-      return req;
+      return asRequire(req);
     };
     expect(loadNdjsonReporter(root, { requireFrom: nothing })).toBe(null);
   });
@@ -204,9 +203,9 @@ describe('loadNdjsonReporter', () => {
 
 describe('startBareServer wiring', () => {
   function fakeDeps() {
-    const calls = {};
+    const calls: Record<string, any> = {};
     const httpServer = {
-      handlers: {},
+      handlers: {} as Record<string, (...args: any[]) => void>,
       on(event, cb) {
         this.handlers[event] = cb;
       },
@@ -294,7 +293,12 @@ describe('startBareServer wiring', () => {
       logsDir: join(root, 'logs'),
       deps,
       reporterFactory: null,
-      writer: { write: (r) => written.push(r) },
+      writer: makeWriter({
+        write: (r) => {
+          written.push(r);
+          return true;
+        },
+      }),
     });
     expect(handle.httpServer).toBeTruthy();
     // config.reporter is left as the project's own (Metro's TerminalReporter,

@@ -43,6 +43,7 @@ import {
   shortUdid,
   writeLastBuild,
 } from '../commands/ios.ts';
+import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroResolution } from './_factories.ts';
 
 const UDID = 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9';
 const FINGERPRINT = 'a3f9b1c2d3e4f5';
@@ -90,7 +91,7 @@ function captureAction(register, deps) {
 // Every engine call is a seam. The defaults describe the happy path with a
 // cache MISS; each test overrides the one fact it is about.
 function harness(overrides = {}) {
-  const calls = { order: [], args: {} };
+  const calls: { order: string[]; args: Record<string, any> } = { order: [], args: {} };
   const record = (name, value) => {
     calls.order.push(name);
     calls.args[name] = value;
@@ -226,9 +227,9 @@ async function run(opts = {}, overrides = {}) {
   let exitCode = null;
   console.log = (l) => logs.push(String(l));
   console.error = (l) => errs.push(String(l));
-  process.exit = (c) => {
+  process.exit = asProcessExit((c) => {
     exitCode = c;
-  };
+  });
   try {
     await action(opts);
   } finally {
@@ -358,7 +359,7 @@ describe('the Metro gate retries an indexing Metro', () => {
   });
 
   test('gateShouldRetry is the rule, stated once', () => {
-    expect(gateShouldRetry({ missing: true })).toBe(true);
+    expect(gateShouldRetry(makeMetroResolution.missing())).toBe(true);
     expect(gateShouldRetry({ notOurs: 'x', kind: 'unresponsive' })).toBe(true);
     expect(gateShouldRetry({ notOurs: 'x', kind: 'unreadable-cwd' })).toBe(true);
     expect(gateShouldRetry({ notOurs: 'x', kind: 'foreign-cwd' })).toBe(false);
@@ -396,13 +397,13 @@ describe('the Metro gate retries an indexing Metro', () => {
 
   test('noMetroMessage names a supervisor only when it is for THIS port and alive', () => {
     const supervisor = { pid: 7, port: 8082, mode: 'expo-child' };
-    expect(noMetroMessage({ port: 8082, resolution: { missing: true }, supervisor, supervisorAlive: true })).toMatch(
+    expect(noMetroMessage({ port: 8082, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: true })).toMatch(
       /supervisor record exists/,
     );
-    expect(noMetroMessage({ port: 8082, resolution: { missing: true }, supervisor, supervisorAlive: false })).toMatch(
+    expect(noMetroMessage({ port: 8082, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: false })).toMatch(
       /Nothing is serving/,
     );
-    expect(noMetroMessage({ port: 8099, resolution: { missing: true }, supervisor, supervisorAlive: true })).toMatch(
+    expect(noMetroMessage({ port: 8099, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: true })).toMatch(
       /Nothing is serving/,
     );
   });
@@ -772,9 +773,9 @@ describe('the remote cache', () => {
     reserve();
     const exits = [];
     const originalExit = process.exit;
-    process.exit = (code) => {
+    process.exit = asProcessExit((code) => {
       exits.push(code);
-    };
+    });
     let errs;
     let calls;
     try {
@@ -1227,10 +1228,10 @@ describe('single-flight builds', () => {
       {
         acquireBuildLock: () => heldBy(),
         waitForBuild: async () => {
-          const err = new Error('Waited 90m ... The lock is /home/build-locks/ios-key.lock');
-          err.code = 'RN_ISO_BUILD_WAIT_TIMEOUT';
-          err.lockPath = '/home/build-locks/ios-key.lock';
-          throw err;
+          throw makeError('Waited 90m ... The lock is /home/build-locks/ios-key.lock', {
+            code: 'RN_ISO_BUILD_WAIT_TIMEOUT',
+            lockPath: '/home/build-locks/ios-key.lock',
+          });
         },
       },
     );
@@ -1552,11 +1553,12 @@ describe('the collector', () => {
         appName: 'FixtureDev',
         spawn: (cmd, args, opts) => {
           spawns.push({ cmd, args, opts });
-          return { pid: 7001, unref() {} };
+          return makeChildProcess({ pid: 7001 });
         },
         kill: (pid, signal) => {
           kills.push({ pid, signal });
           if (killImpl) killImpl(pid, signal);
+          return true;
         },
         alive: () => false,
         waitMs: 0,
@@ -1577,9 +1579,7 @@ describe('the collector', () => {
     const h = collectorHarness({
       state: { collectors: { ios: { pid: 999 } } },
       killImpl: () => {
-        const e = new Error('kill ESRCH');
-        e.code = 'ESRCH';
-        throw e;
+        throw makeError('kill ESRCH', { code: 'ESRCH' });
       },
     });
     const result = await replaceCollector(h.opts);
@@ -1748,24 +1748,24 @@ describe('devClientScheme', () => {
   // deep link was skipped and the app opened the dev-launcher's server picker.
   test("prefers the built app's Info.plist over app.json", () => {
     const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
-    const exec = {
+    const exec = makeExecutor({
       runFile: (cmd, args) => {
         expect(cmd).toBe('plutil');
         expect(args.slice(0, 4)).toEqual(['-convert', 'json', '-o', '-']);
         expect(args[4]).toMatch(/Fixture\.app\/Info\.plist$/);
         return JSON.stringify({ CFBundleURLTypes: [{ CFBundleURLSchemes: ['io.tlon.groups'] }] });
       },
-    };
+    });
     expect(devClientScheme(dir, '/b/Fixture.app', { exec })).toBe('io.tlon.groups');
   });
 
   test('falls back to app.json when the bundle cannot be read', () => {
     const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
-    const exec = {
+    const exec = makeExecutor({
       runFile: () => {
         throw new Error('plutil: file does not exist');
       },
-    };
+    });
     expect(devClientScheme(dir, '/b/Fixture.app', { exec })).toBe('from-app-json');
   });
 
@@ -1862,7 +1862,7 @@ describe('iosFacts', () => {
   // artifact really did come from the local cache; what this adds is that it
   // was not there when the run started, and what it cost to get it.
   test('waitedForBuild names the builder waited on and what the wait cost', () => {
-    const facts = iosFacts({ cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } });
+    const facts = iosFacts({ udid: UDID, cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } });
     expect(facts.cacheHit).toBe('local');
     expect(facts.waitedForBuild).toEqual({ pid: 41233, ms: 761000 });
   });
@@ -1871,14 +1871,14 @@ describe('iosFacts', () => {
   // install from one that cost a download, and those are not the same thing to
   // plan around. Anything that is not a level rendered as `false`.
   test('cacheHit is a LEVEL, and an unknown value is a miss rather than a truthy string', () => {
-    expect(iosFacts({ cacheHit: 'remote' }).cacheHit).toBe('remote');
-    expect(iosFacts({ cacheHit: true }).cacheHit).toBe(false);
-    expect(iosFacts({ cacheHit: false }).cacheHit).toBe(false);
+    expect(iosFacts({ udid: UDID, cacheHit: 'remote' }).cacheHit).toBe('remote');
+    expect(iosFacts({ udid: UDID, cacheHit: true }).cacheHit).toBe(false);
+    expect(iosFacts({ udid: UDID, cacheHit: false }).cacheHit).toBe(false);
   });
 
   test('cacheSkipped separates "found nothing" from "was told not to look"', () => {
-    expect(iosFacts({ cacheHit: false }).cacheSkipped).toBe(false);
-    expect(iosFacts({ cacheHit: false, cacheSkipped: true }).cacheSkipped).toBe(true);
+    expect(iosFacts({ udid: UDID, cacheHit: false }).cacheSkipped).toBe(false);
+    expect(iosFacts({ udid: UDID, cacheHit: false, cacheSkipped: true }).cacheSkipped).toBe(true);
   });
 });
 

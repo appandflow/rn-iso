@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches } from '../caches.ts';
 import { register } from '../cache-manifest.ts';
+import { makeCacheDescriptor } from './_factories.ts';
 import { setProjectSetting, upsertProject } from '../config.ts';
 
 const LONG_AGO = new Date(Date.now() - 90 * 24 * 3600 * 1000);
@@ -67,8 +68,8 @@ test('sizeCaches keeps a precounted size and measures the rest', () => {
     mkdirSync(join(dir, 'sub'));
     writeFileSync(join(dir, 'sub', 'f'), 'y'.repeat(2048));
     const sized = sizeCaches([
-      { name: 'precounted', dir: '/nope', bytes: 42 },
-      { name: 'walked', dir },
+      makeCacheDescriptor({ name: 'precounted', dir: '/nope', bytes: 42 }),
+      makeCacheDescriptor({ name: 'walked', dir }),
     ]);
     expect(sized[0].bytes).toBe(42);
     expect(sized[1].bytes >= 2048).toBeTruthy();
@@ -92,7 +93,7 @@ test('pruneCache keeps a recently READ entry whose mtime is old', () => {
     // Written long ago, read just now -- a cache hit looks exactly like this.
     utimesSync(read, new Date(), longAgo);
 
-    const r = pruneCache({ dir, prune: 'entries' }, { olderThanDays: 30 });
+    const r = pruneCache(makeCacheDescriptor({ dir, prune: 'entries' }), { olderThanDays: 30 });
     expect(r.removed).toBe(1);
     expect(existsSync(old)).toBe(false);
     expect(existsSync(read)).toBe(true);
@@ -110,7 +111,7 @@ test('pruneCache refuses to trim an index-backed cache, and says why', () => {
     const veryOld = new Date(Date.now() - 365 * 24 * 3600 * 1000);
     utimesSync(join(dir, 'v9.1.leaf'), veryOld, veryOld);
 
-    const r = pruneCache({ dir, prune: 'atomic' }, { olderThanDays: 1 });
+    const r = pruneCache(makeCacheDescriptor({ dir, prune: 'atomic' }), { olderThanDays: 1 });
     expect(r.removed).toBe(0);
     expect(r.skipped).toMatch(/whole/);
     expect(existsSync(join(dir, 'v9.1.leaf'))).toBe(true);
@@ -138,7 +139,7 @@ test('pruneCache trims one build at a time in the real build-cache layout', () =
     // depth 1 this stale-looking ios/ takes the fresh build inside it too.
     age(join(root, 'ios'));
 
-    const r = pruneCache({ dir: root, prune: 'entries', entriesDepth: 2 }, { olderThanDays: 30 });
+    const r = pruneCache(makeCacheDescriptor({ dir: root, prune: 'entries', entriesDepth: 2 }), { olderThanDays: 30 });
 
     expect(r.removed).toBe(2);
     expect(existsSync(cold)).toBe(false);
@@ -169,7 +170,7 @@ test('pruneCache trims one transform at a time in a sharded FileStore tree', () 
     age(otherShard);
     age(join(root, '0a'));
 
-    const r = pruneCache({ dir: root, prune: 'entries', entriesDepth: 2 }, { olderThanDays: 30 });
+    const r = pruneCache(makeCacheDescriptor({ dir: root, prune: 'entries', entriesDepth: 2 }), { olderThanDays: 30 });
 
     expect(r.removed).toBe(2);
     expect(existsSync(cold)).toBe(false);
@@ -193,7 +194,7 @@ test('pruneCache leaves a stray file sitting above the entry depth alone', () =>
     mkdirSync(entry, { recursive: true });
     age(entry);
 
-    const r = pruneCache({ dir: root, prune: 'entries', entriesDepth: 2 }, { olderThanDays: 30 });
+    const r = pruneCache(makeCacheDescriptor({ dir: root, prune: 'entries', entriesDepth: 2 }), { olderThanDays: 30 });
 
     expect(r.removed).toBe(1);
     expect(existsSync(entry)).toBe(false);
@@ -214,7 +215,7 @@ test('pruneCache trims only the listed files when a cache does not own its direc
   utimesSync(mine, longAgo, longAgo);
   utimesSync(notMine, longAgo, longAgo);
   try {
-    const r = pruneCache({ dir: tmpdir(), files: [mine], prune: 'entries' }, { olderThanDays: 30 });
+    const r = pruneCache(makeCacheDescriptor({ dir: tmpdir(), files: [mine], prune: 'entries' }), { olderThanDays: 30 });
     expect(r.removed).toBe(1);
     expect(existsSync(mine)).toBe(false);
     expect(existsSync(notMine)).toBe(true);
