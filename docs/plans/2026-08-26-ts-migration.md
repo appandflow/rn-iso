@@ -14,7 +14,7 @@ TypeScript + oxlint + oxfmt + tsdown + vitest(-on-rolldown), tests colocated in
   the release is **2.0.0**. CI matrix [22, 24].
 - **Public surface stable**: bin, the `./cache-manifest` export, and the
   `rn-iso <command>` CLI surface are unchanged. `exports`/`bin` point at `dist/`.
-  Runtime-floor bump to Node 22 makes this **2.0.0**.
+  Node 22 floor; no real consumers yet, so ships as MINOR **1.2.0**.
 - ASCII rule relaxes (TS files may use whatever oxfmt emits) BUT keep the
   existing no-smart-punctuation discipline if oxfmt is fine with it; oxfmt is
   the arbiter of style now.
@@ -30,7 +30,7 @@ TypeScript + oxlint + oxfmt + tsdown + vitest(-on-rolldown), tests colocated in
 5. **oxlint + oxfmt** config + fix.
 6. **CI**: ci.yml = install -> oxlint -> oxfmt --check -> typecheck -> vitest ->
    build -> test:e2e. Keep e2e-native.yml.
-7. Green -> bump all packages to 2.0.0 (engines >=22) -> merge to main.
+7. Green -> bump all packages to 1.2.0 (engines >=22) -> merge to main.
 6b. **Validate CI for real**: push branch, watch Actions until ci.yml is green on the runner, trigger e2e-native.yml once (bare+expo x ios+android) to prove the native path, not just YAML parse.
 
 ## Definition of done (the goal)

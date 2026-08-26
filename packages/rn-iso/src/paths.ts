@@ -14,27 +14,27 @@ import { getConfigDir } from './config.js';
 
 export const WORKSPACE_DIR_NAME = '.rn-iso';
 
-export function workspaceDir(projectRoot) {
+export function workspaceDir(projectRoot: string): string {
   return join(projectRoot, WORKSPACE_DIR_NAME);
 }
 
-export function workspaceLogsDir(projectRoot) {
+export function workspaceLogsDir(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'logs');
 }
 
-export function workspaceDerivedData(projectRoot) {
+export function workspaceDerivedData(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'derived-data');
 }
 
-export function workspaceGradleBuild(projectRoot) {
+export function workspaceGradleBuild(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'gradle-build');
 }
 
-export function supervisorPidFile(projectRoot) {
+export function supervisorPidFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'supervisor.pid');
 }
 
-export function workspaceStateFile(projectRoot) {
+export function workspaceStateFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'state.json');
 }
 
@@ -42,14 +42,14 @@ export function workspaceStateFile(projectRoot) {
 // supervisor, each collector, and ios/android's lastBuild all patch this one
 // file). mkdir-mtime, like the config lock -- these writes are milliseconds, so
 // the staleness guard is age, not pid-liveness. See src/dir-lock.js.
-export function workspaceStateLock(projectRoot) {
+export function workspaceStateLock(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'state.lock');
 }
 
 // The supervisor's own stdio, raw rather than NDJSON: it is what a spawn that
 // died before it could write a single structured record leaves behind, so it
 // is the one file `start` quotes when a supervisor never comes up.
-export function supervisorLogFile(projectRoot) {
+export function supervisorLogFile(projectRoot: string): string {
   return join(workspaceLogsDir(projectRoot), 'supervisor.log');
 }
 
@@ -74,29 +74,29 @@ export function supervisorLogFile(projectRoot) {
 // correct but pointlessly large. Anything that is not a plain path segment is
 // replaced, and leading dots go, so a scoped package name cannot climb out of
 // the cache root.
-function cacheNameSegment(name) {
+function cacheNameSegment(name: string | null | undefined): string {
   return String(name).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^\.+/, '') || 'app';
 }
 
-export function sharedMetroCache(name) {
+export function sharedMetroCache(name?: string | null): string {
   if (process.env.RN_ISO_METRO_CACHE) return process.env.RN_ISO_METRO_CACHE;
   const root = join(getConfigDir(), 'metro-cache');
   return name === undefined || name === null || name === '' ? root : join(root, cacheNameSegment(name));
 }
 
-export function sharedBuildCache() {
+export function sharedBuildCache(): string {
   return process.env.RN_ISO_BUILD_CACHE || join(getConfigDir(), 'build-cache');
 }
 
-export function sharedCompilationCache() {
+export function sharedCompilationCache(): string {
   return join(getConfigDir(), 'compilation-cache');
 }
 
-export function sharedGradle() {
+export function sharedGradle(): string {
   return join(getConfigDir(), 'gradle');
 }
 
-export function sharedPods() {
+export function sharedPods(): string {
   return join(getConfigDir(), 'pods');
 }
 
