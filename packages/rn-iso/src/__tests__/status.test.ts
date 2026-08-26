@@ -202,12 +202,19 @@ test('status reports a supervisor whose port answers as this project as healthy'
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
   const port = (server.address() as AddressInfo).port;
   try {
+    // The LISTENER pid is deliberately a dead one: on Linux, processCwd reads
+    // /proc/<pid>/cwd before falling back to the mocked lsof, so a REAL pid
+    // (like process.pid) would resolve to the test runner's true cwd and never
+    // match `root`. A dead pid makes the /proc read fail and the lsof mock
+    // answer, on every platform. The SUPERVISOR pid stays process.pid -- its
+    // liveness check is real.
+    const listenerPid = 999999901;
     setExecutor({
       run: () => '',
       runQuiet(cmd) {
-        if (cmd.includes(`-iTCP:${port}`)) return String(process.pid);
-        if (cmd.includes('-d cwd -Fn')) return `p${process.pid}\nfcwd\nn${root}`;
-        if (cmd.startsWith('ps -o pgid=')) return String(process.pid);
+        if (cmd.includes(`-iTCP:${port}`)) return String(listenerPid);
+        if (cmd.includes('-d cwd -Fn')) return `p${listenerPid}\nfcwd\nn${root}`;
+        if (cmd.startsWith('ps -o pgid=')) return String(listenerPid);
         return null;
       },
       spawn() {
