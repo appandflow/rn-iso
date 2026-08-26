@@ -20,36 +20,80 @@
 //
 //   const { ndjsonReporter } = require('@rn-iso/metro');
 //   config.reporter = ndjsonReporter({ dir: '<root>/.rn-iso/logs' });
+//
+// This file is authored in TypeScript with ESM syntax and built to CommonJS by
+// tsdown (format: 'cjs'), because a metro.config.js and a supervisor hosting
+// Metro in-process both reach the published entry through require().
 
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+// A Metro FileStore, kept structural so this package need not depend on
+// metro-cache's types: the constructor is all the caller relies on.
+type FileStoreCtor = new (options: { root: string }) => object;
+
+interface RegisterOptions {
+  dir: string;
+  name?: string;
+  prune?: string;
+  note?: string;
+  entriesDepth?: number;
+}
+
+// A Metro reporter event. Metro's event union is large and version-dependent, so
+// only the fields this reporter reads are named; the rest ride along untyped.
+interface MetroEvent {
+  type?: string;
+  level?: unknown;
+  data?: unknown;
+  error?: unknown;
+  stack?: string;
+  buildID?: string;
+}
+
+// rn-iso's log record contract (Contract 1).
+interface LogRecord {
+  ts: number;
+  src: 'metro' | 'client';
+  level: string;
+  msg: string;
+  event?: string;
+  stack?: string;
+  marker?: boolean;
+}
+
+export interface NdjsonReporter {
+  dir: string;
+  update(event: MetroEvent): void;
+  readonly drops: number;
+}
 
 // THIS RESOLUTION EXISTS THREE TIMES: here, in
-// packages/expo-build-cache/index.js, and in rn-iso's own src/paths.js
+// packages/expo-build-cache/index.ts, and in rn-iso's own src/paths.ts
 // (sharedMetroCache / sharedBuildCache). This package cannot import that module
 // -- it has to work on a machine with no rn-iso installed at all -- so the
 // duplication is deliberate, the same way buildCacheKey is duplicated between
 // the build-cache implementations. Change one and you must change all three:
 // when they drift, one entry point writes a cache the other will never read,
-// and neither of them says so. rn-iso's test/cache-packages.test.js asserts all
-// three agree.
+// and neither of them says so. rn-iso's src/__tests__/cache-packages.test.ts
+// asserts all three agree.
 //
 // RN_ISO_METRO_CACHE comes first because it did before the layout existed, and
 // quietly ignoring an override someone already set reads as an empty cache
 // rather than as an error. It names one directory, so it wins for a named cache
 // too -- otherwise half the stores on a machine would move and half would not.
-function configDir() {
+function configDir(): string {
   return process.env.RN_ISO_HOME || path.join(os.homedir(), '.rn-iso');
 }
 
 // Anything that is not a plain path segment is replaced, and leading dots go, so
 // a scoped package name cannot climb out of the cache root.
-function cacheNameSegment(name) {
+function cacheNameSegment(name: string): string {
   return String(name).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^\.+/, '') || 'app';
 }
 
-function cacheRoot(name) {
+export function cacheRoot(name?: string | null): string {
   if (process.env.RN_ISO_METRO_CACHE) return process.env.RN_ISO_METRO_CACHE;
   const root = path.join(configDir(), 'metro-cache');
   return name === undefined || name === null || name === '' ? root : path.join(root, cacheNameSegment(name));
@@ -66,11 +110,11 @@ function cacheRoot(name) {
 //   - rn-iso is an ES module, so `require` of it throws ERR_REQUIRE_ESM on Node
 //     before 20.19
 // A dynamic import fixes the second and not the first.
-function registerCache({ dir, name, prune, note, entriesDepth }) {
+function registerCache({ dir, name, prune, note, entriesDepth }: RegisterOptions): void {
   try {
     const home = configDir();
     const file = path.join(home, 'caches.json');
-    let manifest = { version: 1, caches: [] };
+    let manifest: { version: number; caches: Array<Record<string, unknown>> } = { version: 1, caches: [] };
     try {
       const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
       if (Array.isArray(parsed?.caches)) manifest = { version: 1, caches: parsed.caches };
@@ -80,7 +124,7 @@ function registerCache({ dir, name, prune, note, entriesDepth }) {
     // Keyed on the directory so repeated calls update rather than accumulate --
     // these run on every build.
     const others = manifest.caches.filter(c => c.dir !== dir);
-    const record = { dir, name, prune, note, registeredBy: process.cwd() };
+    const record: Record<string, unknown> = { dir, name, prune, note, registeredBy: process.cwd() };
     // Only written when the caller sets it: an absent depth means the entries
     // are the directory's immediate children, which is the common case.
     if (entriesDepth) record.entriesDepth = entriesDepth;
@@ -92,7 +136,7 @@ function registerCache({ dir, name, prune, note, entriesDepth }) {
   }
 }
 
-function registerOnce(dir) {
+function registerOnce(dir: string): void {
   registerCache({
     dir,
     name: 'Metro transform cache',
@@ -109,8 +153,11 @@ function registerOnce(dir) {
 // it is a subdirectory of the shared root, not a directory of its own. Metro
 // keys entries by content, so sharing one store between unrelated projects would
 // be correct but pointlessly large.
-function sharedCacheStores(name = 'app', { FileStore } = {}) {
-  const Store = FileStore || require('metro-cache').FileStore;
+export function sharedCacheStores(name = 'app', { FileStore }: { FileStore?: FileStoreCtor } = {}): object[] {
+  // metro-cache is a peer dependency, resolved at call time so this package
+  // still loads on a machine that never installed it (the store can be
+  // injected instead). require() is native at runtime in the built CJS.
+  const Store: FileStoreCtor = FileStore || (require('metro-cache') as { FileStore: FileStoreCtor }).FileStore;
   const root = cacheRoot(name);
   registerOnce(root);
   return [new Store({ root })];
@@ -140,7 +187,7 @@ const NDJSON_LEVELS = new Set(['debug', 'info', 'warn', 'error', 'fatal']);
 // Metro speaks the console's vocabulary on client logs (`log`, `trace`,
 // `group`) and its own on server logs. Anything unrecognized falls back to the
 // caller's default rather than inventing a level.
-function ndjsonLevel(level, fallback) {
+function ndjsonLevel(level: unknown, fallback: string): string {
   const value = String(level === undefined || level === null ? '' : level).toLowerCase();
   if (NDJSON_LEVELS.has(value)) return value;
   switch (value) {
@@ -163,7 +210,7 @@ function ndjsonLevel(level, fallback) {
 // Client logs arrive as the console's argument list, so they are joined the way
 // a console would print them. A value that cannot be stringified (a circular
 // object, a proxy that throws) still has to produce something.
-function formatValue(value) {
+function formatValue(value: unknown): string {
   if (typeof value === 'string') return value;
   if (value instanceof Error) return value.message || String(value);
   try {
@@ -179,7 +226,7 @@ function formatValue(value) {
   }
 }
 
-function formatData(data) {
+function formatData(data: unknown): string {
   if (data === undefined || data === null) return '';
   if (Array.isArray(data)) return data.map(formatValue).join(' ');
   return formatValue(data);
@@ -188,14 +235,16 @@ function formatData(data) {
 // Metro wraps its failures differently depending on where they came from: a
 // resolution failure is an Error, a transformer failure can be a plain object
 // carrying only a message.
-function errorMessage(error) {
+function errorMessage(error: unknown): string {
   if (error === undefined || error === null) return 'unknown error';
   if (typeof error === 'string') return error;
-  if (typeof error.message === 'string' && error.message) return error.message;
+  if (typeof (error as { message?: unknown }).message === 'string' && (error as { message: string }).message) {
+    return (error as { message: string }).message;
+  }
   return formatValue(error);
 }
 
-function ndjsonReporter({ dir } = {}) {
+export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
   const logDir = dir || path.join(process.cwd(), '.rn-iso', 'logs');
   let ensured = false;
   let drops = 0;
@@ -203,7 +252,7 @@ function ndjsonReporter({ dir } = {}) {
   // Lazily: constructing a reporter must not create directories for a server
   // that may never start, and the log directory is workspace-local, so it may
   // not exist yet at all.
-  function write(file, record) {
+  function write(file: string, record: LogRecord): void {
     try {
       if (!ensured) {
         fs.mkdirSync(logDir, { recursive: true });
@@ -218,10 +267,10 @@ function ndjsonReporter({ dir } = {}) {
     }
   }
 
-  function update(event) {
+  function update(event: MetroEvent): void {
     try {
       const type = event && typeof event.type === 'string' ? event.type : '';
-      const record = { ts: Date.now(), src: 'metro', level: 'debug', msg: '' };
+      const record: LogRecord = { ts: Date.now(), src: 'metro', level: 'debug', msg: '' };
       if (type) record.event = type;
 
       if (type === 'client_log') {
@@ -269,5 +318,3 @@ function ndjsonReporter({ dir } = {}) {
     },
   };
 }
-
-module.exports = { sharedCacheStores, cacheRoot, ndjsonReporter };

@@ -37,7 +37,7 @@ test('the Expo build cache provider registers itself on this Node, at the right 
   process.env.RN_ISO_HOME = home;
   process.env.RN_ISO_BUILD_CACHE = cacheRoot;
   try {
-    const provider = await import('../../../expo-build-cache/index.js');
+    const provider = await import('@rn-iso/expo-build-cache');
     expect(provider.cacheRoot()).toBe(cacheRoot);
 
     // A miss is enough: registration happens on every resolve, hit or not.
@@ -62,7 +62,7 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
   process.env.RN_ISO_HOME = home;
   process.env.RN_ISO_METRO_CACHE = cacheRoot;
   try {
-    const { sharedCacheStores } = await import('../../../metro/index.js');
+    const { sharedCacheStores } = await import('@rn-iso/metro');
     // Metro's own FileStore is not a dependency of rn-iso, and the store object
     // is not what is under test here.
     class FakeStore {
@@ -92,7 +92,7 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
 // write the manifest themselves, so neither may name rn-iso as a module.
 test('neither package reaches rn-iso as a module', () => {
   for (const pkg of ['expo-build-cache', 'metro']) {
-    const source = readFileSync(join(PACKAGES, pkg, 'index.js'), 'utf-8');
+    const source = readFileSync(join(PACKAGES, pkg, 'index.ts'), 'utf-8');
     expect(source).not.toMatch(/require\(\s*['"]rn-iso/);
     expect(source).not.toMatch(/import\(\s*['"]rn-iso/);
     expect(source).toMatch(/caches\.json/);
@@ -108,8 +108,8 @@ test('both packages resolve the same cache roots the CLI does', async () => {
   const home = mkdtempSync(join(tmpdir(), 'rn-iso-pkg-home3-'));
   process.env.RN_ISO_HOME = home;
   try {
-    const provider = await import('../../../expo-build-cache/index.js');
-    const metro = await import('../../../metro/index.js');
+    const provider = await import('@rn-iso/expo-build-cache');
+    const metro = await import('@rn-iso/metro');
 
     expect(provider.cacheRoot()).toBe(sharedBuildCache());
     expect(provider.cacheRoot()).toBe(join(home, 'build-cache'));

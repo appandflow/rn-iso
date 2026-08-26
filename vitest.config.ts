@@ -10,6 +10,7 @@ export default defineConfig({
     include: [
       'packages/*/src/**/*.test.ts',
       'packages/*/src/**/__tests__/**/*.test.ts',
+      'packages/*/__tests__/**/*.test.ts',
     ],
     // These tests spawn real processes, bind real ports and shell out to real
     // tools; keep them isolated in a forked child like `node --test` gave them.
