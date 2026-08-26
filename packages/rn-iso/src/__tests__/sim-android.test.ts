@@ -11,6 +11,7 @@ import {
   parseAdbDevices,
   nextConsolePort,
   pickDefaultSystemImage,
+  hostSystemImageArch,
   deleteAvd,
   resolveOwnedAvdSerial,
   waitForBoot,
@@ -119,7 +120,7 @@ test('pickDefaultSystemImage prefers highest api, then google_apis, arm64 only',
     { api: 36, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-36;google_apis;arm64-v8a' },
     { api: 36, tag: 'google_apis', arch: 'x86_64', pkg: 'system-images;android-36;google_apis;x86_64' },
   ];
-  const picked = pickDefaultSystemImage(images, {});
+  const picked = pickDefaultSystemImage(images, { hostArch: 'arm64-v8a' });
   assert(picked);
   expect(picked.pkg).toBe('system-images;android-36;google_apis;arm64-v8a');
 });
@@ -141,21 +142,33 @@ test('pickDefaultSystemImage ranks a 16KB-page image below a plain one, api or n
     arch: 'arm64-v8a',
     pkg: 'system-images;android-35;google_apis;arm64-v8a',
   };
-  const bothA = pickDefaultSystemImage([ps16k, plain], {});
+  const bothA = pickDefaultSystemImage([ps16k, plain], { hostArch: 'arm64-v8a' });
   assert(bothA);
   expect(bothA.pkg).toBe(plain.pkg);
-  const bothB = pickDefaultSystemImage([plain, ps16k], {});
+  const bothB = pickDefaultSystemImage([plain, ps16k], { hostArch: 'arm64-v8a' });
   assert(bothB);
   expect(bothB.pkg).toBe(plain.pkg);
   // ...and with nothing else installed it is still a working emulator, which
   // is what rn-iso creates rather than refusing.
-  const only16k = pickDefaultSystemImage([ps16k], {});
+  const only16k = pickDefaultSystemImage([ps16k], { hostArch: 'arm64-v8a' });
   assert(only16k);
   expect(only16k.pkg).toBe(ps16k.pkg);
   // An explicit choice is still honoured, 16KB or not.
   const explicit = pickDefaultSystemImage([ps16k, plain], { systemImage: ps16k.pkg });
   assert(explicit);
   expect(explicit.pkg).toBe(ps16k.pkg);
+});
+
+// The default arch follows the HOST: arm64-v8a on Apple Silicon, x86_64
+// everywhere else (an Intel Mac, a Linux CI runner). A hardcoded arm64 filter
+// returned null on every x86_64 host.
+test('pickDefaultSystemImage matches the host architecture by default', () => {
+  const arm = { pkg: 'system-images;android-34;google_apis;arm64-v8a', api: 34, tag: 'google_apis', arch: 'arm64-v8a' };
+  const x64 = { pkg: 'system-images;android-34;google_apis;x86_64', api: 34, tag: 'google_apis', arch: 'x86_64' };
+  expect(pickDefaultSystemImage([arm, x64], { hostArch: 'x86_64' })).toBe(x64);
+  expect(pickDefaultSystemImage([arm, x64], { hostArch: 'arm64-v8a' })).toBe(arm);
+  expect(hostSystemImageArch('arm64')).toBe('arm64-v8a');
+  expect(hostSystemImageArch('x64')).toBe('x86_64');
 });
 
 test('pickDefaultSystemImage honors an explicit package and returns null on no match', () => {
