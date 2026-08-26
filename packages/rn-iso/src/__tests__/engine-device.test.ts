@@ -21,15 +21,28 @@ import { makeAdbDevices, makeConfig, makeIosSim } from './_factories.ts';
 type SimEntry = { udid: string; name: string; state: string; isAvailable: boolean };
 
 let tmpHome: string;
+let savedAndroidHome: string | undefined;
+let savedSdkRoot: string | undefined;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
   process.env.RN_ISO_HOME = tmpHome;
+  // Pin Android tool resolution to the bare-name fallback: the machine's
+  // real SDK (if any) must not leak absolute paths into the command strings
+  // the executor mocks below match exactly.
+  savedAndroidHome = process.env.ANDROID_HOME;
+  savedSdkRoot = process.env.ANDROID_SDK_ROOT;
+  process.env.ANDROID_HOME = join(tmpHome, 'no-sdk-here');
+  delete process.env.ANDROID_SDK_ROOT;
 });
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.RN_ISO_HOME;
+  if (savedAndroidHome === undefined) delete process.env.ANDROID_HOME;
+  else process.env.ANDROID_HOME = savedAndroidHome;
+  if (savedSdkRoot === undefined) delete process.env.ANDROID_SDK_ROOT;
+  else process.env.ANDROID_SDK_ROOT = savedSdkRoot;
   resetExecutor();
 });
 

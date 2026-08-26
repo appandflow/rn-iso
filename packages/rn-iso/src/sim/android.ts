@@ -55,8 +55,36 @@ export function androidHome(): string {
   return process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || join(homedir(), 'Library', 'Android', 'sdk');
 }
 
-function avdmanagerPath(): string {
-  return join(androidHome(), 'cmdline-tools', 'latest', 'bin', 'avdmanager');
+// Where each SDK tool lives inside an Android SDK root.
+const SDK_TOOL_LOCATIONS = {
+  emulator: ['emulator', 'emulator'],
+  adb: ['platform-tools', 'adb'],
+  avdmanager: ['cmdline-tools', 'latest', 'bin', 'avdmanager'],
+} as const;
+
+type AndroidTool = keyof typeof SDK_TOOL_LOCATIONS;
+
+// Resolves an SDK tool to an absolute path when it exists under androidHome()
+// ($ANDROID_HOME / $ANDROID_SDK_ROOT, defaulting to ~/Library/Android/sdk),
+// falling back to the bare name for a PATH lookup. The SDK is normally put on
+// PATH by the user's interactive shell rc, which a non-interactive shell
+// spawned by a Node process never reads -- so a bare `emulator` fails in
+// exactly the shells rn-iso runs from, teardown reports failed, and the
+// registry entry outlives its worktree. Absolute resolution makes those
+// shells work; the bare-name fallback keeps a PATH-only setup (a custom SDK
+// location exported globally) working as before.
+export function androidToolPath(tool: AndroidTool): string {
+  const abs = join(androidHome(), ...SDK_TOOL_LOCATIONS[tool]);
+  return existsSync(abs) ? abs : tool;
+}
+
+// The shell-embedded form of androidToolPath: quoted when resolved (an SDK
+// path can carry a space), bare otherwise so the shell still does the PATH
+// lookup. Every shell invocation of an Android tool in this module goes
+// through here; spawn() takes androidToolPath directly (argv, no shell).
+function androidTool(tool: AndroidTool): string {
+  const resolved = androidToolPath(tool);
+  return resolved === tool ? tool : `"${resolved}"`;
 }
 
 // system-images/<android-XX>/<tag>/<arch>/ on disk.
@@ -133,7 +161,7 @@ export function createOwnedAvd(label: string, { systemImage }: { systemImage?: s
   const avdName = ownedAvdName(label);
   // avdmanager prompts "Do you wish to create a custom hardware profile?";
   // piping "no" answers it non-interactively.
-  getExecutor().run(`echo no | "${avdmanagerPath()}" create avd -n "${avdName}" -k "${pick.pkg}"`);
+  getExecutor().run(`echo no | ${androidTool('avdmanager')} create avd -n "${avdName}" -k "${pick.pkg}"`);
   return { avdName };
 }
 
@@ -161,7 +189,7 @@ export function deleteAvd(avdName: string): void {
   if (!avdName?.startsWith('rn-iso-')) {
     throw new Error(`Refusing to delete AVD "${avdName}": not an rn-iso-owned AVD (name must start with "rn-iso-").`);
   }
-  getExecutor().run(`"${avdmanagerPath()}" delete avd -n "${avdName}"`);
+  getExecutor().run(`${androidTool('avdmanager')} delete avd -n "${avdName}"`);
 }
 
 export function parseAvdList(text: string): string[] {
@@ -210,11 +238,11 @@ export function parseAdbDevices(text: string): AdbDevices {
 }
 
 export function listAvds({ timeoutMs }: { timeoutMs?: number } = {}): string[] {
-  return parseAvdList(getExecutor().run('emulator -list-avds', { timeoutMs }));
+  return parseAvdList(getExecutor().run(`${androidTool('emulator')} -list-avds`, { timeoutMs }));
 }
 
 export function listAdbDevices(): AdbDevices {
-  return parseAdbDevices(getExecutor().run('adb devices'));
+  return parseAdbDevices(getExecutor().run(`${androidTool('adb')} devices`));
 }
 
 export function nextConsolePort(claimedPorts: number[]): number {
@@ -226,7 +254,7 @@ export function nextConsolePort(claimedPorts: number[]): number {
 export function bootAndroidEmulator(avdName: string, consolePort: number): void {
   const exec = getExecutor();
   exec
-    .spawn('emulator', ['-avd', avdName, '-port', String(consolePort)], {
+    .spawn(androidToolPath('emulator'), ['-avd', avdName, '-port', String(consolePort)], {
       detached: true,
       stdio: 'ignore',
     })
@@ -238,7 +266,7 @@ export function bootAndroidEmulator(avdName: string, consolePort: number): void 
 // the emulator has registered. Null is "not booted yet", so it reads as an
 // empty string and the poll continues.
 function getprop(exec: Executor, serial: string, prop: string): string {
-  const out = exec.runQuiet(`adb -s ${serial} shell getprop ${prop}`);
+  const out = exec.runQuiet(`${androidTool('adb')} -s ${serial} shell getprop ${prop}`);
   return typeof out === 'string' ? out.trim() : '';
 }
 
@@ -254,7 +282,7 @@ export async function waitForBoot(serial: string, timeoutMs = 60000): Promise<Bo
   }
   // Diagnostic snapshot for the timeout error: shows the user exactly
   // what adb sees and why the polling never resolved.
-  const devicesOut = exec.runQuiet('adb devices');
+  const devicesOut = exec.runQuiet(`${androidTool('adb')} devices`);
   return {
     ok: false,
     diagnostic: {
@@ -267,7 +295,7 @@ export async function waitForBoot(serial: string, timeoutMs = 60000): Promise<Bo
 }
 
 export function shutdownAndroidEmulator(serial: string): void {
-  getExecutor().runQuiet(`adb -s ${serial} emu kill`);
+  getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu kill`);
 }
 
 // There is no adbReverse here any more. Contract 6's port wiring lives in
@@ -277,7 +305,7 @@ export function shutdownAndroidEmulator(serial: string): void {
 // CLAUDE.md item 4 warns about: it would map only one of the two, silently.
 
 function getAvdNameForSerial(serial: string): string | null {
-  const out = getExecutor().runQuiet(`adb -s ${serial} emu avd name`);
+  const out = getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu avd name`);
   if (!out) return null;
   // `adb emu avd name` returns the AVD name on the first line, "OK" on the second.
   return out.split('\n')[0]?.trim() || null;

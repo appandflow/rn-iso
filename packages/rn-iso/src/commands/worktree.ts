@@ -621,9 +621,10 @@ function pathArgs(lines: string[] | null | undefined, limit = 5): string {
 // Pure: takes the already-computed dirty/unpushed facts and turns them into
 // human-readable reasons to refuse removal. `worktree remove` is called
 // unattended (agents, phone-driven sessions) and `git worktree remove
-// --force` silently discards uncommitted changes and any commits that exist
-// on no remote -- this is the only check standing between that and lost
-// work, so it must be right and it must be tested without touching git.
+// --force` silently discards uncommitted changes and strands any commits
+// that exist on no remote and no other local branch -- this is the only
+// check standing between that and lost work, so it must be right and it
+// must be tested without touching git.
 // `dirty` / `unpushed` are `null` (not `false` / `[]`) when the caller could
 // not get an answer from git at all -- see hasUncommittedWork/unpushedCommits
 // in worktree.js. For a destructive command the unknown case must fail
@@ -636,7 +637,7 @@ export function removalBlockers({ dirty, unpushed }: { dirty: boolean | null; un
   }
   if (dirty) blockers.push('uncommitted changes or untracked files');
   if (unpushed && unpushed.length) {
-    blockers.push(`${unpushed.length} commit(s) not on any remote`);
+    blockers.push(`${unpushed.length} commit(s) not on any remote or any other local branch`);
   }
   return blockers;
 }
@@ -884,10 +885,14 @@ export function registerRemove(worktree: Command): void {
         console.error(chalk.red(`Refusing to remove ${path}:`));
         for (const b of blockers) console.error(chalk.red(`  - ${b}`));
         if (unpushed && unpushed.length && !hasRemote(path)) {
-          // Every commit reaches this branch when no remote is configured at
-          // all -- that is the safe direction (refuse), but a bare count
-          // reads like a bug rather than a missing remote. Say so.
-          console.error(chalk.dim('  (no remote is configured for this worktree, so every commit counts as unpushed)'));
+          // With no remote configured, every commit no other local branch
+          // reaches counts -- that is the safe direction (refuse), but a bare
+          // count reads like a bug rather than a missing remote. Say so.
+          console.error(
+            chalk.dim(
+              '  (no remote is configured for this worktree, so every commit no other local branch reaches counts as unpushed)',
+            ),
+          );
         }
         // A native build rewrites tracked files -- `pod install` always
         // touches Podfile.lock and project.pbxproj -- so this refusal fires
@@ -914,10 +919,16 @@ export function registerRemove(worktree: Command): void {
         // paste, and one carrying a literal `<worktree>` is a command that
         // fails in a way that reads like the tool being broken.
         for (const line of removalRemedy(dirtyLines, { worktree: path })) console.error(chalk.dim(line));
-        console.error(chalk.dim('Otherwise: commit or push the branch. --force is a last resort -- it discards'));
+        // "Push the branch" is followable now precisely because of what is
+        // counted: only commits no remote AND no other local branch reaches --
+        // this worktree's own work, never commits inherited from a local-only
+        // base ref (issue #8) -- so pushing publishes nothing but its own.
+        console.error(chalk.dim('Otherwise: commit or push the branch (only commits found nowhere else are counted,'));
+        console.error(chalk.dim("so pushing publishes nothing but this worktree's own work). --force is a last"));
         console.error(
-          chalk.dim('uncommitted changes and untracked files permanently; committed work stays on the branch.'),
+          chalk.dim('resort -- it discards uncommitted changes and untracked files permanently; committed'),
         );
+        console.error(chalk.dim('work stays on the branch.'));
         process.exitCode = 1;
         return;
       }

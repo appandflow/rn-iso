@@ -1,7 +1,28 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 
-afterEach(() => resetExecutor());
+let savedAndroidHome: string | undefined;
+let savedSdkRoot: string | undefined;
+
+// Pin Android tool resolution to the bare-name fallback: the machine's real
+// SDK (if any) must not leak absolute paths into the command strings the
+// androidExecutor mocks below match exactly.
+beforeEach(() => {
+  savedAndroidHome = process.env.ANDROID_HOME;
+  savedSdkRoot = process.env.ANDROID_SDK_ROOT;
+  process.env.ANDROID_HOME = join(tmpdir(), 'rn-iso-test-no-sdk-here');
+  delete process.env.ANDROID_SDK_ROOT;
+});
+
+afterEach(() => {
+  if (savedAndroidHome === undefined) delete process.env.ANDROID_HOME;
+  else process.env.ANDROID_HOME = savedAndroidHome;
+  if (savedSdkRoot === undefined) delete process.env.ANDROID_SDK_ROOT;
+  else process.env.ANDROID_SDK_ROOT = savedSdkRoot;
+  resetExecutor();
+});
 
 interface IosExecutorOptions {
   sims?: unknown[];
