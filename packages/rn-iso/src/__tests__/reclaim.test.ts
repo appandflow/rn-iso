@@ -5,7 +5,7 @@ import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, setDevice, getProject } from '../config.ts';
 import { describeDereferenced } from '../reclaim.ts';
 
-let tmpHome;
+let tmpHome: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -40,7 +40,7 @@ test('reclaimProject removes the config entry', async () => {
   upsertProject('/proj', { metroPort: 8082 });
   setDevice('/proj', 'ios', { deviceUdid: 'U1' });
 
-  const result = await reclaimProject('/proj', { deleteArtifacts: false });
+  const result = await reclaimProject('/proj', { deleteOwnedDevices: false });
   expect(result.path).toBe('/proj');
   expect(result.dereferenced).toEqual(['ios sim U1']);
   expect(getProject('/proj')).toBe(null);
@@ -50,7 +50,7 @@ test('reclaimProject removes the config entry', async () => {
 // artifacts to find or measure: it must not walk a global DerivedData tree
 // (one `plutil` per directory) or size anything (one `du` walk per match).
 test('reclaimProject scans and sizes no build output at all', async () => {
-  const calls = [];
+  const calls: string[] = [];
   setExecutor({
     run: (cmd) => {
       calls.push(cmd);
@@ -96,7 +96,7 @@ test('reclaimProject keeps the config entry when an owned device delete fails', 
   const result = await reclaimProject('/proj', { deleteOwnedDevices: true });
   expect(result.keptEntry).toBe(true);
   expect(result.deletedDevices.length).toBe(0);
-  expect(result.failedDevices[0].reason).toMatch(/Unable to delete device/);
+  expect(result.failedDevices[0]?.reason).toMatch(/Unable to delete device/);
   expect(getProject('/proj')).toBeTruthy();
 });
 
@@ -134,7 +134,7 @@ test('reclaimProject refuses to kill an unidentified process on the port', async
   const { reclaimProject } = await import('../reclaim.ts');
   upsertProject('/nonexistent/project', { metroPort: 8082 });
 
-  const result = await reclaimProject('/nonexistent/project', { deleteArtifacts: false });
+  const result = await reclaimProject('/nonexistent/project', { deleteOwnedDevices: false });
   expect(result.killedPid).toBe(null);
   expect(result.skippedMetro).toBeTruthy();
   resetExecutor();

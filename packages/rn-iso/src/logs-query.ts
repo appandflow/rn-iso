@@ -73,8 +73,8 @@ export function parseSince(text: unknown): SinceResult {
   if (!m) {
     return { error: `Invalid --since value "${text}". Use a count and a unit, e.g. ${SINCE_FORMS}.` };
   }
-  const unit = m[2].toLowerCase() as keyof typeof SINCE_UNITS;
-  return { ms: parseInt(m[1], 10) * SINCE_UNITS[unit] };
+  const unit = (m[2] ?? '').toLowerCase() as keyof typeof SINCE_UNITS;
+  return { ms: parseInt(m[1] ?? '', 10) * SINCE_UNITS[unit] };
 }
 
 // Pure. Same contract as parseSince: a bad pattern is data, not an exception,

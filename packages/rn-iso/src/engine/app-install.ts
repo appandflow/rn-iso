@@ -194,7 +194,7 @@ export function parseResolvedActivity(text: unknown) {
   return null;
 }
 
-export function resolveLaunchActivity(serial: string, packageName: string, { exec = null }: ExecOpt = {}) {
+function resolveLaunchActivity(serial: string, packageName: string, { exec = null }: ExecOpt = {}) {
   const e = exec || getExecutor();
   try {
     const out = e.runFile('adb', [
@@ -280,7 +280,7 @@ export function reverseMetroPorts(
 // emulator itself provides. It also keeps debug_http_host and the dev-client
 // deep link naming the SAME host, which matters because expo-dev-launcher
 // persists the url it was opened with in its recent-servers list.
-export const EMULATOR_HOST_LOOPBACK = '10.0.2.2';
+const EMULATOR_HOST_LOOPBACK = '10.0.2.2';
 
 // `adb shell` does NOT escape its arguments -- it joins them with spaces and
 // hands the resulting STRING to the device's shell, which parses it. So an
@@ -502,7 +502,7 @@ function describe(err: unknown) {
 // on expo-dev-launcher's DEVELOPMENT SERVERS picker, listing every OTHER
 // workspace's Metro on the machine. One tap there loads another project's
 // bundle onto this workspace's simulator -- the exact cross-workspace
-// contamination v3 exists to prevent -- and from the outside a picker looks
+// contamination rn-iso exists to prevent -- and from the outside a picker looks
 // identical to a loaded app. `simctl launch` returning a pid proves a process
 // started, and nothing more.
 //
@@ -523,7 +523,6 @@ function describe(err: unknown) {
 // check. Saying "launched" when we did not see a bundle request is the thing
 // that must not happen.
 
-export const LAUNCH_VERIFIED = 'verified';
 export const LAUNCH_UNVERIFIED = 'unverified';
 
 // ~20s: a cold dev-client fetches the manifest, then requests the bundle. On
@@ -531,7 +530,7 @@ export const LAUNCH_UNVERIFIED = 'unverified';
 // 3-8s after launch; 20 is generous without being a wait anybody notices when
 // something is wrong.
 export const VERIFY_TIMEOUT_MS = 20000;
-export const VERIFY_POLL_MS = 500;
+const VERIFY_POLL_MS = 500;
 
 // Bare path (@rn-iso/metro's ndjsonReporter): Metro's own event names. Any of
 // them proves a client asked THIS server for a bundle -- including the

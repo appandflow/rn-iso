@@ -119,6 +119,7 @@ export function parseLogcatLine(line: string, { now = Date.now }: { now?: () => 
   const m = LOGCAT_TIME.exec(line.trimEnd());
   if (!m) return null;
   const [, month, day, hour, minute, second, millis, letter, tag, pid, msg] = m;
+  if (letter === undefined || tag === undefined || msg === undefined) return null;
   if (!msg.trim()) return null;
   return {
     ts: parseLogcatTimestamp(
@@ -156,7 +157,7 @@ export function parsePidof(text: unknown): number | null {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-export function resolveAppPid(
+function resolveAppPid(
   serial: string,
   packageName: string,
   { exec = null }: { exec?: Executor | null } = {},
@@ -250,7 +251,7 @@ export function startAndroidLogcat({
 // the stream is quiet: a quiet stream is not a signal on Android, where a
 // backgrounded app can be silent for minutes, and `pidof` is one adb call
 // every few seconds.
-export const PID_WATCH_MS = 3000;
+const PID_WATCH_MS = 3000;
 
 // A test redirect, in the spirit of RN_ISO_HOME: the collector is spawned as
 // a separate PROCESS in its own tests (see collector-run.test.js), so an

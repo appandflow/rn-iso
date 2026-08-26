@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -93,7 +94,7 @@ test('unpushedCommits against a real repo: empty right after push, reports a com
     mkdirSync(bareRemote, { recursive: true });
     execSync(`git init -q --bare "${bareRemote}"`);
     mkdirSync(repo, { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
     git('git init -q');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -110,6 +111,7 @@ test('unpushedCommits against a real repo: empty right after push, reports a com
     git('git commit -q -m "local-only commit"');
 
     const unpushed = unpushedCommits(repo);
+    assert(unpushed, 'unpushedCommits returned null');
     expect(unpushed.length).toBe(1);
     expect(unpushed[0]).toMatch(/local-only commit/);
   } finally {
@@ -118,7 +120,7 @@ test('unpushedCommits against a real repo: empty right after push, reports a com
 });
 
 test('resolveBaseRef("head") returns HEAD and never touches origin/HEAD', () => {
-  const calls = [];
+  const calls: string[] = [];
   setExecutor({
     run: () => '',
     runQuiet: (cmd) => {
@@ -133,7 +135,7 @@ test('resolveBaseRef("head") returns HEAD and never touches origin/HEAD', () => 
 
 test('resolveBaseRef("fresh") returns origin/HEAD\'s branch when it resolves, no warning', () => {
   setExecutor({ run: () => '', runQuiet: () => 'origin/main', spawn: () => {} });
-  const errs = [];
+  const errs: string[] = [];
   const originalError = console.error;
   console.error = (msg) => errs.push(msg);
   try {
@@ -149,7 +151,7 @@ test('resolveBaseRef("fresh") returns origin/HEAD\'s branch when it resolves, no
 // local HEAD with no indication anything had fallen back.
 test('resolveBaseRef("fresh") falls back to HEAD and warns on stderr when origin/HEAD is missing', () => {
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
-  const errs = [];
+  const errs: string[] = [];
   const originalError = console.error;
   console.error = (msg) => errs.push(msg);
   try {
@@ -247,8 +249,8 @@ test('carryOverFiles reports per-file failures instead of swallowing them', () =
 
     expect(copied).toEqual(['apps/mobile/.env']);
     expect(failed.length).toBe(1);
-    expect(failed[0].file).toBe('apps/missing/.env');
-    expect(failed[0].error).toMatch(/ENOENT|no such file/i);
+    expect(failed[0]?.file).toBe('apps/missing/.env');
+    expect(failed[0]?.error).toMatch(/ENOENT|no such file/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
@@ -279,7 +281,7 @@ test('cloneIgnoredEntries skips excluded paths and reports a clone that fell bac
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
   const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
   try {
-    const fileCalls = [];
+    const fileCalls: [string, string[]][] = [];
     setExecutor({
       run: (cmd) => {
         throw new Error(`unexpected shell run: ${cmd}`);
@@ -325,7 +327,7 @@ test('carryOverFiles against a real git repo copies only the gitignored+matched 
   try {
     mkdirSync(root, { recursive: true });
     mkdirSync(target, { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
     git('git init -q');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -378,7 +380,7 @@ test('listGitignoredFiles and carryOverFiles still find the target file when raw
   try {
     mkdirSync(root, { recursive: true });
     mkdirSync(target, { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
     git('git init -q');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -423,7 +425,7 @@ test('addWorktree runs git via runFile (no shell) with a `--` terminator, path a
   const tmp = mkdtempSync(join(tmpdir(), 'rn-iso-test-add-'));
   try {
     const path = join(tmp, 'my worktree', 'repo');
-    const calls = [];
+    const calls: [string, string[]][] = [];
     setExecutor({
       run: (cmd) => {
         throw new Error(`unexpected shell run: ${cmd}`);
@@ -436,7 +438,7 @@ test('addWorktree runs git via runFile (no shell) with a `--` terminator, path a
       spawn: () => {},
     });
 
-    const result = addWorktree({ path, branch: 'feat-x', baseRef: 'origin/main' });
+    const result = addWorktree({ path, branch: 'feat-x', baseRef: 'origin/main', cwd: tmp });
 
     expect(result).toBe(path);
     // No shell string anywhere; the space-bearing path is a single literal argv
@@ -457,7 +459,7 @@ test('addWorktree attaches to an existing branch instead of erroring on -b', () 
   const tmp = mkdtempSync(join(tmpdir(), 'rn-iso-test-add-reuse-'));
   try {
     const path = join(tmp, 'repo2');
-    const calls = [];
+    const calls: [string, string[]][] = [];
     setExecutor({
       run: (cmd) => {
         throw new Error(`unexpected shell run: ${cmd}`);
@@ -486,7 +488,7 @@ test('addWorktree uses -b for a genuinely new branch name', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'rn-iso-test-add-fresh-'));
   try {
     const path = join(tmp, 'repo3');
-    const calls = [];
+    const calls: [string, string[]][] = [];
     setExecutor({
       run: (cmd) => {
         throw new Error(`unexpected shell run: ${cmd}`);
@@ -507,12 +509,12 @@ test('addWorktree uses -b for a genuinely new branch name', () => {
   }
 });
 
-test('removeWorktree includes --force only when asked, for a path containing a space', () => {
+test('removeWorktree runs git via runFile (no shell) and includes --force only when asked', () => {
   const path = '/tmp/my worktree/repo';
-  const calls = [];
+  const calls: string[][] = [];
   setExecutor({
-    run: (cmd) => {
-      calls.push(cmd);
+    runFile: (file, args = []) => {
+      calls.push([file, ...args]);
       return '';
     },
     runQuiet: () => '',
@@ -522,9 +524,11 @@ test('removeWorktree includes --force only when asked, for a path containing a s
   removeWorktree(path);
   removeWorktree(path, { force: true });
 
+  // No shell: the path -- which may contain a space, quote, or `$(...)` -- is a
+  // single argv element, and `--` ends option parsing before it.
   expect(calls).toEqual([
-    `git -C "${path}" worktree remove "${path}"`,
-    `git -C "${path}" worktree remove --force "${path}"`,
+    ['git', '-C', path, 'worktree', 'remove', '--', path],
+    ['git', '-C', path, 'worktree', 'remove', '--force', '--', path],
   ]);
 });
 
@@ -533,7 +537,15 @@ test('removeWorktree includes --force only when asked, for a path containing a s
 // imports the contradiction and xcodebuild reports it only after every pod has
 // compiled ("sandbox is not in sync"). Catching it at create time is a file
 // comparison; catching it at build time cost 25 minutes on a real project.
-function podsFixture({ manifest, podfileLock, dir = 'ios' }) {
+function podsFixture({
+  manifest,
+  podfileLock,
+  dir = 'ios',
+}: {
+  manifest?: string | null;
+  podfileLock?: string | null;
+  dir?: string;
+}) {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-pods-'));
   mkdirSync(join(root, dir, 'Pods'), { recursive: true });
   if (manifest != null) writeFileSync(join(root, dir, 'Pods', 'Manifest.lock'), manifest);
@@ -712,7 +724,7 @@ test('cloneIgnoredEntries against a real git repo never overwrites a path the de
   const target = join(base, 'wt');
   try {
     mkdirSync(root, { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
     git('git init -q -b main');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -761,7 +773,7 @@ test('carryOverFiles against a real git repo never overwrites a path the destina
   const target = join(base, 'wt');
   try {
     mkdirSync(root, { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
     git('git init -q -b main');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -814,7 +826,7 @@ test('carry against a real git repo leaves a tracked file under an ignored direc
   const target = join(base, 'wt');
   try {
     mkdirSync(root, { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
     git('git init -q -b main');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -922,7 +934,7 @@ test('C1: resolveRef never lets a $(...) baseRef reach a shell, and still resolv
   const cwdBefore = process.cwd();
   try {
     mkdirSync(root, { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
     git('git init -q -b main');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -952,7 +964,7 @@ test('C1: addWorktree never lets a $(...) baseRef reach a shell, and still creat
   const cwdBefore = process.cwd();
   try {
     mkdirSync(root, { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
     git('git init -q -b main');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -1030,7 +1042,7 @@ test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a l
   try {
     mkdirSync(root, { recursive: true });
     mkdirSync(target, { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
     git('git init -q -b main');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -1098,7 +1110,7 @@ test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData bu
   try {
     mkdirSync(root, { recursive: true });
     mkdirSync(target, { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
     git('git init -q');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -1137,7 +1149,7 @@ test('carryOverFiles against a real git repo skips a .DerivedData file but copie
   try {
     mkdirSync(root, { recursive: true });
     mkdirSync(target, { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
     git('git init -q');
     git('git config user.email test@example.com');
     git('git config user.name test');

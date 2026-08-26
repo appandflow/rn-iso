@@ -16,10 +16,11 @@
     "test:watch": "vitest",
     "build": "npm run build --workspaces --if-present",
     "test:e2e": "node --test test/e2e/*.e2e.js",
-    "typecheck:tests": "tsc --noEmit -p packages/rn-iso/tsconfig.test.json"
+    "knip": "knip"
   },
   "devDependencies": {
     "@types/node": "26.3.0",
+    "knip": "^6.32.2",
     "oxfmt": "0.65.0",
     "oxlint": "1.80.0",
     "tsdown": "0.22.14",
@@ -28,5 +29,8 @@
   },
   "overrides": {
     "vite": "npm:rolldown-vite@7.3.1"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

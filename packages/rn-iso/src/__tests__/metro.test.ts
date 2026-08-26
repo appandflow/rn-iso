@@ -111,7 +111,7 @@ test('resolveProjectMetro identifies our Metro and reports its group leader', as
 });
 
 test('killMetroTree signals the process group, not just the pid', () => {
-  const signalled: any[] = [];
+  const signalled: [number, string | number][] = [];
   const origKill = process.kill;
   process.kill = ((pid: number, sig: string | number) => {
     signalled.push([pid, sig]);
@@ -126,7 +126,7 @@ test('killMetroTree signals the process group, not just the pid', () => {
 });
 
 test('killMetroTree falls back to the bare pid when the group is gone', () => {
-  const signalled: any[] = [];
+  const signalled: [number, string | number][] = [];
   const origKill = process.kill;
   process.kill = ((pid: number, sig: string | number) => {
     if (pid < 0) throw new Error('ESRCH');
@@ -143,22 +143,24 @@ test('killMetroTree falls back to the bare pid when the group is gone', () => {
 
 // A Metro backgrounded by a non-interactive script shares its shell's process
 // group with rn-iso itself, so signalling the group would kill rn-iso and the
-// shell that started it.
-test('killMetroTree signals the bare pid when the leader is our own process group', () => {
+// shell that started it -- and the group LEADER is that shell, not Metro. The
+// listener pid is signalled directly instead.
+test('killMetroTree signals the listener pid, not the leader, when the leader is our own process group', () => {
   setExecutor({
     run: () => '',
     runQuiet: (cmd: string) => (cmd.includes('ps -o pgid=') ? ' 4242\n' : ''),
     spawn: () => {},
   });
-  const signalled: any[] = [];
+  const signalled: [number, string | number][] = [];
   const origKill = process.kill;
   process.kill = ((pid: number, sig: string | number) => {
     signalled.push([pid, sig]);
     return true;
   }) as typeof process.kill;
   try {
-    expect(killMetroTree(4242)).toBe(true);
-    expect(signalled).toEqual([[4242, 'SIGTERM']]);
+    // leader 4242 IS our own group; the Metro listener is pid 5555.
+    expect(killMetroTree(4242, 5555)).toBe(true);
+    expect(signalled).toEqual([[5555, 'SIGTERM']]);
   } finally {
     process.kill = origKill;
     resetExecutor();
@@ -170,7 +172,7 @@ test('killMetroTree signals the bare pid when the leader is our own process grou
 test('killMetroTree resolves its own process group with the real ps and spares it', () => {
   const ownPgid = processGroupLeader(process.pid);
   expect(Number.isFinite(ownPgid), 'ps must report a numeric pgid for this process').toBeTruthy();
-  const signalled: any[] = [];
+  const signalled: [number, string | number][] = [];
   const origKill = process.kill;
   process.kill = ((pid: number, sig: string | number) => {
     signalled.push([pid, sig]);
@@ -228,7 +230,7 @@ test.skipIf(!CAN_READ_CWD)(
       const timer = setTimeout(() => reject(new Error('the fake Metro never reported a port')), 10000);
       child.stdout!.on('data', (chunk: Buffer) => {
         buffered += chunk;
-        const line = buffered.split('\n')[0];
+        const line = buffered.split('\n')[0] ?? '';
         if (buffered.includes('\n')) {
           clearTimeout(timer);
           resolve(parseInt(line, 10));

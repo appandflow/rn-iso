@@ -4,7 +4,21 @@ import { join, dirname, resolve } from 'path';
 import { type ProjectRecord, loadConfig, findEnclosingWorktreeRoot, getProject } from './config.ts';
 
 // Loosely-typed views of the JSON config files this module parses defensively.
-type AnyJson = Record<string, any>;
+interface PackageJson {
+  scripts?: Record<string, unknown>;
+  dependencies?: Record<string, unknown>;
+  devDependencies?: Record<string, unknown>;
+}
+
+interface AnyJson {
+  expo?: {
+    ios?: { bundleIdentifier?: unknown };
+    android?: { package?: unknown };
+    [key: string]: unknown;
+  };
+  extra?: { eas?: unknown };
+  [key: string]: unknown;
+}
 
 export interface ResolveResult {
   found: string | null;
@@ -103,7 +117,10 @@ export function resolveRegisteredProject(arg?: string | null): ResolveResult {
 
   // Shortcut match (label or basename).
   const matches = Object.keys(projects).filter((p) => projectShortcut(p, projects[p]) === arg);
-  if (matches.length === 1) return { found: matches[0] };
+  if (matches.length === 1) {
+    const only = matches[0];
+    if (only !== undefined) return { found: only };
+  }
   if (matches.length > 1) {
     return {
       found: null,
@@ -132,7 +149,7 @@ export function findProjectRoot(startDir: string): string | null {
   }
 }
 
-function readPackageJson(projectRoot: string): AnyJson | null {
+function readPackageJson(projectRoot: string): PackageJson | null {
   const p = join(projectRoot, 'package.json');
   if (!existsSync(p)) return null;
   try {
@@ -197,7 +214,7 @@ export function detectIsExpo(projectRoot: string): boolean {
 // app.json is `{ "name": ..., "displayName": ... }` and has none of these.
 // Every key below is one only Expo reads, so a match is the config saying
 // what it is for.
-export function looksLikeExpoConfig(appJson: AnyJson | null): boolean {
+function looksLikeExpoConfig(appJson: AnyJson | null): boolean {
   if (!appJson || typeof appJson !== 'object' || Array.isArray(appJson)) return false;
   if (appJson.expo) return true;
   const keys = [
@@ -257,12 +274,13 @@ function readAppConfigText(projectRoot: string): string | null {
 export function detectBundleId(projectRoot: string): string | null {
   const appJson = readAppJson(projectRoot);
   const fromJson = appJson?.expo?.ios?.bundleIdentifier;
-  if (fromJson) return fromJson;
+  if (typeof fromJson === 'string' && fromJson) return fromJson;
 
   const text = readAppConfigText(projectRoot);
   if (text) {
     const m = text.match(/bundleIdentifier\s*:\s*["']([^"']+)["']/);
-    if (m) return m[1];
+    const id = m?.[1];
+    if (id) return id;
   }
 
   // Fallback: hybrid Expo / bare RN projects keep the bundle ID in the Xcode
@@ -276,19 +294,20 @@ export function detectBundleId(projectRoot: string): string | null {
 export function detectAndroidPackage(projectRoot: string): string | null {
   const appJson = readAppJson(projectRoot);
   const fromJson = appJson?.expo?.android?.package;
-  if (fromJson) return fromJson;
+  if (typeof fromJson === 'string' && fromJson) return fromJson;
 
   const text = readAppConfigText(projectRoot);
   if (text) {
     const m = text.match(/package\s*:\s*["']([^"']+)["']/);
-    if (m) return m[1];
+    const pkg = m?.[1];
+    if (pkg) return pkg;
   }
 
   // Fallback: bare RN keeps the package in android/app/build.gradle.
   return detectAndroidPackageFromGradle(projectRoot);
 }
 
-export function detectBundleIdFromPbxproj(projectRoot: string): string | null {
+function detectBundleIdFromPbxproj(projectRoot: string): string | null {
   const iosDir = join(projectRoot, 'ios');
   if (!existsSync(iosDir)) return null;
   let entries: import('fs').Dirent[];
@@ -308,7 +327,7 @@ export function detectBundleIdFromPbxproj(projectRoot: string): string | null {
       continue;
     }
     const all = [...text.matchAll(/PRODUCT_BUNDLE_IDENTIFIER\s*=\s*([^;\s"]+)\s*;/g)].map((m) => m[1]);
-    const concrete = all.filter((id) => id && !id.startsWith('$') && !id.includes('('));
+    const concrete = all.filter((id): id is string => !!id && !id.startsWith('$') && !id.includes('('));
     if (concrete.length === 0) continue;
     const counts: Record<string, number> = {};
     for (const id of concrete) counts[id] = (counts[id] || 0) + 1;
@@ -327,7 +346,7 @@ export function detectBundleIdFromPbxproj(projectRoot: string): string | null {
   return null;
 }
 
-export function detectAndroidPackageFromGradle(projectRoot: string): string | null {
+function detectAndroidPackageFromGradle(projectRoot: string): string | null {
   const gradle = join(projectRoot, 'android', 'app', 'build.gradle');
   if (!existsSync(gradle)) return null;
   let text: string;
@@ -339,8 +358,10 @@ export function detectAndroidPackageFromGradle(projectRoot: string): string | nu
   // Try `namespace "com.foo"` (modern AGP) first, then fall back to
   // `applicationId "com.foo"`.
   const ns = text.match(/namespace\s+["']([^"']+)["']/);
-  if (ns) return ns[1];
+  const nsId = ns?.[1];
+  if (nsId) return nsId;
   const app = text.match(/applicationId\s+["']([^"']+)["']/);
-  if (app) return app[1];
+  const appId = app?.[1];
+  if (appId) return appId;
   return null;
 }

@@ -5,6 +5,7 @@
 // to get subtly wrong: which packages come from the PROJECT, what a missing or
 // mismatched one reports, and that the reporter and both middlewares actually
 // reach Metro.runServer.
+import assert from 'node:assert';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,19 +19,22 @@ import {
   resolveBareDeps,
   startBareServer,
 } from '../supervisor/server-bare.ts';
+import { asRequire, makeError, makeWriter } from './_factories.ts';
 
 // assert.throws does not hand back the error, and every assertion below is
 // about the error's contents.
-function caught(fn) {
+function caught(fn: () => unknown): Error & Record<string, unknown> {
   try {
     fn();
   } catch (err) {
-    return err;
+    // The thrown value is unknown; every assertion below reads a coded-error
+    // property, so the single cast for that is centralized in this helper.
+    return err as Error & Record<string, unknown>;
   }
   throw new Error('expected a throw');
 }
 
-let root;
+let root: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'rn-iso-bare-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'bare' }));
@@ -41,28 +45,33 @@ afterEach(() => {
 
 // A require() that resolves only the modules it is given, so a project's
 // node_modules can be simulated without one existing.
-function fakeRequire(modules, { throwOnLoad = {} } = {}) {
-  const require_ = (id) => {
+function fakeRequire(
+  modules: Record<string, unknown>,
+  { throwOnLoad = {} }: { throwOnLoad?: Record<string, string> } = {},
+) {
+  const require_ = (id: string) => {
     if (throwOnLoad[id]) throw new Error(throwOnLoad[id]);
     if (!(id in modules)) {
-      const err = new Error(`Cannot find module '${id}'`);
-      err.code = 'MODULE_NOT_FOUND';
-      throw err;
+      throw makeError(`Cannot find module '${id}'`, { code: 'MODULE_NOT_FOUND' });
     }
     return modules[id];
   };
-  require_.resolve = (id) => {
+  require_.resolve = (id: string) => {
     if (!(id in modules) && !(id in throwOnLoad)) {
-      const err = new Error(`Cannot find module '${id}'`);
-      err.code = 'MODULE_NOT_FOUND';
-      throw err;
+      throw makeError(`Cannot find module '${id}'`, { code: 'MODULE_NOT_FOUND' });
     }
     return id;
   };
-  return () => require_;
+  return () => asRequire(require_);
 }
 
-const OK_MODULES = () => ({
+type OkModules = {
+  metro: { loadConfig: () => Promise<unknown>; runServer?: () => Promise<unknown> };
+  '@react-native/dev-middleware'?: { createDevMiddleware: () => unknown };
+  '@react-native-community/cli-server-api'?: { createDevServerMiddleware: () => unknown };
+};
+
+const OK_MODULES = (): OkModules => ({
   metro: { loadConfig: async () => ({}), runServer: async () => ({}) },
   '@react-native/dev-middleware': { createDevMiddleware: () => ({ middleware: 'dm', websocketEndpoints: {} }) },
   '@react-native-community/cli-server-api': {
@@ -162,14 +171,16 @@ describe('config adjustments', () => {
 
 describe('the dev-middleware logger', () => {
   test('routes info/warn/error into the reporter as unstable_server_log', () => {
-    const events = [];
-    const logger = reporterLogger({ update: (e) => events.push(e) });
+    const events: Array<{ type: string; level: string; data: unknown[] }> = [];
+    const logger = reporterLogger({
+      update: (e: { type: string; level: string; data: unknown[] }) => events.push(e),
+    });
     logger.info('hello', 'world');
     logger.warn('careful');
     logger.error('boom');
     expect(events.map((e) => e.type)).toEqual(['unstable_server_log', 'unstable_server_log', 'unstable_server_log']);
     expect(events.map((e) => e.level)).toEqual(['info', 'warn', 'error']);
-    expect(events[0].data).toEqual(['hello', 'world']);
+    expect(events[0]?.data).toEqual(['hello', 'world']);
   });
 
   test('a throwing reporter never reaches the dev server', () => {
@@ -186,17 +197,18 @@ describe('loadNdjsonReporter', () => {
   test('resolves the one shared implementation from @rn-iso/metro', () => {
     const factory = loadNdjsonReporter(root);
     expect(typeof factory).toBe('function');
+    assert(factory);
     const reporter = factory({ dir: join(root, '.rn-iso', 'logs') });
     expect(typeof reporter.update).toBe('function');
   });
 
   test('returns null rather than throwing when the package is nowhere', () => {
     const nothing = () => {
-      const req = (id) => {
+      const req = (id: string) => {
         throw new Error(`Cannot find module '${id}'`);
       };
       req.resolve = req;
-      return req;
+      return asRequire(req);
     };
     expect(loadNdjsonReporter(root, { requireFrom: nothing })).toBe(null);
   });
@@ -204,39 +216,51 @@ describe('loadNdjsonReporter', () => {
 
 describe('startBareServer wiring', () => {
   function fakeDeps() {
-    const calls = {};
+    interface FakeCalls {
+      loadConfig?: { cwd: string; port: number };
+      runServer: {
+        config: { reporter?: unknown; resolver: { platforms: unknown } };
+        options: { unstable_extraMiddleware?: unknown; websocketEndpoints?: unknown; host?: unknown };
+      };
+      createDevMiddleware: { serverBaseUrl?: unknown; logger: { error?: unknown } };
+      createDevServerMiddleware?: unknown;
+      reporterDir?: unknown;
+      closed?: boolean;
+      closedConnections?: boolean;
+    }
+    const calls = {} as FakeCalls;
     const httpServer = {
-      handlers: {},
-      on(event, cb) {
+      handlers: {} as Record<string, (...args: unknown[]) => void>,
+      on(event: string, cb: (...args: unknown[]) => void) {
         this.handlers[event] = cb;
       },
       closeAllConnections() {
         calls.closedConnections = true;
       },
-      close(cb) {
+      close(cb?: () => void) {
         calls.closed = true;
         cb?.();
       },
     };
     const deps = {
       metro: {
-        async loadConfig(argv) {
+        async loadConfig(argv: { cwd: string; port: number }) {
           calls.loadConfig = argv;
           return { resolver: { platforms: ['android', 'ios'] }, watchFolders: ['/w'], server: {} };
         },
-        async runServer(config, options) {
+        async runServer(config: FakeCalls['runServer']['config'], options: FakeCalls['runServer']['options']) {
           calls.runServer = { config, options };
           return httpServer;
         },
       },
       devMiddleware: {
-        createDevMiddleware(args) {
+        createDevMiddleware(args: FakeCalls['createDevMiddleware']) {
           calls.createDevMiddleware = args;
           return { middleware: 'dev-mw', websocketEndpoints: { '/inspector': 'i' } };
         },
       },
       serverApi: {
-        createDevServerMiddleware(args) {
+        createDevServerMiddleware(args: unknown) {
           calls.createDevServerMiddleware = args;
           return { middleware: 'community-mw', websocketEndpoints: { '/message': 'm' } };
         },
@@ -287,14 +311,19 @@ describe('startBareServer wiring', () => {
 
   test('serves without the reporter package, and says so in the log it would have written', async () => {
     const { deps, calls } = fakeDeps();
-    const written = [];
+    const written: Array<{ src: string; level: string; event: string; msg: string }> = [];
     const handle = await startBareServer({
       root,
       port: 8101,
       logsDir: join(root, 'logs'),
       deps,
       reporterFactory: null,
-      writer: { write: (r) => written.push(r) },
+      writer: makeWriter({
+        write: (r: { src: string; level: string; event: string; msg: string }) => {
+          written.push(r);
+          return true;
+        },
+      }),
     });
     expect(handle.httpServer).toBeTruthy();
     // config.reporter is left as the project's own (Metro's TerminalReporter,
@@ -302,6 +331,7 @@ describe('startBareServer wiring', () => {
     // black hole.
     expect(calls.runServer.config.reporter).toBe(undefined);
     const warn = written.find((r) => r.event === 'reporter_missing');
+    assert(warn);
     expect(warn.level).toBe('warn');
     expect(warn.msg).toMatch(/@rn-iso\/metro/);
   });
@@ -331,11 +361,11 @@ describe('startBareServer wiring', () => {
       deps,
       reporterFactory: () => ({ update() {} }),
     });
-    const seen = [];
+    const seen: Array<{ code: number; reason?: string }> = [];
     handle.onExit((info) => seen.push(info));
-    httpServer.handlers.close();
+    httpServer.handlers.close?.();
     expect(seen.length).toBe(1);
-    expect(seen[0].reason).toMatch(/closed/);
+    expect(seen[0]?.reason).toMatch(/closed/);
   });
 
   test('our own close does not report an unexpected exit', async () => {
@@ -347,10 +377,10 @@ describe('startBareServer wiring', () => {
       deps,
       reporterFactory: () => ({ update() {} }),
     });
-    const seen = [];
+    const seen: Array<{ code: number; reason?: string }> = [];
     handle.onExit((info) => seen.push(info));
     await handle.close();
-    httpServer.handlers.close();
+    httpServer.handlers.close?.();
     expect(seen).toEqual([]);
   });
 });

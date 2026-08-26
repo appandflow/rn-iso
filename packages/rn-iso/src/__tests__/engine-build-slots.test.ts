@@ -3,6 +3,7 @@
 // -- a waiter installing another workspace's artifact never consumes a slot --
 // and a full slate WAITS, with the same pid-liveness staleness a build lock
 // uses (a 20-minute hold is normal, so age is the wrong guard).
+import assert from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,7 @@ import {
   tryAcquireBuildSlot,
 } from '../engine/build-slots.ts';
 
-let tmpHome;
+let tmpHome: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-slots-'));
@@ -34,6 +35,7 @@ const neverAlive = () => false;
 describe('tryAcquireBuildSlot', () => {
   test('takes the first free slot and records the holder', () => {
     const got = tryAcquireBuildSlot({ max: 2, root: '/w/a', isAlive: alwaysAlive });
+    assert(got);
     expect(got.acquired).toBe(true);
     expect(got.index).toBe(0);
     expect(existsSync(buildSlotPath(0))).toBeTruthy();
@@ -56,6 +58,7 @@ describe('tryAcquireBuildSlot', () => {
     // The record is brand new, so an mtime rule would call it fresh; liveness
     // says the builder is gone, so the slot is reclaimable.
     const got = tryAcquireBuildSlot({ max: 2, isAlive: neverAlive });
+    assert(got);
     expect(got.acquired).toBe(true);
     expect(got.index).toBe(0);
   });
@@ -64,12 +67,14 @@ describe('tryAcquireBuildSlot', () => {
 describe('releaseBuildSlot', () => {
   test('removes our slot', () => {
     const got = tryAcquireBuildSlot({ max: 1, isAlive: alwaysAlive });
+    assert(got?.path);
     expect(releaseBuildSlot(got)).toBe(true);
     expect(existsSync(got.path)).toBe(false);
   });
 
   test('refuses to remove a slot another pid now holds', () => {
     const got = tryAcquireBuildSlot({ max: 1, isAlive: alwaysAlive });
+    assert(got?.path);
     // A takeover: someone else re-created the slot under a different pid.
     writeFileSync(join(got.path, 'slot.json'), JSON.stringify({ pid: 424242, index: 0 }));
     expect(releaseBuildSlot(got)).toBe(false);
@@ -127,13 +132,13 @@ describe('live: 2 slots, 3 processes', () => {
     );
 
     const dir = tmpHome;
-    const spawn = (id) =>
-      new Promise((resolve, reject) => {
+    const spawn = (id: string) =>
+      new Promise<void>((resolve, reject) => {
         execFile(process.execPath, [script, id, dir], { env: { ...process.env, RN_ISO_HOME: tmpHome } }, (err) =>
           err ? reject(err) : resolve(),
         );
       });
-    const waitFor = async (file, timeoutMs = 8000) => {
+    const waitFor = async (file: string, timeoutMs = 8000) => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
         if (existsSync(join(dir, file))) return true;
@@ -167,7 +172,7 @@ describe('live: 2 slots, 3 processes', () => {
   });
 });
 
-function mkslot(i) {
+function mkslot(i: number) {
   mkdirSync(buildSlotPath(i), { recursive: true });
   return buildSlotPath(i);
 }

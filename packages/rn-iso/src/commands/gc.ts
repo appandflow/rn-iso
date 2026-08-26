@@ -17,9 +17,9 @@
 //                             SIGKILL in the middle of a compile
 //   5. shared caches          alive by design, never dead, only bigger
 //
-// v2's `cache register` / `cache forget` / `cache list` verbs folded into the
-// report here: v3 prescribes the cache paths, so there is nothing left to
-// register by hand. The programmatic `rn-iso/cache-manifest` export stays --
+// The cache paths are prescribed, so there is nothing to register or forget by
+// hand; gc just reports them, and there is no separate register / forget / list
+// verb. The programmatic `rn-iso/cache-manifest` export stays --
 // that is how @rn-iso/metro and src/build-cache.js self-register.
 import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
@@ -28,8 +28,9 @@ import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { clearDevice, getConfigDir, loadConfig } from '../config.ts';
 import { formatBytes, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
-import { listBuildLocks } from '../engine/build-lock.ts';
-import { listBuildSlots } from '../engine/build-slots.ts';
+import { listBuildLocks, readBuildLock } from '../engine/build-lock.ts';
+import { listBuildSlots, readBuildSlot } from '../engine/build-slots.ts';
+import { isPidAlive } from '../metro.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { listAllIosSims, type IosSimRecord } from '../sim/ios.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
@@ -367,7 +368,7 @@ export function describeUnverifiableDevices(
 // thing in a report line is noise; enough of it to match against a build's own
 // `fingerprint <hash>` line is not. Same rule, and the same shape, as
 // shortHash in commands/ios.js.
-export function shortKey(key: unknown) {
+function shortKey(key: unknown) {
   const text = String(key ?? '');
   return text.length > 6 ? `${text.slice(0, 6)}..` : text;
 }
@@ -716,8 +717,8 @@ export async function collectGcReport({
   lastTouched = projectLastTouched,
   unsafeAllowScopedDeviceSweep = false,
 }: CollectGcReportOptions = {}): Promise<GcReport> {
-  // Reported on every run now that v3 prescribes the cache paths: `cache list`
-  // was the only way to see a registered cache, and it is gone. Sizing walks
+  // Reported on every run: the cache paths are prescribed and there is no
+  // `cache list`, so this report is the only way to see a registered cache. Sizing walks
   // the directories, which is the cost of the report being complete.
   // With --all each row is annotated with whether it would be emptied and, if
   // not, why -- decided here so the report and the action cannot disagree.
@@ -989,9 +990,15 @@ export async function runGc(opts: RunGcOptions = {}) {
   }
 
   // Stale locks only, and only ever the directory: there is no process to
-  // signal (that is what makes it stale) and no artifact to remove. A LIVE
-  // lock is never reached from here -- it was never in this list.
+  // signal (that is what makes it stale) and no artifact to remove. The stale
+  // list was built when the report was assembled; a waiter may have reaped and
+  // re-created this lock as a LIVE build since (the TOCTOU reapStaleLock closes
+  // on the acquire side). Re-read each record right before removing and skip a
+  // now-live one -- deleting it would let a second builder acquire the same
+  // fingerprint.
   for (const lock of buildLocks.stale) {
+    const current = readBuildLock(lock.path);
+    if (current?.pid && isPidAlive(current.pid)) continue;
     try {
       rmSync(lock.path, { recursive: true, force: true });
       console.log(
@@ -1005,9 +1012,12 @@ export async function runGc(opts: RunGcOptions = {}) {
     }
   }
 
-  // Stale build slots, the same way: only ever the directory, and only a slot
-  // no live builder holds (a live one was never in this list).
+  // Stale build slots, the same way -- and with the same right-before-removal
+  // liveness re-check, so a slot re-claimed by a live builder since the report
+  // is not deleted out from under it (which would over-subscribe maxBuilds).
   for (const slot of buildSlots.stale) {
+    const current = readBuildSlot(slot.path);
+    if (current?.pid && isPidAlive(current.pid)) continue;
     try {
       rmSync(slot.path, { recursive: true, force: true });
       console.log(

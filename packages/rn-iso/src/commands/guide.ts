@@ -4,7 +4,7 @@
 //
 // Why this exists: skill/SKILL.md ships through `npx skills add` (GitHub) while
 // the CLI ships through npm, with no version relationship between them. A user
-// reported running a 0.10.0 CLI against a 0.6.x skill and not noticing. Docs
+// reported running a newer CLI against an older skill and not noticing. Docs
 // that live only in the skill drift silently.
 //
 // The split is by VOLATILITY, not by length. The skill keeps what makes an
@@ -516,7 +516,7 @@ but --base <ref> resolves to <sha>"  (worktree create)
 
 "Installed rn-iso skill is X but this CLI is Y"
   The skill is a plain file copy, so upgrading rn-iso never refreshes it, and
-  npx can serve a cached older CLI. Run \`npx rn-iso skill install\`. If the
+  npx can serve a cached older CLI. Refresh the skill with \`npx skills\`. If the
   CLI itself is the old half, \`npx rn-iso@latest\` bypasses the stale cache.
 
 "Found no free Metro port between ..."
@@ -794,7 +794,7 @@ SHARED BUILD CACHES
     summary: 'Settings rn-iso reads, and where they can live',
     body: () => `SETTINGS
 
-There is no \`rn-iso config\` command: v3's commands take no device flags, so
+There is no \`rn-iso config\` command: rn-iso's commands take no device flags, so
 settings are FILES, edited by hand or committed.
 
 Resolution order, first match wins:
@@ -885,7 +885,7 @@ export function renderIndex(version: string) {
   ];
   const width = Math.max(...topicNames().map((n) => n.length));
   for (const name of topicNames()) {
-    lines.push(`  ${name.padEnd(width)}  ${TOPICS[name].summary}`);
+    lines.push(`  ${name.padEnd(width)}  ${TOPICS[name]?.summary ?? ''}`);
   }
   lines.push('', 'Read one with:  npx rn-iso guide <topic>');
   return lines.join('\n');

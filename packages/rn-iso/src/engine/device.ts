@@ -7,8 +7,8 @@
 //
 // The ownership rule (CLAUDE.md item 2) is the invariant everything below
 // enforces: rn-iso only ever creates, boots, or destroys a device it created
-// itself, named `rn-iso-<label>` and recorded with `owned: true`. v3 dropped
-// physical-device support, so that rule now has NO carve-out: there is no
+// itself, named `rn-iso-<label>` and recorded with `owned: true`. rn-iso has no
+// physical-device support, so that rule has NO carve-out: there is no
 // path through this file that touches hardware, and every ambiguous record
 // resolves toward creating an owned emulator instead.
 import chalk from 'chalk';
@@ -30,7 +30,7 @@ import {
 // `udid`/`name`): this module has always used `deviceUdid`/`deviceName`, and
 // config's index signature is what keeps the two compatible where they meet
 // (setDevice's parameter, and the cast where a record is read back out).
-interface OwnedDeviceRecord {
+export interface OwnedDeviceRecord {
   deviceUdid?: string;
   deviceName?: string;
   owned?: boolean;
@@ -80,7 +80,7 @@ interface CapacityRefusal {
 // print a note and leave it as-is (the port is still reserved by the
 // caller). A recorded device that no longer exists at all (deleted sim,
 // removed AVD) is dropped and falls through to creation, as is a legacy
-// PHYSICAL Android assignment: v3 removed physical support, and the safe
+// PHYSICAL Android assignment: rn-iso has no physical support, and the safe
 // direction for an unsupported record is a fresh owned emulator, never a
 // command aimed at somebody's phone.
 export async function ensureOwnedDevice({
@@ -298,8 +298,8 @@ async function ensureOwnedAndroidDevice({
       // AVD was deleted out from under the record: fall through to creation.
     }
   } else if (record?.serial) {
-    // A legacy PHYSICAL assignment from a v2 `up android --serial`. v3 removed
-    // physical support (spec, "Out of scope"), so there is nothing left that
+    // A legacy PHYSICAL assignment (rn-iso has no `--serial` flow). rn-iso has
+    // no physical support (spec, "Out of scope"), so there is nothing that
     // can honour this record. It is reported once and then ignored: the run
     // falls through to creating an owned emulator, which is the direction that
     // never sends a command at hardware rn-iso does not own.
@@ -428,7 +428,7 @@ export function liveOwnedDeviceCount({
 }
 
 // Does THIS workspace already have a live device of its own for `platform`?
-export function workspaceHasLiveDevice({
+function workspaceHasLiveDevice({
   platform,
   project,
   sims = [],

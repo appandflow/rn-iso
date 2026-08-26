@@ -656,11 +656,9 @@ export function removalBlockers({ dirty, unpushed }: { dirty: boolean | null; un
 // they differ so the two lines are visibly the same device; android skips have
 // no separate udid (their `name` already is the AVD name), so this is a no-op
 // for them.
-// reclaim.ts is owned by another agent and, like the rest of this codebase's
-// in-flight migration, does not (yet) declare the shape of what it returns.
-// This is the shape reclaimAll/registerRemove actually read off a skipped
-// device entry -- named locally rather than imported so this file does not
-// depend on reclaim.ts's types settling first.
+// The shape reclaimAll/registerRemove read off a skipped device entry. Kept
+// local (and looser -- `platform` optional) rather than importing reclaim.ts's
+// own SkippedDevice, whose `platform` is a required 'ios' | 'android'.
 interface SkippedDevice {
   platform?: string;
   name: string;
@@ -674,7 +672,7 @@ function describeKeptDevice(s: SkippedDevice): string {
 
 // The aggregate reclaimAll produces across every registered key under a
 // worktree root -- see the comment above this function for why there can be
-// more than one. Named locally for the same reason as SkippedDevice above.
+// more than one. Distinct from reclaim.ts's per-project ReclaimResult.
 interface ReclaimAllResult {
   dereferenced: string[];
   killedPids: number[];
@@ -775,7 +773,7 @@ export function registerRemove(worktree: Command): void {
     )
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work')
     .action(async (target, opts) => {
-      // Defaults to the current workspace, like every other v3 command: an
+      // Defaults to the current workspace, like every other command: an
       // agent finishing a ticket is already standing in the worktree it is
       // done with, and making it name a path it is inside of is the kind of
       // ceremony the surface exists to remove. It is still refused on the main
@@ -1042,7 +1040,7 @@ export function registerRemove(worktree: Command): void {
 
 // There is no `worktree list`. Its own description read "`rn-iso status` shows
 // the same worktrees WITH their environments -- prefer it", and a command whose
-// purpose is to redirect to another command does not survive into v3.
+// purpose is to redirect to another command has no place in the surface.
 // `src/status.js` reports unprovisioned worktrees, so nothing is lost.
 
 export default function worktreeCommand(program: Command): void {

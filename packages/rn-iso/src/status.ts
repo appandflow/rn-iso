@@ -25,14 +25,14 @@ const METRO_MB = 700;
 // supervisor record, a worktree list, a log summary. None of these are
 // produced here, so each is modelled as a flat bag of the fields this module
 // actually reads rather than imported from the module that built it.
-interface SimFacts {
+export interface SimFacts {
   udid?: string;
   name?: string;
   state?: string;
   [key: string]: unknown;
 }
 
-interface MetroFacts {
+export interface MetroFacts {
   metro?: { pid: number } | null;
   notOurs?: string;
   [key: string]: unknown;
@@ -51,7 +51,7 @@ interface LogsFacts {
   errorsSinceMarker?: number;
 }
 
-interface WorktreeFacts {
+export interface WorktreeFacts {
   path: string;
   branch?: string;
   [key: string]: unknown;
@@ -224,7 +224,9 @@ export function parseDfFree(output: unknown): DiskInfo | null {
   // Fields: Filesystem 1024-blocks Used Available Capacity ... Mounted-on.
   // The filesystem name can contain spaces, so count from the RIGHT of the
   // capacity field rather than assuming field 0 is one token.
-  const m = /\s(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%/.exec(lines[lines.length - 1]);
+  const lastLine = lines[lines.length - 1];
+  if (lastLine === undefined) return null;
+  const m = /\s(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%/.exec(lastLine);
   if (!m) return null;
   const totalKb = Number(m[1]);
   const availableKb = Number(m[3]);
@@ -266,7 +268,9 @@ export function diskLine(volumes: VolumeInfo[] | null | undefined): string | nul
   const usable = (volumes || []).filter((v): v is VolumeInfo & { disk: DiskInfo } => Boolean(v && v.disk));
   if (usable.length === 0) return null;
   if (usable.length === 1) {
-    const { disk } = usable[0];
+    const first = usable[0];
+    if (!first) return null;
+    const { disk } = first;
     return `${formatSpace(disk.availableMb)} free of ${formatSpace(disk.totalMb)} on disk.`;
   }
   return `${usable.map((v) => `${formatSpace(v.disk.availableMb)} free on ${v.volume}`).join(', ')}.`;

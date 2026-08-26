@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +15,7 @@ import gcCommand, {
   formatGcReport,
   runGc,
 } from '../commands/gc.ts';
+import { makeConfig, makeIosSim, makeCacheDescriptor, makeBuildLock, makeBuildSlot } from './_factories.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -58,8 +60,20 @@ test('the cache report says which caches were registered and which were detected
     skipped: [],
     deadProjects: [],
     caches: [
-      { name: 'Metro transforms', dir: '/c/metro', note: 'from a metro.config.js', bytes: 2048, source: 'registered' },
-      { name: 'Xcode compilation cache', dir: '/c/cas', note: 'index-backed', bytes: 4096, source: 'detected' },
+      makeCacheDescriptor({
+        name: 'Metro transforms',
+        dir: '/c/metro',
+        note: 'from a metro.config.js',
+        bytes: 2048,
+        source: 'registered',
+      }),
+      makeCacheDescriptor({
+        name: 'Xcode compilation cache',
+        dir: '/c/cas',
+        note: 'index-backed',
+        bytes: 4096,
+        source: 'detected',
+      }),
     ],
   }).join('\n');
   expect(lines).toMatch(/Metro transforms.*registered/);
@@ -71,12 +85,12 @@ test('the cache report says which caches were registered and which were detected
 test('findOrphanedDevices proposes only rn-iso devices absent from config', () => {
   const result = findOrphanedDevices({
     sims: [
-      { udid: 'U1', name: 'rn-iso-gone' },
-      { udid: 'U2', name: 'rn-iso-live' },
-      { udid: 'U3', name: 'iPhone 17 Pro' },
+      makeIosSim({ udid: 'U1', name: 'rn-iso-gone' }),
+      makeIosSim({ udid: 'U2', name: 'rn-iso-live' }),
+      makeIosSim({ udid: 'U3', name: 'iPhone 17 Pro' }),
     ],
     avds: ['rn-iso-old', 'Pixel_7'],
-    config: {
+    config: makeConfig({
       projects: {
         '/p': {
           platforms: {
@@ -85,7 +99,7 @@ test('findOrphanedDevices proposes only rn-iso devices absent from config', () =
           },
         },
       },
-    },
+    }),
     isMounted: () => true,
   });
   expect(result.orphaned.map((o) => o.id).sort()).toEqual(['U1', 'rn-iso-old']);
@@ -93,20 +107,20 @@ test('findOrphanedDevices proposes only rn-iso devices absent from config', () =
 
 test('devices referenced by a project on an unmounted volume are kept', () => {
   const result = findOrphanedDevices({
-    sims: [{ udid: 'U1', name: 'rn-iso-ext' }],
+    sims: [makeIosSim({ udid: 'U1', name: 'rn-iso-ext' })],
     avds: [],
-    config: { projects: { '/Volumes/Ext/p': { platforms: { ios: { deviceUdid: 'U1', owned: true } } } } },
+    config: makeConfig({ projects: { '/Volumes/Ext/p': { platforms: { ios: { deviceUdid: 'U1', owned: true } } } } }),
     isMounted: () => false,
   });
   expect(result.orphaned.length).toBe(0);
-  expect(result.kept[0].reason).toMatch(/not mounted/);
+  expect(result.kept[0]?.reason).toMatch(/not mounted/);
 });
 
 test('a device named by a non-owned (legacy/stale) record is still counted as referenced, not orphaned', () => {
   const result = findOrphanedDevices({
-    sims: [{ udid: 'U1', name: 'rn-iso-stale-record' }],
+    sims: [makeIosSim({ udid: 'U1', name: 'rn-iso-stale-record' })],
     avds: ['rn-iso-stale-avd'],
-    config: {
+    config: makeConfig({
       projects: {
         '/p': {
           platforms: {
@@ -118,7 +132,7 @@ test('a device named by a non-owned (legacy/stale) record is still counted as re
           },
         },
       },
-    },
+    }),
     isMounted: () => true,
   });
   expect(result.orphaned.length).toBe(0);
@@ -129,9 +143,9 @@ test('a device named by a non-owned (legacy/stale) record is still counted as re
 // live reference, or the device only gets reaped on a second run.
 test('a device owned only by a dead project is orphaned when that project is passed as deadProjects', () => {
   const result = findOrphanedDevices({
-    sims: [{ udid: 'U1', name: 'rn-iso-dead' }],
+    sims: [makeIosSim({ udid: 'U1', name: 'rn-iso-dead' })],
     avds: [],
-    config: { projects: { '/gone/p': { platforms: { ios: { deviceUdid: 'U1', owned: true } } } } },
+    config: makeConfig({ projects: { '/gone/p': { platforms: { ios: { deviceUdid: 'U1', owned: true } } } } }),
     isMounted: () => true,
     deadProjects: ['/gone/p'],
   });
@@ -144,15 +158,15 @@ test('a device owned only by a dead project is orphaned when that project is pas
 // `worktree remove`d, so the main checkout's owned sim is shut down but never
 // reaped. Nothing else on the machine would ever destroy it.
 
-const staleSims = [{ udid: 'U-STALE', name: 'rn-iso-stale' }];
+const staleSims = [makeIosSim({ udid: 'U-STALE', name: 'rn-iso-stale' })];
 
 function staleConfig(extra = {}) {
-  return {
+  return makeConfig({
     projects: {
       '/live/p': { platforms: { ios: { deviceUdid: 'U-STALE', owned: true } } },
       ...extra,
     },
-  };
+  });
 }
 
 // --- stale device RECORDS ---------------------------------------------
@@ -164,15 +178,15 @@ function staleConfig(extra = {}) {
 
 test('findStaleDeviceRecords reports a live project pointing at a device that is gone', () => {
   const stale = findStaleDeviceRecords({
-    config: {
+    config: makeConfig({
       projects: {
         '/a': { platforms: { ios: { deviceUdid: 'GONE', owned: true } } },
         '/b': { platforms: { ios: { deviceUdid: 'HERE', owned: true } } },
         '/c': { platforms: { android: { avdName: 'rn-iso-gone', owned: true } } },
         '/d': { platforms: { android: { avdName: 'rn-iso-here', owned: true } } },
       },
-    },
-    sims: [{ udid: 'HERE', name: 'rn-iso-b' }],
+    }),
+    sims: [makeIosSim({ udid: 'HERE', name: 'rn-iso-b' })],
     avds: ['rn-iso-here'],
   });
   expect(stale.map((r) => [r.kind, r.id, r.project])).toEqual([
@@ -185,11 +199,11 @@ test('findStaleDeviceRecords reports a live project pointing at a device that is
 // Reading it as such would propose clearing every device record on the machine
 // the first time simctl is missing or wedged.
 test('findStaleDeviceRecords proposes nothing for a platform whose listing failed', () => {
-  const config = {
+  const config = makeConfig({
     projects: {
       '/a': { platforms: { ios: { deviceUdid: 'GONE' }, android: { avdName: 'rn-iso-gone' } } },
     },
-  };
+  });
   expect(findStaleDeviceRecords({ config, sims: [], avds: [], simsChecked: false }).map((r) => r.kind)).toEqual([
     'android',
   ]);
@@ -201,7 +215,7 @@ test('findStaleDeviceRecords proposes nothing for a platform whose listing faile
 
 test('findStaleDeviceRecords skips a project the dead-entry sweep already claimed', () => {
   const stale = findStaleDeviceRecords({
-    config: { projects: { '/dead': { platforms: { ios: { deviceUdid: 'GONE' } } } } },
+    config: makeConfig({ projects: { '/dead': { platforms: { ios: { deviceUdid: 'GONE' } } } } }),
     sims: [],
     deadProjects: ['/dead'],
   });
@@ -213,7 +227,7 @@ test('findStaleDeviceRecords skips a project the dead-entry sweep already claime
 // owned one, and leaving it keeps `status` warning about it forever.
 test('findStaleDeviceRecords covers a non-owned record too, and reports its ownership', () => {
   const stale = findStaleDeviceRecords({
-    config: { projects: { '/a': { platforms: { ios: { deviceUdid: 'GONE' } } } } },
+    config: makeConfig({ projects: { '/a': { platforms: { ios: { deviceUdid: 'GONE' } } } } }),
     sims: [],
   });
   expect(stale.map((r) => r.owned)).toEqual([false]);
@@ -224,7 +238,7 @@ test('findStaleDeviceRecords covers a non-owned record too, and reports its owne
 test('findStaleDeviceRecords never calls a physical serial record stale', () => {
   expect(
     findStaleDeviceRecords({
-      config: { projects: { '/a': { platforms: { android: { serial: 'R58M1234' } } } } },
+      config: makeConfig({ projects: { '/a': { platforms: { android: { serial: 'R58M1234' } } } } }),
       avds: [],
     }),
   ).toEqual([]);
@@ -232,7 +246,7 @@ test('findStaleDeviceRecords never calls a physical serial record stale', () => 
 
 test('the report names stale device records and says the delete touches no device', () => {
   const lines = formatGcReport({
-    staleDeviceRecords: [{ kind: 'ios', id: 'GONE', project: '/a' }],
+    staleDeviceRecords: [{ kind: 'ios', id: 'GONE', project: '/a', owned: false }],
   }).join('\n');
   expect(lines).toMatch(/Stale device records \(1\)/);
   expect(lines).toMatch(/ios GONE is not on this machine/);
@@ -252,7 +266,7 @@ test('findStaleProjectDevices reaps an owned device whose project has not been t
     lastTouched: () => now - 90 * DAY_MS,
   });
   expect(stale.map((d) => d.id)).toEqual(['U-STALE']);
-  expect(stale[0].project).toBe('/live/p');
+  expect(stale[0]?.project).toBe('/live/p');
 });
 
 test('findStaleProjectDevices leaves a recently touched project alone', () => {
@@ -286,7 +300,7 @@ test('findStaleProjectDevices fails closed when a project timestamp cannot be re
 test('findStaleProjectDevices ignores devices rn-iso does not own', () => {
   const now = Date.now();
   const stale = findStaleProjectDevices({
-    config: { projects: { '/live/p': { platforms: { ios: { deviceUdid: 'U-STALE' } } } } },
+    config: makeConfig({ projects: { '/live/p': { platforms: { ios: { deviceUdid: 'U-STALE' } } } } }),
     sims: staleSims,
     avds: [],
     olderThanDays: 30,
@@ -334,10 +348,19 @@ test('findStaleProjectDevices skips projects the dead-entry sweep already claime
 // HOME, so a "dead" project path resolves to a real, mounted boot-volume
 // ancestor rather than to the developer's own repos.
 
-let tmpHome;
-let fakeHome;
-let originalHome;
-let originalTmpdir;
+let tmpHome: string;
+let fakeHome: string;
+let originalHome: string | undefined;
+let originalTmpdir: string | undefined;
+
+// loadConfig() is Config | null (null when no config exists on disk); every
+// caller below saves one first, so a missing config is a test bug worth
+// throwing on rather than a case to narrow at each read site.
+function currentConfig() {
+  const cfg = loadConfig();
+  assert(cfg, 'expected a config on disk');
+  return cfg;
+}
 
 // No device tooling and no shellouts of any kind: any `run` is a bug, and
 // runQuiet answers the lsof port lookup reclaimProject makes with "no live
@@ -358,7 +381,7 @@ function installExecutor() {
 
 // Through commander, exactly as the binary does: the RN_ISO_HOME guard is
 // live on this path, so the device sweep is a no-op here by design.
-async function cli(args = []) {
+async function cli(args: string[] = []) {
   const program = new Command();
   gcCommand(program);
   await program.parseAsync(['node', 'rn-iso', 'gc', ...args]);
@@ -373,8 +396,8 @@ async function sweepingGc(opts = {}) {
   await runGc({ unsafeAllowScopedDeviceSweep: true, ...opts });
 }
 
-function captureLog(fn) {
-  const logs = [];
+function captureLog(fn: () => unknown) {
+  const logs: string[] = [];
   const originalLog = console.log;
   console.log = (...args) => logs.push(args.join(' '));
   return Promise.resolve()
@@ -427,7 +450,7 @@ test('a bare gc leaves every registered entry in place', async () => {
   const before = loadConfig();
   await cli();
 
-  expect(loadConfig().projects[localDeadPath]).toBeTruthy();
+  expect(currentConfig().projects[localDeadPath]).toBeTruthy();
   expect(loadConfig()).toEqual(before);
 });
 
@@ -460,11 +483,11 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
 
   await cli(['--delete']);
 
-  const cfg = loadConfig();
+  const cfg = currentConfig();
   // The unmounted-volume entry survives: its volume could not be confirmed
   // mounted, so it must not be treated as dead.
   expect(cfg.projects[unmountedPath]).toBeTruthy();
-  expect(cfg.projects[unmountedPath].metroPort).toBe(8100);
+  expect(cfg.projects[unmountedPath]?.metroPort).toBe(8100);
   // The genuinely local dead entry (boot volume, directory just missing) is
   // still pruned as before.
   expect(cfg.projects[localDeadPath]).toBe(undefined);
@@ -477,7 +500,13 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
 // and orphanedDevices is always []. These seed a live simctl listing so a
 // real rn-iso-* sim goes through resolveOwnedIosSim -> shutdown -> delete.
 
-function iosListJson(devices) {
+interface DeviceSpec {
+  udid: string;
+  name: string;
+  state?: string;
+}
+
+function iosListJson(devices: DeviceSpec[]) {
   return JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-17-4': devices.map((d) => ({
@@ -490,7 +519,17 @@ function iosListJson(devices) {
   });
 }
 
-function installDeviceExecutor({ devices, execCalls, throwOnShutdownFor = new Set() }) {
+interface InstallDeviceExecutorOptions {
+  devices: DeviceSpec[];
+  execCalls: string[];
+  throwOnShutdownFor?: Set<string>;
+}
+
+function installDeviceExecutor({
+  devices,
+  execCalls,
+  throwOnShutdownFor = new Set<string>(),
+}: InstallDeviceExecutorOptions) {
   setExecutor({
     run(cmd) {
       execCalls.push(cmd);
@@ -513,14 +552,14 @@ function installDeviceExecutor({ devices, execCalls, throwOnShutdownFor = new Se
   });
 }
 
-function touchedDaysAgo(dir, days) {
+function touchedDaysAgo(dir: string, days: number) {
   mkdirSync(dir, { recursive: true });
   const when = new Date(Date.now() - days * DAY_MS);
   utimesSync(dir, when, when);
 }
 
 test('--delete re-verifies ownership before shutdown, shuts down before delete, and contains a per-device teardown throw', async () => {
-  const execCalls = [];
+  const execCalls: string[] = [];
   installDeviceExecutor({
     devices: [
       { udid: 'UDID-1', name: 'rn-iso-orphan-1' },
@@ -550,7 +589,7 @@ test('--delete re-verifies ownership before shutdown, shuts down before delete, 
 });
 
 test('report-mode gc lists a seeded orphaned ios sim but issues no shutdown or delete command', async () => {
-  const execCalls = [];
+  const execCalls: string[] = [];
   installDeviceExecutor({
     devices: [{ udid: 'UDID-9', name: 'rn-iso-report-orphan' }],
     execCalls,
@@ -581,7 +620,7 @@ test("--delete reaps a dead project's owned orphan device in the same run it pru
     },
     repos: {},
   });
-  const execCalls = [];
+  const execCalls: string[] = [];
   installDeviceExecutor({
     devices: [{ udid: 'UDID-DEAD', name: 'rn-iso-dead-owner' }],
     execCalls,
@@ -589,7 +628,7 @@ test("--delete reaps a dead project's owned orphan device in the same run it pru
 
   await sweepingGc({ delete: true });
 
-  const cfg = loadConfig();
+  const cfg = currentConfig();
   expect(cfg.projects[localDeadPath]).toBe(undefined);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown UDID-DEAD'))).toBeTruthy();
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-DEAD'))).toBeTruthy();
@@ -607,7 +646,7 @@ test("--delete reaps a dead project's owned orphan device in the same run it pru
 // so the cfg === null guard is the only thing standing between --delete and
 // every rn-iso-* device on the machine.
 test('gc with no config names rn-iso devices it cannot verify, but never touches them', async () => {
-  const execCalls = [];
+  const execCalls: string[] = [];
   installDeviceExecutor({
     devices: [{ udid: 'UDID-LIVE', name: 'rn-iso-someones-live-env', state: 'Booted' }],
     execCalls,
@@ -633,7 +672,7 @@ test('gc with no config names rn-iso devices it cannot verify, but never touches
 // perfectly well-informed while knowing nothing about the machine's real
 // devices. RN_ISO_HOME scopes the config; sims and AVDs are machine-global.
 test('a config scoped by RN_ISO_HOME never sweeps machine-global devices', async () => {
-  const execCalls = [];
+  const execCalls: string[] = [];
   installDeviceExecutor({
     devices: [
       { udid: 'UDID-REAL-1', name: 'rn-iso-real-env-1', state: 'Booted' },
@@ -670,7 +709,7 @@ test('the RN_ISO_HOME guard does not disable dead-entry pruning', async () => {
 
   await cli(['--delete']);
 
-  expect(loadConfig().projects[localDeadPath]).toBe(undefined);
+  expect(currentConfig().projects[localDeadPath]).toBe(undefined);
 });
 
 // --- Stale owned devices (--older-than) --------------------------------
@@ -683,7 +722,7 @@ test('--delete --older-than reaps an owned device whose project went untouched, 
     projects: { [stalePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-STALE', owned: true } } } },
     repos: {},
   });
-  const execCalls = [];
+  const execCalls: string[] = [];
   installDeviceExecutor({
     devices: [{ udid: 'UDID-STALE', name: 'rn-iso-abandoned' }],
     execCalls,
@@ -693,9 +732,9 @@ test('--delete --older-than reaps an owned device whose project went untouched, 
 
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown UDID-STALE'))).toBeTruthy();
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-STALE'))).toBeTruthy();
-  const cfg = loadConfig();
+  const cfg = currentConfig();
   expect(cfg.projects[stalePath]).toBeTruthy();
-  expect(cfg.projects[stalePath].platforms?.ios).toBe(undefined);
+  expect(cfg.projects[stalePath]?.platforms?.ios).toBe(undefined);
 });
 
 // The whole field-test complaint, end to end: a live project whose recorded sim
@@ -708,19 +747,19 @@ test('gc reports a live project whose recorded sim is gone, and --delete clears 
     projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-VANISHED', owned: true } } } },
     repos: {},
   });
-  const execCalls = [];
+  const execCalls: string[] = [];
   installDeviceExecutor({ devices: [], execCalls });
 
   const report = await captureLog(() => sweepingGc({ delete: false }));
   expect(report).toMatch(/Stale device records \(1\)/);
   expect(report).toMatch(/UDID-VANISHED/);
-  expect(loadConfig().projects[livePath].platforms.ios).toBeTruthy();
+  expect(currentConfig().projects[livePath]?.platforms?.ios).toBeTruthy();
 
   const output = await captureLog(() => sweepingGc({ delete: true }));
   expect(output).toMatch(/Cleared the ios record/);
-  const cfg = loadConfig();
+  const cfg = currentConfig();
   expect(cfg.projects[livePath]).toBeTruthy();
-  expect(cfg.projects[livePath].platforms?.ios).toBe(undefined);
+  expect(cfg.projects[livePath]?.platforms?.ios).toBe(undefined);
   // Never touches devices: the premise is that there is none left to touch.
   expect(execCalls.some((c) => /simctl (shutdown|delete)/.test(c))).toBe(false);
   expect(execCalls.some((c) => /avdmanager delete/.test(c))).toBe(false);
@@ -738,7 +777,7 @@ test('a recorded sim that IS on the machine is not a stale record', async () => 
 
   const output = await captureLog(() => sweepingGc({ delete: true }));
   expect(output).not.toMatch(/Stale device records/);
-  expect(loadConfig().projects[livePath].platforms.ios).toBeTruthy();
+  expect(currentConfig().projects[livePath]?.platforms?.ios).toBeTruthy();
 });
 
 test('--older-than without --delete only reports the stale device', async () => {
@@ -749,7 +788,7 @@ test('--older-than without --delete only reports the stale device', async () => 
     projects: { [stalePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-STALE', owned: true } } } },
     repos: {},
   });
-  const execCalls = [];
+  const execCalls: string[] = [];
   installDeviceExecutor({
     devices: [{ udid: 'UDID-STALE', name: 'rn-iso-abandoned' }],
     execCalls,
@@ -760,7 +799,7 @@ test('--older-than without --delete only reports the stale device', async () => 
   expect(output).toMatch(/rn-iso-abandoned/);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
-  expect(loadConfig().projects[stalePath].platforms.ios).toBeTruthy();
+  expect(currentConfig().projects[stalePath]?.platforms?.ios).toBeTruthy();
 });
 
 test('a device whose project is still being worked in is never reaped by --older-than', async () => {
@@ -771,7 +810,7 @@ test('a device whose project is still being worked in is never reaped by --older
     projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-LIVE', owned: true } } } },
     repos: {},
   });
-  const execCalls = [];
+  const execCalls: string[] = [];
   installDeviceExecutor({
     devices: [{ udid: 'UDID-LIVE', name: 'rn-iso-live' }],
     execCalls,
@@ -780,7 +819,7 @@ test('a device whose project is still being worked in is never reaped by --older
   await sweepingGc({ delete: true, olderThan: 30 });
 
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
-  expect(loadConfig().projects[livePath].platforms.ios).toBeTruthy();
+  expect(currentConfig().projects[livePath]?.platforms?.ios).toBeTruthy();
 });
 
 // --- Shared caches (the folded-in `cache list`) -------------------------
@@ -977,16 +1016,16 @@ test('--all reaches caches only: never a device, never a project entry', async (
   mkdirSync(entry, { recursive: true });
   writeFileSync(join(entry, 'blob'), 'x'.repeat(1000));
   register({ dir: cacheDir, name: 'My cache' });
-  const execCalls = [];
+  const execCalls: string[] = [];
   installDeviceExecutor({ devices: [{ udid: 'UDID-LIVE', name: 'rn-iso-live' }], execCalls });
 
   await captureLog(() => sweepingGc({ delete: true, all: true }));
 
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
-  const cfg = loadConfig();
+  const cfg = currentConfig();
   expect(cfg.projects[livePath]).toBeTruthy();
-  expect(cfg.projects[livePath].platforms?.ios).toBeTruthy();
+  expect(cfg.projects[livePath]?.platforms?.ios).toBeTruthy();
   expect(existsSync(entry)).toBe(false);
 });
 
@@ -1040,7 +1079,17 @@ test('describeUnverifiableDevices carries the reason it was given', () => {
 // one would put two workspaces on the same 19-minute compile, which is the
 // exact failure single-flight exists to prevent.
 
-function writeLock({ platform = 'ios', key = 'abc-debug-sim', pid, projectRoot = '/w/app-412' }) {
+function writeLock({
+  platform = 'ios',
+  key = 'abc-debug-sim',
+  pid,
+  projectRoot = '/w/app-412',
+}: {
+  platform?: string;
+  key?: string;
+  pid: number;
+  projectRoot?: string;
+}) {
   const path = join(tmpHome, 'build-locks', `${platform}-${key}.lock`);
   mkdirSync(path, { recursive: true });
   writeFileSync(
@@ -1063,31 +1112,31 @@ test('the report separates locks whose builder is gone from builds in progress',
 
   const report = await collectGcReport();
   expect(report.buildLocks.stale.length).toBe(1);
-  expect(report.buildLocks.stale[0].pid).toBe(999999);
+  expect(report.buildLocks.stale[0]?.pid).toBe(999999);
   expect(report.buildLocks.live.length).toBe(1);
-  expect(report.buildLocks.live[0].projectRoot).toBe('/w/alive');
+  expect(report.buildLocks.live[0]?.projectRoot).toBe('/w/alive');
 });
 
 test('formatGcReport names both, and says a live one is a build it will not touch', () => {
   const lines = formatGcReport({
     buildLocks: {
       stale: [
-        {
+        makeBuildLock({
           platform: 'ios',
           key: 'abc-debug-sim',
           pid: 999999,
           projectRoot: '/w/dead',
           path: '/h/build-locks/ios-abc.lock',
-        },
+        }),
       ],
       live: [
-        {
+        makeBuildLock({
           platform: 'android',
           key: 'def-debug-sim',
           pid: 41233,
           projectRoot: '/w/alive',
           path: '/h/build-locks/android-def.lock',
-        },
+        }),
       ],
     },
   }).join('\n');
@@ -1102,7 +1151,10 @@ test('formatGcReport names both, and says a live one is a build it will not touc
 
 test('a stale lock counts as something to reclaim', () => {
   const lines = formatGcReport({
-    buildLocks: { stale: [{ platform: 'ios', key: 'k', pid: 9, projectRoot: '/w', path: '/h/l.lock' }], live: [] },
+    buildLocks: {
+      stale: [makeBuildLock({ platform: 'ios', key: 'k', pid: 9, projectRoot: '/w', path: '/h/l.lock' })],
+      live: [],
+    },
   }).join('\n');
   expect(lines.split('\n')[0]).not.toMatch(/^Nothing to reclaim\.$/);
 });
@@ -1111,7 +1163,7 @@ test('a live lock alone is not something to reclaim', () => {
   const lines = formatGcReport({
     buildLocks: {
       stale: [],
-      live: [{ platform: 'ios', key: 'k', pid: process.pid, projectRoot: '/w', path: '/h/l.lock' }],
+      live: [makeBuildLock({ platform: 'ios', key: 'k', pid: process.pid, projectRoot: '/w', path: '/h/l.lock' })],
     },
   }).join('\n');
   expect(lines).toMatch(/Nothing to reclaim/);
@@ -1144,7 +1196,15 @@ test('a bare gc removes no lock at all', async () => {
 // a reboot or a SIGKILL leaves a stale one behind; gc reports and (with
 // --delete) clears the stale ones, and never touches a slot a live builder holds.
 
-function writeSlot({ index = 0, pid, projectRoot = '/w/app-412' }) {
+function writeSlot({
+  index = 0,
+  pid,
+  projectRoot = '/w/app-412',
+}: {
+  index?: number;
+  pid: number;
+  projectRoot?: string;
+}) {
   const path = join(tmpHome, 'build-slots', `slot-${index}`);
   mkdirSync(path, { recursive: true });
   writeFileSync(
@@ -1162,13 +1222,16 @@ test('the report separates stale build slots from ones a live builder holds', as
 
   const report = await collectGcReport();
   expect(report.buildSlots.stale.length).toBe(1);
-  expect(report.buildSlots.stale[0].pid).toBe(999999);
+  expect(report.buildSlots.stale[0]?.pid).toBe(999999);
   expect(report.buildSlots.live.length).toBe(1);
 });
 
 test('formatGcReport names a stale build slot', () => {
   const lines = formatGcReport({
-    buildSlots: { stale: [{ index: 1, pid: 999999, projectRoot: '/w/dead', path: '/h/build-slots/slot-1' }], live: [] },
+    buildSlots: {
+      stale: [makeBuildSlot({ index: 1, pid: 999999, projectRoot: '/w/dead', path: '/h/build-slots/slot-1' })],
+      live: [],
+    },
   }).join('\n');
   expect(lines).toMatch(/Stale build slots \(1\)/);
   expect(lines).toMatch(/999999/);
@@ -1176,7 +1239,7 @@ test('formatGcReport names a stale build slot', () => {
 
 test('a stale build slot counts as something to reclaim', () => {
   const lines = formatGcReport({
-    buildSlots: { stale: [{ index: 0, pid: 9, projectRoot: '/w', path: '/h/slot-0' }], live: [] },
+    buildSlots: { stale: [makeBuildSlot({ index: 0, pid: 9, projectRoot: '/w', path: '/h/slot-0' })], live: [] },
   }).join('\n');
   expect(lines.split('\n')[0]).not.toMatch(/^Nothing to reclaim\.$/);
 });

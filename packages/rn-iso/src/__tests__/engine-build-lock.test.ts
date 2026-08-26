@@ -18,8 +18,9 @@
 //      coming.
 //   4. A REAL RACE, in real processes, against a real filesystem (CLAUDE.md
 //      item 9): a mocked mkdir cannot prove two processes cannot both win.
+import assert from 'node:assert';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
@@ -36,8 +37,8 @@ import {
 const PLATFORM = 'ios';
 const KEY = 'a3f9b1c2d3e4f5-debug-sim';
 
-let home;
-let root;
+let home: string;
+let root: string;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'rn-iso-home-'));
@@ -89,11 +90,14 @@ describe('acquireBuildLock', () => {
     const got = acquireBuildLock(spec());
     expect(got.acquired).toBe(true);
     expect(got.path).toBe(buildLockPath(PLATFORM, KEY));
+    assert(got.path);
 
     const info = readBuildLock(got.path);
+    assert(info);
     expect(info.pid).toBe(process.pid);
     expect(info.projectRoot).toBe(root);
     expect(info.logFile).toBe(join(root, 'build.ndjson'));
+    assert(info.startedAt);
     expect(Date.parse(info.startedAt) > 0).toBeTruthy();
   });
 
@@ -103,6 +107,7 @@ describe('acquireBuildLock', () => {
     acquireBuildLock(spec());
     const second = acquireBuildLock(spec({ root: '/other/worktree' }));
     expect(second.acquired).toBe(undefined);
+    assert(second.held);
     expect(second.held).toEqual({
       pid: process.pid,
       projectRoot: root,
@@ -123,10 +128,12 @@ describe('acquireBuildLock', () => {
   // prevent.
   test('an OLD lock held by a LIVE pid is not stale', () => {
     const got = acquireBuildLock(spec());
+    assert(got.path);
     const longAgo = new Date(Date.now() - 45 * 60 * 1000);
     utimesSync(got.path, longAgo, longAgo);
     const second = acquireBuildLock(spec());
     expect(second.acquired).toBe(undefined);
+    assert(second.held);
     expect(second.held.pid).toBe(process.pid);
   });
 
@@ -145,7 +152,9 @@ describe('acquireBuildLock', () => {
 
     const got = acquireBuildLock(spec({ isAlive: () => false }));
     expect(got.acquired).toBe(true);
-    expect(readBuildLock(path).pid).toBe(process.pid);
+    const taken = readBuildLock(path);
+    assert(taken);
+    expect(taken.pid).toBe(process.pid);
   });
 
   // A process killed between the mkdir and the write leaves a lock nothing can
@@ -160,11 +169,14 @@ describe('acquireBuildLock', () => {
 
     const got = acquireBuildLock(spec());
     expect(got.acquired).toBe(true);
-    expect(readBuildLock(path).pid).toBe(process.pid);
+    const taken = readBuildLock(path);
+    assert(taken);
+    expect(taken.pid).toBe(process.pid);
   });
 
   test('releaseBuildLock removes the lock and is safe to repeat', () => {
     const got = acquireBuildLock(spec());
+    assert(got.path);
     expect(releaseBuildLock(got)).toBe(true);
     expect(existsSync(got.path)).toBe(false);
     expect(releaseBuildLock(got)).toBe(true);
@@ -176,6 +188,7 @@ describe('acquireBuildLock', () => {
   // delete a lock that is now someone else's, and TWO builders would compile.
   test('releaseBuildLock refuses to remove a lock another pid took over', () => {
     const got = acquireBuildLock(spec());
+    assert(got.path);
     writeFileSync(
       join(got.path, 'lock.json'),
       JSON.stringify({
@@ -193,6 +206,7 @@ describe('acquireBuildLock', () => {
   // this is the same guarantee at the unit level.
   test('a throw inside a finally-wrapped build still releases', () => {
     const got = acquireBuildLock(spec());
+    assert(got.path);
     expect(() => {
       try {
         throw new Error('xcodebuild exploded');
@@ -229,6 +243,8 @@ describe('listBuildLocks', () => {
     expect(locks.length).toBe(2);
     const live = locks.find((l) => l.alive);
     const stale = locks.find((l) => !l.alive);
+    assert(live);
+    assert(stale);
     expect(live.platform).toBe('ios');
     expect(live.key).toBe(KEY);
     expect(live.projectRoot).toBe(root);
@@ -244,6 +260,7 @@ describe('listBuildLocks', () => {
     mkdirSync(path, { recursive: true });
     writeFileSync(join(path, 'lock.json'), 'not json');
     const [lock] = listBuildLocks();
+    assert(lock);
     expect(lock.pid).toBe(null);
     expect(lock.alive).toBe(false);
   });
@@ -289,6 +306,7 @@ describe('waitForBuild', () => {
       }),
     );
     expect(result.hit).toBe('/cache/ios/key/Fixture.app');
+    assert(result.waitedMs != null);
     expect(result.waitedMs > 0).toBeTruthy();
     expect(polls).toBe(3);
   });
@@ -324,7 +342,7 @@ describe('waitForBuild', () => {
   // something that is sitting in the cache.
   test('an artifact that lands as the lock is released is still a hit', async () => {
     const path = lockOn();
-    let stored = null;
+    let stored: string | null = null;
     const result = await waitForBuild(
       opts({
         resolve: () => stored,
@@ -360,14 +378,14 @@ describe('waitForBuild', () => {
   test('emits a progress line about every 30s, naming the holder and its log', async () => {
     lockOn();
     let clock = 0;
-    const lines = [];
+    const lines: string[] = [];
     let polls = 0;
     await waitForBuild(
       opts({
         resolve: () => (++polls < 200 ? null : '/cache/ios/key/Fixture.app'),
         isAlive: () => true,
         now: () => (clock += 1000),
-        out: (l) => lines.push(l),
+        out: (l: string) => lines.push(l),
       }),
     );
     expect(lines.length >= 5).toBeTruthy();
@@ -383,7 +401,7 @@ describe('waitForBuild', () => {
   test('a generous ceiling ends the wait with a structured error naming the lock', async () => {
     const path = lockOn();
     let clock = 0;
-    let err: any;
+    let err: (Error & { code?: string; lockPath?: string }) | undefined;
     try {
       await waitForBuild(
         opts({
@@ -394,12 +412,12 @@ describe('waitForBuild', () => {
         }),
       );
     } catch (e) {
-      err = e;
+      err = e as Error & { code?: string; lockPath?: string };
     }
     expect(err).toBeInstanceOf(Error);
-    expect(err.code).toBe('RN_ISO_BUILD_WAIT_TIMEOUT');
-    expect(err.lockPath).toBe(path);
-    expect(err.message).toMatch(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    expect(err?.code).toBe('RN_ISO_BUILD_WAIT_TIMEOUT');
+    expect(err?.lockPath).toBe(path);
+    expect(err?.message).toMatch(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   });
 });
 
@@ -436,14 +454,14 @@ describe('a real race between real processes', () => {
   const LOCK_URL = new URL('../engine/build-lock.ts', import.meta.url).href;
   const CACHE_URL = new URL('../build-cache.ts', import.meta.url).href;
 
-  function script(name, body) {
+  function script(name: string, body: string) {
     const path = join(root, name);
     writeFileSync(path, body);
     return path;
   }
 
-  function runNode(path, args = [], env = {}) {
-    return new Promise((resolve, reject) => {
+  function runNode(path: string, args: string[] = [], env: Record<string, string> = {}) {
+    return new Promise<{ code: number | string; stdout: string; stderr: string }>((resolve, reject) => {
       execFile(
         process.execPath,
         [path, ...args],
@@ -488,7 +506,9 @@ describe('a real race between real processes', () => {
       expect(loser.held.projectRoot).toMatch(/^\/worktree\//);
     }
     // The winner's record is still on disk: nothing released it.
-    expect(readBuildLock(buildLockPath('ios', 'race-debug-sim')).pid).toBe(winners[0].pid);
+    const winnerRecord = readBuildLock(buildLockPath('ios', 'race-debug-sim'));
+    assert(winnerRecord);
+    expect(winnerRecord.pid).toBe(winners[0].pid);
   });
 
   // The whole chain, end to end, in two processes: one holds the lock,
@@ -572,7 +592,10 @@ describe('a real race between real processes', () => {
 
     const takeover = acquireBuildLock({ platform: 'ios', key, root, logFile: null });
     expect(takeover.acquired).toBe(true);
-    expect(readBuildLock(takeover.path).pid).toBe(process.pid);
+    assert(takeover.path);
+    const takeoverRecord = readBuildLock(takeover.path);
+    assert(takeoverRecord);
+    expect(takeoverRecord.pid).toBe(process.pid);
   });
 });
 

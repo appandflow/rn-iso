@@ -70,7 +70,7 @@ export function checkBareApi(modules: Record<string, BareModule>): string[] {
       problems.push(`${name} loaded but exported nothing`);
       continue;
     }
-    for (const fn of REQUIRED_EXPORTS[name]) {
+    for (const fn of REQUIRED_EXPORTS[name] ?? []) {
       if (typeof mod[fn] !== 'function') {
         problems.push(`${name} does not export ${fn}()`);
       }
@@ -107,7 +107,7 @@ export function resolveBareDeps(
       continue;
     }
     try {
-      modules[name] = normalizeModule(require_(resolved), REQUIRED_EXPORTS[name]);
+      modules[name] = normalizeModule(require_(resolved), REQUIRED_EXPORTS[name] ?? []);
     } catch (err) {
       throw supervisorError(
         'RN_ISO_BARE_LOAD',

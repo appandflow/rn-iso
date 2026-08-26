@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -12,7 +13,7 @@ import {
   waitForBoot,
 } from '../sim/android.ts';
 
-let tmpHome;
+let tmpHome: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -88,7 +89,9 @@ test('pickDefaultSystemImage prefers highest api, then google_apis, arm64 only',
     { api: 36, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-36;google_apis;arm64-v8a' },
     { api: 36, tag: 'google_apis', arch: 'x86_64', pkg: 'system-images;android-36;google_apis;x86_64' },
   ];
-  expect(pickDefaultSystemImage(images, {}).pkg).toBe('system-images;android-36;google_apis;arm64-v8a');
+  const picked = pickDefaultSystemImage(images, {});
+  assert(picked);
+  expect(picked.pkg).toBe('system-images;android-36;google_apis;arm64-v8a');
 });
 
 // The 16KB-page images break exactly what an RN app is: a native module
@@ -108,18 +111,30 @@ test('pickDefaultSystemImage ranks a 16KB-page image below a plain one, api or n
     arch: 'arm64-v8a',
     pkg: 'system-images;android-35;google_apis;arm64-v8a',
   };
-  expect(pickDefaultSystemImage([ps16k, plain], {}).pkg).toBe(plain.pkg);
-  expect(pickDefaultSystemImage([plain, ps16k], {}).pkg).toBe(plain.pkg);
+  const bothA = pickDefaultSystemImage([ps16k, plain], {});
+  assert(bothA);
+  expect(bothA.pkg).toBe(plain.pkg);
+  const bothB = pickDefaultSystemImage([plain, ps16k], {});
+  assert(bothB);
+  expect(bothB.pkg).toBe(plain.pkg);
   // ...and with nothing else installed it is still a working emulator, which
   // is what rn-iso creates rather than refusing.
-  expect(pickDefaultSystemImage([ps16k], {}).pkg).toBe(ps16k.pkg);
+  const only16k = pickDefaultSystemImage([ps16k], {});
+  assert(only16k);
+  expect(only16k.pkg).toBe(ps16k.pkg);
   // An explicit choice is still honoured, 16KB or not.
-  expect(pickDefaultSystemImage([ps16k, plain], { systemImage: ps16k.pkg }).pkg).toBe(ps16k.pkg);
+  const explicit = pickDefaultSystemImage([ps16k, plain], { systemImage: ps16k.pkg });
+  assert(explicit);
+  expect(explicit.pkg).toBe(ps16k.pkg);
 });
 
 test('pickDefaultSystemImage honors an explicit package and returns null on no match', () => {
   const images = [{ api: 36, tag: 'default', arch: 'arm64-v8a', pkg: 'system-images;android-36;default;arm64-v8a' }];
-  expect(pickDefaultSystemImage(images, { systemImage: images[0].pkg }).pkg).toBe(images[0].pkg);
+  const first = images[0];
+  assert(first);
+  const honored = pickDefaultSystemImage(images, { systemImage: first.pkg });
+  assert(honored);
+  expect(honored.pkg).toBe(first.pkg);
   expect(pickDefaultSystemImage([], {})).toBe(null);
   expect(pickDefaultSystemImage(images, { systemImage: 'system-images;android-99;x;y' })).toBe(null);
 });

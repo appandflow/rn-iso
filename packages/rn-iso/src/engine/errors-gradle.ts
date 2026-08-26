@@ -169,62 +169,79 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
 
     const kotlinUri = KOTLIN_URI.exec(line);
     if (kotlinUri) {
+      // file and message are required capture groups; skip if a match somehow
+      // lacks them rather than fabricate a diagnostic.
+      const uriFile = kotlinUri[1];
+      const uriMsg = kotlinUri[4];
+      if (uriFile === undefined || uriMsg === undefined) continue;
       add({
-        file: decodePath(kotlinUri[1]),
+        file: decodePath(uriFile),
         line: Number(kotlinUri[2]),
         column: Number(kotlinUri[3]),
-        message: kotlinUri[4],
+        message: uriMsg,
       });
       continue;
     }
     const kotlinParen = KOTLIN_PAREN.exec(line);
     if (kotlinParen) {
+      const parenMsg = kotlinParen[4];
+      if (parenMsg === undefined) continue;
       add({
         file: kotlinParen[1],
         line: Number(kotlinParen[2]),
         column: Number(kotlinParen[3]),
-        message: kotlinParen[4],
+        message: parenMsg,
       });
       continue;
     }
 
     const aapt = AAPT_PREFIXED.exec(line);
     if (aapt) {
+      const aaptMsg = aapt[4];
+      if (aaptMsg === undefined) continue;
       add({
         file: aapt[1],
         line: Number(aapt[2]),
         column: aapt[3] ? Number(aapt[3]) : undefined,
-        message: stripAaptPrefix(aapt[4]),
+        message: stripAaptPrefix(aaptMsg),
       });
       continue;
     }
 
     const fileError = FILE_LINE_ERROR.exec(line);
     if (fileError) {
+      const errMsg = fileError[4];
+      if (errMsg === undefined) continue;
       add({
         file: fileError[1],
         line: Number(fileError[2]),
         column: fileError[3] ? Number(fileError[3]) : undefined,
-        message: fileError[4],
+        message: errMsg,
       });
       continue;
     }
 
     const kotlinBare = KOTLIN_BARE.exec(line);
     if (kotlinBare) {
-      add({ message: kotlinBare[1] });
+      const bareMsg = kotlinBare[1];
+      if (bareMsg === undefined) continue;
+      add({ message: bareMsg });
       continue;
     }
 
     const bare = BARE_ERROR.exec(line);
     if (bare) {
-      add({ message: bare[1] });
+      const bareErrMsg = bare[1];
+      if (bareErrMsg === undefined) continue;
+      add({ message: bareErrMsg });
       continue;
     }
 
     const resolve = COULD_NOT_RESOLVE.exec(line);
     if (resolve) {
-      add({ message: resolve[1] });
+      const resolveMsg = resolve[1];
+      if (resolveMsg === undefined) continue;
+      add({ message: resolveMsg });
       continue;
     }
 
@@ -312,7 +329,7 @@ function decodePath(path: string): string {
 
 // Gradle's rich console redraws with carriage returns; a captured transcript
 // keeps them, and they would otherwise glue two lines together.
-function stripCarriage(line: string): string {
+function stripCarriage(line: string | undefined): string {
   const text = String(line ?? '');
   const idx = text.lastIndexOf('\r');
   return idx === -1 ? text : text.slice(idx + 1);

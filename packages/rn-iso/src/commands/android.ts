@@ -31,7 +31,7 @@ import { basename, join, relative } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
 import type { Command } from 'commander';
 import type { AndroidFacts, WaitedForBuild } from '../types.ts';
-import { getConcurrencyLimits, getProject, upsertProject, type ProjectRecord } from '../config.ts';
+import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.ts';
 import {
@@ -42,7 +42,7 @@ import {
   type WaitForBuildResult,
 } from '../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
-import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
+import { createNdjsonWriter } from '../ndjson.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
 import { workspaceLogsDir } from '../paths.ts';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../project.ts';
@@ -73,6 +73,7 @@ import {
 } from '../engine/app-install.ts';
 import { androidHome } from '../sim/android.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
+import type { OwnedDeviceRecord } from '../engine/device.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid } from '../engine/gradle.ts';
 import {
@@ -94,39 +95,14 @@ export const PLATFORM = 'android';
 
 // --- local, flat shapes for engine results ---------------------------------
 //
-// The engine modules (engine/*, sim/*) are being typed by other agents
-// concurrently and their exports may still be implicitly-typed. These
-// interfaces describe only the shape THIS file reads off their results, all
-// fields optional to match the defensive JS underneath.
-
-interface DeviceLike {
-  avdName?: string | null;
-  deviceName?: string | null;
-}
-
-interface BootedLike {
-  ok?: boolean;
-  failed?: boolean;
-  reason?: string | null;
-  serial?: string;
-}
-
-interface DeviceCapacityRefusalLike {
-  code: string;
-  message: string;
-  remedy?: string | null;
-}
+// These interfaces describe only the shape THIS file reads off the engine and
+// sim results -- a deliberately local, all-optional view, looser than the
+// producers' own exported types, matching the defensive reads underneath.
 
 interface SupervisorLike {
   pid?: number;
   port?: number;
   mode?: string;
-}
-
-interface RemoteHitLike {
-  appPath?: string | null;
-  timedOut?: boolean;
-  failed?: string | null;
 }
 
 interface RemoteUploadLike {
@@ -354,18 +330,23 @@ export function parseXmltree(text: unknown): XmlNode {
     const line = raw.trim();
     const element = /^E: ([\w.:-]+)/.exec(line);
     if (element) {
-      while (stack.length > 1 && stack[stack.length - 1].indent >= indent) stack.pop();
-      const node: XmlNode = { tag: element[1], attrs: {}, children: [], indent };
-      stack[stack.length - 1].children.push(node);
+      // stack always holds the root sentinel, so stack[length-1] is present
+      // (the `length > 1` guard here is about not popping the root).
+      while (stack.length > 1 && stack[stack.length - 1]!.indent >= indent) stack.pop();
+      // element matched /^E: ([\w.:-]+)/, so capture group 1 is present.
+      const node: XmlNode = { tag: element[1]!, attrs: {}, children: [], indent };
+      stack[stack.length - 1]!.children.push(node);
       stack.push(node);
       continue;
     }
     const attr = /^A: ([^(=]+?)(?:\(0x[0-9a-f]+\))?=(.*)$/.exec(line);
     if (attr && stack.length > 1) {
+      // attr matched, so groups 1 and 2 are present.
       // aapt prints `android:name`, aapt2 the full namespace URI.
-      const name = attr[1].replace(/^http:\/\/schemas\.android\.com\/apk\/res\/android:/, 'android:');
-      const value = /^"((?:[^"\\]|\\.)*)"/.exec(attr[2]);
-      stack[stack.length - 1].attrs[name] = value ? value[1] : null;
+      const name = attr[1]!.replace(/^http:\/\/schemas\.android\.com\/apk\/res\/android:/, 'android:');
+      const value = /^"((?:[^"\\]|\\.)*)"/.exec(attr[2]!);
+      // stack holds the root sentinel, so stack[length-1] is present.
+      stack[stack.length - 1]!.attrs[name] = value ? value[1]! : null;
     }
   }
   return root;
@@ -895,16 +876,7 @@ export async function runAndroid(
   // emulator: a refusal has to fire before that. It never refuses a workspace
   // whose own emulator is already running (re-running `android` is
   // idempotent), only a NEW device over concurrency.maxDevices.
-  // checkDeviceCapacity is still untyped in engine/device.ts, and its `= {}`
-  // default drops `platform`/`project`/`max` (no default of their own) from
-  // the inferred parameter type. The local signature is what this file
-  // actually calls it with.
-  type CheckDeviceCapacityFn = (args: {
-    platform: string;
-    project: ProjectRecord | null;
-    max: number;
-  }) => DeviceCapacityRefusalLike | null;
-  const capacity = (checkCapacity as unknown as CheckDeviceCapacityFn)({
+  const capacity = checkCapacity({
     platform: PLATFORM,
     project,
     max: limits.maxDevices,
@@ -912,7 +884,7 @@ export async function runAndroid(
   if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
 
   // ---- device --------------------------------------------------------
-  let device: DeviceLike;
+  let device: OwnedDeviceRecord;
   try {
     device = await ensureDevice({
       platform: PLATFORM,
@@ -977,14 +949,7 @@ export async function runAndroid(
   }
   const metroPort = reservedPort ?? DEFAULT_METRO_PORT;
 
-  // ensureBooted is still untyped in engine/device.ts; its `= {}` default
-  // drops `platform`/`device` (no default of their own) from the inferred type.
-  type EnsureBootedFn = (args: {
-    platform: string;
-    device: unknown;
-    out?: (line: string) => void;
-  }) => Promise<BootedLike>;
-  const booted = await (ensureDeviceBooted as unknown as EnsureBootedFn)({ platform: PLATFORM, device, out });
+  const booted = await ensureDeviceBooted({ platform: PLATFORM, device, out });
   if (booted.failed) {
     return fail(
       NO_DEVICE,
@@ -1074,17 +1039,7 @@ export async function runAndroid(
   }
 
   if (remote && useBuildCache) {
-    // resolveRemote is still untyped in engine/remote-cache.ts, and every
-    // property this call sends has no default there, so TS infers a parameter
-    // type with NO overlap at all against the object below. The local
-    // signature is what this file actually calls it with.
-    type ResolveRemoteFn = (args: {
-      provider: unknown;
-      platform: string;
-      projectRoot: string;
-      fingerprintHash: string;
-    }) => Promise<RemoteHitLike | null>;
-    const hit = await (resolveRemoteBuild as unknown as ResolveRemoteFn)({
+    const hit = await resolveRemoteBuild({
       provider: remote.provider,
       platform: PLATFORM,
       projectRoot: root,
@@ -1285,15 +1240,7 @@ export async function runAndroid(
       // STARTED here, collected after the launch, so the upload overlaps the
       // install instead of being added to it. Nothing in this run depends on it.
       if (remote) {
-        // uploadRemote has the same untyped-default shape as resolveRemote above.
-        type UploadRemoteFn = (args: {
-          provider: unknown;
-          platform: string;
-          projectRoot: string;
-          fingerprintHash: string;
-          buildPath: string;
-        }) => Promise<RemoteUploadLike>;
-        uploadPending = (uploadRemoteBuild as unknown as UploadRemoteFn)({
+        uploadPending = uploadRemoteBuild({
           provider: remote.provider,
           platform: PLATFORM,
           projectRoot: root,
@@ -1452,8 +1399,9 @@ export async function runAndroid(
   // Skipped under --no-metro-check, for the reason given in commands/ios.js:
   // the gate was waived, so there is nothing to poll for. The fact still is
   // not `true`.
-  // verifyLaunch is still untyped in engine/app-install.ts; read through the
-  // flat, all-optional local interface rather than its inferred return union.
+  // Read through a flat, all-optional local interface rather than
+  // verifyLaunch's return union -- this file branches only on
+  // `verified` / `skipped` / `waitedMs`.
   const verification: VerifyLaunchResultLike = metroCheck
     ? await verifyLaunched({ logsDir, since: launchedAt, mode: isExpo ? MODE_EXPO : MODE_BARE })
     : { verified: false, skipped: true };

@@ -6,6 +6,7 @@
 // tested through runStop with every side effect injected, so nothing in this
 // file kills anything, boots anything, or touches a real simulator.
 
+import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -21,6 +22,7 @@ import {
   resolveSupervisorTarget,
   runStop,
 } from '../commands/stop.ts';
+import { makeConfig, makeError, makeMetroResolution } from './_factories.ts';
 
 // --- resolveSupervisorTarget: who may be signalled --------------------------
 
@@ -31,10 +33,10 @@ test('no supervisor recorded anywhere is "none", not an error', () => {
 
 test('an alive pid whose recorded port matches the reservation is ours to signal', () => {
   const r = resolveSupervisorTarget({
-    state: { pid: 4242, port: 8083, mode: 'bare-inproc', startedAt: 111 },
+    state: { pid: 4242, port: 8083, mode: 'bare-inproc', startedAt: '111' },
     record: { pid: 4242, port: 8083 },
     reservedPort: 8083,
-    isAlive: (pid) => pid === 4242,
+    isAlive: (pid: number) => pid === 4242,
   });
   expect(r.status).toBe('ours');
   expect(r.pid).toBe(4242);
@@ -86,7 +88,7 @@ test('state.json and the global registry disagreeing on the pid is refused', () 
 test('a registry record with no state.json is still actionable when the port matches', () => {
   const r = resolveSupervisorTarget({
     state: null,
-    record: { pid: 4242, port: 8083, startedAt: 5 },
+    record: { pid: 4242, port: 8083, startedAt: '5' },
     reservedPort: 8083,
     isAlive: () => true,
   });
@@ -109,8 +111,21 @@ test('no reservation left falls back to the in-workspace record', () => {
 
 // --- runStop: the sequence --------------------------------------------------
 
+type TeardownCall =
+  | { udid: string; opts: { del?: boolean; label?: string } }
+  | { avd: string; opts: { del?: boolean } };
+
 function seams(over = {}) {
-  const calls = {
+  const calls: {
+    signals: (number | null | undefined)[];
+    teardowns: TeardownCall[];
+    freed: { root: string; port: number }[];
+    cleared: number;
+    stateCleared: number;
+    killedMetro: (number | null | undefined)[];
+    collectorSignals: number[];
+    collectorsCleared: number;
+  } = {
     signals: [],
     teardowns: [],
     freed: [],
@@ -125,33 +140,33 @@ function seams(over = {}) {
     project: { metroPort: 8083, platforms: {} },
     state: null,
     collectors: {},
-    signalCollector: (pid) => {
+    signalCollector: (pid: number) => {
       calls.collectorSignals.push(pid);
     },
     clearCollectors: () => {
       calls.collectorsCleared += 1;
     },
     isAlive: () => false,
-    killGroup: (pid) => {
+    killGroup: (pid: number | null | undefined) => {
       calls.signals.push(pid);
       return true;
     },
     waitForDeath: async () => true,
-    resolveMetro: async () => ({ missing: true }),
-    killMetro: (leader) => {
+    resolveMetro: async () => makeMetroResolution.missing(),
+    killMetro: (leader: number | null | undefined) => {
       calls.killedMetro.push(leader);
       return true;
     },
     findListener: () => null,
-    teardownIos: (udid, opts) => {
+    teardownIos: (udid: string, opts: { del?: boolean; label?: string }) => {
       calls.teardowns.push({ udid, opts });
       return { status: 'torn-down', label: 'rn-iso-a' };
     },
-    teardownAvd: (name, opts) => {
+    teardownAvd: (name: string, opts: { del?: boolean }) => {
       calls.teardowns.push({ avd: name, opts });
       return { status: 'torn-down', label: name };
     },
-    freePort: (root, port) => {
+    freePort: (root: string, port: number) => {
       calls.freed.push({ root, port });
     },
     clearRegistration: async () => {
@@ -181,7 +196,7 @@ test('nothing running anywhere is a clean success', async () => {
 test('a live supervisor is SIGTERMed as a group and its Metro is left to it', async () => {
   const { calls, opts } = seams({
     state: { pid: 4242, port: 8083, mode: 'expo-child' },
-    isAlive: (pid) => pid === 4242,
+    isAlive: (pid: number) => pid === 4242,
     resolveMetro: async () => {
       throw new Error('the metro fallback must not run for a live supervisor');
     },
@@ -201,7 +216,7 @@ test('a live supervisor is SIGTERMed as a group and its Metro is left to it', as
 test('a supervisor that outlives the wait is reported, never SIGKILLed', async () => {
   const { calls, opts } = seams({
     state: { pid: 4242, port: 8083 },
-    isAlive: (pid) => pid === 4242,
+    isAlive: (pid: number) => pid === 4242,
     waitForDeath: async () => false,
   });
   const r = await runStop(opts);
@@ -222,7 +237,9 @@ test('a stale supervisor record is a success with a note, and the rest still run
   const r = await runStop(opts);
   expect(r.ok).toBe(true);
   expect(r.outcomes.supervisor.status).toBe('already-stopped');
-  expect(r.outcomes.device.ios.status).toBe('shut-down');
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  expect(ios.status).toBe('shut-down');
   expect(r.outcomes.port.status).toBe('freed');
   expect(calls.stateCleared).toBe(1);
 });
@@ -242,7 +259,7 @@ test('an unverified supervisor record is refused without signalling anything', a
 // With no supervisor, v2's path is unchanged: identity first, kill the group.
 test('no supervisor but our own Metro on the port kills the group', async () => {
   const { calls, opts } = seams({
-    resolveMetro: async () => ({ metro: { pid: 90, leader: 88, cwd: '/proj/a' } }),
+    resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 90, leader: 88, cwd: '/proj/a' } }),
   });
   const r = await runStop(opts);
   expect(r.ok).toBe(true);
@@ -252,7 +269,9 @@ test('no supervisor but our own Metro on the port kills the group', async () => 
 });
 
 test('an unproven listener is refused and named, and --force overrides it', async () => {
-  const { opts } = seams({ resolveMetro: async () => ({ notOurs: 'pid 99 runs from /elsewhere' }) });
+  const { opts } = seams({
+    resolveMetro: async () => makeMetroResolution.notOurs({ notOurs: 'pid 99 runs from /elsewhere' }),
+  });
   const refused = await runStop(opts);
   expect(refused.ok).toBe(false);
   expect(refused.outcomes.metro.status).toBe('refused');
@@ -260,7 +279,7 @@ test('an unproven listener is refused and named, and --force overrides it', asyn
   expect(refused.outcomes.port.status).toBe('kept');
 
   const forced = seams({
-    resolveMetro: async () => ({ notOurs: 'pid 99 runs from /elsewhere' }),
+    resolveMetro: async () => makeMetroResolution.notOurs({ notOurs: 'pid 99 runs from /elsewhere' }),
     findListener: () => 99,
     force: true,
   });
@@ -292,8 +311,12 @@ test('owned devices are shut down with del:false, never deleted', async () => {
     },
   });
   const r = await runStop(opts);
-  expect(r.outcomes.device.ios.status).toBe('shut-down');
-  expect(r.outcomes.device.android.status).toBe('shut-down');
+  const ios = r.outcomes.device.ios;
+  const android = r.outcomes.device.android;
+  assert(ios);
+  assert(android);
+  expect(ios.status).toBe('shut-down');
+  expect(android.status).toBe('shut-down');
   for (const c of calls.teardowns) expect(c.opts.del).toBe(false);
 });
 
@@ -302,8 +325,10 @@ test('a device rn-iso does not own is left alone', async () => {
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: false } } },
   });
   const r = await runStop(opts);
-  expect(r.outcomes.device.ios.status).toBe('skipped');
-  expect(r.outcomes.device.ios.kind).toBe('not-owned');
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  expect(ios.status).toBe('skipped');
+  expect(ios.kind).toBe('not-owned');
   expect(calls.teardowns).toEqual([]);
 });
 
@@ -316,8 +341,10 @@ test('an occupied sim is reported as skipped and does not fail the run', async (
   });
   const r = await runStop(opts);
   expect(r.ok).toBe(true);
-  expect(r.outcomes.device.ios.status).toBe('skipped');
-  expect(r.outcomes.device.ios.kind).toBe('occupied');
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  expect(ios.status).toBe('skipped');
+  expect(ios.kind).toBe('occupied');
 });
 
 test('a failed device teardown fails the run and says why', async () => {
@@ -327,7 +354,9 @@ test('a failed device teardown fails the run and says why', async () => {
   });
   const r = await runStop(opts);
   expect(r.ok).toBe(false);
-  expect(r.outcomes.device.ios.reason).toMatch(/simctl exploded/);
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  expect(ios.reason).toMatch(/simctl exploded/);
 });
 
 test('a project with no reserved port has nothing to free', async () => {
@@ -341,8 +370,8 @@ test('a project with no reserved port has nothing to free', async () => {
 
 // --- state files and the registry, against a real temp workspace ------------
 
-let tmpHome;
-let tmpRoot;
+let tmpHome: string;
+let tmpRoot: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -390,16 +419,17 @@ test('clearSupervisorState removes a state file that held only the supervisor', 
 });
 
 test('stopping frees the reserved port in the registry and keeps the device record', async () => {
-  saveConfig({
-    version: 2,
-    projects: {
-      [tmpRoot]: {
-        label: 'agent-1',
-        metroPort: 8083,
-        platforms: { ios: { deviceUdid: 'U1', owned: true } },
+  saveConfig(
+    makeConfig({
+      projects: {
+        [tmpRoot]: {
+          label: 'agent-1',
+          metroPort: 8083,
+          platforms: { ios: { deviceUdid: 'U1', owned: true } },
+        },
       },
-    },
-  });
+    }),
+  );
   mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(supervisorPidFile(tmpRoot), '4242');
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 4242, port: 8083 } }));
@@ -415,6 +445,8 @@ test('stopping frees the reserved port in the registry and keeps the device reco
 
   expect(r.ok).toBe(true);
   const after = getProject(tmpRoot);
+  assert(after);
+  assert(after.platforms);
   expect(after.metroPort).toBe(null);
   expect(after.platforms.ios).toEqual({ deviceUdid: 'U1', owned: true });
   expect(existsSync(workspaceStateFile(tmpRoot))).toBe(false);
@@ -425,17 +457,18 @@ test('stopping frees the reserved port in the registry and keeps the device reco
 // find a supervisor whose workspace is gone, so a stop that leaves one behind
 // leaves a permanent ghost.
 test('stopping clears the global supervisor registration', async () => {
-  saveConfig({
-    version: 2,
-    projects: {
-      [tmpRoot]: {
-        label: 'agent-1',
-        metroPort: 8083,
-        supervisor: { pid: 4242, port: 8083, startedAt: 5 },
-        platforms: {},
+  saveConfig(
+    makeConfig({
+      projects: {
+        [tmpRoot]: {
+          label: 'agent-1',
+          metroPort: 8083,
+          supervisor: { pid: 4242, port: 8083, startedAt: '5' },
+          platforms: {},
+        },
       },
-    },
-  });
+    }),
+  );
 
   const r = await runStop({
     root: tmpRoot,
@@ -446,7 +479,9 @@ test('stopping clears the global supervisor registration', async () => {
 
   expect(r.ok).toBe(true);
   expect(r.outcomes.supervisor.status).toBe('already-stopped');
-  expect(getProject(tmpRoot).supervisor).toBe(undefined);
+  const proj = getProject(tmpRoot);
+  assert(proj);
+  expect(proj.supervisor).toBe(undefined);
 });
 
 // --- Contract 5: the collectors ---------------------------------------------
@@ -510,9 +545,7 @@ test('a collector that exits between the liveness check and the signal is not an
     collectors: { ios: { pid: 111 } },
     isAlive: () => true,
     signalCollector: () => {
-      const e = new Error('ESRCH');
-      e.code = 'ESRCH';
-      throw e;
+      throw makeError('ESRCH', { code: 'ESRCH' });
     },
   });
   const r = await runStop(opts);
@@ -601,16 +634,18 @@ test('parseSimHolders never names rn-iso own processes', () => {
 });
 
 test('an occupied sim names the process holding it', async () => {
-  const reports = [];
+  const reports: string[] = [];
   const { opts } = seams({
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
     teardownIos: () => ({ status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' }),
-    simHolders: (udid) => (udid === 'U1' ? ['xcodebuild (pid 4242)'] : []),
-    report: (l) => reports.push(String(l)),
+    simHolders: (udid: string) => (udid === 'U1' ? ['xcodebuild (pid 4242)'] : []),
+    report: (l: string) => reports.push(String(l)),
   });
   const r = await runStop(opts);
-  expect(r.outcomes.device.ios.status).toBe('skipped');
-  expect(r.outcomes.device.ios.reason).toMatch(/xcodebuild \(pid 4242\)/);
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  expect(ios.status).toBe('skipped');
+  expect(ios.reason).toMatch(/xcodebuild \(pid 4242\)/);
   expect(reports.join('\n')).toMatch(/xcodebuild \(pid 4242\)/);
 });
 
@@ -621,7 +656,9 @@ test('an occupied sim nothing can identify still gets a hint about who it usuall
     simHolders: () => [],
   });
   const r = await runStop(opts);
-  expect(r.outcomes.device.ios.reason).toMatch(/UI-test runner or device tool/);
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  expect(ios.reason).toMatch(/UI-test runner or device tool/);
 });
 
 test('a not-owned skip is not given an occupancy hint', async () => {
@@ -631,6 +668,10 @@ test('a not-owned skip is not given an occupancy hint', async () => {
     simHolders: () => ['xcodebuild (pid 1)'],
   });
   const r = await runStop(opts);
-  expect(!/UI-test runner/.test(r.outcomes.device.ios.reason)).toBeTruthy();
-  expect(!/pid 1/.test(r.outcomes.device.ios.reason)).toBeTruthy();
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  const reason = ios.reason;
+  assert(reason);
+  expect(!/UI-test runner/.test(reason)).toBeTruthy();
+  expect(!/pid 1/.test(reason)).toBeTruthy();
 });

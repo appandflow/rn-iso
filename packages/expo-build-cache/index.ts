@@ -147,7 +147,15 @@ function shortKey(key: string, fingerprintHash: string): string {
 // The cached artifact is the single .app / .apk inside the entry directory.
 function artifactIn(dir: string): string | null {
   if (!fs.existsSync(dir)) return null;
-  const found = fs.readdirSync(dir).find((f) => f.endsWith('.app') || f.endsWith('.apk'));
+  // Wrapped like the CLI-side twin (src/build-cache.ts): the entry can be
+  // pruned by `gc --delete` between the existsSync and the readdir, and an
+  // ENOENT here must degrade to a miss, not throw out of the Expo provider.
+  let found;
+  try {
+    found = fs.readdirSync(dir).find((f) => f.endsWith('.app') || f.endsWith('.apk'));
+  } catch {
+    return null;
+  }
   return found ? path.join(dir, found) : null;
 }
 
@@ -229,8 +237,13 @@ export async function resolveBuildCache({
     console.log(`[build-cache] hit ${platform} ${shortKey(key, fingerprintHash)}`);
     // Touch on hit so age-based trimming can tell a working entry from a dead
     // one. Without this, the entries earning their keep look identical to the
-    // ones nothing has used in months.
-    fs.utimesSync(path.dirname(hit), new Date(), new Date());
+    // ones nothing has used in months. Guarded like the CLI twin: not being
+    // able to touch it (a concurrent prune) is not a reason to refuse the hit.
+    try {
+      fs.utimesSync(path.dirname(hit), new Date(), new Date());
+    } catch {
+      /* the hit still stands */
+    }
     return hit;
   }
   console.log(`[build-cache] miss ${platform} ${shortKey(key, fingerprintHash)}`);
@@ -265,7 +278,15 @@ export async function uploadBuildCache({
 
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.rmSync(dest, { recursive: true, force: true });
-  fs.renameSync(staging, dest);
+  try {
+    fs.renameSync(staging, dest);
+  } catch {
+    // Two `expo run` builds of the same fingerprint can finish together and
+    // interleave rm/rm/rename/rename; the loser's rename onto the now-populated
+    // dest throws. The winner's entry is byte-identical, so keep it and drop our
+    // staging rather than fail an otherwise-successful build.
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
 
   console.log(`[build-cache] stored ${platform} ${shortKey(key, fingerprintHash)}`);
   return artifactIn(dest);

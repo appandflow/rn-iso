@@ -3,9 +3,10 @@ import { dirname } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { register, readManifest, registeredCaches, unregister, manifestPath } from '../cache-manifest.ts';
+import type { CacheEntry } from '../cache-manifest.ts';
 
-let tmpHome;
-let cacheDir;
+let tmpHome: string;
+let cacheDir: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-manifest-'));
   process.env.RN_ISO_HOME = tmpHome;
@@ -24,8 +25,8 @@ test('registering the same directory twice updates it instead of duplicating it'
   register({ dir: cacheDir, name: 'second', note: 'changed my mind' });
   const caches = readManifest().caches;
   expect(caches.length).toBe(1);
-  expect(caches[0].name).toBe('second');
-  expect(caches[0].note).toBe('changed my mind');
+  expect(caches[0]?.name).toBe('second');
+  expect(caches[0]?.note).toBe('changed my mind');
 });
 
 // The prune contract is the whole reason gc can act on a registration, so an
@@ -33,18 +34,20 @@ test('registering the same directory twice updates it instead of duplicating it'
 // of an index-backed store.
 test('prune defaults to entries and only accepts atomic as the alternative', () => {
   register({ dir: cacheDir });
-  expect(readManifest().caches[0].prune).toBe('entries');
+  expect(readManifest().caches[0]?.prune).toBe('entries');
 
   register({ dir: cacheDir, prune: 'atomic' });
-  expect(readManifest().caches[0].prune).toBe('atomic');
+  expect(readManifest().caches[0]?.prune).toBe('atomic');
 
-  register({ dir: cacheDir, prune: 'something-else' });
-  expect(readManifest().caches[0].prune).toBe('entries');
+  // Intentionally invalid: this test proves register rejects an unrecognised
+  // prune value, so the bad input is cast past the 'atomic' | 'entries' type.
+  register({ dir: cacheDir, prune: 'something-else' as CacheEntry['prune'] });
+  expect(readManifest().caches[0]?.prune).toBe('entries');
 });
 
 test('a leading ~ is expanded, so a registration made from any cwd resolves the same', () => {
   register({ dir: '~/.rn-iso-tilde-test' });
-  expect(readManifest().caches[0].dir).toBe(join(homedir(), '.rn-iso-tilde-test'));
+  expect(readManifest().caches[0]?.dir).toBe(join(homedir(), '.rn-iso-tilde-test'));
 });
 
 // A cache someone deleted by hand should not be reported as a 0-byte entry --
@@ -75,7 +78,9 @@ test('a corrupt manifest reads as empty rather than throwing', () => {
 });
 
 test('a registration needs a directory', () => {
-  expect(() => register({ name: 'nameless' })).toThrow(/needs a `dir`/);
+  // Intentionally invalid: a registration with no `dir` is the input under
+  // test, so it is cast to CacheEntry past the required-`dir` check.
+  expect(() => register({ name: 'nameless' } as CacheEntry)).toThrow(/needs a `dir`/);
 });
 
 // The depth is what stops gc from treating <root>/ios as one entry and removing
@@ -83,15 +88,17 @@ test('a registration needs a directory', () => {
 // default rather than being carried through.
 test('entriesDepth defaults to 1 and rejects anything that is not a usable depth', () => {
   register({ dir: cacheDir });
-  expect(readManifest().caches[0].entriesDepth).toBe(1);
+  expect(readManifest().caches[0]?.entriesDepth).toBe(1);
 
   register({ dir: cacheDir, entriesDepth: 2 });
-  expect(readManifest().caches[0].entriesDepth).toBe(2);
-  expect(registeredCaches()[0].entriesDepth).toBe(2);
+  expect(readManifest().caches[0]?.entriesDepth).toBe(2);
+  expect(registeredCaches()[0]?.entriesDepth).toBe(2);
 
   for (const bad of [0, -1, 1.5, 'two', null]) {
-    register({ dir: cacheDir, entriesDepth: bad });
-    expect(readManifest().caches[0].entriesDepth).toBe(1);
+    // Intentionally invalid depths (this test proves each falls back to 1), so
+    // the non-number members of the list are cast past the `number` field.
+    register({ dir: cacheDir, entriesDepth: bad as number });
+    expect(readManifest().caches[0]?.entriesDepth).toBe(1);
   }
 });
 

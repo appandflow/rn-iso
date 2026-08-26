@@ -66,11 +66,11 @@ const LAST_LINES = 20;
 // writer as it arrives.
 const TRANSCRIPT_LINES = 2000;
 
-export function androidDir(root: string) {
+function androidDir(root: string) {
   return join(root, 'android');
 }
 
-export function gradlewPath(root: string) {
+function gradlewPath(root: string) {
   return join(androidDir(root), 'gradlew');
 }
 
@@ -355,7 +355,9 @@ function spawnFailure(err: unknown, project: AndroidProjectResult, durationMs: n
 
 function baseName(file: string) {
   const parts = String(file).split('/');
-  return parts[parts.length - 1];
+  // split always yields >= 1 element, so the last index is present; the
+  // fallback only satisfies the index type and is never taken.
+  return parts[parts.length - 1] ?? String(file);
 }
 
 function safeList(dir: string) {

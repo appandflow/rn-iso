@@ -325,28 +325,36 @@ function readNested(obj: unknown, dottedKey: string): unknown {
   return cur;
 }
 
-function writeNested(obj: Record<string, any>, dottedKey: string, value: unknown): void {
+function writeNested(obj: Record<string, unknown>, dottedKey: string, value: unknown): void {
   const keys = dottedKey.split('.');
   let cur = obj;
   for (let i = 0; i < keys.length - 1; i++) {
-    if (typeof cur[keys[i]] !== 'object' || cur[keys[i]] === null) {
-      cur[keys[i]] = {};
+    const k = keys[i];
+    if (k === undefined) continue;
+    const next = cur[k];
+    if (typeof next !== 'object' || next === null) {
+      cur[k] = {};
     }
-    cur = cur[keys[i]];
+    cur = cur[k] as Record<string, unknown>;
   }
-  cur[keys[keys.length - 1]] = value;
+  const leaf = keys[keys.length - 1];
+  if (leaf !== undefined) cur[leaf] = value;
 }
 
-function deleteNested(obj: Record<string, any>, dottedKey: string): boolean {
+function deleteNested(obj: Record<string, unknown>, dottedKey: string): boolean {
   const keys = dottedKey.split('.');
-  const chain = [obj];
+  const chain: Record<string, unknown>[] = [obj];
   let cur = obj;
   for (let i = 0; i < keys.length - 1; i++) {
-    if (cur[keys[i]] == null || typeof cur[keys[i]] !== 'object') return false;
-    cur = cur[keys[i]];
+    const k = keys[i];
+    if (k === undefined) return false;
+    const next = cur[k];
+    if (next == null || typeof next !== 'object') return false;
+    cur = next as Record<string, unknown>;
     chain.push(cur);
   }
   const leaf = keys[keys.length - 1];
+  if (leaf === undefined) return false;
   if (!(leaf in cur)) return false;
   delete cur[leaf];
   // Prune any intermediate objects left empty by the deletion, so e.g.
@@ -354,7 +362,9 @@ function deleteNested(obj: Record<string, any>, dottedKey: string): boolean {
   for (let i = chain.length - 2; i >= 0; i--) {
     const parent = chain[i];
     const key = keys[i];
-    if (Object.keys(chain[i + 1]).length === 0) {
+    const child = chain[i + 1];
+    if (parent === undefined || key === undefined || child === undefined) break;
+    if (Object.keys(child).length === 0) {
       delete parent[key];
     } else {
       break;
@@ -436,22 +446,4 @@ export function allConsolePortsAndSerials({
     }
   }
   return result;
-}
-
-// Remove project entries whose path no longer exists on disk (deleted
-// worktrees). Returns the removed entries so callers can report what was
-// freed and clean up any process still bound to their Metro ports.
-export function pruneDeadProjects(): { path: string; project: ProjectRecord }[] {
-  return withConfigLock(() => {
-    const cfg = loadConfig();
-    if (!cfg?.projects) return [];
-    const removed: { path: string; project: ProjectRecord }[] = [];
-    for (const [path, proj] of Object.entries(cfg.projects)) {
-      if (existsSync(path)) continue;
-      removed.push({ path, project: proj });
-      delete cfg.projects[path];
-    }
-    if (removed.length) saveConfig(cfg);
-    return removed;
-  });
 }

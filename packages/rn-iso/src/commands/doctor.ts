@@ -2,15 +2,7 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import { findProjectRoot } from '../project.ts';
 import { detectXcodeMajor, runDoctor } from '../doctor.ts';
-
-// Local, flat shape for what runDoctor's findings look like -- doctor.ts is
-// typed by another agent concurrently, so this is not imported from there.
-interface DoctorFinding {
-  level?: string;
-  title?: string;
-  detail?: string;
-  fix?: string;
-}
+import type { Finding } from '../doctor.ts';
 
 interface DoctorOptions {
   json?: boolean;
@@ -31,14 +23,9 @@ export default function doctorCommand(program: Command) {
         return;
       }
 
-      const rawFindings = runDoctor(root, {
-        // doctor.ts's own param types are still being added by another agent;
-        // its current inferred signature only accepts a literal null here.
-        xcodeMajor: detectXcodeMajor() as any,
+      const findings: Finding[] = runDoctor(root, {
+        xcodeMajor: detectXcodeMajor(),
       });
-      const findings: DoctorFinding[] = (rawFindings as (DoctorFinding | null)[]).filter(
-        (f): f is DoctorFinding => f != null,
-      );
 
       if (opts.json) {
         console.log(JSON.stringify({ project: root, findings }, null, 2));

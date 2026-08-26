@@ -14,6 +14,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import assert from 'node:assert';
 import { readManifest } from '../cache-manifest.ts';
 import { sharedBuildCache, sharedMetroCache } from '../paths.ts';
 
@@ -21,7 +22,7 @@ const PACKAGES = join(fileURLToPath(import.meta.url), '..', '..', '..', '..');
 
 // Registration is deliberately fire-and-forget, so the caller returns before the
 // import resolves. Poll rather than sleep: it lands within a tick or two.
-async function waitForRegistration(dir, timeoutMs = 5000) {
+async function waitForRegistration(dir: string, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const found = readManifest().caches.find((c) => c.dir === dir);
@@ -45,6 +46,7 @@ test('the Expo build cache provider registers itself on this Node, at the right 
 
     const record = await waitForRegistration(cacheRoot);
     expect(record).toBeTruthy();
+    assert(record);
     expect(record.entriesDepth).toBe(2);
     expect(record.prune).toBe('entries');
   } finally {
@@ -66,15 +68,17 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
     // Metro's own FileStore is not a dependency of rn-iso, and the store object
     // is not what is under test here.
     class FakeStore {
-      constructor(options) {
-        (this as any).root = options.root;
+      root: string;
+      constructor(options: { root: string }) {
+        this.root = options.root;
       }
     }
     const stores = sharedCacheStores('demo', { FileStore: FakeStore });
-    expect(stores[0].root).toBe(cacheRoot);
+    expect((stores[0] as { root: string }).root).toBe(cacheRoot);
 
     const record = await waitForRegistration(cacheRoot);
     expect(record).toBeTruthy();
+    assert(record);
     expect(record.entriesDepth).toBe(2);
     expect(record.prune).toBe('entries');
   } finally {
