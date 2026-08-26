@@ -229,7 +229,11 @@ FLAGS
   --errors         errors and fatals since the last marker, from metro, client
                    and build -- the agent query. Capped at 20 printed records.
   --follow         keep streaming until interrupted (Ctrl+C is exit 0)
-  --json           the raw records, one per line, so stdout is valid NDJSON
+  --json           the raw records, one per line, so stdout is valid NDJSON.
+                   ZERO matches is ZERO bytes on stdout (an empty NDJSON
+                   stream), exit 0 -- parse stdout line by line, never as one
+                   JSON document. The "No matching log records" note is human
+                   mode only, on stderr.
 
 --ERRORS, PRECISELY
   Level error or fatal, from metro, client and build, timestamped after the
