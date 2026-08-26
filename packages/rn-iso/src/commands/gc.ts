@@ -927,6 +927,14 @@ export async function runGc(opts: RunGcOptions = {}): Promise<void> {
     if (result.killedPid) {
       console.log(chalk.dim(`  killed orphaned Metro pid ${result.killedPid}`));
     }
+    if (result.stoppedSession) {
+      console.log(chalk.dim(`  stopped remote session ${result.stoppedSession}`));
+    }
+    // A session whose stop failed is money still being spent, so it is a
+    // warning with the manual command in it, not a dim note.
+    for (const s of result.skippedDevices) {
+      console.log(chalk.yellow(`  ${s.name}: ${s.reason}`));
+    }
   }
 
   // Each device's teardown is wrapped in its own try/catch (the pattern

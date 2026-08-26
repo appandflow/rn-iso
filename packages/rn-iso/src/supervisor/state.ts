@@ -22,6 +22,9 @@ export interface WorkspaceState {
   supervisor?: Record<string, unknown>;
   collectors?: Record<string, unknown>;
   lastBuild?: Record<string, unknown>;
+  // Written by `ios --remote` the moment the session exists. The session id
+  // ONLY: the daemon token is never persisted anywhere.
+  remoteDevice?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -40,6 +43,20 @@ export function readWorkspaceState(root: string): WorkspaceState | null {
     // are also in the config, so an unusable one reads as "no state".
     return null;
   }
+}
+
+// The remote session this workspace created, or null.
+//
+// A narrow reader rather than a raw readWorkspaceState at each call site: the
+// three places that end a session (`stop`, `worktree remove` and `gc`, the
+// last two through reclaim) must all agree on where the id lives and on what
+// a malformed record means, and a session they disagree about is one that
+// keeps billing.
+export function readRemoteSessionId(root: string): string | null {
+  const record = readWorkspaceState(root)?.remoteDevice;
+  if (!record || typeof record !== 'object') return null;
+  const id = (record as { sessionId?: unknown }).sessionId;
+  return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
 // Runs `fn` with the state.json lock held (reentrant within this process).

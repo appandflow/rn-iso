@@ -196,12 +196,24 @@ ends the session, and drops the record only on success. A failure keeps the
 record and exits non-zero, matching how a failed local teardown keeps its
 device record: the record is the only handle left to retry with.
 
-**Not implemented, and a real leak until it is: `gc` and `worktree remove`.**
-`reclaim.ts` is the shared path both go through and is where this belongs,
-together with a `gc` sweep over
-`eas simulator:list --name rn-iso- --status new,in-progress` for sessions
-whose project is gone. Until then, a worktree removed without a `stop` first
-leaves a session billing until its cap.
+**Implemented: `gc` and `worktree remove`,** through `reclaim.ts`, the shared
+path both go through. The timing is the whole constraint: the session id
+lives in the workspace's `state.json` and `eas simulator:stop` needs a
+project directory (its `contextDefinition` includes `ProjectDir`), so both
+are gone the moment `git worktree remove` runs. Ending the session therefore
+happens inside `reclaimProject`, which already precedes the caller's removal
+step.
+
+It runs regardless of `deleteOwnedDevices`. That flag guards destroying a
+local device, which is a real choice because a shut-down simulator can be
+booted again; a session cannot be handed back, so the only choice is ending
+it now or paying to its cap.
+
+**Still uncovered: a workspace deleted by hand.** `rm -rf` on a worktree
+takes `state.json` with it, and with it the only record of the session id.
+`gc` cannot recover it either, because listing sessions needs a project
+directory that no longer exists. The `--max-duration-minutes` cap is the
+backstop for that case.
 
 **`stop` will delete, and today it never does.** The documented rule is that
 `stop` shuts a device down and never destroys it. A cloud session bills while
@@ -235,6 +247,32 @@ from flags plus settings are all pure.
 What unit tests cannot cover is the two live integrations. Those go through
 the existing `docs/field-test-protocol.md`, once against a real
 `agent-device proxy` and once against a real EAS session.
+
+## Why Android is not in this
+
+Android is not a mechanical copy of the iOS path, and the reason is worth
+recording so nobody attempts it as one.
+
+iOS works because `simctl openurl` carries a URL verbatim, so rn-iso composes
+its own dev-client deep link and agent-device's companion tunnel gives the
+simulator a route to this machine's Metro.
+
+Android's two mechanisms are both **host-relative** and neither survives a
+remote daemon:
+
+- `adb reverse tcp:8081 tcp:<port>` maps a device port back to the host
+  running adb. Against a remote daemon that host is the remote machine, not
+  this laptop.
+- The dev-client deep link uses `10.0.2.2`, which is the emulator's route to
+  **its own** host loopback. On a remote emulator it points at the wrong
+  machine.
+
+agent-device has an Android answer already ("Android keeps using
+bridge-provided runtime routes such as `/api/metro/runtimes/<runtimeId>/...`"),
+which means the correct design is for rn-iso to stop composing the URL and
+stop running `adb reverse`, and let agent-device's hint carry reachability.
+That is a different division of responsibility from iOS, not the same code
+with a different binary name.
 
 ## Phasing
 

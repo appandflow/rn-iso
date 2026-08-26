@@ -135,7 +135,7 @@ It needs `agent-device` on PATH, plus one of:
 
 `ios.remote: true` in settings does the same thing as the flag, per project or per repo.
 
-**`stop` DESTROYS a remote session**, unlike a local device which it only shuts down. A session bills until its max duration, so leaving one running is the worse failure. If the stop fails, the command exits non-zero and keeps the record so you can retry -- do not ignore that.
+**`stop`, `worktree remove` and `gc` DESTROY a remote session**, unlike a local device which they only shut down (or delete, for `worktree remove`). A session bills until its max duration, so leaving one running is the worse failure. If the stop fails, the command exits non-zero and keeps the record so you can retry -- do not ignore that. The one case nothing can recover is a worktree you `rm -rf` by hand: that takes the session id with it, and the two-hour cap is all that stops the billing.
 
 **There are no device logs on a remote device yet.** `logs --source device` is empty because the collector is local-only. The Metro half -- JS errors, redboxes, bundling failures -- is unaffected and is where nearly everything useful comes from anyway. `--errors` still works and still means what it says.
 

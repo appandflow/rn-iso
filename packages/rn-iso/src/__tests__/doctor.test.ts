@@ -14,6 +14,7 @@ import {
   checkGradleBuildCache,
   checkMetroCache,
   detectFingerprintParity,
+  checkRemoteDevice,
   runDoctor,
   metroConfigDelegate,
   detectXcodeMajor,
@@ -719,4 +720,48 @@ test('detectFingerprintParity skips silently outside a git repo and without a fi
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- the remote device ------------------------------------------------------
+//
+// Silent unless this project actually uses one. doctor's whole value is that
+// every line it prints is worth reading, so a note about a feature the machine
+// never touches is worse than no note.
+
+test('a project with no remote device gets no remote finding', () => {
+  expect(checkRemoteDevice({})).toBeNull();
+  // Not even when the tools happen to be installed: having agent-device on
+  // PATH is not a request for a remote device.
+  expect(checkRemoteDevice({ agentDeviceOnPath: true, easCliResolvable: true })).toBeNull();
+});
+
+test('a configured remote with no agent-device is a cost, not a note', () => {
+  // It fails at the device step, which is AFTER the build -- the expensive
+  // place to discover a missing tool.
+  const f = checkRemoteDevice({ configured: true, agentDeviceOnPath: false });
+  assert(f);
+  expect(f.level).toBe('cost');
+  expect(f.fix).toContain('agent-device');
+});
+
+test('a daemon in the environment is reported as the operator owning the session', () => {
+  const f = checkRemoteDevice({ daemonInEnv: true, agentDeviceOnPath: true });
+  assert(f);
+  expect(f.level).toBe('note');
+  // The load-bearing half: rn-iso neither creates nor stops that session.
+  expect(f.detail).toContain('create no EAS session of its own');
+});
+
+test('a configured remote with no eas-cli and no daemon cannot create a session', () => {
+  const f = checkRemoteDevice({ configured: true, agentDeviceOnPath: true, easCliResolvable: false });
+  assert(f);
+  expect(f.level).toBe('cost');
+  expect(f.fix).toContain('AGENT_DEVICE_DAEMON_BASE_URL');
+});
+
+test('a fully configured remote says what it will do, including the log gap', () => {
+  const f = checkRemoteDevice({ configured: true, agentDeviceOnPath: true, easCliResolvable: true });
+  assert(f);
+  expect(f.level).toBe('note');
+  expect(f.detail).toContain('Native device logs are not captured');
 });

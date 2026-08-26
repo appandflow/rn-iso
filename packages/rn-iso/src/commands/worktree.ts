@@ -750,6 +750,8 @@ interface ReclaimAllResult {
   // for the caller that deletes each key's own `.rn-iso/` rather than the
   // whole tree -- see reclaimEnvironment.
   reclaimedKeys: string[];
+  // The remote sessions this reclaim ended. Each one was billing.
+  stoppedSessions: string[];
 }
 
 async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
@@ -765,15 +767,25 @@ async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
   const deletedDevices: string[] = [];
   const skippedDevices: SkippedDevice[] = [];
   const keptEntries: string[] = [];
+  const stoppedSessions: string[] = [];
   for (const key of keys) {
     const r = await reclaimProject(key, { deleteOwnedDevices: true });
     dereferenced.push(...r.dereferenced);
     if (r.killedPid) killedPids.push(r.killedPid);
     deletedDevices.push(...r.deletedDevices);
     skippedDevices.push(...r.skippedDevices);
+    if (r.stoppedSession) stoppedSessions.push(r.stoppedSession);
     if (r.keptEntry) keptEntries.push(key);
   }
-  return { dereferenced, killedPids, deletedDevices, skippedDevices, keptEntries, reclaimedKeys: [...keys] };
+  return {
+    dereferenced,
+    killedPids,
+    deletedDevices,
+    skippedDevices,
+    keptEntries,
+    reclaimedKeys: [...keys],
+    stoppedSessions,
+  };
 }
 
 // Whether rn-iso registered anything at or under `rootPath`. This is what
@@ -1162,6 +1174,8 @@ export function registerRemove(worktree: Command): void {
         for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
         if (result.deletedDevices.length)
           console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+        if (result.stoppedSessions.length)
+          console.error(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
         for (const s of result.skippedDevices) console.error(chalk.dim(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
         for (const kept of result.keptEntries) {
           console.error(
@@ -1179,6 +1193,8 @@ export function registerRemove(worktree: Command): void {
       for (const pid of result.killedPids) console.log(chalk.dim(`  killed Metro pid ${pid}`));
       if (result.deletedDevices.length)
         console.log(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+      if (result.stoppedSessions.length)
+        console.log(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
       for (const s of result.skippedDevices) {
         console.log(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
       }

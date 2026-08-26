@@ -468,12 +468,15 @@ bills until its max duration, so `stop` ENDS it. A failed stop keeps the
 record and exits non-zero, for the same reason a failed local teardown does:
 the record is the only handle left to retry with.
 
-NOT YET DONE, and a real leak until it is: `gc` and `worktree remove` do not
-sweep remote sessions. `reclaim.js` is the shared path both go through and is
-where it belongs, alongside a `gc` sweep over
-`eas simulator:list --name rn-iso- --status new,in-progress`. Until that
-lands, a worktree removed without a `stop` first leaves a session billing
-until its two-hour cap.
+`gc` and `worktree remove` end it too, through `reclaim.js`. The timing is the
+constraint and is why it lives there rather than in either caller: the session
+id is in the workspace's state.json and `eas simulator:stop` needs a project
+directory, so both are gone once `git worktree remove` runs. It ignores
+`deleteOwnedDevices` deliberately -- that flag guards destroying a local
+device, which can be booted again, and a session cannot be handed back.
+
+The one uncovered case is a worktree deleted by hand: `rm -rf` takes the
+session id with it, and the max-duration cap is the only backstop.
 
 `--base` is the counter-example worth remembering: it accepted only the two
 sentinels `fresh` and `head`, and widening it to any ref `git rev-parse`

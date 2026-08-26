@@ -2,6 +2,9 @@ import { type ProjectRecord, getProject, removeProject } from './config.ts';
 import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.ts';
 import { readCollectors } from './collector/state.ts';
+import { readRemoteSessionId } from './supervisor/state.ts';
+import { endRecordedSession } from './engine/device-remote.ts';
+import { resolveEasCliBin } from './engine/remote-cache.ts';
 
 // Stop this workspace's device-log collectors. Their record in state.json is
 // the only thing that names them, so they must be reaped before the entry (and,
@@ -21,6 +24,53 @@ function reapCollectors(root: string): void {
       /* already gone between the read and the signal */
     }
   }
+}
+
+// End the remote session this workspace created, while the workspace still
+// exists.
+//
+// TIMING IS THE WHOLE CONSTRAINT. The session id lives in
+// `<root>/.rn-iso/state.json`, and `eas simulator:stop` needs a project
+// directory to run in (its contextDefinition includes ProjectDir). Both are
+// gone the moment `git worktree remove` runs, so this must happen HERE, in
+// the shared reclaim that precedes the caller's removal step -- not in the
+// caller afterwards.
+//
+// Unlike a local simulator, a remote session is not occupancy-checked and is
+// never spared: it bills until its max duration, and the project that owned
+// it is going away.
+function reclaimRemoteSession(
+  root: string,
+  { stopSession = defaultStopSession }: { stopSession?: StopSession } = {},
+): { stopped: string | null; failed: SkippedDevice | null } {
+  const sessionId = readRemoteSessionId(root);
+  if (!sessionId) return { stopped: null, failed: null };
+  let result: { status: 'torn-down' | 'failed'; reason?: string };
+  try {
+    result = stopSession(root, sessionId);
+  } catch (err) {
+    // Contained for the same reason every teardown here is: a throw would
+    // abort the reclaim before the caller's removal step, and re-running
+    // would hit it forever.
+    result = { status: 'failed', reason: String((err as Error)?.message ?? err) };
+  }
+  if (result.status === 'torn-down') return { stopped: sessionId, failed: null };
+  return {
+    stopped: null,
+    failed: {
+      platform: 'ios',
+      name: `remote session ${sessionId}`,
+      reason:
+        `${result.reason ?? 'stop failed'} -- it keeps billing until its max duration. ` +
+        `Stop it by hand from any directory of this project: eas simulator:stop --id ${sessionId}`,
+    },
+  };
+}
+
+type StopSession = (root: string, sessionId: string) => { status: 'torn-down' | 'failed'; reason?: string };
+
+function defaultStopSession(root: string, sessionId: string) {
+  return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null });
 }
 
 // A device this function skipped or failed to tear down: reported alongside
@@ -134,11 +184,16 @@ export interface ReclaimResult {
   skippedDevices: SkippedDevice[];
   failedDevices: SkippedDevice[];
   keptEntry: boolean;
+  // The remote session this reclaim ended, if there was one.
+  stoppedSession: string | null;
 }
 
 export async function reclaimProject(
   path: string,
-  { deleteOwnedDevices = false }: { deleteOwnedDevices?: boolean } = {},
+  {
+    deleteOwnedDevices = false,
+    stopSession = defaultStopSession,
+  }: { deleteOwnedDevices?: boolean; stopSession?: StopSession } = {},
 ): Promise<ReclaimResult> {
   const project = getProject(path);
   const dereferenced = describeDereferenced(project);
@@ -156,6 +211,17 @@ export async function reclaimProject(
     skippedDevices: SkippedDevice[];
     failedDevices: SkippedDevice[];
   } = deleteOwnedDevices ? reclaimOwnedDevices(project) : { deletedDevices: [], skippedDevices: [], failedDevices: [] };
+
+  // Always, not only under deleteOwnedDevices. That flag guards DESTROYING a
+  // local device, which is a real choice because a shut-down simulator can be
+  // booted again. A remote session cannot be handed back: the workspace that
+  // holds its id is going away, so the choice is between ending it now and
+  // paying for it until its cap.
+  const remote = reclaimRemoteSession(path, { stopSession });
+  if (remote.failed) {
+    skippedDevices.push(remote.failed);
+    failedDevices.push(remote.failed);
+  }
 
   // A Metro started from a deleted directory can outlive it and squat on the
   // port, so the port is not genuinely free until the process is gone. Killing
@@ -190,5 +256,6 @@ export async function reclaimProject(
     skippedDevices,
     failedDevices,
     keptEntry,
+    stoppedSession: remote.stopped,
   };
 }

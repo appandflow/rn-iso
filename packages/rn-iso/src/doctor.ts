@@ -30,8 +30,10 @@ import {
   checkEasAuth as probeEasAuth,
   ownerFromConfig,
   providerFromConfig,
+  resolveEasCliBin,
 } from './engine/remote-cache.ts';
 import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.ts';
+import { remoteIosSetting, resolveSettings } from './settings.ts';
 
 // Loosely-typed views of the JSON config files this module parses
 // defensively (package.json, app.json, Podfile.properties.json): the shapes
@@ -529,6 +531,64 @@ export function checkConcurrency({
   );
 }
 
+// The remote device, and ONLY when this project has asked for one.
+//
+// Silent by default, for the reason checkConcurrency is: a machine that never
+// uses a remote device should not read about one on every run. "Asked for
+// one" means either `ios.remote` in settings or a daemon already exported
+// into the environment -- the two ways `ios --remote` can be satisfied.
+//
+// PURE: the caller resolves both facts. The one thing worth being loud about
+// is a configured remote with no agent-device, because that fails at the
+// device step AFTER the build, which is the expensive place to find out.
+export function checkRemoteDevice({
+  configured = false,
+  daemonInEnv = false,
+  agentDeviceOnPath = false,
+  easCliResolvable = false,
+}: {
+  configured?: boolean;
+  daemonInEnv?: boolean;
+  agentDeviceOnPath?: boolean;
+  easCliResolvable?: boolean;
+} = {}): Finding | null {
+  if (!configured && !daemonInEnv) return null;
+
+  if (!agentDeviceOnPath) {
+    return finding(
+      'cost',
+      'A remote device is configured, but agent-device is missing',
+      'agent-device is what drives a remote simulator: rn-iso creates the session and then installs, launches and connects through it. Without it `rn-iso ios --remote` refuses at the device step -- which is after the build, so the whole compile is paid for before anything says why.',
+      'npm i -g agent-device',
+    );
+  }
+
+  if (daemonInEnv) {
+    return finding(
+      'note',
+      'A remote daemon is set in the environment',
+      'AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN are both set, so `rn-iso ios --remote` will use that daemon and create no EAS session of its own. It also stops none: a session someone else started is theirs to end.',
+      null,
+    );
+  }
+
+  if (!easCliResolvable) {
+    return finding(
+      'cost',
+      'A remote device is configured, but there is no eas-cli to create a session with',
+      'With no daemon in the environment, `rn-iso ios --remote` creates an EAS Simulator session itself, which needs eas-cli and an account with EAS Simulator access. Neither a project copy nor one on PATH was found.',
+      'Install eas-cli, or export AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN from `eas sim` or `agent-device proxy`.',
+    );
+  }
+
+  return finding(
+    'note',
+    'This project uses a remote device',
+    '`rn-iso ios --remote` creates an EAS Simulator session named rn-iso-<label>, bounded to two hours, and ends it on `stop` and `worktree remove`. The build still runs on this machine; only the device is elsewhere. Native device logs are not captured on a remote device -- the Metro half of the timeline is unaffected.',
+    null,
+  );
+}
+
 // Runs every check against one project directory. Pure enough to test: all file
 // reads happen here, and each check is a function of the text it was given.
 export function runDoctor(
@@ -540,6 +600,8 @@ export function runDoctor(
     concurrency = getConcurrencyLimits,
     liveDevices = null,
     activeBuilds = null,
+    remoteEnv = process.env,
+    lookupAgentDevice = null,
   }: {
     readFile?: typeof readFileSync;
     xcodeMajor?: number | null;
@@ -547,6 +609,8 @@ export function runDoctor(
     concurrency?: (() => ConcurrencyLimits) | ConcurrencyLimits;
     liveDevices?: (() => number) | null;
     activeBuilds?: (() => number) | null;
+    remoteEnv?: NodeJS.ProcessEnv;
+    lookupAgentDevice?: (() => boolean) | null;
   } = {},
 ): Finding[] {
   const read = (rel: string): string | null => {
@@ -618,6 +682,21 @@ export function runDoctor(
     });
   }
 
+  // The remote device. Both facts are cheap, and the check returns null unless
+  // one of them says this project actually uses one, so an ordinary project
+  // pays a settings read and nothing else.
+  const remoteConfigured = remoteIosSetting(resolveSettings({ projectPath: projectRoot, repoRoot: projectRoot }));
+  const daemonInEnv = Boolean(remoteEnv.AGENT_DEVICE_DAEMON_BASE_URL && remoteEnv.AGENT_DEVICE_DAEMON_AUTH_TOKEN);
+  const remoteFinding =
+    remoteConfigured || daemonInEnv
+      ? checkRemoteDevice({
+          configured: remoteConfigured,
+          daemonInEnv,
+          agentDeviceOnPath: lookupAgentDevice ? lookupAgentDevice() : agentDeviceIsOnPath(),
+          easCliResolvable: Boolean(resolveEasCliBin(projectRoot)),
+        })
+      : null;
+
   return [
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
@@ -628,7 +707,19 @@ export function runDoctor(
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
     easFinding,
     concurrencyFinding,
+    remoteFinding,
   ].filter((f): f is Finding => Boolean(f));
+}
+
+// Fails CLOSED to "present": a `command -v` that itself fails must not turn a
+// working setup into a "install agent-device" finding. The real refusal at the
+// device step is the authority; this is advice.
+function agentDeviceIsOnPath(): boolean {
+  try {
+    return Boolean(getExecutor().runQuiet('command -v agent-device', { timeoutMs: 5000 }));
+  } catch {
+    return true;
+  }
 }
 
 // The thin I/O behind the concurrency note. Both fail OPEN (0): a flaky simctl
