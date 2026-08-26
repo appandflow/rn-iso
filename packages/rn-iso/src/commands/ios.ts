@@ -1402,6 +1402,12 @@ export async function runIos(
     }
   }
 
+  // The record's bundleId came from a config detect at command start, which is
+  // empty on a managed app with no native dir -- so `status` showed `app: ?`
+  // for a workspace that had just built successfully. The resolved id (from
+  // the built or cached app's own Info.plist) is the truth; persist it.
+  if (bundleId) d.upsertProject(root, { bundleId });
+
   // ---- install ----
   // appPath and bundleId are provably set by this point: the cache branch above
   // fails early when bundleId cannot be read, and the build branch's buildIos

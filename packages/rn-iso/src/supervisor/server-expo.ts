@@ -314,9 +314,21 @@ export async function startExpoServer({
     env: { ...process.env, FORCE_COLOR: '0' },
   });
 
+  // Expo prints some fatal lines to BOTH streams (the config PluginError in
+  // the tlon fresh-pass arrived once on stdout and once on stderr, ms apart),
+  // which doubled the death cry in `logs --errors` and in start's failure
+  // evidence. Same msg as the previous record within a second is stream
+  // duplication, not information.
+  let lastMsg: string | null = null;
+  let lastAt = 0;
   const emit = (stream: string) => (chunk: unknown) => {
     const record = recordFromLine(chunk, { stream });
-    if (record) log.write(record);
+    if (!record) return;
+    const now = Date.now();
+    if (record.msg === lastMsg && now - lastAt < 1000) return;
+    lastMsg = typeof record.msg === 'string' ? record.msg : null;
+    lastAt = now;
+    log.write(record);
   };
   const outReader = createLineReader(emit('stdout'));
   const errReader = createLineReader(emit('stderr'));
