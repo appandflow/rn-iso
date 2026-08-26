@@ -47,7 +47,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
-const CLI = join(REPO, 'packages', 'rn-iso', 'bin', 'cli.js');
+const CLI = join(REPO, 'packages', 'rn-iso', 'dist', 'cli.js');
 
 // ---- args -------------------------------------------------------------------
 

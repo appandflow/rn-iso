@@ -86,6 +86,9 @@ jobs:
       - name: Install (workspace root)
         run: npm ci
 
+      - name: Build (dist/cli.js is what the native e2e drives)
+        run: npm run build
+
       - run: mkdir -p "$TMPDIR" "$RN_ISO_BUILD_CACHE"
 
       - name: Restore cross-run build cache
@@ -154,6 +157,9 @@ jobs:
 
       - name: Install (workspace root)
         run: npm ci
+
+      - name: Build (dist/cli.js is what the native e2e drives)
+        run: npm run build
 
       - run: mkdir -p "$TMPDIR" "$RN_ISO_BUILD_CACHE"
 
