@@ -35,10 +35,126 @@ interface ChildResult {
 
 export const DEPS_ERROR = 'RN_ISO_DEPS_FAILED';
 
-// How many transcript lines a failure carries back for the caller to print.
-// The whole transcript is in the build log; this is the extract that goes on
-// stdout (design principle 2).
+// How many transcript lines a failure carries back for the caller to print
+// when no anchored diagnostic matched. The whole transcript is in the build
+// log; this is the extract that goes on stdout (design principle 2).
 const LAST_LINES = 20;
+
+// --- pod-install diagnostics ----------------------------------------------
+//
+// `pod install` is two tools stacked on top of each other, and each puts its
+// actionable line somewhere the tail is not:
+//
+// - CocoaPods flags every line it wants a human to read with a column-0
+//   `[!]`, detail indented under it. The fatal `[!]` is printed where the
+//   run DIES -- often mid-transcript -- and Pod::UI then flushes its
+//   DEFERRED warnings after it, so the tail of a failing log is routinely
+//   twenty warnings and no error.
+// - A Ruby/Bundler crash prints `path.rb:LINE:in 'method': <message>
+//   (<ErrorClass>)` FIRST and the `from ...` caller frames after it, so the
+//   tail is pure stack frames with no message at all.
+//
+// Same contract as errors-xcode.ts: pure text in, extraction out, and an
+// unrecognized transcript returns null -- explicitly -- so the caller falls
+// back to the tail rather than print a guess.
+
+// How many extracted lines a failure carries. Enough for a whole
+// version-conflict block plus a warning or two; the full set is in the log.
+const MAX_POD_DIAGNOSTIC_LINES = 15;
+
+// CocoaPods anchors its actionable lines at column 0 with `[!]`; everything
+// it indents under one is that line's detail (the resolver's conflict blocks
+// above all). Anchoring at column 0 is what keeps an indented transcript
+// line that happens to contain "[!]" from being promoted.
+const POD_MARKER = /^\[!\]/;
+const POD_CONTINUATION = /^\s+\S/;
+
+// A Ruby exception head: `path.rb:LINE:in 'method': <message>`, in both
+// quoting styles Ruby has used (`method' before 3.4, 'method' after). The
+// caller frames underneath are `from path.rb:LINE:in 'method'` -- same shape,
+// no message -- and are excluded by RUBY_FRAME wherever they appear.
+const RUBY_HEAD = /^\S.*\.rb:\d+:in\s+(?:`[^']*'|'[^']*'):\s*\S/;
+const RUBY_FRAME = /^\s*from\s+\S/;
+
+// Bundler prints its own message and its `Run \`bundle install\`` hint
+// immediately ABOVE the raise; this is how many of those contiguous lines
+// ride along with the head.
+const RUBY_CONTEXT_BEFORE = 4;
+
+export interface PodDiagnostics {
+  source: 'cocoapods' | 'ruby';
+  lines: string[];
+}
+
+// PURE. The transcript of a failed `pod install` in, the actionable lines
+// out; null when neither tool's failure shape is recognized, so the caller
+// can fall back to the tail instead of printing a guess.
+export function extractPodDiagnostics(transcript: string): PodDiagnostics | null {
+  if (typeof transcript !== 'string' || transcript === '') return null;
+  const lines = transcript.split('\n').map((line) => line.replace(/\r$/, ''));
+  return extractPodBangBlocks(lines) || extractRubyHead(lines);
+}
+
+// Every `[!]` block, in transcript order, with the FIRST blocks winning the
+// budget: CocoaPods prints the fatal `[!]` at the point of death and flushes
+// deferred warnings after it, so when a cap has to fall it falls on the
+// warning pile at the end, never on the error above it.
+function extractPodBangBlocks(lines: string[]): PodDiagnostics | null {
+  const blocks: string[][] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line === undefined || !POD_MARKER.test(line)) continue;
+    const block = [line];
+    let j = i + 1;
+    for (; j < lines.length; j += 1) {
+      const next = lines[j];
+      if (next === undefined || !POD_CONTINUATION.test(next)) break;
+      block.push(next);
+    }
+    blocks.push(block);
+    i = j - 1;
+  }
+  if (blocks.length === 0) return null;
+
+  const out: string[] = [];
+  let dropped = 0;
+  for (const block of blocks) {
+    const room = MAX_POD_DIAGNOSTIC_LINES - out.length;
+    if (room <= 0) {
+      dropped += block.length;
+      continue;
+    }
+    out.push(...block.slice(0, room));
+    dropped += Math.max(0, block.length - room);
+  }
+  if (dropped > 0) out.push(`(+${dropped} more [!] lines in the build log)`);
+  return { source: 'cocoapods', lines: out };
+}
+
+// The FIRST exception head in the transcript, with Bundler's prologue above
+// it and any message continuation below it -- and none of the `from` frames,
+// which carry no fact an agent can act on.
+function extractRubyHead(lines: string[]): PodDiagnostics | null {
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line === undefined || !RUBY_HEAD.test(line) || RUBY_FRAME.test(line)) continue;
+    let start = i;
+    while (start > 0 && i - start < RUBY_CONTEXT_BEFORE) {
+      const prev = lines[start - 1];
+      if (prev === undefined || prev.trim() === '' || RUBY_FRAME.test(prev) || POD_MARKER.test(prev)) break;
+      start -= 1;
+    }
+    let end = i + 1;
+    while (end < lines.length) {
+      const next = lines[end];
+      if (next === undefined || next.trim() === '' || RUBY_FRAME.test(next)) break;
+      end += 1;
+    }
+    const out = lines.slice(start, end).filter((entry) => entry.trim() !== '');
+    return { source: 'ruby', lines: out.slice(0, MAX_POD_DIAGNOSTIC_LINES) };
+  }
+  return null;
+}
 
 // PURE. Three outcomes, not two:
 //   { noPods: true, stale: false }  neither file exists -- this project has
@@ -125,12 +241,16 @@ export async function runPodInstall(
 
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const startedAt = now();
-  const tail: string[] = [];
+  // The whole transcript, not a rolling tail: the fatal `[!]` of a failed
+  // install is routinely mid-transcript with deferred warnings after it (see
+  // extractPodDiagnostics), so a tail kept at write time has already thrown
+  // the error away by the time the exit code says to go looking for it.
+  // Same trade xcode.ts makes, on a far smaller transcript.
+  const transcript: string[] = [];
   const push = (line: unknown) => {
     const msg = stripAnsi(String(line)).trimEnd();
     if (!msg.trim()) return;
-    tail.push(msg);
-    if (tail.length > LAST_LINES) tail.shift();
+    transcript.push(msg);
     logWriter?.write?.({ src: 'build', level: 'debug', msg, raw: true, event: 'pod_install' });
   };
 
@@ -171,18 +291,23 @@ export async function runPodInstall(
         failed: true,
         code: DEPS_ERROR,
         reason: `Could not run \`pod install\`: ${result.error?.message || result.error}`,
-        lastLines: tail.slice(),
+        lastLines: transcript.slice(-LAST_LINES),
         durationMs,
       }
     );
   }
   if (result.code !== 0) {
     const how = result.signal ? `signal ${result.signal}` : `exit code ${result.code}`;
+    // The anchored extraction is what the caller prints; the tail survives
+    // beside it as the fallback for a transcript neither pattern matched.
+    const extracted = extractPodDiagnostics(transcript.join('\n'));
     return {
       failed: true,
       code: DEPS_ERROR,
       reason: `\`pod install\` failed (${how}).`,
-      lastLines: tail.slice(),
+      diagnosticSource: extracted ? extracted.source : ('tail' as const),
+      diagnosticLines: extracted ? extracted.lines : ([] as string[]),
+      lastLines: transcript.slice(-LAST_LINES),
       durationMs,
     };
   }

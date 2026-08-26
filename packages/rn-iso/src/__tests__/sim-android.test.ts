@@ -1,9 +1,12 @@
 import assert from 'node:assert';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
+  androidToolPath,
+  bootAndroidEmulator,
+  listAvds,
   parseAvdList,
   parseAdbDevices,
   nextConsolePort,
@@ -14,17 +17,44 @@ import {
 } from '../sim/android.ts';
 
 let tmpHome: string;
+let savedAndroidHome: string | undefined;
+let savedSdkRoot: string | undefined;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
   process.env.RN_ISO_HOME = tmpHome;
+  // Pin tool resolution to the bare-name fallback: the machine's real SDK
+  // (if any) must not leak absolute paths into the command strings the
+  // executor mocks below match on.
+  savedAndroidHome = process.env.ANDROID_HOME;
+  savedSdkRoot = process.env.ANDROID_SDK_ROOT;
+  process.env.ANDROID_HOME = join(tmpHome, 'no-sdk-here');
+  delete process.env.ANDROID_SDK_ROOT;
 });
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.RN_ISO_HOME;
+  if (savedAndroidHome === undefined) delete process.env.ANDROID_HOME;
+  else process.env.ANDROID_HOME = savedAndroidHome;
+  if (savedSdkRoot === undefined) delete process.env.ANDROID_SDK_ROOT;
+  else process.env.ANDROID_SDK_ROOT = savedSdkRoot;
   resetExecutor();
 });
+
+// Lays a fake SDK on disk with every tool the resolver knows, and returns its
+// root. Plain files are enough: resolution is an existence check, not an
+// executable check.
+function makeFakeSdk(root: string): string {
+  const sdk = join(root, 'sdk');
+  mkdirSync(join(sdk, 'emulator'), { recursive: true });
+  writeFileSync(join(sdk, 'emulator', 'emulator'), '');
+  mkdirSync(join(sdk, 'platform-tools'), { recursive: true });
+  writeFileSync(join(sdk, 'platform-tools', 'adb'), '');
+  mkdirSync(join(sdk, 'cmdline-tools', 'latest', 'bin'), { recursive: true });
+  writeFileSync(join(sdk, 'cmdline-tools', 'latest', 'bin', 'avdmanager'), '');
+  return sdk;
+}
 
 test('parseAvdList strips header and blanks', () => {
   const out = `INFO    | Storing AVDs in...\nPixel_6_API_34\nPixel_7_API_33\n`;
@@ -275,4 +305,87 @@ test('waitForBoot reports a timeout diagnostic when adb never answers', async ()
   const result = await waitForBoot('emulator-5554', 10);
   expect(result.ok).toBe(false);
   expect(result.diagnostic).toEqual({ devices: '', sysBoot: '', devBoot: '', bootAnim: '' });
+});
+
+// --- SDK tool resolution (issue #18) ---------------------------------------
+//
+// A non-interactive shell spawned by a Node process never reads the rc file
+// that puts the SDK on PATH, so a bare `emulator` fails in exactly the shells
+// rn-iso runs from -- teardown reported failed and the registry entry outlived
+// its worktree. The resolver is pure path logic over androidHome(), so it is
+// tested directly against a fake SDK on disk.
+
+test('androidToolPath resolves each tool inside ANDROID_HOME when it exists', () => {
+  const sdk = makeFakeSdk(tmpHome);
+  process.env.ANDROID_HOME = sdk;
+  expect(androidToolPath('emulator')).toBe(join(sdk, 'emulator', 'emulator'));
+  expect(androidToolPath('adb')).toBe(join(sdk, 'platform-tools', 'adb'));
+  expect(androidToolPath('avdmanager')).toBe(join(sdk, 'cmdline-tools', 'latest', 'bin', 'avdmanager'));
+});
+
+test('androidToolPath honours ANDROID_SDK_ROOT when ANDROID_HOME is unset', () => {
+  const sdk = makeFakeSdk(tmpHome);
+  delete process.env.ANDROID_HOME;
+  process.env.ANDROID_SDK_ROOT = sdk;
+  expect(androidToolPath('adb')).toBe(join(sdk, 'platform-tools', 'adb'));
+});
+
+test('androidToolPath falls back to the bare name when no SDK is on disk', () => {
+  process.env.ANDROID_HOME = join(tmpHome, 'nowhere');
+  expect(androidToolPath('emulator')).toBe('emulator');
+  expect(androidToolPath('adb')).toBe('adb');
+  expect(androidToolPath('avdmanager')).toBe('avdmanager');
+});
+
+// A resolved path is embedded QUOTED in shell commands: an SDK root chosen by
+// the user (ANDROID_HOME) can carry a space, and run() goes through /bin/sh.
+test('listAvds runs the resolved emulator binary, quoted', () => {
+  const sdk = makeFakeSdk(tmpHome);
+  process.env.ANDROID_HOME = sdk;
+  const calls: string[] = [];
+  setExecutor({
+    run: (cmd: string) => {
+      calls.push(cmd);
+      return 'Pixel_6_API_34\n';
+    },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+  expect(listAvds()).toEqual(['Pixel_6_API_34']);
+  expect(calls).toEqual([`"${join(sdk, 'emulator', 'emulator')}" -list-avds`]);
+});
+
+// spawn() takes argv directly (no shell), so the emulator boot gets the
+// resolved path unquoted.
+test('bootAndroidEmulator spawns the resolved emulator binary', () => {
+  const sdk = makeFakeSdk(tmpHome);
+  process.env.ANDROID_HOME = sdk;
+  const spawned: Array<[string, string[]]> = [];
+  setExecutor({
+    run: () => '',
+    runQuiet: () => null,
+    spawn: (cmd: string, args: string[]) => {
+      spawned.push([cmd, args]);
+      return { unref: () => {} };
+    },
+  });
+  bootAndroidEmulator('rn-iso-app', 5556);
+  expect(spawned).toEqual([[join(sdk, 'emulator', 'emulator'), ['-avd', 'rn-iso-app', '-port', '5556']]]);
+});
+
+// The PATH-only setup keeps working: with no SDK on disk the command is the
+// bare name, exactly what it was before resolution existed.
+test('listAvds keeps the bare command when resolution falls back to PATH', () => {
+  process.env.ANDROID_HOME = join(tmpHome, 'nowhere');
+  const calls: string[] = [];
+  setExecutor({
+    run: (cmd: string) => {
+      calls.push(cmd);
+      return '';
+    },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+  listAvds();
+  expect(calls).toEqual(['emulator -list-avds']);
 });

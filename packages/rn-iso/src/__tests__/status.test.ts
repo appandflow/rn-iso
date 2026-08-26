@@ -339,6 +339,64 @@ test('the printed lines name the supervisor and the error count', async () => {
   }
 });
 
+// --- the monorepo double entry ----------------------------------------
+//
+// `worktree create` registers the worktree ROOT to reserve its label, and in
+// a monorepo the app registers its own entry -- two registry records for one
+// workspace. The human view relabels the root; the JSON view must flag it,
+// or a consumer counting environments double-counts the workspace.
+test('a label-only worktree root is flagged labelOnly in --json and relabelled in the human view', async () => {
+  saveConfig(
+    makeConfig({
+      version: 2,
+      projects: {
+        '/wt/agent-1': { label: 'agent-1', worktreeRoot: true, platforms: {} },
+        '/wt/agent-1/apps/mobile': {
+          label: 'agent-1',
+          bundleId: 'com.acme.app',
+          metroPort: 8083,
+          platforms: {},
+        },
+      },
+    }),
+  );
+
+  const payload = await runStatusJson();
+  expect(payload.environments.length).toBe(2);
+  const rootEntry = payload.environments.find((e: { path: string }) => e.path === '/wt/agent-1');
+  const appEntry = payload.environments.find((e: { path: string }) => e.path === '/wt/agent-1/apps/mobile');
+  assert(rootEntry);
+  assert(appEntry);
+  expect(rootEntry.labelOnly).toBe(true);
+  expect('labelOnly' in appEntry).toBe(false);
+
+  const logs = await runStatus();
+  expect(logs.some((l) => /worktree root \(holds the label/.test(l))).toBeTruthy();
+});
+
+// A worktree root that IS the app (no monorepo) must not be flagged: it has
+// the port/device/bundle facts of a real environment.
+test('a worktree root that is itself the app is not flagged labelOnly', async () => {
+  saveConfig(
+    makeConfig({
+      version: 2,
+      projects: {
+        '/wt/agent-2': {
+          label: 'agent-2',
+          worktreeRoot: true,
+          bundleId: 'com.acme.solo',
+          metroPort: 8084,
+          platforms: {},
+        },
+      },
+    }),
+  );
+
+  const payload = await runStatusJson();
+  expect(payload.environments.length).toBe(1);
+  expect('labelOnly' in payload.environments[0]).toBe(false);
+});
+
 // --- the disk report --------------------------------------------------
 //
 // It read `df -k /` and nothing else. On a machine whose repos live on an

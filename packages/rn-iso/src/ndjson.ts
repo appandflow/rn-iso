@@ -97,15 +97,26 @@ export function formatNdjsonLine(record: unknown): string | null {
   }
 }
 
-// Appends. The fd is opened lazily on the first write, in append mode, so a
-// writer costs nothing until something is actually logged and two writers on
-// one file interleave whole lines rather than overwriting each other.
+// Appends by default. The fd is opened lazily on the first write, in append
+// mode, so a writer costs nothing until something is actually logged and two
+// writers on one file interleave whole lines rather than overwriting each
+// other.
+//
+// `truncate: true` starts the file over on the first successful open instead.
+// The build transcript wants this -- it is a per-run log, and a reader sent to
+// it by "see ... for the transcript" must find THIS run's errors first, not a
+// previous attempt's. The multi-writer logs (device.ndjson, metro.ndjson) must
+// never pass it: two writers on one file only interleave safely in append
+// mode. Only the FIRST open truncates -- the retry-after-failure reopen below
+// appends, so a transient write failure never wipes what this writer already
+// recorded.
 //
 // A failed open clears the fd, so the NEXT write retries it: a log directory
 // that comes back (recreated by a later mkdir, a volume remounted) starts
 // recording again instead of staying dead for the life of the supervisor.
-export function createNdjsonWriter(file: string): NdjsonWriter {
+export function createNdjsonWriter(file: string, { truncate = false }: { truncate?: boolean } = {}): NdjsonWriter {
   let fd: number | null = null;
+  let freshFile = truncate;
   let written = 0;
   let dropped = 0;
   let lastError: Error | null = null;
@@ -113,7 +124,8 @@ export function createNdjsonWriter(file: string): NdjsonWriter {
 
   function open(): void {
     mkdirSync(dirname(file), { recursive: true });
-    fd = openSync(file, 'a');
+    fd = openSync(file, freshFile ? 'w' : 'a');
+    freshFile = false;
   }
 
   function write(record: unknown): boolean {

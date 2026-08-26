@@ -852,7 +852,7 @@ export async function runIos(
   let writer = null as NdjsonWriter | null;
   // Opened lazily by createNdjsonWriter's first write, so a run that fails at
   // the Metro gate leaves no empty log behind.
-  const logWriter = () => (writer ||= d.createWriter(logFile));
+  const logWriter = () => (writer ||= d.createWriter(logFile, { truncate: true }));
 
   // Every failure exits the same way: the diagnostic, the remedy if there is
   // one, the machine-readable code, and -- once there is a build attempt to
@@ -1126,6 +1126,7 @@ export async function runIos(
 
   if (remote && useBuildCache) {
     const hit = await d.resolveRemote({
+      logWriter: logWriter(),
       provider: remote.provider,
       platform: PLATFORM,
       projectRoot: root,
@@ -1334,7 +1335,9 @@ export async function runIos(
             code: result.code || 'RN_ISO_DEPS_FAILED',
             message: result.reason || '`pod install` failed.',
             remedy: result.remedy || `See ${logFile} for the transcript.`,
-            lines: (result.lastLines || []).slice(-5),
+            // The anchored extraction when the engine found one ([!] blocks,
+            // a Ruby exception head); the transcript tail only as fallback.
+            lines: result.diagnosticLines?.length ? result.diagnosticLines : (result.lastLines || []).slice(-5),
             build: buildFailure,
           });
         }
@@ -1385,6 +1388,7 @@ export async function runIos(
       // depends on it.
       if (remote) {
         uploadPending = d.uploadRemote({
+          logWriter: logWriter(),
           provider: remote.provider,
           platform: PLATFORM,
           projectRoot: root,

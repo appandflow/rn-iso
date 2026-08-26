@@ -108,11 +108,15 @@ export const ERROR_SOURCES = ['metro', 'client', 'build'];
 //
 // The rule now: a marker closes the window for the sources it can actually
 // speak for.
-//   * A BUNDLE marker (src metro: the reporter's bundle_build_done, or the
-//     "Bundled 812ms" line in expo-child mode) means the BUNDLER is happy. It
-//     resets metro-source errors -- a resolve failure you fixed and rebuilt is
-//     history -- and says nothing about the app, so client, device and build
-//     errors survive it.
+//   * A BUNDLE marker (src metro: the reporter's bundle_build_done or
+//     bundle_build_failed, or the "Bundled 812ms" / "Bundling failed 893ms"
+//     lines in expo-child mode) means a bundle ATTEMPT finished -- success or
+//     failure, because a failed attempt is a boundary too: without one,
+//     back-to-back failures accumulate and `--errors` lists the stale one
+//     first (appandflow/rn-iso#13). It resets metro-source errors from before
+//     the attempt -- a resolve failure you fixed and rebuilt is history, and
+//     only the newest failure is current -- and says nothing about the app,
+//     so client, device and build errors survive it.
 //   * A LAUNCH marker (src build: `ios`/`android` after a successful launch)
 //     means a new run of the app starts here. It resets everything, which is
 //     what stops the previous run's redbox from being reported forever.
@@ -161,13 +165,22 @@ export function recordMatches(record: NdjsonRecord | null | undefined, criteria:
     // error has to clear both, which makes its cutoff the later of the two.
     if (typeof markerTs === 'number') {
       const ts = tsOf(record);
-      // Strictly after: a record stamped at the same millisecond as the marker
-      // describes the state the marker closes off, not the one it opens.
+      // Strictly after: a record stamped at the same millisecond as the launch
+      // marker describes the run the marker closes off, not the one it opens.
       if (ts === null || ts <= markerTs) return false;
     }
     if (typeof bundleMarkerTs === 'number' && record.src === 'metro') {
       const ts = tsOf(record);
-      if (ts === null || ts <= bundleMarkerTs) return false;
+      // Strict < -- a tie SURVIVES, the opposite of the launch rule above,
+      // because a bundle marker can be a FAILED attempt's boundary and both
+      // producers write that boundary immediately before the attempt's own
+      // error records (Metro reports bundle_build_failed before bundling_error
+      // from the same catch block; Expo prints the "Bundling failed" summary,
+      // which IS the marker, before its detail lines). Same producer, same
+      // file, appended in order: a metro error at the marker's own millisecond
+      // came after it and belongs to the window the marker OPENS. `<=` here
+      // would let a fast-failing bundle hide its own errors.
+      if (ts === null || ts < bundleMarkerTs) return false;
     }
   }
 

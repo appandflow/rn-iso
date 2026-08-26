@@ -420,6 +420,44 @@ describe('buildAndroid', () => {
     expect((result as BuildAndroidResultLike).remedy).toMatch(/ANDROID_HOME/);
   });
 
+  // The heartbeat: the same seam buildIos has (the helpers live in xcode.ts
+  // and gradle borrows them), exercised here because the wiring -- gradle's
+  // own push() feeding the activity hint, the stop after waitForChild -- is
+  // this module's.
+  test('a slow gradle build emits heartbeats carrying the latest transcript line', async () => {
+    makeAndroidProject();
+    const beats: string[] = [];
+    // A hand-built child that stays running until the test ends it, unlike
+    // fakeChild's exit-on-setImmediate.
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter & { setEncoding: (enc?: string) => void };
+      stderr: EventEmitter & { setEncoding: (enc?: string) => void };
+    };
+    child.stdout = new EventEmitter() as EventEmitter & { setEncoding: (enc?: string) => void };
+    child.stderr = new EventEmitter() as EventEmitter & { setEncoding: (enc?: string) => void };
+    child.stdout.setEncoding = () => {};
+    child.stderr.setEncoding = () => {};
+    const promise = buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: () => child as unknown as ChildProcess,
+        heartbeatMs: 10,
+        onHeartbeat: (line) => beats.push(line),
+      },
+    );
+    child.stdout.emit('data', '> Task :app:compileDebugKotlin\n');
+    await new Promise((r) => setTimeout(r, 80));
+    expect(beats.length).toBeGreaterThanOrEqual(1);
+    expect(beats[0]).toMatch(/^build {6} still running \(\d+s\): > Task :app:compileDebugKotlin$/);
+    writeApk();
+    child.emit('exit', 0, null);
+    const result = await promise;
+    expect((result as BuildAndroidResultLike).ok).toBe(true);
+    const settled = beats.length;
+    await new Promise((r) => setTimeout(r, 40));
+    expect(beats.length).toBe(settled);
+  });
+
   test('android/local.properties satisfies the SDK check on its own', async () => {
     makeAndroidProject();
     process.env.ANDROID_HOME = join(root, 'no-such-sdk');
