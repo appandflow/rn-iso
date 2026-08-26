@@ -251,10 +251,14 @@ test('create action: accepts --base head and --base fresh', async () => {
     const head = await runCreateInRepo(repo, 'feat-head', { base: 'head', install: false });
     expect(head.logs).toEqual([join(defaultWorktreeDir(repo), 'feat-head')]);
     expect(process.exitCode).not.toBe(1);
+    // No staleness note for head: it is the checkout's own HEAD, which no
+    // `git fetch` moves (issue #26).
+    expect(head.errs.some((e) => /current as of the last/.test(String(e)))).toBe(false);
 
     const fresh = await runCreateInRepo(repo, 'feat-fresh', { base: 'fresh', install: false });
     expect(fresh.logs).toEqual([join(defaultWorktreeDir(repo), 'feat-fresh')]);
     expect(process.exitCode).not.toBe(1);
+    expect(fresh.errs.some((e) => /current as of the last/.test(String(e)))).toBe(true);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
