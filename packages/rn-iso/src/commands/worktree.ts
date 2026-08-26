@@ -184,6 +184,19 @@ export function registerCreate(worktree: Command): void {
             : `Branched ${branch} from ${baseRef} (${baseSha}).`,
         ),
       );
+      // `fresh` (and `head`) branch from a REMOTE-TRACKING ref that is only as
+      // current as the last `git fetch`. rn-iso does not fetch (that is a
+      // network call with its own auth/offline failure modes, not a worktree
+      // creation's job), so an agent told to work "on latest main" against a
+      // ref last fetched days ago would silently build on stale code. Say so.
+      if (!reusedBranch && (base === 'fresh' || base === 'head')) {
+        console.error(
+          chalk.dim(
+            `  ${baseRef} is a local ref, current as of the last \`git fetch\`. If you need the very latest, ` +
+              `run \`git -C ${root} fetch\` first.`,
+          ),
+        );
+      }
 
       // Fall back to settings on emptiness, not just on null: a
       // `.worktreeinclude` that exists but is blank/comment-only returns
