@@ -20,8 +20,8 @@ import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, utimesSync } fr
 import { basename, dirname, join } from 'path';
 import { createRequire } from 'module';
 import { getExecutor } from './exec.js';
-import { register } from './cache-manifest.js';
-import { sharedBuildCache } from './paths.js';
+import { register } from './cache-manifest.ts';
+import { sharedBuildCache } from './paths.ts';
 
 // One line, but the one that decides whether the CLI and the provider address
 // the same entries at all: src/paths.js owns the resolution, and

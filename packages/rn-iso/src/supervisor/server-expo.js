@@ -23,7 +23,7 @@
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { dirname, join, parse } from 'node:path';
 import { getExecutor } from '../exec.js';
-import { createNdjsonWriter } from '../ndjson.js';
+import { createNdjsonWriter } from '../ndjson.ts';
 import { resolvePackageJson } from '../project.js';
 import { supervisorError } from './errors.js';
 

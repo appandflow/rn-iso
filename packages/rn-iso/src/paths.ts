@@ -75,7 +75,11 @@ export function supervisorLogFile(projectRoot: string): string {
 // replaced, and leading dots go, so a scoped package name cannot climb out of
 // the cache root.
 function cacheNameSegment(name: string | null | undefined): string {
-  return String(name).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^\.+/, '') || 'app';
+  return (
+    String(name)
+      .replace(/[^A-Za-z0-9._-]+/g, '-')
+      .replace(/^\.+/, '') || 'app'
+  );
 }
 
 export function sharedMetroCache(name?: string | null): string {
@@ -99,4 +103,3 @@ export function sharedGradle(): string {
 export function sharedPods(): string {
   return join(getConfigDir(), 'pods');
 }
-

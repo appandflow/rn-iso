@@ -16,10 +16,7 @@ import skillCommand from '../src/commands/skill.js';
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 
 const program = new Command();
-program
-  .name('rn-iso')
-  .description('Isolated React Native dev environments per project/worktree')
-  .version(pkg.version);
+program.name('rn-iso').description('Isolated React Native dev environments per project/worktree').version(pkg.version);
 
 // Registration order is the order `--help` lists them, and that listing is the
 // surface a new agent reads first: the lifecycle in the order it is run
@@ -55,8 +52,8 @@ try {
   // Errors that describe a state the user must repair carry their own
   // instructions, so the message is the whole output. Anything else is a bug,
   // and its stack trace is the useful part.
-  if (err?.code === 'RN_ISO_CONFIG_CORRUPT') {
-    console.error(err.message);
+  if ((err as { code?: string })?.code === 'RN_ISO_CONFIG_CORRUPT') {
+    console.error((err as Error).message);
     process.exit(1);
   }
   throw err;

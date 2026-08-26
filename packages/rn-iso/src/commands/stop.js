@@ -26,13 +26,13 @@ import chalk from 'chalk';
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { clearSupervisor, getProject, upsertProject } from '../config.js';
 import { findProjectRoot } from '../project.js';
-import { supervisorPidFile, workspaceStateFile } from '../paths.js';
+import { supervisorPidFile, workspaceStateFile } from '../paths.ts';
 import {
   findPidListeningOnPort,
   isPidAlive,
   killMetroTree,
   resolveProjectMetro,
-} from '../metro.js';
+} from '../metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
 import { getExecutor } from '../exec.js';
 

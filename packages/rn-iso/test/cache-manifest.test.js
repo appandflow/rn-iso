@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, rmSync } from 'node
 import { dirname } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
-import { register, readManifest, registeredCaches, unregister, manifestPath } from '../src/cache-manifest.js';
+import { register, readManifest, registeredCaches, unregister, manifestPath } from '../src/cache-manifest.ts';
 
 let tmpHome;
 let cacheDir;

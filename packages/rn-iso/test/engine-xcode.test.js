@@ -27,7 +27,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../src/exec.js';
-import { createNdjsonWriter, parseNdjsonText } from '../src/ndjson.js';
+import { createNdjsonWriter, parseNdjsonText } from '../src/ndjson.ts';
 import {
   buildIos,
   discoverXcodeProject,

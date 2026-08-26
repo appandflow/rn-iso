@@ -1,5 +1,5 @@
 import { getProject, removeProject } from './config.js';
-import { resolveProjectMetro, killMetroTree } from './metro.js';
+import { resolveProjectMetro, killMetroTree } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.js';
 
 // The devices this project's entry stops referencing. Dropping the reference

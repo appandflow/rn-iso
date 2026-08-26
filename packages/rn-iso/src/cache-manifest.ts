@@ -18,15 +18,26 @@ import { homedir } from 'os';
 import { basename, dirname, join, resolve } from 'path';
 import { getConfigDir } from './config.js';
 
-export function manifestPath() {
+// The shape a caller registers. `dir` is the only required field; gc reads
+// `prune` / `entriesDepth` to decide how to trim, and the rest is provenance.
+export interface CacheEntry {
+  dir: string;
+  name?: string;
+  prune?: 'atomic' | 'entries';
+  entriesDepth?: number;
+  note?: string;
+  registeredBy?: string;
+}
+
+export function manifestPath(): string {
   return join(getConfigDir(), 'caches.json');
 }
 
-function expand(dir) {
+function expand(dir: string): string {
   return resolve(dir.startsWith('~') ? join(homedir(), dir.slice(1)) : dir);
 }
 
-export function readManifest(path = manifestPath()) {
+export function readManifest(path: string = manifestPath()): { version: number; caches: any[] } {
   if (!existsSync(path)) return { version: 1, caches: [] };
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8'));
@@ -45,7 +56,7 @@ export function readManifest(path = manifestPath()) {
 // readable for as long as the write takes, which readManifest can only treat as
 // corrupt. Writing a sibling and renaming makes the swap atomic, so a reader
 // sees either the old manifest or the new one.
-function writeManifest(path, caches) {
+function writeManifest(path: string, caches: any[]): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
   try {
@@ -69,7 +80,7 @@ function writeManifest(path, caches) {
 // of grouping directories -- <root>/<platform>/<fingerprint> for a build cache,
 // <root>/<shard>/<key> for a Metro FileStore -- registers 2, so gc trims one
 // build or one transform rather than an entire platform or shard.
-export function register(entry, path = manifestPath()) {
+export function register(entry: CacheEntry, path: string = manifestPath()) {
   if (!entry?.dir) throw new Error('a cache registration needs a `dir`');
   const dir = expand(entry.dir);
   const manifest = readManifest(path);
@@ -84,7 +95,7 @@ export function register(entry, path = manifestPath()) {
     // is the entire point of a shared cache.
     registeredBy: entry.registeredBy || process.cwd(),
   };
-  const caches = manifest.caches.filter(c => expand(c.dir) !== dir);
+  const caches = manifest.caches.filter((c) => expand(c.dir) !== dir);
   caches.push(record);
   writeManifest(path, caches);
   return record;
@@ -93,16 +104,16 @@ export function register(entry, path = manifestPath()) {
 // A depth gc cannot walk is worse than no depth at all: too deep and it treats
 // nothing as an entry, too shallow and one removal takes a whole group. Anything
 // that is not a whole number of at least 1 falls back to the flat default.
-function normalizeDepth(value) {
+function normalizeDepth(value: unknown): number {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1) return 1;
   return n;
 }
 
-export function unregister(dir, path = manifestPath()) {
+export function unregister(dir: string, path: string = manifestPath()): boolean {
   const manifest = readManifest(path);
   const target = expand(dir);
-  const caches = manifest.caches.filter(c => expand(c.dir) !== target);
+  const caches = manifest.caches.filter((c) => expand(c.dir) !== target);
   if (caches.length === manifest.caches.length) return false;
   writeManifest(path, caches);
   return true;
@@ -112,10 +123,10 @@ export function unregister(dir, path = manifestPath()) {
 // hand is dropped from the report rather than shown as 0 bytes -- but it is
 // left in the manifest, because it will come back the next time that project
 // builds, and re-registering it should not be the user's job.
-export function registeredCaches(path = manifestPath()) {
+export function registeredCaches(path: string = manifestPath()) {
   return readManifest(path)
-    .caches.filter(c => c.dir && existsSync(c.dir))
-    .map(c => ({
+    .caches.filter((c) => c.dir && existsSync(c.dir))
+    .map((c) => ({
       name: c.name,
       dir: c.dir,
       prune: c.prune === 'atomic' ? 'atomic' : 'entries',

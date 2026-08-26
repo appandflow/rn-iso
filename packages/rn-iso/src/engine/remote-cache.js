@@ -52,8 +52,8 @@ import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { format } from 'node:util';
 import { getExecutor } from '../exec.js';
-import { createNdjsonWriter } from '../ndjson.js';
-import { workspaceLogsDir } from '../paths.js';
+import { createNdjsonWriter } from '../ndjson.ts';
+import { workspaceLogsDir } from '../paths.ts';
 import { resolvePackageJson } from '../project.js';
 // The SAME two helpers engine/prebuild.js uses to find a project's own expo
 // binary. Imported rather than re-derived: a fourth copy of "where is this

@@ -2,7 +2,7 @@ import { defineConfig } from 'tsdown';
 
 export default defineConfig({
   entry: {
-    'bin/cli': 'bin/cli.ts',
+    cli: 'bin/cli.ts',
     'cache-manifest': 'src/cache-manifest.ts',
   },
   format: 'esm',

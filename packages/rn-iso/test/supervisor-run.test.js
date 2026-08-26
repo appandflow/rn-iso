@@ -14,8 +14,8 @@ import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, upsertProject } from '../src/config.js';
-import { parseNdjsonText } from '../src/ndjson.js';
-import { supervisorPidFile, workspaceLogsDir, workspaceStateFile } from '../src/paths.js';
+import { parseNdjsonText } from '../src/ndjson.ts';
+import { supervisorPidFile, workspaceLogsDir, workspaceStateFile } from '../src/paths.ts';
 import { describeError, supervisorError } from '../src/supervisor/errors.js';
 import {
   MODE_BARE,

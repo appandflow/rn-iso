@@ -5,8 +5,6 @@
 // every event; if a full disk or a deleted directory threw from there, a
 // logging problem would take the dev server down with it. So every failure
 // path is a counted drop, and close() is where the count surfaces.
-import { test, describe, beforeEach, afterEach } from 'node:test';
-import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,9 +16,9 @@ import {
   LEVELS,
   SOURCES,
   levelRank,
-} from '../src/ndjson.js';
+} from '../ndjson.ts';
 
-let dir;
+let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'rn-iso-ndjson-'));
 });
@@ -31,100 +29,100 @@ afterEach(() => {
 describe('parseNdjsonLine', () => {
   test('parses a Contract-1 record', () => {
     const r = parseNdjsonLine('{"ts":1,"src":"metro","level":"info","msg":"hi"}');
-    assert.deepEqual(r, { ts: 1, src: 'metro', level: 'info', msg: 'hi' });
+    expect(r).toEqual({ ts: 1, src: 'metro', level: 'info', msg: 'hi' });
   });
 
   test('tolerates surrounding whitespace and carriage returns', () => {
     const r = parseNdjsonLine('  {"ts":2,"src":"client","level":"warn","msg":"x"}\r');
-    assert.equal(r.msg, 'x');
+    expect(r!.msg).toBe('x');
   });
 
   test('returns null for a blank line', () => {
-    assert.equal(parseNdjsonLine(''), null);
-    assert.equal(parseNdjsonLine('   '), null);
+    expect(parseNdjsonLine('')).toBe(null);
+    expect(parseNdjsonLine('   ')).toBe(null);
   });
 
   // A half-written final line is the normal state of a file being appended to
   // by a live supervisor. Reading it must skip, never throw.
   test('returns null for a truncated or corrupt line', () => {
-    assert.equal(parseNdjsonLine('{"ts":1,"src":"met'), null);
-    assert.equal(parseNdjsonLine('not json at all'), null);
+    expect(parseNdjsonLine('{"ts":1,"src":"met')).toBe(null);
+    expect(parseNdjsonLine('not json at all')).toBe(null);
   });
 
   test('returns null for valid JSON that is not an object', () => {
-    assert.equal(parseNdjsonLine('42'), null);
-    assert.equal(parseNdjsonLine('"str"'), null);
-    assert.equal(parseNdjsonLine('[1,2]'), null);
-    assert.equal(parseNdjsonLine('null'), null);
+    expect(parseNdjsonLine('42')).toBe(null);
+    expect(parseNdjsonLine('"str"')).toBe(null);
+    expect(parseNdjsonLine('[1,2]')).toBe(null);
+    expect(parseNdjsonLine('null')).toBe(null);
   });
 
   test('returns null for a non-string input', () => {
-    assert.equal(parseNdjsonLine(undefined), null);
-    assert.equal(parseNdjsonLine(null), null);
+    expect(parseNdjsonLine(undefined)).toBe(null);
+    expect(parseNdjsonLine(null)).toBe(null);
   });
 });
 
 describe('parseNdjsonText', () => {
   test('parses every line and skips the corrupt ones', () => {
     const text = '{"ts":1,"msg":"a"}\ngarbage\n{"ts":2,"msg":"b"}\n';
-    assert.deepEqual(parseNdjsonText(text).map((r) => r.msg), ['a', 'b']);
+    expect(parseNdjsonText(text).map((r) => r.msg)).toEqual(['a', 'b']);
   });
 
   test('returns [] for empty or missing text', () => {
-    assert.deepEqual(parseNdjsonText(''), []);
-    assert.deepEqual(parseNdjsonText(undefined), []);
+    expect(parseNdjsonText('')).toEqual([]);
+    expect(parseNdjsonText(undefined)).toEqual([]);
   });
 
   test('drops a trailing partial line rather than failing the whole read', () => {
     const text = '{"ts":1,"msg":"a"}\n{"ts":2,"ms';
-    assert.deepEqual(parseNdjsonText(text).map((r) => r.msg), ['a']);
+    expect(parseNdjsonText(text).map((r) => r.msg)).toEqual(['a']);
   });
 });
 
 describe('levels', () => {
   test('LEVELS is the Contract-1 order, lowest first', () => {
-    assert.deepEqual(LEVELS, ['debug', 'info', 'warn', 'error', 'fatal']);
+    expect(LEVELS).toEqual(['debug', 'info', 'warn', 'error', 'fatal']);
   });
 
   test('levelRank orders them and puts an unknown level at the bottom', () => {
-    assert.ok(levelRank('fatal') > levelRank('error'));
-    assert.ok(levelRank('error') > levelRank('warn'));
-    assert.ok(levelRank('warn') > levelRank('info'));
-    assert.ok(levelRank('info') > levelRank('debug'));
-    assert.equal(levelRank('nonsense'), 0);
-    assert.equal(levelRank(undefined), 0);
+    expect(levelRank('fatal') > levelRank('error')).toBeTruthy();
+    expect(levelRank('error') > levelRank('warn')).toBeTruthy();
+    expect(levelRank('warn') > levelRank('info')).toBeTruthy();
+    expect(levelRank('info') > levelRank('debug')).toBeTruthy();
+    expect(levelRank('nonsense')).toBe(0);
+    expect(levelRank(undefined)).toBe(0);
   });
 });
 
 describe('sources', () => {
   test('SOURCES is the Contract-1 set', () => {
-    assert.deepEqual(SOURCES, ['metro', 'client', 'device', 'build']);
+    expect(SOURCES).toEqual(['metro', 'client', 'device', 'build']);
   });
 });
 
 describe('formatNdjsonLine', () => {
   test('emits one line, newline terminated, with no embedded newline', () => {
     const line = formatNdjsonLine({ ts: 1, src: 'metro', level: 'info', msg: 'a\nb' });
-    assert.equal(line.endsWith('\n'), true);
-    assert.equal(line.slice(0, -1).includes('\n'), false);
-    assert.equal(parseNdjsonLine(line).msg, 'a\nb');
+    expect(line!.endsWith('\n')).toBe(true);
+    expect(line!.slice(0, -1).includes('\n')).toBe(false);
+    expect(parseNdjsonLine(line!)!.msg).toBe('a\nb');
   });
 
   test('returns null for a record that cannot be serialized', () => {
-    const circular = { ts: 1, msg: 'x' };
+    const circular: any = { ts: 1, msg: 'x' };
     circular.self = circular;
-    assert.equal(formatNdjsonLine(circular), null);
+    expect(formatNdjsonLine(circular)).toBe(null);
   });
 });
 
 describe('createNdjsonWriter', () => {
   test('creates the parent directory on first write', () => {
     const file = join(dir, 'logs', 'metro.ndjson');
-    assert.equal(existsSync(join(dir, 'logs')), false);
+    expect(existsSync(join(dir, 'logs'))).toBe(false);
     const w = createNdjsonWriter(file);
-    assert.equal(w.write({ src: 'metro', level: 'info', msg: 'hello' }), true);
+    expect(w.write({ src: 'metro', level: 'info', msg: 'hello' })).toBe(true);
     w.close();
-    assert.equal(existsSync(file), true);
+    expect(existsSync(file)).toBe(true);
   });
 
   test('stamps ts when absent and keeps a caller-provided ts', () => {
@@ -135,9 +133,9 @@ describe('createNdjsonWriter', () => {
     w.write({ ts: 5, src: 'metro', level: 'info', msg: 'kept' });
     w.close();
     const records = parseNdjsonText(readFileSync(file, 'utf-8'));
-    assert.equal(typeof records[0].ts, 'number');
-    assert.ok(records[0].ts >= before);
-    assert.equal(records[1].ts, 5);
+    expect(typeof records[0].ts).toBe('number');
+    expect(records[0].ts! >= before).toBeTruthy();
+    expect(records[1].ts).toBe(5);
   });
 
   test('appends rather than truncating, across writer instances', () => {
@@ -149,7 +147,7 @@ describe('createNdjsonWriter', () => {
     b.write({ src: 'metro', level: 'info', msg: 'second' });
     b.close();
     const msgs = parseNdjsonText(readFileSync(file, 'utf-8')).map((r) => r.msg);
-    assert.deepEqual(msgs, ['first', 'second']);
+    expect(msgs).toEqual(['first', 'second']);
   });
 
   test('counts writes and reports them from close()', () => {
@@ -157,10 +155,10 @@ describe('createNdjsonWriter', () => {
     w.write({ src: 'metro', level: 'info', msg: 'a' });
     w.write({ src: 'metro', level: 'info', msg: 'b' });
     const stats = w.close();
-    assert.equal(stats.written, 2);
-    assert.equal(stats.dropped, 0);
-    assert.equal(stats.lastError, null);
-    assert.equal(stats.file, join(dir, 'metro.ndjson'));
+    expect(stats.written).toBe(2);
+    expect(stats.dropped).toBe(0);
+    expect(stats.lastError).toBe(null);
+    expect(stats.file).toBe(join(dir, 'metro.ndjson'));
   });
 
   // A file where a directory should be is the cheap, real stand-in for the
@@ -169,12 +167,12 @@ describe('createNdjsonWriter', () => {
     const blocker = join(dir, 'logs');
     writeFileSync(blocker, 'i am a file, not a directory');
     const w = createNdjsonWriter(join(blocker, 'metro.ndjson'));
-    assert.equal(w.write({ src: 'metro', level: 'error', msg: 'boom' }), false);
-    assert.equal(w.write({ src: 'metro', level: 'error', msg: 'boom again' }), false);
+    expect(w.write({ src: 'metro', level: 'error', msg: 'boom' })).toBe(false);
+    expect(w.write({ src: 'metro', level: 'error', msg: 'boom again' })).toBe(false);
     const stats = w.close();
-    assert.equal(stats.written, 0);
-    assert.equal(stats.dropped, 2);
-    assert.ok(stats.lastError, 'the last fs error is kept for the caller to report');
+    expect(stats.written).toBe(0);
+    expect(stats.dropped).toBe(2);
+    expect(stats.lastError, 'the last fs error is kept for the caller to report').toBeTruthy();
   });
 
   test('exposes the running drop count without closing', () => {
@@ -182,22 +180,22 @@ describe('createNdjsonWriter', () => {
     writeFileSync(blocker, 'file');
     const w = createNdjsonWriter(join(blocker, 'metro.ndjson'));
     w.write({ src: 'metro', level: 'error', msg: 'boom' });
-    assert.equal(w.dropped, 1);
-    assert.equal(w.written, 0);
+    expect(w.dropped).toBe(1);
+    expect(w.written).toBe(0);
     w.close();
   });
 
   test('drops an unserializable record instead of throwing', () => {
     const file = join(dir, 'metro.ndjson');
     const w = createNdjsonWriter(file);
-    const circular = { src: 'metro', level: 'info', msg: 'loop' };
+    const circular: any = { src: 'metro', level: 'info', msg: 'loop' };
     circular.self = circular;
-    assert.equal(w.write(circular), false);
+    expect(w.write(circular)).toBe(false);
     w.write({ src: 'metro', level: 'info', msg: 'fine' });
     const stats = w.close();
-    assert.equal(stats.written, 1);
-    assert.equal(stats.dropped, 1);
-    assert.deepEqual(parseNdjsonText(readFileSync(file, 'utf-8')).map((r) => r.msg), ['fine']);
+    expect(stats.written).toBe(1);
+    expect(stats.dropped).toBe(1);
+    expect(parseNdjsonText(readFileSync(file, 'utf-8')).map((r) => r.msg)).toEqual(['fine']);
   });
 
   // The supervisor keeps writing while a `worktree remove` or a stray rm -rf
@@ -207,8 +205,8 @@ describe('createNdjsonWriter', () => {
     const w = createNdjsonWriter(file);
     w.write({ src: 'metro', level: 'info', msg: 'before' });
     rmSync(join(dir, 'logs'), { recursive: true, force: true });
-    assert.doesNotThrow(() => w.write({ src: 'metro', level: 'info', msg: 'after' }));
-    assert.doesNotThrow(() => w.close());
+    expect(() => w.write({ src: 'metro', level: 'info', msg: 'after' })).not.toThrow();
+    expect(() => w.close()).not.toThrow();
   });
 
   test('close() is idempotent and writes after close are counted drops', () => {
@@ -216,12 +214,12 @@ describe('createNdjsonWriter', () => {
     const w = createNdjsonWriter(file);
     w.write({ src: 'metro', level: 'info', msg: 'a' });
     const first = w.close();
-    assert.equal(first.written, 1);
-    assert.equal(w.write({ src: 'metro', level: 'info', msg: 'late' }), false);
+    expect(first.written).toBe(1);
+    expect(w.write({ src: 'metro', level: 'info', msg: 'late' })).toBe(false);
     const second = w.close();
-    assert.equal(second.written, 1);
-    assert.equal(second.dropped, 1);
-    assert.deepEqual(parseNdjsonText(readFileSync(file, 'utf-8')).map((r) => r.msg), ['a']);
+    expect(second.written).toBe(1);
+    expect(second.dropped).toBe(1);
+    expect(parseNdjsonText(readFileSync(file, 'utf-8')).map((r) => r.msg)).toEqual(['a']);
   });
 
   test('round-trips optional Contract-1 fields', () => {
@@ -239,9 +237,9 @@ describe('createNdjsonWriter', () => {
     });
     w.close();
     const [r] = parseNdjsonText(readFileSync(file, 'utf-8'));
-    assert.equal(r.event, 'client_log');
-    assert.equal(r.marker, true);
-    assert.equal(r.raw, true);
-    assert.deepEqual(r.stack, [{ file: 'App.js', line: 3, column: 7, fn: 'render' }]);
+    expect(r.event).toBe('client_log');
+    expect(r.marker).toBe(true);
+    expect(r.raw).toBe(true);
+    expect(r.stack).toEqual([{ file: 'App.js', line: 3, column: 7, fn: 'render' }]);
   });
 });

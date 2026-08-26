@@ -25,7 +25,7 @@
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir } from '../config.js';
-import { isPidAlive } from '../metro.js';
+import { isPidAlive } from '../metro.ts';
 import { formatWaited } from './build-lock.js';
 
 const SLOT_FILE_NAME = 'slot.json';

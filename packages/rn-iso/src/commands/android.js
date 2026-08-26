@@ -33,9 +33,9 @@ import { getExecutor } from '../exec.js';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.js';
 import { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild } from '../engine/build-lock.js';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.js';
-import { createNdjsonWriter } from '../ndjson.js';
-import { isPidAlive, resolveProjectMetro } from '../metro.js';
-import { workspaceLogsDir } from '../paths.js';
+import { createNdjsonWriter } from '../ndjson.ts';
+import { isPidAlive, resolveProjectMetro } from '../metro.ts';
+import { workspaceLogsDir } from '../paths.ts';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../project.js';
 import {
   // devClientScheme is the app.json half of the iOS reader and is not

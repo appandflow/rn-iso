@@ -13,8 +13,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { upsertProject } from '../src/config.js';
-import { parseNdjsonText } from '../src/ndjson.js';
-import { workspaceLogsDir, workspaceStateFile } from '../src/paths.js';
+import { parseNdjsonText } from '../src/ndjson.ts';
+import { workspaceLogsDir, workspaceStateFile } from '../src/paths.ts';
 import { writeWorkspaceState } from '../src/supervisor/run.js';
 import { resolveMetroWithRetry } from '../src/commands/ios.js';
 import {

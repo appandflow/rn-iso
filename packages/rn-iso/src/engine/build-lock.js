@@ -35,7 +35,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync }
 import { join } from 'node:path';
 import { getConfigDir } from '../config.js';
 import { resolveBuild } from '../build-cache.js';
-import { isPidAlive } from '../metro.js';
+import { isPidAlive } from '../metro.ts';
 
 const LOCK_FILE_NAME = 'lock.json';
 const LOCK_SUFFIX = '.lock';

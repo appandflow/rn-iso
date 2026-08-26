@@ -10,7 +10,7 @@ import { EventEmitter } from 'node:events';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseNdjsonText } from '../src/ndjson.js';
+import { parseNdjsonText } from '../src/ndjson.ts';
 import {
   cleanLine,
   createLineReader,

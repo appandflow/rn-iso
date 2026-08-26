@@ -18,8 +18,8 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { upsertProject } from '../src/config.js';
-import { parseNdjsonText } from '../src/ndjson.js';
-import { workspaceLogsDir, workspaceStateFile } from '../src/paths.js';
+import { parseNdjsonText } from '../src/ndjson.ts';
+import { workspaceLogsDir, workspaceStateFile } from '../src/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../src/supervisor/run.js';
 import {
   appNameFromPath,

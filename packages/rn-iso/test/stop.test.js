@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { saveConfig, getProject } from '../src/config.js';
-import { supervisorPidFile, workspaceStateFile } from '../src/paths.js';
+import { supervisorPidFile, workspaceStateFile } from '../src/paths.ts';
 import {
   clearCollectorState,
   clearSupervisorState,

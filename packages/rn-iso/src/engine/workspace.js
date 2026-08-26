@@ -15,7 +15,7 @@
 // invocation.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from '../paths.js';
+import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from '../paths.ts';
 
 // Appended rather than generated: .gitignore belongs to the repo, and by the
 // second week its contents are none of rn-iso's business.

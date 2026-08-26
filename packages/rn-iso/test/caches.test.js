@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches } from '../src/caches.js';
-import { register } from '../src/cache-manifest.js';
+import { register } from '../src/cache-manifest.ts';
 import { setProjectSetting, upsertProject } from '../src/config.js';
 
 const LONG_AGO = new Date(Date.now() - 90 * 24 * 3600 * 1000);

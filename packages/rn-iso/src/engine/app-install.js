@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.js';
-import { parseNdjsonText } from '../ndjson.js';
+import { parseNdjsonText } from '../ndjson.ts';
 
 export const INSTALL_ERROR = 'RN_ISO_INSTALL_FAILED';
 export const LAUNCH_ERROR = 'RN_ISO_LAUNCH_FAILED';

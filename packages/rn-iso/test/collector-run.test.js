@@ -19,8 +19,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseNdjsonText } from '../src/ndjson.js';
-import { workspaceLogsDir, workspaceStateFile } from '../src/paths.js';
+import { parseNdjsonText } from '../src/ndjson.ts';
+import { workspaceLogsDir, workspaceStateFile } from '../src/paths.ts';
 import {
   parseArgs,
   readCollectors,

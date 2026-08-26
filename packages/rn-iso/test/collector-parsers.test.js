@@ -40,7 +40,7 @@ import {
   watchAppPid,
   NOISE_TAGS,
 } from '../src/collector/android.js';
-import { LEVELS, SOURCES } from '../src/ndjson.js';
+import { LEVELS, SOURCES } from '../src/ndjson.ts';
 
 function fixture(name) {
   return readFileSync(fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)), 'utf-8');

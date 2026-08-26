@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, upsertProject } from '../src/config.js';
 import { resetExecutor, setExecutor } from '../src/exec.js';
-import { supervisorLogFile, workspaceLogsDir } from '../src/paths.js';
+import { supervisorLogFile, workspaceLogsDir } from '../src/paths.ts';
 import { writeWorkspaceState } from '../src/supervisor/run.js';
 import {
   liveSupervisor,

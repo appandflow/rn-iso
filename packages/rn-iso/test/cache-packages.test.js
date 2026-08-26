@@ -16,8 +16,8 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readManifest } from '../src/cache-manifest.js';
-import { sharedBuildCache, sharedMetroCache } from '../src/paths.js';
+import { readManifest } from '../src/cache-manifest.ts';
+import { sharedBuildCache, sharedMetroCache } from '../src/paths.ts';
 
 const PACKAGES = join(fileURLToPath(import.meta.url), '..', '..', '..');
 

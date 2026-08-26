@@ -28,8 +28,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clearSupervisor, setSupervisor } from '../config.js';
 import { withDirLock } from '../dir-lock.js';
-import { createNdjsonWriter } from '../ndjson.js';
-import { supervisorPidFile, workspaceLogsDir, workspaceStateFile, workspaceStateLock } from '../paths.js';
+import { createNdjsonWriter } from '../ndjson.ts';
+import { supervisorPidFile, workspaceLogsDir, workspaceStateFile, workspaceStateLock } from '../paths.ts';
 import { detectIsExpo } from '../project.js';
 import { describeError } from './errors.js';
 

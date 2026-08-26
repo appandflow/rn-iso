@@ -24,7 +24,7 @@
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'fs';
 import { join } from 'path';
 import { StringDecoder } from 'string_decoder';
-import { levelRank, parseNdjsonLine, parseNdjsonText } from './ndjson.js';
+import { levelRank, parseNdjsonLine, parseNdjsonText } from './ndjson.ts';
 
 const SINCE_UNITS = { s: 1000, m: 60000, h: 3600000 };
 const SINCE_FORMS = '30s, 5m, 2h';

@@ -12,7 +12,7 @@ import { existsSync, readdirSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { directorySize } from './fs-util.js';
-import { registeredCaches } from './cache-manifest.js';
+import { registeredCaches } from './cache-manifest.ts';
 import { findProjectRoot } from './project.js';
 import { resolveSettings } from './settings.js';
 import { gitCommonDir, repoRoot } from './worktree.js';

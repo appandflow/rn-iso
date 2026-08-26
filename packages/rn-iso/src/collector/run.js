@@ -30,8 +30,8 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createNdjsonWriter } from '../ndjson.js';
-import { workspaceLogsDir } from '../paths.js';
+import { createNdjsonWriter } from '../ndjson.ts';
+import { workspaceLogsDir } from '../paths.ts';
 import { createLineReader } from '../supervisor/server-expo.js';
 import { readWorkspaceState, withWorkspaceStateLock, writeWorkspaceState } from '../supervisor/run.js';
 import { appNameFromBundleId, parseLogStreamLine, startIosLogStream } from './ios.js';

@@ -23,7 +23,7 @@ import { listAdbDevices } from './sim/android.js';
 // owns what to SAY about it. Imported under a second name because the pure
 // check below is the doctor-side function of the same idea.
 import { checkEasAuth as probeEasAuth, ownerFromConfig, providerFromConfig } from './engine/remote-cache.js';
-import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.js';
+import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.ts';
 
 // `xcodebuild -version` prints "Xcode 26.1" on its first line. Anything else --
 // no Xcode, command line tools only, a localized or future format -- is null,

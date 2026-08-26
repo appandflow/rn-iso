@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { getExecutor } from './exec.js';
-import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.js';
+import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.ts';
 
 // `.rn-iso/` is never carried into a new worktree, at any depth and whatever
 // any pattern file says. It holds THIS workspace's derived data, its logs and

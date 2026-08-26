@@ -52,8 +52,8 @@ export const SOURCES = ['metro', 'client', 'device', 'build'];
 // An unrecognized level ranks at the bottom rather than being dropped: a
 // record with a level we do not know is still a record, and hiding it behind
 // `--level debug` is the least surprising place to put it.
-export function levelRank(level: string): number {
-  const i = LEVELS.indexOf(level);
+export function levelRank(level?: string): number {
+  const i = LEVELS.indexOf(level as string);
   return i < 0 ? 0 : i;
 }
 
@@ -135,7 +135,11 @@ export function createNdjsonWriter(file: string): NdjsonWriter {
     } catch (err) {
       // Drop the fd so a transient failure is retried on the next record.
       if (fd !== null) {
-        try { closeSync(fd); } catch { /* already gone */ }
+        try {
+          closeSync(fd);
+        } catch {
+          /* already gone */
+        }
         fd = null;
       }
       dropped += 1;
@@ -146,7 +150,11 @@ export function createNdjsonWriter(file: string): NdjsonWriter {
 
   function close(): { file: string; written: number; dropped: number; lastError: Error | null } {
     if (fd !== null) {
-      try { closeSync(fd); } catch { /* already gone */ }
+      try {
+        closeSync(fd);
+      } catch {
+        /* already gone */
+      }
       fd = null;
     }
     closed = true;
@@ -157,9 +165,15 @@ export function createNdjsonWriter(file: string): NdjsonWriter {
     file,
     write,
     close,
-    get written() { return written; },
-    get dropped() { return dropped; },
-    get lastError() { return lastError; },
+    get written() {
+      return written;
+    },
+    get dropped() {
+      return dropped;
+    },
+    get lastError() {
+      return lastError;
+    },
   };
 }
 
@@ -168,9 +182,7 @@ export function createNdjsonWriter(file: string): NdjsonWriter {
 // carry their own and must keep it, or the merge in logs-query reorders them.
 function stamp(record: unknown): NdjsonRecord {
   const base: NdjsonRecord =
-    record && typeof record === 'object' && !Array.isArray(record)
-      ? (record as NdjsonRecord)
-      : { msg: String(record) };
+    record && typeof record === 'object' && !Array.isArray(record) ? (record as NdjsonRecord) : { msg: String(record) };
   if (typeof base.ts === 'number' && Number.isFinite(base.ts)) return base;
   return { ...base, ts: Date.now() };
 }

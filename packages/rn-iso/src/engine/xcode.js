@@ -21,7 +21,7 @@
 import { readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getExecutor } from '../exec.js';
-import { workspaceDerivedData } from '../paths.js';
+import { workspaceDerivedData } from '../paths.ts';
 import { capDiagnostics, describeDiagnostic, extractXcodeDiagnostics } from './errors-xcode.js';
 // Borrowed rather than copied: these two are generic child-stdout plumbing
 // that happens to live next to the Expo server because that is what needed

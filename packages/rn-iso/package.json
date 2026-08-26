@@ -4,7 +4,7 @@
   "description": "Isolated React Native dev environments per project/worktree",
   "type": "module",
   "bin": {
-    "rn-iso": "bin/cli.js"
+    "rn-iso": "bin/cli.ts"
   },
   "files": [
     "bin",
@@ -14,7 +14,8 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "build": "tsdown"
   },
   "dependencies": {
     "chalk": "^5.4.1",
@@ -44,6 +45,6 @@
   "license": "MIT",
   "author": "Janic Duplessis",
   "exports": {
-    "./cache-manifest": "./src/cache-manifest.js"
+    "./cache-manifest": "./src/cache-manifest.ts"
   }
 }

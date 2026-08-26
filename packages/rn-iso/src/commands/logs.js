@@ -9,8 +9,8 @@
 // The only exit-1 paths here are a malformed query or no project.
 import chalk from 'chalk';
 import { findProjectRoot } from '../project.js';
-import { workspaceLogsDir } from '../paths.js';
-import { LEVELS, SOURCES } from '../ndjson.js';
+import { workspaceLogsDir } from '../paths.ts';
+import { LEVELS, SOURCES } from '../ndjson.ts';
 import { buildCriteria, compileGrep, fileSizes, followLogs, parseSince, queryLogs } from '../logs-query.js';
 
 const LEVEL_WIDTH = 5; // 'debug' / 'fatal'

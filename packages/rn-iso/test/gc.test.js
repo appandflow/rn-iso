@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../src/exec.js';
 import { saveConfig, loadConfig } from '../src/config.js';
-import { register } from '../src/cache-manifest.js';
+import { register } from '../src/cache-manifest.ts';
 import gcCommand, {
   collectGcReport,
   describeUnverifiableDevices,
