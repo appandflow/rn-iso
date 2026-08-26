@@ -1,6 +1,6 @@
 import { getExecutor } from './exec.ts';
 import { isMetroRunning } from './ports.ts';
-import { realpathSync } from 'fs';
+import { readlinkSync, realpathSync } from 'fs';
 import { sep } from 'path';
 
 export function findPidListeningOnPort(port: number): number | null {
@@ -57,6 +57,20 @@ export function parsePsPgid(out: unknown): number | null {
 }
 
 export function processCwd(pid: number): string | null {
+  // Linux first: /proc/<pid>/cwd is a symlink the kernel maintains, readable
+  // for same-user processes with no child process at all. This is not just an
+  // optimization -- GitHub's ubuntu runners return nothing for
+  // `lsof -d cwd` (observed live: Metro listening and healthy, yet its cwd
+  // unreadable, so identity verification never passed and every `start` on
+  // Linux CI timed out). lsof stays as the fallback there and the path on
+  // macOS, where /proc does not exist.
+  if (process.platform === 'linux') {
+    try {
+      return readlinkSync(`/proc/${pid}/cwd`);
+    } catch {
+      /* fall through to lsof: not our process, or it just exited */
+    }
+  }
   return parseLsofCwd(getExecutor().runQuiet(`lsof -a -p ${pid} -d cwd -Fn`));
 }
 

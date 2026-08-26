@@ -9,12 +9,13 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-v2-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -42,13 +43,25 @@ jobs:
       - name: Install (workspace root)
         run: npm ci
 
-      # Lint / format / types are fast and fail early. oxlint and oxfmt are the
-      # oxc toolchain; typecheck is the production src (tests run under vitest).
+      # Lint and format are fast and fail early. oxlint and oxfmt are the oxc
+      # toolchain; typecheck is the production src (tests run under vitest),
+      # and it now sits below the build -- see why on that step.
       - name: Lint (oxlint)
         run: npm run lint
 
       - name: Format check (oxfmt)
         run: npm run format:check
+
+      # Build every package with tsdown (rn-iso -> dist ESM, the two cache
+      # packages -> dist CJS). Proves the published artifacts compile.
+      #
+      # BEFORE typecheck, and that order is load-bearing. The two cache
+      # packages are CJS and are consumed by rn-iso's suite as
+      # `@rn-iso/expo-build-cache` and `@rn-iso/metro`; their .d.ts files are
+      # build OUTPUT, so a typecheck that runs first cannot resolve either
+      # module and fails with TS2307 on a tree that is perfectly fine.
+      - name: Build (tsdown, all packages)
+        run: npm run build
 
       - name: Typecheck (production)
         run: npm run typecheck
@@ -57,11 +70,6 @@ jobs:
       # surface honest as the codebase changes.
       - name: Dead code (knip)
         run: npm run knip
-
-      # Build every package with tsdown (rn-iso -> dist ESM, the two cache
-      # packages -> dist CJS). Proves the published artifacts compile.
-      - name: Build (tsdown, all packages)
-        run: npm run build
 
       # The unit suite on vitest (rolldown-vite): rn-iso + both cache packages,
       # 52 files. Real processes, real ports, real git; fakes for xcrun/adb.
