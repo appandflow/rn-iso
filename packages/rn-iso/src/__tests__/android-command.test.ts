@@ -22,6 +22,7 @@ import {
   NO_METRO,
   androidDevClientScheme,
   androidFacts,
+  apkPackage,
   apkDevClientFacts,
   dumpApkManifest,
   findAapt,
@@ -1809,4 +1810,13 @@ describe('concurrency limits', () => {
     expect(slotAcquired).toBe(0);
     expect(built).toBe(0);
   });
+});
+
+// The package attribute lives on the manifest ROOT, not on any child element.
+test('apkPackage reads the manifest root package and null on garbage', () => {
+  const dump =
+    'N: android=http://schemas.android.com/apk/res/android\nE: manifest (line=1)\n  A: package="com.example.blank" (Raw: "com.example.blank")\n  E: application (line=5)\n';
+  expect(apkPackage(dump)).toBe('com.example.blank');
+  expect(apkPackage('')).toBe(null);
+  expect(apkPackage(null)).toBe(null);
 });
