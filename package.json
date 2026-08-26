@@ -9,5 +9,13 @@
   "scripts": {
     "test": "npm test --workspace rn-iso && npm test --workspace @rn-iso/expo-build-cache && npm test --workspace @rn-iso/metro",
     "test:e2e": "node --test test/e2e/*.e2e.js"
+  },
+  "devDependencies": {
+    "@types/node": "26.3.0",
+    "oxfmt": "0.65.0",
+    "oxlint": "1.80.0",
+    "tsdown": "0.22.14",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
   }
 }
