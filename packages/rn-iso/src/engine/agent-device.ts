@@ -46,7 +46,9 @@ export interface RemoteProfile {
   daemonTransport: 'http';
   platform: 'ios' | 'android';
   session: string;
-  metroProjectRoot: string;
+  tenant: string;
+  runId: string;
+  sessionIsolation: 'tenant';
 }
 
 // PURE. agent-device's session name for this workspace.
@@ -69,23 +71,48 @@ export function remoteProfilePath(root: string): string {
 // `daemonTransport: 'http'` is stated rather than left to discovery: a remote
 // daemon is reached over HTTP by definition, and socket discovery against a
 // remote URL is a wasted probe on every command.
+//
+// `tenant` and `runId` are REQUIRED by `agent-device connect --remote-config`,
+// which refuses with INVALID_ARGS when either is absent. Both are the
+// workspace label because the workspace is genuinely both things here: it is
+// the isolation boundary (worktree A must not adopt worktree B's lease) and
+// it has exactly one live run at a time.
+//
+// Deriving runId from the workspace rather than minting a fresh one per
+// invocation is deliberate. `rn-iso ios` is idempotent, and a new runId each
+// time would leave the previous lease held until its idle expiry, so a
+// re-run would contend with itself.
+//
+// `sessionIsolation: 'tenant'` is what makes the tenant scoping apply rather
+// than being metadata.
+//
+// NO `metroProjectRoot`, deliberately. Setting it makes agent-device treat
+// Metro as its to prepare and then refuse without a bridge origin:
+//   INVALID_ARGS: Deferred Metro preparation requires metroPublicBaseUrl or
+//   metroProxyBaseUrl when Metro settings are provided.
+// rn-iso already owns Metro, and the self-hosted `agent-device proxy` serves
+// no bridge at all (`/api/metro/bridge` is a 404 there; its routes are
+// /health, /rpc, /upload and /artifacts). Both facts were established against
+// agent-device 0.20.10. Metro reachability is therefore rn-iso's problem, and
+// it is solved in device-remote.ts by choosing the deep link's host.
 export function remoteProfile({
   daemon,
   platform,
   label,
-  projectRoot,
 }: {
   daemon: RemoteDaemon;
   platform: 'ios' | 'android';
   label: string;
-  projectRoot: string;
 }): RemoteProfile {
+  const scope = sessionNameFor(label);
   return {
     daemonBaseUrl: daemon.baseUrl,
     daemonTransport: 'http',
     platform,
-    session: sessionNameFor(label),
-    metroProjectRoot: projectRoot,
+    session: scope,
+    tenant: scope,
+    runId: scope,
+    sessionIsolation: 'tenant',
   };
 }
 
@@ -102,9 +129,16 @@ function withProfile(profilePath: string, args: string[]): string[] {
   return [...args, '--remote-config', profilePath];
 }
 
-// PURE. Establish the connection. This is also what prepares Metro, lazily.
+// PURE. Establish the connection.
+//
+// `--force` is required, not defensive. rn-iso rewrites the profile on every
+// run, and a remote session hands back a different daemon URL each time, so
+// the second run of a workspace hits
+//   INVALID_ARGS: Active remote connection config changed.
+//   Run agent-device connect --force to refresh it.
+// Verified against agent-device 0.20.10.
 export function connectArgs(profilePath: string): string[] {
-  return withProfile(profilePath, ['connect']);
+  return withProfile(profilePath, ['connect', '--force']);
 }
 
 // PURE. Push a locally-built artifact to the remote device.
@@ -143,4 +177,20 @@ export function openArgs(profilePath: string, bundleId: string, url: string | nu
 // PURE. Release the lease and stop the Metro companion this workspace owns.
 export function disconnectArgs(profilePath: string): string[] {
   return withProfile(profilePath, ['disconnect']);
+}
+
+// PURE. Is this daemon on the machine rn-iso is running on?
+//
+// The whole question behind Metro reachability. A loopback daemon drives a
+// simulator that shares THIS host's loopback, so the app can be pointed at
+// `localhost:<reserved port>` and reach rn-iso's own Metro. Any other daemon
+// is on another machine, where `localhost` is that machine.
+export function isLoopbackDaemon(baseUrl: string): boolean {
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    return false;
+  }
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
 }

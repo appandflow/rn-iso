@@ -13,8 +13,18 @@ import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_MAX_DURATION_MINUTES, remoteIosDeps, teardownRemote } from '../engine/device-remote.ts';
+import {
+  DEFAULT_MAX_DURATION_MINUTES,
+  PUBLIC_METRO_ENV,
+  remoteIosDeps,
+  resolveMetroOrigin,
+  teardownRemote,
+} from '../engine/device-remote.ts';
 import { stopSessionArgs } from '../engine/eas-simulator.ts';
+
+// The same-machine proxy: the simulator shares this host's loopback, so
+// localhost in the deep link reaches rn-iso's own Metro. Live-verified.
+const LOOPBACK = { baseUrl: 'http://127.0.0.1:4310', token: 'tok_proxy' };
 
 const CREATED = JSON.stringify({
   id: 'drs_42',
@@ -158,14 +168,14 @@ describe('the token never reaches disk', () => {
 
   test('it travels as an env var on every agent-device call instead', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx());
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
     await deps.ensureBooted({});
     deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/My App.app' });
     deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
     const agentCalls = exec.calls.filter((c) => c.file === '/bin/agent-device');
     expect(agentCalls.length).toBe(3);
     for (const call of agentCalls) {
-      expect(call.env?.AGENT_DEVICE_DAEMON_AUTH_TOKEN).toBe('tok_secret');
+      expect(call.env?.AGENT_DEVICE_DAEMON_AUTH_TOKEN).toBe('tok_proxy');
     }
   });
 
@@ -192,7 +202,7 @@ describe('install and launch match their local counterparts', () => {
     // agent-device#1245: its hint writes bare-RN RCT_jsLocation, which a
     // dev-client ignores. open <app> <url> runs simctl openurl verbatim.
     const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx());
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
     await deps.ensureBooted({});
     const result = deps.launchIosApp({
       udid: 'drs_42',
@@ -207,7 +217,7 @@ describe('install and launch match their local counterparts', () => {
 
   test('a bare RN launch has no url positional', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx());
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
     await deps.ensureBooted({});
     expect(deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 }).mode).toBe('launch');
     const open = exec.calls.find((c) => c.args[0] === 'open');
@@ -267,5 +277,60 @@ describe('teardown', () => {
     const result = teardownRemote(ctx(), { sessionId: null, stopArgs: [] });
     expect(result.status).toBe('torn-down');
     expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+  });
+});
+
+describe('Metro reachability', () => {
+  // The hard part of a remote device, and the one agent-device does NOT solve
+  // for a self-hosted proxy: verified against 0.20.10, `agent-device proxy`
+  // serves no /api/metro route at all, so there is no bridge to lean on.
+  test('a loopback daemon shares this host, so localhost is correct', () => {
+    expect(resolveMetroOrigin({ daemonBaseUrl: 'http://127.0.0.1:4310', metroPort: 8082 })).toEqual({
+      origin: 'http://localhost:8082',
+    });
+  });
+
+  test('a daemon on another machine is refused, never guessed', () => {
+    // Sending `localhost` to a remote device resolves on THAT machine, so the
+    // app would load nothing and the run would look merely unverified.
+    const r = resolveMetroOrigin({ daemonBaseUrl: 'https://sim-42.eas.dev/daemon', metroPort: 8082 });
+    expect('failed' in r).toBe(true);
+    if ('failed' in r) {
+      expect(r.failed).toContain('cannot reach Metro on localhost:8082');
+      expect(r.remedy).toContain(PUBLIC_METRO_ENV);
+    }
+  });
+
+  test('an operator-named public url wins, and its trailing slash is dropped', () => {
+    expect(
+      resolveMetroOrigin({
+        daemonBaseUrl: 'https://sim-42.eas.dev/daemon',
+        metroPort: 8082,
+        publicUrl: 'https://abc.trycloudflare.com/',
+      }),
+    ).toEqual({ origin: 'https://abc.trycloudflare.com' });
+  });
+
+  test('launching against an unreachable Metro refuses instead of opening the app', async () => {
+    mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    const result = deps.launchIosApp({
+      udid: 'drs_42',
+      bundleId: 'com.example.app',
+      metroPort: 8082,
+      devClientScheme: 'myapp',
+    });
+    expect(result.failed).toBe(true);
+    expect(result.code).toBe('RN_ISO_REMOTE_METRO_UNREACHABLE');
+  });
+
+  test('the named url is what the deep link carries', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx({ publicMetroUrl: 'https://abc.trycloudflare.com' }));
+    await deps.ensureBooted({});
+    deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
+    const open = exec.calls.find((c) => c.args[0] === 'open');
+    expect(open?.args[2]).toBe('myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com');
   });
 });

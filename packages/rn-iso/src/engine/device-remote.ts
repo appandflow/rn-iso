@@ -27,11 +27,12 @@ import {
   daemonEnv,
   disconnectArgs,
   installArgs,
+  isLoopbackDaemon,
   openArgs,
   remoteProfile,
   remoteProfilePath,
 } from './agent-device.ts';
-import { devClientUrl, jsLocationValue, INSTALL_ERROR, LAUNCH_ERROR } from './app-install.ts';
+import { jsLocationValue, INSTALL_ERROR, LAUNCH_ERROR } from './app-install.ts';
 import {
   createSessionArgs,
   getSessionArgs,
@@ -42,6 +43,52 @@ import {
 } from './eas-simulator.ts';
 
 export const REMOTE_SESSION_ERROR = 'RN_ISO_NO_REMOTE_SESSION';
+const REMOTE_METRO_ERROR = 'RN_ISO_REMOTE_METRO_UNREACHABLE';
+
+// Where the app should look for Metro, when the device is not on this machine.
+// Set it to a URL that reaches THIS workspace's dev server from the device's
+// network -- a cloudflared/ngrok tunnel in front of the reserved port.
+export const PUBLIC_METRO_ENV = 'RN_ISO_METRO_PUBLIC_URL';
+
+/**
+ * PURE. The origin the launched app should fetch its bundle from, or a
+ * refusal.
+ *
+ * THIS IS THE HARD PART OF A REMOTE DEVICE, and it is not solved by
+ * agent-device for a self-hosted proxy. Established against agent-device
+ * 0.20.10: `agent-device proxy` serves /health, /rpc, /upload and /artifacts
+ * and NOTHING under /api/metro, so `/api/metro/bridge` is a 404 and the
+ * companion-tunnel path is a cloud-only feature. A device on another machine
+ * therefore has no route to this laptop's Metro that agent-device will build.
+ *
+ * So the honest rule:
+ *   loopback daemon -> the simulator shares this host's loopback, and
+ *                      `localhost:<reserved port>` is correct and verified.
+ *   anything else   -> rn-iso cannot invent a reachable address. It refuses,
+ *                      unless the operator names one via RN_ISO_METRO_PUBLIC_URL.
+ *
+ * Refusing beats guessing. `localhost` sent to a remote device resolves on
+ * THAT machine, so the app would silently load nothing (or, worse, another
+ * project's bundler) and the run would look like a launch that merely failed
+ * to verify.
+ */
+export function resolveMetroOrigin({
+  daemonBaseUrl,
+  metroPort,
+  publicUrl = null,
+}: {
+  daemonBaseUrl: string;
+  metroPort: number | string;
+  publicUrl?: string | null;
+}): { origin: string } | { failed: string; remedy: string } {
+  const named = publicUrl?.trim();
+  if (named) return { origin: named.replace(/\/+$/, '') };
+  if (isLoopbackDaemon(daemonBaseUrl)) return { origin: `http://localhost:${metroPort}` };
+  return {
+    failed: `The remote device is not on this machine (${daemonBaseUrl}), so it cannot reach Metro on localhost:${metroPort}.`,
+    remedy: `Expose this workspace's Metro port and name it: tunnel port ${metroPort} (for example \`cloudflared tunnel --url http://127.0.0.1:${metroPort}\`), then export ${PUBLIC_METRO_ENV}=<that url> and run again.`,
+  };
+}
 
 // A cloud session is billable and a build can be long. Ten minutes is too
 // short for a cold pod install; a day is a forgotten session nobody notices.
@@ -77,6 +124,9 @@ export interface RemoteContext {
   easBin: string;
   agentDeviceBin: string;
   maxDurationMinutes?: number | null;
+  // A URL that reaches THIS workspace's Metro from the device's network.
+  // Only consulted when the daemon is not on this machine.
+  publicMetroUrl?: string | null;
   // Set when the operator already has a daemon (an `agent-device proxy`, or
   // an exported EAS session). rn-iso then creates NO session and destroys
   // none: it is a guest on someone else's device.
@@ -95,12 +145,7 @@ interface RemoteSession {
 function writeProfile(ctx: RemoteContext, daemon: RemoteDaemon): string {
   const path = remoteProfilePath(ctx.root);
   mkdirSync(dirname(path), { recursive: true });
-  const profile = remoteProfile({
-    daemon,
-    platform: 'ios',
-    label: ctx.label,
-    projectRoot: ctx.root,
-  });
+  const profile = remoteProfile({ daemon, platform: 'ios', label: ctx.label });
   writeFileSync(path, `${JSON.stringify(profile, null, 2)}\n`);
   return path;
 }
@@ -127,8 +172,13 @@ export function remoteIosDeps(ctx: RemoteContext) {
 
     // Records intent only. The session is created in ensureBooted so the
     // Metro gate still runs before the expensive, billable step.
+    //
+    // The name says which KIND of remote device this is, because the two
+    // behave differently in ways an operator needs to see in one line: an EAS
+    // session is rn-iso's to create and destroy, a daemon from the
+    // environment is somebody else's and is never stopped here.
     ensureOwnedDevice: async (): Promise<RemoteDeviceRecord> => ({
-      deviceName: 'EAS Simulator',
+      deviceName: ctx.existingDaemon ? 'remote device (your daemon)' : 'EAS Simulator',
       owned: true,
       remote: true,
     }),
@@ -185,9 +235,11 @@ export function remoteIosDeps(ctx: RemoteContext) {
       }
 
       session = { id, daemon, profilePath };
-      // `udid` is the field ios.ts reads and prints. The session id is the
-      // remote analog: the one handle that identifies this device.
-      return { ok: true, udid: id ?? daemon.baseUrl };
+      // `udid` is the field ios.ts reads and prints, and shortUdid truncates
+      // it for the phase line. A session id shortens to something meaningful;
+      // a base URL shortens to "http..", which is noise. So a daemon with no
+      // session of its own reports its host instead.
+      return { ok: true, udid: id ?? daemonHostLabel(daemon.baseUrl) };
     },
 
     installIosApp: ({ appPath }: { udid: string; appPath: string }) => {
@@ -218,12 +270,26 @@ export function remoteIosDeps(ctx: RemoteContext) {
       devClientScheme?: string | null;
     }) => {
       if (!session) return notConnected(LAUNCH_ERROR);
+      // WHERE the app looks for Metro is decided first, and a device that
+      // cannot reach this workspace's dev server is a refusal rather than a
+      // launch that will never load a bundle.
+      const origin = resolveMetroOrigin({
+        daemonBaseUrl: session.daemon.baseUrl,
+        metroPort,
+        publicUrl: ctx.publicMetroUrl ?? null,
+      });
+      if ('failed' in origin) {
+        return { failed: true, code: REMOTE_METRO_ERROR, reason: `${origin.failed} ${origin.remedy}` };
+      }
+
       // The dev-client link is composed HERE rather than left to
       // agent-device's own Metro hint. That hint writes bare-RN's
       // RCT_jsLocation, which an expo-dev-client ignores
       // (callstack/agent-device#1245). `open <app> <url>` runs simctl openurl
       // with the url verbatim, so rn-iso's own link works today.
-      const url = devClientScheme ? devClientUrl(devClientScheme, metroPort) : null;
+      const url = devClientScheme
+        ? `${devClientScheme}://expo-development-client/?url=${encodeURIComponent(origin.origin)}`
+        : null;
       try {
         exec().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, bundleId, url), {
           cwd: ctx.root,
@@ -315,6 +381,7 @@ export function resolveRemoteContext({
       easBin: easBin ?? '',
       agentDeviceBin,
       maxDurationMinutes,
+      publicMetroUrl: env[PUBLIC_METRO_ENV]?.trim() || null,
       existingDaemon,
     },
   };
@@ -324,6 +391,16 @@ function defaultLookupAgentDevice(): string | null {
   const found = getExecutor().runQuiet('command -v agent-device', { timeoutMs: 5000 });
   const file = (String(found ?? '').split('\n')[0] ?? '').trim();
   return file || null;
+}
+
+// PURE. The host:port of a daemon, for a phase line that has room for one
+// short token. Falls back to the whole URL when it will not parse.
+function daemonHostLabel(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
 }
 
 function notConnected(code: string): OpFailure {
