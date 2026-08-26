@@ -47,7 +47,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
-const CLI = join(REPO, 'packages', 'rn-iso', 'bin', 'cli.js');
+const CLI = join(REPO, 'packages', 'rn-iso', 'dist', 'cli.js');
 
 // ---- args -------------------------------------------------------------------
 
@@ -184,6 +184,18 @@ function createFixture() {
       timeout: 10 * 60 * 1000,
     });
     if (r2.status !== 0) die('installing @expo/fingerprint into the bare fixture failed');
+  } else {
+    // create-expo-app ran with --no-install (its own install is flaky in CI),
+    // so the fixture has no node_modules yet. Install now: `start`'s expo-child
+    // needs `expo` resolvable (RN_ISO_EXPO_BIN otherwise), and worktree create
+    // --carry-ignored only clones a node_modules that exists.
+    const r2 = spawnSync('npm', ['install', '--no-audit', '--no-fund'], {
+      cwd: appDir,
+      env: ENV,
+      stdio: 'inherit',
+      timeout: 15 * 60 * 1000,
+    });
+    if (r2.status !== 0) die('installing the expo fixture dependencies failed');
   }
 
   gitInitWithRemote(appDir);
@@ -203,7 +215,24 @@ function worktreeCreate(name, appDir) {
 }
 
 function startAndAssertMode(cwd) {
-  const facts = cliJson(['start', '--json'], { cwd });
+  // --wait 240 (vs the 60s default): a bare RN app hosts Metro in-process, and
+  // its first metro-file-map crawl + transform on a cold, loaded CI runner can
+  // take well over a minute -- the android-bare job hit RN_ISO_METRO_TIMEOUT at
+  // 60s. This is CI headroom, not a product change.
+  const r = cli(['start', '--json', '--wait', '240'], { cwd, allowFail: true });
+  if (r.code !== 0) {
+    // The one diagnosis start's stderr cannot carry: WHY the supervisor / dev
+    // server never verified. Surface its log right in the job output -- the
+    // artifact upload misses dot-dirs unless include-hidden-files, and an
+    // inline tail beats downloading an artifact anyway.
+    const supLog = join(cwd, '.rn-iso', 'logs', 'supervisor.log');
+    if (existsSync(supLog)) {
+      log(`--- supervisor.log (tail) ---\n${lastLines(readFileSync(supLog, 'utf-8'), 80)}`);
+    }
+    die(`rn-iso start failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
+  }
+  const line = r.stdout.trim().split('\n').filter(Boolean).pop();
+  const facts = JSON.parse(line);
   assert(
     facts.mode === EXPECTED_MODE,
     `start mode for a ${FRAMEWORK} app must be ${EXPECTED_MODE}, got ${JSON.stringify(facts.mode)} ` +
@@ -267,8 +296,17 @@ function assertNoCompile(cwd) {
 }
 
 function worktreeRemove(path) {
-  // No --force: a clean worktree must remove on the routine path. .rn-iso/ is
-  // rn-iso's own output and it purges that itself.
+  // A worktree that COMPILED is not clean: pod install modifies tracked files
+  // (project.pbxproj, Info.plist, PrivacyInfo.xcprivacy) and leaves untracked
+  // output (Podfile.lock, *.xcworkspace). rn-iso's remove refuses that with a
+  // documented remedy -- restore the churn, delete the untracked build output --
+  // which is exactly what an agent following the refusal does, so the driver
+  // does it too. `clean -fd` (no -x) skips gitignored paths, so node_modules,
+  // Pods and .rn-iso/ are untouched. Both are no-ops on a cache-installed
+  // worktree that never compiled.
+  sh('git', ['-C', path, 'checkout', '--', '.'], { allowFail: true });
+  sh('git', ['-C', path, 'clean', '-fdq', 'ios', 'android'], { allowFail: true });
+  // No --force: after the churn restore, a routine worktree must remove clean.
   const r = cli(['worktree', 'remove', path], { allowFail: true });
   assert(r.code === 0, `worktree remove refused a clean worktree:\n${r.stderr}`);
   log(`removed worktree ${path}`);
@@ -376,6 +414,11 @@ function gitInitWithRemote(appDir) {
 function ensureGitignore(appDir) {
   const gi = join(appDir, '.gitignore');
   const needed = ['node_modules/', 'ios/Pods/', 'ios/build/', 'android/.gradle/', 'android/app/build/', '.rn-iso/'];
+  // A MANAGED app's native dirs are `expo prebuild` output -- disposable and
+  // conventionally gitignored. Left tracked, the prebuild inside the worktree
+  // makes the tree dirty and `worktree remove` (correctly) refuses. Bare apps
+  // keep ios/ and android/ tracked: they ARE the source.
+  if (FRAMEWORK === 'expo') needed.push('ios/', 'android/');
   let text = existsSync(gi) ? readFileSync(gi, 'utf-8') : '';
   const missing = needed.filter(
     (n) =>

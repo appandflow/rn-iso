@@ -86,6 +86,9 @@ jobs:
       - name: Install (workspace root)
         run: npm ci
 
+      - name: Build (dist/cli.js is what the native e2e drives)
+        run: npm run build
+
       - run: mkdir -p "$TMPDIR" "$RN_ISO_BUILD_CACHE"
 
       - name: Restore cross-run build cache
@@ -99,12 +102,13 @@ jobs:
           restore-keys: |
             rn-iso-buildcache-ios-${{ matrix.framework }}-
 
+      # Any restored content -- exact key or restore-keys prefix -- means the first
+      # build may be a legitimate cross-run HIT rather than a cold miss. The
+      # combined cache action only reports exact matches, so ask the filesystem.
+      - name: Detect a warmed cross-run cache
+        run: echo "RN_ISO_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$RN_ISO_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+
       - name: Native e2e (ios, ${{ matrix.framework }})
-        env:
-          # When the cache restored, the first build may be a legitimate cross-run
-          # HIT rather than a cold miss -- tell the driver to tolerate that. The
-          # wt2 within-run cache proof is unconditional regardless.
-          RN_ISO_E2E_WARM_CACHE: ${{ steps.cache.outputs.cache-hit == 'true' && '1' || '0' }}
         # --keep leaves the temp worktrees in place on this ephemeral runner so
         # the artifact step below can collect their build logs.
         run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep
@@ -114,7 +118,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-ios-${{ matrix.framework }}
-          path: ${{ env.TMPDIR }}/**/.rn-iso/logs/build-*.ndjson
+          path: ${{ env.TMPDIR }}/**/.rn-iso/logs/*
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
 
@@ -155,6 +160,9 @@ jobs:
       - name: Install (workspace root)
         run: npm ci
 
+      - name: Build (dist/cli.js is what the native e2e drives)
+        run: npm run build
+
       - run: mkdir -p "$TMPDIR" "$RN_ISO_BUILD_CACHE"
 
       - name: Restore cross-run build cache
@@ -175,6 +183,9 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Detect a warmed cross-run cache
+        run: echo "RN_ISO_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$RN_ISO_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+
       - name: Native e2e (android, ${{ matrix.framework }})
         # reactivecircus/android-emulator-runner installs the SDK + system image,
         # enables acceleration, and runs `script` once an emulator is up. rn-iso
@@ -183,21 +194,26 @@ jobs:
         # the action's emulator is only there to guarantee the SDK/KVM
         # environment; rn-iso does the device work itself.
         uses: reactivecircus/android-emulator-runner@v2
-        env:
-          RN_ISO_E2E_WARM_CACHE: ${{ steps.cache.outputs.cache-hit == 'true' && '1' || '0' }}
         with:
           api-level: 34
           target: google_apis
           arch: x86_64
           # A fast, headless boot; the assertions do not need a window.
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
-          script: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep
+          # The action's own emulator only proved the SDK/KVM environment; kill it
+          # before the driver runs so rn-iso's owned emulator gets the runner's
+          # full memory and CPU (two emulators on a 7 GB runner starve the boot).
+          script: |
+            adb -s emulator-5554 emu kill || true
+            sleep 3
+            node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep
 
       - name: Upload build logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-android-${{ matrix.framework }}
-          path: ${{ env.TMPDIR }}/**/.rn-iso/logs/build-*.ndjson
+          path: ${{ env.TMPDIR }}/**/.rn-iso/logs/*
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
