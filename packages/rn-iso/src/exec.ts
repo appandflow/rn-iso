@@ -6,7 +6,10 @@ interface ExecOptions {
   // arguments are RELATIVE to a directory this codebase staged -- `zip -0 -r
   // <apk> assets` writes archive entries at paths relative to the cwd, which
   // is the whole mechanism engine/apk-swap.js uses to put the bundle back at
-  // assets/index.android.bundle. Unset means "inherit", exactly as before.
+  // assets/index.android.bundle -- and by a tool that resolves its target from
+  // the working directory with no positional for it, which is how `eas sim`
+  // finds the project (unlike `expo config --json <root>`). Unset means
+  // "inherit", exactly as before.
   cwd?: string;
 }
 

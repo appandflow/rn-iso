@@ -1,0 +1,140 @@
+// src/engine/agent-device.ts -- the remote device's control surface.
+//
+// Once a session exists (engine/eas-simulator.ts made it, or an operator ran
+// `agent-device proxy`), everything rn-iso does to the device goes through
+// the agent-device CLI pointed at that daemon. This module composes those
+// calls; it never decides WHETHER the device is remote.
+//
+// The workflow is agent-device's own documented remote one:
+//   connect --remote-config <profile>
+//   install <bundleId> <path>
+//   open <bundleId> [url] --relaunch
+//   disconnect --remote-config <profile>
+// `connect` is what defers and then performs Metro preparation, and
+// `disconnect` is what "release[s] the lease and stop[s] the owned Metro
+// companion". rn-iso therefore does NOT drive `metro prepare` itself: the
+// companion tunnel that makes rn-iso's local Metro reachable from a cloud
+// simulator is agent-device's to own, and a second driver would fight it.
+//
+// TWO INVARIANTS, both covered by tests that fail loudly:
+//
+// 1. THE TOKEN NEVER REACHES DISK. It travels as an env var on the child
+//    process. agent-device's own ADR 0007 says the same thing about its
+//    generated profiles -- "must strip daemon and Metro bearer tokens" --
+//    and a profile is an ordinary file with no special mode, so a token
+//    written there outlives the command that needed it.
+//
+// 2. THE PROFILE IS RN-ISO'S FILE. It lives under <root>/.rn-iso/, which
+//    rn-iso creates and self-ensures into .gitignore, never in the project
+//    directory. Writing a project file is the line engine/remote-cache.ts
+//    draws and this honours it.
+import { join } from 'node:path';
+import { sanitizeDeviceLabel } from '../sim/ios.ts';
+import type { RemoteDaemon } from './eas-simulator.ts';
+
+// The name agent-device reads a token from, and the name eas-cli writes into
+// .env.eas-simulator (simulator/utils.ts,
+// getRemoteSessionEnvironmentVariables). The two agreeing is what lets one
+// backend serve EAS Simulator and a self-hosted proxy unchanged.
+export const DAEMON_TOKEN_ENV = 'AGENT_DEVICE_DAEMON_AUTH_TOKEN';
+
+const PROFILE_FILE = 'agent-device.remote.json';
+
+/** The non-secret half of a connection: routing only, per ADR 0007. */
+export interface RemoteProfile {
+  daemonBaseUrl: string;
+  daemonTransport: 'http';
+  platform: 'ios' | 'android';
+  session: string;
+  metroProjectRoot: string;
+}
+
+// PURE. agent-device's session name for this workspace.
+//
+// Per-workspace by construction. agent-device's docs are explicit that a
+// flagless command "can reuse active connection state", so two worktrees
+// sharing a session name is how one of them adopts the other's connection --
+// the same collision rn-iso's port and device ownership exist to prevent.
+export function sessionNameFor(label: string): string {
+  return `rn-iso-${sanitizeDeviceLabel(label)}`;
+}
+
+// PURE. Where rn-iso keeps the profile: its own directory, not the project's.
+export function remoteProfilePath(root: string): string {
+  return join(root, '.rn-iso', PROFILE_FILE);
+}
+
+// PURE. The profile, with no credential in it.
+//
+// `daemonTransport: 'http'` is stated rather than left to discovery: a remote
+// daemon is reached over HTTP by definition, and socket discovery against a
+// remote URL is a wasted probe on every command.
+export function remoteProfile({
+  daemon,
+  platform,
+  label,
+  projectRoot,
+}: {
+  daemon: RemoteDaemon;
+  platform: 'ios' | 'android';
+  label: string;
+  projectRoot: string;
+}): RemoteProfile {
+  return {
+    daemonBaseUrl: daemon.baseUrl,
+    daemonTransport: 'http',
+    platform,
+    session: sessionNameFor(label),
+    metroProjectRoot: projectRoot,
+  };
+}
+
+// PURE. The env additions a child agent-device call needs.
+export function daemonEnv(daemon: RemoteDaemon): Record<string, string> {
+  return { [DAEMON_TOKEN_ENV]: daemon.token };
+}
+
+// Every argv below carries --remote-config. agent-device falls back to an
+// "active connection" when a command has no explicit selectors, which in a
+// repo with several worktrees means adopting a connection that belongs to a
+// different one.
+function withProfile(profilePath: string, args: string[]): string[] {
+  return [...args, '--remote-config', profilePath];
+}
+
+// PURE. Establish the connection. This is also what prepares Metro, lazily.
+export function connectArgs(profilePath: string): string[] {
+  return withProfile(profilePath, ['connect']);
+}
+
+// PURE. Push a locally-built artifact to the remote device.
+//
+// The path is its own argv element, so a `.app` under a directory with a
+// space in it arrives as one argument. Against a remote daemon the client
+// uploads the file and the daemon materializes it
+// (src/daemon/install-source-resolution.ts, the `path` + uploadedArtifactId
+// branch), which is why a local build needs no public URL and no EAS Build.
+export function installArgs(profilePath: string, bundleId: string, artifactPath: string): string[] {
+  return withProfile(profilePath, ['install', bundleId, artifactPath]);
+}
+
+// PURE. Launch, optionally via a deep link.
+//
+// `open <app> <url>` runs `simctl openurl` with the URL verbatim
+// (platforms/apple/core/app-launch.ts). That is what lets rn-iso pass its own
+// expo-dev-client link and sidestep callstack/agent-device#1245, where
+// agent-device's Metro hint writes only bare-RN's RCT_jsLocation and a
+// dev-client ignores it.
+//
+// `--relaunch` because rn-iso's contract is that `ios` produces a freshly
+// launched app on this workspace's Metro. Attaching to a process left over
+// from a previous run would report success while running an older bundle.
+export function openArgs(profilePath: string, bundleId: string, url: string | null): string[] {
+  const positional = url ? [bundleId, url] : [bundleId];
+  return withProfile(profilePath, ['open', ...positional, '--relaunch']);
+}
+
+// PURE. Release the lease and stop the Metro companion this workspace owns.
+export function disconnectArgs(profilePath: string): string[] {
+  return withProfile(profilePath, ['disconnect']);
+}
