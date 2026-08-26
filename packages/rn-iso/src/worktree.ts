@@ -648,13 +648,15 @@ export function addWorktree({
 }
 
 export function removeWorktree(path: string, { force = false }: { force?: boolean } = {}): void {
-  const flag = force ? ' --force' : '';
   // `-C`-scoped, not a bare `git worktree remove`: the bare form depends on
   // process.cwd() being inside the repo, which is not guaranteed for an
   // unattended agent/phone-spawned invocation (the primary use case here).
-  // Validation just above (in registerRemove) already uses `git -C
-  // "${path}" worktree list`; this matches that.
-  getExecutor().run(`git -C "${path}" worktree remove${flag} "${path}"`);
+  // runFile (no shell) with a trailing `--`, not an interpolated `run`: this is
+  // a DESTRUCTIVE command and `path` comes from `git worktree list` -- a
+  // directory a user created, which may contain a quote or `$(...)`. addWorktree
+  // takes the same care for the same reason.
+  const args = ['-C', path, 'worktree', 'remove', ...(force ? ['--force'] : []), '--', path];
+  getExecutor().runFile('git', args);
 }
 
 // One `git worktree list --porcelain` entry: the worktree path, and its

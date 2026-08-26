@@ -28,8 +28,9 @@ import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { clearDevice, getConfigDir, loadConfig } from '../config.ts';
 import { formatBytes, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
-import { listBuildLocks } from '../engine/build-lock.ts';
-import { listBuildSlots } from '../engine/build-slots.ts';
+import { listBuildLocks, readBuildLock } from '../engine/build-lock.ts';
+import { listBuildSlots, readBuildSlot } from '../engine/build-slots.ts';
+import { isPidAlive } from '../metro.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { listAllIosSims, type IosSimRecord } from '../sim/ios.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
@@ -989,9 +990,15 @@ export async function runGc(opts: RunGcOptions = {}) {
   }
 
   // Stale locks only, and only ever the directory: there is no process to
-  // signal (that is what makes it stale) and no artifact to remove. A LIVE
-  // lock is never reached from here -- it was never in this list.
+  // signal (that is what makes it stale) and no artifact to remove. The stale
+  // list was built when the report was assembled; a waiter may have reaped and
+  // re-created this lock as a LIVE build since (the TOCTOU reapStaleLock closes
+  // on the acquire side). Re-read each record right before removing and skip a
+  // now-live one -- deleting it would let a second builder acquire the same
+  // fingerprint.
   for (const lock of buildLocks.stale) {
+    const current = readBuildLock(lock.path);
+    if (current?.pid && isPidAlive(current.pid)) continue;
     try {
       rmSync(lock.path, { recursive: true, force: true });
       console.log(
@@ -1005,9 +1012,12 @@ export async function runGc(opts: RunGcOptions = {}) {
     }
   }
 
-  // Stale build slots, the same way: only ever the directory, and only a slot
-  // no live builder holds (a live one was never in this list).
+  // Stale build slots, the same way -- and with the same right-before-removal
+  // liveness re-check, so a slot re-claimed by a live builder since the report
+  // is not deleted out from under it (which would over-subscribe maxBuilds).
   for (const slot of buildSlots.stale) {
+    const current = readBuildSlot(slot.path);
+    if (current?.pid && isPidAlive(current.pid)) continue;
     try {
       rmSync(slot.path, { recursive: true, force: true });
       console.log(

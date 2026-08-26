@@ -256,12 +256,20 @@ function makeExecutor({
     calls: { run: runCalls, runQuiet: runQuietCalls },
     run(cmd: string) {
       runCalls.push(cmd);
-      if (/worktree remove/.test(cmd)) return '';
       if (/simctl list devices --json/.test(cmd)) return simctlList;
       // deleteIosSim/deleteAvd go through the throwing run() so a failed
       // delete surfaces as { status: 'failed' } instead of a false success.
       if (/simctl delete|delete avd/.test(cmd)) return '';
       throw new Error(`unexpected run: ${cmd}`);
+    },
+    // `git worktree remove` now goes through runFile (no shell) since it is a
+    // destructive command with an interpolated path. Reconstruct the command
+    // into the same runCalls log so the assertions below match either form.
+    runFile(file: string, args: string[] = []) {
+      const cmd = [file, ...args].join(' ');
+      runCalls.push(cmd);
+      if (/worktree remove/.test(cmd)) return '';
+      throw new Error(`unexpected runFile: ${cmd}`);
     },
     runQuiet(cmd: string) {
       runQuietCalls.push(cmd);
@@ -369,12 +377,12 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
   // config entry. A future reorder (removeWorktree before reclaimProject)
   // would leave the entry present here and fail this assertion, even though
   // every pure removalBlockers test above would still pass unchanged.
-  const originalRun = exec.run.bind(exec);
-  exec.run = (cmd) => {
-    if (/worktree remove/.test(cmd)) {
+  const originalRunFile = exec.runFile.bind(exec);
+  exec.runFile = (file, args = []) => {
+    if (/worktree remove/.test([file, ...args].join(' '))) {
       expect(getProject(wtDir)).toBe(null);
     }
-    return originalRun(cmd);
+    return originalRunFile(file, args);
   };
   setExecutor(exec);
 
@@ -632,12 +640,12 @@ test('action: the workspace directory is deleted before git worktree remove is c
   });
   // Fail the removal the way real git does when the directory is still there,
   // so the assertion is about ORDER rather than about our own rmSync.
-  const originalRun = exec.run;
-  exec.run = function (cmd) {
-    if (/worktree remove/.test(cmd) && existsSync(join(wtDir, '.rn-iso'))) {
+  const originalRunFile = exec.runFile;
+  exec.runFile = function (file, args = []) {
+    if (/worktree remove/.test([file, ...args].join(' ')) && existsSync(join(wtDir, '.rn-iso'))) {
       throw new Error('fatal: contains modified or untracked files, use --force to delete it');
     }
-    return originalRun.call(this, cmd);
+    return originalRunFile.call(this, file, args);
   };
   setExecutor(exec);
 
@@ -969,7 +977,7 @@ test('action: run from a monorepo app dir, it removes the enclosing worktree', a
   await run(nestedDir, {});
 
   expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some((c) => c.includes(`worktree remove "${wtDir}"`))).toBeTruthy();
+  expect(exec.calls.run.some((c) => c.includes(`worktree remove -- ${wtDir}`))).toBeTruthy();
   expect(getProject(wtDir)).toBe(null);
   expect(getProject(nestedDir)).toBe(null);
 });

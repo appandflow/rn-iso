@@ -395,7 +395,7 @@ export async function runStop({
   waitForDeath?: ((pid: number) => Promise<boolean>) | undefined;
   waitMs?: number;
   resolveMetro?: (port: number, root: string) => Promise<MetroResolution>;
-  killMetro?: (leader: number | null | undefined) => boolean;
+  killMetro?: (leader: number | null | undefined, listenerPid?: number | null) => boolean;
   findListener?: (port: number) => number | null;
   teardownIos?: (udid: string, opts: { del?: boolean; label?: string }) => TeardownResult;
   teardownAvd?: (avdName: string, opts: { del?: boolean }) => TeardownResult;

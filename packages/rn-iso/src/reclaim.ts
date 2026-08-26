@@ -14,7 +14,7 @@ import { readCollectors } from './collector/state.ts';
 function reapCollectors(root: string): void {
   for (const record of Object.values(readCollectors(root))) {
     const pid = (record as { pid?: unknown } | null)?.pid;
-    if (typeof pid !== 'number' || pid === process.pid || !isPidAlive(pid)) continue;
+    if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !isPidAlive(pid)) continue;
     try {
       process.kill(pid, 'SIGTERM');
     } catch {

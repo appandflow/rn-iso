@@ -509,12 +509,12 @@ test('addWorktree uses -b for a genuinely new branch name', () => {
   }
 });
 
-test('removeWorktree includes --force only when asked, for a path containing a space', () => {
+test('removeWorktree runs git via runFile (no shell) and includes --force only when asked', () => {
   const path = '/tmp/my worktree/repo';
-  const calls: string[] = [];
+  const calls: string[][] = [];
   setExecutor({
-    run: (cmd) => {
-      calls.push(cmd);
+    runFile: (file, args = []) => {
+      calls.push([file, ...args]);
       return '';
     },
     runQuiet: () => '',
@@ -524,9 +524,11 @@ test('removeWorktree includes --force only when asked, for a path containing a s
   removeWorktree(path);
   removeWorktree(path, { force: true });
 
+  // No shell: the path -- which may contain a space, quote, or `$(...)` -- is a
+  // single argv element, and `--` ends option parsing before it.
   expect(calls).toEqual([
-    `git -C "${path}" worktree remove "${path}"`,
-    `git -C "${path}" worktree remove --force "${path}"`,
+    ['git', '-C', path, 'worktree', 'remove', '--', path],
+    ['git', '-C', path, 'worktree', 'remove', '--force', '--', path],
   ]);
 });
 
