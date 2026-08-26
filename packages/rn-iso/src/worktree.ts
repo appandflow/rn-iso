@@ -420,6 +420,41 @@ export function podsOutOfSync(
   return problems;
 }
 
+const LOCKFILE_NAMES = ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb'];
+
+// Carried node_modules match the SOURCE worktree; the target's lockfile comes
+// from the branch. When the two lockfiles differ, the carried install cannot
+// satisfy this branch's manifest -- the classic symptom is the dev server
+// dying on a config plugin the branch added after the source last installed
+// (appandflow/rn-iso#32). Byte comparison of the lockfiles is cheap and
+// answers exactly that question; same advisory contract as podsOutOfSync.
+export function depsOutOfSync(
+  root: string,
+  target: string,
+  copiedEntries: string[] | null | undefined,
+  { read = readFileSync }: { read?: typeof readFileSync } = {},
+): { dir: string; lockfile: string }[] {
+  const problems: { dir: string; lockfile: string }[] = [];
+  for (const rel of copiedEntries || []) {
+    if (rel !== 'node_modules' && !rel.endsWith('/node_modules')) continue;
+    const dir = rel === 'node_modules' ? '' : rel.slice(0, -'/node_modules'.length);
+    for (const name of LOCKFILE_NAMES) {
+      const source = join(root, dir, name);
+      const branch = join(target, dir, name);
+      if (!existsSync(source) || !existsSync(branch)) continue;
+      try {
+        if (read(source, 'utf-8') !== read(branch, 'utf-8')) {
+          problems.push({ dir: dir || '.', lockfile: name });
+        }
+      } catch {
+        // Unreadable is not the same as out of sync, and this is advisory.
+      }
+      break;
+    }
+  }
+  return problems;
+}
+
 // Returns null (indeterminate) when `runQuiet` could not get an answer from
 // git at all -- e.g. index.lock held by a concurrent process, a permission
 // error, or `dir` not being a git worktree -- as distinct from `false`

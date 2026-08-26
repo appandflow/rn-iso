@@ -16,6 +16,7 @@ import {
   carryOverFiles,
   cloneIgnoredEntries,
   podsOutOfSync,
+  depsOutOfSync,
   isPodInstallChurn,
   listGitignoredEntries,
   listGitignoredFiles,
@@ -638,6 +639,25 @@ function podsFixture({
   if (podfileLock != null) writeFileSync(join(root, dir, 'Podfile.lock'), podfileLock);
   return root;
 }
+
+test('depsOutOfSync flags a carried node_modules whose source lockfile differs from the branch checkout', () => {
+  const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-deps-'));
+  const root = join(base, 'src');
+  const target = join(base, 'wt');
+  try {
+    mkdirSync(root, { recursive: true });
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(root, 'pnpm-lock.yaml'), 'lock-v1');
+    writeFileSync(join(target, 'pnpm-lock.yaml'), 'lock-v2');
+    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([{ dir: '.', lockfile: 'pnpm-lock.yaml' }]);
+    writeFileSync(join(target, 'pnpm-lock.yaml'), 'lock-v1');
+    expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([]);
+    expect(depsOutOfSync(root, target, ['assets'])).toEqual([]);
+    expect(depsOutOfSync(root, target, null)).toEqual([]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
 
 test('carried Pods matching their Podfile.lock produce no warning', () => {
   const root = podsFixture({ manifest: 'PODS:\n  - fmt (11.0.2)\n', podfileLock: 'PODS:\n  - fmt (11.0.2)\n' });
