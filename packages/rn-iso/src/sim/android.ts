@@ -261,10 +261,23 @@ export function nextConsolePort(claimedPorts: number[]): number {
   return max + 2; // emulator console ports are even
 }
 
+// A Linux host with no display -- a CI runner, an SSH session -- cannot open
+// the emulator window: without -no-window the emulator dies in display init
+// and never registers with adb (observed live on a GitHub runner: the qemu
+// process launched, `adb devices` never listed it). Headlessness is a fact of
+// the environment, so it is detected, not configured; a desktop session keeps
+// its window.
+export function headlessEmulatorArgs(env: NodeJS.ProcessEnv = process.env): string[] {
+  if (process.platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
+    return ['-no-window', '-noaudio', '-no-boot-anim', '-gpu', 'swiftshader_indirect'];
+  }
+  return [];
+}
+
 export function bootAndroidEmulator(avdName: string, consolePort: number): void {
   const exec = getExecutor();
   exec
-    .spawn(androidToolPath('emulator'), ['-avd', avdName, '-port', String(consolePort)], {
+    .spawn(androidToolPath('emulator'), ['-avd', avdName, '-port', String(consolePort), ...headlessEmulatorArgs()], {
       detached: true,
       stdio: 'ignore',
     })

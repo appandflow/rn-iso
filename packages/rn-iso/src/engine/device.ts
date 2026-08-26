@@ -565,7 +565,11 @@ interface BootResult {
 export async function ensureBooted({
   platform,
   device,
-  timeoutMs = 120000,
+  // 240s, not 120: the FIRST boot of a freshly created AVD does a full cold
+  // Android boot, and on a loaded host (or software rendering on a CI runner)
+  // that genuinely takes 2-4 minutes. The wait returns the moment the device
+  // reports booted; the timeout only bounds the worst case.
+  timeoutMs = 240000,
   pollMs = BOOT_POLL_MS,
   out = () => {},
 }: Partial<{
