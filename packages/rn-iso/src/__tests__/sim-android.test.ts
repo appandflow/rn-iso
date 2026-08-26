@@ -5,6 +5,7 @@ import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
   androidToolPath,
+  headlessEmulatorArgs,
   bootAndroidEmulator,
   listAvds,
   parseAvdList,
@@ -111,6 +112,19 @@ test('nextConsolePort returns 5554 when none claimed', () => {
 
 test('nextConsolePort returns next even port above max claimed', () => {
   expect(nextConsolePort([5554, 5556])).toBe(5558);
+});
+
+test('headlessEmulatorArgs is headless on displayless linux only', () => {
+  expect(headlessEmulatorArgs({}, 'linux')).toEqual([
+    '-no-window',
+    '-noaudio',
+    '-no-boot-anim',
+    '-gpu',
+    'swiftshader_indirect',
+  ]);
+  expect(headlessEmulatorArgs({ DISPLAY: ':0' }, 'linux')).toEqual([]);
+  expect(headlessEmulatorArgs({ WAYLAND_DISPLAY: 'wayland-0' }, 'linux')).toEqual([]);
+  expect(headlessEmulatorArgs({}, 'darwin')).toEqual([]);
 });
 
 test('pickDefaultSystemImage prefers highest api, then google_apis, arm64 only', () => {
