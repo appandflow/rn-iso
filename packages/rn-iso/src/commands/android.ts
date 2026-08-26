@@ -374,6 +374,18 @@ interface ApkDevClientFacts {
 // CLI uses (and that pickDevClientScheme inherits for iOS, where the plist
 // gives no activity structure) picks exactly the wrong one. The activity that
 // answers android.intent.action.MAIN is the app.
+// PURE. The `package` attribute of the manifest root -- the ground truth the
+// APK itself carries. Exists for the same reason the iOS command reads the
+// bundle id out of the cached .app's Info.plist: on a cache HIT no prebuild
+// ran, so a managed app may have no android/ dir and no android.package in
+// app.json, yet the artifact in hand knows exactly what it is.
+export function apkPackage(text: unknown): string | null {
+  const root = parseXmltree(text);
+  const manifest = root.children.find((c) => c.tag === 'manifest');
+  const pkg = manifest?.attrs['package'];
+  return typeof pkg === 'string' && pkg.trim() ? pkg.trim() : null;
+}
+
 export function apkDevClientFacts(text: unknown): ApkDevClientFacts {
   const root = parseXmltree(text);
   const facts: ApkDevClientFacts = { devClient: false, schemes: [] };
@@ -1277,7 +1289,10 @@ export async function runAndroid(
   );
 
   // ---- launch (Contract 6) ---------------------------------------------
-  androidPackage = androidPackage || detectAndroidPackage(root);
+  // Project files first, then the APK itself: on a cache hit no prebuild ran,
+  // so a managed app can have no android/ dir and no android.package in its
+  // config -- but the installed artifact always knows its own package.
+  androidPackage = androidPackage || detectAndroidPackage(root) || apkPackage(dumpApkManifest(apkPath));
   record.bundleId = androidPackage;
   if (!androidPackage) {
     return fail(
