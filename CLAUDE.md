@@ -26,9 +26,9 @@ The v3 lifecycle is `worktree create` -> `start` -> `ios|android` ->
 `logs --errors` -> edit -> `logs` -> `stop` / `worktree remove` (which reaps the
 owned device(s) along with the worktree).
 
-**The surface is closed, at eleven commands.** `doctor`, `worktree
+**The surface is closed, at ten commands.** `doctor`, `worktree
 create|remove`, `start`, `stop`, `ios`, `android`, `logs`, `status`, `gc`, plus
-`guide` and `skill`. That is all of it, deliberately (spec: "Command surface").
+`guide`. That is all of it, deliberately (spec: "Command surface").
 v2's `up`, `device`, `release`, `shutdown`, `config`, `build-cache` and
 `worktree list` are deleted, along with `--serial` and all physical-device
 support. A project needing more wraps rn-iso in an npm script rather than
@@ -221,7 +221,6 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # with nothing able to clear it; --delete clears the RECORD only), and
                           # report the shared caches (every run; there is no --caches flag)
       guide.js            # version-matched reference topics, printed by the binary
-      skill.js            # copy the bundled skills into ~/.claude and ~/.agents
   test/
     *.test.js             # `node --test` (no framework)
   skill/
@@ -275,9 +274,9 @@ checklist:
 - Behavior change (e.g., a new `--json` field, a new destructive side effect)?
   Update both the relevant section and "When things go wrong".
 
-Two skills ship in the package, and `skill install` copies both:
+Two skills ship in the package, installed with `npx skills`:
 `skill/SKILL.md` (how to drive the CLI) and `skill/rn-iso-init/SKILL.md`
-(how to make a repo fast for parallel agents). The second one is now the whole
+(how to make a repo fast for parallel agents). The second one is the whole
 of repo setup -- it is a PLAYBOOK an agent applies by hand, not a description of
 a command -- so a change to caching or to `doctor` belongs there, not in the
 first.

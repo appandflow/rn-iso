@@ -25,7 +25,6 @@ import type { MetroResolution } from '../metro.ts';
 import { supervisorLogFile, workspaceLogsDir } from '../paths.ts';
 import { reserveMetroPort } from '../ports.ts';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
-import { installedSkillVersions, staleSkillWarning } from './skill.ts';
 import { readWorkspaceState } from '../supervisor/state.ts';
 import { ensureWorkspaceIgnored } from '../engine/workspace.ts';
 import { spawnEntry } from '../spawn-entry.ts';
@@ -174,8 +173,8 @@ export function readLogTail(file: string, n = LOG_TAIL_LINES): string[] {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-export default function startCommand(program: Command, cliVersion?: string | null) {
-  registerStart(program, cliVersion);
+export default function startCommand(program: Command) {
+  registerStart(program);
 }
 
 interface StartOptions {
@@ -183,12 +182,7 @@ interface StartOptions {
   wait?: string;
 }
 
-// `cliVersion` is optional: without it the skill-staleness check is skipped
-// rather than comparing against undefined, which would report every installed
-// copy as stale. Only bin/cli.js has the real version to pass. This check used
-// to live on `up`, which was the command every session ran first; `start` is
-// what took that place in the v3 lifecycle.
-export function registerStart(program: Command, cliVersion: string | null = null) {
+export function registerStart(program: Command) {
   program
     .command('start')
     .description(
@@ -227,15 +221,6 @@ export function registerStart(program: Command, cliVersion: string | null = null
         if (json) console.log(JSON.stringify(startError({ code, message, remedy })));
         process.exit(1);
       };
-
-      // The installed skill is a plain file copy, so upgrading rn-iso never
-      // refreshes it. A v2 skill against a v3 CLI describes commands that no
-      // longer exist, and nothing else says so. Never fatal, and never on
-      // stdout -- see the --json contract above. ONE line however many copies
-      // are installed: both targets normally hold the same file, and the
-      // warning names neither, so a per-copy loop just said it twice.
-      const skillWarning = cliVersion ? staleSkillWarning(installedSkillVersions(), cliVersion) : null;
-      if (skillWarning) note(chalk.yellow(skillWarning));
 
       const wait = parseWait(opts.wait);
       if (wait.error) {

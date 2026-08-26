@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { readFileSync } from 'fs';
 import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
 
@@ -23,6 +24,7 @@ test('the index lists every topic and the running version', () => {
 // guide is not updated, this fails rather than shipping stale agent guidance.
 test('the facts topic documents the fields each --json payload actually carries', () => {
   const body = renderTopic('facts');
+  assert(body);
   const sources = {
     start: readFileSync(new URL('../commands/start.ts', import.meta.url), 'utf-8'),
     ios: readFileSync(new URL('../commands/ios.ts', import.meta.url), 'utf-8'),
@@ -48,7 +50,7 @@ test('the facts topic documents the fields each --json payload actually carries'
   for (const [command, names] of Object.entries(fields)) {
     for (const f of names) {
       expect(body.includes(f)).toBeTruthy();
-      expect(sources[command].includes(f)).toBeTruthy();
+      expect(sources[command as keyof typeof sources].includes(f)).toBeTruthy();
     }
   }
 });
@@ -58,6 +60,7 @@ test('the facts topic documents the fields each --json payload actually carries'
 // `up --wait-metro` by exactly one release, which is what this pins against.
 test('the flags the guide advertises are the flags the commands define', () => {
   const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
   const advertised = {
     'start.ts': ['--json', '--wait'],
     'ios.ts': ['--json', '--no-metro-check', '--no-build-cache'],
@@ -78,7 +81,9 @@ test('the flags the guide advertises are the flags the commands define', () => {
   const statusSrc = readFileSync(new URL('../commands/status.ts', import.meta.url), 'utf-8');
   expect(!statusSrc.includes("'--all'")).toBeTruthy();
   for (const name of topicNames()) {
-    expect(!renderTopic(name).includes('status --all')).toBeTruthy();
+    const topic = renderTopic(name);
+    assert(topic);
+    expect(!topic.includes('status --all')).toBeTruthy();
   }
 });
 
@@ -100,6 +105,7 @@ test('no topic teaches a command this binary does not have', () => {
   ];
   for (const name of topicNames()) {
     const body = renderTopic(name);
+    assert(body);
     for (const dead of gone) {
       expect(!body.includes(dead)).toBeTruthy();
     }
@@ -112,6 +118,7 @@ test('no topic teaches a command this binary does not have', () => {
 // branching on `code` meets one it has no guidance for.
 test('the errors topic documents every code the build commands can emit', () => {
   const body = renderTopic('errors');
+  assert(body);
   const sources = ['ios.ts', 'android.ts', 'start.ts']
     .map((f) => readFileSync(new URL(`../commands/${f}`, import.meta.url), 'utf-8'))
     .join('\n');
@@ -125,6 +132,7 @@ test('the errors topic documents every code the build commands can emit', () => 
 
 test('the settings topic lists exactly the keys settings.js honours', () => {
   const body = renderTopic('settings');
+  assert(body);
   const src = readFileSync(new URL('../settings.ts', import.meta.url), 'utf-8');
   const known = [...src.matchAll(/^\s*'([a-zA-Z.]+)',$/gm)].map((m) => m[1]);
   expect(known.length > 0).toBeTruthy();
@@ -166,7 +174,6 @@ test('the skill advertises exactly the commands bin/cli.js registers', () => {
     'guide',
     'ios',
     'logs',
-    'skill',
     'start',
     'status',
     'stop',

@@ -11,7 +11,6 @@ import logsCommand from '../src/commands/logs.ts';
 import statusCommand from '../src/commands/status.ts';
 import gcCommand from '../src/commands/gc.ts';
 import guideCommand from '../src/commands/guide.ts';
-import skillCommand from '../src/commands/skill.ts';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 
@@ -32,7 +31,7 @@ program.name('rn-iso').description('Isolated React Native dev environments per p
 // reports, an agent applies each fix in the repo's own style.
 doctorCommand(program);
 worktreeCommand(program);
-startCommand(program, pkg.version);
+startCommand(program);
 stopCommand(program);
 iosCommand(program);
 androidCommand(program);
@@ -40,7 +39,6 @@ logsCommand(program);
 statusCommand(program);
 gcCommand(program);
 guideCommand(program, pkg.version);
-skillCommand(program, pkg.version);
 
 // parseAsync (not parse): several command actions (ios, android, start, stop,
 // worktree) are async, and commander only awaits/propagates their errors

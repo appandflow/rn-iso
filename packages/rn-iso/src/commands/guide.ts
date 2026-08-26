@@ -516,7 +516,7 @@ but --base <ref> resolves to <sha>"  (worktree create)
 
 "Installed rn-iso skill is X but this CLI is Y"
   The skill is a plain file copy, so upgrading rn-iso never refreshes it, and
-  npx can serve a cached older CLI. Run \`npx rn-iso skill install\`. If the
+  npx can serve a cached older CLI. Refresh the skill with \`npx skills\`. If the
   CLI itself is the old half, \`npx rn-iso@latest\` bypasses the stale cache.
 
 "Found no free Metro port between ..."
