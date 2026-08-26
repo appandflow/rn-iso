@@ -4,3 +4,8 @@ node_modules/
 .superpowers/
 dist/
 .rn-iso/
+
+# stray tsc/tsdown declaration output next to sources (real types ship from dist/)
+packages/*/index.d.ts
+packages/*/bin/*.d.ts
+packages/rn-iso/src/**/*.d.ts
