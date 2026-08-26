@@ -1,0 +1,25 @@
+{
+  "id": "changelog",
+  "title": "Changelog",
+  "description": "Release notes",
+  "source": "@site/docs/changelog.md",
+  "sourceDirName": ".",
+  "slug": "/changelog",
+  "permalink": "/rn-iso/docs/changelog",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/appandflow/rn-iso/tree/main/website/docs/changelog.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 99,
+  "frontMatter": {
+    "title": "Changelog",
+    "sidebar_position": 99,
+    "description": "Release notes"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Requirements",
+    "permalink": "/rn-iso/docs/requirements"
+  }
+}

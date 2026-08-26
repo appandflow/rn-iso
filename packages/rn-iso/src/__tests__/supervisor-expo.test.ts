@@ -72,6 +72,13 @@ describe('line parsing', () => {
     expect(inferLevel('')).toBe('info');
   });
 
+  test('inferLevel treats a Node-exception line (PluginError:, CommandError:) as an error (#30)', () => {
+    expect(inferLevel('PluginError: Failed to resolve plugin for module "expo-share-intent"')).toBe('error');
+    expect(inferLevel('CommandError: something broke')).toBe('error');
+    expect(inferLevel('Errors were found')).toBe('info');
+    expect(inferLevel('PluginErrorish text without colon')).toBe('info');
+  });
+
   test('inferLevel reads the symbols Expo uses instead of words', () => {
     expect(inferLevel('\u2716 Metro encountered an error')).toBe('error');
     expect(inferLevel('\u274C build failed')).toBe('error');
@@ -213,6 +220,28 @@ describe('startExpoServer', () => {
     // detached:false is what keeps the child in the supervisor's process
     // group, so it can never outlive it.
     expect(seen.opts.detached).toBe(false);
+  });
+
+  test('the child inherits the supervisor process environment (#33)', async () => {
+    fakeBin();
+    process.env.RN_ISO_TEST_SENTINEL = 'through';
+    const calls: { opts: SpawnOptions }[] = [];
+    try {
+      await startExpoServer({
+        root,
+        port: 8113,
+        logsDir: join(root, 'logs'),
+        spawnFn: (_cmd, _args, opts) => {
+          calls.push({ opts });
+          return fakeChild();
+        },
+      });
+    } finally {
+      delete process.env.RN_ISO_TEST_SENTINEL;
+    }
+    const env = calls[0]?.opts.env as Record<string, string>;
+    expect(env.RN_ISO_TEST_SENTINEL).toBe('through');
+    expect(env.FORCE_COLOR).toBe('0');
   });
 
   test('stdout and stderr lines land in metro.ndjson as Contract-1 records', async () => {

@@ -208,6 +208,9 @@ test('the dev client finding still fires for a project that builds with expo run
 // file that has to say so (isWorkspaceArtifact in src/worktree.js).
 test('silent when .rn-iso is gitignored', () => {
   expect(checkArtifactLayout({ gitignoreSource: '.rn-iso/\n' })).toBe(null);
+  // git's monorepo-aware verdict wins over the app dir's own file (#31)
+  expect(checkArtifactLayout({ gitignoreSource: 'node_modules\n', gitIgnored: true })).toBe(null);
+  expect(checkArtifactLayout({ gitignoreSource: '.rn-iso/\n', gitIgnored: null })).toBe(null);
 });
 
 test('a project that does not ignore .rn-iso is told what ends up in git status', () => {

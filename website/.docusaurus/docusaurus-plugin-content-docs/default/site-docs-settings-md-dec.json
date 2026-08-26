@@ -1,0 +1,29 @@
+{
+  "id": "settings",
+  "title": "Settings",
+  "description": "The layered settings files and every key rn-iso reads",
+  "source": "@site/docs/settings.md",
+  "sourceDirName": ".",
+  "slug": "/settings",
+  "permalink": "/rn-iso/docs/settings",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/appandflow/rn-iso/tree/main/website/docs/settings.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 1,
+  "frontMatter": {
+    "title": "Settings",
+    "sidebar_position": 1,
+    "description": "The layered settings files and every key rn-iso reads"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Worktrees",
+    "permalink": "/rn-iso/docs/worktrees"
+  },
+  "next": {
+    "title": "The cache packages",
+    "permalink": "/rn-iso/docs/cache-packages"
+  }
+}

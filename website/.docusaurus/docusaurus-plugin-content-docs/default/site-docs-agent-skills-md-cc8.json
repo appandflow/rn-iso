@@ -1,0 +1,29 @@
+{
+  "id": "agent-skills",
+  "title": "Agent skills",
+  "description": "Installing and refreshing the bundled skills with npx skills",
+  "source": "@site/docs/agent-skills.md",
+  "sourceDirName": ".",
+  "slug": "/agent-skills",
+  "permalink": "/rn-iso/docs/agent-skills",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/appandflow/rn-iso/tree/main/website/docs/agent-skills.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 3,
+  "frontMatter": {
+    "title": "Agent skills",
+    "sidebar_position": 3,
+    "description": "Installing and refreshing the bundled skills with npx skills"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "The cache packages",
+    "permalink": "/rn-iso/docs/cache-packages"
+  },
+  "next": {
+    "title": "Requirements",
+    "permalink": "/rn-iso/docs/requirements"
+  }
+}

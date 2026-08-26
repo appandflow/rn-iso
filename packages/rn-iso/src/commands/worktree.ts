@@ -10,6 +10,7 @@ import {
   addWorktree,
   branchExists,
   carryOverFiles,
+  depsOutOfSync,
   cloneIgnoredEntries,
   defaultWorktreeDir,
   dirtyPaths,
@@ -239,6 +240,14 @@ export function registerCreate(worktree: Command): void {
         }
         for (const f of res.failed) {
           console.error(chalk.yellow(`Failed to clone ${f.file}: ${f.error}`));
+        }
+        for (const d of depsOutOfSync(root, target, res.copied)) {
+          const where = d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`;
+          console.error(
+            chalk.yellow(
+              `Carried ${d.dir === '.' ? 'node_modules' : `${d.dir}/node_modules`} was installed for a different ${d.lockfile} than this branch's ${where}. Reinstall dependencies before building, or the dev server can die on a module the branch added.`,
+            ),
+          );
         }
         for (const p of podsOutOfSync(target, res.copied)) {
           const where = p.dir === '.' ? 'Podfile.lock' : `${p.dir}/Podfile.lock`;

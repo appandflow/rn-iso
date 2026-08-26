@@ -120,8 +120,8 @@ export function checkMetroCache(metroConfigSource: string | null): Finding | nul
     return finding(
       'note',
       'No metro.config.js found',
-      'Metro then caches transforms under the project itself, so a second workspace starts cold and re-transforms every module.',
-      'Add a metro.config.js with a FileStore cacheStore pointing outside the project.',
+      "Metro's default transform cache lives under $TMPDIR/metro-cache -- outside the project, but in a location the OS periodically purges and rn-iso's gc cannot see.",
+      'Add a metro.config.js with a FileStore cacheStore at a stable shared path.',
     );
   }
   // A config that is nothing but a re-export cannot be read here at all: the
@@ -286,13 +286,22 @@ function listsWorkspaceDir(source: string | null | undefined): boolean {
     .some((line) => line.replace(/^\/+/, '').replace(/\/+$/, '') === WORKSPACE_DIR);
 }
 
-export function checkArtifactLayout({ gitignoreSource }: { gitignoreSource?: string | null } = {}): Finding | null {
-  if (listsWorkspaceDir(gitignoreSource)) return null;
+// `gitIgnored` is git's own verdict (`git check-ignore`), which sees every
+// .gitignore on the path -- a monorepo app dir covered by the REPO ROOT's
+// .gitignore is properly ignored even though its own file never says so
+// (appandflow/rn-iso#31). The file read stays as the fallback for a tree
+// where git is not available.
+export function checkArtifactLayout({
+  gitignoreSource,
+  gitIgnored = null,
+}: { gitignoreSource?: string | null; gitIgnored?: boolean | null } = {}): Finding | null {
+  if (gitIgnored === true) return null;
+  if (gitIgnored === null && listsWorkspaceDir(gitignoreSource)) return null;
   return finding(
     'note',
     '.rn-iso/ is not gitignored',
     "It holds this workspace's build output, logs and supervisor pidfile -- location-addressed, meaningful only to the checkout that produced it. Unignored, every build offers its own DerivedData up for commit and git status stops being readable.",
-    `Add ${WORKSPACE_DIR}/ to .gitignore. (start/ios/android add it themselves on first use; this only appears when that write failed or was reverted.)`,
+    `Add ${WORKSPACE_DIR}/ to .gitignore -- or just run start/ios/android once: they add it themselves and say so. On a repo rn-iso has already touched, this finding means that self-write failed or was reverted.`,
   );
 }
 
@@ -524,6 +533,15 @@ export function runDoctor(
   const podfile = read(join('ios', 'Podfile'));
   const metroConfig = read('metro.config.js') ?? read('metro.config.cjs');
   const gitignore = read('.gitignore');
+  // git's verdict on the workspace dir, monorepo-aware. check-ignore exits 0
+  // for ignored, 1 for not ignored, 128 outside a repo; runQuiet nulls the
+  // failures, so only a definite "ignored" upgrades the file-based answer.
+  const gitIgnored =
+    getExecutor().runQuiet(`git -C ${JSON.stringify(projectRoot)} check-ignore ${WORKSPACE_DIR}`, {
+      timeoutMs: 10000,
+    }) != null
+      ? true
+      : null;
 
   // Same detector `status` uses, so one project never reads as expo in one
   // command and bare in another. It weighs the `ios` script above the presence
@@ -566,7 +584,7 @@ export function runDoctor(
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
     checkCompilationCache(podfile, xcodeMajor),
-    checkArtifactLayout({ gitignoreSource: gitignore }),
+    checkArtifactLayout({ gitignoreSource: gitignore, gitIgnored }),
     checkCcacheConflict(podfile, podfileProperties),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
     easFinding,

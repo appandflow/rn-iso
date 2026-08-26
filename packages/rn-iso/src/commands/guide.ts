@@ -170,6 +170,12 @@ WHAT THE SUPERVISOR IS
   the device-log collectors, shuts the owned device down (never deletes it)
   and frees the port.
 
+  ENVIRONMENT: the supervisor -- and through it the dev server, including a
+  metro.config.js evaluated inside the expo child -- inherits the environment
+  of the \`start\` call that SPAWNED it. A later \`start\` that finds a healthy
+  supervisor is a no-op and cannot change a running supervisor's env: to apply
+  a new env var, \`stop\` first, then \`start\` with it set.
+
   The supervisor's own stdio goes to .rn-iso/logs/supervisor.log, which is NOT
   part of the NDJSON timeline. It is what a supervisor that died before it
   could write a structured record leaves behind. In expo-child mode the child's

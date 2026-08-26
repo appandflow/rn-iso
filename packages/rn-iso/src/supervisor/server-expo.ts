@@ -190,6 +190,11 @@ export function inferLevel(line: unknown): string {
   if (/\bBundling failed\b/.test(text)) return 'error';
   if (/^Unable to resolve\b/.test(text)) return 'error';
   if (/^Failed to (load|resolve|compile|build)\b/.test(text)) return 'error';
+  // Node-exception shape: "PluginError: Failed to resolve plugin ...",
+  // "CommandError: ...". This is how an expo child dies on a config error,
+  // and it was stored at info in the tlon fresh-pass -- which hid the death
+  // cry from `logs --errors` AND from start's failure evidence (#30).
+  if (/^[A-Z][A-Za-z]*Error:/.test(text)) return 'error';
   return 'info';
 }
 

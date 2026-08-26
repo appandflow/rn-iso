@@ -1,0 +1,29 @@
+{
+  "id": "commands",
+  "title": "Commands",
+  "description": "The closed, ten-command surface, and what each one does",
+  "source": "@site/docs/commands.md",
+  "sourceDirName": ".",
+  "slug": "/commands",
+  "permalink": "/rn-iso/docs/commands",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/appandflow/rn-iso/tree/main/website/docs/commands.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 3,
+  "frontMatter": {
+    "title": "Commands",
+    "sidebar_position": 3,
+    "description": "The closed, ten-command surface, and what each one does"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Getting started",
+    "permalink": "/rn-iso/docs/getting-started"
+  },
+  "next": {
+    "title": "Owned devices",
+    "permalink": "/rn-iso/docs/owned-devices"
+  }
+}

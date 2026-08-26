@@ -1,0 +1,191 @@
+'use strict';
+(self.webpackChunkwebsite = self.webpackChunkwebsite || []).push([
+  ['331'],
+  {
+    8274(e, s, n) {
+      (n.r(s),
+        n.d(s, {
+          metadata: () => r,
+          default: () => h,
+          frontMatter: () => o,
+          contentTitle: () => c,
+          toc: () => a,
+          assets: () => d,
+        }));
+      var r = JSON.parse(
+          '{"id":"settings","title":"Settings","description":"The layered settings files and every key rn-iso reads","source":"@site/docs/settings.md","sourceDirName":".","slug":"/settings","permalink":"/rn-iso/docs/settings","draft":false,"unlisted":false,"editUrl":"https://github.com/appandflow/rn-iso/tree/main/website/docs/settings.md","tags":[],"version":"current","sidebarPosition":1,"frontMatter":{"title":"Settings","sidebar_position":1,"description":"The layered settings files and every key rn-iso reads"},"sidebar":"docs","previous":{"title":"Worktrees","permalink":"/rn-iso/docs/worktrees"},"next":{"title":"The cache packages","permalink":"/rn-iso/docs/cache-packages"}}',
+        ),
+        t = n(4848),
+        i = n(8453);
+      let o = {
+          title: 'Settings',
+          sidebar_position: 1,
+          description: 'The layered settings files and every key rn-iso reads',
+        },
+        c,
+        d = {},
+        a = [];
+      function l(e) {
+        let s = {
+          code: 'code',
+          li: 'li',
+          ol: 'ol',
+          p: 'p',
+          pre: 'pre',
+          strong: 'strong',
+          ...(0, i.R)(),
+          ...e.components,
+        };
+        return (0, t.jsxs)(t.Fragment, {
+          children: [
+            (0, t.jsxs)(s.p, {
+              children: [
+                (0, t.jsx)(s.code, { children: 'worktree create' }),
+                ', ',
+                (0, t.jsx)(s.code, { children: 'start' }),
+                ', ',
+                (0, t.jsx)(s.code, { children: 'ios' }),
+                ' and ',
+                (0, t.jsx)(s.code, { children: 'android' }),
+                ' resolve settings from three layers, merged with the first match winning (nested objects merge key by key; arrays -- like ',
+                (0, t.jsx)(s.code, { children: 'worktree.include' }),
+                ' -- are replaced wholesale, never concatenated):',
+              ],
+            }),
+            '\n',
+            (0, t.jsxs)(s.ol, {
+              children: [
+                '\n',
+                (0, t.jsxs)(s.li, {
+                  children: [
+                    (0, t.jsx)(s.strong, { children: 'Project settings' }),
+                    ' -- per absolute project path, stored in ',
+                    (0, t.jsx)(s.code, { children: '~/.rn-iso/config.json' }),
+                    '. Highest precedence.',
+                  ],
+                }),
+                '\n',
+                (0, t.jsxs)(s.li, {
+                  children: [
+                    (0, t.jsx)(s.strong, { children: 'Repo settings' }),
+                    " -- shared by every worktree of the same repository (keyed by the repo's git common dir), also stored in ",
+                    (0, t.jsx)(s.code, { children: '~/.rn-iso/config.json' }),
+                    '. Local to this machine.',
+                  ],
+                }),
+                '\n',
+                (0, t.jsxs)(s.li, {
+                  children: [
+                    (0, t.jsx)(s.strong, { children: 'Committed settings' }),
+                    ' -- ',
+                    (0, t.jsx)(s.code, { children: '.rn-iso.json' }),
+                    ' at the repo root, checked into git and shared with everyone who clones the repo. Lowest precedence, but the only layer that travels with the repo -- and, with the ',
+                    (0, t.jsx)(s.code, { children: 'config' }),
+                    ' command gone, normally the one you want.',
+                  ],
+                }),
+                '\n',
+              ],
+            }),
+            '\n',
+            (0, t.jsxs)(s.p, {
+              children: [
+                'The keys rn-iso reads are ',
+                (0, t.jsx)(s.code, { children: 'ios.deviceType' }),
+                ', ',
+                (0, t.jsx)(s.code, { children: 'ios.runtime' }),
+                ', ',
+                (0, t.jsx)(s.code, { children: 'android.systemImage' }),
+                ', ',
+                (0, t.jsx)(s.code, { children: 'worktreeDir' }),
+                ', ',
+                (0, t.jsx)(s.code, { children: 'caches' }),
+                ', and, under ',
+                (0, t.jsx)(s.code, { children: 'worktree' }),
+                ': ',
+                (0, t.jsx)(s.code, { children: 'baseRef' }),
+                ' (',
+                (0, t.jsx)(s.code, { children: '"fresh"' }),
+                ' or ',
+                (0, t.jsx)(s.code, { children: '"head"' }),
+                '), ',
+                (0, t.jsx)(s.code, { children: 'include' }),
+                ' (carry-over patterns, same role as ',
+                (0, t.jsx)(s.code, { children: '.worktreeinclude' }),
+                ') and ',
+                (0, t.jsx)(s.code, { children: 'exclude' }),
+                ' (the ',
+                (0, t.jsx)(s.code, { children: '--carry-ignored' }),
+                ' skip list, same role as ',
+                (0, t.jsx)(s.code, { children: '.worktreeexclude' }),
+                '). ',
+                (0, t.jsx)(s.strong, {
+                  children:
+                    'Anything else is ignored, and rn-iso warns about it by name on every run that resolves settings',
+                }),
+                ' -- a ',
+                (0, t.jsx)(s.code, { children: 'worktree.install' }),
+                ' pipeline, for instance, is not a key rn-iso reads. Example ',
+                (0, t.jsx)(s.code, { children: '.rn-iso.json' }),
+                ':',
+              ],
+            }),
+            '\n',
+            (0, t.jsx)(s.pre, {
+              children: (0, t.jsx)(s.code, {
+                className: 'language-json',
+                children:
+                  '{\n  "ios": { "deviceType": "iPhone 17 Pro" },\n  "worktree": {\n    "baseRef": "fresh",\n    "include": [".env", ".env.*"]\n  }\n}\n',
+              }),
+            }),
+            '\n',
+            (0, t.jsxs)(s.p, {
+              children: [
+                (0, t.jsxs)(s.strong, {
+                  children: ['Never put secrets in ', (0, t.jsx)(s.code, { children: '.rn-iso.json' }), '.'],
+                }),
+                " It's committed to git and readable by anyone with repo access. Secrets belong in gitignored files (",
+                (0, t.jsx)(s.code, { children: '.env' }),
+                ' and friends) that ',
+                (0, t.jsx)(s.code, { children: 'worktree create' }),
+                "'s carry-over feature copies into each new worktree -- that mechanism exists specifically so gitignored, secret-bearing files reach a fresh worktree without ever being committed to ",
+                (0, t.jsx)(s.code, { children: '.rn-iso.json' }),
+                ' or anywhere else in git history.',
+              ],
+            }),
+          ],
+        });
+      }
+      function h(e = {}) {
+        let { wrapper: s } = { ...(0, i.R)(), ...e.components };
+        return s ? (0, t.jsx)(s, { ...e, children: (0, t.jsx)(l, { ...e }) }) : l(e);
+      }
+    },
+    8453(e, s, n) {
+      n.d(s, { R: () => o, x: () => c });
+      var r = n(6540);
+      let t = {},
+        i = r.createContext(t);
+      function o(e) {
+        let s = r.useContext(i);
+        return r.useMemo(
+          function () {
+            return 'function' == typeof e ? e(s) : { ...s, ...e };
+          },
+          [s, e],
+        );
+      }
+      function c(e) {
+        let s;
+        return (
+          (s = e.disableParentContext
+            ? 'function' == typeof e.components
+              ? e.components(t)
+              : e.components || t
+            : o(e.components)),
+          r.createElement(i.Provider, { value: s }, e.children)
+        );
+      }
+    },
+  },
+]);

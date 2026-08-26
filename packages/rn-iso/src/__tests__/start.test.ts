@@ -331,6 +331,25 @@ describe('failureEvidence (issue #24)', () => {
     expect(lines[1]).toBe(`Supervisor log: ${logFile}`);
   });
 
+  test('falls back to any-level records from this attempt when nothing reached error level (#30)', () => {
+    const logsDir = join(root, '.rn-iso', 'logs');
+    mkdirSync(logsDir, { recursive: true });
+    const logFile = join(logsDir, 'supervisor.log');
+    writeFileSync(logFile, '');
+    const rec = (ts: number, msg: string) => JSON.stringify({ ts, level: 'info', src: 'metro', msg });
+    writeFileSync(
+      join(logsDir, 'metro.ndjson'),
+      [rec(1000, 'old noise'), rec(5000, 'PluginError: Failed to resolve plugin'), rec(5001, 'at loadConfig')].join(
+        '\n',
+      ) + '\n',
+    );
+    const lines = failureEvidence({ logFile, logsDir, sinceTs: 2000 });
+    expect(lines).toContain('metro: PluginError: Failed to resolve plugin');
+    expect(lines).toContain('metro: at loadConfig');
+    expect(lines.some((l) => l.includes('old noise'))).toBe(false);
+    expect(lines.at(-1)).toBe('Full records: `rn-iso logs`');
+  });
+
   test('nothing anywhere is an empty evidence list, not a throw', () => {
     const logsDir = join(root, 'no-such-logs');
     expect(failureEvidence({ logFile: join(logsDir, 'supervisor.log'), logsDir, sinceTs: 0 })).toEqual([]);

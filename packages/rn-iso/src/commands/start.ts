@@ -449,17 +449,27 @@ export function failureEvidence({
 }): string[] {
   const supTail = readLogTail(logFile);
   const lines = supTail.length > 0 ? [...supTail, `Supervisor log: ${logFile}`] : [];
-  let records: ReturnType<typeof queryLogs> = [];
+  let errors: ReturnType<typeof queryLogs> = [];
+  let all: ReturnType<typeof queryLogs> = [];
   try {
-    records = queryLogs({ dir: logsDir, minLevel: 'error' });
+    errors = queryLogs({ dir: logsDir, minLevel: 'error' });
+    all = queryLogs({ dir: logsDir });
   } catch {
     // An unreadable timeline must not mask the failure being reported.
   }
-  const recent = records.filter((r) => typeof r.ts === 'number' && r.ts >= sinceTs).slice(-ERROR_EVIDENCE_RECORDS);
+  const since = (rs: ReturnType<typeof queryLogs>) =>
+    rs.filter((r) => typeof r.ts === 'number' && r.ts >= sinceTs).slice(-ERROR_EVIDENCE_RECORDS);
+  let recent = since(errors);
+  // Level inference on a child's raw output is best-effort, so a death cry
+  // can sit in the timeline at info (#30). When nothing made it to error
+  // level, the last raw lines of THIS attempt are still the best evidence
+  // there is -- the same reasoning as quoting supervisor.log's tail.
+  const fellBack = recent.length === 0;
+  if (fellBack) recent = since(all);
   for (const r of recent) {
     lines.push(`${String(r.src ?? '?')}: ${String(r.msg ?? '').split('\n')[0] ?? ''}`);
   }
-  if (recent.length > 0) lines.push('Full records: `rn-iso logs --errors`');
+  if (recent.length > 0) lines.push(fellBack ? 'Full records: `rn-iso logs`' : 'Full records: `rn-iso logs --errors`');
   return lines;
 }
 
