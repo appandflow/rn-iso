@@ -109,13 +109,19 @@ export function connectArgs(profilePath: string): string[] {
 
 // PURE. Push a locally-built artifact to the remote device.
 //
+// The one-positional form (`install <path>`, as opposed to
+// `install <app> <path>`) is deliberate: a `.app` carries its own bundle id,
+// so naming it again would be a second source of truth for the same fact.
+// It also keeps this signature identical to the local installIosApp, which
+// is what lets the remote path drop into the existing dep seam unchanged.
+//
 // The path is its own argv element, so a `.app` under a directory with a
 // space in it arrives as one argument. Against a remote daemon the client
 // uploads the file and the daemon materializes it
 // (src/daemon/install-source-resolution.ts, the `path` + uploadedArtifactId
 // branch), which is why a local build needs no public URL and no EAS Build.
-export function installArgs(profilePath: string, bundleId: string, artifactPath: string): string[] {
-  return withProfile(profilePath, ['install', bundleId, artifactPath]);
+export function installArgs(profilePath: string, artifactPath: string): string[] {
+  return withProfile(profilePath, ['install', artifactPath]);
 }
 
 // PURE. Launch, optionally via a deep link.

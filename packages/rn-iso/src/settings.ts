@@ -36,6 +36,7 @@ const KNOWN_SETTINGS = new Set([
   'ios.deviceType',
   'ios.runtime',
   'ios.configuration',
+  'ios.remote',
   'android.systemImage',
   'android.variant',
   'android.keystore',
@@ -95,4 +96,18 @@ export function resolveSettings({
     gitCommonDir ? getRepoSettings(gitCommonDir) : null,
     readCommittedSettings(repoRoot),
   ]);
+}
+
+// Whether this workspace's iOS device is remote. Kept beside KNOWN_SETTINGS
+// for the reason stated above: the name of a setting and the code that reads
+// it drifting apart is how `worktree.install` became a silent no-op.
+//
+// Settings are Record<string, unknown> because they come from three JSON
+// layers, so the read narrows rather than asserts. Anything other than a
+// literal `true` is false: a setting that means "use a billable cloud device"
+// must not be switched on by a stray string.
+export function remoteIosSetting(settings: SettingsObject): boolean {
+  const ios = settings.ios;
+  if (typeof ios !== 'object' || ios === null) return false;
+  return (ios as { remote?: unknown }).remote === true;
 }

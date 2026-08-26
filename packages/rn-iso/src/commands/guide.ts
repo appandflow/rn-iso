@@ -791,7 +791,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
 THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds>
-  ios             --json --no-metro-check --no-build-cache --configuration <name>
+  ios             --json --no-metro-check --no-build-cache --configuration <name> --remote
   android         --json --no-metro-check --no-build-cache --variant <name>
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
@@ -1045,6 +1045,9 @@ KEYS RN-ISO READS
                         embedded JS, no Metro, cache keyed -release-sim, and
                         a JS-bundle swap on cache hits. The \`--configuration\`
                         flag overrides this per invocation. Unset means Debug.
+  ios.remote            true to use a remote simulator instead of a local one,
+                        the same as passing \`--remote\`. The build still runs
+                        here; only the device is elsewhere.
   android.systemImage   e.g. "system-images;android-36;google_apis;arm64-v8a"
   android.variant       e.g. "productionDebug" -- the gradle variant to
                         assemble and install on a project with product

@@ -656,3 +656,97 @@ test('a not-owned skip is not given an occupancy hint', async () => {
   expect(!/UI-test runner/.test(reason)).toBeTruthy();
   expect(!/pid 1/.test(reason)).toBeTruthy();
 });
+
+// --- the remote session ----------------------------------------------------
+//
+// A remote session is the ONE device `stop` destroys rather than shuts down.
+// Locally that would be wrong (a shut-down sim costs nothing to keep); a
+// cloud session bills until its max duration, so leaving one up is worse.
+
+function withRemoteSession(sessionId: string) {
+  saveConfig(
+    makeConfig({
+      projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } },
+    }),
+  );
+  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({ remoteDevice: { platform: 'ios', sessionId }, lastBuild: { hash: 'keepme' } }),
+  );
+}
+
+test('stopping ends the remote session this workspace created', async () => {
+  withRemoteSession('drs_42');
+  const stopped: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: (_root, sessionId) => {
+      stopped.push(sessionId);
+      return { status: 'torn-down' };
+    },
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(true);
+  expect(stopped).toEqual(['drs_42']);
+  expect(r.outcomes.device.remote?.status).toBe('torn-down');
+});
+
+test('a session that could not be stopped fails the command, so it is not reported as clean', async () => {
+  // The failure mode this guards: a session nothing stopped keeps billing,
+  // and a green `stop` is how nobody finds out.
+  withRemoteSession('drs_99');
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: () => ({ status: 'failed', reason: 'eas simulator:stop drs_99 failed: offline' }),
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(false);
+  expect(r.outcomes.device.remote?.status).toBe('failed');
+  // The record SURVIVES a failed stop, for the same reason a failed local
+  // teardown keeps its device record: it is the only handle left to retry.
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice.sessionId).toBe('drs_99');
+});
+
+test('a successful stop drops the record but keeps lastBuild', async () => {
+  withRemoteSession('drs_7');
+  await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: () => ({ status: 'torn-down' }),
+    report: () => {},
+  });
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice).toBeUndefined();
+  // Taking the fingerprint away would make the next build a guaranteed miss.
+  expect(state.lastBuild.hash).toBe('keepme');
+});
+
+test('a workspace with no remote session never calls the remote teardown', async () => {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  let called = false;
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: () => {
+      called = true;
+      return { status: 'torn-down' };
+    },
+    report: () => {},
+  });
+  expect(called).toBe(false);
+  expect(r.outcomes.device.remote).toBeUndefined();
+});

@@ -48,28 +48,42 @@ Worth stating first, because it is most of the system.
   provider, and single-flight builds. The `.app` is the same artifact.
 - The Metro supervisor and port reservation. Metro stays local.
 - `commands/ios.ts`'s phase sequence. Every phase keeps its name and its
-  order. Only the callee behind three of them changes.
+  order. Only the callee behind the device phases changes.
 - The state file, its lock, and the config lock.
 
 ## The seam
 
 Three modules reach for a device today. They become one interface.
 
-| Module | Local | Remote |
-| --- | --- | --- |
-| `engine/device.ts` `ensureOwnedDevice` | `simctl create` / `boot` | `eas sim` session create |
-| `engine/app-install.ts` `installIosApp` | `simctl install` | `agent-device install <path>` |
-| `engine/app-install.ts` `launchIosApp` | `simctl openurl` / `launch` | `agent-device open <app> <url>` |
-| `collector/ios.ts` | `simctl spawn log stream` | not in v1, see Logs |
+| Module                                  | Local                       | Remote                          |
+| --------------------------------------- | --------------------------- | ------------------------------- |
+| `engine/device.ts` `ensureOwnedDevice`  | `simctl create` / `boot`    | `eas sim` session create        |
+| `engine/app-install.ts` `installIosApp` | `simctl install`            | `agent-device install <path>`   |
+| `engine/app-install.ts` `launchIosApp`  | `simctl openurl` / `launch` | `agent-device open <app> <url>` |
+| `collector/ios.ts`                      | `simctl spawn log stream`   | not in v1, see Logs             |
 
-`engine/device-backend.ts` declares the interface. The local implementation
-wraps today's functions and changes none of their behaviour. Selection is a
-`--remote` flag on `rn-iso ios`, plus an `ios.remote` key in settings, which
-must also be added to `KNOWN_SETTINGS` in `settings.ts` or it silently
-becomes a no-op.
+**The seam already existed, so no new abstraction was added.** `DEFAULT_DEPS`
+in `commands/ios.ts` is documented as "the test seam. Every engine call goes
+through it", and four of its entries are the whole device surface:
+`checkDeviceCapacity`, `ensureOwnedDevice`, `ensureBooted`, `installIosApp`
+and `launchIosApp`. Remote mode replaces those and nothing else.
+`engine/device-remote.ts` supplies the replacements, each matching its local
+counterpart's signature exactly.
 
-The command surface stays closed at eleven commands. A remote device is a
-property of the device, not a new verb.
+The consequence is that the local path is not refactored at all: every call
+site, every phase line and every existing test is untouched, so a regression
+there cannot be caused by this change. An earlier draft of this spec proposed
+extracting a `DeviceBackend` interface; that would have been a second way to
+say what the dep seam already says.
+
+Selection is a `--remote` flag on `rn-iso ios`, plus an `ios.remote` key in
+settings, which must also be added to `KNOWN_SETTINGS` in `settings.ts` or it
+silently becomes a no-op.
+
+The command surface stays closed. A remote device is a property of the
+device, not a new verb. The option surface does grow by one flag, which
+`CLAUDE.md` says must be a deliberate decision rather than a drift: it is
+recorded here and in that file's option-surface list.
 
 ## Session lifecycle
 
@@ -111,9 +125,13 @@ rn-iso keeps owning Metro, and the cloud simulator reaches it through
 agent-device's companion tunnel. That tunnel is a detached local process
 which dials **outward** to the daemon and registers rn-iso's local Metro. The
 daemon exposes it to the simulator on a device-side port. No inbound firewall
-hole and no third-party tunnel service. rn-iso calls it with `reuseExisting`
-pointed at the reserved port, so agent-device never starts a competing
-bundler.
+hole and no third-party tunnel service.
+
+rn-iso does NOT drive `metro prepare` itself. `agent-device connect` defers
+and then performs Metro preparation, and `disconnect` releases the lease and
+stops the companion it owns. rn-iso passes `metroProjectRoot` in the
+connection profile and lets agent-device own the tunnel; a second driver
+would fight it.
 
 The consequence worth naming: **`verify` keeps working unchanged.** Its check
 is "did a bundle request reach _this workspace's_ Metro", and with the tunnel
@@ -169,10 +187,21 @@ implementation.
 
 ## Teardown, gc, doctor
 
-`teardown.ts` gains `teardownRemoteSession(sessionId)` beside
-`teardownOwnedIosSim` and `teardownOwnedAvd`, returning the same
-`TeardownOutcome`, so `stop`, `worktree remove` and `gc` need no new branching
-beyond picking the function.
+`engine/device-remote.ts` exposes `endRecordedSession({root, sessionId})`,
+which resolves its own eas-cli because a teardown runs long after the `ios`
+that created the session, in a process with none of its context.
+
+**Implemented: `stop`.** It reads the `remoteDevice` record from state.json,
+ends the session, and drops the record only on success. A failure keeps the
+record and exits non-zero, matching how a failed local teardown keeps its
+device record: the record is the only handle left to retry with.
+
+**Not implemented, and a real leak until it is: `gc` and `worktree remove`.**
+`reclaim.ts` is the shared path both go through and is where this belongs,
+together with a `gc` sweep over
+`eas simulator:list --name rn-iso- --status new,in-progress` for sessions
+whose project is gone. Until then, a worktree removed without a `stop` first
+leaves a session billing until its cap.
 
 **`stop` will delete, and today it never does.** The documented rule is that
 `stop` shuts a device down and never destroys it. A cloud session bills while

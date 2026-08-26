@@ -56,6 +56,7 @@ import {
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
+import { REMOTE_SESSION_ERROR, remoteIosDeps, resolveRemoteContext } from '../engine/device-remote.ts';
 import { type Diagnostic, describeDiagnostic } from '../engine/errors-xcode.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import {
@@ -67,6 +68,7 @@ import {
   exitAfterFlush,
   isEasAuthFailureText,
   loadProjectProvider,
+  resolveEasCliBin,
   resolveRemote,
   uploadRemote,
   type LoadProjectProviderResult,
@@ -79,7 +81,7 @@ import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../paths.ts';
 import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.ts';
-import { resolveSettings, unknownSettingKeys, type SettingsObject } from '../settings.ts';
+import { remoteIosSetting, resolveSettings, unknownSettingKeys, type SettingsObject } from '../settings.ts';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 
@@ -150,6 +152,7 @@ interface IosCommandOptions {
   metroCheck?: boolean;
   buildCache?: boolean;
   configuration?: string;
+  remote?: boolean;
 }
 
 interface WaitedForBuild {
@@ -852,6 +855,8 @@ const DEFAULT_DEPS: IosDeps = {
   checkDeviceCapacity,
   ensureOwnedDevice,
   ensureBooted,
+  resolveRemoteContext,
+  remoteIosDeps,
   resolveProjectMetro,
   resolveMetroWithRetry,
   readWorkspaceState,
@@ -867,6 +872,7 @@ const DEFAULT_DEPS: IosDeps = {
   releaseBuildSlot,
   loadProjectProvider,
   checkEasAuth,
+  resolveEasCliBin,
   resolveRemote,
   uploadRemote,
   needsPrebuild,
@@ -916,6 +922,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       '--configuration <name>',
       'Xcode configuration to build (e.g. Release; simulator only). A non-Debug configuration embeds the JS bundle and skips Metro entirely. Overrides the ios.configuration setting. Default: Debug',
     )
+    .option(
+      '--remote',
+      'Install and launch on a remote simulator (EAS Simulator, or an agent-device proxy named by AGENT_DEVICE_DAEMON_BASE_URL) instead of a local one. The build still happens here.',
+    )
     .action(async (opts: IosCommandOptions) => {
       await runIos(opts, deps);
     });
@@ -925,7 +935,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // Annotated explicitly: spreading a Partial<> over the full DEFAULT_DEPS
   // would otherwise let TS infer some properties as possibly-undefined, even
   // though every key is always present (DEFAULT_DEPS supplies every one).
-  const d: typeof DEFAULT_DEPS = { ...DEFAULT_DEPS, ...overrides };
+  let d: typeof DEFAULT_DEPS = { ...DEFAULT_DEPS, ...overrides };
   const json = Boolean(opts.json);
   // commander's --no-metro-check leaves metroCheck true by default.
   const metroCheck = opts.metroCheck !== false;
@@ -1063,6 +1073,33 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const proj = d.getProject(root);
   const label = d.projectShortcut(root, proj);
 
+  // ---- remote device: four dep overrides, or none ----
+  //
+  // `--remote` swaps the device out and NOTHING else. The build, the
+  // fingerprint, the cache and Metro all stay exactly where they were, which
+  // is why this is four entries in the dep seam rather than a second command.
+  const wantRemote = Boolean(opts.remote) || remoteIosSetting(settings);
+  let remoteDevice: ReturnType<typeof d.remoteIosDeps> | null = null;
+  if (wantRemote) {
+    const resolved = d.resolveRemoteContext({
+      root,
+      label,
+      easBin: d.resolveEasCliBin(root)?.file ?? null,
+    });
+    if ('failed' in resolved) {
+      return fail({ code: REMOTE_SESSION_ERROR, message: resolved.failed, remedy: resolved.remedy });
+    }
+    remoteDevice = d.remoteIosDeps(resolved.ctx);
+    d = {
+      ...d,
+      checkDeviceCapacity: remoteDevice.checkDeviceCapacity,
+      ensureOwnedDevice: remoteDevice.ensureOwnedDevice,
+      ensureBooted: remoteDevice.ensureBooted,
+      installIosApp: remoteDevice.installIosApp,
+      launchIosApp: remoteDevice.launchIosApp,
+    };
+  }
+
   // ---- concurrency: opt-in, unlimited by default ----
   const limits = d.getConcurrencyLimits();
 
@@ -1179,7 +1216,23 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // The build destination: the udid exists as soon as the device record does.
   // The rare record without one (legacy shapes) waits for the boot to resolve
   // it, which is exactly the old ordering.
+  //
+  // A REMOTE device has no udid on its record at all -- the session that
+  // identifies it does not exist until ensureBooted creates it -- so this
+  // await is what serialises session creation ahead of the build. That is
+  // deliberate: the artifact has to be uploaded to a device that exists.
   const udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
+
+  // Recorded the MOMENT the session exists, not at the end of a successful
+  // run. A remote session bills while it lives, so a build that fails three
+  // minutes from now must still leave `stop` and `gc` a handle to end it.
+  // The session id only; the token is re-read from eas when it is needed.
+  if (remoteDevice) {
+    const sessionId = remoteDevice.createdSessionId();
+    if (sessionId) {
+      d.writeWorkspaceState(root, { remoteDevice: { platform: PLATFORM, sessionId, startedAt } });
+    }
+  }
 
   // ---- fingerprint and cache ----
   // Covers the fingerprint compute plus the LOCAL cache resolve; a remote

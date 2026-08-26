@@ -359,7 +359,7 @@ composes, never one it inferred from a package.json script. Nothing reads
 fixed and it does not grow:
 
     start           --json --wait
-    ios             --json --no-metro-check --no-build-cache --configuration <name>
+    ios             --json --no-metro-check --no-build-cache --configuration <name> --remote
     android         --json --no-metro-check --no-build-cache --variant <name>
     logs            --source --level --since --grep --tail --follow --errors --json
     stop            --json --force
@@ -451,6 +451,29 @@ react-native) into a COPY of the artifact, re-signs it ad hoc and installs
 that (`src/engine/js-swap.ts`); any swap failure falls back to a full build,
 never to installing stale JS. Store signing, devices and distribution remain
 out of scope.
+
+`--remote` is the one deliberate addition since this list was written, and it
+is recorded here rather than left to drift. It does not reconstruct anything
+and it does not widen what rn-iso builds: the build, the fingerprint and the
+cache are identical, and the flag moves ONLY the device (see
+`docs/specs/2026-08-26-remote-device-backend-design.md`). It earns its place
+because the resource it relieves -- how many simulators one machine can host
+-- is the same class of contended resource as the Metro port, which rn-iso
+already brokers. Note the asymmetry with `android`, which does not have it
+yet.
+
+**Remote is also the one exception to "`stop` never deletes."** A local device
+is shut down and kept, because keeping it costs nothing. A remote session
+bills until its max duration, so `stop` ENDS it. A failed stop keeps the
+record and exits non-zero, for the same reason a failed local teardown does:
+the record is the only handle left to retry with.
+
+NOT YET DONE, and a real leak until it is: `gc` and `worktree remove` do not
+sweep remote sessions. `reclaim.js` is the shared path both go through and is
+where it belongs, alongside a `gc` sweep over
+`eas simulator:list --name rn-iso- --status new,in-progress`. Until that
+lands, a worktree removed without a `stop` first leaves a session billing
+until its two-hour cap.
 
 `--base` is the counter-example worth remembering: it accepted only the two
 sentinels `fresh` and `head`, and widening it to any ref `git rev-parse`

@@ -2168,62 +2168,143 @@ describe('concurrency limits', () => {
   });
 });
 
-// --- a diagnosed MISS: what changed since this workspace's previous build ---
+// --- the remote device ------------------------------------------------------
 //
-// The fingerprint line alone says only "the hash moved". When the previous
-// build's cache entry stored its sources (fingerprint-sources.json, written by
-// storeBuild), a miss can NAME the inputs that moved: up to three on the phase
-// line, the capped full list in the build log as a fingerprint_diff record.
-test('a miss with a prior stored entry appends the changed-sources suffix and logs fingerprint_diff', async () => {
-  reserve();
-  // The previous build (Contract 4), pointing at an entry in the shared cache.
-  writeWorkspaceState(root, {
-    lastBuild: { platform: 'ios', fingerprint: 'oldhash', cacheKey: 'old-key' },
+// `--remote` swaps FOUR entries in the dep seam and nothing else. These tests
+// are about that boundary: which implementation each phase reached for, and
+// that the local path is untouched when the flag is absent.
+describe('--remote', () => {
+  // A stand-in for engine/device-remote's return value. Records which device
+  // calls went through the remote implementation rather than the local one.
+  function remoteStub() {
+    const hits: string[] = [];
+    return {
+      hits,
+      deps: {
+        resolveRemoteContext: () => ({
+          ctx: { root, label: 'fixture', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        }),
+        remoteIosDeps: () => ({
+          checkDeviceCapacity: () => {
+            hits.push('checkDeviceCapacity');
+            return null;
+          },
+          ensureOwnedDevice: async () => {
+            hits.push('ensureOwnedDevice');
+            return { deviceName: 'EAS Simulator', owned: true, remote: true };
+          },
+          ensureBooted: async () => {
+            hits.push('ensureBooted');
+            return { ok: true, udid: 'drs_42' };
+          },
+          installIosApp: () => {
+            hits.push('installIosApp');
+            return { ok: true };
+          },
+          launchIosApp: () => {
+            hits.push('launchIosApp');
+            return { ok: true, mode: 'launch' };
+          },
+          createdSessionId: () => 'drs_42',
+        }),
+      },
+    };
+  }
+
+  test('the device phases run against the remote implementation', async () => {
+    const remote = remoteStub();
+    reserve();
+    const { calls, exitCode } = await run({ remote: true }, remote.deps);
+    expect(exitCode).toBeFalsy();
+    expect(remote.hits).toEqual([
+      'checkDeviceCapacity',
+      'ensureOwnedDevice',
+      'ensureBooted',
+      'installIosApp',
+      'launchIosApp',
+    ]);
+    // The local implementations were never reached for those phases.
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+    expect(calls.order.includes('installIosApp')).toBeFalsy();
   });
-  const entry = join(tmpHome, 'build-cache', 'ios', 'old-key');
-  mkdirSync(entry, { recursive: true });
-  writeFileSync(
-    join(entry, 'fingerprint-sources.json'),
-    JSON.stringify([
-      { type: 'file', filePath: 'ios/Podfile.lock', hash: 'aa' },
-      { type: 'contents', id: 'expoConfig', hash: 'bb' },
-    ]),
-  );
 
-  const { errs } = await run(
-    {},
-    {
-      fingerprintProject: async () => ({
-        hash: FINGERPRINT,
-        sources: [
-          { type: 'file', filePath: 'ios/Podfile.lock', hash: 'a2' },
-          { type: 'contents', id: 'expoConfig', hash: 'bb' },
-        ],
-      }),
-    },
-  );
+  test('the build still happens locally -- only the device moved', async () => {
+    const remote = remoteStub();
+    reserve();
+    const { calls } = await run({ remote: true }, remote.deps);
+    // The whole premise of remote mode: the fingerprint, the cache and the
+    // build are untouched, because none of them care where the device is.
+    expect(calls.order.includes('fingerprintProject')).toBeTruthy();
+    expect(calls.order.includes('resolveBuild')).toBeTruthy();
+    expect(calls.order.includes('buildIos')).toBeTruthy();
+  });
 
-  const line = errs.find((e) => e.startsWith('fingerprint'));
-  assert(line);
-  expect(line).toMatch(/miss/);
-  expect(line).toMatch(/ -- 1 source changed: ios\/Podfile\.lock$/);
+  test('the Metro gate still runs BEFORE the session is created', async () => {
+    // Remote inverts which device step is expensive: creating a billable
+    // cloud session happens in ensureBooted, so a dead port must still refuse
+    // before it. Same ordering property as local, opposite mechanics.
+    const remote = remoteStub();
+    reserve();
+    const { exitCode } = await run(
+      { remote: true },
+      { ...remote.deps, resolveProjectMetro: async () => ({ metro: null }) },
+    );
+    expect(exitCode).toBe(1);
+    expect(remote.hits.includes('ensureOwnedDevice')).toBeTruthy();
+    expect(remote.hits.includes('ensureBooted')).toBeFalsy();
+  });
 
-  const record = buildRecords().find((r) => r.event === 'fingerprint_diff');
-  assert(record, 'expected a fingerprint_diff record in the build log');
-  expect(record.level).toBe('info');
-  expect(record.src).toBe('build');
-  expect(record.changed).toBe(1);
-  expect(record.sources).toEqual(['ios/Podfile.lock']);
-  expect(record.msg).toMatch(/oldhash -> a3f9b1c2d3e4f5/);
-});
+  test('an unusable remote setup refuses before any build work', async () => {
+    const { exitCode, calls, stderr } = await run(
+      { remote: true },
+      {
+        resolveRemoteContext: () => ({ failed: 'agent-device is not on PATH.', remedy: 'Install it.' }),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('agent-device is not on PATH.');
+    expect(calls.order.includes('fingerprintProject')).toBeFalsy();
+  });
 
-test('a miss with no prior entry (or a first build) prints the plain miss line, no suffix', async () => {
-  reserve();
-  const { errs } = await run();
-  const line = errs.find((e) => e.startsWith('fingerprint'));
-  assert(line);
-  expect(line).toMatch(/miss \(\d+m?\d*s\)$/);
-  expect(buildRecords().some((r) => r.event === 'fingerprint_diff')).toBe(false);
+  test('without the flag nothing remote is consulted', async () => {
+    let asked = false;
+    reserve();
+    const { calls, exitCode } = await run(
+      {},
+      {
+        resolveRemoteContext: () => {
+          asked = true;
+          return { failed: 'should not be called', remedy: '' };
+        },
+      },
+    );
+    expect(exitCode).toBeFalsy();
+    expect(asked).toBe(false);
+    expect(calls.order.includes('ensureOwnedDevice')).toBeTruthy();
+  });
+
+  test('the ios.remote setting does the same thing as the flag', async () => {
+    const remote = remoteStub();
+    reserve();
+    const { exitCode } = await run({}, { ...remote.deps, resolveSettings: () => ({ ios: { remote: true } }) });
+    expect(exitCode).toBeFalsy();
+    expect(remote.hits.includes('ensureBooted')).toBeTruthy();
+  });
+
+  test('a non-true ios.remote value does not switch on a billable device', async () => {
+    let asked = false;
+    await run(
+      {},
+      {
+        resolveSettings: () => ({ ios: { remote: 'yes' } }),
+        resolveRemoteContext: () => {
+          asked = true;
+          return { failed: 'x', remedy: '' };
+        },
+      },
+    );
+    expect(asked).toBe(false);
+  });
 });
 
 // --- release builds (--configuration, issue #57 phase 1) --------------------

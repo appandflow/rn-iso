@@ -72,7 +72,7 @@ describe('argv', () => {
     // connection, which is exactly the collision rn-iso exists to prevent.
     for (const args of [
       connectArgs(profilePath),
-      installArgs(profilePath, 'com.example.app', '/tmp/My App.app'),
+      installArgs(profilePath, '/tmp/My App.app'),
       openArgs(profilePath, 'com.example.app', null),
       disconnectArgs(profilePath),
     ]) {
@@ -80,12 +80,12 @@ describe('argv', () => {
     }
   });
 
-  test('install names the bundle id and the path as separate argv elements', () => {
-    // A .app path with a space in it must reach the tool as one argument.
-    const args = installArgs(profilePath, 'com.example.app', '/tmp/My App.app');
+  test('install passes the .app path as one literal argv element', () => {
+    // A .app path with a space in it must reach the tool as one argument,
+    // and the bundle id is not repeated: the .app already carries it.
+    const args = installArgs(profilePath, '/tmp/My App.app');
     expect(args[0]).toBe('install');
-    expect(args[1]).toBe('com.example.app');
-    expect(args[2]).toBe('/tmp/My App.app');
+    expect(args[1]).toBe('/tmp/My App.app');
   });
 
   test('open with a dev-client url passes it as the url positional', () => {

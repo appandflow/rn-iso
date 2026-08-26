@@ -32,6 +32,9 @@ import { supervisorPidFile, workspaceStateFile } from '../paths.ts';
 import { findPidListeningOnPort, isPidAlive, killMetroTree, resolveProjectMetro } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
+import { endRecordedSession } from '../engine/device-remote.ts';
+import { resolveEasCliBin } from '../engine/remote-cache.ts';
+import { getExecutor } from '../exec.ts';
 
 const DEFAULT_WAIT_MS = 10_000;
 const POLL_MS = 100;
@@ -102,6 +105,24 @@ export function readCollectorState(root: string): CollectorStateMap {
     return collectors && typeof collectors === 'object' ? collectors : {};
   } catch {
     return {};
+  }
+}
+
+// The remote session this workspace created, if any. Written by `ios --remote`
+// the moment the session exists, so a build that failed later still leaves a
+// handle here. Only the session id: the token is never persisted.
+interface RemoteDeviceRecord {
+  platform?: string;
+  sessionId?: string;
+}
+function readRemoteDeviceState(root: string): RemoteDeviceRecord | null {
+  const file = workspaceStateFile(root);
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf-8'));
+    const record = parsed?.remoteDevice;
+    return record && typeof record === 'object' ? record : null;
+  } catch {
+    return null;
   }
 }
 
@@ -341,6 +362,11 @@ interface DeviceOutcomeEntry {
 interface DeviceOutcome {
   ios: DeviceOutcomeEntry | null;
   android: DeviceOutcomeEntry | null;
+  // Only set when this workspace created a remote session. Unlike ios and
+  // android, its `torn-down` means DESTROYED, not shut down: see the device
+  // step in runStop for why remote is the one exception to "stop never
+  // deletes".
+  remote?: DeviceOutcomeEntry | null;
 }
 
 interface PortOutcome {
@@ -360,6 +386,15 @@ interface StopOutcomes {
 // Every side effect is injected so the ORDER -- which is the part that can
 // strand a live process or free a port out from under one -- is testable
 // without signalling anything.
+// The real teardown: resolve eas-cli against the project, then end the
+// session. Injected in tests so `stop`'s own suite never shells out.
+function defaultTeardownRemoteSession(
+  root: string,
+  sessionId: string,
+): { status: 'torn-down' | 'failed'; reason?: string } {
+  return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null });
+}
+
 export async function runStop({
   root,
   force = false,
@@ -377,6 +412,8 @@ export async function runStop({
   findListener = findPidListeningOnPort,
   teardownIos = teardownOwnedIosSim,
   teardownAvd = teardownOwnedAvd,
+  remoteDevice = undefined,
+  teardownRemoteSession = defaultTeardownRemoteSession,
   freePort = defaultFreePort,
   clearRegistration = defaultClearRegistration,
   clearState = clearSupervisorState,
@@ -398,6 +435,8 @@ export async function runStop({
   findListener?: (port: number) => number | null;
   teardownIos?: (udid: string, opts: { del?: boolean; label?: string }) => TeardownResult;
   teardownAvd?: (avdName: string, opts: { del?: boolean }) => TeardownResult;
+  remoteDevice?: RemoteDeviceRecord | null;
+  teardownRemoteSession?: (root: string, sessionId: string) => { status: 'torn-down' | 'failed'; reason?: string };
   freePort?: (root: string, port: number) => void;
   clearRegistration?: (root: string) => Promise<void>;
   clearState?: (root: string) => void;
@@ -484,6 +523,24 @@ export async function runStop({
   } else {
     outcomes.device = shutDownDevices(proj, { teardownIos, teardownAvd, report });
     if (outcomes.device.ios?.status === 'failed' || outcomes.device.android?.status === 'failed') ok = false;
+
+    // A remote session is the ONE device rn-iso stops by DESTROYING. Locally
+    // `stop` never deletes, because a shut-down simulator costs nothing to
+    // keep. A cloud session bills until its max duration, so leaving one up
+    // is the worse failure -- and `ios --remote` creates a fresh one anyway.
+    const remote = remoteDevice === undefined ? readRemoteDeviceState(root) : remoteDevice;
+    const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
+    if (sessionId) {
+      const result = teardownRemoteSession(root, sessionId);
+      outcomes.device.remote = { status: result.status, label: sessionId, reason: result.reason };
+      if (result.status === 'failed') {
+        ok = false;
+        report(chalk.red(`remote: ${result.reason ?? `could not stop session ${sessionId}`}`));
+      } else {
+        report(chalk.dim(`remote: stopped session ${sessionId}`));
+        dropStateKeys(root, ['remoteDevice']);
+      }
+    }
   }
 
   // Step 5: the port, and step 6: the records. Both are bookkeeping, and both

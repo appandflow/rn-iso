@@ -124,6 +124,21 @@ Ten commands: `doctor` (what is silently costing build time) · `worktree create
 
 That is all of it. There is no `init` -- repo setup is the `rn-iso-init` skill applying `doctor`'s findings by hand, and the one safe generated edit (`.rn-iso/` in `.gitignore`) is self-ensured by `start`/`ios`/`android`. There is also no `up`, no `release`, no `shutdown`, no `config`, no `build-cache`, no `worktree list` -- `status` covers the last one, `ios`/`android` absorbed the build cache, settings are files (`guide settings`), and destruction consolidated into `worktree remove` and `gc --delete`. Run `npx rn-iso <command> --help` for flags, or `npx rn-iso guide` for the reference.
 
+## A remote simulator (`--remote`)
+
+`ios --remote` installs and launches on a simulator that is not on this machine. **The build still runs here** -- the fingerprint, the shared cache and single-flight builds are unchanged, and only the device moves. Reach for it when the machine runs out of simulators before it runs out of work, not as a default: a cloud session is billable, and a local device is faster.
+
+It needs `agent-device` on PATH, plus one of:
+
+- **`AGENT_DEVICE_DAEMON_BASE_URL` + `AGENT_DEVICE_DAEMON_AUTH_TOKEN` in the environment.** rn-iso uses that daemon and creates no session of its own. This is the `agent-device proxy` case, and it is also how you attach to a session someone else started.
+- **Nothing.** rn-iso creates an EAS Simulator session itself (`eas sim`, named `rn-iso-<label>`, bounded to two hours), which needs eas-cli and an account with EAS Simulator access.
+
+`ios.remote: true` in settings does the same thing as the flag, per project or per repo.
+
+**`stop` DESTROYS a remote session**, unlike a local device which it only shuts down. A session bills until its max duration, so leaving one running is the worse failure. If the stop fails, the command exits non-zero and keeps the record so you can retry -- do not ignore that.
+
+**There are no device logs on a remote device yet.** `logs --source device` is empty because the collector is local-only. The Metro half -- JS errors, redboxes, bundling failures -- is unaffected and is where nearly everything useful comes from anyway. `--errors` still works and still means what it says.
+
 ## When things go wrong
 
 - **A build failed.** Read the extracted diagnostic rn-iso printed, not the log. The full transcript is in `.rn-iso/logs/build-<platform>.ndjson` if you genuinely need it -- it holds this run only (each build starts the file over), and it is almost never worth the tokens. The failure carries a code (`RN_ISO_BUILD_FAILED`, `RN_ISO_DEPS_FAILED`, ...) -- `npx rn-iso guide errors` maps every one to a remedy.

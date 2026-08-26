@@ -76,7 +76,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
   assert(lifecycle);
   const advertised = {
     'start.ts': ['--json', '--wait'],
-    'ios.ts': ['--json', '--no-metro-check', '--no-build-cache', '--configuration'],
+    'ios.ts': ['--json', '--no-metro-check', '--no-build-cache', '--configuration', '--remote'],
     'android.ts': ['--json', '--no-metro-check', '--no-build-cache', '--variant'],
     'stop.ts': ['--json', '--force'],
     'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],
