@@ -32,7 +32,6 @@ import { supervisorPidFile, workspaceStateFile } from '../paths.ts';
 import { findPidListeningOnPort, isPidAlive, killMetroTree, resolveProjectMetro } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
-import { getExecutor } from '../exec.ts';
 
 const DEFAULT_WAIT_MS = 10_000;
 const POLL_MS = 100;
@@ -69,6 +68,7 @@ interface TeardownResult {
   reason?: string;
   label?: string;
   serial?: string | null;
+  holders?: string[];
 }
 
 // --- workspace state (Contract 2) -------------------------------------------
@@ -377,7 +377,6 @@ export async function runStop({
   findListener = findPidListeningOnPort,
   teardownIos = teardownOwnedIosSim,
   teardownAvd = teardownOwnedAvd,
-  simHolders = defaultSimHolders,
   freePort = defaultFreePort,
   clearRegistration = defaultClearRegistration,
   clearState = clearSupervisorState,
@@ -399,7 +398,6 @@ export async function runStop({
   findListener?: (port: number) => number | null;
   teardownIos?: (udid: string, opts: { del?: boolean; label?: string }) => TeardownResult;
   teardownAvd?: (avdName: string, opts: { del?: boolean }) => TeardownResult;
-  simHolders?: (udid: string) => string[];
   freePort?: (root: string, port: number) => void;
   clearRegistration?: (root: string) => Promise<void>;
   clearState?: (root: string) => void;
@@ -484,7 +482,7 @@ export async function runStop({
   if (stillHolding) {
     report(chalk.dim('device: left alone (something is still running)'));
   } else {
-    outcomes.device = shutDownDevices(proj, { teardownIos, teardownAvd, simHolders, report });
+    outcomes.device = shutDownDevices(proj, { teardownIos, teardownAvd, report });
     if (outcomes.device.ios?.status === 'failed' || outcomes.device.android?.status === 'failed') ok = false;
   }
 
@@ -651,63 +649,23 @@ async function stopMetro(
 // --- who is holding an occupied sim ----------------------------------------
 //
 // teardownOwnedIosSim spares a sim something else is attached to (CLAUDE.md
-// item 4), and reported that as "in use by another process (occupied)": true,
-// and a dead end. The reader is left with a device that did not shut down and
-// no way to find out why without knowing about `simctl spawn ... launchctl
-// list` themselves.
+// item 4). The occupancy DECIDER counts only foreign .xctrunner bundles, and
+// the outcome now carries exactly that list, so the skip names what counted
+// and nothing else. (An earlier version scanned `ps` for any command line
+// carrying the udid, which named the sim's own runtime and the app rn-iso
+// itself launched alongside the one process that decided the skip.)
 //
-// Naming it is cheap, because anything that attaches to a simulator has to
-// name the udid to do it -- an `xcodebuild test-without-building -destination
-// id=<udid>`, a device-automation tool, a stray `simctl` -- so the udid is on
-// the holder's own command line. When nothing can be named (a holder that
-// never took the udid as an argument, or a `ps` that could not run at all --
-// isSimOccupied also fails CLOSED, so "occupied" does not prove a holder
-// exists), the generic hint is still better than nothing: it is very nearly
-// always one of two things.
+// The probe also fails CLOSED, so an 'occupied' skip with no holder list does
+// not prove a holder exists -- the generic hint is still better than nothing:
+// it is very nearly always one of two things.
 const OCCUPANCY_HINT = 'often a UI-test runner or device tool still attached';
-
-// PURE. `ps` output -> the processes naming this udid, as "name (pid N)".
-//
-// rn-iso's own processes are dropped: this workspace's device-log collector is
-// a `simctl log stream <udid>`, i.e. a guaranteed match, and it is reaped in
-// step 2 of this very command -- naming it would send the reader after a
-// process that is already exiting, and away from the one that is not.
-export function parseSimHolders(
-  psOutput: string | null | undefined,
-  udid: string,
-  { ignorePids = [process.pid], limit = 3 }: { ignorePids?: number[]; limit?: number } = {},
-): string[] {
-  if (typeof psOutput !== 'string' || !udid) return [];
-  const holders: string[] = [];
-  const seen = new Set<number>();
-  for (const line of psOutput.split('\n')) {
-    if (!line.includes(udid)) continue;
-    const m = line.trim().match(/^(\d+)\s+(\S+)(.*)$/);
-    if (!m) continue;
-    const pid = Number(m[1]);
-    if (ignorePids.includes(pid) || seen.has(pid)) continue;
-    const args = `${m[2]}${m[3]}`;
-    if (/(?:^|\/)rn-iso(?:\s|$)|collector\/run\.js/.test(args)) continue;
-    seen.add(pid);
-    holders.push(`${(m[2] ?? '').split('/').pop()} (pid ${pid})`);
-    if (holders.length >= limit) break;
-  }
-  return holders;
-}
-
-function defaultSimHolders(udid: string): string[] {
-  // `ps` over every process rather than lsof over the device directory: lsof on
-  // a CoreSimulator device path returns the daemons that always hold it
-  // (launchd_sim, CoreSimulatorBridge), which name the sim rather than the
-  // holder. A command line carrying the udid is the thing that is actually
-  // specific to "someone else drove THIS device".
-  return parseSimHolders(getExecutor().runQuiet('ps -Ao pid=,args='), udid);
-}
 
 // PURE. The occupied skip, with whoever can be named appended to it.
 function occupiedSkipReason(reason: string, holders: string[] | null | undefined): string {
   const named = (holders || []).filter(Boolean);
-  return named.length ? `${reason} -- held by ${named.join(', ')}` : `${reason} -- ${OCCUPANCY_HINT}`;
+  return named.length
+    ? `${reason} -- held by UI-test runner ${named.join(', ')}`
+    : `${reason} -- ${OCCUPANCY_HINT}`;
 }
 
 // Owned devices only, and always with del:false. `stop` shutting a device down
@@ -718,12 +676,10 @@ function shutDownDevices(
   {
     teardownIos,
     teardownAvd,
-    simHolders,
     report,
   }: {
     teardownIos: (udid: string, opts: { del?: boolean; label?: string }) => TeardownResult;
     teardownAvd: (avdName: string, opts: { del?: boolean }) => TeardownResult;
-    simHolders: (udid: string) => string[];
     report: (line: string) => void;
   },
 ): DeviceOutcome {
@@ -741,15 +697,7 @@ function shutDownDevices(
       device.ios = { status: 'skipped', kind: 'not-owned', label: iosUdid, reason: 'rn-iso does not own this device' };
       report(chalk.dim(`ios: ${iosUdid} is not rn-iso-owned, leaving it running`));
     } else {
-      device.ios = reportDevice(
-        'ios',
-        iosUdid,
-        teardownIos(iosUdid, { del: false, label: iosName }),
-        report,
-        // Only paid for when the sim was actually spared: the whole point of
-        // the occupancy check is that it almost never fires.
-        () => simHolders(iosUdid),
-      );
+      device.ios = reportDevice('ios', iosUdid, teardownIos(iosUdid, { del: false, label: iosName }), report);
     }
   }
 
@@ -778,7 +726,6 @@ function reportDevice(
   label: string,
   r: TeardownResult,
   report: (line: string) => void,
-  holders: (() => string[]) | null = null,
 ): DeviceOutcomeEntry {
   if (r.status === 'torn-down') {
     report(chalk.green(`${platform}: shut down ${r.label ?? label}`));
@@ -789,7 +736,7 @@ function reportDevice(
     return { status: 'missing', label };
   }
   if (r.status === 'skipped') {
-    const reason = r.kind === 'occupied' && holders ? occupiedSkipReason(r.reason as string, holders()) : r.reason;
+    const reason = r.kind === 'occupied' ? occupiedSkipReason(r.reason as string, r.holders) : r.reason;
     report(chalk.yellow(`${platform}: skipped ${label}: ${reason}`));
     return { status: 'skipped', kind: r.kind ?? null, label, reason };
   }

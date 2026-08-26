@@ -296,19 +296,25 @@ test('deleteIosSim no-ops quietly when the udid is already gone', () => {
 // teardown site skips the sim instead of deleting one that may still be driven
 // by a foreign UI-test runner. This failed OPEN until 0.9.0, on a rationale
 // (never block device selection) whose model was deleted in 0.7.
-test('isSimOccupied reports occupied when the probe cannot answer', async () => {
+test('occupyingApps returns null (doubt, read as occupied) when the probe cannot answer', async () => {
   const { setExecutor, resetExecutor } = await import('../exec.ts');
-  const { isSimOccupied } = await import('../sim/ios.ts');
+  const { occupyingApps } = await import('../sim/ios.ts');
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
-  expect(isSimOccupied('UDID-X')).toBe(true);
+  expect(occupyingApps('UDID-X')).toBe(null);
   resetExecutor();
 });
 
-test('isSimOccupied reports not-occupied when the probe answers with nothing', async () => {
+test('occupyingApps returns the counted xctrunner bundles, and [] for a free sim', async () => {
   const { setExecutor, resetExecutor } = await import('../exec.ts');
-  const { isSimOccupied } = await import('../sim/ios.ts');
+  const { occupyingApps } = await import('../sim/ios.ts');
   setExecutor({ run: () => '', runQuiet: () => '', spawn: () => {} });
-  expect(isSimOccupied('UDID-X')).toBe(false);
+  expect(occupyingApps('UDID-X')).toEqual([]);
+  setExecutor({
+    run: () => '',
+    runQuiet: () => '1\t0\tUIKitApplication:com.example.app.xctrunner[a][rb-legacy]',
+    spawn: () => {},
+  });
+  expect(occupyingApps('UDID-X')).toEqual(['com.example.app.xctrunner']);
   resetExecutor();
 });
 
@@ -316,9 +322,9 @@ test('isSimOccupied reports not-occupied when the probe answers with nothing', a
 // one -- it exits non-zero with "device is not booted", which the probe alone
 // reads as occupied. That left a shut-down orphan permanently unreapable: gc
 // reported it and skipped it every run. The state check has to come first.
-test('isSimOccupied reports not-occupied for a shut-down device without probing', async () => {
+test('occupyingApps reports a shut-down device free without probing', async () => {
   const { setExecutor, resetExecutor } = await import('../exec.ts');
-  const { isSimOccupied } = await import('../sim/ios.ts');
+  const { occupyingApps } = await import('../sim/ios.ts');
   const devices = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
@@ -335,16 +341,16 @@ test('isSimOccupied reports not-occupied for a shut-down device without probing'
     },
     spawn: () => {},
   });
-  expect(isSimOccupied('UDID-X')).toBe(false);
+  expect(occupyingApps('UDID-X')).toEqual([]);
   expect(probed).toBe(false);
   resetExecutor();
 });
 
 // The state check must not weaken the guard for a device that IS booted: an
 // unanswerable probe there is still doubt, and doubt still means occupied.
-test('isSimOccupied still fails closed for a booted device whose probe cannot answer', async () => {
+test('occupyingApps still returns null (doubt) for a booted device whose probe cannot answer', async () => {
   const { setExecutor, resetExecutor } = await import('../exec.ts');
-  const { isSimOccupied } = await import('../sim/ios.ts');
+  const { occupyingApps } = await import('../sim/ios.ts');
   const devices = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
@@ -353,7 +359,7 @@ test('isSimOccupied still fails closed for a booted device whose probe cannot an
     },
   });
   setExecutor({ run: () => devices, runQuiet: () => null, spawn: () => {} });
-  expect(isSimOccupied('UDID-X')).toBe(true);
+  expect(occupyingApps('UDID-X')).toBe(null);
   resetExecutor();
 });
 

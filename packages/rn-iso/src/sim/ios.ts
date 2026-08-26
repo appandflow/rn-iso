@@ -104,7 +104,11 @@ export function parseOccupyingApps(launchctlOutput: string): string[] {
 // be running on it, and `simctl spawn` cannot answer for it either -- it exits
 // non-zero with "device is not booted", which the probe alone reads as
 // occupied. Check the state first, and only probe a device that is booted.
-export function isSimOccupied(udid: string): boolean {
+// Returns the bundles that COUNT (the foreign .xctrunner list), so the caller
+// can name exactly what decided the skip -- not every process near the sim.
+// null is an unanswerable probe: doubt, which the caller must read as
+// occupied. A non-empty list is occupied; [] is free.
+export function occupyingApps(udid: string): string[] | null {
   let sim: IosSimRecord | undefined;
   try {
     sim = listAllIosSims().find((s) => s.udid === udid);
@@ -113,10 +117,10 @@ export function isSimOccupied(udid: string): boolean {
     // probe and let it fail closed.
     sim = undefined;
   }
-  if (sim && sim.state !== 'Booted') return false;
+  if (sim && sim.state !== 'Booted') return [];
   const out = getExecutor().runQuiet(`xcrun simctl spawn ${udid} launchctl list`);
-  if (out === null || out === undefined) return true;
-  return parseOccupyingApps(out).length > 0;
+  if (out === null || out === undefined) return null;
+  return parseOccupyingApps(out);
 }
 
 export function parseRuntimeVersion(runtimeId: string): string {
