@@ -24,7 +24,12 @@ So the loop is:
 2. **For each finding, open the file it names and read what is already there.**
    The correct edit is the smallest one that fits the code in front of you, not
    the snippet on this page pasted over it.
-3. **Re-run `rn-iso doctor`** to confirm the finding is gone.
+3. **Re-run `rn-iso doctor`** to confirm the finding is gone. Two classes of
+   note can NEVER clear, by design, and count as done once you have verified
+   the thing by hand: a metro config that only re-exports another package's
+   config (doctor will not evaluate code -- wire the store in the delegated
+   file and move on), and an `app.config.ts`/`.js` (same reason -- check
+   `npx expo config --json` yourself).
 4. **Then work through the sections below that doctor cannot check at all.** A
    clean `doctor` run does not mean this repo is set up; it means doctor had
    nothing to say about the handful of things it reads. Each section says which
