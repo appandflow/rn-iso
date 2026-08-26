@@ -203,7 +203,11 @@ function worktreeCreate(name, appDir) {
 }
 
 function startAndAssertMode(cwd) {
-  const facts = cliJson(['start', '--json'], { cwd });
+  // --wait 240 (vs the 60s default): a bare RN app hosts Metro in-process, and
+  // its first metro-file-map crawl + transform on a cold, loaded CI runner can
+  // take well over a minute -- the android-bare job hit RN_ISO_METRO_TIMEOUT at
+  // 60s. This is CI headroom, not a product change.
+  const facts = cliJson(['start', '--json', '--wait', '240'], { cwd });
   assert(
     facts.mode === EXPECTED_MODE,
     `start mode for a ${FRAMEWORK} app must be ${EXPECTED_MODE}, got ${JSON.stringify(facts.mode)} ` +
