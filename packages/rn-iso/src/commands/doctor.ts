@@ -32,9 +32,7 @@ export default function doctorCommand(program: Command) {
       }
 
       const rawFindings = runDoctor(root, {
-        // doctor.ts's own param types are still being added by another agent;
-        // its current inferred signature only accepts a literal null here.
-        xcodeMajor: detectXcodeMajor() as any,
+        xcodeMajor: detectXcodeMajor(),
       });
       const findings: DoctorFinding[] = (rawFindings as (DoctorFinding | null)[]).filter(
         (f): f is DoctorFinding => f != null,

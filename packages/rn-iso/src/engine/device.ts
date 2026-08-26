@@ -30,7 +30,7 @@ import {
 // `udid`/`name`): this module has always used `deviceUdid`/`deviceName`, and
 // config's index signature is what keeps the two compatible where they meet
 // (setDevice's parameter, and the cast where a record is read back out).
-interface OwnedDeviceRecord {
+export interface OwnedDeviceRecord {
   deviceUdid?: string;
   deviceName?: string;
   owned?: boolean;

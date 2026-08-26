@@ -25,14 +25,14 @@ const METRO_MB = 700;
 // supervisor record, a worktree list, a log summary. None of these are
 // produced here, so each is modelled as a flat bag of the fields this module
 // actually reads rather than imported from the module that built it.
-interface SimFacts {
+export interface SimFacts {
   udid?: string;
   name?: string;
   state?: string;
   [key: string]: unknown;
 }
 
-interface MetroFacts {
+export interface MetroFacts {
   metro?: { pid: number } | null;
   notOurs?: string;
   [key: string]: unknown;
@@ -51,7 +51,7 @@ interface LogsFacts {
   errorsSinceMarker?: number;
 }
 
-interface WorktreeFacts {
+export interface WorktreeFacts {
   path: string;
   branch?: string;
   [key: string]: unknown;

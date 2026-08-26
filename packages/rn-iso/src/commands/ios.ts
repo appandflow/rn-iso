@@ -87,12 +87,6 @@ interface DeviceLike {
   avdName?: string | null;
 }
 
-interface BootedLike {
-  ok?: boolean;
-  reason?: string | null;
-  udid?: string;
-}
-
 interface PodStateLike {
   hasPodfile?: boolean;
   lockText?: unknown;
@@ -115,12 +109,6 @@ interface SupervisorLike {
   pid?: number;
   port?: number;
   mode?: string;
-}
-
-interface RemoteHitLike {
-  appPath?: string | null;
-  timedOut?: boolean;
-  failed?: string | null;
 }
 
 interface RemoteUploadLike {
@@ -176,12 +164,6 @@ interface VerifyLaunchResultLike {
   verified?: boolean;
   skipped?: boolean;
   waitedMs?: number;
-}
-
-interface DeviceCapacityRefusalLike {
-  code: string;
-  message: string;
-  remedy?: string | null;
 }
 
 interface IosCommandOptions {
@@ -991,16 +973,7 @@ export async function runIos(
   // a sim: a refusal has to fire before that, not after. It never refuses a
   // workspace whose own sim is already booted (re-running `ios` is idempotent),
   // only a NEW device that would push the machine over concurrency.maxDevices.
-  // checkDeviceCapacity is still untyped in engine/device.ts, and its destructured
-  // parameter (with a `= {}` default) infers a type that drops every property with
-  // no default of its own -- so TS sees zero overlap with the real call shape. The
-  // local signature below is what this file actually calls it with.
-  type CheckDeviceCapacityFn = (args: {
-    platform: string;
-    project: ProjectRecord | null;
-    max: number;
-  }) => DeviceCapacityRefusalLike | null;
-  const capacity = (d.checkDeviceCapacity as unknown as CheckDeviceCapacityFn)({
+  const capacity = d.checkDeviceCapacity({
     platform: PLATFORM,
     project: proj,
     max: limits.maxDevices,
@@ -1087,14 +1060,7 @@ export async function runIos(
     note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${metroPort}.`));
   }
 
-  // ensureBooted is still untyped in engine/device.ts; its `= {}` default drops
-  // `platform`/`device` (no default of their own) from the inferred type.
-  type EnsureBootedFn = (args: {
-    platform: string;
-    device: unknown;
-    out?: (...args: unknown[]) => void;
-  }) => Promise<BootedLike>;
-  const booted = await (d.ensureBooted as unknown as EnsureBootedFn)({ platform: PLATFORM, device, out: noteAny });
+  const booted = await d.ensureBooted({ platform: PLATFORM, device, out: noteAny });
   if (!booted?.ok) {
     return fail({
       code: 'RN_ISO_NO_DEVICE',
@@ -1191,17 +1157,7 @@ export async function runIos(
   }
 
   if (remote && useBuildCache) {
-    // resolveRemote is still untyped in engine/remote-cache.ts, and every
-    // property this call sends has no default there, so TS infers a parameter
-    // type with NO overlap at all against the object below. The local
-    // signature is what this file actually calls it with.
-    type ResolveRemoteFn = (args: {
-      provider: unknown;
-      platform: string;
-      projectRoot: string;
-      fingerprintHash: string;
-    }) => Promise<RemoteHitLike | null>;
-    const hit = await (d.resolveRemote as unknown as ResolveRemoteFn)({
+    const hit = await d.resolveRemote({
       provider: remote.provider,
       platform: PLATFORM,
       projectRoot: root,
@@ -1460,15 +1416,7 @@ export async function runIos(
       // beside the install rather than being added to it. Nothing about this run
       // depends on it.
       if (remote) {
-        // uploadRemote has the same untyped-default shape as resolveRemote above.
-        type UploadRemoteFn = (args: {
-          provider: unknown;
-          platform: string;
-          projectRoot: string;
-          fingerprintHash: string;
-          buildPath: string;
-        }) => Promise<RemoteUploadLike>;
-        uploadPending = (d.uploadRemote as unknown as UploadRemoteFn)({
+        uploadPending = d.uploadRemote({
           provider: remote.provider,
           platform: PLATFORM,
           projectRoot: root,
