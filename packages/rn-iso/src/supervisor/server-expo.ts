@@ -277,6 +277,38 @@ interface ExpoExitInfo {
   error?: Error;
 }
 
+/**
+ * PURE. Tell Expo's dev server its PUBLIC address, when this workspace has
+ * one.
+ *
+ * Expo builds the manifest's `hostUri` and `launchAsset.url` from the request
+ * it is answering, taking the hostname from the Host header but the port from
+ * ITSELF. Behind a tunnel that produces an address that cannot exist:
+ *
+ *   "hostUri": "priest-contribute-mysql-leslie.trycloudflare.com:8085"
+ *
+ * -- the tunnel's hostname with the local Metro port, while the tunnel
+ * listens on 443. A remote device follows that manifest and fails, which is
+ * observable as a launch that reaches "Loading from Metro..." and then
+ * redboxes with "Could not connect to development server". Verified on a real
+ * EAS Simulator, and it is NOT fixable from the device side: the manifest
+ * wins over the launch URL.
+ *
+ * EXPO_PACKAGER_PROXY_URL is Expo's own answer, and setting it makes the
+ * manifest advertise the tunnel with no port at all.
+ *
+ * Derived from RN_ISO_METRO_PUBLIC_URL so the two halves cannot disagree:
+ * that one variable is already what `ios --remote` points the device at, and
+ * requiring a second one to match it by hand is a trap. An explicit
+ * EXPO_PACKAGER_PROXY_URL always wins -- a project that sets it has said
+ * something more specific than rn-iso can infer.
+ */
+export function expoProxyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  if (env.EXPO_PACKAGER_PROXY_URL) return {};
+  const publicUrl = env.RN_ISO_METRO_PUBLIC_URL?.trim();
+  return publicUrl ? { EXPO_PACKAGER_PROXY_URL: publicUrl.replace(/\/+$/, '') } : {};
+}
+
 // The ServerHandle runSupervisor drives, plus the pieces a test reaches for.
 export interface ExpoServerHandle {
   mode: string;
@@ -320,7 +352,7 @@ export async function startExpoServer({
     // outlive us.
     detached: false,
     // Colour only makes the log harder to read; it is stripped either way.
-    env: { ...process.env, FORCE_COLOR: '0' },
+    env: { ...process.env, FORCE_COLOR: '0', ...expoProxyEnv(process.env) },
   });
 
   // Expo prints some fatal lines to BOTH streams (the config PluginError in

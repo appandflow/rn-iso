@@ -128,6 +128,16 @@ That is all of it. There is no `init` -- repo setup is the `rn-iso-init` skill a
 
 `ios --remote` installs and launches on a simulator that is not on this machine. **The build still runs here** -- the fingerprint, the shared cache and single-flight builds are unchanged, and only the device moves. Reach for it when the machine runs out of simulators before it runs out of work, not as a default: a cloud session is billable, and a local device is faster.
 
+**A device on another machine needs Metro to be reachable from ITS network**, so expose the reserved port through a tunnel and name it:
+
+```bash
+rn-iso start                                        # note the reserved port, e.g. 8085
+cloudflared tunnel --url http://127.0.0.1:8085      # wait for it -- a fresh quick tunnel takes a few minutes to route
+export RN_ISO_METRO_PUBLIC_URL=https://<that-url>
+```
+
+Set it BEFORE `rn-iso start`, not just before `ios`. `start` turns it into Expo's `EXPO_PACKAGER_PROXY_URL`, which is what makes the manifest advertise the tunnel. Without it Expo builds the manifest from its own port, the device is told to fetch `https://<tunnel-host>:8085/...`, and the launch dies at "Could not connect to development server" -- the manifest wins over the deep link, so it cannot be fixed from the device side. A loopback proxy needs none of this.
+
 It needs `agent-device` on PATH, plus one of:
 
 - **`AGENT_DEVICE_DAEMON_BASE_URL` + `AGENT_DEVICE_DAEMON_AUTH_TOKEN` in the environment.** rn-iso uses that daemon and creates no session of its own. This is the `agent-device proxy` case, and it is also how you attach to a session someone else started.

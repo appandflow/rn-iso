@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseNdjsonText } from '../ndjson.ts';
 import {
+  expoProxyEnv,
   cleanLine,
   createLineReader,
   expoBinPath,
@@ -407,4 +408,42 @@ test('inferLevel classifies Expo bundling failures as errors', () => {
   expect(inferLevel('Failed to load app from http://localhost:8084')).toBe('error');
   expect(inferLevel('iOS Bundled 812ms index.js (1150 modules)')).toBe('info');
   expect(inferLevel('Bundling 100%')).toBe('info');
+});
+
+// --- the public Metro address -----------------------------------------------
+//
+// Expo composes the manifest's hostUri from the Host header it was called
+// with plus ITS OWN port. Behind a tunnel that yields
+// "<tunnel-host>:8085" while the tunnel listens on 443, and a remote device
+// following that manifest can never connect. Verified on a real EAS
+// Simulator; the manifest wins over the launch URL, so it cannot be fixed
+// from the device side.
+
+test('a workspace with no public URL sets nothing', () => {
+  expect(expoProxyEnv({})).toEqual({});
+});
+
+test('the public URL becomes EXPO_PACKAGER_PROXY_URL', () => {
+  // One variable, not two that must agree by hand: this is the same value
+  // `ios --remote` points the device at.
+  expect(expoProxyEnv({ RN_ISO_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com' })).toEqual({
+    EXPO_PACKAGER_PROXY_URL: 'https://abc.trycloudflare.com',
+  });
+});
+
+test('a trailing slash is dropped', () => {
+  expect(expoProxyEnv({ RN_ISO_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com/' })).toEqual({
+    EXPO_PACKAGER_PROXY_URL: 'https://abc.trycloudflare.com',
+  });
+});
+
+test('an explicit EXPO_PACKAGER_PROXY_URL is never overridden', () => {
+  // A project that set it has said something more specific than rn-iso can
+  // infer.
+  expect(
+    expoProxyEnv({
+      EXPO_PACKAGER_PROXY_URL: 'https://chosen.example.com',
+      RN_ISO_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com',
+    }),
+  ).toEqual({});
 });
