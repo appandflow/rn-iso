@@ -23,16 +23,16 @@
 
 ## File Structure
 
-| File | Responsibility |
-|---|---|
-| `packages/rn-iso/src/paths.js` | **New.** Every path rn-iso writes: workspace-local under `<root>/.rn-iso/`, shared under `getConfigDir()`. Pure functions, no I/O. |
-| `packages/rn-iso/src/fs-util.js` | **New.** The half of `artifacts.js` that survives: volume detection (`volumeRootFor`, `isRealMount`, `listMountedVolumes`, `isOnMountedVolume`) and sizing (`directorySize`, `formatBytes`). |
-| `packages/rn-iso/src/artifacts.js` | **Deleted.** Its DerivedData classification has no consumer once build output is workspace-local. |
-| `packages/rn-iso/src/init.js` | Templates gain `.rn-iso/` in `.gitignore` and `.worktreeexclude`, plus the Podfile compilation-cache pin. **No xcconfig** -- `-derivedDataPath` is an xcodebuild argument, not a build setting. |
-| `packages/rn-iso/src/doctor.js` | Gains `checkArtifactLayout`. |
-| `packages/rn-iso/src/commands/gc.js` | Narrowed: dead entries, orphaned devices, shared caches. DerivedData sweep removed. |
-| `packages/rn-iso/src/commands/prune.js` | **Deleted.** Its behavior is `gc --delete` restricted to one project. |
-| `packages/rn-iso/src/commands/cache.js` | **Deleted.** `register`/`forget`/`list` fold into `gc`'s report. |
+| File                                    | Responsibility                                                                                                                                                                                  |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/rn-iso/src/paths.js`          | **New.** Every path rn-iso writes: workspace-local under `<root>/.rn-iso/`, shared under `getConfigDir()`. Pure functions, no I/O.                                                              |
+| `packages/rn-iso/src/fs-util.js`        | **New.** The half of `artifacts.js` that survives: volume detection (`volumeRootFor`, `isRealMount`, `listMountedVolumes`, `isOnMountedVolume`) and sizing (`directorySize`, `formatBytes`).    |
+| `packages/rn-iso/src/artifacts.js`      | **Deleted.** Its DerivedData classification has no consumer once build output is workspace-local.                                                                                               |
+| `packages/rn-iso/src/init.js`           | Templates gain `.rn-iso/` in `.gitignore` and `.worktreeexclude`, plus the Podfile compilation-cache pin. **No xcconfig** -- `-derivedDataPath` is an xcodebuild argument, not a build setting. |
+| `packages/rn-iso/src/doctor.js`         | Gains `checkArtifactLayout`.                                                                                                                                                                    |
+| `packages/rn-iso/src/commands/gc.js`    | Narrowed: dead entries, orphaned devices, shared caches. DerivedData sweep removed.                                                                                                             |
+| `packages/rn-iso/src/commands/prune.js` | **Deleted.** Its behavior is `gc --delete` restricted to one project.                                                                                                                           |
+| `packages/rn-iso/src/commands/cache.js` | **Deleted.** `register`/`forget`/`list` fold into `gc`'s report.                                                                                                                                |
 
 **Known follow-up, do not fix mid-task:** the string `.rn-iso` now exists in
 three places -- `WORKSPACE_DIR_NAME` in `src/paths.js`, `WORKSPACE_DIR` in
@@ -47,10 +47,12 @@ once Tasks 2, 3 and 4 have all landed, as its own commit.
 ### Task 1: The layout module
 
 **Files:**
+
 - Create: `packages/rn-iso/src/paths.js`
 - Test: `packages/rn-iso/test/paths.test.js`
 
 **Interfaces:**
+
 - Consumes: `getConfigDir()` from `src/config.js` (already respects `RN_ISO_HOME`).
 - Produces: `workspaceDir(root)`, `workspaceLogsDir(root)`, `workspaceDerivedData(root)`, `workspaceGradleBuild(root)`, `supervisorPidFile(root)`, `workspaceStateFile(root)`, `sharedMetroCache()`, `sharedBuildCache()`, `sharedCompilationCache()`, `sharedGradle()`, `sharedPods()`. All return absolute path strings and perform no I/O.
 
@@ -64,8 +66,13 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
-  workspaceDir, workspaceLogsDir, workspaceDerivedData, supervisorPidFile,
-  sharedMetroCache, sharedBuildCache, sharedCompilationCache,
+  workspaceDir,
+  workspaceLogsDir,
+  workspaceDerivedData,
+  supervisorPidFile,
+  sharedMetroCache,
+  sharedBuildCache,
+  sharedCompilationCache,
 } from '../src/paths.js';
 
 describe('workspace paths', () => {
@@ -197,19 +204,21 @@ git commit -m "feat: add paths module as the single source of truth for layout"
 ### Task 2: Split artifacts.js into fs-util.js
 
 **Files:**
+
 - Create: `packages/rn-iso/src/fs-util.js`
 - Create: `packages/rn-iso/test/fs-util.test.js`
 - Delete: `packages/rn-iso/src/artifacts.js`, `packages/rn-iso/test/artifacts.test.js`
 - Modify (import updates): `src/ports.js`, `src/reclaim.js`, `src/config.js`, `src/caches.js`, `src/commands/gc.js`, `src/commands/build-cache.js`, `src/commands/cache.js`, `src/commands/prune.js`, `src/commands/worktree.js`
 
 **Interfaces:**
+
 - Produces: `volumeRootFor(path)`, `isRealMount(entryDev, rootDev)`, `listMountedVolumes({statFn})`, `isOnMountedVolume(path, mountedVolumes)`, `directorySize(dir)`, `formatBytes(bytes)` — all moved verbatim from `artifacts.js`, signatures unchanged.
 - Removed with no replacement: `derivedDataRoot`, `parseDerivedDataInfo`, `listDerivedDataEntries`, `classifyDerivedData`, `findDerivedDataFor`, `findOrphanedDerivedData`.
 
 **Why this is a split and not a deletion:** the mounted-volume guard protects
-two different things, and only one of them goes away. Guarding *DerivedData
-classification* stops being necessary once build output is workspace-local.
-Guarding the *project registry* does not: `findReclaimablePort` in `ports.js`
+two different things, and only one of them goes away. Guarding _DerivedData
+classification_ stops being necessary once build output is workspace-local.
+Guarding the _project registry_ does not: `findReclaimablePort` in `ports.js`
 must still refuse to reclaim the port of a project whose volume is merely
 unplugged, because reclaiming removes the whole entry and drops its device
 claim. Deleting `isOnMountedVolume` would silently reintroduce that bug.
@@ -272,17 +281,19 @@ git commit -m "refactor: split artifacts.js, keep volume and size utils in fs-ut
 ### Task 3: init writes the layout into the repo
 
 **Files:**
+
 - Modify: `packages/rn-iso/src/init.js` (`renderWorktreeExclude` at line 216)
 - Modify: `packages/rn-iso/src/commands/init.js`
 - Test: `packages/rn-iso/test/init.test.js`
 
 **Interfaces:**
+
 - Consumes: `workspaceDerivedData`, `sharedCompilationCache` from `src/paths.js` (Task 1).
 - Produces: `renderGitignoreAdditions()` returning the lines `init` appends to `.gitignore`; `renderPodfileCasPin()` returning the `post_install` lines that pin the compilation cache.
 
 **Do NOT try to redirect DerivedData from an xcconfig.** `-derivedDataPath` is
 an `xcodebuild` command-line argument, not a build setting; `SYMROOT` and
-`OBJROOT` control where build *products* land, which is a different and
+`OBJROOT` control where build _products_ land, which is a different and
 narrower thing. The redirection is applied by the `ios` command passing
 `-derivedDataPath $(workspaceDerivedData(root))` at build time, which lands in
 step 3. `init` has nothing to write for it, because `src/paths.js` already
@@ -295,7 +306,7 @@ derives the path from the project root -- there is no configuration to store.
    workspace's DerivedData, logs and pidfile into a fresh worktree, which is
    strictly worse than starting cold.
 2. `COMPILATION_CACHE_CAS_PATH` must be pinned to `sharedCompilationCache()`.
-   Xcode's default CAS path is *inside* DerivedData, so redirecting DerivedData
+   Xcode's default CAS path is _inside_ DerivedData, so redirecting DerivedData
    into the worktree would drag the CAS in with it and make it per-worktree,
    sharing nothing. `doctor.js`'s `checkCompilationCache` (line 96) already
    warns about exactly this and its message stays accurate.
@@ -354,10 +365,12 @@ git commit -m "feat: init redirects DerivedData into the workspace, pins the CAS
 ### Task 4: doctor reports the layout
 
 **Files:**
+
 - Modify: `packages/rn-iso/src/doctor.js` (add beside `checkCompilationCache`, line 96; register in `runDoctor`, line 217)
 - Test: `packages/rn-iso/test/doctor.test.js`
 
 **Interfaces:**
+
 - Consumes: `finding(level, title, detail, fix)` from `src/doctor.js` line 38.
 - Produces: `checkArtifactLayout({ gitignoreSource, worktreeExcludeSource })` returning a finding or `null`. Pure — it is a function of the text it is given, matching every other check in the file.
 
@@ -374,10 +387,13 @@ test('reports when .rn-iso is gitignored but not worktree-excluded', () => {
 });
 
 test('silent when both are wired', () => {
-  assert.strictEqual(checkArtifactLayout({
-    gitignoreSource: '.rn-iso/\n',
-    worktreeExcludeSource: '.rn-iso/\n',
-  }), null);
+  assert.strictEqual(
+    checkArtifactLayout({
+      gitignoreSource: '.rn-iso/\n',
+      worktreeExcludeSource: '.rn-iso/\n',
+    }),
+    null,
+  );
 });
 ```
 
@@ -409,12 +425,14 @@ git commit -m "feat: doctor reports an unwired artifact layout"
 ### Task 5: Narrow gc, delete prune and cache
 
 **Files:**
+
 - Modify: `packages/rn-iso/src/commands/gc.js`
 - Delete: `packages/rn-iso/src/commands/prune.js`, `packages/rn-iso/test/prune.test.js`, `packages/rn-iso/src/commands/cache.js`, `packages/rn-iso/test/cache-command.test.js`
 - Modify: `packages/rn-iso/bin/cli.js` (drop the `pruneCommand` and `cacheCommand` registrations)
 - Test: `packages/rn-iso/test/gc.test.js`
 
 **Interfaces:**
+
 - Consumes: `findOrphanedDevices` (already in `gc.js`), `discoverCaches`/`sizeCaches`/`pruneCache` from `src/caches.js`, `teardownOwnedIosSim`/`teardownOwnedAvd` from `src/teardown.js`.
 - Produces: `gc [--delete] [--older-than <days>]`. Bare `gc` reports and never writes.
 - `--delete --older-than <days>` must ALSO reap owned devices whose project has
@@ -506,6 +524,7 @@ git commit -m "refactor: narrow gc to dead entries, orphaned devices and caches"
 ### Task 6: Reconcile the cache paths across all three implementations
 
 **Files:**
+
 - Modify: `packages/rn-iso/src/paths.js`, `packages/rn-iso/src/build-cache.js`
 - Modify: `packages/metro-cache/index.js`, `packages/expo-build-cache/index.js`
 - Modify: `packages/rn-iso/src/commands/init.js`, `packages/rn-iso/src/doctor.js`
@@ -514,8 +533,8 @@ git commit -m "refactor: narrow gc to dead entries, orphaned devices and caches"
 
 **The problem.** Task 1 declared shared paths that disagree with reality:
 
-| | today | `paths.js` |
-|---|---|---|
+|             | today                   | `paths.js`              |
+| ----------- | ----------------------- | ----------------------- |
 | build cache | `~/.rn-iso-build-cache` | `~/.rn-iso/build-cache` |
 | metro cache | `~/.<name>-metro-cache` | `~/.rn-iso/metro-cache` |
 
@@ -548,8 +567,7 @@ test('shared paths honour the legacy env overrides', () => {
 test('the CJS providers resolve the same root the CLI does', () => {
   // The whole point of this test: if these two ever disagree, the CLI stores
   // builds somewhere the Expo provider will never look for them.
-  assert.strictEqual(require('../../expo-build-cache/index.js').cacheRoot(),
-                     sharedBuildCache());
+  assert.strictEqual(require('../../expo-build-cache/index.js').cacheRoot(), sharedBuildCache());
 });
 ```
 
@@ -646,11 +664,11 @@ that guard, no flag or env var may lift it.
 test('--delete --all empties an index-backed cache that --older-than cannot trim', async () => {
   // The CAS is the case that exists for: trimming by age skips it entirely.
   const report = await collectGcReport({ all: true });
-  assert.ok(report.caches.some(c => c.prune === 'atomic' && c.willEmpty));
+  assert.ok(report.caches.some((c) => c.prune === 'atomic' && c.willEmpty));
 });
 
 test('--all under a scoped home refuses machine-global caches', async () => {
-  process.env.RN_ISO_HOME = tmpHome;               // scoped
+  process.env.RN_ISO_HOME = tmpHome; // scoped
   await runGc({ delete: true, all: true });
   // A cache outside getConfigDir() must survive, and say why.
   assert.ok(existsSync(machineGlobalCacheDir));
@@ -664,16 +682,16 @@ test('--all never reaches devices', async () => {
 ```
 
 - [ ] **Step 2: Run to verify they fail.** Expect a link-time
-`SyntaxError` if an export is missing, or a failing assertion on `willEmpty`.
+      `SyntaxError` if an export is missing, or a failing assertion on `willEmpty`.
 
 - [ ] **Step 3: Implement**, reusing `pruneCache`'s existing `atomic` handling
-in `src/caches.js` rather than adding a second emptying path.
+      in `src/caches.js` rather than adding a second emptying path.
 
 - [ ] **Step 4: Run the tests, then the full suite.** `npm test` from the root.
 
 - [ ] **Step 5: Live-verify** per item 9, under a throwaway `RN_ISO_HOME`, and
-confirm the machine's real Xcode CAS SURVIVES -- that is the assertion that
-matters here, not that emptying works.
+      confirm the machine's real Xcode CAS SURVIVES -- that is the assertion that
+      matters here, not that emptying works.
 
 - [ ] **Step 6: Commit**
 

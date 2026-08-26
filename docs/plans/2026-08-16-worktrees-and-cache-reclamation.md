@@ -27,10 +27,12 @@ Run the full suite with `npm test` at the end of every task.
 ### Task 1: Config schema v2 with a `repos` section
 
 **Files:**
+
 - Modify: `src/config.js`
 - Test: `test/config.test.js`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `getRepoSettings(gitCommonDir)`, `setRepoSetting(gitCommonDir, dottedKey, value)`, `unsetRepoSetting(gitCommonDir, dottedKey)`. `ensureConfig()` now returns `{version: 2, projects: {}, repos: {}}`.
 
@@ -149,10 +151,12 @@ git commit -m "feat(config): add v2 schema with per-repo settings section"
 ### Task 2: Layered settings resolution
 
 **Files:**
+
 - Create: `src/settings.js`
 - Test: `test/settings.test.js`
 
 **Interfaces:**
+
 - Consumes: `getProjectSettings`, `getRepoSettings` from Task 1.
 - Produces: `mergeSettingsLayers(layers)` (pure, first-wins over an ordered array), `resolveSettings({projectPath, gitCommonDir, repoRoot})` returning the merged object, `readCommittedSettings(repoRoot)` reading `<repoRoot>/.rn-iso.json`.
 
@@ -182,10 +186,7 @@ afterEach(() => {
 });
 
 test('earlier layers win over later ones', () => {
-  const merged = mergeSettingsLayers([
-    { packageManager: 'bun' },
-    { packageManager: 'pnpm', worktreeDir: '/b' },
-  ]);
+  const merged = mergeSettingsLayers([{ packageManager: 'bun' }, { packageManager: 'pnpm', worktreeDir: '/b' }]);
   assert.deepEqual(merged, { packageManager: 'bun', worktreeDir: '/b' });
 });
 
@@ -202,10 +203,7 @@ test('ignores null and undefined layers', () => {
 });
 
 test('an array value is replaced wholesale, not concatenated', () => {
-  const merged = mergeSettingsLayers([
-    { worktree: { install: ['a'] } },
-    { worktree: { install: ['b', 'c'] } },
-  ]);
+  const merged = mergeSettingsLayers([{ worktree: { install: ['a'] } }, { worktree: { install: ['b', 'c'] } }]);
   assert.deepEqual(merged.worktree.install, ['a']);
 });
 
@@ -223,7 +221,7 @@ test('readCommittedSettings returns empty for missing or malformed files', () =>
 test('resolveSettings orders project over repo over committed', () => {
   writeFileSync(
     join(tmpHome, '.rn-iso.json'),
-    JSON.stringify({ packageManager: 'yarn', worktree: { baseRef: 'fresh' } })
+    JSON.stringify({ packageManager: 'yarn', worktree: { baseRef: 'fresh' } }),
   );
   setRepoSetting('/repo/.git', 'packageManager', 'pnpm');
   upsertProject('/proj', {});
@@ -314,10 +312,12 @@ git commit -m "feat(settings): add layered settings resolution"
 ### Task 3: DerivedData discovery and orphan classification
 
 **Files:**
+
 - Create: `src/artifacts.js`
 - Test: `test/artifacts.test.js`
 
 **Interfaces:**
+
 - Consumes: `getExecutor` from `src/exec.js`.
 - Produces: `parseDerivedDataInfo(plistJson)` returning `{workspacePath, lastAccessed}`; `volumeRootFor(path)`; `classifyDerivedData(entries, {mountedVolumes, now, olderThanDays})` returning `{orphaned, live, skipped}`; `derivedDataRoot()`; `listDerivedDataEntries()`.
 
@@ -328,11 +328,7 @@ Create `test/artifacts.test.js`:
 ```js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  parseDerivedDataInfo,
-  volumeRootFor,
-  classifyDerivedData,
-} from '../src/artifacts.js';
+import { parseDerivedDataInfo, volumeRootFor, classifyDerivedData } from '../src/artifacts.js';
 
 test('parses WorkspacePath and LastAccessedDate from plutil json', () => {
   const json = JSON.stringify({
@@ -357,16 +353,19 @@ test('volumeRootFor identifies external and boot volumes', () => {
 test('classifies a missing workspace on a mounted volume as orphaned', () => {
   const result = classifyDerivedData(
     [{ dir: '/dd/App-abc', workspacePath: '/Volumes/ExternalSSD/gone/App.xcworkspace', exists: false }],
-    { mountedVolumes: ['/', '/Volumes/ExternalSSD'] }
+    { mountedVolumes: ['/', '/Volumes/ExternalSSD'] },
   );
-  assert.deepEqual(result.orphaned.map(e => e.dir), ['/dd/App-abc']);
+  assert.deepEqual(
+    result.orphaned.map((e) => e.dir),
+    ['/dd/App-abc'],
+  );
   assert.equal(result.skipped.length, 0);
 });
 
 test('skips rather than orphans when the volume is not mounted', () => {
   const result = classifyDerivedData(
     [{ dir: '/dd/App-abc', workspacePath: '/Volumes/ExternalSSD/x/App.xcworkspace', exists: false }],
-    { mountedVolumes: ['/'] }
+    { mountedVolumes: ['/'] },
   );
   assert.equal(result.orphaned.length, 0);
   assert.equal(result.skipped.length, 1);
@@ -374,32 +373,46 @@ test('skips rather than orphans when the volume is not mounted', () => {
 });
 
 test('skips entries whose metadata could not be read', () => {
-  const result = classifyDerivedData(
-    [{ dir: '/dd/App-abc', workspacePath: null, exists: false }],
-    { mountedVolumes: ['/'] }
-  );
+  const result = classifyDerivedData([{ dir: '/dd/App-abc', workspacePath: null, exists: false }], {
+    mountedVolumes: ['/'],
+  });
   assert.equal(result.orphaned.length, 0);
   assert.equal(result.skipped.length, 1);
   assert.match(result.skipped[0].reason, /unreadable/);
 });
 
 test('an existing workspace is live, never orphaned', () => {
-  const result = classifyDerivedData(
-    [{ dir: '/dd/App-abc', workspacePath: '/live/App.xcworkspace', exists: true }],
-    { mountedVolumes: ['/'] }
+  const result = classifyDerivedData([{ dir: '/dd/App-abc', workspacePath: '/live/App.xcworkspace', exists: true }], {
+    mountedVolumes: ['/'],
+  });
+  assert.deepEqual(
+    result.live.map((e) => e.dir),
+    ['/dd/App-abc'],
   );
-  assert.deepEqual(result.live.map(e => e.dir), ['/dd/App-abc']);
   assert.equal(result.orphaned.length, 0);
 });
 
 test('olderThanDays keeps recently accessed orphans out of the result', () => {
   const now = new Date('2026-08-16T00:00:00Z');
   const entries = [
-    { dir: '/dd/old', workspacePath: '/gone/A.xcworkspace', exists: false, lastAccessed: new Date('2026-07-01T00:00:00Z') },
-    { dir: '/dd/new', workspacePath: '/gone/B.xcworkspace', exists: false, lastAccessed: new Date('2026-08-15T00:00:00Z') },
+    {
+      dir: '/dd/old',
+      workspacePath: '/gone/A.xcworkspace',
+      exists: false,
+      lastAccessed: new Date('2026-07-01T00:00:00Z'),
+    },
+    {
+      dir: '/dd/new',
+      workspacePath: '/gone/B.xcworkspace',
+      exists: false,
+      lastAccessed: new Date('2026-08-15T00:00:00Z'),
+    },
   ];
   const result = classifyDerivedData(entries, { mountedVolumes: ['/'], now, olderThanDays: 7 });
-  assert.deepEqual(result.orphaned.map(e => e.dir), ['/dd/old']);
+  assert.deepEqual(
+    result.orphaned.map((e) => e.dir),
+    ['/dd/old'],
+  );
 });
 ```
 
@@ -533,7 +546,7 @@ export function classifyDerivedData(entries, { mountedVolumes, now, olderThanDay
 export function findDerivedDataFor(projectPath, root = derivedDataRoot()) {
   const prefix = projectPath.endsWith('/') ? projectPath : `${projectPath}/`;
   return listDerivedDataEntries(root).filter(
-    e => e.workspacePath && (e.workspacePath === projectPath || e.workspacePath.startsWith(prefix))
+    (e) => e.workspacePath && (e.workspacePath === projectPath || e.workspacePath.startsWith(prefix)),
   );
 }
 
@@ -576,11 +589,13 @@ git commit -m "feat(artifacts): map DerivedData to projects and classify orphans
 ### Task 4: Shared `reclaimProject`, with `prune` delegating to it
 
 **Files:**
+
 - Create: `src/reclaim.js`
 - Modify: `src/commands/prune.js`
 - Test: `test/reclaim.test.js`
 
 **Interfaces:**
+
 - Consumes: `pruneDeadProjects`, `removeProject` (config.js); `findPidListeningOnPort` (metro.js); `findDerivedDataFor`, `directorySize` (Task 3).
 - Produces: `reclaimProject(path, {deleteArtifacts})` returning `{path, freed: string[], artifacts: [{dir, bytes}], killedPid}`.
 
@@ -619,9 +634,7 @@ test('describeFreed lists ios and android claims', () => {
 });
 
 test('describeFreed reports a physical android device when there is no avd', () => {
-  assert.deepEqual(describeFreed({ platforms: { android: { serial: 'R5CT' } } }), [
-    'android device R5CT',
-  ]);
+  assert.deepEqual(describeFreed({ platforms: { android: { serial: 'R5CT' } } }), ['android device R5CT']);
 });
 
 test('describeFreed returns an empty list when nothing is claimed', () => {
@@ -671,7 +684,7 @@ export function reclaimProject(path, { deleteArtifacts = false } = {}) {
   const project = getProject(path);
   const freed = describeFreed(project);
 
-  const artifacts = findDerivedDataFor(path).map(entry => ({
+  const artifacts = findDerivedDataFor(path).map((entry) => ({
     dir: entry.dir,
     bytes: directorySize(entry.dir),
   }));
@@ -717,10 +730,12 @@ import { reclaimProject } from '../reclaim.js';
 export default function pruneCommand(program) {
   program
     .command('prune')
-    .description('Remove entries for projects whose directory no longer exists (deleted worktrees), freeing their sims/emulators and Metro ports. Live projects are never touched. Does not delete build artifacts; see `gc`.')
+    .description(
+      'Remove entries for projects whose directory no longer exists (deleted worktrees), freeing their sims/emulators and Metro ports. Live projects are never touched. Does not delete build artifacts; see `gc`.',
+    )
     .action(() => {
       const cfg = loadConfig();
-      const deadPaths = Object.keys(cfg?.projects || {}).filter(p => !existsSync(p));
+      const deadPaths = Object.keys(cfg?.projects || {}).filter((p) => !existsSync(p));
 
       if (deadPaths.length === 0) {
         console.log(chalk.dim('Nothing to prune: every registered project path still exists.'));
@@ -740,7 +755,9 @@ export default function pruneCommand(program) {
 
       console.log(chalk.dim(`\n${deadPaths.length} project entr${deadPaths.length === 1 ? 'y' : 'ies'} removed.`));
       if (reclaimableBytes > 0) {
-        console.log(chalk.yellow('Build artifacts from these projects are still on disk. Run `rn-iso gc` to review them.'));
+        console.log(
+          chalk.yellow('Build artifacts from these projects are still on disk. Run `rn-iso gc` to review them.'),
+        );
       }
     });
 }
@@ -763,11 +780,13 @@ git commit -m "feat(reclaim): extract shared reclaimProject and use it in prune"
 ### Task 5: The `gc` command
 
 **Files:**
+
 - Create: `src/commands/gc.js`
 - Modify: `bin/cli.js`
 - Test: `test/gc.test.js`
 
 **Interfaces:**
+
 - Consumes: `findOrphanedDerivedData`, `directorySize`, `formatBytes` (Task 3); `reclaimProject` (Task 4).
 - Produces: `formatGcReport({orphaned, skipped, deadProjects, totalBytes})` (pure, returns a string array).
 
@@ -854,17 +873,19 @@ export function formatGcReport({ orphaned, skipped, deadProjects, totalBytes }) 
 export default function gcCommand(program) {
   program
     .command('gc')
-    .description('Reclaim build artifacts and config entries left behind by worktrees that no longer exist. Reports by default; pass --delete to act.')
+    .description(
+      'Reclaim build artifacts and config entries left behind by worktrees that no longer exist. Reports by default; pass --delete to act.',
+    )
     .option('--delete', 'actually delete the reported artifacts and entries')
-    .option('--older-than <days>', 'only consider artifacts not accessed in this many days', v => parseInt(v, 10))
-    .action(opts => {
+    .option('--older-than <days>', 'only consider artifacts not accessed in this many days', (v) => parseInt(v, 10))
+    .action((opts) => {
       const { orphaned, skipped } = findOrphanedDerivedData({ olderThanDays: opts.olderThan });
 
-      const sized = orphaned.map(entry => ({ ...entry, bytes: directorySize(entry.dir) }));
+      const sized = orphaned.map((entry) => ({ ...entry, bytes: directorySize(entry.dir) }));
       const totalBytes = sized.reduce((sum, e) => sum + e.bytes, 0);
 
       const cfg = loadConfig();
-      const deadProjects = Object.keys(cfg?.projects || {}).filter(p => !existsSync(p));
+      const deadProjects = Object.keys(cfg?.projects || {}).filter((p) => !existsSync(p));
 
       for (const line of formatGcReport({ orphaned: sized, skipped, deadProjects, totalBytes })) {
         console.log(line);
@@ -926,10 +947,12 @@ git commit -m "feat(gc): add machine-wide artifact and config reclamation"
 ### Task 6: Foreign-runner occupancy detection
 
 **Files:**
+
 - Modify: `src/sim/ios.js`
 - Test: `test/sim-ios.test.js`
 
 **Interfaces:**
+
 - Consumes: `getExecutor`.
 - Produces: `parseOccupyingApps(launchctlOutput)` returning bundle-id strings; `isSimOccupied(udid)`; `selectIosDevice` now accepts `occupiedUdids` and returns candidates carrying `occupied: boolean`.
 
@@ -958,31 +981,36 @@ test('parseOccupyingApps fails open on unparseable output', () => {
 
 test('selectIosDevice excludes occupied sims from allocation', () => {
   setExecutor({
-    run: () => JSON.stringify({
-      devices: {
-        'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-          { udid: 'FREE', name: 'iPhone 17', state: 'Shutdown', isAvailable: true },
-          { udid: 'BUSY', name: 'iPhone 17 Pro', state: 'Booted', isAvailable: true },
-        ],
-      },
-    }),
+    run: () =>
+      JSON.stringify({
+        devices: {
+          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+            { udid: 'FREE', name: 'iPhone 17', state: 'Shutdown', isAvailable: true },
+            { udid: 'BUSY', name: 'iPhone 17 Pro', state: 'Booted', isAvailable: true },
+          ],
+        },
+      }),
     runQuiet: () => null,
     spawn: () => {},
   });
   const result = selectIosDevice({ claimedUdids: [], occupiedUdids: ['BUSY'] });
   assert.equal(result.kind, 'allocate');
-  assert.deepEqual(result.candidates.map(c => c.udid), ['FREE']);
+  assert.deepEqual(
+    result.candidates.map((c) => c.udid),
+    ['FREE'],
+  );
 });
 
 test('selectIosDevice reports allClaimed when every sim is claimed or occupied', () => {
   setExecutor({
-    run: () => JSON.stringify({
-      devices: {
-        'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-          { udid: 'BUSY', name: 'iPhone 17 Pro', state: 'Booted', isAvailable: true },
-        ],
-      },
-    }),
+    run: () =>
+      JSON.stringify({
+        devices: {
+          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+            { udid: 'BUSY', name: 'iPhone 17 Pro', state: 'Booted', isAvailable: true },
+          ],
+        },
+      }),
     runQuiet: () => null,
     spawn: () => {},
   });
@@ -1028,7 +1056,7 @@ export function isSimOccupied(udid) {
 }
 
 export function findOccupiedSims(udids) {
-  return udids.filter(udid => {
+  return udids.filter((udid) => {
     try {
       return isSimOccupied(udid);
     } catch {
@@ -1043,7 +1071,7 @@ export function selectIosDevice({ existingUdid, claimedUdids, occupiedUdids = []
   const occupied = new Set(occupiedUdids);
 
   if (existingUdid) {
-    const found = sims.find(s => s.udid === existingUdid);
+    const found = sims.find((s) => s.udid === existingUdid);
     if (found) {
       return { kind: 'reuse', udid: found.udid, name: found.name, state: found.state };
     }
@@ -1051,9 +1079,9 @@ export function selectIosDevice({ existingUdid, claimedUdids, occupiedUdids = []
 
   if (sims.length === 0) return { kind: 'noSims' };
 
-  const annotate = list => list.map(s => ({ ...s, occupied: occupied.has(s.udid) }));
+  const annotate = (list) => list.map((s) => ({ ...s, occupied: occupied.has(s.udid) }));
 
-  const available = sims.filter(s => !claimed.has(s.udid) && !occupied.has(s.udid));
+  const available = sims.filter((s) => !claimed.has(s.udid) && !occupied.has(s.udid));
   if (available.length === 0) {
     // Every sim is claimed by another project, held by a reservation, or busy
     // with a foreign runner. The picker can offer to take one over.
@@ -1071,8 +1099,8 @@ Find the `selectIosDevice({ ... })` call and add the occupancy lookup immediatel
 ```js
 import { findOccupiedSims, listBootedIosSims } from '../sim/ios.js';
 
-const bootedUdids = listBootedIosSims().map(s => s.udid);
-const occupiedUdids = findOccupiedSims(bootedUdids.filter(u => !claimedUdids.includes(u)));
+const bootedUdids = listBootedIosSims().map((s) => s.udid);
+const occupiedUdids = findOccupiedSims(bootedUdids.filter((u) => !claimedUdids.includes(u)));
 
 const selection = selectIosDevice({ existingUdid, claimedUdids, occupiedUdids, usage });
 ```
@@ -1096,10 +1124,12 @@ git commit -m "feat(ios): treat sims held by a foreign xctrunner as occupied"
 ### Task 7: `release --shutdown` withholds shutdown for occupied sims
 
 **Files:**
+
 - Modify: `src/commands/release.js`
 - Test: `test/release.test.js`
 
 **Interfaces:**
+
 - Consumes: `isSimOccupied` (Task 6).
 - Produces: `shouldShutdown({occupied, force})` (pure).
 
@@ -1183,10 +1213,12 @@ git commit -m "feat(release): withhold shutdown for sims in use by another tool"
 ### Task 8: Git worktree operations and carry-over
 
 **Files:**
+
 - Create: `src/worktree.js`
 - Test: `test/worktree.test.js`
 
 **Interfaces:**
+
 - Consumes: `getExecutor`.
 - Produces: `gitCommonDir(cwd)`, `repoRoot(cwd)`, `defaultWorktreeDir(repoRoot)`, `worktreePath({worktreeDir, name})`, `hasUncommittedWork(dir)`, `unpushedCommits(dir)`, `matchesInclude(path, patterns)` (pure), `carryOverFiles({repoRoot, worktreePath, patterns})`, `addWorktree({path, branch, baseRef})`, `removeWorktree(path, {force})`, `listWorktrees(cwd)`.
 
@@ -1211,7 +1243,7 @@ afterEach(() => resetExecutor());
 test('default worktree dir is a sibling of the repo', () => {
   assert.equal(
     defaultWorktreeDir('/Volumes/ExternalSSD/Developer/tlon-apps'),
-    '/Volumes/ExternalSSD/Developer/tlon-apps-worktrees'
+    '/Volumes/ExternalSSD/Developer/tlon-apps-worktrees',
   );
 });
 
@@ -1302,14 +1334,12 @@ export function readWorktreeInclude(root) {
   if (!existsSync(p)) return null;
   return readFileSync(p, 'utf-8')
     .split('\n')
-    .map(l => l.trim())
-    .filter(l => l && !l.startsWith('#'));
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'));
 }
 
 export function listGitignoredFiles(root) {
-  const out = getExecutor().runQuiet(
-    `git -C "${root}" ls-files --others --ignored --exclude-standard`
-  );
+  const out = getExecutor().runQuiet(`git -C "${root}" ls-files --others --ignored --exclude-standard`);
   return out ? out.split('\n').filter(Boolean) : [];
 }
 
@@ -1341,10 +1371,13 @@ export function hasUncommittedWork(dir) {
 // Commits reachable from HEAD but from no remote ref. Removing the worktree
 // would destroy these.
 export function unpushedCommits(dir) {
-  const out = getExecutor().runQuiet(
-    `git -C "${dir}" log --oneline --not --remotes`
-  );
-  return out ? out.split('\n').map(l => l.trim()).filter(Boolean) : [];
+  const out = getExecutor().runQuiet(`git -C "${dir}" log --oneline --not --remotes`);
+  return out
+    ? out
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+    : [];
 }
 
 export function addWorktree({ path, branch, baseRef }) {
@@ -1399,11 +1432,13 @@ git commit -m "feat(worktree): add git worktree operations and carry-over"
 ### Task 9: `rn-iso worktree create`
 
 **Files:**
+
 - Create: `src/commands/worktree.js`
 - Modify: `bin/cli.js`, `src/config.js`
 - Test: `test/worktree-create.test.js`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 1, 2, 8; `detectPackageManager` from `src/runner.js`.
 - Produces: `resolveInstallPipeline(settings, projectRoot)` (pure) returning `string[]`; `setSetupStatus(path, status)` / `getSetupStatus(path)` in config.js, where status is `{commands: [{command, ok}], complete: boolean}`.
 
@@ -1433,10 +1468,7 @@ afterEach(() => {
 });
 
 test('uses the configured pipeline verbatim', () => {
-  const pipeline = resolveInstallPipeline(
-    { worktree: { install: ['pnpm install', 'pnpm build:packages'] } },
-    '/proj'
-  );
+  const pipeline = resolveInstallPipeline({ worktree: { install: ['pnpm install', 'pnpm build:packages'] } }, '/proj');
   assert.deepEqual(pipeline, ['pnpm install', 'pnpm build:packages']);
 });
 
@@ -1586,7 +1618,7 @@ export function registerCreate(worktree) {
       if (opts.install !== false) {
         results = runPipeline(resolveInstallPipeline(settings, target), target);
       }
-      const complete = results.every(r => r.ok);
+      const complete = results.every((r) => r.ok);
 
       // Register the label now, before `rn-iso ios` ever runs. Without this,
       // the project would later register under its directory basename, and in
@@ -1596,7 +1628,7 @@ export function registerCreate(worktree) {
       setSetupStatus(target, { complete, commands: results });
 
       if (!complete) {
-        const failed = results.filter(r => !r.ok).map(r => r.command);
+        const failed = results.filter((r) => !r.ok).map((r) => r.command);
         console.error(chalk.yellow(`Setup incomplete. Failed: ${failed.join(', ')}`));
         console.error(chalk.dim('The worktree is usable but may not build until these succeed.'));
       }
@@ -1649,10 +1681,12 @@ git commit -m "feat(worktree): add create with carry-over and setup pipeline"
 ### Task 10: `worktree remove` and `worktree list`
 
 **Files:**
+
 - Modify: `src/commands/worktree.js`
 - Test: `test/worktree-remove.test.js`
 
 **Interfaces:**
+
 - Consumes: `reclaimProject` (Task 4); `hasUncommittedWork`, `unpushedCommits`, `removeWorktree`, `listWorktrees` (Task 8).
 - Produces: `removalBlockers({dirty, unpushed})` (pure) returning `string[]`.
 
@@ -1698,12 +1732,7 @@ import { rmSync } from 'fs';
 import { formatBytes } from '../artifacts.js';
 import { reclaimProject } from '../reclaim.js';
 import { getSetupStatus } from '../config.js';
-import {
-  hasUncommittedWork,
-  listWorktrees,
-  removeWorktree,
-  unpushedCommits,
-} from '../worktree.js';
+import { hasUncommittedWork, listWorktrees, removeWorktree, unpushedCommits } from '../worktree.js';
 
 export function removalBlockers({ dirty, unpushed }) {
   const blockers = [];
@@ -1798,7 +1827,7 @@ import { getSetupStatus } from '../config.js';
 
 const setup = getSetupStatus(projectRoot);
 if (setup && !setup.complete) {
-  const failed = setup.commands.filter(c => !c.ok).map(c => c.command);
+  const failed = setup.commands.filter((c) => !c.ok).map((c) => c.command);
   console.log(chalk.yellow(`Warning: worktree setup is incomplete. Failed: ${failed.join(', ')}`));
   console.log(chalk.dim('The build may fail until these succeed.'));
 }
@@ -1826,6 +1855,7 @@ git commit -m "feat(worktree): add remove with work protection, and list"
 ### Task 11: Documentation
 
 **Files:**
+
 - Modify: `skill/SKILL.md`, `README.md`, `CLAUDE.md`
 
 - [ ] **Step 1: Update `skill/SKILL.md`**
@@ -1858,9 +1888,7 @@ Add `worktree create|remove|list` and `gc` to the command table. Add a section d
 ```json
 {
   "hooks": {
-    "WorktreeCreate": [
-      { "hooks": [{ "type": "command", "command": "rn-iso worktree create \"$(jq -r .name)\"" }] }
-    ]
+    "WorktreeCreate": [{ "hooks": [{ "type": "command", "command": "rn-iso worktree create \"$(jq -r .name)\"" }] }]
   }
 }
 ```

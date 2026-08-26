@@ -1,11 +1,11 @@
 # Fast, BLOCKING CI. Runs on every push and pull request.
 #
-# It does everything that is provable on a plain Linux box with no Xcode and no
-# Android SDK: the full unit suite for all three workspace packages, and the
-# fast cross-platform e2e (test/e2e/cache-flow.e2e.js), which drives the real
-# CLI and the real cache library end to end with no compiler. The SLOW native
-# builds (a real xcodebuild / gradle on a real device) live in e2e-native.yml,
-# which is gated so a flaky 15-minute build never blocks a PR.
+# Everything provable on a plain Linux box with no Xcode and no Android SDK:
+# lint, format, typecheck, build, the full vitest unit suite (all three
+# packages), and the fast cross-platform e2e (test/e2e/cache-flow.e2e.js), which
+# drives the real CLI and the real cache library end to end with no compiler.
+# The SLOW native builds live in e2e-native.yml, gated so a flaky 15-minute
+# build never blocks a PR.
 name: CI
 
 on:
@@ -13,8 +13,6 @@ on:
     branches: [main]
   pull_request:
 
-# One in-flight run per ref: a new push cancels the previous run for the same
-# branch/PR rather than piling up.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -27,12 +25,11 @@ jobs:
     name: test (node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
-      # Prove the engines floor. package.json declares "node": ">=20", so 20 is
-      # the contract and 22 is the current LTS the maintainer runs; both must be
-      # green. fail-fast off so a break on one version still shows the other.
+      # The engines floor is Node 22 (Node 20 is EOL). Prove 22 and the current
+      # LTS line 24. fail-fast off so a break on one still shows the other.
       fail-fast: false
       matrix:
-        node: [20, 22]
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v4
 
@@ -42,28 +39,33 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
-      # npm ci from the workspace root installs every package deterministically
-      # from package-lock.json. It is what the whole matrix hangs on, so it runs
-      # first and blocks.
       - name: Install (workspace root)
         run: npm ci
 
-      # The unit suite: rn-iso, then @rn-iso/expo-build-cache, then @rn-iso/metro
-      # (the root `test` script chains all three).
-      - name: Unit tests (all packages)
+      # Lint / format / types are fast and fail early. oxlint and oxfmt are the
+      # oxc toolchain; typecheck is the production src (tests run under vitest).
+      - name: Lint (oxlint)
+        run: npm run lint
+
+      - name: Format check (oxfmt)
+        run: npm run format:check
+
+      - name: Typecheck (production)
+        run: npm run typecheck
+
+      # Build every package with tsdown (rn-iso -> dist ESM, the two cache
+      # packages -> dist CJS). Proves the published artifacts compile.
+      - name: Build (tsdown, all packages)
+        run: npm run build
+
+      # The unit suite on vitest (rolldown-vite): rn-iso + both cache packages,
+      # 52 files. Real processes, real ports, real git; fakes for xcrun/adb.
+      - name: Unit tests (vitest)
         run: npm test
 
-      # The fast cross-platform e2e: real git worktrees, the real worktree
-      # create/remove CLI, the real fingerprint/buildCacheKey/store/resolve cache
-      # machinery, and a real single-flight race between real node processes --
-      # all with a throwaway RN_ISO_HOME, no Xcode, no Android SDK.
+      # The fast cross-platform e2e: real git worktrees, the real CLI, the real
+      # fingerprint/buildCacheKey/store/resolve cache machinery, and a real
+      # single-flight race between real node processes -- throwaway RN_ISO_HOME,
+      # no Xcode, no Android SDK.
       - name: Cross-platform e2e
         run: npm run test:e2e
-
-      # PLACEHOLDER (planned TS migration): once the codebase moves to
-      # TypeScript, add the lint + typecheck steps here, e.g.
-      #   - run: npx oxlint
-      #   - run: npx tsc --noEmit
-      # They are intentionally NOT added now: neither oxlint nor a tsconfig is set
-      # up in this repo yet, and a CI step that shells out to a tool that does not
-      # exist would fail every run. Add them WITH the migration, not before it.

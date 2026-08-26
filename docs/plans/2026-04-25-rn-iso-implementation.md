@@ -58,6 +58,7 @@ Each `src/commands/*.js` is a thin commander wrapper that calls service function
 ## Task 1: Project bootstrap
 
 **Files:**
+
 - Create: `package.json`
 - Create: `.gitignore`
 - Create: `bin/cli.js`
@@ -108,10 +109,7 @@ Expected: creates `node_modules/` and `package-lock.json` without errors.
 import { Command } from 'commander';
 
 const program = new Command();
-program
-  .name('rn-iso')
-  .description('Isolated React Native dev environments per project/worktree')
-  .version('0.1.0');
+program.name('rn-iso').description('Isolated React Native dev environments per project/worktree').version('0.1.0');
 
 program.parse();
 ```
@@ -135,6 +133,7 @@ git commit -m "chore: project bootstrap with commander stub"
 The single point all `child_process` calls go through. Tests inject a mock to avoid real shell-outs.
 
 **Files:**
+
 - Create: `src/exec.js`
 - Create: `test/exec.test.js`
 
@@ -229,6 +228,7 @@ git commit -m "feat: mockable exec wrapper for child_process calls"
 ## Task 3: Project root + bundle ID detection
 
 **Files:**
+
 - Create: `src/project.js`
 - Create: `test/project.test.js`
 - Create: `test/fixtures/sample-expo-project/package.json` (test fixture)
@@ -237,6 +237,7 @@ git commit -m "feat: mockable exec wrapper for child_process calls"
 - [ ] **Step 1: Create test fixtures**
 
 `test/fixtures/sample-expo-project/package.json`:
+
 ```json
 {
   "name": "sample-app",
@@ -245,6 +246,7 @@ git commit -m "feat: mockable exec wrapper for child_process calls"
 ```
 
 `test/fixtures/sample-expo-project/app.json`:
+
 ```json
 {
   "expo": {
@@ -255,6 +257,7 @@ git commit -m "feat: mockable exec wrapper for child_process calls"
 ```
 
 Also create `test/fixtures/sample-bare-project/package.json`:
+
 ```json
 {
   "name": "bare-app",
@@ -263,7 +266,9 @@ Also create `test/fixtures/sample-bare-project/package.json`:
 ```
 
 And create `test/fixtures/sample-expo-project/src/.keep` (empty file) to allow walking up from a nested dir during testing:
+
 ```
+
 ```
 
 - [ ] **Step 2: Write failing tests**
@@ -364,7 +369,9 @@ function readAppConfigText(projectRoot) {
     if (existsSync(p)) {
       try {
         return readFileSync(p, 'utf-8');
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
   return null;
@@ -414,6 +421,7 @@ git commit -m "feat: project root + bundle ID + Expo detection"
 ## Task 4: Config module
 
 **Files:**
+
 - Create: `src/config.js`
 - Create: `test/config.test.js`
 
@@ -631,8 +639,8 @@ export function allMetroPorts() {
   const cfg = loadConfig();
   if (!cfg?.projects) return [];
   return Object.values(cfg.projects)
-    .map(p => p.metroPort)
-    .filter(p => typeof p === 'number');
+    .map((p) => p.metroPort)
+    .filter((p) => typeof p === 'number');
 }
 
 export function allClaimedDevices() {
@@ -667,6 +675,7 @@ git commit -m "feat: global config module with per-project state"
 ## Task 5: Port allocation
 
 **Files:**
+
 - Create: `src/ports.js`
 - Create: `test/ports.test.js`
 
@@ -766,16 +775,18 @@ import { loadConfig, allMetroPorts, removeProject } from './config.js';
 
 export function isMetroRunning(port) {
   return new Promise((resolve) => {
-    const req = request(
-      { hostname: 'localhost', port, path: '/status', timeout: 2000 },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => resolve(data.includes('packager-status:running')));
-      }
-    );
+    const req = request({ hostname: 'localhost', port, path: '/status', timeout: 2000 }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      res.on('end', () => resolve(data.includes('packager-status:running')));
+    });
     req.on('error', () => resolve(false));
-    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
     req.end();
   });
 }
@@ -832,6 +843,7 @@ git commit -m "feat: port allocation with reclamation of dead Metro ports"
 The selection algorithm is pure given simctl output and the claimed-set. Implement and test it without invoking real simctl.
 
 **Files:**
+
 - Create: `src/sim/ios.js`
 - Create: `test/sim-ios.test.js`
 
@@ -876,12 +888,12 @@ const SIMCTL_OUTPUT = JSON.stringify({
 test('parseSimctlList flattens devices and filters unavailable', () => {
   const sims = parseSimctlList(SIMCTL_OUTPUT);
   assert.equal(sims.length, 3);
-  assert.deepEqual(sims.map(s => s.udid).sort(), ['UDID-A', 'UDID-B', 'UDID-C']);
+  assert.deepEqual(sims.map((s) => s.udid).sort(), ['UDID-A', 'UDID-B', 'UDID-C']);
 });
 
 test('parseSimctlList includes runtime in each entry', () => {
   const sims = parseSimctlList(SIMCTL_OUTPUT);
-  const a = sims.find(s => s.udid === 'UDID-A');
+  const a = sims.find((s) => s.udid === 'UDID-A');
   assert.equal(a.runtime, 'com.apple.CoreSimulator.SimRuntime.iOS-17-2');
 });
 
@@ -905,7 +917,7 @@ test('listBootedIosSims filters by state', () => {
     spawn: () => null,
   });
   const booted = listBootedIosSims();
-  assert.deepEqual(booted.map(s => s.udid).sort(), ['UDID-A', 'UDID-C']);
+  assert.deepEqual(booted.map((s) => s.udid).sort(), ['UDID-A', 'UDID-C']);
 });
 
 test('selectIosDevice prefers existing assignment when sim still exists', () => {
@@ -979,7 +991,7 @@ export function listAllIosSims() {
 }
 
 export function listBootedIosSims() {
-  return listAllIosSims().filter(s => s.state === 'Booted');
+  return listAllIosSims().filter((s) => s.state === 'Booted');
 }
 
 export function selectIosDevice({ existingUdid, claimedUdids }) {
@@ -987,13 +999,13 @@ export function selectIosDevice({ existingUdid, claimedUdids }) {
   const claimed = new Set(claimedUdids);
 
   if (existingUdid) {
-    const found = sims.find(s => s.udid === existingUdid);
+    const found = sims.find((s) => s.udid === existingUdid);
     if (found) {
       return { kind: 'reuse', udid: found.udid, state: found.state };
     }
   }
 
-  const candidate = sims.find(s => s.state === 'Booted' && !claimed.has(s.udid));
+  const candidate = sims.find((s) => s.state === 'Booted' && !claimed.has(s.udid));
   if (candidate) {
     return { kind: 'allocate', udid: candidate.udid, state: candidate.state };
   }
@@ -1016,7 +1028,7 @@ export function listIosDeviceTypes() {
   const exec = getExecutor();
   const out = exec.run('xcrun simctl list devicetypes --json');
   const data = JSON.parse(out);
-  return (data.devicetypes || []).map(dt => ({
+  return (data.devicetypes || []).map((dt) => ({
     identifier: dt.identifier,
     name: dt.name,
   }));
@@ -1031,8 +1043,8 @@ export function listIosRuntimes() {
   const out = getExecutor().run('xcrun simctl list runtimes --json');
   const data = JSON.parse(out);
   return (data.runtimes || [])
-    .filter(r => r.isAvailable && r.platform === 'iOS')
-    .map(r => ({ identifier: r.identifier, name: r.name, version: r.version }));
+    .filter((r) => r.isAvailable && r.platform === 'iOS')
+    .map((r) => ({ identifier: r.identifier, name: r.name, version: r.version }));
 }
 ```
 
@@ -1053,6 +1065,7 @@ git commit -m "feat: iOS simctl wrappers and device selection algorithm"
 ## Task 7: Android emulator listing + selection logic
 
 **Files:**
+
 - Create: `src/sim/android.js`
 - Create: `test/sim-android.test.js`
 
@@ -1066,12 +1079,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
-import {
-  parseAvdList,
-  parseAdbDevices,
-  selectAndroidDevice,
-  nextConsolePort,
-} from '../src/sim/android.js';
+import { parseAvdList, parseAdbDevices, selectAndroidDevice, nextConsolePort } from '../src/sim/android.js';
 
 let tmpHome;
 
@@ -1095,10 +1103,13 @@ test('parseAvdList strips header and blanks', () => {
 test('parseAdbDevices extracts running emulator console ports', () => {
   const out = `List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n0123456789ABCDEF\tdevice\n`;
   const result = parseAdbDevices(out);
-  assert.deepEqual(result.emulators.sort((a, b) => a.consolePort - b.consolePort), [
-    { serial: 'emulator-5554', consolePort: 5554 },
-    { serial: 'emulator-5556', consolePort: 5556 },
-  ]);
+  assert.deepEqual(
+    result.emulators.sort((a, b) => a.consolePort - b.consolePort),
+    [
+      { serial: 'emulator-5554', consolePort: 5554 },
+      { serial: 'emulator-5556', consolePort: 5556 },
+    ],
+  );
 });
 
 test('parseAdbDevices ignores offline emulators', () => {
@@ -1216,8 +1227,8 @@ import { getExecutor } from '../exec.js';
 export function parseAvdList(text) {
   return text
     .split('\n')
-    .map(l => l.trim())
-    .filter(l => l && !l.startsWith('INFO') && !l.startsWith('WARNING'));
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('INFO') && !l.startsWith('WARNING'));
 }
 
 export function parseAdbDevices(text) {
@@ -1251,7 +1262,7 @@ export function nextConsolePort(claimedPorts) {
 export function selectAndroidDevice({ existingAvd, existingConsolePort, claimedAvds, claimedConsolePorts }) {
   const avds = listAvds();
   const adbDevices = listAdbDevices();
-  const runningPorts = new Set(adbDevices.emulators.map(e => e.consolePort));
+  const runningPorts = new Set(adbDevices.emulators.map((e) => e.consolePort));
 
   if (existingAvd && avds.includes(existingAvd)) {
     const port = existingConsolePort ?? nextConsolePort(claimedConsolePorts);
@@ -1268,7 +1279,7 @@ export function selectAndroidDevice({ existingAvd, existingConsolePort, claimedA
   }
 
   const claimedAvdSet = new Set(claimedAvds);
-  const candidate = avds.find(a => !claimedAvdSet.has(a));
+  const candidate = avds.find((a) => !claimedAvdSet.has(a));
   if (!candidate) {
     return { kind: 'noAvd' };
   }
@@ -1283,10 +1294,12 @@ export function selectAndroidDevice({ existingAvd, existingConsolePort, claimedA
 
 export function bootAndroidEmulator(avdName, consolePort) {
   const exec = getExecutor();
-  exec.spawn('emulator', ['-avd', avdName, '-port', String(consolePort)], {
-    detached: true,
-    stdio: 'ignore',
-  }).unref();
+  exec
+    .spawn('emulator', ['-avd', avdName, '-port', String(consolePort)], {
+      detached: true,
+      stdio: 'ignore',
+    })
+    .unref();
 }
 
 export async function waitForBoot(serial, timeoutMs = 60000) {
@@ -1295,7 +1308,7 @@ export async function waitForBoot(serial, timeoutMs = 60000) {
   while (Date.now() - start < timeoutMs) {
     const out = exec.runQuiet(`adb -s ${serial} shell getprop sys.boot_completed`);
     if (out && out.trim() === '1') return true;
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 1000));
   }
   return false;
 }
@@ -1326,6 +1339,7 @@ git commit -m "feat: Android emulator listing and device selection"
 ## Task 8: Runner module (Expo vs bare dispatch)
 
 **Files:**
+
 - Create: `src/runner.js`
 - Create: `test/runner.test.js`
 
@@ -1367,11 +1381,12 @@ test('buildMetroCommand picks expo or react-native', () => {
 
 test('resolveSimNameByUdid returns name from simctl JSON', () => {
   setExecutor({
-    run: () => JSON.stringify({
-      devices: {
-        'iOS-17': [{ udid: 'UDID-1', name: 'iPhone 15', state: 'Booted', isAvailable: true }],
-      },
-    }),
+    run: () =>
+      JSON.stringify({
+        devices: {
+          'iOS-17': [{ udid: 'UDID-1', name: 'iPhone 15', state: 'Booted', isAvailable: true }],
+        },
+      }),
     runQuiet: () => null,
     spawn: () => null,
   });
@@ -1380,21 +1395,19 @@ test('resolveSimNameByUdid returns name from simctl JSON', () => {
 
 test('resolveSimNameByUdid throws when ambiguous', () => {
   setExecutor({
-    run: () => JSON.stringify({
-      devices: {
-        'iOS-17': [
-          { udid: 'UDID-1', name: 'iPhone 15', state: 'Booted', isAvailable: true },
-          { udid: 'UDID-2', name: 'iPhone 15', state: 'Shutdown', isAvailable: true },
-        ],
-      },
-    }),
+    run: () =>
+      JSON.stringify({
+        devices: {
+          'iOS-17': [
+            { udid: 'UDID-1', name: 'iPhone 15', state: 'Booted', isAvailable: true },
+            { udid: 'UDID-2', name: 'iPhone 15', state: 'Shutdown', isAvailable: true },
+          ],
+        },
+      }),
     runQuiet: () => null,
     spawn: () => null,
   });
-  assert.throws(
-    () => resolveSimNameByUdid('UDID-1'),
-    /ambiguous/i
-  );
+  assert.throws(() => resolveSimNameByUdid('UDID-1'), /ambiguous/i);
 });
 ```
 
@@ -1424,20 +1437,18 @@ export function buildAndroidCommand({ isExpo, serial, port }) {
 }
 
 export function buildMetroCommand({ isExpo, port }) {
-  return isExpo
-    ? `npx expo start --port ${port}`
-    : `npx react-native start --port ${port}`;
+  return isExpo ? `npx expo start --port ${port}` : `npx react-native start --port ${port}`;
 }
 
 export function resolveSimNameByUdid(udid) {
   const sims = listAllIosSims();
-  const target = sims.find(s => s.udid === udid);
+  const target = sims.find((s) => s.udid === udid);
   if (!target) throw new Error(`Simulator UDID not found: ${udid}`);
-  const sameName = sims.filter(s => s.name === target.name);
+  const sameName = sims.filter((s) => s.name === target.name);
   if (sameName.length > 1) {
     throw new Error(
       `Multiple simulators named "${target.name}" — bare RN takes a name, not UDID. ` +
-      `Rename one in the Simulator app.`
+        `Rename one in the Simulator app.`,
     );
   }
   return target.name;
@@ -1461,6 +1472,7 @@ git commit -m "feat: Expo vs bare dispatch for run/start commands"
 ## Task 9: Metro process management
 
 **Files:**
+
 - Create: `src/metro.js`
 - Create: `test/metro.test.js`
 
@@ -1533,9 +1545,7 @@ export function logFileFor(projectPath) {
 export function buildMetroSpawnArgs({ isExpo, port }) {
   return {
     cmd: 'npx',
-    args: isExpo
-      ? ['expo', 'start', '--port', String(port)]
-      : ['react-native', 'start', '--port', String(port)],
+    args: isExpo ? ['expo', 'start', '--port', String(port)] : ['react-native', 'start', '--port', String(port)],
   };
 }
 
@@ -1607,6 +1617,7 @@ git commit -m "feat: Metro process management with detached spawn and log files"
 The simplest user-facing command — surface assignment lookup.
 
 **Files:**
+
 - Create: `src/commands/device.js`
 - Modify: `bin/cli.js`
 
@@ -1642,9 +1653,16 @@ export default function deviceCommand(program) {
       }
 
       if (opts.json) {
-        const payload = opts.platform === 'ios'
-          ? { platform: 'ios', udid: platformEntry.deviceUdid, metroPort: proj.metroPort }
-          : { platform: 'android', serial: `emulator-${platformEntry.consolePort}`, avdName: platformEntry.avdName, consolePort: platformEntry.consolePort, metroPort: proj.metroPort };
+        const payload =
+          opts.platform === 'ios'
+            ? { platform: 'ios', udid: platformEntry.deviceUdid, metroPort: proj.metroPort }
+            : {
+                platform: 'android',
+                serial: `emulator-${platformEntry.consolePort}`,
+                avdName: platformEntry.avdName,
+                consolePort: platformEntry.consolePort,
+                metroPort: proj.metroPort,
+              };
         console.log(JSON.stringify(payload));
         return;
       }
@@ -1668,10 +1686,7 @@ import { Command } from 'commander';
 import deviceCommand from '../src/commands/device.js';
 
 const program = new Command();
-program
-  .name('rn-iso')
-  .description('Isolated React Native dev environments per project/worktree')
-  .version('0.1.0');
+program.name('rn-iso').description('Isolated React Native dev environments per project/worktree').version('0.1.0');
 
 deviceCommand(program);
 
@@ -1697,6 +1712,7 @@ git commit -m "feat: rn-iso device command"
 This is the central user flow. It composes everything built so far.
 
 **Files:**
+
 - Create: `src/commands/ios.js`
 - Modify: `bin/cli.js`
 
@@ -1732,7 +1748,9 @@ export default function iosCommand(program) {
       const androidPackage = detectAndroidPackage(root);
       const isExpo = detectIsExpo(root);
       if (!bundleId) {
-        console.error(chalk.red('Could not detect iOS bundle identifier. v1 requires app.json with expo.ios.bundleIdentifier set.'));
+        console.error(
+          chalk.red('Could not detect iOS bundle identifier. v1 requires app.json with expo.ios.bundleIdentifier set.'),
+        );
         process.exit(1);
       }
 
@@ -1754,7 +1772,7 @@ export default function iosCommand(program) {
       }
 
       // Pick (or reuse) a simulator.
-      const claimed = allClaimedDevices().iosUdids.filter(u => u !== proj.platforms?.ios?.deviceUdid);
+      const claimed = allClaimedDevices().iosUdids.filter((u) => u !== proj.platforms?.ios?.deviceUdid);
       const selection = selectIosDevice({
         existingUdid: proj.platforms?.ios?.deviceUdid || null,
         claimedUdids: claimed,
@@ -1798,7 +1816,7 @@ export default function iosCommand(program) {
         const exec = getExecutor();
         const child = exec.spawn('sh', ['-c', cmd], { cwd: root, stdio: 'inherit' });
         await new Promise((resolve, reject) => {
-          child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`Build failed (exit ${code})`)));
+          child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`Build failed (exit ${code})`))));
         });
       }
 
@@ -1807,19 +1825,19 @@ export default function iosCommand(program) {
 }
 
 async function bootNewSim({ auto, deviceType }) {
-  const types = listIosDeviceTypes().filter(t => t.identifier.includes('iPhone'));
+  const types = listIosDeviceTypes().filter((t) => t.identifier.includes('iPhone'));
   const runtimes = listIosRuntimes();
   if (runtimes.length === 0) throw new Error('No iOS runtimes installed; install one via Xcode.');
   const latestRuntime = runtimes.sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }))[0];
 
   let chosenType;
   if (deviceType) {
-    chosenType = types.find(t => t.name === deviceType || t.identifier === deviceType);
+    chosenType = types.find((t) => t.name === deviceType || t.identifier === deviceType);
     if (!chosenType) throw new Error(`Device type not found: ${deviceType}`);
   } else if (auto) {
-    chosenType = types.find(t => t.name === 'iPhone 15 Pro') || types[0];
+    chosenType = types.find((t) => t.name === 'iPhone 15 Pro') || types[0];
   } else {
-    const choices = types.map(t => ({ title: t.name, value: t.identifier }));
+    const choices = types.map((t) => ({ title: t.name, value: t.identifier }));
     const answer = await prompts({
       type: 'select',
       name: 'id',
@@ -1827,7 +1845,7 @@ async function bootNewSim({ auto, deviceType }) {
       choices,
     });
     if (!answer.id) throw new Error('Cancelled.');
-    chosenType = types.find(t => t.identifier === answer.id);
+    chosenType = types.find((t) => t.identifier === answer.id);
   }
 
   const udid = createIosSim(chosenType.identifier, latestRuntime.identifier);
@@ -1845,10 +1863,7 @@ import deviceCommand from '../src/commands/device.js';
 import iosCommand from '../src/commands/ios.js';
 
 const program = new Command();
-program
-  .name('rn-iso')
-  .description('Isolated React Native dev environments per project/worktree')
-  .version('0.1.0');
+program.name('rn-iso').description('Isolated React Native dev environments per project/worktree').version('0.1.0');
 
 deviceCommand(program);
 iosCommand(program);
@@ -1883,6 +1898,7 @@ git commit -m "feat: rn-iso ios command — sim allocation, Metro, build dispatc
 Mirror of `ios.js` but with Android specifics.
 
 **Files:**
+
 - Create: `src/commands/android.js`
 - Modify: `bin/cli.js`
 
@@ -1915,7 +1931,9 @@ export default function androidCommand(program) {
       const androidPackage = detectAndroidPackage(root);
       const isExpo = detectIsExpo(root);
       if (!androidPackage) {
-        console.error(chalk.red('Could not detect Android package. v1 requires app.json with expo.android.package set.'));
+        console.error(
+          chalk.red('Could not detect Android package. v1 requires app.json with expo.android.package set.'),
+        );
         process.exit(1);
       }
 
@@ -1937,8 +1955,8 @@ export default function androidCommand(program) {
       const claimed = allClaimedDevices();
       const myAvd = proj.platforms?.android?.avdName || null;
       const myPort = proj.platforms?.android?.consolePort || null;
-      const claimedAvds = claimed.androidAvds.filter(a => a !== myAvd);
-      const claimedPorts = claimed.androidConsolePorts.filter(p => p !== myPort);
+      const claimedAvds = claimed.androidAvds.filter((a) => a !== myAvd);
+      const claimedPorts = claimed.androidConsolePorts.filter((p) => p !== myPort);
 
       const selection = selectAndroidDevice({
         existingAvd: myAvd,
@@ -1948,10 +1966,12 @@ export default function androidCommand(program) {
       });
 
       if (selection.kind === 'noAvd') {
-        console.error(chalk.red(
-          'No AVDs available (or all are claimed by other projects). ' +
-          'Create one via Android Studio (Tools → Device Manager).'
-        ));
+        console.error(
+          chalk.red(
+            'No AVDs available (or all are claimed by other projects). ' +
+              'Create one via Android Studio (Tools → Device Manager).',
+          ),
+        );
         process.exit(1);
       }
 
@@ -1990,7 +2010,7 @@ export default function androidCommand(program) {
         const exec = getExecutor();
         const child = exec.spawn('sh', ['-c', cmd], { cwd: root, stdio: 'inherit' });
         await new Promise((resolve, reject) => {
-          child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`Build failed (exit ${code})`)));
+          child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`Build failed (exit ${code})`))));
         });
       }
 
@@ -2009,10 +2029,7 @@ import iosCommand from '../src/commands/ios.js';
 import androidCommand from '../src/commands/android.js';
 
 const program = new Command();
-program
-  .name('rn-iso')
-  .description('Isolated React Native dev environments per project/worktree')
-  .version('0.1.0');
+program.name('rn-iso').description('Isolated React Native dev environments per project/worktree').version('0.1.0');
 
 deviceCommand(program);
 iosCommand(program);
@@ -2044,6 +2061,7 @@ git commit -m "feat: rn-iso android command — emulator allocation, Metro, buil
 Metro lifecycle commands without platform action.
 
 **Files:**
+
 - Create: `src/commands/start.js`
 - Create: `src/commands/stop.js`
 - Create: `src/commands/logs.js`
@@ -2123,9 +2141,9 @@ export default function stopCommand(program) {
       }
       const ok = killMetroByPid(proj.metroPid);
       setMetro(root, proj.metroPort, null);
-      console.log(ok
-        ? chalk.green(`Killed Metro pid ${proj.metroPid}`)
-        : chalk.dim(`Metro pid ${proj.metroPid} was not alive`));
+      console.log(
+        ok ? chalk.green(`Killed Metro pid ${proj.metroPid}`) : chalk.dim(`Metro pid ${proj.metroPid} was not alive`),
+      );
     });
 }
 ```
@@ -2176,10 +2194,7 @@ import stopCommand from '../src/commands/stop.js';
 import logsCommand from '../src/commands/logs.js';
 
 const program = new Command();
-program
-  .name('rn-iso')
-  .description('Isolated React Native dev environments per project/worktree')
-  .version('0.1.0');
+program.name('rn-iso').description('Isolated React Native dev environments per project/worktree').version('0.1.0');
 
 deviceCommand(program);
 iosCommand(program);
@@ -2209,6 +2224,7 @@ git commit -m "feat: rn-iso start / stop / logs commands"
 Show all projects' state.
 
 **Files:**
+
 - Create: `src/commands/status.js`
 - Modify: `bin/cli.js`
 
@@ -2246,7 +2262,9 @@ export default function statusCommand(program) {
           const pidLive = isPidAlive(proj.metroPid);
           const label = running
             ? chalk.green('running')
-            : pidLive ? chalk.yellow('pid alive but not responding') : chalk.dim('stopped');
+            : pidLive
+              ? chalk.yellow('pid alive but not responding')
+              : chalk.dim('stopped');
           console.log(`  metro: port ${proj.metroPort} pid ${proj.metroPid ?? '?'} (${label})`);
         } else {
           console.log(chalk.dim('  metro: unassigned'));
@@ -2282,6 +2300,7 @@ git commit -m "feat: rn-iso status command"
 ## Task 15: `rn-iso release` and `rn-iso shutdown` commands
 
 **Files:**
+
 - Create: `src/commands/release.js`
 - Create: `src/commands/shutdown.js`
 - Modify: `bin/cli.js`
@@ -2387,6 +2406,7 @@ git commit -m "feat: rn-iso release and shutdown commands"
 GC dead entries machine-wide.
 
 **Files:**
+
 - Create: `src/commands/prune.js`
 - Modify: `bin/cli.js`
 
@@ -2412,7 +2432,7 @@ export default function pruneCommand(program) {
         return;
       }
 
-      const allIosUdids = new Set(listAllIosSims().map(s => s.udid));
+      const allIosUdids = new Set(listAllIosSims().map((s) => s.udid));
       const allAvds = new Set(listAvds());
 
       const droppedSims = [];
@@ -2468,11 +2488,12 @@ git commit -m "feat: rn-iso prune command for GC"
 ## Task 17: Skill file for AI agents
 
 **Files:**
+
 - Create: `skill/SKILL.md`
 
 - [ ] **Step 1: Write skill/SKILL.md**
 
-```markdown
+````markdown
 ---
 name: rn-iso
 description: Manage isolated React Native / Expo dev environments. Each project (or worktree) gets its own Metro server and dedicated simulator/emulator. Use to ensure the right simulator is booted with the right port, and to discover which device to target for UI interactions.
@@ -2495,9 +2516,11 @@ From the project root (or any subdirectory):
 
 2. **Get the device target** — `rn-iso device --platform ios --json` returns:
    ```json
-   {"platform":"ios","udid":"ABC-...","metroPort":8083}
+   { "platform": "ios", "udid": "ABC-...", "metroPort": 8083 }
    ```
-   Use the UDID for any `agent-device` / `xcrun simctl` / `idb` calls. For Android, the `serial` field gives you `emulator-<port>` to use with `adb -s`.
+````
+
+Use the UDID for any `agent-device` / `xcrun simctl` / `idb` calls. For Android, the `serial` field gives you `emulator-<port>` to use with `adb -s`.
 
 3. **Interact with the device** — pass the UDID/serial to your UI tools. Never call `simctl boot` or `simctl <verb>` without `<UDID>` — `booted` could be the wrong sim.
 
@@ -2544,25 +2567,27 @@ xcrun simctl io "$UDID" screenshot /tmp/screen.png
 ## Differences from `react-native-worktree`
 
 `react-native-worktree` shares one simulator across worktrees with a mutex. `rn-iso` gives each project its own dedicated simulator — no locking, no contention. If both are installed, prefer `rn-iso` unless the user explicitly asks for the shared-sim model.
-```
+
+````
 
 - [ ] **Step 2: Commit**
 
 ```bash
 git add skill/SKILL.md
 git commit -m "docs: skill file for AI agent integration"
-```
+````
 
 ---
 
 ## Task 18: README
 
 **Files:**
+
 - Create: `README.md`
 
 - [ ] **Step 1: Write README.md**
 
-```markdown
+````markdown
 # rn-iso
 
 Isolated React Native / Expo dev environments per project or worktree. Each project gets its own Metro server and dedicated simulator/emulator. Designed for running multiple AI coding agents in parallel without port or device collisions.
@@ -2572,6 +2597,7 @@ Isolated React Native / Expo dev environments per project or worktree. Each proj
 ```bash
 npm install -g rn-iso
 ```
+````
 
 For AI agents, install the skill:
 
@@ -2599,18 +2625,18 @@ Both run side-by-side, no contention.
 
 ## Commands
 
-| Command | Purpose |
-|---|---|
-| `rn-iso ios [--auto] [--device-type <name>] [--no-install]` | Ensure iOS sim + Metro + build/install |
-| `rn-iso android [--no-install]` | Same for Android |
-| `rn-iso start` | Just start Metro, no platform action |
-| `rn-iso device [--platform ios|android] [--json]` | Print the assigned device target |
-| `rn-iso status` | Show all projects' state |
-| `rn-iso release [--platform <p>]` | Unbind device assignment(s) for current project |
-| `rn-iso shutdown [--platform <p>]` | Release and shut down sims for current project |
-| `rn-iso prune [--shutdown]` | GC dead entries machine-wide |
-| `rn-iso logs` | Tail Metro log for current project |
-| `rn-iso stop` | Kill Metro for current project |
+| Command                                                     | Purpose                                         |
+| ----------------------------------------------------------- | ----------------------------------------------- |
+| `rn-iso ios [--auto] [--device-type <name>] [--no-install]` | Ensure iOS sim + Metro + build/install          |
+| `rn-iso android [--no-install]`                             | Same for Android                                |
+| `rn-iso start`                                              | Just start Metro, no platform action            |
+| `rn-iso device [--platform ios                              | android] [--json]`                              | Print the assigned device target |
+| `rn-iso status`                                             | Show all projects' state                        |
+| `rn-iso release [--platform <p>]`                           | Unbind device assignment(s) for current project |
+| `rn-iso shutdown [--platform <p>]`                          | Release and shut down sims for current project  |
+| `rn-iso prune [--shutdown]`                                 | GC dead entries machine-wide                    |
+| `rn-iso logs`                                               | Tail Metro log for current project              |
+| `rn-iso stop`                                               | Kill Metro for current project                  |
 
 ## How it works
 
@@ -2629,14 +2655,15 @@ Both run side-by-side, no contention.
 ## License
 
 MIT
-```
+
+````
 
 - [ ] **Step 2: Commit**
 
 ```bash
 git add README.md
 git commit -m "docs: README"
-```
+````
 
 ---
 

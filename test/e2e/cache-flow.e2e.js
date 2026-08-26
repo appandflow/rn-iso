@@ -28,9 +28,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -41,16 +39,16 @@ import {
   storeBuild,
   resolveBuild,
   entryDir,
-} from '../../packages/rn-iso/src/build-cache.js';
-import { buildLockPath } from '../../packages/rn-iso/src/engine/build-lock.js';
-import { loadConfig } from '../../packages/rn-iso/src/config.js';
+} from '../../packages/rn-iso/src/build-cache.ts';
+import { buildLockPath } from '../../packages/rn-iso/src/engine/build-lock.ts';
+import { loadConfig } from '../../packages/rn-iso/src/config.ts';
 import { makeFingerprinter } from './fixtures/fingerprint-stub.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
-const CLI = join(REPO, 'packages', 'rn-iso', 'bin', 'cli.js');
-const LOCK_URL = pathToFileURL(join(REPO, 'packages', 'rn-iso', 'src', 'engine', 'build-lock.js')).href;
-const CACHE_URL = pathToFileURL(join(REPO, 'packages', 'rn-iso', 'src', 'build-cache.js')).href;
+const CLI = join(REPO, 'packages', 'rn-iso', 'bin', 'cli.ts');
+const LOCK_URL = pathToFileURL(join(REPO, 'packages', 'rn-iso', 'src', 'engine', 'build-lock.ts')).href;
+const CACHE_URL = pathToFileURL(join(REPO, 'packages', 'rn-iso', 'src', 'build-cache.ts')).href;
 
 // The stub, injected everywhere fingerprintProject is called below.
 const load = () => makeFingerprinter();
@@ -182,14 +180,16 @@ test('exactly one of four racing processes acquires the lock', async () => {
     'process.stdout.write(JSON.stringify({ pid: process.pid, ...got }));',
   ]);
 
-  const results = await Promise.all(
-    ['a', 'b', 'c', 'd'].map((name) => runNode(racer, [key, name])),
-  );
+  const results = await Promise.all(['a', 'b', 'c', 'd'].map((name) => runNode(racer, [key, name])));
   const answers = results.map((r) => JSON.parse(r.stdout.trim()));
   const winners = answers.filter((a) => a.acquired);
   const losers = answers.filter((a) => a.held);
 
-  assert.equal(winners.length, 1, `exactly one builder: ${JSON.stringify(answers.map((a) => a.acquired ?? a.held?.pid))}`);
+  assert.equal(
+    winners.length,
+    1,
+    `exactly one builder: ${JSON.stringify(answers.map((a) => a.acquired ?? a.held?.pid))}`,
+  );
   assert.equal(losers.length, 3, 'everyone else is told to wait');
   for (const loser of losers) {
     assert.equal(loser.held.pid, winners[0].pid, 'every loser names the one real builder');
@@ -251,8 +251,11 @@ test('worktree remove refuses a dirty tree, then removes a clean one leaving not
   // Steps 2 and 4 dirtied both worktrees on purpose (an untracked ios/Podfile.lock,
   // a modified android/app/build.gradle). remove must REFUSE that without --force
   // -- protecting work the tester did not mean to throw away.
-  assert.throws(() => removeWorktree(ctx.wt1), /Refusing to remove|uncommitted/i,
-    'a dirty worktree is not silently deleted');
+  assert.throws(
+    () => removeWorktree(ctx.wt1),
+    /Refusing to remove|uncommitted/i,
+    'a dirty worktree is not silently deleted',
+  );
 
   // Follow the tool's own remedy: drop the untracked file, restore the tracked
   // change. Now the tree is clean and removal is the routine no-force path.
@@ -309,13 +312,18 @@ function writeScript(name, lines) {
 
 function runNode(scriptPath, args = []) {
   return new Promise((resolve, reject) => {
-    execFile(process.execPath, [scriptPath, ...args], {
-      env: { ...process.env, RN_ISO_HOME: ctx.home },
-      timeout: 60000,
-    }, (err, stdout, stderr) => {
-      if (err && err.code === undefined) return reject(err);
-      resolve({ code: err?.code ?? 0, stdout: String(stdout), stderr: String(stderr) });
-    });
+    execFile(
+      process.execPath,
+      [scriptPath, ...args],
+      {
+        env: { ...process.env, RN_ISO_HOME: ctx.home },
+        timeout: 60000,
+      },
+      (err, stdout, stderr) => {
+        if (err && err.code === undefined) return reject(err);
+        resolve({ code: err?.code ?? 0, stdout: String(stdout), stderr: String(stderr) });
+      },
+    );
   });
 }
 
@@ -331,13 +339,20 @@ function makeMinimalRnProject(root) {
   mkdirSync(join(root, 'ios', 'App.xcodeproj'), { recursive: true });
   mkdirSync(join(root, 'android', 'app'), { recursive: true });
 
-  write(join(root, 'package.json'), JSON.stringify({
-    name: 'rn-iso-e2e-fixture',
-    version: '1.0.0',
-    private: true,
-    scripts: { ios: 'react-native run-ios', android: 'react-native run-android' },
-    dependencies: { react: '18.2.0', 'react-native': '0.74.0' },
-  }, null, 2) + '\n');
+  write(
+    join(root, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'rn-iso-e2e-fixture',
+        version: '1.0.0',
+        private: true,
+        scripts: { ios: 'react-native run-ios', android: 'react-native run-android' },
+        dependencies: { react: '18.2.0', 'react-native': '0.74.0' },
+      },
+      null,
+      2,
+    ) + '\n',
+  );
 
   write(join(root, 'app.json'), JSON.stringify({ name: 'App', displayName: 'App' }, null, 2) + '\n');
   write(join(root, 'index.js'), "import { AppRegistry } from 'react-native';\n");
@@ -347,7 +362,7 @@ function makeMinimalRnProject(root) {
   write(join(root, 'ios', 'App.xcodeproj', 'project.pbxproj'), '// minimal pbxproj fixture\n');
 
   // android/ native inputs.
-  write(join(root, 'android', 'build.gradle'), "buildscript { ext { minSdkVersion = 24 } }\n");
+  write(join(root, 'android', 'build.gradle'), 'buildscript { ext { minSdkVersion = 24 } }\n');
   write(join(root, 'android', 'settings.gradle'), "rootProject.name = 'App'\n");
   write(join(root, 'android', 'app', 'build.gradle'), "apply plugin: 'com.android.application'\n");
   write(join(root, 'android', 'app', 'AndroidManifest.xml'), '<manifest package="com.app"/>\n');

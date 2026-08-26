@@ -24,6 +24,7 @@ Secondary motivator: a human jumping between several projects locally, without c
 ### Scenario A — multi-agent, multiple worktrees
 
 Janic spawns three Claude Code sessions in three worktrees of the same app. Each runs `rn-iso ios` once. Each gets:
+
 - A unique Metro port (8082, 8083, 8084).
 - A dedicated booted iOS simulator (different UDIDs).
 - An installed copy of the app pointing to that worktree's port.
@@ -72,6 +73,7 @@ Stored at `~/.rn-iso/config.json`. Keyed by absolute project path (resolved via 
 ```
 
 Notes:
+
 - Single Metro per project, shared across iOS and Android (same as `react-native run-*` defaults).
 - `metroPort` and `metroPid` live at the project level — one Metro serves both platforms.
 - `metroPid` is recorded when Metro is started detached, used by `rn-iso stop` and `rn-iso logs`.
@@ -83,12 +85,14 @@ Notes:
 `rn-iso` resolves the "current project" by walking up from CWD until it finds a directory containing `package.json`. That directory is the canonical project root used as the config key.
 
 Inside that root, detection determines:
+
 - **Bare vs Expo:** presence of `expo` in `package.json` dependencies AND presence of `app.json` / `app.config.{js,ts}`. If both, treat as Expo.
 - **Bundle ID / package name:** lifted from the existing `react-native-worktree` logic — checks `app.json` (`expo.ios.bundleIdentifier`, `expo.android.package`) and `app.config.{js,ts}` via regex.
 
 ### Port allocation
 
 Same logic as `react-native-worktree`:
+
 - On first assignment for a project, scan all ports in config across all projects, plus probe `localhost:<port>/status` to detect dead Metros.
 - If a dead Metro port is found, reclaim it and remove the dead entry.
 - Else assign `max(allPorts, 8081) + 1`.
@@ -100,6 +104,7 @@ Both platforms in the same project share one Metro port.
 Sticky and explicit. First `rn-iso ios` for a project picks a sim and writes it to config. Subsequent invocations reuse it.
 
 **Selection algorithm (iOS):**
+
 1. List booted sims via `xcrun simctl list devices booted -j`.
 2. Compute "claimed" UDIDs from config (across all projects).
 3. **Prefer reuse:** if config has a UDID for this project and it's bootable (exists in `simctl list devices`), use it. Boot it if not booted.
@@ -110,6 +115,7 @@ Sticky and explicit. First `rn-iso ios` for a project picks a sim and writes it 
 6. Boot it via `xcrun simctl boot <UDID>` and `open -a Simulator`.
 
 **Selection algorithm (Android):**
+
 1. List existing AVDs via `emulator -list-avds`.
 2. List currently-running emulator console ports via `adb devices` (entries like `emulator-5554`).
 3. Compute claimed AVDs and console ports from config.
@@ -122,17 +128,20 @@ When booting Android: `emulator -avd <name> -port <consolePort>` (detached).
 ### App install
 
 iOS:
+
 - `expo run:ios --device <UDID> --port <PORT>` (Expo) or `react-native run-ios --simulator <name> --port <PORT>` (bare; note: bare RN takes a name, not UDID — translate via `simctl list`).
 - These build, install, and launch.
 - On reruns of `rn-iso ios` against the same project + sim, this is fast because the build is incremental.
 
 Android:
+
 - `expo run:android --device <serial> --port <PORT>` (Expo) or `react-native run-android --deviceId <serial>` (bare).
 - After install, set up `adb -s <serial> reverse tcp:<PORT> tcp:<PORT>` so the emulator can reach Metro on the host.
 
 ### Metro management
 
 `rn-iso ios` / `rn-iso android` ensure Metro is running on the project's assigned port:
+
 - If a process is already responding to `/status` on that port, leave it alone.
 - Else spawn detached: `npx expo start --port <PORT>` or `npx react-native start --port <PORT>`. Record PID in config. Pipe stdout/stderr to `~/.rn-iso/logs/<project-hash>-metro.log`.
 
@@ -190,17 +199,18 @@ The "current project" is always the package.json root walking up from CWD. No fl
 
 ### Bare vs Expo dispatch
 
-| Action | Expo | Bare |
-|---|---|---|
-| Run iOS | `npx expo run:ios --device <UDID> --port <P>` | `npx react-native run-ios --simulator "<name>" --port <P>` |
+| Action      | Expo                                                | Bare                                                                                             |
+| ----------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Run iOS     | `npx expo run:ios --device <UDID> --port <P>`       | `npx react-native run-ios --simulator "<name>" --port <P>`                                       |
 | Run Android | `npx expo run:android --device <serial> --port <P>` | `npx react-native run-android --deviceId <serial>` (bare RN takes port via `RCT_METRO_PORT` env) |
-| Start Metro | `npx expo start --port <P>` | `npx react-native start --port <P>` |
+| Start Metro | `npx expo start --port <P>`                         | `npx react-native start --port <P>`                                                              |
 
-Bare RN's `run-ios` takes a device *name*, not a UDID — we'll resolve UDID → name via `simctl list devices -j`. If multiple sims share a name (common), error out with "ambiguous; please rename one in the Simulator app."
+Bare RN's `run-ios` takes a device _name_, not a UDID — we'll resolve UDID → name via `simctl list devices -j`. If multiple sims share a name (common), error out with "ambiguous; please rename one in the Simulator app."
 
 ## Agent integration
 
 A skill (provisional name `rn-iso`) shipped with the CLI that teaches agents how to use it. Skill content covers:
+
 - Run `rn-iso ios` (or android) from the project root before any device interaction.
 - Use `rn-iso device --platform ios` to get the UDID, pass to `agent-device`'s `--device <UDID>` form (or whatever the platform-specific flag is).
 - Pass `--auto --device-type "iPhone 15 Pro"` (or similar) for non-interactive runs.
@@ -209,6 +219,7 @@ A skill (provisional name `rn-iso`) shipped with the CLI that teaches agents how
 The skill installs the same way as `react-native-worktree`'s skill (`curl ... -o ~/.claude/skills/rn-iso/SKILL.md`).
 
 `rn-iso device` is the single point of integration. Output format:
+
 - Success: `<UDID>` (or `<emulator-serial>`) on stdout, exit 0.
 - Not assigned: empty stdout, error message on stderr, exit 1.
 - `--platform <p>` filters; default = ios.
@@ -216,15 +227,15 @@ The skill installs the same way as `react-native-worktree`'s skill (`curl ... -o
 
 ## Failure modes & error handling
 
-| Situation | Behavior |
-|---|---|
-| No `package.json` found walking up from CWD | Error: "Not in a React Native project (no package.json)" |
-| Bundle ID undetectable | Error: "Could not detect bundle ID; provide via `--bundle-id <id>`" (later — v1 requires app.json) |
-| Assigned sim no longer exists | Warn, drop assignment, run normal allocation |
-| Assigned sim exists but won't boot | Error with the simctl message; don't auto-fall-through |
-| Metro port collides with non-rn-iso process | Detect via probe; if `/status` doesn't return `packager-status:running`, error: "port X busy by non-Metro process" |
-| Two instances of `rn-iso ios` for the same project run concurrently | File-based lock on the project's config entry during mutation. Race-window only during allocation. |
-| Expo run hangs / fails | Surface stderr; don't silently retry |
+| Situation                                                           | Behavior                                                                                                           |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| No `package.json` found walking up from CWD                         | Error: "Not in a React Native project (no package.json)"                                                           |
+| Bundle ID undetectable                                              | Error: "Could not detect bundle ID; provide via `--bundle-id <id>`" (later — v1 requires app.json)                 |
+| Assigned sim no longer exists                                       | Warn, drop assignment, run normal allocation                                                                       |
+| Assigned sim exists but won't boot                                  | Error with the simctl message; don't auto-fall-through                                                             |
+| Metro port collides with non-rn-iso process                         | Detect via probe; if `/status` doesn't return `packager-status:running`, error: "port X busy by non-Metro process" |
+| Two instances of `rn-iso ios` for the same project run concurrently | File-based lock on the project's config entry during mutation. Race-window only during allocation.                 |
+| Expo run hangs / fails                                              | Surface stderr; don't silently retry                                                                               |
 
 ## Testing strategy
 

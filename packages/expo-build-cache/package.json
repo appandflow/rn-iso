@@ -1,14 +1,27 @@
 {
   "name": "@rn-iso/expo-build-cache",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Local Expo build cache provider: installs a cached .app/.apk instead of compiling when no native input changed.",
-  "main": "index.js",
-  "files": [
-    "index.js",
-    "README.md"
-  ],
   "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "build": "tsdown"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowJs": true,
+    "checkJs": false,
+    "types": ["node", "vitest/globals"],
+    "noImplicitAny": false,
+    "strictNullChecks": false
+  },
+  "include": ["src/**/__tests__/**/*.ts"]
+}

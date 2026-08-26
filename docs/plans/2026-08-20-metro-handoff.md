@@ -4,7 +4,7 @@
 
 **Goal:** Stop rn-iso from spawning Metro; keep it allocating the port, and make teardown kill Metro only after positively identifying it as this project's.
 
-**Architecture:** `src/metro.js` is gutted of spawn machinery and re-purposed into a port-to-process identity module. A new `resolveProjectMetro(port, projectPath)` returns a three-outcome result mirroring `resolveOwnedIosSim`, requiring *both* a live `/status` answer and a working directory inside the project before anything is killed. All five kill sites (`stop`, `release`, `shutdown`, `reclaim`, `gc`) route through it. `up` allocates and records the port but never spawns.
+**Architecture:** `src/metro.js` is gutted of spawn machinery and re-purposed into a port-to-process identity module. A new `resolveProjectMetro(port, projectPath)` returns a three-outcome result mirroring `resolveOwnedIosSim`, requiring _both_ a live `/status` answer and a working directory inside the project before anything is killed. All five kill sites (`stop`, `release`, `shutdown`, `reclaim`, `gc`) route through it. `up` allocates and records the port but never spawns.
 
 **Tech Stack:** Node 20+ ESM, `node --test`, commander, chalk. No new dependencies.
 
@@ -23,27 +23,29 @@
 
 ## File Structure
 
-| File | Responsibility after this plan |
-|---|---|
-| `src/metro.js` | Port-to-process identity and killing. No spawning, no logs. |
-| `src/ports.js` | Unchanged. Allocation, reclamation, `isMetroRunning`. |
-| `src/commands/stop.js` | Manual entry point for the identity guard, plus `--force`. |
-| `src/commands/up.js` | Allocates/records port, does not spawn. |
-| `src/commands/start.js` | **Deleted.** |
-| `src/commands/logs.js` | **Deleted.** |
-| `src/reclaim.js`, `src/commands/{release,shutdown,gc}.js` | Route Metro teardown through the guard. |
-| `src/commands/{device,status}.js` | Drop `metroPid` / `metroLog` reporting. |
-| `test/metro.test.js` | Rewritten: parsers, guard outcomes, real-tool test. |
+| File                                                      | Responsibility after this plan                              |
+| --------------------------------------------------------- | ----------------------------------------------------------- |
+| `src/metro.js`                                            | Port-to-process identity and killing. No spawning, no logs. |
+| `src/ports.js`                                            | Unchanged. Allocation, reclamation, `isMetroRunning`.       |
+| `src/commands/stop.js`                                    | Manual entry point for the identity guard, plus `--force`.  |
+| `src/commands/up.js`                                      | Allocates/records port, does not spawn.                     |
+| `src/commands/start.js`                                   | **Deleted.**                                                |
+| `src/commands/logs.js`                                    | **Deleted.**                                                |
+| `src/reclaim.js`, `src/commands/{release,shutdown,gc}.js` | Route Metro teardown through the guard.                     |
+| `src/commands/{device,status}.js`                         | Drop `metroPid` / `metroLog` reporting.                     |
+| `test/metro.test.js`                                      | Rewritten: parsers, guard outcomes, real-tool test.         |
 
 ---
 
 ### Task 1: Identity primitives and `resolveProjectMetro`
 
 **Files:**
+
 - Modify: `src/metro.js` (add; delete nothing yet)
 - Test: `test/metro.test.js`
 
 **Interfaces:**
+
 - Consumes: `findPidListeningOnPort(port)` and `isPidAlive(pid)` (already in `src/metro.js`), `isMetroRunning(port)` from `src/ports.js`.
 - Produces:
   - `parseLsofPids(out) -> number[]`
@@ -252,10 +254,12 @@ git commit -m "feat(metro): port-to-process identity guard, ownership before kil
 ### Task 2: `killMetroTree` and the real-tool verification
 
 **Files:**
+
 - Modify: `src/metro.js`
 - Test: `test/metro.test.js`
 
 **Interfaces:**
+
 - Consumes: `resolveProjectMetro` from Task 1.
 - Produces: `killMetroTree(leader) -> boolean`
 
@@ -270,7 +274,9 @@ import { spawn as realSpawn } from 'node:child_process';
 test('killMetroTree signals the process group, not just the pid', () => {
   const signalled = [];
   const origKill = process.kill;
-  process.kill = (pid, sig) => { signalled.push([pid, sig]); };
+  process.kill = (pid, sig) => {
+    signalled.push([pid, sig]);
+  };
   try {
     assert.equal(killMetroTree(59806), true);
     assert.deepEqual(signalled[0], [-59806, 'SIGTERM']);
@@ -296,7 +302,9 @@ test('killMetroTree falls back to the bare pid when the group is gone', () => {
 
 test('killMetroTree reports false when nothing could be signalled', () => {
   const origKill = process.kill;
-  process.kill = () => { throw new Error('ESRCH'); };
+  process.kill = () => {
+    throw new Error('ESRCH');
+  };
   try {
     assert.equal(killMetroTree(1234567), false);
   } finally {
@@ -318,11 +326,14 @@ test('resolveProjectMetro identifies and kills a REAL listening process from the
   const dir = mkdtempSync(join(tmpdir(), 'rn-iso-metro-'));
   const port = 8099;
   const script = join(dir, 'fake-metro.js');
-  writeFileSync(script, `
+  writeFileSync(
+    script,
+    `
     const http = require('http');
     http.createServer((req, res) => res.end('packager-status:running'))
         .listen(${port}, '127.0.0.1');
-  `);
+  `,
+  );
   const child = realSpawn(process.execPath, [script], { cwd: dir, detached: true, stdio: 'ignore' });
   child.unref();
   try {
@@ -346,8 +357,12 @@ test('resolveProjectMetro identifies and kills a REAL listening process from the
     }
     assert.equal(await isMetroRunning(port), false, 'real process should be dead');
   } finally {
-    try { process.kill(-child.pid, 'SIGKILL'); } catch {}
-    try { process.kill(child.pid, 'SIGKILL'); } catch {}
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {}
+    try {
+      process.kill(child.pid, 'SIGKILL');
+    } catch {}
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -407,10 +422,12 @@ git commit -m "feat(metro): kill the process group, verified against a real list
 ### Task 3: `stop` uses the guard, gains `--force`
 
 **Files:**
+
 - Modify: `src/commands/stop.js` (full rewrite of the kill paths)
 - Test: `test/stop.test.js` (create)
 
 **Interfaces:**
+
 - Consumes: `resolveProjectMetro`, `killMetroTree` from Tasks 1-2.
 - Produces: `stopAction({ resolution, force }) -> { action: 'killed'|'missing'|'refused'|'forced', reason?, pid? }` (pure, exported for tests)
 
@@ -476,8 +493,13 @@ export function stopAction({ resolution, force }) {
 export default function stopCommand(program) {
   program
     .command('stop [target]')
-    .description('Kill this project\'s Metro. rn-iso no longer starts Metro, so it verifies the process on the assigned port belongs to this project before killing it. Pass a project shortcut or absolute path to target another project.')
-    .option('--force', 'Kill whatever listens on the port even if it cannot be identified as this project\'s Metro (destructive: ask the user first)')
+    .description(
+      "Kill this project's Metro. rn-iso no longer starts Metro, so it verifies the process on the assigned port belongs to this project before killing it. Pass a project shortcut or absolute path to target another project.",
+    )
+    .option(
+      '--force',
+      "Kill whatever listens on the port even if it cannot be identified as this project's Metro (destructive: ask the user first)",
+    )
     .action(async (target, opts) => {
       const { found, error } = resolveRegisteredProject(target);
       if (!found) {
@@ -538,12 +560,14 @@ git commit -m "feat(stop): verify identity before killing, add --force"
 ### Task 4: Route the four teardown sites through the guard
 
 **Files:**
+
 - Modify: `src/reclaim.js:124-136`
 - Modify: `src/commands/shutdown.js:53-58, 134-149`
 - Modify: `src/commands/release.js:131-140`
 - Test: `test/reclaim.test.js`, `test/shutdown.test.js`
 
 **Interfaces:**
+
 - Consumes: `resolveProjectMetro`, `killMetroTree`.
 - Produces: `reclaimProject` gains `skippedMetro: string | null` alongside `killedPid`.
 
@@ -577,21 +601,21 @@ Expected: FAIL, `skippedMetro` undefined (today it kills unconditionally).
 Replace the Metro block (currently lines 124-136) with:
 
 ```js
-  // A Metro started from a deleted directory can outlive it and squat on the
-  // port, so the port is not genuinely free until the process is gone. Killing
-  // by port alone would repeat the Android console-port mistake, so identity is
-  // proven first and an unidentified listener is reported, never killed.
-  let killedPid = null;
-  let skippedMetro = null;
-  if (typeof project?.metroPort === 'number') {
-    const resolution = await resolveProjectMetro(project.metroPort, path);
-    if (resolution.metro) {
-      killedPid = killMetroTree(resolution.metro.leader) ? resolution.metro.pid : null;
-      if (killedPid === null) skippedMetro = `could not kill pid ${resolution.metro.pid}`;
-    } else if (resolution.notOurs) {
-      skippedMetro = resolution.notOurs;
-    }
+// A Metro started from a deleted directory can outlive it and squat on the
+// port, so the port is not genuinely free until the process is gone. Killing
+// by port alone would repeat the Android console-port mistake, so identity is
+// proven first and an unidentified listener is reported, never killed.
+let killedPid = null;
+let skippedMetro = null;
+if (typeof project?.metroPort === 'number') {
+  const resolution = await resolveProjectMetro(project.metroPort, path);
+  if (resolution.metro) {
+    killedPid = killMetroTree(resolution.metro.leader) ? resolution.metro.pid : null;
+    if (killedPid === null) skippedMetro = `could not kill pid ${resolution.metro.pid}`;
+  } else if (resolution.notOurs) {
+    skippedMetro = resolution.notOurs;
   }
+}
 ```
 
 Update the import on line 3 to `import { resolveProjectMetro, killMetroTree } from './metro.js';` and add `skippedMetro` to the returned object.
@@ -603,17 +627,17 @@ Update the import on line 3 to `import { resolveProjectMetro, killMetroTree } fr
 It has three production callers and one test, and none of them are currently
 async. Convert all of them, in this order:
 
-| Site | Change |
-|---|---|
-| `src/reclaim.js:104` | `export function` -> `export async function` |
-| `src/commands/gc.js:297` | `const result = await reclaimProject(...)` |
-| `src/commands/gc.js:188` | `.action(opts => {` -> `.action(async opts => {` |
-| `src/commands/prune.js:44` | `const result = await reclaimProject(...)` |
-| `src/commands/prune.js:12` | `.action(() => {` -> `.action(async () => {` |
-| `src/commands/worktree.js:283` | `const r = await reclaimProject(...)` |
-| `src/commands/worktree.js:269` | `function reclaimAll(rootPath)` -> `async function reclaimAll(rootPath)` |
-| `src/commands/worktree.js:367` | `const result = await reclaimAll(path);` |
-| `test/reclaim.test.js:47` | `const result = await reclaimProject(...)`; make the test callback `async` |
+| Site                           | Change                                                                     |
+| ------------------------------ | -------------------------------------------------------------------------- |
+| `src/reclaim.js:104`           | `export function` -> `export async function`                               |
+| `src/commands/gc.js:297`       | `const result = await reclaimProject(...)`                                 |
+| `src/commands/gc.js:188`       | `.action(opts => {` -> `.action(async opts => {`                           |
+| `src/commands/prune.js:44`     | `const result = await reclaimProject(...)`                                 |
+| `src/commands/prune.js:12`     | `.action(() => {` -> `.action(async () => {`                               |
+| `src/commands/worktree.js:283` | `const r = await reclaimProject(...)`                                      |
+| `src/commands/worktree.js:269` | `function reclaimAll(rootPath)` -> `async function reclaimAll(rootPath)`   |
+| `src/commands/worktree.js:367` | `const result = await reclaimAll(path);`                                   |
+| `test/reclaim.test.js:47`      | `const result = await reclaimProject(...)`; make the test callback `async` |
 
 `bin/cli.js` already uses `parseAsync` (commit 96152aa), so async command
 actions propagate their rejections correctly. Do not switch it back to
@@ -624,6 +648,7 @@ Verify nothing calls it without awaiting:
 ```bash
 grep -rn "reclaimProject(\|reclaimAll(" src/ test/ | grep -v "await" | grep -v "function"
 ```
+
 Expected: no output.
 
 - [ ] **Step 4: Update `shutdown.js`**
@@ -631,24 +656,24 @@ Expected: no output.
 At line 56, stop reading `proj.metroPid`:
 
 ```js
-          metros.push({ path, port: proj.metroPort });
+metros.push({ path, port: proj.metroPort });
 ```
 
 Replace the Phase 1 loop (lines 134-149) with:
 
 ```js
-      // Phase 1: kill Metro instances, identity-verified. rn-iso no longer
-      // starts Metro, so a recorded port proves nothing about who holds it.
-      for (const m of metros) {
-        const resolution = await resolveProjectMetro(m.port, m.path);
-        if (resolution.metro && killMetroTree(resolution.metro.leader)) {
-          console.log(chalk.green(`Killed Metro pid ${resolution.metro.pid} on port ${m.port} ${chalk.dim(`(${m.path})`)}`));
-        } else if (resolution.notOurs) {
-          console.log(chalk.yellow(`Skipped port ${m.port}: ${resolution.notOurs} (${m.path})`));
-        } else {
-          console.log(chalk.dim(`No Metro running on port ${m.port} (${m.path})`));
-        }
-      }
+// Phase 1: kill Metro instances, identity-verified. rn-iso no longer
+// starts Metro, so a recorded port proves nothing about who holds it.
+for (const m of metros) {
+  const resolution = await resolveProjectMetro(m.port, m.path);
+  if (resolution.metro && killMetroTree(resolution.metro.leader)) {
+    console.log(chalk.green(`Killed Metro pid ${resolution.metro.pid} on port ${m.port} ${chalk.dim(`(${m.path})`)}`));
+  } else if (resolution.notOurs) {
+    console.log(chalk.yellow(`Skipped port ${m.port}: ${resolution.notOurs} (${m.path})`));
+  } else {
+    console.log(chalk.dim(`No Metro running on port ${m.port} (${m.path})`));
+  }
+}
 ```
 
 Update the import on line 6 to `import { resolveProjectMetro, killMetroTree } from '../metro.js';` and drop `setMetro` from the config import if it becomes unused.
@@ -658,16 +683,19 @@ Update the import on line 6 to `import { resolveProjectMetro, killMetroTree } fr
 `handleUnmatchedPort` (line 131) already prompts before killing an unmatched port; keep the prompt but route the kill through `killMetroTree` so it takes the group:
 
 ```js
-  const pid = findPidListeningOnPort(port);
+const pid = findPidListeningOnPort(port);
 ```
+
 stays, and the kill inside the confirm branch becomes:
+
 ```js
-    const leader = processGroupLeader(pid) ?? pid;
-    if (!killMetroTree(leader)) {
-      console.error(chalk.red(`Could not kill pid ${pid} on port ${port}.`));
-      return;
-    }
+const leader = processGroupLeader(pid) ?? pid;
+if (!killMetroTree(leader)) {
+  console.error(chalk.red(`Could not kill pid ${pid} on port ${port}.`));
+  return;
+}
 ```
+
 Import `killMetroTree` and `processGroupLeader` from `../metro.js`.
 
 - [ ] **Step 6: `gc.js` needs no change**
@@ -694,6 +722,7 @@ git commit -m "fix(teardown): verify Metro identity before killing at every site
 ### Task 5: `up` stops spawning; drop `metroPid` and `metroLog`
 
 **Files:**
+
 - Modify: `src/commands/up.js:110-150, 363-375`
 - Modify: `src/config.js:62, 80-88, 211`
 - Modify: `src/commands/device.js:33-38`
@@ -701,6 +730,7 @@ git commit -m "fix(teardown): verify Metro identity before killing at every site
 - Test: `test/up.test.js`, `test/config.test.js`, `test/status.test.js`
 
 **Interfaces:**
+
 - Produces: `buildFacts` payload without `metroPid` / `metroLog`; `setMetro(projectPath, metroPort)` (two args).
 
 - [ ] **Step 1: Write the failing test**
@@ -760,21 +790,21 @@ export function buildFacts({ platform, device, port, metro, bundleId, setup }) {
 Replace lines 116-124 (the `ensureMetro` call and its reporting) with:
 
 ```js
-      // rn-iso allocates and records the port but does not start Metro: how to
-      // invoke a project's bundler is project-specific judgment, the same
-      // reason the build wrappers were removed. Report what is actually there.
-      const metroHealthy = await isMetroRunning(port);
-      if (metroHealthy) {
-        out(chalk.dim(`Metro already running on port ${port}`));
-      } else {
-        out(chalk.dim(`Metro port reserved: ${port} (not running -- start it yourself)`));
-      }
+// rn-iso allocates and records the port but does not start Metro: how to
+// invoke a project's bundler is project-specific judgment, the same
+// reason the build wrappers were removed. Report what is actually there.
+const metroHealthy = await isMetroRunning(port);
+if (metroHealthy) {
+  out(chalk.dim(`Metro already running on port ${port}`));
+} else {
+  out(chalk.dim(`Metro port reserved: ${port} (not running -- start it yourself)`));
+}
 ```
 
 Replace lines 141-146 (the `metroPid` / `log` assembly) with:
 
 ```js
-      const metro = { healthy: metroHealthy };
+const metro = { healthy: metroHealthy };
 ```
 
 Update the import on line 21 to drop `ensureMetro`, `logFileFor`, and `findPidListeningOnPort` if unused, and import `isMetroRunning` from `../ports.js`. Change `setMetro(root, port, null)` on line 113 to `setMetro(root, port)`.
@@ -788,24 +818,28 @@ Update the import on line 21 to drop `ensureMetro`, `logFileFor`, and `findPidLi
 - [ ] **Step 6: Update `device.js` and `status.js`**
 
 `device.js` lines 33-38:
+
 ```js
-        const metro = {
-          metroPort: proj.metroPort,
-          metroHealthy: proj.metroPort ? await isMetroRunning(proj.metroPort) : false,
-        };
+const metro = {
+  metroPort: proj.metroPort,
+  metroHealthy: proj.metroPort ? await isMetroRunning(proj.metroPort) : false,
+};
 ```
+
 Drop the `logFileFor` import.
 
 `status.js` lines 38-47:
+
 ```js
-        if (proj.metroPort) {
-          const running = await isMetroRunning(proj.metroPort);
-          const label = running ? chalk.green('running') : chalk.dim('not running');
-          console.log(`  metro: port ${proj.metroPort} (${label})`);
-        } else {
-          console.log(chalk.dim('  metro: unassigned'));
-        }
+if (proj.metroPort) {
+  const running = await isMetroRunning(proj.metroPort);
+  const label = running ? chalk.green('running') : chalk.dim('not running');
+  console.log(`  metro: port ${proj.metroPort} (${label})`);
+} else {
+  console.log(chalk.dim('  metro: unassigned'));
+}
 ```
+
 Drop the `isPidAlive` / `logFileExists` import.
 
 - [ ] **Step 7: Run the full suite**
@@ -825,6 +859,7 @@ git commit -m "feat(up): reserve the port, stop spawning Metro"
 ### Task 6: Delete the spawn machinery, `start`, and `logs`
 
 **Files:**
+
 - Delete: `src/commands/start.js`, `src/commands/logs.js`
 - Modify: `src/metro.js`, `bin/cli.js:5,7,27,29`
 - Modify: `test/metro.test.js`
@@ -850,9 +885,11 @@ From `test/metro.test.js`, delete `projectHash is deterministic and short`, `log
 - [ ] **Step 4: Verify nothing still references the deleted symbols**
 
 Run:
+
 ```bash
 grep -rn "ensureMetro\|logFileFor\|logFileExists\|buildMetroSpawnArgs\|killMetroByPid\|projectHash\|waitForMetroReady" src/ bin/ test/
 ```
+
 Expected: no output.
 
 - [ ] **Step 5: Verify the CLI loads and the commands are gone**
@@ -877,6 +914,7 @@ git commit -m "refactor: delete Metro spawn machinery, start and logs commands"
 ### Task 7: Documentation
 
 **Files:**
+
 - Modify: `skill/SKILL.md` (lines 3, 9, 21-25, 38, 45, 62, 64-68, 90-91, 126, 128-129, 131)
 - Modify: `README.md`
 - Modify: `CLAUDE.md` (the "up is a broker" section and the file-layout table)
@@ -885,7 +923,7 @@ git commit -m "refactor: delete Metro spawn machinery, start and logs commands"
 
 Replace the "Metro rules" section with a "Starting Metro" section:
 
-````markdown
+```markdown
 ## Starting Metro
 
 rn-iso reserves a **port** for your project and never starts Metro itself --
@@ -893,12 +931,12 @@ which bundler command a project needs is judgment you have from reading the
 repo, the same reason rn-iso does not run your build. Start it yourself on the
 assigned port, in the background, before you build:
 
-| Project shape | Metro invocation |
-|---|---|
-| Expo | `npx expo start --port <port>` |
-| Bare RN | `npx react-native start --port <port>` |
+| Project shape              | Metro invocation                                                    |
+| -------------------------- | ------------------------------------------------------------------- |
+| Expo                       | `npx expo start --port <port>`                                      |
+| Bare RN                    | `npx react-native start --port <port>`                              |
 | Has its own `start` script | run it and append `--port <port>` -- it may carry flags that matter |
-| Monorepo | run from the app directory, not the repo root |
+| Monorepo                   | run from the app directory, not the repo root                       |
 
 Two rules that make teardown work:
 
@@ -914,7 +952,7 @@ Two rules that make teardown work:
 `metroHealthy` in `up --json` is a live `/status` ping. It is normally `false`
 on a fresh `up`, because nothing has started Metro yet -- that is expected, not
 an error. Start Metro, then poll until it reports `true` before building.
-````
+```
 
 Update the lifecycle example (lines 21-25) to insert the Metro step between
 `up` and the build, and drop `metroPid` / `metroLog` from the sample payload.
@@ -940,9 +978,11 @@ explicitly. In the file-layout table, change `metro.js`'s description to
 - [ ] **Step 4: Verify no doc still promises deleted behavior**
 
 Run:
+
 ```bash
 grep -rn "rn-iso logs\|rn-iso start\|managed Metro\|PID-tracked\|metroPid\|metroLog" README.md skill/SKILL.md CLAUDE.md
 ```
+
 Expected: no output.
 
 - [ ] **Step 5: Commit**
@@ -957,6 +997,7 @@ git commit -m "docs: agents start Metro on the reserved port"
 ### Task 8: Live verification and the 0.8.0 release
 
 **Files:**
+
 - Modify: `package.json`, `package-lock.json`
 
 - [ ] **Step 1: Live-verify the whole flow on a real project**
@@ -970,16 +1011,20 @@ export RN_ISO_HOME=$(mktemp -d)
 cd /Volumes/ExternalSSD/Developer/member-app
 node /Volumes/ExternalSSD/Developer/rn-iso/bin/cli.js up ios --json
 ```
+
 Expected: one JSON line, `metroHealthy:false`, a `metroPort`, an owned sim
 created and booted. All status text on stderr.
 
 ```bash
 npx react-native start --port <port> &
 ```
+
 Wait for it to bind, then:
+
 ```bash
 node /Volumes/ExternalSSD/Developer/rn-iso/bin/cli.js up ios --json
 ```
+
 Expected: `metroHealthy:true`.
 
 - [ ] **Step 2: Live-verify the refusal path**
@@ -996,6 +1041,7 @@ Expected: exit 1, "Refusing to kill port N: ... outside ...". Then confirm
 node .../bin/cli.js stop      # kills the real Metro, group and all
 node .../bin/cli.js release   # deletes the owned sim
 ```
+
 Expected: no leaked process, no bound port, no sim. Verify with
 `lsof -nP -iTCP:<port> -sTCP:LISTEN` (empty) and `xcrun simctl list devices | grep rn-iso` (empty).
 

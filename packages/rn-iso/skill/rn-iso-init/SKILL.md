@@ -34,7 +34,7 @@ So the loop is:
 
 - **`.rn-iso/` in `.gitignore`.** `start`, `ios` and `android` each add the entry
   themselves if it is missing, and say so once on stderr (`note   added .rn-iso/
-  to .gitignore`). It was the one edit safe to generate, so it stopped being a
+to .gitignore`). It was the one edit safe to generate, so it stopped being a
   setup step. (doctor still reports a missing entry, because doctor is read-only
   and runs on repos no rn-iso command has touched yet.)
 
@@ -48,6 +48,7 @@ So the loop is:
   committing the entry ends that difference for good. Symptom while it lasts:
   the first `rn-iso ios` in a new worktree misses a cache entry another
   worktree stored for the same commit, then hits from then on.
+
 - **A `.worktreeexclude` for it.** `.rn-iso/` holds a workspace's own derived
   data, its logs and the supervisor pidfile -- build output keyed to a path a new
   worktree does not have, and a pidfile for a process that is not running -- so
@@ -57,10 +58,10 @@ So the loop is:
   file is a rule that goes missing. A `.worktreeexclude` at the **repo root**
   (`git rev-parse --show-toplevel`, which is where `worktree create` reads it)
   still works for a repo's own additions -- `bench/results`, a fixture tree --
-  and only ever *adds* to the skip list; nothing in it can bring `.rn-iso/` back.
+  and only ever _adds_ to the skip list; nothing in it can bring `.rn-iso/` back.
 - **A run script.** rn-iso runs the dev server and the build itself, so there is
   no bundler or build command left to wrap. Write one only if this repo needs
-  something *around* those two steps -- a codegen pass, a workspace filter, an
+  something _around_ those two steps -- a codegen pass, a workspace filter, an
   env file to source. A `scripts/dev` or `WORKFLOW.md` an older version generated
   belongs to the repo now; neither describes this version, and nothing here
   touches them.
@@ -70,14 +71,14 @@ So the loop is:
 `doctor` reads a fixed handful of things and nothing else. Every one of them is
 a file it can read statically:
 
-| Finding | Read from |
-|---|---|
-| `expo-dev-client` is not installed | `package.json` |
-| Metro cache is per-project, or its `cacheStores` is only wired conditionally | `metro.config.js`, read and never evaluated |
-| Compilation caching off, or left at its default CAS path | `ios/Podfile` |
-| ccache and compilation caching both enabled | `ios/Podfile` + `ios/Podfile.properties.json` |
-| `buildCacheProvider` missing, or on the key this SDK ignores | `app.json` (an `app.config.ts` is code, so it says so instead of guessing) |
-| `.rn-iso/` missing from `.gitignore` | the project's `.gitignore` |
+| Finding                                                                      | Read from                                                                  |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `expo-dev-client` is not installed                                           | `package.json`                                                             |
+| Metro cache is per-project, or its `cacheStores` is only wired conditionally | `metro.config.js`, read and never evaluated                                |
+| Compilation caching off, or left at its default CAS path                     | `ios/Podfile`                                                              |
+| ccache and compilation caching both enabled                                  | `ios/Podfile` + `ios/Podfile.properties.json`                              |
+| `buildCacheProvider` missing, or on the key this SDK ignores                 | `app.json` (an `app.config.ts` is code, so it says so instead of guessing) |
+| `.rn-iso/` missing from `.gitignore`                                         | the project's `.gitignore`                                                 |
 
 **Everything else on this page is yours to check by hand.** doctor does not read
 `.fingerprintignore`, does not look at `CLANG_OTHER_PREFIX_MAPPINGS` or
@@ -86,12 +87,12 @@ keys. A clean `doctor` run does not mean those are right — it means it had
 nothing to say about the things it reads. Each section below says which kind it
 is.
 
-Findings carry a `fix` line naming what to change. Treat it as the *intent* of
+Findings carry a `fix` line naming what to change. Treat it as the _intent_ of
 the edit, not its text: apply it in the style of the file you are editing.
 
 ## The one that blocks, not just slows
 
-*doctor reports this.*
+_doctor reports this._
 
 **`expo-dev-client` must be installed** for a reserved Metro port to reach the
 app at all. The port is never compiled into the binary: it travels in the
@@ -125,8 +126,8 @@ EXDevMenuShowsAtLaunch             false
 
 ## Skip the build entirely
 
-*doctor reports whether a provider is configured, and whether it is on the key
-this SDK reads. It does not check `.fingerprintignore`.*
+_doctor reports whether a provider is configured, and whether it is on the key
+this SDK reads. It does not check `.fingerprintignore`._
 
 A ticket that changes no native input should not compile anything. Expo's build
 cache provider keys a built `.app` on a fingerprint of the native inputs and
@@ -148,8 +149,8 @@ cache someone was using.
 
 ### `"buildCacheProvider": "eas"` needs a session, and says nothing when it has none
 
-*doctor checks this: eas-cli resolvable, logged in, and on an account that
-covers the project's `expo.owner`.*
+_doctor checks this: eas-cli resolvable, logged in, and on an account that
+covers the project's `expo.owner`._
 
 The EAS provider is the one whose failure mode is **silence by construction**.
 Both of its entry points wrap `npx eas-cli` in a `try { ... } catch { return
@@ -206,9 +207,9 @@ npm i -D @rn-iso/expo-build-cache
 Where the key goes moved when the setting left experiments, and the wrong
 combination is a silent no-op rather than an error:
 
-| SDK | Reads |
-|---|---|
-| 53 | `expo.experiments.buildCacheProvider` **only** |
+| SDK | Reads                                                          |
+| --- | -------------------------------------------------------------- |
+| 53  | `expo.experiments.buildCacheProvider` **only**                 |
 | 54+ | `expo.buildCacheProvider`, falling back to the experiments key |
 
 ```jsonc
@@ -244,7 +245,7 @@ longer cost you an ANDROID hit -- but it still costs you the iOS one, and a
 provider you write yourself gets whatever hash Expo hands it, which is
 UNSCOPED (`createFingerprintAsync(projectRoot)` with no options, in
 `@expo/cli`'s `build-cache-providers`). Scope it in `calculateFingerprintHash`
-if you want the same behaviour there. A repo that wants cross-worktree hits should commit a *settled*
+if you want the same behaviour there. A repo that wants cross-worktree hits should commit a _settled_
 `Podfile.lock`: run `pod install` once, commit whatever it produced, and check
 that a second run leaves it alone. The diagnostic when two workspaces that
 should agree do not is to fingerprint both and diff the sources rather than the
@@ -285,9 +286,9 @@ resolves from.
 
 ## Share compiled output between workspaces
 
-*doctor reports whether compilation caching is on and whether its CAS path is
+_doctor reports whether compilation caching is on and whether its CAS path is
 outside DerivedData, and whether ccache conflicts with it. It does not check the
-prefix mappings or the Swift setting below.*
+prefix mappings or the Swift setting below._
 
 On Xcode 26+, compilation caching is content-addressed, so it survives a
 different DerivedData — but **the default CAS path is inside DerivedData**,
@@ -370,14 +371,14 @@ config.build_settings['SWIFT_ENABLE_COMPILE_CACHE'] = 'NO'
 **Do not enable ccache alongside this.** The ccache launcher is what disables
 explicitly built modules, which compilation caching requires, so enabling both
 tends to mean neither works. ccache also keys on absolute paths — including
-paths *inside* generated files like header maps and VFS overlays, which no
+paths _inside_ generated files like header maps and VFS overlays, which no
 `base_dir` setting can rewrite — so it misses across worktrees regardless.
 
 ## Share Metro's transform cache
 
-*doctor reports whether `metro.config.js` sets any `cacheStores` at all, and
+_doctor reports whether `metro.config.js` sets any `cacheStores` at all, and
 downgrades to a note when every mention of it sits behind a conditional. It does
-not check where they point, and it never evaluates the file.*
+not check where they point, and it never evaluates the file._
 
 Metro's default transform cache is NOT under the project -- Expo/RN put it at
 `$TMPDIR/metro-cache`, which is already machine-global but is a location the OS
@@ -401,9 +402,7 @@ The `FileStore` itself is the easy part — that call is equivalent to:
 
 ```js
 const { FileStore } = require('metro-cache');
-config.cacheStores = [
-  new FileStore({ root: path.join(os.homedir(), '.myapp-metro-cache') }),
-];
+config.cacheStores = [new FileStore({ root: path.join(os.homedir(), '.myapp-metro-cache') })];
 ```
 
 What the package adds is registering the store with rn-iso, at the right entry

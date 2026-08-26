@@ -2,7 +2,7 @@
 
 rn-iso has three test layers. The unit suite (`npm test`, ~1350 `node:test`
 cases across the three packages) is the bulk of the coverage. On top of it sit
-two end-to-end layers that exercise the *published loop* rather than individual
+two end-to-end layers that exercise the _published loop_ rather than individual
 functions.
 
 ## The fast cross-platform e2e

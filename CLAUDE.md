@@ -61,7 +61,7 @@ state.json uses it as `withWorkspaceStateLock` in `src/supervisor/run.js` (lock
 at `<root>/.rn-iso/state.lock`), which every state writer -- the supervisor, the
 two collectors, and `ios`/`android`'s `lastBuild` -- inherits by going through
 `writeWorkspaceState`. mtime staleness is correct for these because the writes
-are milliseconds long; a lock a process holds for *minutes* (a build) must use
+are milliseconds long; a lock a process holds for _minutes_ (a build) must use
 pid-liveness instead (`src/engine/build-lock.js`), never this.
 
 ## Architecture conventions
@@ -80,7 +80,7 @@ pid-liveness instead (`src/engine/build-lock.js`), never this.
   that way: rn-iso is an optional peer, and a missing or old one must never
   break a bundler config or a build. `rn-iso/cache-manifest` still exists as a
   public export for consumers that DO have rn-iso -- and, since the `cache
-  register` / `forget` / `list` verbs were removed, the ONLY way to register a
+register` / `forget` / `list` verbs were removed, the ONLY way to register a
   cache by hand; it is simply not how these two packages do it.
   `@rn-iso/metro` carries a second export for the same reason it is CJS:
   `ndjsonReporter` is `require()`d by whoever hosts Metro programmatically, and
@@ -310,7 +310,7 @@ teardown into a simulator nothing references and nothing will ever reap.
 
 History: this replaces an earlier invariant, "never auto-create
 simulators," which existed because early auto-creation accumulated junk
-sims. That was really a symptom of creation *without* a reaper — there was
+sims. That was really a symptom of creation _without_ a reaper — there was
 no command that ever destroyed a device rn-iso had booted for you. The
 reaper now exists (`worktree remove`, `gc`'s orphan sweep), so
 creating a device and guaranteeing its eventual destruction is no longer
@@ -384,7 +384,7 @@ admitting three others re-implemented the pattern inline; both could not be
 true, and the copies had begun to drift. Do not add another copy.
 
 The invariants it enforces, in order: (1) re-resolve the device against the
-*live* sim/AVD list immediately before issuing any command at it
+_live_ sim/AVD list immediately before issuing any command at it
 (`resolveOwnedIosSim` / `resolveOwnedAvdSerial`) — a udid whose sim was
 renamed away from the `rn-iso-` prefix, or already deleted, must never be
 shut down, only reported as a skip; issuing shutdown first and only catching
