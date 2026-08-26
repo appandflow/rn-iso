@@ -17,9 +17,9 @@
 //                             SIGKILL in the middle of a compile
 //   5. shared caches          alive by design, never dead, only bigger
 //
-// v2's `cache register` / `cache forget` / `cache list` verbs folded into the
-// report here: v3 prescribes the cache paths, so there is nothing left to
-// register by hand. The programmatic `rn-iso/cache-manifest` export stays --
+// The cache paths are prescribed, so there is nothing to register or forget by
+// hand; gc just reports them, and there is no separate register / forget / list
+// verb. The programmatic `rn-iso/cache-manifest` export stays --
 // that is how @rn-iso/metro and src/build-cache.js self-register.
 import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
@@ -716,8 +716,8 @@ export async function collectGcReport({
   lastTouched = projectLastTouched,
   unsafeAllowScopedDeviceSweep = false,
 }: CollectGcReportOptions = {}): Promise<GcReport> {
-  // Reported on every run now that v3 prescribes the cache paths: `cache list`
-  // was the only way to see a registered cache, and it is gone. Sizing walks
+  // Reported on every run: the cache paths are prescribed and there is no
+  // `cache list`, so this report is the only way to see a registered cache. Sizing walks
   // the directories, which is the cost of the report being complete.
   // With --all each row is annotated with whether it would be emptied and, if
   // not, why -- decided here so the report and the action cannot disagree.

@@ -80,10 +80,10 @@ export function isInsideProject(cwd: string | null | undefined, projectPath: str
   return a === b || a.startsWith(b.endsWith(sep) ? b : b + sep);
 }
 
-// Three outcomes, mirroring resolveOwnedIosSim. A port is NOT identity: the
-// final 0.7.0 review's one Critical finding was Android teardown trusting a
-// console port that a foreign emulator could occupy. Killing by port alone
-// repeats that mistake, so identity is proven before anything dies.
+// Three outcomes, mirroring resolveOwnedIosSim. A port is NOT identity:
+// Android teardown that trusts a console port a foreign emulator could occupy
+// is a known hazard. Killing by port alone repeats that mistake, so identity
+// is proven before anything dies.
 //   { metro: {pid, leader, cwd} }  proven to be this project's Metro
 //   { missing: true }              nothing listening; already gone, not an error
 //   { notOurs: <reason>, kind }    listening but unproven; report, never kill

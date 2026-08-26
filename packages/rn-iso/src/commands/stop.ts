@@ -1,6 +1,6 @@
 // src/commands/stop.js
 //
-// v3's `stop` is the inverse of `start`, and nothing more: it halts the
+// `stop` is the inverse of `start`, and nothing more: it halts the
 // supervisor, reaps this workspace's device-log collectors, shuts the owned
 // device DOWN, and frees the port. It is not
 // destructive and it never deletes a device, because destruction lives in
@@ -8,13 +8,13 @@
 // reaching for `stop` to reclaim memory must not have a `--delete` within
 // reach of a typo, so there is no flag here that could become one.
 //
-// What survives from v2 is the identity discipline, in two places:
+// The identity discipline lives in two places:
 //   1. A supervisor pid is signalled only when it is ALIVE and PROVABLY ours --
 //      recorded in this workspace's state.json (or in the global registration
 //      for this exact path) and holding the port this project reserved. A pid
 //      is a number the OS reuses; a port is a slot anyone can occupy. Neither
 //      alone is proof.
-//   2. With no supervisor, the fallback is v2's `resolveProjectMetro` check
+//   2. With no supervisor, the fallback is the `resolveProjectMetro` check
 //      before killing whatever answers the reserved port, with `--force` still
 //      the only way past an unproven listener. That flag guards THAT case; it
 //      has nothing to do with the supervisor, and it destroys nothing.

@@ -171,12 +171,12 @@ export function parseAvdList(text: string): string[] {
     .filter((l) => l && !l.startsWith('INFO') && !l.startsWith('WARNING'));
 }
 
-// v3 removed physical-device support, so NOTHING assigns, boots or installs
+// rn-iso has no physical-device support, so NOTHING assigns, boots or installs
 // onto the `physical` bucket any more. It stays because this is a faithful
 // parse of `adb devices` rather than a device picker: a connected phone must
 // land somewhere that is not `emulators`, or console-port allocation and the
 // owned-AVD identity check would both count it as an emulator. Nothing may
-// grow a consumer for it -- an assignment path is what was deleted.
+// grow a consumer for it -- there is deliberately no assignment path.
 export function parseAdbDevices(text: string): AdbDevices {
   const lines = text.split('\n').slice(1); // skip "List of devices attached"
   const emulators: AdbEmulatorEntry[] = [];

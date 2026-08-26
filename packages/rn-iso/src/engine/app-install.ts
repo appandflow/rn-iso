@@ -502,7 +502,7 @@ function describe(err: unknown) {
 // on expo-dev-launcher's DEVELOPMENT SERVERS picker, listing every OTHER
 // workspace's Metro on the machine. One tap there loads another project's
 // bundle onto this workspace's simulator -- the exact cross-workspace
-// contamination v3 exists to prevent -- and from the outside a picker looks
+// contamination rn-iso exists to prevent -- and from the outside a picker looks
 // identical to a loaded app. `simctl launch` returning a pid proves a process
 // started, and nothing more.
 //

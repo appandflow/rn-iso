@@ -38,8 +38,8 @@ export interface SupervisorRecord {
 }
 
 // An owned iOS simulator assignment. Producer: engine/device.ts setDevice(..,
-// 'ios', ..) writes { deviceUdid, owned, deviceName }; `serial` is a legacy
-// v2 field still tolerated on read.
+// 'ios', ..) writes { deviceUdid, owned, deviceName }; `serial` is an older
+// field still tolerated on read.
 interface IosDeviceRecord {
   deviceUdid?: string;
   deviceName?: string | null;
