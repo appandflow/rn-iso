@@ -1,5 +1,7 @@
 # rn-iso
 
+[![CI](https://github.com/janicduplessis/rn-iso/actions/workflows/ci.yml/badge.svg)](https://github.com/janicduplessis/rn-iso/actions/workflows/ci.yml)
+
 The React Native / Expo CLI for AI agents. One isolated dev environment per project or worktree: `rn-iso start` runs the dev server on a reserved, collision-free Metro port under a detached supervisor; `rn-iso ios` / `rn-iso android` boot a dedicated, **owned** simulator/emulator, install a build from a shared fingerprint cache when nothing native changed, and launch the app wired to that port; `rn-iso logs --errors` answers "did that work" from a captured timeline instead of a scraped terminal. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
 
 It never prompts, prints on the order of ten lines, takes `--json` everywhere, and reports a failing build as the *extracted* compiler diagnostic plus a log path rather than four thousand lines of transcript.

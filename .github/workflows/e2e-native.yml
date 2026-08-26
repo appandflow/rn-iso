@@ -1,0 +1,203 @@
+# SLOW, GATED native e2e -- a real xcodebuild / gradle build on a real
+# simulator/emulator, driven by test/e2e/native/run-native-e2e.mjs. It codifies
+# docs/field-test-protocol.md across the full 2x2 matrix:
+#
+#     framework in {bare, expo}   x   platform in {ios, android}
+#
+# WHY IT IS GATED. A cold native build is ~10-20 minutes and occasionally flaky
+# (device boot, toolchain). Blocking every PR on it would be miserable, so it
+# runs:
+#   - nightly (schedule), against main;
+#   - on demand (workflow_dispatch);
+#   - on a PR ONLY when that PR carries the `e2e-native` label (see the `if:`
+#     guard on each job). Adding the label re-triggers via the `labeled` event.
+#
+# VARIANT LAYOUT. Each platform is its own job, and within it the {bare, expo}
+# frameworks are a matrix -- so bare-ios and expo-ios run as two PARALLEL,
+# ISOLATED macOS jobs (a stuck bare build cannot fail the expo one, and each has
+# its own owned simulator and its own build-cache key). iOS and Android are
+# separate jobs by necessity: iOS needs macOS+Xcode, Android needs a Linux host
+# with KVM. The bare-vs-expo split matters because they exercise different
+# rn-iso code paths -- bare hosts Metro in-process (start mode "bare-inproc"),
+# expo spawns `expo start` as a child (mode "expo-child") and prebuilds first;
+# the driver asserts the mode explicitly per variant.
+name: Native E2E
+
+on:
+  schedule:
+    # 07:00 UTC nightly. Cron has no notion of "against main" -- schedule always
+    # runs on the default branch, which is what we want.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+  pull_request:
+    # `labeled` is what makes "add the label to run it" work; the others let a
+    # push to an already-labeled PR re-run. The `if:` on each job is the actual
+    # gate -- these types only decide when to EVALUATE it.
+    types: [labeled, opened, synchronize, reopened]
+
+concurrency:
+  group: e2e-native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    name: ios ${{ matrix.framework }}
+    # Gate: always on schedule/dispatch; on a PR only when it is labeled.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e-native'))
+    runs-on: macos-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [bare, expo]
+    env:
+      # The registry stays throwaway per run (the driver makes its own temp home)
+      # for deterministic device/project state; the SHARED build cache is
+      # persisted across runs here, so the cross-run cache path is itself
+      # exercised. Kept per-variant so bare and expo never address one another's
+      # entries.
+      RN_ISO_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/ios-${{ matrix.framework }}
+      # Keep every temp dir (and thus each worktree's .rn-iso/logs) under the
+      # workspace so the failure artifact step can find the build logs.
+      TMPDIR: ${{ github.workspace }}/.e2e-tmp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Select a recent stable Xcode
+        # REVIEWER: confirm the macos-latest image ships this Xcode. 'latest-stable'
+        # tracks whatever the runner image has; pin to a specific version here if a
+        # build needs a known toolchain.
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install (workspace root)
+        run: npm ci
+
+      - run: mkdir -p "$TMPDIR" "$RN_ISO_BUILD_CACHE"
+
+      - name: Restore cross-run build cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.RN_ISO_BUILD_CACHE }}
+          # Invalidated when the lockfile changes (a dep bump can move the
+          # fingerprint); restore-keys let an older cache warm-start a new key.
+          key: rn-iso-buildcache-ios-${{ matrix.framework }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            rn-iso-buildcache-ios-${{ matrix.framework }}-
+
+      - name: Native e2e (ios, ${{ matrix.framework }})
+        env:
+          # When the cache restored, the first build may be a legitimate cross-run
+          # HIT rather than a cold miss -- tell the driver to tolerate that. The
+          # wt2 within-run cache proof is unconditional regardless.
+          RN_ISO_E2E_WARM_CACHE: ${{ steps.cache.outputs.cache-hit == 'true' && '1' || '0' }}
+        # --keep leaves the temp worktrees in place on this ephemeral runner so
+        # the artifact step below can collect their build logs.
+        run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-ios-${{ matrix.framework }}
+          path: ${{ env.TMPDIR }}/**/.rn-iso/logs/build-*.ndjson
+          if-no-files-found: warn
+          retention-days: 7
+
+  android:
+    name: android ${{ matrix.framework }}
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e-native'))
+    # A Linux host with KVM: the Android emulator needs hardware acceleration,
+    # which the ubuntu-latest GitHub runners provide once /dev/kvm is exposed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [bare, expo]
+    env:
+      RN_ISO_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/android-${{ matrix.framework }}
+      TMPDIR: ${{ github.workspace }}/.e2e-tmp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up JDK 17
+        # gradle for a modern RN/Expo Android build needs a JDK; 17 is the
+        # current baseline.
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install (workspace root)
+        run: npm ci
+
+      - run: mkdir -p "$TMPDIR" "$RN_ISO_BUILD_CACHE"
+
+      - name: Restore cross-run build cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.RN_ISO_BUILD_CACHE }}
+          key: rn-iso-buildcache-android-${{ matrix.framework }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            rn-iso-buildcache-android-${{ matrix.framework }}-
+
+      # Expose /dev/kvm to the emulator (the standard incantation the
+      # android-emulator-runner README recommends).
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Native e2e (android, ${{ matrix.framework }})
+        # reactivecircus/android-emulator-runner installs the SDK + system image,
+        # enables acceleration, and runs `script` once an emulator is up. rn-iso
+        # then creates and boots its OWN owned AVD (the ownership rule forbids it
+        # from touching a device it did not create -- see CLAUDE.md item 2), so
+        # the action's emulator is only there to guarantee the SDK/KVM
+        # environment; rn-iso does the device work itself.
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          RN_ISO_E2E_WARM_CACHE: ${{ steps.cache.outputs.cache-hit == 'true' && '1' || '0' }}
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          # A fast, headless boot; the assertions do not need a window.
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-android-${{ matrix.framework }}
+          path: ${{ env.TMPDIR }}/**/.rn-iso/logs/build-*.ndjson
+          if-no-files-found: warn
+          retention-days: 7

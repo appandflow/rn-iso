@@ -1,5 +1,7 @@
 # rn-iso
 
+[![CI](https://github.com/janicduplessis/rn-iso/actions/workflows/ci.yml/badge.svg)](https://github.com/janicduplessis/rn-iso/actions/workflows/ci.yml)
+
 The React Native / Expo CLI for AI agents: isolated dev environments, so several
 worktrees or coding agents can build the same app on one machine at the same
 time without fighting over ports and simulators -- and a build loop optimised
