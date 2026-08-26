@@ -8,7 +8,7 @@ import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEPS_ERROR, podsAreStale, readPodState, runPodInstall } from '../engine/deps.ts';
+import { DEPS_ERROR, extractPodDiagnostics, podsAreStale, readPodState, runPodInstall } from '../engine/deps.ts';
 import { makeChildProcess, makeError, makeWriter } from './_factories.ts';
 
 // The build-log records the collecting writer captures; only these fields are read.
@@ -194,5 +194,151 @@ describe('runPodInstall', () => {
     });
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/No ios\/ directory/);
+  });
+
+  // The regression behind issue #9: the fatal `[!]` of a failed install is
+  // routinely mid-transcript (CocoaPods flushes deferred warnings after it),
+  // so a tail-based extract shows warnings and never the error.
+  test('the anchored [!] diagnostic survives a transcript whose tail is all noise', async () => {
+    mkdirSync(join(root, 'ios'), { recursive: true });
+    const noise = Array.from({ length: 25 }, (_, i) => `Installing SomePod-${i} (1.0.${i})`);
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: () =>
+        fakePodChild({
+          lines: [
+            'Analyzing dependencies',
+            '[!] Unable to find a specification for `ExpoModulesCore` depended upon by `Expo`',
+            ...noise,
+          ],
+          code: 1,
+        }),
+    });
+    expect(result.failed).toBe(true);
+    expect(result.diagnosticSource).toBe('cocoapods');
+    assert(result.diagnosticLines);
+    expect(result.diagnosticLines[0]).toMatch(/Unable to find a specification/);
+    // The tail alone -- what used to be all the caller got -- has already
+    // lost the error; the extraction is the only place it survives.
+    assert(result.lastLines);
+    expect(result.lastLines.join('\n')).not.toMatch(/Unable to find a specification/);
+  });
+
+  test('a transcript with no recognizable marker falls back to the tail', async () => {
+    mkdirSync(join(root, 'ios'), { recursive: true });
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: () => fakePodChild({ lines: ['Analyzing dependencies', 'Something went wrong'], code: 1 }),
+    });
+    expect(result.failed).toBe(true);
+    expect(result.diagnosticSource).toBe('tail');
+    expect(result.diagnosticLines).toEqual([]);
+    assert(result.lastLines);
+    expect(result.lastLines.join('\n')).toMatch(/Something went wrong/);
+  });
+});
+
+// The fixtures are the three transcripts from issue #9, reduced but
+// structurally faithful: the anchor position (mid-file fatal, deferred
+// warnings behind it, exception head above its frames) is the thing under
+// test, so it is the thing the fixtures preserve.
+describe('extractPodDiagnostics', () => {
+  test('a fatal [!] mid-transcript beats the deferred warnings flushed after it (case 1)', () => {
+    const warnings = ['expo-sensors', 'expo-splash-screen', 'expo-store-review', 'expo-system-ui', 'expo-video'].map(
+      (pkg) => `[!] [Expo] ${pkg} was not linked: requires iOS 16.4 but app targets 16.0`,
+    );
+    const transcript = [
+      'Analyzing dependencies',
+      'Fetching podspec for `hermes-engine` from `../node_modules/react-native/sdks/hermes-engine`',
+      '[!] Unable to find a specification for `ExpoModulesCore` depended upon by `Expo`',
+      '',
+      'You have either:',
+      ' * out-of-date source repos which you can update with `pod repo update` or with `pod install --repo-update`.',
+      ' * mistyped the name or version.',
+      ...warnings,
+    ].join('\n');
+    const extracted = extractPodDiagnostics(transcript);
+    assert(extracted);
+    expect(extracted.source).toBe('cocoapods');
+    expect(extracted.lines[0]).toBe('[!] Unable to find a specification for `ExpoModulesCore` depended upon by `Expo`');
+    // Only anchored lines: the column-0 advice block between the error and
+    // the warnings is exactly the noise case 3 shows being printed instead
+    // of the answer.
+    expect(extracted.lines.join('\n')).not.toMatch(/You have either/);
+    expect(extracted.lines).toHaveLength(1 + warnings.length);
+  });
+
+  test('a resolver conflict block is captured whole, generic advice excluded (case 3)', () => {
+    const block = [
+      '[!] CocoaPods could not find compatible versions for pod "GoogleUtilities":',
+      '  In snapshot (Podfile.lock):',
+      '    GoogleUtilities (= 13.6.1)',
+      '  In Podfile:',
+      '    FirebaseCoreInternal was resolved to 9.6.0, which depends on',
+      '      GoogleUtilities (= 13.6.3)',
+    ];
+    const transcript = [
+      'Analyzing dependencies',
+      ...block,
+      '',
+      'You have either:',
+      ' * out-of-date source repos which you can update with `pod repo update` or with `pod install --repo-update`.',
+      ' * changed the constraints of dependency `GoogleUtilities` inside your development pod.',
+    ].join('\n');
+    const extracted = extractPodDiagnostics(transcript);
+    assert(extracted);
+    expect(extracted.source).toBe('cocoapods');
+    expect(extracted.lines).toEqual(block);
+  });
+
+  test('a Ruby crash extracts the exception head and its prologue, never the frames (case 2)', () => {
+    const rubyRoot = '/opt/homebrew/Cellar/ruby/3.4.1/lib/ruby/3.4.0';
+    const transcript = [
+      'Could not find proper version of cocoapods (1.15.2) in any of the sources',
+      'Run `bundle install` to install missing gems.',
+      `${rubyRoot}/rubygems/specification.rb:1408:in 'Gem::Specification.gem': Could not find 'minitest' (>= 5.1) among 81 total gem(s) (Gem::MissingSpecError)`,
+      `\tfrom ${rubyRoot}/rubygems.rb:239:in 'block in Gem.find_and_activate_spec_for_exe'`,
+      `\tfrom ${rubyRoot}/rubygems.rb:238:in 'Thread::Mutex#synchronize'`,
+      `\tfrom ${rubyRoot}/rubygems.rb:238:in 'Gem.find_and_activate_spec_for_exe'`,
+      `\tfrom ${rubyRoot}/rubygems.rb:282:in 'Gem.activate_and_load_bin_path'`,
+      "\tfrom /opt/homebrew/bin/pod:25:in '<main>'",
+    ].join('\n');
+    const extracted = extractPodDiagnostics(transcript);
+    assert(extracted);
+    expect(extracted.source).toBe('ruby');
+    expect(extracted.lines).toEqual([
+      'Could not find proper version of cocoapods (1.15.2) in any of the sources',
+      'Run `bundle install` to install missing gems.',
+      `${rubyRoot}/rubygems/specification.rb:1408:in 'Gem::Specification.gem': Could not find 'minitest' (>= 5.1) among 81 total gem(s) (Gem::MissingSpecError)`,
+    ]);
+  });
+
+  test('the pre-3.4 backtick quoting of a Ruby head is recognized too', () => {
+    const transcript = [
+      "/usr/lib/ruby/2.6.0/rubygems/core_ext/kernel_require.rb:54:in `require': cannot load such file -- cocoapods (LoadError)",
+      "\tfrom /usr/lib/ruby/2.6.0/rubygems/core_ext/kernel_require.rb:54:in `require'",
+      "\tfrom /usr/local/bin/pod:23:in `<main>'",
+    ].join('\n');
+    const extracted = extractPodDiagnostics(transcript);
+    assert(extracted);
+    expect(extracted.source).toBe('ruby');
+    expect(extracted.lines).toEqual([
+      "/usr/lib/ruby/2.6.0/rubygems/core_ext/kernel_require.rb:54:in `require': cannot load such file -- cocoapods (LoadError)",
+    ]);
+  });
+
+  test('an unrecognized transcript returns null, explicitly, so the caller tails', () => {
+    expect(extractPodDiagnostics('Analyzing dependencies\nSomething broke')).toBeNull();
+    expect(extractPodDiagnostics('')).toBeNull();
+  });
+
+  test('the cap falls on the warnings at the end, never the error at the front', () => {
+    const transcript = [
+      '[!] The one line that matters',
+      ...Array.from({ length: 20 }, (_, i) => `[!] [Expo] package-${i} was not linked: requires iOS 16.4`),
+    ].join('\n');
+    const extracted = extractPodDiagnostics(transcript);
+    assert(extracted);
+    expect(extracted.lines).toHaveLength(16);
+    expect(extracted.lines[0]).toBe('[!] The one line that matters');
+    expect(extracted.lines[15]).toBe('(+6 more [!] lines in the build log)');
   });
 });

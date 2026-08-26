@@ -60,6 +60,16 @@ export default function statusCommand(program: Command) {
       const worktrees: WorktreeEntry[] = listWorktrees(process.cwd()).slice(1);
 
       const states: EnvironmentState[] = [];
+      // `worktree create` registers the worktree ROOT to reserve its label,
+      // but in a monorepo the app lives in a subdirectory and registers its
+      // own entry -- so one workspace legitimately holds TWO registry entries.
+      // This flags the label-only root, computed once and used by both output
+      // modes: the human view relabels the line, and the JSON view carries it
+      // as `labelOnly: true` so a consumer counting workspaces can fold the
+      // root under its app instead of double-counting. The entry itself stays:
+      // it is a real registry record (it holds the label), and `status`
+      // reports the registry, it does not editorialize it away.
+      const labelOnlyRoots: boolean[] = [];
       for (const [path, proj] of projects) {
         // Resolving Metro's identity costs an lsof per project, which is why it
         // is only done for ports that answer at all.
@@ -86,6 +96,10 @@ export default function statusCommand(program: Command) {
             },
           ),
         );
+        const state = states[states.length - 1];
+        labelOnlyRoots.push(
+          Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android),
+        );
       }
 
       const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
@@ -99,7 +113,7 @@ export default function statusCommand(program: Command) {
         console.log(
           JSON.stringify(
             {
-              environments: states,
+              environments: states.map((state, i) => (labelOnlyRoots[i] ? { ...state, labelOnly: true } : state)),
               capacity: cap,
               unprovisionedWorktrees: orphanWorktrees,
               simctlAvailable: simsAvailable,
@@ -132,15 +146,12 @@ export default function statusCommand(program: Command) {
         const marker = path === cwdRoot ? chalk.bold.cyan(`* ${shortcut}`) : shortcut;
         const idle = state.live ? '' : chalk.dim(' [idle]');
         console.log(`\n${marker}${idle} ${chalk.dim(`(${path})`)}`);
-        // `worktree create` registers the worktree ROOT to reserve its label,
-        // but in a monorepo the app lives in a subdirectory and registers its
-        // own entry. The root has no bundle id, no port and no device, so an
-        // `app: ? (bare)` line described it as a broken app instead of what it
-        // is. Only the label-only case is relabelled: a root that IS the app
-        // still prints a normal app line.
-        const labelOnly = proj.worktreeRoot && !proj.bundleId && !state.metro && !state.ios && !state.android;
+        // The root has no bundle id, no port and no device, so an `app: ?
+        // (bare)` line described it as a broken app instead of what it is.
+        // Only the label-only case (labelOnlyRoots above) is relabelled: a
+        // root that IS the app still prints a normal app line.
         console.log(
-          labelOnly
+          labelOnlyRoots[i]
             ? chalk.dim('  worktree root (holds the label; the app registers its own entry)')
             : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${proj.isExpo ? 'expo' : 'bare'})`),
         );

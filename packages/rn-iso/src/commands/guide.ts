@@ -232,8 +232,8 @@ FLAGS
   --json           the raw records, one per line, so stdout is valid NDJSON
 
 --ERRORS, PRECISELY
-  Level error or fatal, from metro, client and build, timestamped strictly
-  AFTER the marker that closes their window. Three rules, and a field test
+  Level error or fatal, from metro, client and build, timestamped after the
+  marker that closes their window. Three rules, and a field test
   caught all three wrong at once -- it returned 3,004 iOS syslog lines on a
   healthy app while hiding a real startup crash.
 
@@ -254,9 +254,13 @@ FLAGS
   has always shown everything.
 
   THE WINDOW. A marker closes the window for the sources it can speak for:
-    a BUNDLE marker (src metro: bundle_build_done, or Expo's "Bundled" line)
-      resets METRO errors -- a resolve failure you fixed and rebuilt is
-      history -- and nothing else.
+    a BUNDLE marker (src metro: bundle_build_done / bundle_build_failed, or
+      Expo's "Bundled" / "Bundling failed" lines) is written when a bundle
+      attempt FINISHES, success or failure. It resets METRO errors from
+      before the attempt -- a resolve failure you fixed and rebuilt is
+      history, and when bundles fail back to back only the newest attempt's
+      errors are reported -- and nothing else. A failed attempt's own summary
+      and details land at or after its marker, so they stay reported.
     a LAUNCH marker (src build, written by \`ios\` / \`android\`) resets
       EVERYTHING: a new run of the app starts there.
   A finished bundle is not evidence that the app which loaded it is fine.
@@ -304,7 +308,9 @@ WHAT WRITES WHAT
                        --errors leaves this source out unless asked.
   build-ios.ndjson     the xcodebuild / gradle transcript at level debug, the
   build-android.ndjson extracted diagnostics at level error, and the launch as
-                       a marker record.
+                       a marker record. One RUN's worth: each build starts the
+                       file over, so the first error in it always belongs to
+                       the run that pointed you at it.
 
   Only a dev server rn-iso hosted is captured. If you started the bundler
   yourself, the metro and client sources stay empty -- which is not a sign of a
@@ -767,8 +773,8 @@ DISK
   first iOS build of a real app). They are worth that -- a build that fails at
   minute nine is unreadable any other way -- and they are per workspace, not
   global, so \`worktree remove\` reclaims them along with everything else in
-  <worktree>/.rn-iso. Nothing else prunes them; a workspace you keep building
-  in keeps appending.
+  <worktree>/.rn-iso. Each build starts its transcript file over, so the log
+  holds one run and a workspace you keep building in does not accumulate them.
 
   Simulators are large and live in the CoreSimulator device set, not in your
   project. If the disk is filling up, rn-iso's own devices are usually not the

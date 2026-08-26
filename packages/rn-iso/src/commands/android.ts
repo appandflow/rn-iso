@@ -767,7 +767,7 @@ export async function runAndroid(
   await ensureIgnored(root, { note: out });
   const logsDir = workspaceLogsDir(root);
   const buildLog = join(logsDir, 'build-android.ndjson');
-  const writer = createWriter(buildLog);
+  const writer = createWriter(buildLog, { truncate: true });
 
   // Failure state that lands in Contract 4 is accumulated as the run goes, so
   // a failure at any step after the fingerprint records what it knew.
@@ -1040,6 +1040,7 @@ export async function runAndroid(
 
   if (remote && useBuildCache) {
     const hit = await resolveRemoteBuild({
+      logWriter: writer,
       provider: remote.provider,
       platform: PLATFORM,
       projectRoot: root,
@@ -1241,6 +1242,7 @@ export async function runAndroid(
       // install instead of being added to it. Nothing in this run depends on it.
       if (remote) {
         uploadPending = uploadRemoteBuild({
+          logWriter: writer,
           provider: remote.provider,
           platform: PLATFORM,
           projectRoot: root,

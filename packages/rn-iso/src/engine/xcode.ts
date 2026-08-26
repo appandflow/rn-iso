@@ -359,6 +359,68 @@ export function tailLines(lines: unknown, count = 5) {
   return nonEmpty.slice(-count);
 }
 
+// --- the build heartbeat ---------------------------------------------------
+//
+// A native build runs two to six minutes, and between the command layer's
+// fingerprint line and its completion line stderr prints NOTHING: the
+// transcript streams to the build log, and an agent watching the command
+// cannot tell "compiling" from "wedged" without going around the CLI to the
+// log file or the process table. The heartbeat is one stderr line roughly
+// every 30 seconds while the build child runs -- the elapsed time plus the
+// last meaningful transcript line, truncated -- so the silence is never
+// longer than one interval. stdout stays untouched: progress is stderr in
+// both output modes (CLAUDE.md item 7, one payload on stdout).
+//
+// gradle.ts imports these rather than copying them -- the same
+// borrowed-not-copied reasoning as the line reader above.
+
+export const HEARTBEAT_INTERVAL_MS = 30_000;
+
+// How much of the sampled transcript line survives into the heartbeat. Long
+// enough to name a compile target, short enough that the line stays a line.
+const HEARTBEAT_HINT_LENGTH = 80;
+
+// 5m19s / 42s: the shape the completion line already uses for durations, so
+// the heartbeat and the summary read as the same clock.
+export function formatHeartbeatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m${String(seconds).padStart(2, '0')}s` : `${seconds}s`;
+}
+
+// PURE. The line itself, in the commands' phase-line shape (label padded to
+// 11 columns) so it lines up with the `fingerprint` and `build` lines around
+// it on stderr.
+export function heartbeatLine(elapsedMs: number, lastLine: string): string {
+  const hint =
+    lastLine.length > HEARTBEAT_HINT_LENGTH ? `${lastLine.slice(0, HEARTBEAT_HINT_LENGTH - 3)}...` : lastLine;
+  const activity = hint.trim() === '' ? '' : `: ${hint}`;
+  return `${'build'.padEnd(11)} still running (${formatHeartbeatElapsed(elapsedMs)})${activity}`;
+}
+
+// Starts the timer, returns the stop function. The timer samples state
+// through the two thunks rather than owning any: the caller already tracks
+// elapsed time and the latest transcript line for other reasons, and a timer
+// that kept its own copies would drift from them. `unref` keeps a heartbeat
+// from holding the process open should the child's close never fire.
+export function startBuildHeartbeat({
+  intervalMs,
+  elapsed,
+  lastLine,
+  emit,
+}: {
+  intervalMs: number;
+  elapsed: () => number;
+  lastLine: () => string;
+  emit: (line: string) => void;
+}): () => void {
+  if (!(intervalMs > 0)) return () => {};
+  const timer = setInterval(() => emit(heartbeatLine(elapsed(), lastLine())), intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 function failedResult({
   code,
   diagnostics,
@@ -413,6 +475,8 @@ export async function buildIos({
   extraArgs = [],
   now = () => Date.now(),
   exec = null,
+  heartbeatMs = HEARTBEAT_INTERVAL_MS,
+  onHeartbeat = (line: string) => console.error(line),
 }: {
   root: string;
   udid?: string | null;
@@ -426,6 +490,8 @@ export async function buildIos({
   extraArgs?: string[];
   now?: () => number;
   exec?: Executor | null;
+  heartbeatMs?: number;
+  onHeartbeat?: (line: string) => void;
 }) {
   if (!root || typeof root !== 'string') throw new TypeError('buildIos requires {root}');
   if (!logWriter || typeof logWriter.write !== 'function')
@@ -503,6 +569,8 @@ export async function buildIos({
   });
 
   const transcript: string[] = [];
+  // The heartbeat's activity hint: the last non-blank line the child printed.
+  let lastTranscriptLine = '';
   const onLine = (line: unknown) => {
     const msg = cleanLine(line);
     transcript.push(msg);
@@ -510,6 +578,7 @@ export async function buildIos({
     // extraction (the linker's undefined-symbol block ends on one) and dropped
     // from the log, where they would be thousands of empty entries.
     if (msg.trim() === '') return;
+    lastTranscriptLine = msg;
     logWriter.write({ src: 'build', level: 'debug', msg });
   };
 
@@ -543,6 +612,13 @@ export async function buildIos({
   child.stdout?.on('data', (chunk) => outReader.push(chunk));
   child.stderr?.on('data', (chunk) => errReader.push(chunk));
 
+  const stopHeartbeat = startBuildHeartbeat({
+    intervalMs: heartbeatMs,
+    elapsed,
+    lastLine: () => lastTranscriptLine,
+    emit: onHeartbeat,
+  });
+
   // `close`, not `exit`: exit fires when the process ends, which can be before
   // its stdio pipes have been drained. Waiting for close is what guarantees
   // the last diagnostic -- usually the most important line in the file -- is
@@ -564,6 +640,7 @@ export async function buildIos({
     },
   );
 
+  stopHeartbeat();
   const durationMs = elapsed();
   const text = transcript.join('\n');
 

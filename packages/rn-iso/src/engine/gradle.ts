@@ -30,6 +30,10 @@ import { androidHome } from '../sim/android.ts';
 import { createLineReader, stripAnsi } from '../supervisor/server-expo.ts';
 import { waitForChild } from './deps.ts';
 import { capDiagnostics, extractGradleDiagnostics } from './errors-gradle.ts';
+// Borrowed rather than copied (the same reasoning as the line reader above):
+// the heartbeat is generic build-child plumbing that lives beside the iOS
+// build because that is what needed it first, and a second copy would drift.
+import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 
 export const BUILD_ERROR = 'RN_ISO_BUILD_FAILED';
 
@@ -237,7 +241,15 @@ export async function buildAndroid(
     spawnFn = null,
     now = Date.now,
     env = process.env,
-  }: { spawnFn?: SpawnFn | null; now?: () => number; env?: NodeJS.ProcessEnv } = {},
+    heartbeatMs = HEARTBEAT_INTERVAL_MS,
+    onHeartbeat = (line: string) => console.error(line),
+  }: {
+    spawnFn?: SpawnFn | null;
+    now?: () => number;
+    env?: NodeJS.ProcessEnv;
+    heartbeatMs?: number;
+    onHeartbeat?: (line: string) => void;
+  } = {},
 ) {
   const project = discoverAndroidProject(root);
   if (project.failed) return { ...project, diagnostics: [], truncated: 0, lastLines: [] as string[], durationMs: 0 };
@@ -255,9 +267,12 @@ export async function buildAndroid(
   const startedAt = now();
   const tail: string[] = [];
   const window: string[] = [];
+  // The heartbeat's activity hint: the last non-blank line gradle printed.
+  let lastTranscriptLine = '';
   const push = (line: unknown) => {
     const msg = stripAnsi(String(line)).trimEnd();
     if (!msg.trim()) return;
+    lastTranscriptLine = msg;
     tail.push(msg);
     if (tail.length > LAST_LINES) tail.shift();
     window.push(msg);
@@ -288,7 +303,18 @@ export async function buildAndroid(
   child.stdout?.on('data', (chunk) => outReader.push(chunk));
   child.stderr?.on('data', (chunk) => errReader.push(chunk));
 
+  // One stderr line roughly every 30s while gradle runs -- see the heartbeat
+  // block in xcode.ts for why the silence between the fingerprint line and
+  // completion is worth breaking. stdout stays untouched.
+  const stopHeartbeat = startBuildHeartbeat({
+    intervalMs: heartbeatMs,
+    elapsed: () => now() - startedAt,
+    lastLine: () => lastTranscriptLine,
+    emit: onHeartbeat,
+  });
+
   const result = await waitForChild(child);
+  stopHeartbeat();
   outReader.flush();
   errReader.flush();
   const durationMs = now() - startedAt;
