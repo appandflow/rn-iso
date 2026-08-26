@@ -72,6 +72,13 @@ describe('line parsing', () => {
     expect(inferLevel('')).toBe('info');
   });
 
+  test('inferLevel treats a Node-exception line (PluginError:, CommandError:) as an error (#30)', () => {
+    expect(inferLevel('PluginError: Failed to resolve plugin for module "expo-share-intent"')).toBe('error');
+    expect(inferLevel('CommandError: something broke')).toBe('error');
+    expect(inferLevel('Errors were found')).toBe('info');
+    expect(inferLevel('PluginErrorish text without colon')).toBe('info');
+  });
+
   test('inferLevel reads the symbols Expo uses instead of words', () => {
     expect(inferLevel('\u2716 Metro encountered an error')).toBe('error');
     expect(inferLevel('\u274C build failed')).toBe('error');

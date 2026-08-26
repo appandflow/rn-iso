@@ -1,0 +1,29 @@
+{
+  "id": "requirements",
+  "title": "Requirements",
+  "description": "What rn-iso needs from the machine",
+  "source": "@site/docs/requirements.md",
+  "sourceDirName": ".",
+  "slug": "/requirements",
+  "permalink": "/rn-iso/docs/requirements",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/appandflow/rn-iso/tree/main/website/docs/requirements.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 4,
+  "frontMatter": {
+    "title": "Requirements",
+    "sidebar_position": 4,
+    "description": "What rn-iso needs from the machine"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Agent skills",
+    "permalink": "/rn-iso/docs/agent-skills"
+  },
+  "next": {
+    "title": "Changelog",
+    "permalink": "/rn-iso/docs/changelog"
+  }
+}
