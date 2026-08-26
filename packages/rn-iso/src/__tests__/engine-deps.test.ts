@@ -144,6 +144,25 @@ describe('runPodInstall', () => {
     ]);
   });
 
+  test('a slow pod install emits `pods` heartbeats while the child runs', async () => {
+    mkdirSync(join(root, 'ios'), { recursive: true });
+    const beats: string[] = [];
+    const child = makeChildProcess({ pid: 4242 });
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: () => {
+        setImmediate(() => child.stdout?.emit('data', 'Installing FlipperKit (0.125.3)\n'));
+        setTimeout(() => child.emit('exit', 0, null), 120);
+        return child;
+      },
+      heartbeatMs: 25,
+      onHeartbeat: (l: string) => beats.push(l),
+    });
+    expect(result.ok).toBe(true);
+    expect(beats.length >= 1).toBe(true);
+    expect(beats[0]).toMatch(/^pods\s+still running \(/);
+    expect(beats[0]).toMatch(/Installing FlipperKit/);
+  });
+
   test('a non-zero exit comes back as {failed, lastLines}, never a throw', async () => {
     mkdirSync(join(root, 'ios'), { recursive: true });
     const result = await runPodInstall(root, collectingWriter(), {

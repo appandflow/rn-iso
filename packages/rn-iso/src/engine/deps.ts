@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi } from '../supervisor/server-expo.ts';
+import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 
 // The signature every spawnFn injection seam in this module (and gradle.js /
 // prebuild.js, which share the pattern) accepts: getExecutor().spawn's shape,
@@ -226,7 +227,17 @@ function readOrNull(file: string) {
 export async function runPodInstall(
   root: string,
   logWriter: NdjsonWriter | null | undefined,
-  { spawnFn = null, now = Date.now }: { spawnFn?: SpawnFn | null; now?: () => number } = {},
+  {
+    spawnFn = null,
+    now = Date.now,
+    heartbeatMs = HEARTBEAT_INTERVAL_MS,
+    onHeartbeat = (line: string) => console.error(line),
+  }: {
+    spawnFn?: SpawnFn | null;
+    now?: () => number;
+    heartbeatMs?: number;
+    onHeartbeat?: (line: string) => void;
+  } = {},
 ) {
   const iosDir = join(root, 'ios');
   if (!existsSync(iosDir)) {
@@ -280,7 +291,22 @@ export async function runPodInstall(
   child.stdout?.on('data', (chunk) => reader.out.push(chunk));
   child.stderr?.on('data', (chunk) => reader.err.push(chunk));
 
-  const result = await waitForChild(child);
+  // The build heartbeat, one phase earlier: a cold `pod install` runs minutes
+  // and the silence before xcodebuild's own heartbeat read as a hang (#26).
+  const stopHeartbeat = startBuildHeartbeat({
+    intervalMs: heartbeatMs,
+    elapsed: () => now() - startedAt,
+    lastLine: () => transcript.at(-1) ?? '',
+    emit: onHeartbeat,
+    label: 'pods',
+  });
+
+  let result: Awaited<ReturnType<typeof waitForChild>>;
+  try {
+    result = await waitForChild(child);
+  } finally {
+    stopHeartbeat();
+  }
   reader.out.flush();
   reader.err.flush();
   const durationMs = now() - startedAt;

@@ -392,11 +392,11 @@ export function formatHeartbeatElapsed(ms: number): string {
 // PURE. The line itself, in the commands' phase-line shape (label padded to
 // 11 columns) so it lines up with the `fingerprint` and `build` lines around
 // it on stderr.
-export function heartbeatLine(elapsedMs: number, lastLine: string): string {
+export function heartbeatLine(elapsedMs: number, lastLine: string, label = 'build'): string {
   const hint =
     lastLine.length > HEARTBEAT_HINT_LENGTH ? `${lastLine.slice(0, HEARTBEAT_HINT_LENGTH - 3)}...` : lastLine;
   const activity = hint.trim() === '' ? '' : `: ${hint}`;
-  return `${'build'.padEnd(11)} still running (${formatHeartbeatElapsed(elapsedMs)})${activity}`;
+  return `${label.padEnd(11)} still running (${formatHeartbeatElapsed(elapsedMs)})${activity}`;
 }
 
 // Starts the timer, returns the stop function. The timer samples state
@@ -409,14 +409,16 @@ export function startBuildHeartbeat({
   elapsed,
   lastLine,
   emit,
+  label = 'build',
 }: {
   intervalMs: number;
   elapsed: () => number;
   lastLine: () => string;
   emit: (line: string) => void;
+  label?: string;
 }): () => void {
   if (!(intervalMs > 0)) return () => {};
-  const timer = setInterval(() => emit(heartbeatLine(elapsed(), lastLine())), intervalMs);
+  const timer = setInterval(() => emit(heartbeatLine(elapsed(), lastLine(), label)), intervalMs);
   timer.unref?.();
   return () => clearInterval(timer);
 }
