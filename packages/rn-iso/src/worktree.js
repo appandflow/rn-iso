@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { getExecutor } from './exec.js';
 import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.js';
@@ -15,6 +15,57 @@ import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.js';
 // ls-files --directory` collapses to is the directory itself.
 export function isWorkspaceArtifact(rel) {
   return String(rel).split('/').includes(WORKSPACE_DIR);
+}
+
+// The full carry-skip decision, shared by BOTH carry paths so they cannot
+// drift. A path is skipped when any of its segments is exactly a basename that
+// bakes the SOURCE worktree's absolute path and is regenerated for free:
+//
+//   .rn-iso        this workspace's derived data / logs / supervisor pidfile
+//                  (see isWorkspaceArtifact).
+//   .DerivedData   Xcode/Clang derived data. A live tlon Expo build died with
+//                  `missing required module 'SwiftShims'` because
+//                  `--carry-ignored` cloned
+//                  node_modules/expo-modules-jsi/apple/.DerivedData: the Clang
+//                  module cache inside it bakes the old worktree's absolute
+//                  paths, so every carried module map pointed back at the source
+//                  tree. Same class as .rn-iso -- absolute-path-baked and cheap
+//                  to rebuild -- so it is code, not configuration.
+//
+// Scoped NARROWLY to those exact basenames: node_modules, Pods and everything a
+// build cannot rebuild for free are the whole point of --carry-ignored and must
+// still be carried, and a lookalike like `MyDerivedData` or `.DerivedDataX`
+// must NOT match (segment equality, never a prefix/substring).
+const CARRY_SKIP_BASENAMES = new Set([WORKSPACE_DIR, '.DerivedData']);
+
+export function isCarrySkipped(rel) {
+  return String(rel).split('/').some(seg => CARRY_SKIP_BASENAMES.has(seg));
+}
+
+// Entry-level isCarrySkipped only sees the entry `git ls-files --directory`
+// printed, and a wholly-ignored directory collapses to a single entry
+// (`node_modules`). A .DerivedData nested inside that entry -- the tlon
+// SwiftShims case -- therefore rides along in the wholesale clone untouched. So
+// after the fast APFS clone, prune those basenames back out of the DESTINATION.
+// Driven off the same CARRY_SKIP_BASENAMES set as isCarrySkipped so the two can
+// never disagree about what an artifact is. `find ... -name X` matches the
+// basename exactly (no lookalikes), `-prune` stops it descending into a match,
+// and it is best-effort: a leftover cache is a degraded build, not a reason to
+// fail an otherwise-good multi-GB clone.
+function pruneCarriedArtifacts(dest) {
+  const args = [dest, '-type', 'd', '('];
+  let first = true;
+  for (const name of CARRY_SKIP_BASENAMES) {
+    if (!first) args.push('-o');
+    args.push('-name', name);
+    first = false;
+  }
+  args.push(')', '-prune', '-exec', 'rm', '-rf', '{}', '+');
+  try {
+    getExecutor().runFile('find', args);
+  } catch {
+    // Best-effort; the copy already succeeded.
+  }
 }
 
 export function gitCommonDir(cwd) {
@@ -178,7 +229,7 @@ export function carryOverFiles({ root, target, patterns }) {
   const failed = [];
   const guard = trackedGuard(target);
   for (const rel of listGitignoredFiles(root)) {
-    if (isWorkspaceArtifact(rel)) continue;
+    if (isCarrySkipped(rel)) continue;
     if (!matchesInclude(rel, patterns)) continue;
     const from = join(root, rel);
     const to = join(target, rel);
@@ -231,10 +282,12 @@ export function cloneIgnoredEntries({ root, target, patterns }) {
   let cloned = true;
   const guard = trackedGuard(target);
   for (const rel of listGitignoredEntries(root)) {
-    if (isWorkspaceArtifact(rel)) continue;
+    if (isCarrySkipped(rel)) continue;
     if (matchesInclude(rel, patterns)) continue;
     const from = join(root, rel);
     const to = join(target, rel);
+    let isDir = false;
+    try { isDir = statSync(from).isDirectory(); } catch {}
     const reason = refuseReason(guard, rel, to);
     if (reason) {
       skipped.push({ file: rel, reason });
@@ -257,6 +310,11 @@ export function cloneIgnoredEntries({ root, target, patterns }) {
         getExecutor().runFile('cp', ['-R', from, to]);
         cloned = false;
       }
+      // The clone above was wholesale; drop any nested artifact basename
+      // (e.g. node_modules/.../.DerivedData) that the collapsed entry hid from
+      // the entry-level isCarrySkipped check. Only directory entries can
+      // contain one, so files skip the walk.
+      if (isDir) pruneCarriedArtifacts(to);
       copied.push(rel);
     } catch (e) {
       failed.push({ file: rel, error: String(e?.message || e) });

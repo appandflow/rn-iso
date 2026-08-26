@@ -10,6 +10,7 @@ import {
   worktreePath,
   matchesInclude,
   isWorkspaceArtifact,
+  isCarrySkipped,
   unpushedCommits,
   hasUncommittedWork,
   listWorktrees,
@@ -1034,6 +1035,110 @@ test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a l
     assert.equal(readFileSync(join(target, evil), 'utf-8'), 'payload');
   } finally {
     process.chdir(cwdBefore);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+
+test('isCarrySkipped skips .rn-iso and .DerivedData at any depth, and nothing that merely resembles them', () => {
+  for (const rel of [
+    '.rn-iso',
+    'apps/mobile/.rn-iso',
+    '.DerivedData',
+    'ios/build/.DerivedData',
+    'node_modules/expo-modules-jsi/apple/.DerivedData',
+    'node_modules/pkg/apple/.DerivedData/ModuleCache.noindex/foo.pcm',
+  ]) {
+    assert.equal(isCarrySkipped(rel), true, rel);
+  }
+  for (const rel of [
+    'node_modules',
+    'ios/Pods',
+    'apps/mobile/.rn-isotope',
+    'MyDerivedData',
+    'apple/MyDerivedData/x',
+    '.DerivedDataThing',
+    'apple/DerivedDataFoo',
+    'apple/.DerivedDataX',
+  ]) {
+    assert.equal(isCarrySkipped(rel), false, rel);
+  }
+});
+
+// The live bug: `worktree create --carry-ignored` cloned
+// node_modules/expo-modules-jsi/apple/.DerivedData -- a Clang module cache that
+// bakes the SOURCE worktree's absolute paths -- so the new worktree's build
+// died with `missing required module 'SwiftShims'`. node_modules is one
+// collapsed ls-files entry, so the skip has to reach INSIDE the clone: prune
+// the .DerivedData subtree from the destination while leaving its siblings.
+test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData but keeps its sibling', () => {
+  const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-derived-'));
+  const root = join(base, 'repo');
+  const target = join(base, 'target');
+  try {
+    mkdirSync(root, { recursive: true });
+    mkdirSync(target, { recursive: true });
+    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    writeFileSync(join(root, 'README.md'), 'hello');
+    writeFileSync(join(root, '.gitignore'), 'node_modules/\n');
+    git('git add README.md .gitignore');
+    git('git commit -q -m init');
+
+    // Gitignored via node_modules: the Clang module cache (baked absolute
+    // paths -> must NOT be carried) and a real source file beside it (must be
+    // carried, proving we prune the child, not the parent apple/ directory).
+    mkdirSync(join(root, 'node_modules/pkg/apple/.DerivedData'), { recursive: true });
+    writeFileSync(join(root, 'node_modules/pkg/apple/.DerivedData/x'), 'baked');
+    writeFileSync(join(root, 'node_modules/pkg/apple/Real.swift'), 'import Foundation');
+
+    const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: [] });
+
+    assert.deepEqual(copied, ['node_modules']);
+    assert.deepEqual(failed, []);
+    assert.equal(existsSync(join(target, 'node_modules/pkg/apple/Real.swift')), true, 'sibling carried');
+    assert.equal(existsSync(join(target, 'node_modules/pkg/apple/.DerivedData')), false, '.DerivedData pruned');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// carryOverFiles is file-by-file (and excludes node_modules), so the same skip
+// applies at the entry level: a .DerivedData segment in an enumerated path is
+// dropped while its sibling is copied. The empty `.keep` keeps git from
+// collapsing .DerivedData into one directory entry, so both files enumerate
+// individually the way they would inside a partially-ignored tree.
+test('carryOverFiles against a real git repo skips a .DerivedData file but copies its sibling', () => {
+  const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-derived-files-'));
+  const root = join(base, 'repo');
+  const target = join(base, 'target');
+  try {
+    mkdirSync(root, { recursive: true });
+    mkdirSync(target, { recursive: true });
+    const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    writeFileSync(join(root, 'README.md'), 'hello');
+    writeFileSync(join(root, '.gitignore'), '*.derived\n');
+    git('git add README.md .gitignore');
+    git('git commit -q -m init');
+
+    mkdirSync(join(root, 'apple/.DerivedData'), { recursive: true });
+    writeFileSync(join(root, 'apple/.DerivedData/cache.derived'), 'baked');
+    writeFileSync(join(root, 'apple/.DerivedData/.keep'), ''); // untracked, not ignored
+    writeFileSync(join(root, 'apple/Real.derived'), 'source');
+    writeFileSync(join(root, 'apple/.keep'), ''); // untracked, not ignored
+
+    const { copied, failed } = carryOverFiles({ root, target, patterns: ['*.derived'] });
+
+    assert.deepEqual(copied, ['apple/Real.derived']);
+    assert.deepEqual(failed, []);
+    assert.equal(existsSync(join(target, 'apple/Real.derived')), true, 'sibling copied');
+    assert.equal(existsSync(join(target, 'apple/.DerivedData/cache.derived')), false, '.DerivedData skipped');
+  } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
