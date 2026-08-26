@@ -522,7 +522,7 @@ export function runDoctor(
     : ['app.config.ts', 'app.config.js', 'app.config.mjs'].find((f) => existsSync(join(projectRoot, f))) || null;
   const podfileProperties = readJson(join(projectRoot, 'ios', 'Podfile.properties.json'));
   const podfile = read(join('ios', 'Podfile'));
-  const metroConfig = read('metro.config.js');
+  const metroConfig = read('metro.config.js') ?? read('metro.config.cjs');
   const gitignore = read('.gitignore');
 
   // Same detector `status` uses, so one project never reads as expo in one
