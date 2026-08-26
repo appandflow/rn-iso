@@ -179,7 +179,7 @@ export function inferLevel(line: unknown): string {
   if (first === CROSS || first === CROSS_MARK) return 'error';
   if (first === WARNING_SIGN) return 'warn';
   const word = /^([A-Za-z]+)/.exec(text);
-  const lead = word ? word[1].toLowerCase() : '';
+  const lead = word?.[1]?.toLowerCase() ?? '';
   if (lead === 'error' || lead === 'fatal') return 'error';
   if (lead === 'warn' || lead === 'warning') return 'warn';
   // Expo's real failure vocabulary carries no bullet and no leading "error":
@@ -219,7 +219,7 @@ export function isBundleActivityLine(line: unknown): boolean {
 // arriving as one record containing thirty copies of itself.
 export function cleanLine(line: unknown): string {
   const parts = stripAnsi(line).split('\r');
-  return parts[parts.length - 1].trimEnd();
+  return (parts[parts.length - 1] ?? '').trimEnd();
 }
 
 export function recordFromLine(line: unknown, { stream = 'stdout' }: { stream?: string } = {}): NdjsonRecord | null {

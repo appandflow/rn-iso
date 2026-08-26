@@ -34,7 +34,7 @@ import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.ts';
 // defensively (package.json, app.json, Podfile.properties.json): the shapes
 // come from outside this codebase, so they are read with `?.` rather than
 // modelled as closed interfaces.
-type AnyJson = Record<string, any>;
+type AnyJson = Record<string, unknown>;
 
 // 'cost'  -- measurably slower, silently
 // 'note'  -- worth knowing, not necessarily wrong
@@ -51,7 +51,9 @@ export interface Finding {
 export function parseXcodeMajor(output: unknown): number | null {
   const m = /^Xcode\s+(\d+)/m.exec(String(output || ''));
   if (!m) return null;
-  const major = parseInt(m[1], 10);
+  const digits = m[1];
+  if (digits === undefined) return null;
+  const major = parseInt(digits, 10);
   return Number.isFinite(major) ? major : null;
 }
 
@@ -87,7 +89,10 @@ function readJson(path: string): AnyJson | null {
 // baked in at build time and no deep link is involved. Callers pass
 // detectIsExpo(projectRoot) so this agrees with what `status` prints.
 export function checkDevClient(pkg: AnyJson | null, isExpo: boolean = true): Finding | null {
-  const deps = { ...pkg?.dependencies, ...pkg?.devDependencies };
+  const deps = {
+    ...(pkg?.dependencies as AnyJson | undefined),
+    ...(pkg?.devDependencies as AnyJson | undefined),
+  };
   if (deps['expo-dev-client']) return null;
   // Bare React Native has its own way of reaching a non-default port and no
   // dev client to install; this advice only applies to an Expo app.
@@ -186,7 +191,8 @@ export function metroConfigDelegate(source: unknown): string | null {
     /^export\s+default\s+require\(\s*['"]([^'"]+)['"]\s*\)[^;]*;?$/.exec(code);
   if (!m) return null;
   const pkg = m[1];
-  const base = pkg.startsWith('@') ? pkg.split('/').slice(0, 2).join('/') : pkg.split('/')[0];
+  if (pkg === undefined) return null;
+  const base = pkg.startsWith('@') ? pkg.split('/').slice(0, 2).join('/') : (pkg.split('/')[0] ?? pkg);
   if (METRO_CORE_MODULES.test(pkg) || METRO_CORE_MODULES.test(base)) return null;
   // A relative path is still this repo's own code, and naming it is still the
   // honest answer -- doctor cannot follow it either.
@@ -202,11 +208,14 @@ export function metroConfigDelegate(source: unknown): string | null {
 // nesting is parsing, and the wrong answer here costs a note, not a cost.
 function isConditional(lines: string[], index: number): boolean {
   const line = lines[index];
+  if (line === undefined) return false;
   if (isConditionalLine(line)) return true;
   if (!/^\s+\S/.test(line)) return false;
   for (let i = index - 1; i >= 0; i--) {
-    if (lines[i].trim() === '') continue;
-    return isConditionalLine(lines[i]);
+    const prev = lines[i];
+    if (prev === undefined) continue;
+    if (prev.trim() === '') continue;
+    return isConditionalLine(prev);
   }
   return false;
 }
@@ -345,9 +354,9 @@ export function checkBuildCacheProvider(
     );
   }
   if (!appConfig) return null;
-  const expo = appConfig.expo ?? appConfig;
-  const topLevel = expo?.buildCacheProvider;
-  const experimental = expo?.experiments?.buildCacheProvider;
+  const expo = (appConfig.expo ?? appConfig) as AnyJson;
+  const topLevel = expo.buildCacheProvider;
+  const experimental = (expo.experiments as AnyJson | null | undefined)?.buildCacheProvider;
 
   if (!topLevel && !experimental) {
     return finding(
@@ -521,12 +530,12 @@ export function runDoctor(
   // of the `expo` package, which is the distinction the Expo-only checks below
   // actually depend on.
   const isExpo = detectIsExpo(projectRoot);
-  const expoRange = pkg?.dependencies?.expo || '';
+  const expoRange = (pkg?.dependencies as AnyJson | undefined)?.expo || '';
   const sdkMajor =
     parseInt(
       String(expoRange)
         .replace(/[^\d.]/g, '')
-        .split('.')[0],
+        .split('.')[0] ?? '',
       10,
     ) || null;
 

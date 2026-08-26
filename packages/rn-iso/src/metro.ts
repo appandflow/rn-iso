@@ -6,7 +6,9 @@ import { sep } from 'path';
 export function findPidListeningOnPort(port: number): number | null {
   const out = getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`);
   if (!out) return null;
-  const pid = parseInt(out.split('\n')[0], 10);
+  const first = out.split('\n')[0];
+  if (!first) return null;
+  const pid = parseInt(first, 10);
   return Number.isFinite(pid) ? pid : null;
 }
 
@@ -118,8 +120,8 @@ export async function resolveProjectMetro(
   { probe = isMetroRunning }: { probe?: (port: number) => Promise<boolean> | boolean } = {},
 ): Promise<MetroResolution> {
   const pids = parseLsofPids(getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`));
-  if (pids.length === 0) return { missing: true };
   const pid = pids[0];
+  if (pid === undefined) return { missing: true };
 
   if (!(await probe(port))) {
     return { notOurs: `pid ${pid} on port ${port} does not answer Metro's /status`, kind: NOT_OURS_UNRESPONSIVE, pid };

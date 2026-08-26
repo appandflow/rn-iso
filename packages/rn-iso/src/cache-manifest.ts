@@ -37,7 +37,7 @@ function expand(dir: string): string {
   return resolve(dir.startsWith('~') ? join(homedir(), dir.slice(1)) : dir);
 }
 
-export function readManifest(path: string = manifestPath()): { version: number; caches: any[] } {
+export function readManifest(path: string = manifestPath()): { version: number; caches: CacheEntry[] } {
   if (!existsSync(path)) return { version: 1, caches: [] };
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8'));
@@ -56,7 +56,7 @@ export function readManifest(path: string = manifestPath()): { version: number; 
 // readable for as long as the write takes, which readManifest can only treat as
 // corrupt. Writing a sibling and renaming makes the swap atomic, so a reader
 // sees either the old manifest or the new one.
-function writeManifest(path: string, caches: any[]): void {
+function writeManifest(path: string, caches: CacheEntry[]): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
   try {
@@ -84,7 +84,7 @@ export function register(entry: CacheEntry, path: string = manifestPath()) {
   if (!entry?.dir) throw new Error('a cache registration needs a `dir`');
   const dir = expand(entry.dir);
   const manifest = readManifest(path);
-  const record = {
+  const record: CacheEntry = {
     dir,
     name: entry.name || dir,
     prune: entry.prune === 'atomic' ? 'atomic' : 'entries',

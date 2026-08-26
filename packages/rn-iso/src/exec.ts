@@ -67,7 +67,12 @@ const defaultExecutor: Executor = {
 
 // Tests inject partial, loosely-typed mocks (a `run` that returns a canned
 // string, a `spawn` that returns a fake child); the seam accepts them while
-// getExecutor() still hands callers the full strict Executor.
+// getExecutor() still hands callers the full strict Executor. This is the one
+// place `any` is deliberate: `Partial<Executor>` would force every mock method
+// to match the real signature exactly (a `spawn` returning a fake child object,
+// a `run` reading only the args it cares about), which defeats the point of a
+// test seam. The `as Executor` in setExecutor is the real boundary.
+// oxlint-disable-next-line typescript/no-explicit-any
 export type MockExecutor = { [K in keyof Executor]?: (...args: any[]) => any };
 
 let active: Executor = defaultExecutor;

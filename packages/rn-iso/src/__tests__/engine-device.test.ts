@@ -228,7 +228,9 @@ describe('ensureBooted: android', () => {
     expect(result.ok).toBe(true);
     expect(result.serial).not.toBe('emulator-5554');
     assert(result.serial);
-    expect(spawned[0][4]).toBe(result.serial.replace('emulator-', ''));
+    const call = spawned[0];
+    assert(call);
+    expect(call[4]).toBe(result.serial.replace('emulator-', ''));
   });
 
   test('refuses an AVD that is not rn-iso-owned by name', async () => {
@@ -286,23 +288,26 @@ const TYPES = [
   { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', name: 'iPhone 17 Pro' },
   { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16', name: 'iPhone 16' },
 ];
+const [TYPE_17_PRO, TYPE_16] = TYPES;
+assert(TYPE_17_PRO);
+assert(TYPE_16);
 
 test('deviceTypeMismatch returns null when nothing was requested', () => {
-  expect(deviceTypeMismatch(TYPES[0].identifier, undefined, TYPES)).toBe(null);
+  expect(deviceTypeMismatch(TYPE_17_PRO.identifier, undefined, TYPES)).toBe(null);
 });
 
 test('deviceTypeMismatch returns null when the recorded sim is the requested type', () => {
-  expect(deviceTypeMismatch(TYPES[0].identifier, 'iPhone 17 Pro', TYPES)).toBe(null);
+  expect(deviceTypeMismatch(TYPE_17_PRO.identifier, 'iPhone 17 Pro', TYPES)).toBe(null);
 });
 
 test('deviceTypeMismatch describes the mismatch when the recorded sim is a different model', () => {
-  const msg = deviceTypeMismatch(TYPES[1].identifier, 'iPhone 17 Pro', TYPES);
+  const msg = deviceTypeMismatch(TYPE_16.identifier, 'iPhone 17 Pro', TYPES);
   expect(msg).toMatch(/iPhone 16/);
   expect(msg).toMatch(/iPhone 17 Pro/);
 });
 
 test('deviceTypeMismatch returns null when the requested type is unknown, leaving creation to error', () => {
-  expect(deviceTypeMismatch(TYPES[0].identifier, 'iPhone 99 Ultra', TYPES)).toBe(null);
+  expect(deviceTypeMismatch(TYPE_17_PRO.identifier, 'iPhone 99 Ultra', TYPES)).toBe(null);
 });
 
 test('deviceTypeMismatch returns null when the recorded type is unknown', () => {
@@ -434,7 +439,10 @@ describe('ensureOwnedDevice: android', () => {
     else process.env.ANDROID_HOME = prevAndroidHome;
   });
 
-  function androidExecutor({ avds = [], createAvdError = null }: { avds?: string[]; createAvdError?: string | null } = {}) {
+  function androidExecutor({
+    avds = [],
+    createAvdError = null,
+  }: { avds?: string[]; createAvdError?: string | null } = {}) {
     const run: string[] = [];
     const spawn: { cmd: string; args: readonly string[]; opts?: object }[] = [];
     return {

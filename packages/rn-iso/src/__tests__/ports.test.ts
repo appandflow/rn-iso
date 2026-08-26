@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { resetExecutor } from '../exec.ts';
 import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort } from '../config.ts';
-import { computeNextPort, findReclaimablePort, allocatePort, reserveMetroPort, isPortFree } from '../ports.ts';
+import { computeNextPort, findReclaimablePort, allocatePort, reserveMetroPort } from '../ports.ts';
 
 // Every allocation test injects a deterministic freeness oracle: the real one
 // binds sockets, so leaving it in would make results depend on whatever else

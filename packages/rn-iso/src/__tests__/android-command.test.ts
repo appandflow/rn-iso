@@ -344,7 +344,7 @@ describe('a cache hit', () => {
     const result = await h.run();
 
     expect(result.ok).toBe(true);
-    expect(h.calls.install[0].apkPath).toBe(cached);
+    expect(h.calls.install[0]?.apkPath).toBe(cached);
     assert(result.facts);
     expect(result.facts.cacheHit).toBe('local');
     expect(result.facts.appPath).toBe(cached);
@@ -372,7 +372,9 @@ describe('a cache hit', () => {
     const h = harness({ json: true, resolveCached: () => '/cache/app-debug.apk', build: never('the build') });
     const result = await h.run();
     expect(h.stdout.length).toBe(1);
-    expect(JSON.parse(h.stdout[0])).toEqual({
+    const stdout0 = h.stdout[0];
+    assert(stdout0);
+    expect(JSON.parse(stdout0)).toEqual({
       platform: 'android',
       serial: 'emulator-5584',
       avdName: 'rn-iso-app-412',
@@ -390,7 +392,7 @@ describe('a cache hit', () => {
       logs: workspaceLogsDir(root),
     });
     assert(result.facts);
-    expect(JSON.parse(h.stdout[0])).toEqual(result.facts);
+    expect(JSON.parse(stdout0)).toEqual(result.facts);
   });
 });
 
@@ -401,10 +403,10 @@ describe('a cache miss', () => {
 
     expect(result.ok).toBe(true);
     expect(h.calls.build.length).toBe(1);
-    expect(h.calls.build[0].root).toBe(root);
-    expect(h.calls.build[0].logWriter).toBeTruthy();
-    expect(h.calls.storeCached[0].slice(0, 2)).toEqual(['android', CACHE_KEY]);
-    expect(h.calls.install[0].apkPath).toBe(h.calls.storeCached[0][2]);
+    expect(h.calls.build[0]?.root).toBe(root);
+    expect(h.calls.build[0]?.logWriter).toBeTruthy();
+    expect(h.calls.storeCached[0]?.slice(0, 2)).toEqual(['android', CACHE_KEY]);
+    expect(h.calls.install[0]?.apkPath).toBe(h.calls.storeCached[0]?.[2]);
     expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/miss/);
     expect(labelled(h.stderr, 'build')[0]).toMatch(/app-debug\.apk \(2m41s\)/);
     assert(result.facts);
@@ -431,7 +433,7 @@ describe('a cache miss', () => {
     );
     const order: string[] = [];
     const h = harness({
-      prebuild: async (...args: unknown[]) => {
+      prebuild: async (..._args: unknown[]) => {
         order.push('prebuild');
         return { ok: true, durationMs: 12000 };
       },
@@ -535,14 +537,16 @@ describe('metro is verified before any build work', () => {
     expect(result.ok).toBe(true);
     expect(labelled(h.stderr, 'metro')[0]).toMatch(/not checked/);
     // The reservation is still what the app is wired to.
-    expect(h.calls.launch[0].metroPort).toBe(8082);
+    expect(h.calls.launch[0]?.metroPort).toBe(8082);
   });
 
   test('in --json mode a refusal is the error contract, on stdout, alone', async () => {
     const h = harness({ json: true, resolveMetro: async () => ({ missing: true }), build: never('the build') });
     await h.run();
     expect(h.stdout.length).toBe(1);
-    const payload = JSON.parse(h.stdout[0]);
+    const stdout0 = h.stdout[0];
+    assert(stdout0);
+    const payload = JSON.parse(stdout0);
     expect(payload.code).toBe(NO_METRO);
     expect(payload.message && payload.remedy).toBeTruthy();
   });
@@ -683,8 +687,8 @@ describe('a failed build', () => {
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
     const errors = records.filter((r) => r.level === 'error');
     expect(errors.length).toBe(2);
-    expect(errors[0].src).toBe('build');
-    expect(errors[1].msg).toMatch(/MainActivity\.kt:23:9/);
+    expect(errors[0]?.src).toBe('build');
+    expect(errors[1]?.msg).toMatch(/MainActivity\.kt:23:9/);
   });
 
   test('records lastBuild as failed, with the code and what it knew', async () => {
@@ -725,7 +729,7 @@ describe('the remote cache', () => {
     // which is what detectIsExpo reads.
     const h = harness();
     await h.run();
-    expect(h.calls.loadProvider[0][1]).toEqual({ isExpo: false });
+    expect(h.calls.loadProvider[0]?.[1]).toEqual({ isExpo: false });
     expect(h.calls.resolveRemoteBuild.length).toBe(0);
   });
 
@@ -741,7 +745,7 @@ describe('the remote cache', () => {
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
     const h = harness();
     const result = await h.run();
-    expect(h.calls.loadProvider[0][1]).toEqual({ isExpo: true });
+    expect(h.calls.loadProvider[0]?.[1]).toEqual({ isExpo: true });
     expect(result.ok).toBe(true);
     expect(h.calls.resolveRemoteBuild.length).toBe(0);
     expect(h.calls.uploadRemoteBuild.length).toBe(0);
@@ -765,8 +769,8 @@ describe('the remote cache', () => {
     const result = await h.run();
 
     expect(result.ok).toBe(true);
-    expect(h_calls[0].slice(0, 3)).toEqual(['android', CACHE_KEY, downloaded]);
-    expect(h.calls.install[0].apkPath).toBe(stored);
+    expect(h_calls[0]?.slice(0, 3)).toEqual(['android', CACHE_KEY, downloaded]);
+    expect(h.calls.install[0]?.apkPath).toBe(stored);
     assert(result.facts);
     expect(result.facts.cacheHit).toBe('remote');
     expect(labelled(h.stderr, 'cache')[0]).toMatch(/remote hit \(eas\) -> stored locally/);
@@ -776,9 +780,9 @@ describe('the remote cache', () => {
   test("the provider is asked with this workspace's fingerprint and platform", async () => {
     const h = harness({ loadProvider: async () => provider('./p.cjs') });
     await h.run();
-    expect(h.calls.resolveRemoteBuild[0].platform).toBe('android');
-    expect(h.calls.resolveRemoteBuild[0].fingerprintHash).toBe(FINGERPRINT);
-    expect(h.calls.resolveRemoteBuild[0].projectRoot).toBe(root);
+    expect(h.calls.resolveRemoteBuild[0]?.platform).toBe('android');
+    expect(h.calls.resolveRemoteBuild[0]?.fingerprintHash).toBe(FINGERPRINT);
+    expect(h.calls.resolveRemoteBuild[0]?.projectRoot).toBe(root);
   });
 
   test('a remote MISS builds, stores locally, and uploads the result', async () => {
@@ -787,8 +791,8 @@ describe('the remote cache', () => {
     expect(result.ok).toBe(true);
     expect(h.calls.build.length).toBe(1);
     expect(h.calls.storeCached.length).toBe(1);
-    expect(h.calls.uploadRemoteBuild[0].buildPath).toBe(h.calls.storeCached[0][2]);
-    expect(h.calls.uploadRemoteBuild[0].fingerprintHash).toBe(FINGERPRINT);
+    expect(h.calls.uploadRemoteBuild[0]?.buildPath).toBe(h.calls.storeCached[0]?.[2]);
+    expect(h.calls.uploadRemoteBuild[0]?.fingerprintHash).toBe(FINGERPRINT);
     expect(labelled(h.stderr, 'cache').at(-1)).toMatch(/uploaded \(eas\)/);
   });
 
@@ -864,8 +868,8 @@ describe('the remote cache', () => {
     });
     await h.run();
     expect(h.calls.easAuth.length).toBe(1);
-    expect(h.calls.easAuth[0].owner).toBe('th3rd-wave');
-    expect(h.calls.easAuth[0].projectRoot).toBe(root);
+    expect(h.calls.easAuth[0]?.owner).toBe('th3rd-wave');
+    expect(h.calls.easAuth[0]?.projectRoot).toBe(root);
   });
 
   test('a custom provider is never asked about EAS at all', async () => {
@@ -945,14 +949,14 @@ describe('--no-build-cache', () => {
       loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
     });
     await h.run();
-    expect(h.calls.storeCached[0][3]).toEqual({ overwrite: true });
+    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: true });
     expect(h.calls.uploadRemoteBuild.length).toBe(1);
   });
 
   test('a default run stores without overwriting: two worktrees at the same fingerprint agree', async () => {
     const h = harness();
     await h.run();
-    expect(h.calls.storeCached[0][3]).toEqual({ overwrite: false });
+    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: false });
   });
 });
 
@@ -983,10 +987,10 @@ describe('single-flight builds', () => {
         ['resolveCached', 'resolveRemoteBuild', 'acquireLock', 'build', 'storeCached', 'releaseLock'].includes(o),
       ),
     ).toEqual(['resolveCached', 'resolveRemoteBuild', 'acquireLock', 'build', 'storeCached', 'releaseLock']);
-    expect(h.calls.acquireLock[0].platform).toBe('android');
-    expect(h.calls.acquireLock[0].key).toBe(CACHE_KEY);
-    expect(h.calls.acquireLock[0].root).toBe(root);
-    expect(h.calls.acquireLock[0].logFile).toMatch(/build-android\.ndjson$/);
+    expect(h.calls.acquireLock[0]?.platform).toBe('android');
+    expect(h.calls.acquireLock[0]?.key).toBe(CACHE_KEY);
+    expect(h.calls.acquireLock[0]?.root).toBe(root);
+    expect(h.calls.acquireLock[0]?.logFile).toMatch(/build-android\.ndjson$/);
   });
 
   test('a cache hit at either level never takes the lock', async () => {
@@ -1027,7 +1031,7 @@ describe('single-flight builds', () => {
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(h.calls.releaseLock.length).toBe(0);
-    expect(h.calls.install[0].apkPath).toBe(waited);
+    expect(h.calls.install[0]?.apkPath).toBe(waited);
     assert(result.facts);
     expect(result.facts.cacheHit).toBe('local');
     expect(result.facts.waitedForBuild).toEqual({ pid: 41233, ms: 761000 });
@@ -1190,7 +1194,9 @@ describe('Contract 5: the device-log collector', () => {
     const h = harness();
     await h.run();
     expect(h.calls.spawn.length).toBe(1);
-    const { args, opts, unrefed } = h.calls.spawn[0];
+    const spawn0 = h.calls.spawn[0];
+    assert(spawn0);
+    const { args, opts, unrefed } = spawn0;
     expect(args[0]).toMatch(/collector\/run\.ts$/);
     expect(args.slice(1)).toEqual([
       '--platform',
@@ -1378,8 +1384,8 @@ describe('launch verification', () => {
     const result = await h.run();
     assert(result.facts);
     expect(result.facts.launched).toBe(true);
-    expect(h.calls.verify[0].logsDir).toBe(workspaceLogsDir(root));
-    expect(Number.isFinite(h.calls.verify[0].since)).toBeTruthy();
+    expect(h.calls.verify[0]?.logsDir).toBe(workspaceLogsDir(root));
+    expect(Number.isFinite(h.calls.verify[0]?.since)).toBeTruthy();
     expect(h.stderr.some((l) => /verify.*bundle requested from Metro port 8082/.test(l))).toBeTruthy();
   });
 
@@ -1479,10 +1485,10 @@ describe('the dev-client deep link', () => {
     });
     await h.run();
     expect(asked.length).toBe(1);
-    expect(h.calls.launch[0].devClientScheme).toBe('exp+app');
+    expect(h.calls.launch[0]?.devClientScheme).toBe('exp+app');
     // The apk the resolver is pointed at is the one that was installed, not
     // a source tree it would have to guess a build output path in.
-    expect(asked[0]).toEqual([root, h.calls.install[0].apkPath]);
+    expect(asked[0]).toEqual([root, h.calls.install[0]?.apkPath]);
   });
 
   test('the deep-link launch says so, and the url is in the facts', async () => {
@@ -1714,8 +1720,8 @@ test('android fingerprints with platforms scoped to android', async () => {
   });
   await h.run();
   expect(seen.length).toBe(1);
-  expect(seen[0].path).toBe(root);
-  expect(seen[0].options?.platform).toBe('android');
+  expect(seen[0]?.path).toBe(root);
+  expect(seen[0]?.options?.platform).toBe('android');
 });
 
 // --- opt-in concurrency (unlimited by default) ---

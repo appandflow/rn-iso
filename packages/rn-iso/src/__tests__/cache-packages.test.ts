@@ -14,6 +14,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import assert from 'node:assert';
 import { readManifest } from '../cache-manifest.ts';
 import { sharedBuildCache, sharedMetroCache } from '../paths.ts';
 
@@ -45,6 +46,7 @@ test('the Expo build cache provider registers itself on this Node, at the right 
 
     const record = await waitForRegistration(cacheRoot);
     expect(record).toBeTruthy();
+    assert(record);
     expect(record.entriesDepth).toBe(2);
     expect(record.prune).toBe('entries');
   } finally {
@@ -66,8 +68,9 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
     // Metro's own FileStore is not a dependency of rn-iso, and the store object
     // is not what is under test here.
     class FakeStore {
+      root: string;
       constructor(options: { root: string }) {
-        (this as any).root = options.root;
+        this.root = options.root;
       }
     }
     const stores = sharedCacheStores('demo', { FileStore: FakeStore });
@@ -75,6 +78,7 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
 
     const record = await waitForRegistration(cacheRoot);
     expect(record).toBeTruthy();
+    assert(record);
     expect(record.entriesDepth).toBe(2);
     expect(record.prune).toBe('entries');
   } finally {

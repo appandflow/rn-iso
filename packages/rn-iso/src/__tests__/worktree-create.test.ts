@@ -199,7 +199,7 @@ test('create action: --base takes any ref this repo resolves, and branches from 
       ['feat-branch', 'release'],
       ['feat-tag', 'v1'],
       ['feat-sha', releaseSha],
-    ]) {
+    ] as [string, string][]) {
       const { logs, errs } = await runCreateInRepo(repo, name, { base: ref, install: false });
       const target = join(defaultWorktreeDir(repo), name);
       expect(logs).toEqual([target]);

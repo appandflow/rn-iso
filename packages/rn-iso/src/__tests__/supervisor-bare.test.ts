@@ -180,7 +180,7 @@ describe('the dev-middleware logger', () => {
     logger.error('boom');
     expect(events.map((e) => e.type)).toEqual(['unstable_server_log', 'unstable_server_log', 'unstable_server_log']);
     expect(events.map((e) => e.level)).toEqual(['info', 'warn', 'error']);
-    expect(events[0].data).toEqual(['hello', 'world']);
+    expect(events[0]?.data).toEqual(['hello', 'world']);
   });
 
   test('a throwing reporter never reaches the dev server', () => {
@@ -216,9 +216,21 @@ describe('loadNdjsonReporter', () => {
 
 describe('startBareServer wiring', () => {
   function fakeDeps() {
-    const calls: Record<string, any> = {};
+    interface FakeCalls {
+      loadConfig?: { cwd: string; port: number };
+      runServer: {
+        config: { reporter?: unknown; resolver: { platforms: unknown } };
+        options: { unstable_extraMiddleware?: unknown; websocketEndpoints?: unknown; host?: unknown };
+      };
+      createDevMiddleware: { serverBaseUrl?: unknown; logger: { error?: unknown } };
+      createDevServerMiddleware?: unknown;
+      reporterDir?: unknown;
+      closed?: boolean;
+      closedConnections?: boolean;
+    }
+    const calls = {} as FakeCalls;
     const httpServer = {
-      handlers: {} as Record<string, (...args: any[]) => void>,
+      handlers: {} as Record<string, (...args: unknown[]) => void>,
       on(event: string, cb: (...args: unknown[]) => void) {
         this.handlers[event] = cb;
       },
@@ -236,13 +248,13 @@ describe('startBareServer wiring', () => {
           calls.loadConfig = argv;
           return { resolver: { platforms: ['android', 'ios'] }, watchFolders: ['/w'], server: {} };
         },
-        async runServer(config: unknown, options: unknown) {
+        async runServer(config: FakeCalls['runServer']['config'], options: FakeCalls['runServer']['options']) {
           calls.runServer = { config, options };
           return httpServer;
         },
       },
       devMiddleware: {
-        createDevMiddleware(args: unknown) {
+        createDevMiddleware(args: FakeCalls['createDevMiddleware']) {
           calls.createDevMiddleware = args;
           return { middleware: 'dev-mw', websocketEndpoints: { '/inspector': 'i' } };
         },
@@ -351,9 +363,9 @@ describe('startBareServer wiring', () => {
     });
     const seen: Array<{ code: number; reason?: string }> = [];
     handle.onExit((info) => seen.push(info));
-    httpServer.handlers.close();
+    httpServer.handlers.close?.();
     expect(seen.length).toBe(1);
-    expect(seen[0].reason).toMatch(/closed/);
+    expect(seen[0]?.reason).toMatch(/closed/);
   });
 
   test('our own close does not report an unexpected exit', async () => {
@@ -368,7 +380,7 @@ describe('startBareServer wiring', () => {
     const seen: Array<{ code: number; reason?: string }> = [];
     handle.onExit((info) => seen.push(info));
     await handle.close();
-    httpServer.handlers.close();
+    httpServer.handlers.close?.();
     expect(seen).toEqual([]);
   });
 });

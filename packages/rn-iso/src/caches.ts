@@ -139,6 +139,11 @@ export function discoverCaches({ declared = [] }: { declared?: string[] } = {}):
   // runtime values are always drawn from ('atomic' or 'entries').
   const registered: CacheDescriptor[] = registeredCaches().map((c): CacheDescriptor => ({
     ...c,
+    // register() always writes name/note (falling back to dir / a default), so
+    // these coalesces only recover the union CacheDescriptor requires from
+    // CacheEntry's optional fields; a corrupt manifest missing them still maps.
+    name: c.name ?? c.dir,
+    note: c.note ?? 'registered',
     prune: c.prune as 'atomic' | 'entries',
     source: 'registered',
   }));

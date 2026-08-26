@@ -5,6 +5,7 @@
 // every event; if a full disk or a deleted directory threw from there, a
 // logging problem would take the dev server down with it. So every failure
 // path is a counted drop, and close() is where the count surfaces.
+import assert from 'node:assert';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -109,7 +110,7 @@ describe('formatNdjsonLine', () => {
   });
 
   test('returns null for a record that cannot be serialized', () => {
-    const circular: any = { ts: 1, msg: 'x' };
+    const circular: Record<string, unknown> = { ts: 1, msg: 'x' };
     circular.self = circular;
     expect(formatNdjsonLine(circular)).toBe(null);
   });
@@ -133,9 +134,13 @@ describe('createNdjsonWriter', () => {
     w.write({ ts: 5, src: 'metro', level: 'info', msg: 'kept' });
     w.close();
     const records = parseNdjsonText(readFileSync(file, 'utf-8'));
-    expect(typeof records[0].ts).toBe('number');
-    expect(records[0].ts! >= before).toBeTruthy();
-    expect(records[1].ts).toBe(5);
+    const rec0 = records[0];
+    const rec1 = records[1];
+    assert(rec0);
+    assert(rec1);
+    expect(typeof rec0.ts).toBe('number');
+    expect(rec0.ts! >= before).toBeTruthy();
+    expect(rec1.ts).toBe(5);
   });
 
   test('appends rather than truncating, across writer instances', () => {
@@ -188,7 +193,7 @@ describe('createNdjsonWriter', () => {
   test('drops an unserializable record instead of throwing', () => {
     const file = join(dir, 'metro.ndjson');
     const w = createNdjsonWriter(file);
-    const circular: any = { src: 'metro', level: 'info', msg: 'loop' };
+    const circular: Record<string, unknown> = { src: 'metro', level: 'info', msg: 'loop' };
     circular.self = circular;
     expect(w.write(circular)).toBe(false);
     w.write({ src: 'metro', level: 'info', msg: 'fine' });
@@ -237,6 +242,7 @@ describe('createNdjsonWriter', () => {
     });
     w.close();
     const [r] = parseNdjsonText(readFileSync(file, 'utf-8'));
+    assert(r);
     expect(r.event).toBe('client_log');
     expect(r.marker).toBe(true);
     expect(r.raw).toBe(true);

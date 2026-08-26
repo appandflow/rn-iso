@@ -35,8 +35,7 @@ test('detectIsExpo false when expo is not in dependencies', () => {
 test('detectIsExpo trusts the ios script: react-native script wins even with expo dep', async () => {
   // Mimics rainbow: `expo` in deps for prebuild/modules, but the ios script
   // invokes react-native run-ios. Should NOT be flagged as Expo.
-  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('fs');
-  const { tmpdir } = await import('os');
+  const { mkdtempSync, writeFileSync, rmSync } = await import('fs');
   const tmp = mkdtempSync(join((await import('os')).tmpdir(), 'rn-iso-detect-'));
   try {
     writeFileSync(

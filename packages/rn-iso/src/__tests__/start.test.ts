@@ -138,7 +138,7 @@ function metroExecutor({
     runQuiet(cmd) {
       calls.run.push(cmd);
       const listening = /lsof -nP -iTCP:(\d+)/.exec(cmd);
-      if (listening) return listeners[listening[1]] ? String(listeners[listening[1]]) : '';
+      if (listening) return listeners[listening[1] ?? ''] ? String(listeners[listening[1] ?? '']) : '';
       if (/lsof -a -p \d+ -d cwd/.test(cmd)) return `p1\nfcwd\nn${cwd}`;
       if (/ps -o pgid=/.test(cmd)) return '777';
       return '';
@@ -155,7 +155,7 @@ function metroExecutor({
 const openServers: Server[] = [];
 
 function metroListener(port: number): Promise<Server> {
-  const server = createServer((req, res) => {
+  const server = createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('packager-status:running');
   });
@@ -314,7 +314,7 @@ describe('action: already running', () => {
 
     expect(result.exitCode).toBe(null);
     expect(result.logs.length).toBe(1);
-    const facts = JSON.parse(result.logs[0]);
+    const facts = JSON.parse(result.logs[0] ?? '');
     expect(facts).toEqual({
       port,
       supervisorPid: process.pid,
@@ -338,7 +338,7 @@ describe('action: already running', () => {
       server.close();
     }
 
-    const facts = JSON.parse(result.logs[0]);
+    const facts = JSON.parse(result.logs[0] ?? '');
     expect(facts.supervisorPid).toBe(null);
     expect(facts.alreadyRunning).toBe(true);
     expect(result.exitCode).toBe(null);
@@ -400,6 +400,7 @@ describe('action: spawning the supervisor', () => {
 
     expect(result.exitCode).toBe(null);
     const spawned = exec.calls.spawn[0];
+    assert(spawned);
     expect(spawned.cmd).toBe(process.execPath);
     expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port)]);
     expect(spawned.opts.cwd).toBe(root);
@@ -411,7 +412,7 @@ describe('action: spawning the supervisor', () => {
     expect(stdio[1]).toBe(stdio[2]);
     expect(existsSync(supervisorLogFile(root))).toBeTruthy();
 
-    const facts = JSON.parse(result.logs[0]);
+    const facts = JSON.parse(result.logs[0] ?? '');
     expect(facts.port).toBe(port);
     expect(facts.alreadyRunning).toBe(false);
     expect(facts.supervisorPid).toBe(process.pid);
@@ -450,7 +451,7 @@ describe('action: spawning the supervisor', () => {
     // `facts=$(rn-iso start --json)` got an empty string on every failure and
     // had to scrape stderr prose, which `guide facts` promises it never has to.
     expect(result.logs.length).toBe(1);
-    expect(JSON.parse(result.logs[0])).toEqual({
+    expect(JSON.parse(result.logs[0] ?? '')).toEqual({
       code: 'RN_ISO_METRO_TIMEOUT',
       message: 'The dev server did not answer on port 8155 within 1s.',
       remedy: 'It may still be starting. Run `rn-iso stop` to halt it, or `rn-iso logs` to follow along.',
@@ -506,7 +507,7 @@ describe('the error contract', () => {
     const result = await runAction({ json: true, wait: 'soon' });
     expect(result.exitCode).toBe(1);
     expect(result.logs.length).toBe(1);
-    const facts = JSON.parse(result.logs[0]);
+    const facts = JSON.parse(result.logs[0] ?? '');
     expect(facts.code).toBe('RN_ISO_BAD_ARG');
     expect(facts.message).toMatch(/Invalid --wait/);
     expect(facts.remedy).toBeTruthy();
@@ -541,7 +542,7 @@ describe('the workspace gitignore', () => {
       expect(notes[0]).toMatch(/note {3}added/);
       // The note is stderr, never the --json payload's line.
       expect(result.logs.length).toBe(1);
-      expect(JSON.parse(result.logs[0]).port).toBeTruthy();
+      expect(JSON.parse(result.logs[0] ?? '').port).toBeTruthy();
     } finally {
       server.close();
     }
@@ -591,7 +592,7 @@ describe('action: the reserved port', () => {
     expect(result.errs.join('\n')).toMatch(/is held by something else/);
     // It then tries to start on the new port, and fails to come up within 1s.
     expect(result.exitCode).toBe(1);
-    expect(exec.calls.spawn[0].args[4]).toBe(String(reserved));
+    expect(exec.calls.spawn[0]?.args[4]).toBe(String(reserved));
   });
 
   test('a project with no reservation gets one', async () => {
@@ -608,7 +609,7 @@ describe('action: the reserved port', () => {
     assert(project);
     const reserved = project.metroPort;
     expect(typeof reserved).toBe('number');
-    expect(exec.calls.spawn[0].args[4]).toBe(String(reserved));
+    expect(exec.calls.spawn[0]?.args[4]).toBe(String(reserved));
     expect(result.exitCode).toBe(1);
   });
 
@@ -665,7 +666,7 @@ describe('action: an existing supervisor that is not answering', () => {
     }
 
     expect(result.exitCode).toBe(null);
-    const facts = JSON.parse(result.logs[0]);
+    const facts = JSON.parse(result.logs[0] ?? '');
     expect(facts.supervisorPid).toBe(process.pid);
     expect(facts.alreadyRunning).toBe(true);
     expect(exec.calls.spawn).toEqual([]);

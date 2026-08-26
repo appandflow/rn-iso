@@ -269,7 +269,9 @@ test('no supervisor but our own Metro on the port kills the group', async () => 
 });
 
 test('an unproven listener is refused and named, and --force overrides it', async () => {
-  const { opts } = seams({ resolveMetro: async () => makeMetroResolution.notOurs({ notOurs: 'pid 99 runs from /elsewhere' }) });
+  const { opts } = seams({
+    resolveMetro: async () => makeMetroResolution.notOurs({ notOurs: 'pid 99 runs from /elsewhere' }),
+  });
   const refused = await runStop(opts);
   expect(refused.ok).toBe(false);
   expect(refused.outcomes.metro.status).toBe('refused');

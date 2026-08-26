@@ -688,7 +688,7 @@ export function parseSimHolders(
     const args = `${m[2]}${m[3]}`;
     if (/(?:^|\/)rn-iso(?:\s|$)|collector\/run\.js/.test(args)) continue;
     seen.add(pid);
-    holders.push(`${m[2].split('/').pop()} (pid ${pid})`);
+    holders.push(`${(m[2] ?? '').split('/').pop()} (pid ${pid})`);
     if (holders.length >= limit) break;
   }
   return holders;

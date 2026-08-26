@@ -84,9 +84,11 @@ test('storeBuild stages elsewhere and renames, so a partial copy is never visibl
   assert(stored);
   expect(stored.endsWith('MyApp.app')).toBeTruthy();
   expect(existsSync(stored)).toBe(true);
-  expect(calls[0].file).toBe('cp');
-  expect(calls[0].args.slice(0, 2)).toEqual(['-R', build]);
-  expect(calls[0].args[2]).toMatch(/\.staging-\d+/);
+  const call = calls[0];
+  assert(call);
+  expect(call.file).toBe('cp');
+  expect(call.args.slice(0, 2)).toEqual(['-R', build]);
+  expect(call.args[2]).toMatch(/\.staging-\d+/);
   expect(existsSync(`${entryDir('ios', 'fp1', root)}.staging-${process.pid}`)).toBe(false);
 });
 
@@ -120,7 +122,7 @@ test('storeBuild with { overwrite } REPLACES an existing entry, so a poisoned on
     run: () => {
       throw new Error('the copy must not go through a shell');
     },
-    runFile: (file, args) => {
+    runFile: (_file, args) => {
       // Stand in for `cp -R`, which copies a file here.
       writeFileSync(args[2], readFileSync(args[1], 'utf-8'));
       return '';
@@ -162,7 +164,7 @@ test('storeBuild passes the build path as one argument, never through a shell', 
     run: () => {
       throw new Error('the copy must not go through a shell');
     },
-    runFile: (file, args) => {
+    runFile: (_file, args) => {
       seen = args;
       mkdirSync(args[2], { recursive: true });
       writeFileSync(join(args[2], 'bin'), 'x');
@@ -236,7 +238,7 @@ test('the CLI and the Expo provider compute the same key', () => {
     ['ios', { device: 'Janic iPhone' }],
     ['ios', { device: true }],
     ['android', { variant: 'release', device: 'emulator-5554' }],
-  ] as [string, any][]) {
+  ] as [string, Record<string, unknown>][]) {
     expect(buildCacheKey(platform, 'hash', options)).toBe(providerKey(platform, 'hash', options));
   }
 });
@@ -292,7 +294,8 @@ test('fingerprintProject without a platform passes no platforms option', async (
     },
   });
   expect(await fingerprintProject(root, { load })).toBe('h');
-  expect((options as any)?.platforms).toBe(undefined);
+  const seen = options as { platforms?: string[] } | undefined | 'unset';
+  expect(typeof seen === 'object' ? seen?.platforms : undefined).toBe(undefined);
 });
 
 // An unknown platform is not silently turned into a scope: `platforms: ['web']`
@@ -306,5 +309,6 @@ test('fingerprintProject ignores a platform it does not know', async () => {
     },
   });
   await fingerprintProject(root, { platform: 'web', load });
-  expect((options as any)?.platforms).toBe(undefined);
+  const seen = options as { platforms?: string[] } | undefined | 'unset';
+  expect(typeof seen === 'object' ? seen?.platforms : undefined).toBe(undefined);
 });

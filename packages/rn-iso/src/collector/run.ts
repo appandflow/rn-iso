@@ -93,11 +93,11 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
       continue;
     }
     if (arg === '--serial') {
-      serial = argv[++i];
+      serial = argv[++i] ?? null;
       continue;
     }
     if (arg === '--package') {
-      packageName = argv[++i];
+      packageName = argv[++i] ?? null;
       continue;
     }
     return { error: `Unknown collector argument "${arg}".` };
@@ -179,7 +179,6 @@ export async function runCollector({
   root,
   udid = null,
   appName = null,
-  bundleId = null,
   serial = null,
   packageName = null,
   startStream = null,

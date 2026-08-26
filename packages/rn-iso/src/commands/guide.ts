@@ -885,7 +885,7 @@ export function renderIndex(version: string) {
   ];
   const width = Math.max(...topicNames().map((n) => n.length));
   for (const name of topicNames()) {
-    lines.push(`  ${name.padEnd(width)}  ${TOPICS[name].summary}`);
+    lines.push(`  ${name.padEnd(width)}  ${TOPICS[name]?.summary ?? ''}`);
   }
   lines.push('', 'Read one with:  npx rn-iso guide <topic>');
   return lines.join('\n');

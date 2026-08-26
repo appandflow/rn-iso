@@ -31,7 +31,7 @@ import { basename, join, relative } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
 import type { Command } from 'commander';
 import type { AndroidFacts, WaitedForBuild } from '../types.ts';
-import { getConcurrencyLimits, getProject, upsertProject, type ProjectRecord } from '../config.ts';
+import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.ts';
 import {
@@ -42,7 +42,7 @@ import {
   type WaitForBuildResult,
 } from '../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
-import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
+import { createNdjsonWriter } from '../ndjson.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
 import { workspaceLogsDir } from '../paths.ts';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../project.ts';
@@ -331,18 +331,23 @@ export function parseXmltree(text: unknown): XmlNode {
     const line = raw.trim();
     const element = /^E: ([\w.:-]+)/.exec(line);
     if (element) {
-      while (stack.length > 1 && stack[stack.length - 1].indent >= indent) stack.pop();
-      const node: XmlNode = { tag: element[1], attrs: {}, children: [], indent };
-      stack[stack.length - 1].children.push(node);
+      // stack always holds the root sentinel, so stack[length-1] is present
+      // (the `length > 1` guard here is about not popping the root).
+      while (stack.length > 1 && stack[stack.length - 1]!.indent >= indent) stack.pop();
+      // element matched /^E: ([\w.:-]+)/, so capture group 1 is present.
+      const node: XmlNode = { tag: element[1]!, attrs: {}, children: [], indent };
+      stack[stack.length - 1]!.children.push(node);
       stack.push(node);
       continue;
     }
     const attr = /^A: ([^(=]+?)(?:\(0x[0-9a-f]+\))?=(.*)$/.exec(line);
     if (attr && stack.length > 1) {
+      // attr matched, so groups 1 and 2 are present.
       // aapt prints `android:name`, aapt2 the full namespace URI.
-      const name = attr[1].replace(/^http:\/\/schemas\.android\.com\/apk\/res\/android:/, 'android:');
-      const value = /^"((?:[^"\\]|\\.)*)"/.exec(attr[2]);
-      stack[stack.length - 1].attrs[name] = value ? value[1] : null;
+      const name = attr[1]!.replace(/^http:\/\/schemas\.android\.com\/apk\/res\/android:/, 'android:');
+      const value = /^"((?:[^"\\]|\\.)*)"/.exec(attr[2]!);
+      // stack holds the root sentinel, so stack[length-1] is present.
+      stack[stack.length - 1]!.attrs[name] = value ? value[1]! : null;
     }
   }
   return root;

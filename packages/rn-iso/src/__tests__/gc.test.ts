@@ -60,8 +60,20 @@ test('the cache report says which caches were registered and which were detected
     skipped: [],
     deadProjects: [],
     caches: [
-      makeCacheDescriptor({ name: 'Metro transforms', dir: '/c/metro', note: 'from a metro.config.js', bytes: 2048, source: 'registered' }),
-      makeCacheDescriptor({ name: 'Xcode compilation cache', dir: '/c/cas', note: 'index-backed', bytes: 4096, source: 'detected' }),
+      makeCacheDescriptor({
+        name: 'Metro transforms',
+        dir: '/c/metro',
+        note: 'from a metro.config.js',
+        bytes: 2048,
+        source: 'registered',
+      }),
+      makeCacheDescriptor({
+        name: 'Xcode compilation cache',
+        dir: '/c/cas',
+        note: 'index-backed',
+        bytes: 4096,
+        source: 'detected',
+      }),
     ],
   }).join('\n');
   expect(lines).toMatch(/Metro transforms.*registered/);
@@ -101,7 +113,7 @@ test('devices referenced by a project on an unmounted volume are kept', () => {
     isMounted: () => false,
   });
   expect(result.orphaned.length).toBe(0);
-  expect(result.kept[0].reason).toMatch(/not mounted/);
+  expect(result.kept[0]?.reason).toMatch(/not mounted/);
 });
 
 test('a device named by a non-owned (legacy/stale) record is still counted as referenced, not orphaned', () => {
@@ -254,7 +266,7 @@ test('findStaleProjectDevices reaps an owned device whose project has not been t
     lastTouched: () => now - 90 * DAY_MS,
   });
   expect(stale.map((d) => d.id)).toEqual(['U-STALE']);
-  expect(stale[0].project).toBe('/live/p');
+  expect(stale[0]?.project).toBe('/live/p');
 });
 
 test('findStaleProjectDevices leaves a recently touched project alone', () => {
@@ -475,7 +487,7 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
   // The unmounted-volume entry survives: its volume could not be confirmed
   // mounted, so it must not be treated as dead.
   expect(cfg.projects[unmountedPath]).toBeTruthy();
-  expect(cfg.projects[unmountedPath].metroPort).toBe(8100);
+  expect(cfg.projects[unmountedPath]?.metroPort).toBe(8100);
   // The genuinely local dead entry (boot volume, directory just missing) is
   // still pruned as before.
   expect(cfg.projects[localDeadPath]).toBe(undefined);
@@ -513,7 +525,11 @@ interface InstallDeviceExecutorOptions {
   throwOnShutdownFor?: Set<string>;
 }
 
-function installDeviceExecutor({ devices, execCalls, throwOnShutdownFor = new Set<string>() }: InstallDeviceExecutorOptions) {
+function installDeviceExecutor({
+  devices,
+  execCalls,
+  throwOnShutdownFor = new Set<string>(),
+}: InstallDeviceExecutorOptions) {
   setExecutor({
     run(cmd) {
       execCalls.push(cmd);
@@ -718,7 +734,7 @@ test('--delete --older-than reaps an owned device whose project went untouched, 
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-STALE'))).toBeTruthy();
   const cfg = currentConfig();
   expect(cfg.projects[stalePath]).toBeTruthy();
-  expect(cfg.projects[stalePath].platforms?.ios).toBe(undefined);
+  expect(cfg.projects[stalePath]?.platforms?.ios).toBe(undefined);
 });
 
 // The whole field-test complaint, end to end: a live project whose recorded sim
@@ -737,13 +753,13 @@ test('gc reports a live project whose recorded sim is gone, and --delete clears 
   const report = await captureLog(() => sweepingGc({ delete: false }));
   expect(report).toMatch(/Stale device records \(1\)/);
   expect(report).toMatch(/UDID-VANISHED/);
-  expect(currentConfig().projects[livePath].platforms?.ios).toBeTruthy();
+  expect(currentConfig().projects[livePath]?.platforms?.ios).toBeTruthy();
 
   const output = await captureLog(() => sweepingGc({ delete: true }));
   expect(output).toMatch(/Cleared the ios record/);
   const cfg = currentConfig();
   expect(cfg.projects[livePath]).toBeTruthy();
-  expect(cfg.projects[livePath].platforms?.ios).toBe(undefined);
+  expect(cfg.projects[livePath]?.platforms?.ios).toBe(undefined);
   // Never touches devices: the premise is that there is none left to touch.
   expect(execCalls.some((c) => /simctl (shutdown|delete)/.test(c))).toBe(false);
   expect(execCalls.some((c) => /avdmanager delete/.test(c))).toBe(false);
@@ -761,7 +777,7 @@ test('a recorded sim that IS on the machine is not a stale record', async () => 
 
   const output = await captureLog(() => sweepingGc({ delete: true }));
   expect(output).not.toMatch(/Stale device records/);
-  expect(currentConfig().projects[livePath].platforms?.ios).toBeTruthy();
+  expect(currentConfig().projects[livePath]?.platforms?.ios).toBeTruthy();
 });
 
 test('--older-than without --delete only reports the stale device', async () => {
@@ -783,7 +799,7 @@ test('--older-than without --delete only reports the stale device', async () => 
   expect(output).toMatch(/rn-iso-abandoned/);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
-  expect(currentConfig().projects[stalePath].platforms?.ios).toBeTruthy();
+  expect(currentConfig().projects[stalePath]?.platforms?.ios).toBeTruthy();
 });
 
 test('a device whose project is still being worked in is never reaped by --older-than', async () => {
@@ -803,7 +819,7 @@ test('a device whose project is still being worked in is never reaped by --older
   await sweepingGc({ delete: true, olderThan: 30 });
 
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
-  expect(currentConfig().projects[livePath].platforms?.ios).toBeTruthy();
+  expect(currentConfig().projects[livePath]?.platforms?.ios).toBeTruthy();
 });
 
 // --- Shared caches (the folded-in `cache list`) -------------------------
@@ -1009,7 +1025,7 @@ test('--all reaches caches only: never a device, never a project entry', async (
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
   const cfg = currentConfig();
   expect(cfg.projects[livePath]).toBeTruthy();
-  expect(cfg.projects[livePath].platforms?.ios).toBeTruthy();
+  expect(cfg.projects[livePath]?.platforms?.ios).toBeTruthy();
   expect(existsSync(entry)).toBe(false);
 });
 
@@ -1096,9 +1112,9 @@ test('the report separates locks whose builder is gone from builds in progress',
 
   const report = await collectGcReport();
   expect(report.buildLocks.stale.length).toBe(1);
-  expect(report.buildLocks.stale[0].pid).toBe(999999);
+  expect(report.buildLocks.stale[0]?.pid).toBe(999999);
   expect(report.buildLocks.live.length).toBe(1);
-  expect(report.buildLocks.live[0].projectRoot).toBe('/w/alive');
+  expect(report.buildLocks.live[0]?.projectRoot).toBe('/w/alive');
 });
 
 test('formatGcReport names both, and says a live one is a build it will not touch', () => {
@@ -1135,7 +1151,10 @@ test('formatGcReport names both, and says a live one is a build it will not touc
 
 test('a stale lock counts as something to reclaim', () => {
   const lines = formatGcReport({
-    buildLocks: { stale: [makeBuildLock({ platform: 'ios', key: 'k', pid: 9, projectRoot: '/w', path: '/h/l.lock' })], live: [] },
+    buildLocks: {
+      stale: [makeBuildLock({ platform: 'ios', key: 'k', pid: 9, projectRoot: '/w', path: '/h/l.lock' })],
+      live: [],
+    },
   }).join('\n');
   expect(lines.split('\n')[0]).not.toMatch(/^Nothing to reclaim\.$/);
 });
@@ -1177,7 +1196,15 @@ test('a bare gc removes no lock at all', async () => {
 // a reboot or a SIGKILL leaves a stale one behind; gc reports and (with
 // --delete) clears the stale ones, and never touches a slot a live builder holds.
 
-function writeSlot({ index = 0, pid, projectRoot = '/w/app-412' }: { index?: number; pid: number; projectRoot?: string }) {
+function writeSlot({
+  index = 0,
+  pid,
+  projectRoot = '/w/app-412',
+}: {
+  index?: number;
+  pid: number;
+  projectRoot?: string;
+}) {
   const path = join(tmpHome, 'build-slots', `slot-${index}`);
   mkdirSync(path, { recursive: true });
   writeFileSync(
@@ -1195,13 +1222,16 @@ test('the report separates stale build slots from ones a live builder holds', as
 
   const report = await collectGcReport();
   expect(report.buildSlots.stale.length).toBe(1);
-  expect(report.buildSlots.stale[0].pid).toBe(999999);
+  expect(report.buildSlots.stale[0]?.pid).toBe(999999);
   expect(report.buildSlots.live.length).toBe(1);
 });
 
 test('formatGcReport names a stale build slot', () => {
   const lines = formatGcReport({
-    buildSlots: { stale: [makeBuildSlot({ index: 1, pid: 999999, projectRoot: '/w/dead', path: '/h/build-slots/slot-1' })], live: [] },
+    buildSlots: {
+      stale: [makeBuildSlot({ index: 1, pid: 999999, projectRoot: '/w/dead', path: '/h/build-slots/slot-1' })],
+      live: [],
+    },
   }).join('\n');
   expect(lines).toMatch(/Stale build slots \(1\)/);
   expect(lines).toMatch(/999999/);

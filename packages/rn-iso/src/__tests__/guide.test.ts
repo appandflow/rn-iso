@@ -134,7 +134,9 @@ test('the settings topic lists exactly the keys settings.js honours', () => {
   const body = renderTopic('settings');
   assert(body);
   const src = readFileSync(new URL('../settings.ts', import.meta.url), 'utf-8');
-  const known = [...src.matchAll(/^\s*'([a-zA-Z.]+)',$/gm)].map((m) => m[1]);
+  const known = [...src.matchAll(/^\s*'([a-zA-Z.]+)',$/gm)]
+    .map((m) => m[1])
+    .filter((k): k is string => k !== undefined);
   expect(known.length > 0).toBeTruthy();
   for (const key of known) {
     expect(body.includes(key)).toBeTruthy();

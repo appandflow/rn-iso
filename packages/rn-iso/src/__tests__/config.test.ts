@@ -67,6 +67,7 @@ test('saveConfig + loadConfig roundtrip', () => {
   saveConfig(makeConfig({ version: 1, projects: { '/foo': { metroPort: 8082, platforms: {} } } }));
   const cfg = loadConfig();
   assert(cfg);
+  assert(cfg.projects['/foo']);
   expect(cfg.projects['/foo'].metroPort).toBe(8082);
 });
 
@@ -306,6 +307,7 @@ test('pruneDeadProjects removes dead-path entries and keeps live ones', () => {
   claimMetroPort('/definitely/gone/worktree', 8099);
   const removed = pruneDeadProjects();
   expect(removed.length).toBe(1);
+  assert(removed[0]);
   expect(removed[0].path).toBe('/definitely/gone/worktree');
   expect(removed[0].project.metroPort).toBe(8099);
   expect(getProject('/definitely/gone/worktree')).toBe(null);

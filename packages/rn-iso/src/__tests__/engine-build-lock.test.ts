@@ -20,7 +20,7 @@
 //      item 9): a mocked mkdir cannot prove two processes cannot both win.
 import assert from 'node:assert';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
@@ -260,6 +260,7 @@ describe('listBuildLocks', () => {
     mkdirSync(path, { recursive: true });
     writeFileSync(join(path, 'lock.json'), 'not json');
     const [lock] = listBuildLocks();
+    assert(lock);
     expect(lock.pid).toBe(null);
     expect(lock.alive).toBe(false);
   });
@@ -400,7 +401,7 @@ describe('waitForBuild', () => {
   test('a generous ceiling ends the wait with a structured error naming the lock', async () => {
     const path = lockOn();
     let clock = 0;
-    let err: any;
+    let err: (Error & { code?: string; lockPath?: string }) | undefined;
     try {
       await waitForBuild(
         opts({
@@ -411,12 +412,12 @@ describe('waitForBuild', () => {
         }),
       );
     } catch (e) {
-      err = e;
+      err = e as Error & { code?: string; lockPath?: string };
     }
     expect(err).toBeInstanceOf(Error);
-    expect(err.code).toBe('RN_ISO_BUILD_WAIT_TIMEOUT');
-    expect(err.lockPath).toBe(path);
-    expect(err.message).toMatch(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    expect(err?.code).toBe('RN_ISO_BUILD_WAIT_TIMEOUT');
+    expect(err?.lockPath).toBe(path);
+    expect(err?.message).toMatch(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   });
 });
 

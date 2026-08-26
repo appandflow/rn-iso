@@ -48,7 +48,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { join, relative } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { format } from 'node:util';
 import { getExecutor } from '../exec.ts';
@@ -95,7 +95,7 @@ const TIMED_OUT = Symbol('timed-out');
 
 // The project's config (app.json, or `expo config --json`'s output): genuinely
 // dynamic third-party JSON, read field-by-field rather than trusted wholesale.
-type ProjectConfig = Record<string, any>;
+type ProjectConfig = Record<string, unknown>;
 
 // A `getExecutor().runFile`-shaped call, injectable independently of
 // getExecutor() for tests.
@@ -112,7 +112,7 @@ interface ReadProjectConfigResult {
 interface NormalizedProvider {
   name?: string;
   reference?: string;
-  options?: Record<string, any>;
+  options?: Record<string, unknown>;
   invalid?: string;
 }
 
@@ -120,16 +120,16 @@ interface NormalizedProvider {
 // import() from a project dependency, so its own internals are genuinely
 // dynamic -- only the entry points this module calls are named.
 export interface ProviderPlugin {
-  resolveBuildCache?: (props: any, options: any) => any;
-  resolveRemoteBuildCache?: (props: any, options: any) => any;
-  uploadBuildCache?: (props: any, options: any) => any;
-  uploadRemoteBuildCache?: (props: any, options: any) => any;
-  calculateFingerprintHash?: (props: any, options: any) => any;
+  resolveBuildCache?: (props: unknown, options: unknown) => unknown;
+  resolveRemoteBuildCache?: (props: unknown, options: unknown) => unknown;
+  uploadBuildCache?: (props: unknown, options: unknown) => unknown;
+  uploadRemoteBuildCache?: (props: unknown, options: unknown) => unknown;
+  calculateFingerprintHash?: (props: unknown, options: unknown) => unknown;
 }
 
 interface LoadedProvider {
   plugin: ProviderPlugin;
-  options: Record<string, any>;
+  options: Record<string, unknown>;
 }
 
 // FLAT -- see loadProjectProvider's doc comment for the three outcomes.
@@ -201,7 +201,7 @@ interface CaptureFrame {
 }
 
 interface BudgetOutcome {
-  value?: any;
+  value?: unknown;
   error?: unknown;
   timedOut?: true;
   lines: string[];
@@ -224,8 +224,12 @@ export function dynamicConfigFile(root: string): string | null {
 // resolve here in the same order the CLI uses.
 export function providerFromConfig(config?: ProjectConfig | null): unknown {
   if (!config || typeof config !== 'object') return null;
-  const exp = config.expo && typeof config.expo === 'object' ? config.expo : config;
-  return exp?.buildCacheProvider ?? exp?.experiments?.buildCacheProvider ?? null;
+  const expoField = (config as { expo?: unknown }).expo;
+  const exp = (expoField && typeof expoField === 'object' ? expoField : config) as {
+    buildCacheProvider?: unknown;
+    experiments?: { buildCacheProvider?: unknown };
+  };
+  return exp.buildCacheProvider ?? exp.experiments?.buildCacheProvider ?? null;
 }
 
 // PURE. The Expo account that owns this project, out of either config shape.
@@ -240,8 +244,9 @@ export function providerFromConfig(config?: ProjectConfig | null): unknown {
 // is only ever used to WARN.
 export function ownerFromConfig(config?: ProjectConfig | null): string | null {
   if (!config || typeof config !== 'object') return null;
-  const exp = config.expo && typeof config.expo === 'object' ? config.expo : config;
-  const owner = exp?.owner;
+  const expoField = (config as { expo?: unknown }).expo;
+  const exp = (expoField && typeof expoField === 'object' ? expoField : config) as { owner?: unknown };
+  const owner = exp.owner;
   return typeof owner === 'string' && owner.trim() !== '' ? owner.trim() : null;
 }
 
@@ -250,16 +255,19 @@ export function ownerFromConfig(config?: ProjectConfig | null): string | null {
 // itself would throw on ("Invalid build cache provider").
 // `raw` is whatever a project's config put under buildCacheProvider: genuinely
 // dynamic third-party JSON, asserted into shape below rather than trusted.
-export function normalizeProvider(raw: any): NormalizedProvider | null {
+export function normalizeProvider(raw: unknown): NormalizedProvider | null {
   if (raw === null || raw === undefined || raw === '') return null;
   if (raw === 'eas') return { name: 'eas', reference: EAS_PROVIDER_PACKAGE, options: {} };
-  if (typeof raw === 'object' && typeof raw.plugin === 'string' && raw.plugin.trim() !== '') {
-    const reference = raw.plugin.trim();
-    return {
-      name: reference,
-      reference,
-      options: raw.options && typeof raw.options === 'object' ? raw.options : {},
-    };
+  if (typeof raw === 'object') {
+    const obj = raw as { plugin?: unknown; options?: unknown };
+    if (typeof obj.plugin === 'string' && obj.plugin.trim() !== '') {
+      const reference = obj.plugin.trim();
+      return {
+        name: reference,
+        reference,
+        options: obj.options && typeof obj.options === 'object' ? (obj.options as Record<string, unknown>) : {},
+      };
+    }
   }
   return { invalid: typeof raw === 'string' ? `"${raw}"` : JSON.stringify(raw) };
 }
@@ -556,6 +564,7 @@ export function parseWhoami({
   if (lines.length === 0) return { unknown: 'eas whoami printed nothing' };
 
   const raw = lines[0];
+  if (raw === undefined) return { unknown: 'eas whoami printed nothing' };
   const viaToken = /\(authenticated using EXPO_TOKEN\)\s*$/.test(raw);
   const display = raw.replace(/\s*\(authenticated using EXPO_TOKEN\)\s*$/, '').trim();
 
@@ -566,7 +575,8 @@ export function parseWhoami({
   const accounts: string[] = [];
   for (const line of lines) {
     const m = /^\u2022\s*(\S+)\s*\(Role:/.exec(line);
-    if (m) accounts.push(m[1]);
+    const name = m?.[1];
+    if (name !== undefined) accounts.push(name);
   }
   if (accounts.length === 0 && !display.endsWith('(robot)') && display !== 'robot') {
     // No Accounts block is printed when the personal account is the only one,
@@ -645,9 +655,7 @@ export function resolveEasCliBin(
   const shim = findBinUpward(projectRoot, EAS_CLI_BIN);
   if (shim) return { file: shim, source: 'project' };
   const onPath = lookupPath ? lookupPath() : getExecutor().runQuiet(`command -v ${EAS_CLI_BIN}`, { timeoutMs });
-  const file = String(onPath || '')
-    .split('\n')[0]
-    .trim();
+  const file = (String(onPath || '').split('\n')[0] ?? '').trim();
   return file ? { file, source: 'path' } : null;
 }
 
@@ -858,12 +866,12 @@ export function stripAnsi(text?: string | null): string {
 export function uploadDestination(lines?: string[] | null): string | null {
   const text = (lines || []).map(stripAnsi);
   for (const line of text) {
-    const url = /(https?:\/\/[^\s'"]+)/.exec(line);
-    if (url) return url[1].replace(/[.,)\]]+$/, '');
+    const url = /(https?:\/\/[^\s'"]+)/.exec(line)?.[1];
+    if (url !== undefined) return url.replace(/[.,)\]]+$/, '');
   }
   for (const line of text) {
-    const slug = /\bto\s+(@?[\w.-]+\/[\w.-]+)/i.exec(line);
-    if (slug) return slug[1].replace(/[.,)\]]+$/, '');
+    const slug = /\bto\s+(@?[\w.-]+\/[\w.-]+)/i.exec(line)?.[1];
+    if (slug !== undefined) return slug.replace(/[.,)\]]+$/, '');
   }
   return null;
 }
@@ -906,18 +914,19 @@ function install(): void {
   // shape rather than its declared signature: node calls this with either
   // (chunk, cb) or (chunk, encoding, cb), so the arguments are read
   // dynamically and the result is cast back to NodeJS.WriteStream['write'].
-  const patchedWrite = ((chunk: any, encoding?: any, callback?: any): boolean => {
+  const passthrough = write as unknown as (chunk: unknown, encoding?: unknown, callback?: unknown) => boolean;
+  const patchedWrite = ((chunk: unknown, encoding?: unknown, callback?: unknown): boolean => {
     const frame = currentFrame();
-    if (!frame) return write(chunk, encoding, callback);
+    if (!frame) return passthrough(chunk, encoding, callback);
     const cb = typeof encoding === 'function' ? encoding : callback;
     absorb(frame, typeof chunk === 'string' ? chunk : String(chunk));
-    if (typeof cb === 'function') cb();
+    if (typeof cb === 'function') (cb as () => void)();
     return true;
   }) as NodeJS.WriteStream['write'];
   // console.log already goes through process.stdout.write, so this is belt and
   // braces -- and it is the call the header names, so it is caught explicitly
   // rather than by implication.
-  const patchedLog = (...args: any[]): void => {
+  const patchedLog = (...args: unknown[]): void => {
     const frame = currentFrame();
     if (!frame) return log(...args);
     absorb(frame, `${format(...args)}\n`);
@@ -1051,7 +1060,7 @@ interface ResolveRemoteOptions {
   platform?: string | null;
   projectRoot?: string | null;
   fingerprintHash?: string | null;
-  runOptions?: Record<string, any> | null;
+  runOptions?: Record<string, unknown> | null;
   timeoutMs?: number;
   logWriter?: NdjsonWriter | null;
 }
@@ -1113,7 +1122,7 @@ interface UploadRemoteOptions {
   projectRoot?: string | null;
   fingerprintHash?: string | null;
   buildPath?: string | null;
-  runOptions?: Record<string, any> | null;
+  runOptions?: Record<string, unknown> | null;
   timeoutMs?: number;
   logWriter?: NdjsonWriter | null;
   note?: (line: string) => void;
@@ -1186,7 +1195,7 @@ async function providerFingerprint({
   provider: LoadedProvider;
   platform?: string | null;
   projectRoot?: string | null;
-  runOptions: Record<string, any>;
+  runOptions: Record<string, unknown>;
 }): Promise<string | null> {
   if (typeof provider.plugin.calculateFingerprintHash !== 'function') return null;
   try {
@@ -1209,7 +1218,7 @@ async function providerFingerprint({
 // can still print, and it still must not print onto the payload.
 // The timer is unref'd so THIS module never becomes the thing that does.
 async function withBudget(
-  factory: () => Promise<any>,
+  factory: () => Promise<unknown>,
   ms: number,
   capture?: BeginCaptureOptions | null,
 ): Promise<BudgetOutcome> {
@@ -1249,6 +1258,6 @@ async function withBudget(
 // summary.
 function firstLine(err: unknown): string {
   const text = String((err as Error)?.message || err || 'unknown error').trim();
-  const line = text.split('\n')[0].trim();
+  const line = (text.split('\n')[0] ?? '').trim();
   return line.length > 200 ? `${line.slice(0, 197)}...` : line;
 }

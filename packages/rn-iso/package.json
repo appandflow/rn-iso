@@ -46,10 +46,10 @@
     "chalk": "^5.4.1",
     "commander": "^13.1.0"
   },
-  "engines": {
-    "node": ">=22"
-  },
   "devDependencies": {
     "@rn-iso/expo-build-cache": "*"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

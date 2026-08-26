@@ -267,14 +267,14 @@ function makeExecutor({
       runQuietCalls.push(cmd);
       if (/status --porcelain/.test(cmd)) return dirty;
       const diffMatch = cmd.match(/ diff -- "(.+)"$/);
-      if (diffMatch) return diffs[diffMatch[1]] ?? '';
+      if (diffMatch) return diffs[diffMatch[1] ?? ''] ?? '';
       if (/ checkout -- /.test(cmd)) return '';
       if (/log --oneline HEAD --not --remotes/.test(cmd)) return unpushed;
       if (/worktree list --porcelain/.test(cmd)) return worktrees;
       if (cmd.endsWith('remote')) return remote;
       const spawnMatch = cmd.match(/simctl spawn (\S+) launchctl list/);
       if (spawnMatch) {
-        const udid = spawnMatch[1];
+        const udid = spawnMatch[1] ?? '';
         return occupied[udid] ? '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]' : '';
       }
       return null;

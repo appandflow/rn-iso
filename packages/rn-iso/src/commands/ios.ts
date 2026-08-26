@@ -26,7 +26,7 @@ import { basename, join } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
 import type { Command } from 'commander';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.ts';
-import { getConcurrencyLimits, getProject, upsertProject, type ProjectRecord } from '../config.ts';
+import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import {
   DEFAULT_METRO_PORT,
   LAUNCH_UNVERIFIED,
@@ -117,24 +117,6 @@ interface RemoteUploadLike {
   failed?: string | null;
 }
 
-interface PrebuildResultLike {
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  remedy?: string;
-  lastLines?: string[];
-  durationMs?: number;
-}
-
-interface PodInstallResultLike {
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  remedy?: string;
-  lastLines?: string[];
-  durationMs?: number;
-}
-
 interface BuildIosResultLike {
   failed?: boolean;
   code?: string;
@@ -145,19 +127,6 @@ interface BuildIosResultLike {
   exitCode?: number | null;
   appPath?: string;
   bundleId?: string;
-}
-
-interface InstallResultLike {
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-}
-
-interface LaunchResultLike {
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  mode?: string;
 }
 
 interface VerifyLaunchResultLike {
@@ -328,7 +297,7 @@ export function devClientScheme(
   if (!hasDevClient(root)) return undefined;
   const fromBundle = pickDevClientScheme(readBundleSchemes(appPath, { exec }));
   if (fromBundle) return fromBundle;
-  const app = readJson(join(root, 'app.json'));
+  const app = readJson(join(root, 'app.json')) as { expo?: { scheme?: unknown }; scheme?: unknown } | null;
   const raw = app?.expo?.scheme ?? app?.scheme ?? null;
   const scheme = Array.isArray(raw) ? raw.find((s) => typeof s === 'string' && s.trim() !== '') : raw;
   if (typeof scheme !== 'string' || scheme.trim() === '') return undefined;
@@ -402,7 +371,10 @@ export function pickDevClientScheme(schemes: unknown): string | null {
 }
 
 function hasDevClient(root: string): boolean {
-  const pkg = readJson(join(root, 'package.json'));
+  const pkg = readJson(join(root, 'package.json')) as {
+    dependencies?: Record<string, unknown>;
+    devDependencies?: Record<string, unknown>;
+  } | null;
   const deps = { ...pkg?.dependencies, ...pkg?.devDependencies };
   if ('expo-dev-client' in deps) return true;
   // Hoisted: a monorepo installs it at the workspace root, where the app's
@@ -411,8 +383,9 @@ function hasDevClient(root: string): boolean {
   return isPackageResolvable(root, 'expo-dev-client');
 }
 
-// any: JSON.parse of an arbitrary project file (package.json / app.json), shape unknown until read.
-function readJson(file: string): any {
+// JSON.parse of an arbitrary project file (package.json / app.json); the shape
+// is unknown until read, so callers narrow to the fields they need.
+function readJson(file: string): unknown {
   try {
     return JSON.parse(readFileSync(file, 'utf-8'));
   } catch {
@@ -460,8 +433,10 @@ export async function resolveMetroWithRetry(
 ): Promise<MetroResolutionLike> {
   let resolution = await resolve(port, root);
   for (let i = 0; i < delays.length && gateShouldRetry(resolution); i++) {
-    onRetry({ attempt: i + 1, delayMs: delays[i], resolution });
-    await wait(delays[i]);
+    const delayMs = delays[i];
+    if (delayMs === undefined) break; // i < delays.length proves presence; guards index type
+    onRetry({ attempt: i + 1, delayMs, resolution });
+    await wait(delayMs);
     resolution = await resolve(port, root);
   }
   return resolution;

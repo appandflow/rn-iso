@@ -52,7 +52,7 @@ export default function statusCommand(program: Command) {
         for (const sim of listAllIosSims()) simsByUdid[sim.udid] = sim;
       } catch (e) {
         simsAvailable = false;
-        simctlError = String((e as Error)?.message || e).split('\n')[0];
+        simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
       }
 
       // The first entry is the main checkout, not a workspace: listing it as
@@ -124,7 +124,10 @@ export default function statusCommand(program: Command) {
       }
 
       for (const [i, [path, proj]] of projects.entries()) {
+        // states is built one-per-project in the loop above, in the same order,
+        // so states[i] is always present; guard only to satisfy the checker.
         const state = states[i];
+        if (!state) continue;
         const shortcut = projectShortcut(path, proj);
         const marker = path === cwdRoot ? chalk.bold.cyan(`* ${shortcut}`) : shortcut;
         const idle = state.live ? '' : chalk.dim(' [idle]');

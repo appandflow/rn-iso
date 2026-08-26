@@ -119,6 +119,7 @@ export function parseLogcatLine(line: string, { now = Date.now }: { now?: () => 
   const m = LOGCAT_TIME.exec(line.trimEnd());
   if (!m) return null;
   const [, month, day, hour, minute, second, millis, letter, tag, pid, msg] = m;
+  if (letter === undefined || tag === undefined || msg === undefined) return null;
   if (!msg.trim()) return null;
   return {
     ts: parseLogcatTimestamp(

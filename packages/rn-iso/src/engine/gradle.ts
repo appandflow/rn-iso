@@ -355,7 +355,9 @@ function spawnFailure(err: unknown, project: AndroidProjectResult, durationMs: n
 
 function baseName(file: string) {
   const parts = String(file).split('/');
-  return parts[parts.length - 1];
+  // split always yields >= 1 element, so the last index is present; the
+  // fallback only satisfies the index type and is never taken.
+  return parts[parts.length - 1] ?? String(file);
 }
 
 function safeList(dir: string) {

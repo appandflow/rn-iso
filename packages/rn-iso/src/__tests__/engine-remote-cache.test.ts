@@ -44,6 +44,7 @@ import {
 } from '../engine/remote-cache.ts';
 import { makeError, makeWriter } from './_factories.ts';
 import assert from 'node:assert';
+import type { NdjsonRecord } from '../ndjson.ts';
 
 let root: string;
 
@@ -191,9 +192,11 @@ describe('readProjectConfig', () => {
       },
     });
     expect(calls.length).toBe(1);
-    expect(calls[0].file).toBe(join(root, 'node_modules', '.bin', 'expo'));
-    expect(calls[0].args).toEqual(['config', '--json', root]);
-    expect(calls[0].opts?.timeoutMs).toBe(CONFIG_TIMEOUT_MS);
+    const call = calls[0];
+    assert(call);
+    expect(call.file).toBe(join(root, 'node_modules', '.bin', 'expo'));
+    expect(call.args).toEqual(['config', '--json', root]);
+    expect(call.opts?.timeoutMs).toBe(CONFIG_TIMEOUT_MS);
     expect(read.source).toBe('app.config.js');
     expect(providerFromConfig(read.config)).toEqual({ plugin: './p.cjs' });
   });
@@ -231,8 +234,10 @@ describe('readProjectConfig', () => {
       },
     });
     expect(read.unavailable).toBe(undefined);
-    expect(calls[0].file).toBe(join(root, 'node_modules', '.bin', 'expo'));
-    expect(calls[0].args).toEqual(['config', '--json', app]);
+    const call = calls[0];
+    assert(call);
+    expect(call.file).toBe(join(root, 'node_modules', '.bin', 'expo'));
+    expect(call.args).toEqual(['config', '--json', app]);
     expect(providerFromConfig(read.config)).toBe('eas');
   });
 
@@ -350,7 +355,7 @@ describe('resolveRemote', () => {
   test("hands the provider the Expo CLI's exact props, and returns the path it answers with", async () => {
     const appPath = join(root, 'Fixture.app');
     mkdirSync(appPath);
-    let seen: { props: any; options: any } | undefined;
+    let seen: { props: unknown; options: unknown } | undefined;
     const { provider } = plugin({
       resolveBuildCache: async (props, options) => {
         seen = { props, options };
@@ -376,7 +381,7 @@ describe('resolveRemote', () => {
     const { provider } = plugin({
       calculateFingerprintHash: async () => 'eas-side-hash',
       resolveBuildCache: async (props) => {
-        hash = props.fingerprintHash;
+        hash = (props as { fingerprintHash?: unknown }).fingerprintHash;
         return appPath;
       },
     });
@@ -393,7 +398,7 @@ describe('resolveRemote', () => {
         throw new Error('not logged in');
       },
       resolveBuildCache: async (props) => {
-        hash = props.fingerprintHash;
+        hash = (props as { fingerprintHash?: unknown }).fingerprintHash;
         return appPath;
       },
     });
@@ -459,7 +464,7 @@ describe('resolveRemote', () => {
 
 describe('uploadRemote', () => {
   test("hands the provider the built path with the CLI's props", async () => {
-    let seen: { props: any; options: any } | undefined;
+    let seen: { props: unknown; options: unknown } | undefined;
     const { provider } = plugin({
       uploadBuildCache: async (props, options) => {
         seen = { props, options };
@@ -610,12 +615,12 @@ function records() {
   // makeWriter's write receives `record: unknown` (the NdjsonWriter contract),
   // and the captured frames are read structurally below (r.src / written[1].msg);
   // `any[]` keeps those reads working without a per-read cast.
-  const written: any[] = [];
+  const written: NdjsonRecord[] = [];
   return {
     written,
     writer: makeWriter({
       write: (record) => {
-        written.push(record);
+        written.push(record as NdjsonRecord);
         return true;
       },
     }),
@@ -652,7 +657,7 @@ describe('provider output containment', () => {
       { src: 'build', level: 'debug', event: 'provider' },
       { src: 'build', level: 'debug', event: 'provider' },
     ]);
-    expect(log.written[1].msg).toBe('half a line and the rest');
+    expect(log.written[1]?.msg).toBe('half a line and the rest');
   });
 
   test('stdout is restored when the provider returns, throws, or is abandoned', async () => {
@@ -1028,9 +1033,11 @@ describe('checkEasAuth', () => {
         return 'janic\n';
       },
     });
-    expect(seen[0].file).toBe('/p/node_modules/.bin/eas');
-    expect(seen[0].args).toEqual(['whoami']);
-    expect(seen[0].opts?.timeoutMs).toBe(WHOAMI_TIMEOUT_MS);
+    const call = seen[0];
+    assert(call);
+    expect(call.file).toBe('/p/node_modules/.bin/eas');
+    expect(call.args).toEqual(['whoami']);
+    expect(call.opts?.timeoutMs).toBe(WHOAMI_TIMEOUT_MS);
   });
 });
 

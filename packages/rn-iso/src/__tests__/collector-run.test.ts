@@ -14,7 +14,7 @@
 // sleep.
 import assert from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -262,9 +262,13 @@ describe('the ios collector, spawned for real against a fake xcrun', () => {
       },
       { label: 'a parsed device record' },
     );
-    expect(records[0].msg).toMatch(/LocationProvider/);
-    expect(records[0].proc).toBe('locationd');
-    expect(deviceLog()[0].event).toBe('collector_started');
+    const first = records[0];
+    assert(first);
+    expect(first.msg).toMatch(/LocationProvider/);
+    expect(first.proc).toBe('locationd');
+    const firstLog = deviceLog()[0];
+    assert(firstLog);
+    expect(firstLog.event).toBe('collector_started');
 
     process.kill(childPid(child), 'SIGTERM');
     const result = await exited(child);
@@ -350,8 +354,10 @@ describe('the android collector, spawned for real against a fake adb', () => {
       },
       { label: 'a parsed logcat record' },
     );
-    expect(errors[0].msg).toMatch(/undefined is not a function/);
-    expect(errors[0].proc).toBe('ReactNativeJS(3132)');
+    const firstError = errors[0];
+    assert(firstError);
+    expect(firstError.msg).toMatch(/undefined is not a function/);
+    expect(firstError.proc).toBe('ReactNativeJS(3132)');
     // The banner is skipped, not recorded raw.
     expect(deviceLog().some((r) => r.msg?.includes('beginning of main'))).toBe(false);
 
@@ -580,7 +586,9 @@ describe('runCollector reattach seams', () => {
     expect(started.map((c) => c.pid)).toEqual([3132]);
 
     pid = 4200;
-    started[0].emit('exit', 0, null);
+    const firstStarted = started[0];
+    assert(firstStarted);
+    firstStarted.emit('exit', 0, null);
 
     expect(started.map((c) => c.pid)).toEqual([3132, 4200]);
     expect(code).toBe(null);

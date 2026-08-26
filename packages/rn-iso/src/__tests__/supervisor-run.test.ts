@@ -374,7 +374,7 @@ describe('runSupervisor', () => {
     });
 
     expect(server.state.listeners.length).toBe(1);
-    server.state.listeners[0]({ code: 3, signal: null });
+    server.state.listeners[0]?.({ code: 3, signal: null });
     // The shutdown is async; let it settle.
     await new Promise((r) => setTimeout(r, 10));
 

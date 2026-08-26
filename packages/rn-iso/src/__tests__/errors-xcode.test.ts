@@ -184,16 +184,16 @@ describe('real transcripts', () => {
     // The clang line names the project rather than a source file, so the
     // project path is the only location there is -- and it is a path, so it
     // survives, where the "Scratch: clang:" that follows it does not.
-    expect(found[2].file).toBe('/tmp/rn-iso-xc/Scratch.xcodeproj');
-    expect(found[0].file).toBe(undefined);
+    expect(found[2]?.file).toBe('/tmp/rn-iso-xc/Scratch.xcodeproj');
+    expect(found[0]?.file).toBe(undefined);
   });
 
   test('the CocoaPods sandbox error carries the remedy that fixes it', () => {
     const found = extractXcodeDiagnostics(REAL_PODS_FAILURE);
     expect(found.length).toBe(1);
-    expect(found[0].message).toMatch(/The sandbox is not in sync with the Podfile\.lock/);
-    expect(found[0].remedy).toMatch(/pod install/);
-    expect(found[0].file).toBe(undefined);
+    expect(found[0]?.message).toMatch(/The sandbox is not in sync with the Podfile\.lock/);
+    expect(found[0]?.remedy).toMatch(/pod install/);
+    expect(found[0]?.file).toBe(undefined);
   });
 
   test('the run-script warning in that same transcript is not promoted to an error', () => {
@@ -206,9 +206,9 @@ describe('real transcripts', () => {
   test('a signing failure is recognized as one, and told it should not be signing', () => {
     const found = extractXcodeDiagnostics(REAL_SIGNING_FAILURE);
     expect(found.length).toBe(1);
-    expect(found[0].file).toBe('/tmp/rn-iso-xc/Scratch.xcodeproj');
-    expect(found[0].message).toMatch(/No profiles for 'com\.rniso\.scratch' were found/);
-    expect(found[0].remedy).toMatch(/simulator, which needs no signing/);
+    expect(found[0]?.file).toBe('/tmp/rn-iso-xc/Scratch.xcodeproj');
+    expect(found[0]?.message).toMatch(/No profiles for 'com\.rniso\.scratch' were found/);
+    expect(found[0]?.remedy).toMatch(/simulator, which needs no signing/);
   });
 
   test('an xcodebuild invocation error survives its own timestamped log line', () => {
@@ -218,9 +218,9 @@ describe('real transcripts', () => {
     // not be picked up.
     const found = extractXcodeDiagnostics(REAL_SCHEME_FAILURE);
     expect(found.length).toBe(1);
-    expect(found[0].message).toMatch(/does not contain a scheme named "NoSuchScheme"/);
-    expect(found[0].remedy).toMatch(/xcodebuild -list/);
-    expect(found[0].file).toBe(undefined);
+    expect(found[0]?.message).toMatch(/does not contain a scheme named "NoSuchScheme"/);
+    expect(found[0]?.remedy).toMatch(/xcodebuild -list/);
+    expect(found[0]?.file).toBe(undefined);
   });
 
   test('a successful build yields no diagnostics at all', () => {
@@ -283,12 +283,12 @@ describe('what is and is not a diagnostic', () => {
     const transcript = '/app/ios/App.xcodeproj: error: Signing for "App" requires a development team.';
     const found = extractXcodeDiagnostics(transcript);
     expect(found.length).toBe(1);
-    expect(found[0].remedy).toMatch(/needs no signing/);
+    expect(found[0]?.remedy).toMatch(/needs no signing/);
   });
 
   test('a compile error gets no remedy, because there is no mechanical fix to name', () => {
     const found = extractXcodeDiagnostics('/a/b.m:1:1: error: expected identifier');
-    expect(found[0].remedy).toBe(undefined);
+    expect(found[0]?.remedy).toBe(undefined);
   });
 
   test('nothing recognizable returns [], so a caller knows to fall back to the log tail', () => {
@@ -353,8 +353,8 @@ describe('capDiagnostics', () => {
     const { diagnostics, truncated } = capDiagnostics(many(31));
     expect(diagnostics.length).toBe(10);
     expect(truncated).toBe(21);
-    expect(diagnostics[0].message).toBe('e0');
-    expect(diagnostics[9].message).toBe('e9');
+    expect(diagnostics[0]?.message).toBe('e0');
+    expect(diagnostics[9]?.message).toBe('e9');
   });
 
   test('the cap is a parameter, so a caller that wants everything is not fighting the parser', () => {

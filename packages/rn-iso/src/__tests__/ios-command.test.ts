@@ -60,8 +60,8 @@ type IosDeps = NonNullable<Parameters<typeof registerIos>[1]>;
 // keeps each mock's parameter types (from the real signature, so a callback
 // like `(platform, key, path)` is typed) while leaving returns free.
 type LooseDeps = {
-  [K in keyof Required<IosDeps>]?: Required<IosDeps>[K] extends (...args: infer A) => any
-    ? (...args: A) => any
+  [K in keyof Required<IosDeps>]?: Required<IosDeps>[K] extends (...args: infer A) => unknown
+    ? (...args: A) => unknown
     : Required<IosDeps>[K];
 };
 
@@ -95,7 +95,7 @@ afterEach(() => {
 // The same commander stub the other command tests use. `register` is the real
 // registerIos, but the stub is a partial commander mock; typing register as its
 // exact signature would demand a full Command here, so it stays loose.
-function captureAction(register: any, deps: LooseDeps) {
+function captureAction(register: typeof registerIos, deps: LooseDeps) {
   let captured: ((opts: Record<string, unknown>) => unknown) | undefined;
   const stub = {
     command() {
@@ -112,7 +112,9 @@ function captureAction(register: any, deps: LooseDeps) {
       return stub;
     },
   };
-  register(stub, deps);
+  // The stub is a partial commander mock and deps are partial engine seams;
+  // registerIos wants a full Command and full deps, so cast at this one seam.
+  register(stub as unknown as Parameters<typeof registerIos>[0], deps as unknown as IosDeps);
   return (opts: Record<string, unknown> = {}) => {
     assert(captured);
     return captured(opts);
@@ -121,8 +123,35 @@ function captureAction(register: any, deps: LooseDeps) {
 
 // Every engine call is a seam. The defaults describe the happy path with a
 // cache MISS; each test overrides the one fact it is about.
+// The first NDJSON payload a --json command put on stdout, parsed. Asserts it
+// is present (noUncheckedIndexedAccess) then parses; the parsed value stays
+// JSON.parse-shaped, read one field at a time by the caller.
+function parseFirst(lines: string[]) {
+  const [first] = lines;
+  assert(first);
+  return JSON.parse(first);
+}
+
+// The seam arguments each recorded call carries. Every field the assertions
+// read is modelled as `unknown` (compared one at a time); the index signature
+// keeps the recorder's `args[name] = value` write untyped.
+interface RecordedArgs {
+  [key: string]: unknown;
+  installIosApp: { appPath?: unknown };
+  launchIosApp: { devClientScheme?: unknown; metroPort?: unknown; bundleId?: unknown };
+  storeBuild: { options?: unknown; platform?: unknown; path?: unknown };
+  resolveBuild: { key?: unknown };
+  verifyLaunch: { since?: unknown; logsDir?: unknown };
+  uploadRemote: { fingerprintHash?: unknown; buildPath?: unknown };
+  resolveRemote: { projectRoot?: unknown; platform?: unknown; fingerprintHash?: unknown };
+  replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown };
+  loadProjectProvider: { isExpo?: unknown };
+  acquireBuildLock: { root?: unknown; platform?: unknown; logFile?: unknown; key?: unknown };
+  ensureWorkspaceIgnored: unknown;
+}
+
 function harness(overrides: LooseDeps = {}) {
-  const calls: { order: string[]; args: Record<string, any> } = { order: [], args: {} };
+  const calls: { order: string[]; args: RecordedArgs } = { order: [], args: {} as RecordedArgs };
   const record = (name: string, value: unknown) => {
     calls.order.push(name);
     calls.args[name] = value;
@@ -341,7 +370,7 @@ describe('the Metro gate', () => {
     reserve();
     const { logs, calls, errs } = await run({ json: true, metroCheck: false });
     expect(!calls.order.includes('verifyLaunch')).toBeTruthy();
-    expect(JSON.parse(logs[0]).launched).toBe('unverified');
+    expect(parseFirst(logs).launched).toBe('unverified');
     expect(errs.join('\n')).toMatch(/skipped \(--no-metro-check\)/);
   });
 });
@@ -428,15 +457,15 @@ describe('the Metro gate retries an indexing Metro', () => {
 
   test('noMetroMessage names a supervisor only when it is for THIS port and alive', () => {
     const supervisor = { pid: 7, port: 8082, mode: 'expo-child' };
-    expect(noMetroMessage({ port: 8082, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: true })).toMatch(
-      /supervisor record exists/,
-    );
-    expect(noMetroMessage({ port: 8082, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: false })).toMatch(
-      /Nothing is serving/,
-    );
-    expect(noMetroMessage({ port: 8099, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: true })).toMatch(
-      /Nothing is serving/,
-    );
+    expect(
+      noMetroMessage({ port: 8082, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: true }),
+    ).toMatch(/supervisor record exists/);
+    expect(
+      noMetroMessage({ port: 8082, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: false }),
+    ).toMatch(/Nothing is serving/);
+    expect(
+      noMetroMessage({ port: 8099, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: true }),
+    ).toMatch(/Nothing is serving/);
   });
 });
 
@@ -449,7 +478,7 @@ describe('launch verification', () => {
     reserve();
     const { logs, errs, exitCode, calls } = await run({ json: true });
     expect(exitCode).toBe(null);
-    expect(JSON.parse(logs[0]).launched).toBe(true);
+    expect(parseFirst(logs).launched).toBe(true);
     expect(errs.join('\n')).toMatch(/verify.*bundle requested from Metro port 8082/);
     // It polls THIS workspace's timeline, from the launch onwards.
     expect(calls.args.verifyLaunch.logsDir).toBe(workspaceLogsDir(root));
@@ -468,7 +497,7 @@ describe('launch verification', () => {
     // Exit 0: the app IS launched, and refusing here would break every slow
     // launch. What changes is the FACT, which is what an agent branches on.
     expect(exitCode).toBe(null);
-    expect(JSON.parse(logs[0]).launched).toBe('unverified');
+    expect(parseFirst(logs).launched).toBe('unverified');
     const text = errs.join('\n');
     expect(text).toMatch(/UNVERIFIED/);
     expect(text).toMatch(/DEVELOPMENT SERVERS/);
@@ -496,7 +525,7 @@ describe('launch verification', () => {
     expect(text).toMatch(/Open in/);
     expect(text).toMatch(new RegExp(`xcrun simctl openurl ${UDID}`));
     expect(text).toMatch(/fixture:\/\/expo-development-client/);
-    expect(JSON.parse(logs[0]).launched).toBe('unverified');
+    expect(parseFirst(logs).launched).toBe('unverified');
   });
 
   test('the collector is attached BEFORE the poll: its 20s are the ones worth logging', async () => {
@@ -563,7 +592,7 @@ describe('the cache', () => {
     expect(!calls.order.includes('runPodInstall')).toBeTruthy();
     expect(!calls.order.includes('storeBuild')).toBeTruthy();
     expect(calls.args.installIosApp.appPath).toBe(cachedApp);
-    const facts = JSON.parse(logs[0]);
+    const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('local');
     expect(facts.appPath).toBe(cachedApp);
   });
@@ -642,7 +671,7 @@ describe('the cache', () => {
     expect(exitCode).toBe(null);
     expect(calls.order.includes('buildIos')).toBeTruthy();
     expect(!calls.order.includes('resolveRemote')).toBeTruthy();
-    const facts = JSON.parse(logs[0]);
+    const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe(false);
     expect(facts.cacheSkipped).toBe(true);
     expect(!facts.appPath.startsWith(cachedApp)).toBeTruthy();
@@ -740,11 +769,13 @@ describe('the remote cache', () => {
     expect(!calls.order.includes('buildIos')).toBeTruthy();
     expect(!calls.order.includes('runPrebuild')).toBeTruthy();
     expect(stored.length).toBe(1);
-    expect(stored[0].path).toBe(remoteApp);
-    expect(stored[0].key).toBe(calls.args.resolveBuild.key);
+    const storedEntry = stored[0];
+    assert(storedEntry);
+    expect(storedEntry.path).toBe(remoteApp);
+    expect(storedEntry.key).toBe(calls.args.resolveBuild.key);
     expect(calls.args.installIosApp.appPath).toBe(storedApp);
     expect(errs.join('\n')).toMatch(/^cache {7}remote hit \(eas\) -> stored locally$/m);
-    const facts = JSON.parse(logs[0]);
+    const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('remote');
     expect(facts.appPath).toBe(storedApp);
     const stateAfter = readWorkspaceState(root);
@@ -915,8 +946,10 @@ describe('the remote cache', () => {
       },
     );
     expect(asked.length).toBe(1);
-    expect(asked[0].owner).toBe('th3rd-wave');
-    expect(asked[0].projectRoot).toBe(root);
+    const askedEntry = asked[0];
+    assert(askedEntry);
+    expect(askedEntry.owner).toBe('th3rd-wave');
+    expect(askedEntry.projectRoot).toBe(root);
   });
 
   test('a custom provider is never asked about EAS at all', async () => {
@@ -1112,7 +1145,7 @@ describe('single-flight builds', () => {
     expect(!calls.order.includes('releaseBuildLock')).toBeTruthy();
     expect(calls.args.installIosApp.appPath).toBe(waited);
 
-    const facts = JSON.parse(logs[0]);
+    const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('local');
     expect(facts.waitedForBuild).toEqual({ pid: 41233, ms: 761000 });
     expect(stderr).toMatch(/waited 12m41s for \/w\/app-999's build -> installed from cache/);
@@ -1121,7 +1154,7 @@ describe('single-flight builds', () => {
   test('a run that did not wait reports waitedForBuild: null', async () => {
     reserve();
     const { logs } = await run({ json: true });
-    expect(JSON.parse(logs[0]).waitedForBuild).toBe(null);
+    expect(parseFirst(logs).waitedForBuild).toBe(null);
   });
 
   test('the wait is announced when it starts, naming who is building and what to tail', async () => {
@@ -1273,7 +1306,7 @@ describe('single-flight builds', () => {
     expect(exitCode).toBe(1);
     expect(!calls.order.includes('buildIos')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/RN_ISO_BUILD_WAIT_TIMEOUT/);
-    expect(JSON.parse(logs[0]).code).toBe('RN_ISO_BUILD_WAIT_TIMEOUT');
+    expect(parseFirst(logs).code).toBe('RN_ISO_BUILD_WAIT_TIMEOUT');
   });
 
   // Same containment rule the cache store and the provider follow: this is an
@@ -1384,7 +1417,7 @@ describe('failure output', () => {
     // The shape is `android`'s, and BOTH fields are populated: a payload
     // carrying only a code made `ios --json` the one command whose failure a
     // caller could not report without also parsing stderr prose.
-    const payload = JSON.parse(logs[0]);
+    const payload = parseFirst(logs);
     expect(payload.code).toBe('RN_ISO_BUILD_FAILED');
     expect(payload.message).toMatch(/xcodebuild` failed/);
     expect(payload.message).toMatch(/exit code 65/);
@@ -1406,7 +1439,7 @@ describe('failure output', () => {
     const { logs, exitCode } = await run({ json: true });
     expect(exitCode).toBe(1);
     expect(logs.length).toBe(1);
-    const payload = JSON.parse(logs[0]);
+    const payload = parseFirst(logs);
     expect(payload.code).toBe('RN_ISO_NO_METRO');
     expect(payload.message).toMatch(/no dev server/);
     expect(payload.remedy).toMatch(/rn-iso start/);
@@ -1513,7 +1546,7 @@ describe('success output', () => {
     reserve();
     const { logs, appPath } = await run({ json: true });
     expect(logs.length).toBe(1);
-    const facts = JSON.parse(logs[0]);
+    const facts = parseFirst(logs);
     expect(facts.platform).toBe('ios');
     expect(facts.udid).toBe(UDID);
     expect(facts.deviceName).toBe('rn-iso-fixture');
@@ -1633,7 +1666,9 @@ describe('the collector', () => {
   test('the collector is spawned detached, unref-ed, with the REAL app name from the .app path', async () => {
     const h = collectorHarness();
     await replaceCollector(h.opts);
-    const { cmd, args, opts } = h.spawns[0];
+    const firstSpawn = h.spawns[0];
+    assert(firstSpawn);
+    const { cmd, args, opts } = firstSpawn;
     expect(cmd).toBe(process.execPath);
     expect(args[0]).toBe(collectorEntry());
     expect(existsSync(collectorEntry())).toBeTruthy();
@@ -1950,8 +1985,10 @@ test('ios fingerprints with platforms scoped to ios', async () => {
     },
   );
   expect(seen.length).toBe(1);
-  expect(seen[0].path).toBe(root);
-  expect(seen[0].options?.platform).toBe('ios');
+  const seenEntry = seen[0];
+  assert(seenEntry);
+  expect(seenEntry.path).toBe(root);
+  expect(seenEntry.options?.platform).toBe('ios');
 });
 
 // The generic half of the same contract: nothing recognizable in the
@@ -1974,7 +2011,7 @@ test('--json says so when a build failed with no recognizable diagnostic', async
     },
   );
   expect(exitCode).toBe(1);
-  const payload = JSON.parse(logs[0]);
+  const payload = parseFirst(logs);
   expect(payload.message).toMatch(/no recognizable diagnostic/);
   expect(payload.remedy).toMatch(/build-ios\.ndjson/);
 });

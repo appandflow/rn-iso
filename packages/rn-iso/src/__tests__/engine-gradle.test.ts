@@ -7,6 +7,7 @@
 // module's own line reader, using the distribution already on the machine so
 // nothing was downloaded and no emulator was involved.
 import assert from 'node:assert';
+import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -206,10 +207,13 @@ function fakeChild({
   signal?: NodeJS.Signals | null;
   error?: Error | null;
   onExit?: (() => void) | null;
-} = {}) {
-  const child: any = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
+} = {}): ChildProcess {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter & { setEncoding: (enc?: string) => void };
+    stderr: EventEmitter & { setEncoding: (enc?: string) => void };
+  };
+  child.stdout = new EventEmitter() as EventEmitter & { setEncoding: (enc?: string) => void };
+  child.stderr = new EventEmitter() as EventEmitter & { setEncoding: (enc?: string) => void };
   child.stdout.setEncoding = () => {};
   child.stderr.setEncoding = () => {};
   setImmediate(() => {
@@ -222,7 +226,7 @@ function fakeChild({
     if (onExit) onExit();
     child.emit('exit', code, signal);
   });
-  return child;
+  return child as unknown as ChildProcess;
 }
 
 function recordingWriter(): NdjsonWriter & { records: NdjsonRecord[] } {
@@ -235,6 +239,19 @@ function recordingWriter(): NdjsonWriter & { records: NdjsonRecord[] } {
   });
   return Object.assign(writer, { records });
 }
+
+// buildAndroid returns a wide union (success vs several failure shapes); tests
+// reach for the field the case under test carries, so a permissive view keeps
+// them off `any` without asserting a single variant.
+type BuildAndroidResultLike = {
+  ok?: boolean;
+  apkPath?: string;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+  remedy?: string;
+  durationMs?: number;
+};
 
 describe('buildAndroid', () => {
   test('runs ./gradlew assembleDebug in android/ and streams every line as it arrives', async () => {
@@ -259,18 +276,20 @@ describe('buildAndroid', () => {
     );
 
     expect(calls.length).toBe(1);
-    expect(calls[0].cmd).toBe(join(root, 'android', 'gradlew'));
+    const call = calls[0];
+    assert(call);
+    expect(call.cmd).toBe(join(root, 'android', 'gradlew'));
     // The literal, not the constant: a test that reads the task name out of
     // the module under test cannot notice the module changing it.
-    expect(calls[0].args).toEqual(['assembleDebug']);
+    expect(call.args).toEqual(['assembleDebug']);
     expect(ASSEMBLE_TASK).toBe('assembleDebug');
-    expect(calls[0].opts.cwd).toBe(join(root, 'android'));
-    const { stdio } = calls[0].opts;
+    expect(call.opts.cwd).toBe(join(root, 'android'));
+    const { stdio } = call.opts;
     assert(Array.isArray(stdio));
     expect(stdio[0]).toBe('ignore');
 
-    expect((result as any).ok).toBe(true);
-    expect((result as any).apkPath).toBe(join(debugApkDir(root), 'app-debug.apk'));
+    expect((result as BuildAndroidResultLike).ok).toBe(true);
+    expect((result as BuildAndroidResultLike).apkPath).toBe(join(debugApkDir(root), 'app-debug.apk'));
     expect(result.durationMs).toBe(41000);
     // Contract 1: the raw transcript is src "build", level debug.
     expect(writer.records.map((r) => r.msg)).toEqual(['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s']);
@@ -333,7 +352,7 @@ describe('buildAndroid', () => {
     );
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/produced no APK/);
-    expect((result as any).remedy).toMatch(/assembleDebug/);
+    expect((result as BuildAndroidResultLike).remedy).toMatch(/assembleDebug/);
   });
 
   test('a wrapper that will not execute names the permission bit', async () => {
@@ -348,7 +367,7 @@ describe('buildAndroid', () => {
       },
     );
     expect(result.failed).toBe(true);
-    expect((result as any).remedy).toMatch(/chmod \+x/);
+    expect((result as BuildAndroidResultLike).remedy).toMatch(/chmod \+x/);
   });
 
   // A spawn that fails emits `error` and never `exit`; awaiting exit alone
@@ -379,7 +398,7 @@ describe('buildAndroid', () => {
     );
     expect(spawned).toBe(false);
     expect(result.failed).toBe(true);
-    expect((result as any).remedy).toMatch(/prebuild/);
+    expect((result as BuildAndroidResultLike).remedy).toMatch(/prebuild/);
     expect(result.diagnostics).toEqual([]);
   });
 
@@ -398,7 +417,7 @@ describe('buildAndroid', () => {
     );
     expect(spawned).toBe(false);
     expect(result.failed).toBe(true);
-    expect((result as any).remedy).toMatch(/ANDROID_HOME/);
+    expect((result as BuildAndroidResultLike).remedy).toMatch(/ANDROID_HOME/);
   });
 
   test('android/local.properties satisfies the SDK check on its own', async () => {
@@ -411,6 +430,6 @@ describe('buildAndroid', () => {
         spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() }),
       },
     );
-    expect((result as any).ok).toBe(true);
+    expect((result as BuildAndroidResultLike).ok).toBe(true);
   });
 });

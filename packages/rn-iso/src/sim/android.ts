@@ -112,12 +112,15 @@ export function pickDefaultSystemImage(
   if (systemImage) return images.find((i) => i.pkg === systemImage) || null;
   const arm = images.filter((i) => i.arch === 'arm64-v8a');
   if (arm.length === 0) return null;
-  return [...arm].sort(
-    (a, b) =>
-      pageSizeRank(a) - pageSizeRank(b) ||
-      b.api - a.api ||
-      (b.tag === 'google_apis' ? 1 : 0) - (a.tag === 'google_apis' ? 1 : 0),
-  )[0];
+  // arm.length > 0 was just checked, so [0] is present after the sort.
+  return (
+    [...arm].sort(
+      (a, b) =>
+        pageSizeRank(a) - pageSizeRank(b) ||
+        b.api - a.api ||
+        (b.tag === 'google_apis' ? 1 : 0) - (a.tag === 'google_apis' ? 1 : 0),
+    )[0] ?? null
+  );
 }
 
 export function createOwnedAvd(label: string, { systemImage }: { systemImage?: string } = {}): { avdName: string } {
@@ -183,12 +186,17 @@ export function parseAdbDevices(text: string): AdbDevices {
     const trimmed = line.trim();
     if (!trimmed) continue;
     const [serial, status] = trimmed.split(/\s+/);
+    // An `adb devices` row is always "serial<whitespace>state"; a row missing
+    // either field is malformed output, so skip it.
+    if (!serial || !status) continue;
     const m = serial.match(/^emulator-(\d+)$/);
     if (m) {
+      // m matched /^emulator-(\d+)$/, so capture group 1 (the digits) is present.
+      const consolePort = parseInt(m[1]!, 10);
       if (status === 'device') {
-        emulators.push({ serial, consolePort: parseInt(m[1], 10) });
+        emulators.push({ serial, consolePort });
       } else {
-        unhealthy.push({ serial, kind: 'emulator', consolePort: parseInt(m[1], 10), status });
+        unhealthy.push({ serial, kind: 'emulator', consolePort, status });
       }
     } else {
       if (status === 'device') {
@@ -272,7 +280,7 @@ export function getAvdNameForSerial(serial: string): string | null {
   const out = getExecutor().runQuiet(`adb -s ${serial} emu avd name`);
   if (!out) return null;
   // `adb emu avd name` returns the AVD name on the first line, "OK" on the second.
-  return out.split('\n')[0].trim() || null;
+  return out.split('\n')[0]?.trim() || null;
 }
 
 // Resolves an owned AVD name against the LIVE adb device list, verifying

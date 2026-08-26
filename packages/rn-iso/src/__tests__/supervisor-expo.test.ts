@@ -216,8 +216,8 @@ describe('startExpoServer', () => {
     expect(records.map((r) => r.level)).toEqual(['info', 'info', 'error']);
     expect(records.every((r) => r.src === 'metro' && r.raw === true)).toBeTruthy();
     expect(records.every((r) => typeof r.ts === 'number')).toBeTruthy();
-    expect(records[1].marker).toBe(true);
-    expect(records[2].event).toBe('expo_stderr');
+    expect(records[1]?.marker).toBe(true);
+    expect(records[2]?.event).toBe('expo_stderr');
     expect(handle.serverPid).toBe(child.pid);
     expect(handle.mode).toBe('expo-child');
   });

@@ -325,28 +325,36 @@ function readNested(obj: unknown, dottedKey: string): unknown {
   return cur;
 }
 
-function writeNested(obj: Record<string, any>, dottedKey: string, value: unknown): void {
+function writeNested(obj: Record<string, unknown>, dottedKey: string, value: unknown): void {
   const keys = dottedKey.split('.');
   let cur = obj;
   for (let i = 0; i < keys.length - 1; i++) {
-    if (typeof cur[keys[i]] !== 'object' || cur[keys[i]] === null) {
-      cur[keys[i]] = {};
+    const k = keys[i];
+    if (k === undefined) continue;
+    const next = cur[k];
+    if (typeof next !== 'object' || next === null) {
+      cur[k] = {};
     }
-    cur = cur[keys[i]];
+    cur = cur[k] as Record<string, unknown>;
   }
-  cur[keys[keys.length - 1]] = value;
+  const leaf = keys[keys.length - 1];
+  if (leaf !== undefined) cur[leaf] = value;
 }
 
-function deleteNested(obj: Record<string, any>, dottedKey: string): boolean {
+function deleteNested(obj: Record<string, unknown>, dottedKey: string): boolean {
   const keys = dottedKey.split('.');
-  const chain = [obj];
+  const chain: Record<string, unknown>[] = [obj];
   let cur = obj;
   for (let i = 0; i < keys.length - 1; i++) {
-    if (cur[keys[i]] == null || typeof cur[keys[i]] !== 'object') return false;
-    cur = cur[keys[i]];
+    const k = keys[i];
+    if (k === undefined) return false;
+    const next = cur[k];
+    if (next == null || typeof next !== 'object') return false;
+    cur = next as Record<string, unknown>;
     chain.push(cur);
   }
   const leaf = keys[keys.length - 1];
+  if (leaf === undefined) return false;
   if (!(leaf in cur)) return false;
   delete cur[leaf];
   // Prune any intermediate objects left empty by the deletion, so e.g.
@@ -354,7 +362,9 @@ function deleteNested(obj: Record<string, any>, dottedKey: string): boolean {
   for (let i = chain.length - 2; i >= 0; i--) {
     const parent = chain[i];
     const key = keys[i];
-    if (Object.keys(chain[i + 1]).length === 0) {
+    const child = chain[i + 1];
+    if (parent === undefined || key === undefined || child === undefined) break;
+    if (Object.keys(child).length === 0) {
       delete parent[key];
     } else {
       break;

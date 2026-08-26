@@ -38,9 +38,14 @@ export interface ResolvedIosSim {
 export function parseSimctlList(jsonOutput: string): IosSimRecord[] {
   // simctl's own JSON: genuinely dynamic third-party output, asserted into
   // shape field-by-field below rather than trusted wholesale.
-  const data: any = JSON.parse(jsonOutput);
+  const data = JSON.parse(jsonOutput) as {
+    devices?: Record<
+      string,
+      Array<{ udid: string; name: string; state: string; deviceTypeIdentifier: string; isAvailable?: boolean }>
+    >;
+  };
   const sims: IosSimRecord[] = [];
-  for (const [runtime, devices] of Object.entries<any>(data.devices || {})) {
+  for (const [runtime, devices] of Object.entries(data.devices || {})) {
     // Skip non-iOS runtimes (watchOS, tvOS, visionOS). iOS runtime IDs look
     // like com.apple.CoreSimulator.SimRuntime.iOS-26-2 (the others have
     // watchOS-, tvOS-, xrOS- in place of iOS-).
@@ -93,6 +98,7 @@ export function parseOccupyingApps(launchctlOutput: string): string[] {
     const m = line.match(/UIKitApplication:([^[\s]+)/);
     if (!m) continue;
     const bundleId = m[1];
+    if (bundleId === undefined) continue;
     if (bundleId.startsWith('com.apple.')) continue;
     if (!bundleId.endsWith('.xctrunner')) continue;
     ids.push(bundleId);
@@ -129,7 +135,10 @@ export function parseRuntimeVersion(runtimeId: string): string {
   // e.g. com.apple.CoreSimulator.SimRuntime.iOS-26-2 -> "26.2"
   const m = runtimeId.match(/iOS-(\d+)(?:-(\d+))?$/);
   if (!m) return runtimeId;
-  return m[2] ? `${m[1]}.${m[2]}` : m[1];
+  const major = m[1];
+  if (major === undefined) return runtimeId;
+  const minor = m[2];
+  return minor ? `${major}.${minor}` : major;
 }
 
 export function bootIosSim(udid: string): void {
@@ -151,8 +160,8 @@ export function listIosDeviceTypes(): IosDeviceType[] {
   const exec = getExecutor();
   const out = exec.run('xcrun simctl list devicetypes --json');
   // simctl's own JSON: genuinely dynamic third-party output.
-  const data: any = JSON.parse(out);
-  return (data.devicetypes || []).map((dt: any) => ({
+  const data = JSON.parse(out) as { devicetypes?: Array<{ identifier: string; name: string }> };
+  return (data.devicetypes || []).map((dt) => ({
     identifier: dt.identifier,
     name: dt.name,
   }));
@@ -178,7 +187,7 @@ function rankIphone(name: string): { gen: number; variant: number } {
 // Newest iPhone device type on the newest installed runtime, unless the
 // caller pinned either by name. Pure: takes the listings as data.
 export function pickDefaultIosCreation(
-  deviceTypes: IosDeviceType[],
+  _deviceTypes: IosDeviceType[],
   runtimes: IosRuntime[],
   { deviceType, runtime }: { deviceType?: string; runtime?: string } = {},
 ): IosCreationPick | null {
@@ -196,6 +205,7 @@ export function pickDefaultIosCreation(
         rb = rankIphone(b.name);
       return rb.gen - ra.gen || rb.variant - ra.variant || b.name.localeCompare(a.name, undefined, { numeric: true });
     })[0];
+    if (best === undefined) continue; // supported.length > 0 checked above; guards index type
     return { deviceTypeId: best.identifier, runtimeId: rt.identifier };
   }
   return null;
@@ -276,14 +286,23 @@ export function deleteIosSim(udid: string): void {
 export function listIosRuntimes(): IosRuntime[] {
   const out = getExecutor().run('xcrun simctl list runtimes --json');
   // simctl's own JSON: genuinely dynamic third-party output.
-  const data: any = JSON.parse(out);
+  const data = JSON.parse(out) as {
+    runtimes?: Array<{
+      identifier: string;
+      name: string;
+      version: string;
+      isAvailable?: boolean;
+      platform?: string;
+      supportedDeviceTypes?: Array<{ identifier: string; name: string }>;
+    }>;
+  };
   return (data.runtimes || [])
-    .filter((r: any) => r.isAvailable && r.platform === 'iOS')
-    .map((r: any) => ({
+    .filter((r) => r.isAvailable && r.platform === 'iOS')
+    .map((r) => ({
       identifier: r.identifier,
       name: r.name,
       version: r.version,
-      supportedDeviceTypes: (r.supportedDeviceTypes || []).map((d: any) => ({
+      supportedDeviceTypes: (r.supportedDeviceTypes || []).map((d) => ({
         identifier: d.identifier,
         name: d.name,
       })),

@@ -249,8 +249,8 @@ test('carryOverFiles reports per-file failures instead of swallowing them', () =
 
     expect(copied).toEqual(['apps/mobile/.env']);
     expect(failed.length).toBe(1);
-    expect(failed[0].file).toBe('apps/missing/.env');
-    expect(failed[0].error).toMatch(/ENOENT|no such file/i);
+    expect(failed[0]?.file).toBe('apps/missing/.env');
+    expect(failed[0]?.error).toMatch(/ENOENT|no such file/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });

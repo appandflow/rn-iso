@@ -73,8 +73,10 @@ describe('ios: log stream ndjson', () => {
   // The very first thing a live `log stream` writes is not JSON. A parser
   // that threw here would take the collector down before it recorded a line.
   test('the real non-JSON banner line is skipped, not thrown on', () => {
-    expect(lines[0]).toMatch(/^Filtering the log data using/);
-    expect(parseLogStreamLine(lines[0])).toBe(null);
+    const banner = lines[0];
+    assert(banner);
+    expect(banner).toMatch(/^Filtering the log data using/);
+    expect(parseLogStreamLine(banner)).toBe(null);
   });
 
   // activityCreateEvent / activityTransitionEvent are tracing scaffolding
@@ -355,8 +357,10 @@ describe('android: logcat -v time', () => {
   });
 
   test('the real buffer banner is skipped rather than recorded raw', () => {
-    expect(lines[0]).toBe('--------- beginning of system');
-    expect(parseLogcatLine(lines[0])).toBe(null);
+    const banner = lines[0];
+    assert(banner);
+    expect(banner).toBe('--------- beginning of system');
+    expect(parseLogcatLine(banner)).toBe(null);
   });
 
   test('the real V/D/I/W/E lines map onto Contract 1 levels', () => {
@@ -459,7 +463,9 @@ describe('android: logcat -v time', () => {
       assert(rnjs);
       expect(rnjs.level).toBe('error');
       // From the real fixture.
-      const keystore = parseLogcatLine('08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183');
+      const keystore = parseLogcatLine(
+        '08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183',
+      );
       assert(keystore);
       expect(keystore.level).toBe('error');
     });
@@ -468,7 +474,9 @@ describe('android: logcat -v time', () => {
     // signal or ART aborting. A noisy tag does not buy an exemption from that.
     test('F is never demoted, even from a listed tag', () => {
       expect(levelForLogcat('F', 'libEGL')).toBe('fatal');
-      const libc = parseLogcatLine('08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182');
+      const libc = parseLogcatLine(
+        '08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182',
+      );
       assert(libc);
       expect(libc.level).toBe('fatal');
       expect(!NOISE_TAGS.has('libc')).toBeTruthy();

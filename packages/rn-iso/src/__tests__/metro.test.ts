@@ -111,7 +111,7 @@ test('resolveProjectMetro identifies our Metro and reports its group leader', as
 });
 
 test('killMetroTree signals the process group, not just the pid', () => {
-  const signalled: any[] = [];
+  const signalled: [number, string | number][] = [];
   const origKill = process.kill;
   process.kill = ((pid: number, sig: string | number) => {
     signalled.push([pid, sig]);
@@ -126,7 +126,7 @@ test('killMetroTree signals the process group, not just the pid', () => {
 });
 
 test('killMetroTree falls back to the bare pid when the group is gone', () => {
-  const signalled: any[] = [];
+  const signalled: [number, string | number][] = [];
   const origKill = process.kill;
   process.kill = ((pid: number, sig: string | number) => {
     if (pid < 0) throw new Error('ESRCH');
@@ -150,7 +150,7 @@ test('killMetroTree signals the bare pid when the leader is our own process grou
     runQuiet: (cmd: string) => (cmd.includes('ps -o pgid=') ? ' 4242\n' : ''),
     spawn: () => {},
   });
-  const signalled: any[] = [];
+  const signalled: [number, string | number][] = [];
   const origKill = process.kill;
   process.kill = ((pid: number, sig: string | number) => {
     signalled.push([pid, sig]);
@@ -170,7 +170,7 @@ test('killMetroTree signals the bare pid when the leader is our own process grou
 test('killMetroTree resolves its own process group with the real ps and spares it', () => {
   const ownPgid = processGroupLeader(process.pid);
   expect(Number.isFinite(ownPgid), 'ps must report a numeric pgid for this process').toBeTruthy();
-  const signalled: any[] = [];
+  const signalled: [number, string | number][] = [];
   const origKill = process.kill;
   process.kill = ((pid: number, sig: string | number) => {
     signalled.push([pid, sig]);
@@ -228,7 +228,7 @@ test.skipIf(!CAN_READ_CWD)(
       const timer = setTimeout(() => reject(new Error('the fake Metro never reported a port')), 10000);
       child.stdout!.on('data', (chunk: Buffer) => {
         buffered += chunk;
-        const line = buffered.split('\n')[0];
+        const line = buffered.split('\n')[0] ?? '';
         if (buffered.includes('\n')) {
           clearTimeout(timer);
           resolve(parseInt(line, 10));

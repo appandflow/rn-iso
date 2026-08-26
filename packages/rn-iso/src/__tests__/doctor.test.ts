@@ -16,6 +16,7 @@ import {
   checkConcurrency,
 } from '../doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import type { EasAuthResult } from '../engine/remote-cache.ts';
 import assert from 'node:assert';
 
 // Where the key lives moved when the setting was promoted out of experiments,
@@ -374,7 +375,7 @@ test('a project with no EAS provider is not asked about EAS at all', () => {
     auth: () => {
       asked = true;
     },
-  } as any);
+  } as unknown as Parameters<typeof checkEasAuth>[0]);
   expect(f).toBe(null);
   expect(asked).toBe(false);
 });
@@ -443,13 +444,13 @@ test('a good session is reported as nothing at all', () => {
 
 // The experiments key is where SDK 53 keeps it, and "eas" there is still EAS.
 test('the provider is recognised on either key', () => {
-  const auth = { failed: true, code: 'logged-out', remedy: 'Run `eas login`.' };
-  expect(checkEasAuth({ provider: 'eas', auth } as any)).toBeTruthy();
+  const auth: EasAuthResult = { failed: true, code: 'logged-out', remedy: 'Run `eas login`.' };
+  expect(checkEasAuth({ provider: 'eas', auth })).toBeTruthy();
 });
 
 test('runDoctor probes the session only for an EAS project, and passes it the owner', () => {
   const probes: { projectRoot: string; owner?: string | null }[] = [];
-  const auth = (args: { projectRoot: string; owner?: string | null }) => {
+  const auth = (args: { projectRoot: string; owner?: string | null }): EasAuthResult => {
     probes.push(args);
     return { ok: true, account: 'janic', accounts: ['janic'] };
   };
@@ -460,10 +461,10 @@ test('runDoctor probes the session only for an EAS project, and passes it the ow
     join(easProject, 'app.json'),
     JSON.stringify({ expo: { owner: 'th3rd-wave', buildCacheProvider: 'eas' } }),
   );
-  runDoctor(easProject, { easAuth: auth as any });
+  runDoctor(easProject, { easAuth: auth });
   expect(probes.length).toBe(1);
-  expect(probes[0].projectRoot).toBe(easProject);
-  expect(probes[0].owner).toBe('th3rd-wave');
+  expect(probes[0]?.projectRoot).toBe(easProject);
+  expect(probes[0]?.owner).toBe('th3rd-wave');
 
   const otherProject = mkdtempSync(join(tmpdir(), 'rn-iso-doctor-'));
   writeFileSync(join(otherProject, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
@@ -471,7 +472,7 @@ test('runDoctor probes the session only for an EAS project, and passes it the ow
     join(otherProject, 'app.json'),
     JSON.stringify({ expo: { buildCacheProvider: { plugin: '@rn-iso/expo-build-cache' } } }),
   );
-  runDoctor(otherProject, { easAuth: auth as any });
+  runDoctor(otherProject, { easAuth: auth });
   expect(probes.length).toBe(1);
 
   rmSync(easProject, { recursive: true, force: true });

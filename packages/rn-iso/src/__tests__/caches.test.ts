@@ -37,6 +37,7 @@ test('discoverCaches includes declared paths and expands a leading ~', () => {
     const found = discoverCaches({ declared: [dir, '/definitely/not/here'] });
     const declared = found.filter((c) => c.note.includes('caches` setting'));
     expect(declared.length).toBe(1);
+    assert(declared[0]);
     expect(declared[0].dir).toBe(dir);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -74,6 +75,8 @@ test('sizeCaches keeps a precounted size and measures the rest', () => {
       makeCacheDescriptor({ name: 'precounted', dir: '/nope', bytes: 42 }),
       makeCacheDescriptor({ name: 'walked', dir }),
     ]);
+    assert(sized[0]);
+    assert(sized[1]);
     expect(sized[0].bytes).toBe(42);
     const walkedBytes = sized[1].bytes;
     assert(walkedBytes !== undefined);
@@ -220,7 +223,9 @@ test('pruneCache trims only the listed files when a cache does not own its direc
   utimesSync(mine, longAgo, longAgo);
   utimesSync(notMine, longAgo, longAgo);
   try {
-    const r = pruneCache(makeCacheDescriptor({ dir: tmpdir(), files: [mine], prune: 'entries' }), { olderThanDays: 30 });
+    const r = pruneCache(makeCacheDescriptor({ dir: tmpdir(), files: [mine], prune: 'entries' }), {
+      olderThanDays: 30,
+    });
     expect(r.removed).toBe(1);
     expect(existsSync(mine)).toBe(false);
     expect(existsSync(notMine)).toBe(true);

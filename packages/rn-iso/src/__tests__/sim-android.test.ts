@@ -130,9 +130,11 @@ test('pickDefaultSystemImage ranks a 16KB-page image below a plain one, api or n
 
 test('pickDefaultSystemImage honors an explicit package and returns null on no match', () => {
   const images = [{ api: 36, tag: 'default', arch: 'arm64-v8a', pkg: 'system-images;android-36;default;arm64-v8a' }];
-  const honored = pickDefaultSystemImage(images, { systemImage: images[0].pkg });
+  const first = images[0];
+  assert(first);
+  const honored = pickDefaultSystemImage(images, { systemImage: first.pkg });
   assert(honored);
-  expect(honored.pkg).toBe(images[0].pkg);
+  expect(honored.pkg).toBe(first.pkg);
   expect(pickDefaultSystemImage([], {})).toBe(null);
   expect(pickDefaultSystemImage(images, { systemImage: 'system-images;android-99;x;y' })).toBe(null);
 });

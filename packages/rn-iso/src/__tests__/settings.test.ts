@@ -45,7 +45,10 @@ test('ignores null and undefined layers', () => {
 });
 
 test('an array value is replaced wholesale, not concatenated', () => {
-  const merged = mergeSettingsLayers([{ worktree: { install: ['a'] } }, { worktree: { install: ['b', 'c'] } }]) as SettingsView;
+  const merged = mergeSettingsLayers([
+    { worktree: { install: ['a'] } },
+    { worktree: { install: ['b', 'c'] } },
+  ]) as SettingsView;
   assert(merged.worktree);
   expect(merged.worktree.install).toEqual(['a']);
 });
