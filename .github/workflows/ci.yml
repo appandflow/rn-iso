@@ -15,7 +15,7 @@ on:
   pull_request:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-v2-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
