@@ -172,8 +172,11 @@ WHAT THE SUPERVISOR IS
 
   The supervisor's own stdio goes to .rn-iso/logs/supervisor.log, which is NOT
   part of the NDJSON timeline. It is what a supervisor that died before it
-  could write a structured record leaves behind, so it is the file to read when
-  \`start\` fails -- and \`start\` already prints its last lines for you.
+  could write a structured record leaves behind. In expo-child mode the child's
+  output is parsed into the TIMELINE instead, so a dev server that dies on a
+  config error leaves supervisor.log empty and its death cry in metro.ndjson.
+  A failed \`start\` quotes both for you: the supervisor.log tail when it has
+  one, and this attempt's error records from the timeline.
 
 STARTING YOUR OWN BUNDLER STILL WORKS
   A dev server YOU started is detected and left alone: \`start\` reports it
@@ -427,8 +430,11 @@ RN_ISO_METRO_TIMEOUT
 
 RN_ISO_SUPERVISOR_EXITED
   "The supervisor exited (<code|signal>) before the dev server came up"
-  The dev server failed outright, and the quoted supervisor.log tail is the
-  real error. Fix that and run \`start\` again; nothing is left running.
+  The dev server failed outright, and the quoted evidence is the real error:
+  the supervisor.log tail if it wrote one, plus this attempt's error records
+  from the timeline (an expo child's config error -- a PluginError, a bad app
+  config -- lands THERE, not in supervisor.log). \`rn-iso logs --errors\` has
+  the full records. Fix that and run \`start\` again; nothing is left running.
 
 RN_ISO_BAD_ARG / RN_ISO_NO_PROJECT
   \`start\` refused before doing anything: an unusable --wait value, or a
