@@ -162,6 +162,17 @@ describe('recordMatches', () => {
     expect(recordMatches(err, { errorsOnly: true, markerTs: 100 })).toBe(false);
     expect(recordMatches({ ...err, ts: 101 }, { errorsOnly: true, markerTs: 100 })).toBe(true);
   });
+
+  // The bundle cutoff is strict on purpose: a bundle marker can be a FAILED
+  // attempt's boundary, appended immediately before the attempt's own error
+  // records -- at the same millisecond when the failure is fast -- so a tie
+  // belongs to the window the marker opens, not the one it closes.
+  test('errorsOnly with a bundle marker keeps a metro error at the exact marker ts', () => {
+    const err = { ...rec, level: 'error' };
+    expect(recordMatches({ ...err, ts: 99 }, { errorsOnly: true, bundleMarkerTs: 100 })).toBe(false);
+    expect(recordMatches(err, { errorsOnly: true, bundleMarkerTs: 100 })).toBe(true);
+    expect(recordMatches({ ...err, ts: 101 }, { errorsOnly: true, bundleMarkerTs: 100 })).toBe(true);
+  });
 });
 
 describe('logFiles', () => {
@@ -307,12 +318,25 @@ describe('queryLogs', () => {
       expect(queryLogs({ dir, errorsOnly: true }).map((r) => r.msg)).toEqual(['error after build 2']);
     });
 
-    test('an error at the exact marker ts belongs to the previous window', () => {
-      writeLog('metro.ndjson', [
-        { ts: 5, src: 'metro', level: 'error', msg: 'same instant' },
-        { ts: 5, src: 'metro', level: 'info', msg: 'marker', marker: true },
-      ]);
+    // The tie rules differ by marker kind, on purpose. Nothing races the
+    // launch marker `ios`/`android` writes, so a record at its exact ts
+    // describes the run it closes off. A bundle marker can be a FAILED
+    // attempt's boundary, appended by the same producer to the same file
+    // immediately BEFORE the attempt's own errors, so a tie there belongs to
+    // the window the marker opens.
+    test('an error at the exact launch-marker ts belongs to the previous window', () => {
+      writeLog('client.ndjson', [{ ts: 5, src: 'client', level: 'error', msg: 'same instant' }]);
+      writeLog('build-ios.ndjson', [{ ts: 5, src: 'build', level: 'info', msg: 'launched', marker: true }]);
       expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
+    });
+
+    test('a metro error at the exact bundle-marker ts belongs to the window the marker opens', () => {
+      writeLog('metro.ndjson', [
+        { ts: 4, src: 'metro', level: 'error', msg: 'previous attempt' },
+        { ts: 5, src: 'metro', level: 'info', msg: 'bundle build failed (2)', marker: true },
+        { ts: 5, src: 'metro', level: 'error', msg: 'Unable to resolve "./nope"' },
+      ]);
+      expect(queryLogs({ dir, errorsOnly: true }).map((r) => r.msg)).toEqual(['Unable to resolve "./nope"']);
     });
 
     test('combines with --source and --since', () => {
@@ -420,6 +444,105 @@ describe('queryLogs', () => {
         },
       ]);
       expect(queryLogs({ dir, errorsOnly: true }).length).toBe(1);
+    });
+  });
+
+  // --- consecutive failed bundles (appandflow/rn-iso#13) --------------------
+  //
+  // The repro from the issue: break the bundle, reload, change the cause,
+  // reload again. Before failed attempts wrote markers, both failures were
+  // listed oldest first and errorsSinceMarker only grew; an agent reading
+  // top-down acted on the stale one. Each attempt's boundary marker now
+  // advances the window past the PREVIOUS attempt, and a success still
+  // advances it past everything metro.
+  describe('errorsOnly, consecutive failed bundles', () => {
+    test('bare mode: only the newest attempt is reported, and a success clears it', () => {
+      // Attempt 1, as the reporter writes it: boundary first, then the error.
+      writeLog('metro.ndjson', [
+        {
+          ts: 10,
+          src: 'metro',
+          level: 'info',
+          msg: 'bundle build failed (1)',
+          event: 'bundle_build_failed',
+          marker: true,
+        },
+        { ts: 11, src: 'metro', level: 'error', msg: 'Unable to resolve "some-pkg" from "App.tsx"' },
+      ]);
+      expect(queryLogs({ dir, errorsOnly: true }).map((r) => r.msg)).toEqual([
+        'Unable to resolve "some-pkg" from "App.tsx"',
+      ]);
+
+      // Attempt 2 fails differently: attempt 1 is superseded, not accumulated.
+      writeLog('metro.ndjson', [
+        {
+          ts: 20,
+          src: 'metro',
+          level: 'info',
+          msg: 'bundle build failed (2)',
+          event: 'bundle_build_failed',
+          marker: true,
+        },
+        { ts: 21, src: 'metro', level: 'error', msg: 'SyntaxError in App.tsx: Unexpected token' },
+      ]);
+      expect(queryLogs({ dir, errorsOnly: true }).map((r) => r.msg)).toEqual([
+        'SyntaxError in App.tsx: Unexpected token',
+      ]);
+
+      // Attempt 3 succeeds: the pass condition holds again.
+      writeLog('metro.ndjson', [
+        { ts: 30, src: 'metro', level: 'info', msg: 'bundle build done (3)', event: 'bundle_build_done', marker: true },
+      ]);
+      expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
+    });
+
+    test('expo-child mode: the "Bundling failed" line is its own boundary and stays visible', () => {
+      // As stored from Expo's stdout: the failed summary IS the marker, and
+      // the detail line follows it.
+      writeLog('metro.ndjson', [
+        {
+          ts: 10,
+          src: 'metro',
+          level: 'error',
+          raw: true,
+          msg: 'iOS Bundling failed 10178ms index.js (4309 modules)',
+          marker: true,
+        },
+        { ts: 11, src: 'metro', level: 'error', raw: true, msg: 'Unable to resolve "some-pkg" from "App.tsx"' },
+        {
+          ts: 20,
+          src: 'metro',
+          level: 'error',
+          raw: true,
+          msg: 'iOS Bundling failed 893ms index.js (4173 modules)',
+          marker: true,
+        },
+        { ts: 21, src: 'metro', level: 'error', raw: true, msg: 'ERROR  a different failure' },
+      ]);
+      expect(queryLogs({ dir, errorsOnly: true }).map((r) => r.msg)).toEqual([
+        'iOS Bundling failed 893ms index.js (4173 modules)',
+        'ERROR  a different failure',
+      ]);
+
+      writeLog('metro.ndjson', [
+        {
+          ts: 30,
+          src: 'metro',
+          level: 'info',
+          raw: true,
+          msg: 'iOS Bundled 812ms index.js (4310 modules)',
+          marker: true,
+        },
+      ]);
+      expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
+    });
+
+    // A failed bundle says nothing about the app: only metro errors are
+    // superseded by it. The previous run's redbox stays until a launch.
+    test('a failed-bundle marker does not retire a client error', () => {
+      writeLog('client.ndjson', [{ ts: 5, src: 'client', level: 'error', msg: 'redbox' }]);
+      writeLog('metro.ndjson', [{ ts: 10, src: 'metro', level: 'info', msg: 'bundle build failed (1)', marker: true }]);
+      expect(queryLogs({ dir, errorsOnly: true }).map((r) => r.msg)).toEqual(['redbox']);
     });
   });
 

@@ -65,18 +65,58 @@ test('hasUncommittedWork reflects git status output', () => {
   expect(hasUncommittedWork('/wt')).toBe(false);
 });
 
-test('unpushedCommits lists commits missing from every remote', () => {
+test('unpushedCommits lists commits missing from every remote and every other local branch', () => {
   setExecutor({
-    run: () => 'abc123 first\ndef456 second',
-    runQuiet: () => 'abc123 first\ndef456 second',
+    runQuiet: (cmd: string) => (/symbolic-ref/.test(cmd) ? 'worktree-ws' : 'abc123 first\ndef456 second'),
     spawn: () => {},
   });
   expect(unpushedCommits('/wt')).toEqual(['abc123 first', 'def456 second']);
 });
 
 test('unpushedCommits returns empty when git reports nothing', () => {
-  setExecutor({ run: () => '', runQuiet: () => '', spawn: () => {} });
+  setExecutor({ runQuiet: (cmd: string) => (/symbolic-ref/.test(cmd) ? 'worktree-ws' : ''), spawn: () => {} });
   expect(unpushedCommits('/wt')).toEqual([]);
+});
+
+// The protection set must carve out exactly one branch: the worktree's own,
+// whose tip IS HEAD -- protecting it would protect everything and turn the
+// check off. `--exclude` must precede the `--branches` it scopes, and
+// `--remotes` must sit outside its reach.
+test('unpushedCommits excludes only the worktree own branch from the local-branch protection', () => {
+  const calls: string[] = [];
+  setExecutor({
+    runQuiet: (cmd: string) => {
+      calls.push(cmd);
+      if (/symbolic-ref/.test(cmd)) return 'worktree-ws';
+      if (/ log /.test(cmd)) return 'abc123 own-work';
+      return null;
+    },
+    spawn: () => {},
+  });
+  expect(unpushedCommits('/wt')).toEqual(['abc123 own-work']);
+  const log = calls.find((c) => / log /.test(c));
+  expect(log).toContain('log --oneline HEAD --not --remotes --exclude="worktree-ws" --branches');
+});
+
+// Fail closed, twice over: a detached HEAD (symbolic-ref exits nonzero ->
+// null) and a branch name unsafe to interpolate both fall back to the
+// remotes-only count, which can only refuse MORE, never less.
+test('unpushedCommits falls back to the remotes-only count on a detached HEAD or an unsafe branch name', () => {
+  for (const branch of [null, 'evil"; touch PWNED; "']) {
+    const calls: string[] = [];
+    setExecutor({
+      runQuiet: (cmd: string) => {
+        calls.push(cmd);
+        if (/symbolic-ref/.test(cmd)) return branch;
+        if (/ log /.test(cmd)) return '';
+        return null;
+      },
+      spawn: () => {},
+    });
+    expect(unpushedCommits('/wt')).toEqual([]);
+    const log = calls.find((c) => / log /.test(c));
+    expect(log).toMatch(/--not --remotes$/);
+  }
 });
 
 // A mocked test cannot protect this: the naive command form (`git log
@@ -114,6 +154,52 @@ test('unpushedCommits against a real repo: empty right after push, reports a com
     assert(unpushed, 'unpushedCommits returned null');
     expect(unpushed.length).toBe(1);
     expect(unpushed[0]).toMatch(/local-only commit/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// Issue #8, against real git: a worktree cut from a LOCAL-ONLY base ref
+// inherits that ref's unpushed commits, but the base branch still reaches
+// them, so removing the worktree loses nothing -- the count must be 0. A
+// commit the worktree then ADDS is reachable from nowhere else and must
+// count. A mocked test cannot protect the `--exclude`/`--branches` composed
+// form (a misplaced --exclude is silently ignored by real git), so this
+// drives the real executor over a scratch repo, like the test above.
+test('unpushedCommits against a real repo: commits inherited from a local-only base ref do not count; a commit the worktree adds does', () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-inherited-'));
+  const repo = join(base, 'repo');
+  try {
+    const bareRemote = join(base, 'remote.git');
+    mkdirSync(bareRemote, { recursive: true });
+    execSync(`git init -q --bare "${bareRemote}"`);
+    mkdirSync(repo, { recursive: true });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    git('git init -q -b main');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    // A remote exists but has never seen any of these commits: the base
+    // branch's tip is local-only, exactly the shape the issue reproduced.
+    git(`git remote add origin "${bareRemote}"`);
+    writeFileSync(join(repo, 'README.md'), 'hello');
+    git('git add README.md');
+    git('git commit -q -m base-commit-X');
+    const wt = join(base, 'wt');
+    git(`git worktree add -q "${wt}" -b worktree-ws main`);
+
+    // The worktree added nothing: every commit it reaches, main reaches too.
+    expect(unpushedCommits(wt)).toEqual([]);
+
+    // A commit made IN the worktree is on no remote and no other local
+    // branch tip -- the one class removal could actually strand.
+    writeFileSync(join(wt, 'work.txt'), 'work');
+    execSync('git add work.txt', { cwd: wt });
+    execSync('git commit -q -m "worktree-only commit"', { cwd: wt });
+    const unpushed = unpushedCommits(wt);
+    assert(unpushed, 'unpushedCommits returned null');
+    expect(unpushed.length).toBe(1);
+    expect(unpushed[0]).toMatch(/worktree-only commit/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

@@ -291,11 +291,22 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
       if (type === 'bundling_error' || type === 'transformer_error') {
         record.level = 'error';
         record.msg = errorMessage(event.error);
-      } else if (type === 'bundle_build_done') {
+      } else if (type === 'bundle_build_done' || type === 'bundle_build_failed') {
+        const what = type === 'bundle_build_done' ? 'bundle build done' : 'bundle build failed';
         record.level = 'info';
-        record.msg = event.buildID ? `bundle build done (${event.buildID})` : 'bundle build done';
-        // The marker resets the window `rn-iso logs --errors` reports over: a
-        // successful build is the point past which older errors are history.
+        record.msg = event.buildID ? `${what} (${event.buildID})` : what;
+        // The marker resets the window `rn-iso logs --errors` reports over,
+        // and BOTH ends of a bundle attempt carry one: a successful build is
+        // the point past which older metro errors are history, and a FAILED
+        // build has to advance the window too, or back-to-back failures pile
+        // up and the oldest -- least relevant -- one is listed first
+        // (appandflow/rn-iso#13). Marking the failure boundary cannot hide
+        // the failure's own errors: Metro reports bundle_build_failed BEFORE
+        // the bundling_error that carries the message (the same synchronous
+        // catch block in metro's Server), this reporter appends records in
+        // call order, and logs-query's bundle cutoff is strict (<), so an
+        // error stamped at the marker's own millisecond still lands inside
+        // the window the marker opens.
         record.marker = true;
       } else if (type === 'unstable_server_log') {
         record.level = ndjsonLevel(event.level, 'info');

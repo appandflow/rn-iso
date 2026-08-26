@@ -494,8 +494,25 @@ export function isPodInstallChurn(paths: string[] | null | undefined): boolean {
   return paths.every((line) => /(?:^|\/)(?:Podfile\.lock|project\.pbxproj)$/.test(line.slice(3).trim()));
 }
 
-// Commits reachable from HEAD but from no remote ref. Removing the worktree
-// would destroy these.
+// A branch name this code is willing to interpolate into a shell command as
+// an --exclude pattern. Also excludes git's own glob characters (`*?[`,
+// forbidden in refnames anyway), so the name only ever matches itself.
+const SAFE_BRANCH_NAME = /^[A-Za-z0-9._/-]+$/;
+
+// Commits removing the worktree would actually orphan: reachable from HEAD
+// but from no remote ref AND from no OTHER local branch tip. The worktree's
+// own branch is excluded from the protection set -- its tip IS HEAD, so
+// counting it would protect everything and turn the check off.
+//
+// `--not --remotes` alone over-counted: a worktree cut from a local-only
+// base ref INHERITED that ref's unpushed commits, and removal refused even
+// though the worktree added nothing -- the base branch still reaches every
+// one of those commits, so nothing was at risk, and the refusal's remedy
+// ("push the branch") would have published someone else's local commits as a
+// side effect of deleting a scratch directory (issue #8). Protecting
+// everything any other local branch reaches makes the count "commits only
+// this worktree's branch has", which is the set the branch left behind by
+// `git worktree remove` is the last holder of.
 //
 // HEAD must be passed explicitly: once any revision argument (including a
 // negated one like --not --remotes) is present, `git log` no longer falls
@@ -503,11 +520,23 @@ export function isPodInstallChurn(paths: string[] | null | undefined): boolean {
 // returns nothing even when there are unpushed commits. Verified against a
 // real repo (see task-8-report.md).
 //
+// The worktree's branch comes from `symbolic-ref --quiet --short`, which
+// exits nonzero on a detached HEAD. That null -- and a branch name outside
+// SAFE_BRANCH_NAME, which is not interpolated into a shell command -- falls
+// back to the remotes-only count: the fail-closed direction, it can only
+// refuse MORE, never less. `--exclude` scopes only the `--branches` that
+// follows it (never the `--remotes` before it), and its pattern is matched
+// without the `refs/heads/` prefix, which is exactly what --short printed.
+//
 // Returns null (indeterminate), not [], when `runQuiet` could not get an
 // answer from git -- see hasUncommittedWork above for why that distinction
 // matters here.
 export function unpushedCommits(dir: string): string[] | null {
-  const out = getExecutor().runQuiet(`git -C "${dir}" log --oneline HEAD --not --remotes`);
+  const exec = getExecutor();
+  const branch = exec.runQuiet(`git -C "${dir}" symbolic-ref --quiet --short HEAD`);
+  const own = branch === null ? '' : branch.trim();
+  const protection = own && SAFE_BRANCH_NAME.test(own) ? `--remotes --exclude="${own}" --branches` : '--remotes';
+  const out = exec.runQuiet(`git -C "${dir}" log --oneline HEAD --not ${protection}`);
   if (out === null) return null;
   return out
     .split('\n')
@@ -516,10 +545,10 @@ export function unpushedCommits(dir: string): string[] | null {
 }
 
 // Whether the repo at `dir` has any remote configured at all. Used to make
-// the "not on any remote" removal blocker read sensibly: a repo with no
-// remote makes unpushedCommits() return every commit reachable from HEAD,
-// which is the safe direction (refuse), but the count alone can look like a
-// bug rather than an unconfigured remote.
+// the "not on any remote" removal blocker read sensibly: with no remote,
+// unpushedCommits() counts every commit reachable from HEAD that no other
+// local branch reaches, which is the safe direction (refuse), but the count
+// alone can look like a bug rather than an unconfigured remote.
 export function hasRemote(dir: string): boolean {
   const out = getExecutor().runQuiet(`git -C "${dir}" remote`);
   return Boolean(out && out.trim().length > 0);

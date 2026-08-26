@@ -155,6 +155,46 @@ describe('createNdjsonWriter', () => {
     expect(msgs).toEqual(['first', 'second']);
   });
 
+  // The build transcript's mode: a per-run file whose first error belongs to
+  // THIS run. The multi-writer logs never pass truncate, which the append
+  // test above pins.
+  test('truncate: true starts the file over instead of appending to the previous run', () => {
+    const file = join(dir, 'build-ios.ndjson');
+    const a = createNdjsonWriter(file, { truncate: true });
+    a.write({ src: 'build', level: 'error', msg: 'stale failure from an earlier run' });
+    a.close();
+    const b = createNdjsonWriter(file, { truncate: true });
+    b.write({ src: 'build', level: 'info', msg: 'fresh run' });
+    b.close();
+    const msgs = parseNdjsonText(readFileSync(file, 'utf-8')).map((r) => r.msg);
+    expect(msgs).toEqual(['fresh run']);
+  });
+
+  test('a truncating writer truncates only on open, never between its own writes', () => {
+    const file = join(dir, 'build-ios.ndjson');
+    const w = createNdjsonWriter(file, { truncate: true });
+    w.write({ src: 'build', level: 'info', msg: 'one' });
+    w.write({ src: 'build', level: 'info', msg: 'two' });
+    w.close();
+    const msgs = parseNdjsonText(readFileSync(file, 'utf-8')).map((r) => r.msg);
+    expect(msgs).toEqual(['one', 'two']);
+  });
+
+  // Truncation rides the lazy open, not writer creation: `ios` creates the
+  // writer before the Metro gate, and a run refused there must leave the
+  // previous run's transcript intact rather than an empty file.
+  test('truncation happens on the first write, not at writer creation', () => {
+    const file = join(dir, 'build-ios.ndjson');
+    const a = createNdjsonWriter(file);
+    a.write({ src: 'build', level: 'info', msg: 'previous run' });
+    a.close();
+    const w = createNdjsonWriter(file, { truncate: true });
+    expect(parseNdjsonText(readFileSync(file, 'utf-8')).map((r) => r.msg)).toEqual(['previous run']);
+    w.write({ src: 'build', level: 'info', msg: 'new run' });
+    w.close();
+    expect(parseNdjsonText(readFileSync(file, 'utf-8')).map((r) => r.msg)).toEqual(['new run']);
+  });
+
   test('counts writes and reports them from close()', () => {
     const w = createNdjsonWriter(join(dir, 'metro.ndjson'));
     w.write({ src: 'metro', level: 'info', msg: 'a' });

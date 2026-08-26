@@ -121,6 +121,23 @@ describe('line parsing', () => {
     expect(isBundleMarker('Starting Metro Bundler')).toBe(false);
   });
 
+  // A FAILED bundle is an attempt boundary too (appandflow/rn-iso#13): its
+  // marker is what stops back-to-back failures from accumulating in
+  // `logs --errors`. The failed line is BOTH error and marker -- Expo prints
+  // it before the detail lines, and logs-query's strict (<) bundle cutoff
+  // keeps the line itself and its details reported.
+  test('the "Bundling failed" line is a marker AND an error', () => {
+    const line = 'iOS Bundling failed 893ms index.js (4173 modules)';
+    expect(isBundleMarker(line)).toBe(true);
+    expect(isBundleMarker('Android Bundling failed 91ms')).toBe(true);
+    // In-flight progress is not a boundary: the attempt has not finished.
+    expect(isBundleMarker('iOS Bundling index.js')).toBe(false);
+    const record = recordFromLine(line);
+    assert(record);
+    expect(record.level).toBe('error');
+    expect(record.marker).toBe(true);
+  });
+
   test('recordFromLine produces a Contract-1 record flagged as inferred', () => {
     const record = recordFromLine(`${ESC}[31mERROR  boom${ESC}[39m`, { stream: 'stderr' });
     assert(record);

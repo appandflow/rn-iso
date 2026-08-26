@@ -41,6 +41,8 @@ import {
   pickXcodeProject,
   productsDir,
   readBundleId,
+  formatHeartbeatElapsed,
+  heartbeatLine,
   resolveScheme,
   tailLines,
   xcodebuildArgs,
@@ -516,6 +518,27 @@ describe('reading the bundle id', () => {
   });
 });
 
+describe('the heartbeat line', () => {
+  test('formats elapsed time the way the completion line does', () => {
+    expect(formatHeartbeatElapsed(0)).toBe('0s');
+    expect(formatHeartbeatElapsed(42_000)).toBe('42s');
+    expect(formatHeartbeatElapsed(319_000)).toBe('5m19s');
+    expect(formatHeartbeatElapsed(605_000)).toBe('10m05s');
+  });
+
+  test('carries the activity hint, truncated to one readable line', () => {
+    expect(heartbeatLine(30_000, 'CompileC App.o')).toBe('build       still running (30s): CompileC App.o');
+    const long = 'x'.repeat(200);
+    const line = heartbeatLine(30_000, long);
+    expect(line.endsWith('...')).toBe(true);
+    expect(line.length).toBeLessThan(120);
+  });
+
+  test('omits the hint before the child has printed anything', () => {
+    expect(heartbeatLine(30_000, '')).toBe('build       still running (30s)');
+  });
+});
+
 describe('tailLines', () => {
   test('returns the last non-empty lines, which is the caller fallback when extraction finds nothing', () => {
     expect(tailLines(['a', '', 'b', '   ', 'c', 'd', 'e', 'f'], 3)).toEqual(['d', 'e', 'f']);
@@ -818,6 +841,54 @@ describe('buildIos with a mocked executor', () => {
     const result = asResult(await promise);
     expect(result.failed).toBe(true);
     expect(result.diagnostics[0]?.message).toMatch(/No readable CFBundleIdentifier/);
+  });
+
+  // The heartbeat: one stderr line per interval while the child runs, so a
+  // five-minute build is never indistinguishable from a wedged one.
+  test('a slow build emits heartbeats carrying the latest transcript line, and stops when the child closes', async () => {
+    const child = fakeChild();
+    harness(tmp, { child });
+    const beats: string[] = [];
+    const dd = join(tmp, 'dd');
+    const promise = buildIos({
+      root: tmp,
+      udid: 'u',
+      logWriter: recordingWriter(),
+      derivedDataPath: dd,
+      heartbeatMs: 10,
+      onHeartbeat: (line) => beats.push(line),
+    });
+    child.stdout.emit('data', 'CompileC main.o\n');
+    await new Promise((r) => setTimeout(r, 80));
+    expect(beats.length).toBeGreaterThanOrEqual(1);
+    // The phase-line shape: label column, elapsed, the sampled activity.
+    expect(beats[0]).toMatch(/^build {6} still running \(\d+s\): CompileC main\.o$/);
+    makeProduct(dd);
+    child.emit('close', 0, null);
+    await promise;
+    const settled = beats.length;
+    await new Promise((r) => setTimeout(r, 40));
+    expect(beats.length).toBe(settled);
+  });
+
+  test('heartbeatMs: 0 disables the heartbeat entirely', async () => {
+    const child = fakeChild();
+    harness(tmp, { child });
+    const beats: string[] = [];
+    const dd = join(tmp, 'dd');
+    const promise = buildIos({
+      root: tmp,
+      udid: 'u',
+      logWriter: recordingWriter(),
+      derivedDataPath: dd,
+      heartbeatMs: 0,
+      onHeartbeat: (line) => beats.push(line),
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    makeProduct(dd);
+    child.emit('close', 0, null);
+    await promise;
+    expect(beats).toEqual([]);
   });
 
   test('programmer errors throw, because they are bugs in the caller and not build outcomes', async () => {

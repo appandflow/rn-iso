@@ -99,6 +99,31 @@ test('bundle_build_done is the marker that resets the --errors window', () => {
   });
 });
 
+// A FAILED build is an attempt boundary too: without a marker here,
+// back-to-back failures accumulate in `logs --errors` and the stale one is
+// listed first (appandflow/rn-iso#13). The events are fed in the exact order
+// metro's Server reports them -- bundle_build_failed, then the bundling_error
+// carrying the message -- so the marker precedes the attempt's own errors in
+// the file, which is what logs-query's strict (<) bundle cutoff relies on.
+test('bundle_build_failed is a marker too, written before the bundling_error it precedes', () => {
+  withDir((dir) => {
+    const reporter = ndjsonReporter({ dir });
+    reporter.update({ type: 'bundle_build_failed', buildID: 'build_2' });
+    reporter.update({ type: 'bundling_error', error: new Error('Unable to resolve module ./nope') });
+
+    const lines = records(dir, 'metro.ndjson');
+    expect(lines.length).toBe(2);
+    const [marker, error] = lines;
+    expect(marker.marker).toBe(true);
+    expect(marker.level).toBe('info');
+    expect(marker.event).toBe('bundle_build_failed');
+    expect(marker.msg).toBe('bundle build failed (build_2)');
+    expect(error.level).toBe('error');
+    expect(error.marker).toBe(undefined);
+    expect(error.ts >= marker.ts).toBeTruthy();
+  });
+});
+
 test('unstable_server_log carries its own level', () => {
   withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
