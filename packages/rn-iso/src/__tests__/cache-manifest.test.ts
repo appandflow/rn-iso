@@ -54,7 +54,7 @@ test('registeredCaches hides a directory that is gone but keeps it on file', () 
   register({ dir: cacheDir, name: 'real' });
   register({ dir: join(tmpdir(), 'rn-iso-never-existed'), name: 'ghost' });
   const live = registeredCaches();
-  expect(live.map(c => c.name)).toEqual(['real']);
+  expect(live.map((c) => c.name)).toEqual(['real']);
   expect(readManifest().caches.length).toBe(2);
 });
 
@@ -103,7 +103,7 @@ test('a registration replaces the manifest atomically and leaves no temp file', 
   register({ dir: join(tmpdir(), 'rn-iso-second'), name: 'second' });
   unregister(cacheDir);
 
-  const leftovers = readdirSync(dirname(manifestPath())).filter(n => n.includes('tmp'));
+  const leftovers = readdirSync(dirname(manifestPath())).filter((n) => n.includes('tmp'));
   expect(leftovers).toEqual([]);
-  expect(readManifest().caches.map(c => c.name)).toEqual(['second']);
+  expect(readManifest().caches.map((c) => c.name)).toEqual(['second']);
 });

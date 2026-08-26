@@ -52,7 +52,12 @@ function compilationCache(): CacheDescriptor | null {
   // An LLVM CAS: `v4.actions` indexes the `v9.*.leaf` data files. Removing
   // leaves individually would leave the index pointing at data that is gone,
   // so this one can only be emptied wholesale.
-  return { name: 'Xcode compilation cache', dir, prune: 'atomic', note: 'index-backed, so it can only be emptied whole' };
+  return {
+    name: 'Xcode compilation cache',
+    dir,
+    prune: 'atomic',
+    note: 'index-backed, so it can only be emptied whole',
+  };
 }
 
 // Metro's file map: one per project root, in the system temp dir. Individually
@@ -63,7 +68,7 @@ function metroFileMaps(): CacheDescriptor | null {
   if (!existsSync(root)) return null;
   let names;
   try {
-    names = readdirSync(root).filter(n => n.startsWith('metro-file-map-'));
+    names = readdirSync(root).filter((n) => n.startsWith('metro-file-map-'));
   } catch {
     return null;
   }
@@ -79,7 +84,7 @@ function metroFileMaps(): CacheDescriptor | null {
   return {
     name: 'Metro file maps',
     dir: root,
-    files: names.map(n => join(root, n)),
+    files: names.map((n) => join(root, n)),
     bytes,
     prune: 'entries',
     note: `${names.length} file(s), one per project root Metro has served`,
@@ -90,16 +95,18 @@ function metroFileMaps(): CacheDescriptor | null {
 // provider's artifact directory, a relocated CAS. rn-iso cannot detect these --
 // they are chosen by a project's own config -- so they are declared.
 function declaredCaches(paths: string[]): CacheDescriptor[] {
-  return (paths || [])
-    // resolve() as well as expanding ~: the manifest stores resolved paths, and
-    // a declared path written as `~/x/../x` or as a relative path would
-    // otherwise fail to match the registration of the same directory and be
-    // reported twice.
-    .map(p => resolve(p.startsWith('~') ? join(homedir(), p.slice(1)) : p))
-    .filter(p => existsSync(p))
-    // Declared caches -- a Metro FileStore, an Expo build-cache directory -- are
-    // flat collections of independent entries, so old ones can go individually.
-    .map((dir): CacheDescriptor => ({ name: 'declared', dir, prune: 'entries', note: 'from the `caches` setting' }));
+  return (
+    (paths || [])
+      // resolve() as well as expanding ~: the manifest stores resolved paths, and
+      // a declared path written as `~/x/../x` or as a relative path would
+      // otherwise fail to match the registration of the same directory and be
+      // reported twice.
+      .map((p) => resolve(p.startsWith('~') ? join(homedir(), p.slice(1)) : p))
+      .filter((p) => existsSync(p))
+      // Declared caches -- a Metro FileStore, an Expo build-cache directory -- are
+      // flat collections of independent entries, so old ones can go individually.
+      .map((dir): CacheDescriptor => ({ name: 'declared', dir, prune: 'entries', note: 'from the `caches` setting' }))
+  );
 }
 
 // The `caches` setting is per project, so it only has an answer when the
@@ -130,17 +137,21 @@ export function discoverCaches({ declared = [] }: { declared?: string[] } = {}):
   // registeredCaches() widens `prune` to `string` (an untyped object literal in
   // cache-manifest.js), so the cast here just recovers the union its own
   // runtime values are always drawn from ('atomic' or 'entries').
-  const registered: CacheDescriptor[] = registeredCaches().map((c): CacheDescriptor => ({ ...c, prune: c.prune as 'atomic' | 'entries', source: 'registered' }));
-  const seen = new Set(registered.map(c => c.dir));
+  const registered: CacheDescriptor[] = registeredCaches().map((c): CacheDescriptor => ({
+    ...c,
+    prune: c.prune as 'atomic' | 'entries',
+    source: 'registered',
+  }));
+  const seen = new Set(registered.map((c) => c.dir));
   const detected = [compilationCache(), metroFileMaps(), ...declaredCaches(declared)]
     .filter((c): c is CacheDescriptor => Boolean(c))
-    .filter(c => !seen.has(c.dir))
+    .filter((c) => !seen.has(c.dir))
     .map((c): CacheDescriptor => ({ ...c, source: 'detected' }));
   return [...registered, ...detected];
 }
 
 export function sizeCaches(caches: CacheDescriptor[]): CacheDescriptor[] {
-  return caches.map(c => ({
+  return caches.map((c) => ({
     ...c,
     bytes: c.bytes ?? directorySize(c.dir),
   }));

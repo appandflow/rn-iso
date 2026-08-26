@@ -36,7 +36,14 @@ import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../paths.ts';
 import { createLineReader } from '../supervisor/server-expo.ts';
 import { appNameFromBundleId, parseLogStreamLine, startIosLogStream } from './ios.ts';
-import { type PidResolution, type PidWatcher, parseLogcatLine, startAndroidLogcat, waitForAppPid, watchAppPid } from './android.ts';
+import {
+  type PidResolution,
+  type PidWatcher,
+  parseLogcatLine,
+  startAndroidLogcat,
+  waitForAppPid,
+  watchAppPid,
+} from './android.ts';
 
 export const PLATFORMS = ['ios', 'android'];
 
@@ -65,13 +72,34 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
   let packageName: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--platform') { platform = argv[++i]; continue; }
-    if (arg === '--root') { root = argv[++i]; continue; }
-    if (arg === '--udid') { udid = argv[++i]; continue; }
-    if (arg === '--bundle') { bundleId = argv[++i]; continue; }
-    if (arg === '--app-name') { appName = argv[++i]; continue; }
-    if (arg === '--serial') { serial = argv[++i]; continue; }
-    if (arg === '--package') { packageName = argv[++i]; continue; }
+    if (arg === '--platform') {
+      platform = argv[++i];
+      continue;
+    }
+    if (arg === '--root') {
+      root = argv[++i];
+      continue;
+    }
+    if (arg === '--udid') {
+      udid = argv[++i];
+      continue;
+    }
+    if (arg === '--bundle') {
+      bundleId = argv[++i];
+      continue;
+    }
+    if (arg === '--app-name') {
+      appName = argv[++i];
+      continue;
+    }
+    if (arg === '--serial') {
+      serial = argv[++i];
+      continue;
+    }
+    if (arg === '--package') {
+      packageName = argv[++i];
+      continue;
+    }
     return { error: `Unknown collector argument "${arg}".` };
   }
   if (!platform || !PLATFORMS.includes(platform)) {
@@ -113,8 +141,18 @@ export interface RunCollectorOptions {
   bundleId?: string | null;
   serial?: string | null;
   packageName?: string | null;
-  startStream?: ((opts: { platform: string; udid?: string | null; appName?: string | null; serial?: string | null; pid?: number | null }) => ChildProcess) | null;
-  resolvePid?: ((opts: { serial?: string | null; packageName?: string | null; timeoutMs: number }) => Promise<PidResolution>) | null;
+  startStream?:
+    | ((opts: {
+        platform: string;
+        udid?: string | null;
+        appName?: string | null;
+        serial?: string | null;
+        pid?: number | null;
+      }) => ChildProcess)
+    | null;
+  resolvePid?:
+    | ((opts: { serial?: string | null; packageName?: string | null; timeoutMs: number }) => Promise<PidResolution>)
+    | null;
   pidTimeoutMs?: number;
   pidOf?: ((serial: string, packageName: string, opts: { exec?: Executor | null }) => number | null) | null;
   pidWatchMs?: number | null;
@@ -180,7 +218,11 @@ export async function runCollector({
     // long after its last record.
     watcher?.stop();
     writer.write({ src: 'device', level, event, msg });
-    try { unregisterCollector(root, platform); } catch { /* best effort at exit */ }
+    try {
+      unregisterCollector(root, platform);
+    } catch {
+      /* best effort at exit */
+    }
     const closed = writer.close();
     if (closed.dropped > 0) {
       stderr(`rn-iso collector: dropped ${closed.dropped} record(s); last error: ${describe(closed.lastError)}`);
@@ -222,9 +264,10 @@ export async function runCollector({
     src: 'device',
     level: 'info',
     event: 'collector_started',
-    msg: platform === 'ios'
-      ? `device log collector pid ${process.pid} streaming ${appName} on ${udid}`
-      : `device log collector pid ${process.pid} streaming ${packageName} (pid ${pid}) on ${serial}`,
+    msg:
+      platform === 'ios'
+        ? `device log collector pid ${process.pid} streaming ${appName} on ${udid}`
+        : `device log collector pid ${process.pid} streaming ${packageName} (pid ${pid}) on ${serial}`,
   });
 
   const parse = platform === 'ios' ? parseLogStreamLine : parseLogcatLine;
@@ -239,9 +282,9 @@ export async function runCollector({
   const attach = (streamPid: number | null): ChildProcess => {
     const spawned = startStream
       ? startStream({ platform, udid, appName, serial, pid: streamPid })
-      : (platform === 'ios'
+      : platform === 'ios'
         ? startIosLogStream({ udid: udid as string, appName: appName as string })
-        : startAndroidLogcat({ serial: serial as string, pid: streamPid as number }));
+        : startAndroidLogcat({ serial: serial as string, pid: streamPid as number });
     const outReader = createLineReader(onLine);
     // stderr of the stream tool is not app output: `log stream` writes its
     // filter banner and simctl's getpwuid warning there, and adb writes
@@ -251,7 +294,10 @@ export async function runCollector({
       const text = String(line).trimEnd();
       if (text.trim()) writer.write({ src: 'device', level: 'debug', raw: true, event: 'collector_stderr', msg: text });
     });
-    flushReaders = () => { outReader.flush(); errReader.flush(); };
+    flushReaders = () => {
+      outReader.flush();
+      errReader.flush();
+    };
     spawned.stdout?.setEncoding?.('utf-8');
     spawned.stderr?.setEncoding?.('utf-8');
     spawned.stdout?.on('data', (chunk) => outReader.push(chunk));
@@ -306,7 +352,12 @@ export async function runCollector({
     try {
       child = attach(nextPid);
     } catch (err) {
-      finish(1, 'error', `device log collector could not reattach to pid ${nextPid}: ${describe(err)}`, 'collector_failed');
+      finish(
+        1,
+        'error',
+        `device log collector could not reattach to pid ${nextPid}: ${describe(err)}`,
+        'collector_failed',
+      );
     }
   };
 
@@ -339,7 +390,9 @@ function killChild(child: ChildProcess | null): void {
   try {
     if (child?.pid) process.kill(child.pid, 'SIGTERM');
     else child?.kill?.('SIGTERM');
-  } catch { /* already gone */ }
+  } catch {
+    /* already gone */
+  }
 }
 
 function describe(err: unknown): string {

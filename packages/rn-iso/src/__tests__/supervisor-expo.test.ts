@@ -106,7 +106,9 @@ describe('line parsing', () => {
   // BOTH halves must match in the SAME record, or the demotion starts hiding
   // real navigation bugs -- which is the only thing this rule could break.
   test('the demotion needs both halves, so real navigation bugs still surface', () => {
-    expect(inferLevel(`ERROR  The action 'NAVIGATE' with payload {"name":"Settings"} was not handled by any navigator.`)).toBe('error');
+    expect(
+      inferLevel(`ERROR  The action 'NAVIGATE' with payload {"name":"Settings"} was not handled by any navigator.`),
+    ).toBe('error');
     expect(inferLevel('ERROR  expo-development-client failed to load the bundle')).toBe('error');
     expect(inferLevel(`ERROR  The action 'GO_BACK' was not handled by any navigator.`)).toBe('error');
   });
@@ -160,7 +162,7 @@ describe('startExpoServer', () => {
   test('a project with no resolvable expo fails with a named code and a remedy', async () => {
     const err = await startExpoServer({ root, port: 8110, logsDir: join(root, 'logs') }).then(
       () => null,
-      (e) => e
+      (e) => e,
     );
     expect(err.code).toBe('RN_ISO_EXPO_BIN');
     expect(err.message).toMatch(/not resolvable/);
@@ -174,8 +176,13 @@ describe('startExpoServer', () => {
     fakeBin();
     let call = null;
     await startExpoServer({
-      root, port: 8111, logsDir: join(root, 'logs'),
-      spawnFn: (cmd, args, opts) => { call = { cmd, args, opts }; return fakeChild(); },
+      root,
+      port: 8111,
+      logsDir: join(root, 'logs'),
+      spawnFn: (cmd, args, opts) => {
+        call = { cmd, args, opts };
+        return fakeChild();
+      },
     });
     expect(call.cmd).toBe(expoBinPath(root));
     expect(call.args).toEqual(['start', '--port', '8111']);
@@ -191,7 +198,9 @@ describe('startExpoServer', () => {
     const child = fakeChild();
     const logsDir = join(root, '.rn-iso', 'logs');
     const handle = await startExpoServer({
-      root, port: 8112, logsDir,
+      root,
+      port: 8112,
+      logsDir,
       spawnFn: () => child,
     });
     child.stdout.emit('data', 'Starting project at /app\niOS Bundled 812ms index.js (1150 modules)\n');
@@ -249,10 +258,19 @@ describe('startExpoServer', () => {
   test('close signals the child PID, not the process group it shares with us', async () => {
     fakeBin();
     const child = fakeChild(4242);
-    const handle = await startExpoServer({ root, port: 8116, logsDir: join(root, 'logs'), spawnFn: () => child, killTimeoutMs: 50 });
+    const handle = await startExpoServer({
+      root,
+      port: 8116,
+      logsDir: join(root, 'logs'),
+      spawnFn: () => child,
+      killTimeoutMs: 50,
+    });
     const signals = [];
     const realKill = process.kill;
-    process.kill = (pid, sig) => { signals.push([pid, sig]); if (sig === 'SIGTERM') child.emit('exit', 0, 'SIGTERM'); };
+    process.kill = (pid, sig) => {
+      signals.push([pid, sig]);
+      if (sig === 'SIGTERM') child.emit('exit', 0, 'SIGTERM');
+    };
     try {
       await handle.close();
     } finally {
@@ -266,16 +284,28 @@ describe('startExpoServer', () => {
   test('a child that ignores SIGTERM is escalated to SIGKILL rather than left holding the port', async () => {
     fakeBin();
     const child = fakeChild(4243);
-    const handle = await startExpoServer({ root, port: 8117, logsDir: join(root, 'logs'), spawnFn: () => child, killTimeoutMs: 20 });
+    const handle = await startExpoServer({
+      root,
+      port: 8117,
+      logsDir: join(root, 'logs'),
+      spawnFn: () => child,
+      killTimeoutMs: 20,
+    });
     const signals = [];
     const realKill = process.kill;
-    process.kill = (pid, sig) => { signals.push([pid, sig]); if (sig === 'SIGKILL') child.emit('exit', null, 'SIGKILL'); };
+    process.kill = (pid, sig) => {
+      signals.push([pid, sig]);
+      if (sig === 'SIGKILL') child.emit('exit', null, 'SIGKILL');
+    };
     try {
       await handle.close();
     } finally {
       process.kill = realKill;
     }
-    expect(signals).toEqual([[4243, 'SIGTERM'], [4243, 'SIGKILL']]);
+    expect(signals).toEqual([
+      [4243, 'SIGTERM'],
+      [4243, 'SIGKILL'],
+    ]);
   });
 
   test('closing an already dead child signals nothing', async () => {
@@ -285,7 +315,9 @@ describe('startExpoServer', () => {
     child.emit('exit', 0, null);
     const realKill = process.kill;
     let called = 0;
-    process.kill = () => { called += 1; };
+    process.kill = () => {
+      called += 1;
+    };
     try {
       await handle.close();
     } finally {

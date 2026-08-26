@@ -29,12 +29,7 @@ import { clearSupervisor, getProject, upsertProject } from '../config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../config.ts';
 import { findProjectRoot } from '../project.ts';
 import { supervisorPidFile, workspaceStateFile } from '../paths.ts';
-import {
-  findPidListeningOnPort,
-  isPidAlive,
-  killMetroTree,
-  resolveProjectMetro,
-} from '../metro.ts';
+import { findPidListeningOnPort, isPidAlive, killMetroTree, resolveProjectMetro } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 import { getExecutor } from '../exec.ts';
@@ -285,11 +280,15 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 // listen for.
 export async function waitForExit(
   pid: number,
-  { timeoutMs = DEFAULT_WAIT_MS, intervalMs = POLL_MS, isAlive = isPidAlive }: {
+  {
+    timeoutMs = DEFAULT_WAIT_MS,
+    intervalMs = POLL_MS,
+    isAlive = isPidAlive,
+  }: {
     timeoutMs?: number;
     intervalMs?: number;
     isAlive?: (pid: number) => boolean;
-  } = {}
+  } = {},
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -429,7 +428,11 @@ export async function runStop({
   if (target.status === 'none') {
     report(chalk.dim('supervisor: none recorded'));
   } else if (target.status === 'stale') {
-    outcomes.supervisor = { status: 'already-stopped', pid: target.pid, reason: `recorded pid ${target.pid} is not running` };
+    outcomes.supervisor = {
+      status: 'already-stopped',
+      pid: target.pid,
+      reason: `recorded pid ${target.pid} is not running`,
+    };
     report(chalk.dim(`supervisor: pid ${target.pid} is already gone (stale record)`));
   } else if (target.status === 'unverified') {
     outcomes.supervisor = { status: 'unverified', pid: target.pid, reason: target.reason };
@@ -457,10 +460,11 @@ export async function runStop({
   // hosts the dev server, so with one running (or refusing to die) the port is
   // accounted for, and racing a second killer at it can only take out the wrong
   // process.
-  const supervisorHandled = outcomes.supervisor.status === 'stopped'
-    || outcomes.supervisor.status === 'timeout'
-    || outcomes.supervisor.status === 'unverified'
-    || outcomes.supervisor.status === 'failed';
+  const supervisorHandled =
+    outcomes.supervisor.status === 'stopped' ||
+    outcomes.supervisor.status === 'timeout' ||
+    outcomes.supervisor.status === 'unverified' ||
+    outcomes.supervisor.status === 'failed';
   if (supervisorHandled) {
     outcomes.metro = { status: 'skipped', reason: 'the supervisor owns the dev server on this port' };
   } else if (reservedPort === null) {
@@ -510,11 +514,15 @@ export async function runStop({
 // failure and never makes `stop` non-zero.
 function reapCollectors(
   collectors: CollectorStateMap | null | undefined,
-  { isAlive, signal, report }: {
+  {
+    isAlive,
+    signal,
+    report,
+  }: {
     isAlive: (pid: number) => boolean;
     signal: (pid: number) => void;
     report: (line: string) => void;
-  }
+  },
 ): CollectorsOutcome {
   const targets = resolveCollectorTargets({ collectors, isAlive });
   const entries: CollectorEntry[] = [];
@@ -551,11 +559,15 @@ function reapCollectors(
 
 async function stopSupervisor(
   target: SupervisorTarget,
-  { killGroup, waiter, report }: {
+  {
+    killGroup,
+    waiter,
+    report,
+  }: {
     killGroup: (leader: number | null | undefined) => boolean;
     waiter: (pid: number) => Promise<boolean>;
     report: (line: string) => void;
-  }
+  },
 ): Promise<SupervisorOutcome> {
   report(chalk.dim(`supervisor: sending SIGTERM to process group ${target.pid}`));
   let signalled = false;
@@ -591,13 +603,19 @@ async function stopSupervisor(
 async function stopMetro(
   port: number,
   root: string,
-  { force, resolveMetro, killMetro, findListener, report }: {
+  {
+    force,
+    resolveMetro,
+    killMetro,
+    findListener,
+    report,
+  }: {
     force: boolean;
     resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
     killMetro: (leader: number | null | undefined) => boolean;
     findListener: (port: number) => number | null;
     report: (line: string) => void;
-  }
+  },
 ): Promise<MetroOutcome> {
   const resolution = await resolveMetro(port, root);
   if (resolution.missing) {
@@ -656,7 +674,7 @@ const OCCUPANCY_HINT = 'often a UI-test runner or device tool still attached';
 export function parseSimHolders(
   psOutput: string | null | undefined,
   udid: string,
-  { ignorePids = [process.pid], limit = 3 }: { ignorePids?: number[]; limit?: number } = {}
+  { ignorePids = [process.pid], limit = 3 }: { ignorePids?: number[]; limit?: number } = {},
 ): string[] {
   if (typeof psOutput !== 'string' || !udid) return [];
   const holders: string[] = [];
@@ -688,9 +706,7 @@ function defaultSimHolders(udid: string): string[] {
 // PURE. The occupied skip, with whoever can be named appended to it.
 export function occupiedSkipReason(reason: string, holders: string[] | null | undefined): string {
   const named = (holders || []).filter(Boolean);
-  return named.length
-    ? `${reason} -- held by ${named.join(', ')}`
-    : `${reason} -- ${OCCUPANCY_HINT}`;
+  return named.length ? `${reason} -- held by ${named.join(', ')}` : `${reason} -- ${OCCUPANCY_HINT}`;
 }
 
 // Owned devices only, and always with del:false. `stop` shutting a device down
@@ -698,12 +714,17 @@ export function occupiedSkipReason(reason: string, holders: string[] | null | un
 // instead of a create, a provision and a reinstall.
 function shutDownDevices(
   project: ProjectRecord | null | undefined,
-  { teardownIos, teardownAvd, simHolders, report }: {
+  {
+    teardownIos,
+    teardownAvd,
+    simHolders,
+    report,
+  }: {
     teardownIos: (udid: string, opts: { del?: boolean; label?: string }) => TeardownResult;
     teardownAvd: (avdName: string, opts: { del?: boolean }) => TeardownResult;
     simHolders: (udid: string) => string[];
     report: (line: string) => void;
-  }
+  },
 ): DeviceOutcome {
   const device: DeviceOutcome = { ios: null, android: null };
 
@@ -726,7 +747,7 @@ function shutDownDevices(
         report,
         // Only paid for when the sim was actually spared: the whole point of
         // the occupancy check is that it almost never fires.
-        () => simHolders(iosUdid)
+        () => simHolders(iosUdid),
       );
     }
   }
@@ -734,7 +755,12 @@ function shutDownDevices(
   const android = project?.platforms?.android;
   if (android?.avdName) {
     if (!android.owned) {
-      device.android = { status: 'skipped', kind: 'not-owned', label: android.avdName, reason: 'rn-iso does not own this device' };
+      device.android = {
+        status: 'skipped',
+        kind: 'not-owned',
+        label: android.avdName,
+        reason: 'rn-iso does not own this device',
+      };
       report(chalk.dim(`android: ${android.avdName} is not rn-iso-owned, leaving it running`));
     } else {
       // Android has no occupancy probe, so there is no occupied skip to
@@ -751,7 +777,7 @@ function reportDevice(
   label: string,
   r: TeardownResult,
   report: (line: string) => void,
-  holders: (() => string[]) | null = null
+  holders: (() => string[]) | null = null,
 ): DeviceOutcomeEntry {
   if (r.status === 'torn-down') {
     report(chalk.green(`${platform}: shut down ${r.label ?? label}`));
@@ -776,14 +802,18 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   if (outcomes.supervisor.status === 'already-stopped') parts.push('supervisor already stopped');
   if (outcomes.supervisor.status === 'timeout') parts.push(`supervisor pid ${outcomes.supervisor.pid} still running`);
   if (outcomes.supervisor.status === 'unverified') parts.push(`supervisor pid ${outcomes.supervisor.pid} unverified`);
-  if (outcomes.supervisor.status === 'failed') parts.push(`supervisor pid ${outcomes.supervisor.pid} could not be signalled`);
+  if (outcomes.supervisor.status === 'failed')
+    parts.push(`supervisor pid ${outcomes.supervisor.pid} could not be signalled`);
   const reaped = outcomes.collectors.entries.filter((e) => e.status === 'stopped').length;
   if (reaped) parts.push(`${reaped} collector${reaped === 1 ? '' : 's'} stopped`);
   if (outcomes.metro.status === 'stopped') parts.push(`metro on port ${outcomes.metro.port} stopped`);
   if (outcomes.metro.status === 'forced') parts.push(`port ${outcomes.metro.port} killed (forced)`);
   if (outcomes.metro.status === 'refused') parts.push(`port ${outcomes.metro.port} refused`);
   if (outcomes.metro.status === 'failed') parts.push(`port ${outcomes.metro.port} could not be freed`);
-  const devicesByPlatform: [string, DeviceOutcomeEntry | null][] = [['ios', outcomes.device.ios], ['android', outcomes.device.android]];
+  const devicesByPlatform: [string, DeviceOutcomeEntry | null][] = [
+    ['ios', outcomes.device.ios],
+    ['android', outcomes.device.android],
+  ];
   for (const [platform, o] of devicesByPlatform) {
     if (!o) continue;
     if (o.status === 'shut-down') parts.push(`${platform} ${o.label} shut down`);
@@ -827,8 +857,13 @@ interface StopOptions {
 export default function stopCommand(program: Command) {
   program
     .command('stop')
-    .description('The inverse of `start`: halt this workspace\'s supervisor, shut the owned device down (never deleted), and free the reserved port. Non-destructive -- the device stays assigned, so coming back costs a boot. Acts on the current workspace.')
-    .option('--force', "Kill whatever listens on the reserved port even if it cannot be identified as this project's dev server (only reachable when no supervisor is recorded)")
+    .description(
+      "The inverse of `start`: halt this workspace's supervisor, shut the owned device down (never deleted), and free the reserved port. Non-destructive -- the device stays assigned, so coming back costs a boot. Acts on the current workspace.",
+    )
+    .option(
+      '--force',
+      "Kill whatever listens on the reserved port even if it cannot be identified as this project's dev server (only reachable when no supervisor is recorded)",
+    )
     .option('--json', 'print the per-step outcomes as JSON')
     .action(async (opts: StopOptions) => {
       const root = findProjectRoot(process.cwd());

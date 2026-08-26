@@ -107,14 +107,32 @@ export function devClientUrl(scheme: string, metroPort: number | string, host = 
 // default instead, and a stale one there sends the reload at 8081 -- another
 // workspace's bundler.
 export function launchIosApp(
-  { udid, bundleId, metroPort, devClientScheme = null }: { udid: string; bundleId: string; metroPort: number | string; devClientScheme?: string | null },
-  { exec = null }: ExecOpt = {}
+  {
+    udid,
+    bundleId,
+    metroPort,
+    devClientScheme = null,
+  }: { udid: string; bundleId: string; metroPort: number | string; devClientScheme?: string | null },
+  { exec = null }: ExecOpt = {},
 ) {
   const e = exec || getExecutor();
   try {
-    e.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', jsLocationValue(metroPort)]);
+    e.runFile('xcrun', [
+      'simctl',
+      'spawn',
+      udid,
+      'defaults',
+      'write',
+      bundleId,
+      'RCT_jsLocation',
+      jsLocationValue(metroPort),
+    ]);
   } catch (err) {
-    return { failed: true, code: LAUNCH_ERROR, reason: `Could not point ${bundleId} at Metro port ${metroPort} (defaults write RCT_jsLocation): ${describe(err)}` };
+    return {
+      failed: true,
+      code: LAUNCH_ERROR,
+      reason: `Could not point ${bundleId} at Metro port ${metroPort} (defaults write RCT_jsLocation): ${describe(err)}`,
+    };
   }
 
   if (devClientScheme) {
@@ -137,7 +155,10 @@ export function launchIosApp(
 
 // --- Android --------------------------------------------------------------
 
-export function installAndroidApp({ serial, apkPath }: { serial: string; apkPath: string }, { exec = null }: ExecOpt = {}) {
+export function installAndroidApp(
+  { serial, apkPath }: { serial: string; apkPath: string },
+  { exec = null }: ExecOpt = {},
+) {
   const e = exec || getExecutor();
   try {
     // -r reinstalls over an existing copy, keeping data. Without it every
@@ -176,7 +197,18 @@ export function parseResolvedActivity(text: unknown) {
 export function resolveLaunchActivity(serial: string, packageName: string, { exec = null }: ExecOpt = {}) {
   const e = exec || getExecutor();
   try {
-    const out = e.runFile('adb', ['-s', serial, 'shell', 'cmd', 'package', 'resolve-activity', '--brief', '-c', 'android.intent.category.LAUNCHER', packageName]);
+    const out = e.runFile('adb', [
+      '-s',
+      serial,
+      'shell',
+      'cmd',
+      'package',
+      'resolve-activity',
+      '--brief',
+      '-c',
+      'android.intent.category.LAUNCHER',
+      packageName,
+    ]);
     return parseResolvedActivity(out);
   } catch {
     // resolve-activity exits 0 even for "No activity found", so a throw here
@@ -197,7 +229,10 @@ export function resolveLaunchActivity(serial: string, packageName: string, { exe
 //     Kept for tooling that asks for the real port by number -- a dev-client
 //     deep link, a manual `curl localhost:<port>` from an adb shell, the
 //     inspector proxy. Skipped when it would duplicate the first.
-export function reverseMetroPorts({ serial, metroPort }: { serial: string; metroPort: number | string }, { exec = null }: ExecOpt = {}) {
+export function reverseMetroPorts(
+  { serial, metroPort }: { serial: string; metroPort: number | string },
+  { exec = null }: ExecOpt = {},
+) {
   const e = exec || getExecutor();
   const pairs = [[DEFAULT_METRO_PORT, metroPort]];
   if (Number(metroPort) !== DEFAULT_METRO_PORT) pairs.push([metroPort, metroPort]);
@@ -205,7 +240,11 @@ export function reverseMetroPorts({ serial, metroPort }: { serial: string; metro
     try {
       e.runFile('adb', ['-s', serial, 'reverse', `tcp:${device}`, `tcp:${host}`]);
     } catch (err) {
-      return { failed: true, code: LAUNCH_ERROR, reason: `adb reverse tcp:${device} tcp:${host} failed on ${serial}: ${describe(err)}` };
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `adb reverse tcp:${device} tcp:${host} failed on ${serial}: ${describe(err)}`,
+      };
     }
   }
   return { ok: true, reversed: pairs.map(([device, host]) => `tcp:${device}->tcp:${host}`) };
@@ -275,7 +314,15 @@ export function deviceShellArg(text: unknown) {
 // with the key, a file without it, and Android's empty-prefs form `<map />`.
 // Everything except the header, the closing tag and any existing
 // debug_http_host line is carried over verbatim.
-export function debugHttpHostScript({ packageName, host, dataDir = null }: { packageName: string; host: string; dataDir?: string | null }) {
+export function debugHttpHostScript({
+  packageName,
+  host,
+  dataDir = null,
+}: {
+  packageName: string;
+  host: string;
+  dataDir?: string | null;
+}) {
   const dir = dataDir || `/data/data/${packageName}`;
   const prefs = `shared_prefs/${packageName}_preferences.xml`;
   const tmp = `${prefs}.rn-iso.tmp`;
@@ -298,7 +345,7 @@ export function debugHttpHostScript({ packageName, host, dataDir = null }: { pac
 
 export function writeDebugHttpHost(
   { serial, packageName, metroPort }: { serial: string; packageName: string; metroPort: number | string },
-  { exec = null }: ExecOpt = {}
+  { exec = null }: ExecOpt = {},
 ) {
   const e = exec || getExecutor();
   const host = `${EMULATOR_HOST_LOOPBACK}:${metroPort}`;
@@ -345,11 +392,24 @@ export function amStartError(text: unknown) {
 // The url is quoted for the DEVICE shell (deviceShellArg): adb hands the
 // joined argv to that shell, and the url carries `?` (a glob) and, for a
 // scheme carrying query parameters, `&`.
-export function openAndroidDevClientUrl({ serial, url }: { serial: string; url: string }, { exec = null }: ExecOpt = {}) {
+export function openAndroidDevClientUrl(
+  { serial, url }: { serial: string; url: string },
+  { exec = null }: ExecOpt = {},
+) {
   const e = exec || getExecutor();
   let out;
   try {
-    out = e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', deviceShellArg(url)]);
+    out = e.runFile('adb', [
+      '-s',
+      serial,
+      'shell',
+      'am',
+      'start',
+      '-a',
+      'android.intent.action.VIEW',
+      '-d',
+      deviceShellArg(url),
+    ]);
   } catch (err) {
     return { failed: true, reason: `am start -d ${url} failed on ${serial}: ${describe(err)}` };
   }
@@ -369,8 +429,13 @@ export function openAndroidDevClientUrl({ serial, url }: { serial: string; url: 
 // strictly better than refusing the run. It comes back as `devClientNote`,
 // which commands/android.js prints.
 export function launchAndroidApp(
-  { serial, packageName, metroPort, devClientScheme = null }: { serial: string; packageName: string; metroPort: number | string; devClientScheme?: string | null },
-  { exec = null }: ExecOpt = {}
+  {
+    serial,
+    packageName,
+    metroPort,
+    devClientScheme = null,
+  }: { serial: string; packageName: string; metroPort: number | string; devClientScheme?: string | null },
+  { exec = null }: ExecOpt = {},
 ) {
   const e = exec || getExecutor();
   const reversed = reverseMetroPorts({ serial, metroPort }, { exec: e });
@@ -396,7 +461,11 @@ export function launchAndroidApp(
       e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component]);
       return { ok: true, mode: 'am-start', component, devClientNote, ...wiring };
     } catch (err) {
-      return { failed: true, code: LAUNCH_ERROR, reason: `am start -n ${component} failed on ${serial}: ${describe(err)}` };
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `am start -n ${component} failed on ${serial}: ${describe(err)}`,
+      };
     }
   }
 
@@ -407,7 +476,11 @@ export function launchAndroidApp(
     e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1']);
     return { ok: true, mode: 'monkey', devClientNote, ...wiring };
   } catch (err) {
-    return { failed: true, code: LAUNCH_ERROR, reason: `Could not launch ${packageName} on ${serial}: no launcher activity resolved and monkey failed: ${describe(err)}` };
+    return {
+      failed: true,
+      code: LAUNCH_ERROR,
+      reason: `Could not launch ${packageName} on ${serial}: no launcher activity resolved and monkey failed: ${describe(err)}`,
+    };
   }
 }
 
@@ -595,7 +668,9 @@ export function unverifiedLaunchLines({
   let step = 0;
   const push = (text: string) => lines.push(`  ${++step}. ${text}`);
   if (platform === 'ios') {
-    push('If an "Open in <app>?" alert is showing, confirm it with your device tool (iOS 26 raises it on every first launch on a fresh simulator, in front of the deep link); the bundle loads immediately after.');
+    push(
+      'If an "Open in <app>?" alert is showing, confirm it with your device tool (iOS 26 raises it on every first launch on a fresh simulator, in front of the deep link); the bundle loads immediately after.',
+    );
     push(picker);
     if (url && udid) {
       push(`Only if no alert is showing, retry the deep link: xcrun simctl openurl ${udid} '${url}'`);
@@ -610,11 +685,15 @@ export function unverifiedLaunchLines({
     // only what you are looking at when there is no scheme to deep-link
     // with, and the plain re-launch only ever reopens the same picker.
     if (url && serial) {
-      push(`Re-send the dev-client deep link -- this is the command that points the app at THIS workspace's Metro: adb -s ${serial} shell am start -a android.intent.action.VIEW -d '${url}'`);
+      push(
+        `Re-send the dev-client deep link -- this is the command that points the app at THIS workspace's Metro: adb -s ${serial} shell am start -a android.intent.action.VIEW -d '${url}'`,
+      );
     }
     push(picker);
     if (serial && bundleId) {
-      push(`Otherwise the reverse mapping was not in place when the app started. Re-launch: adb -s ${serial} shell monkey -p ${bundleId} 1`);
+      push(
+        `Otherwise the reverse mapping was not in place when the app started. Re-launch: adb -s ${serial} shell monkey -p ${bundleId} 1`,
+      );
     }
   }
   lines.push(`Then check \`rn-iso logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);

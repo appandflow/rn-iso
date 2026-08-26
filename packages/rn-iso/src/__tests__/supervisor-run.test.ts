@@ -92,7 +92,7 @@ describe('Contract 2: the workspace state file', () => {
     expect(readWorkspaceState(root).supervisor.port).toBe(8082);
   });
 
-  test('writing merges rather than replaces, so a later step\'s lastBuild survives', () => {
+  test("writing merges rather than replaces, so a later step's lastBuild survives", () => {
     writeWorkspaceState(root, { lastBuild: { fingerprint: 'abc' } });
     writeWorkspaceState(root, { supervisor: { pid: 2, port: 8083 } });
     const state = readWorkspaceState(root);
@@ -102,9 +102,7 @@ describe('Contract 2: the workspace state file', () => {
 
   test('writing leaves no temp file behind: readers must never see a partial state', () => {
     writeWorkspaceState(root, { supervisor: { pid: 3, port: 8084 } });
-    const leftovers = existsSync(join(root, '.rn-iso'))
-      ? readFileSync(workspaceStateFile(root), 'utf-8')
-      : '';
+    const leftovers = existsSync(join(root, '.rn-iso')) ? readFileSync(workspaceStateFile(root), 'utf-8') : '';
     expect(leftovers).toMatch(/"pid": 3/);
     const dir = join(root, '.rn-iso');
     const entries = existsSync(dir) ? readdirSync(dir) : [];
@@ -153,22 +151,34 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
   test('4+ processes writing different keys never lose an update', async () => {
     const script = join(tmpHome, 'state-writer.mjs');
     const runUrl = new URL('../supervisor/run.ts', import.meta.url).href;
-    writeFileSync(script, [
-      `const { writeWorkspaceState } = await import(${JSON.stringify(runUrl)});`,
-      'const root = process.argv[2];',
-      'const key = process.argv[3];',
-      'const startAt = Number(process.argv[4]);',
-      // A shared start instant so every process does its single read-modify-write
-      // at the same moment -- process startup otherwise dominates and the
-      // writers never overlap. One-shot writes are the faithful reproduction:
-      // the real supervisor, collector and ios/android writers each patch their
-      // own key ONCE, so whichever renames last silently drops every key it did
-      // not happen to read (the lost update renameSync cannot prevent).
-      'while (Date.now() < startAt) {}',
-      'writeWorkspaceState(root, { [key]: { pid: process.pid } });',
-    ].join('\n'));
+    writeFileSync(
+      script,
+      [
+        `const { writeWorkspaceState } = await import(${JSON.stringify(runUrl)});`,
+        'const root = process.argv[2];',
+        'const key = process.argv[3];',
+        'const startAt = Number(process.argv[4]);',
+        // A shared start instant so every process does its single read-modify-write
+        // at the same moment -- process startup otherwise dominates and the
+        // writers never overlap. One-shot writes are the faithful reproduction:
+        // the real supervisor, collector and ios/android writers each patch their
+        // own key ONCE, so whichever renames last silently drops every key it did
+        // not happen to read (the lost update renameSync cannot prevent).
+        'while (Date.now() < startAt) {}',
+        'writeWorkspaceState(root, { [key]: { pid: process.pid } });',
+      ].join('\n'),
+    );
 
-    const keys = ['supervisor', 'lastBuild', 'collectorsIos', 'collectorsAndroid', 'extra', 'sixth', 'seventh', 'eighth'];
+    const keys = [
+      'supervisor',
+      'lastBuild',
+      'collectorsIos',
+      'collectorsAndroid',
+      'extra',
+      'sixth',
+      'seventh',
+      'eighth',
+    ];
     // Repeated rounds: a single simultaneous volley loses a key often but not
     // every time, so the assertion is over several volleys -- an unlocked
     // writer drops a key in at least one, a locked one never does.
@@ -176,10 +186,19 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
       mkdirSync(join(root, '.rn-iso'), { recursive: true });
       writeFileSync(workspaceStateFile(root), '{}\n');
       const startAt = Date.now() + 250;
-      await Promise.all(keys.map(key => new Promise<void>((resolve, reject) => {
-        execFile(process.execPath, [script, root, key, String(startAt)], { env: { ...process.env, RN_ISO_HOME: tmpHome } },
-          (err) => (err ? reject(err) : resolve()));
-      })));
+      await Promise.all(
+        keys.map(
+          (key) =>
+            new Promise<void>((resolve, reject) => {
+              execFile(
+                process.execPath,
+                [script, root, key, String(startAt)],
+                { env: { ...process.env, RN_ISO_HOME: tmpHome } },
+                (err) => (err ? reject(err) : resolve()),
+              );
+            }),
+        ),
+      );
 
       const state = readWorkspaceState(root);
       for (const key of keys) {
@@ -197,8 +216,12 @@ describe('runSupervisor', () => {
       handle: {
         mode: MODE_BARE,
         serverPid: null,
-        onExit(cb) { state.listeners.push(cb); },
-        async close() { state.closed += 1; },
+        onExit(cb) {
+          state.listeners.push(cb);
+        },
+        async close() {
+          state.closed += 1;
+        },
         ...overrides,
       },
     };
@@ -242,7 +265,10 @@ describe('runSupervisor', () => {
       isExpo: () => true,
       attachSignals: false,
       onExit: () => {},
-      startBare: async () => { bareCalled = true; return server.handle; },
+      startBare: async () => {
+        bareCalled = true;
+        return server.handle;
+      },
       startExpo: async () => server.handle,
     });
     expect(bareCalled).toBe(false);
@@ -286,7 +312,10 @@ describe('runSupervisor', () => {
     const server = fakeServer();
     const exits = [];
     const running = await runSupervisor({
-      root, port: 8094, isExpo: () => false, attachSignals: false,
+      root,
+      port: 8094,
+      isExpo: () => false,
+      attachSignals: false,
       onExit: (code) => exits.push(code),
       startBare: async () => server.handle,
     });
@@ -300,7 +329,10 @@ describe('runSupervisor', () => {
     const server = fakeServer();
     const exits = [];
     await runSupervisor({
-      root, port: 8095, isExpo: () => false, attachSignals: false,
+      root,
+      port: 8095,
+      isExpo: () => false,
+      attachSignals: false,
       onExit: (code) => exits.push(code),
       startBare: async () => server.handle,
     });
@@ -323,7 +355,10 @@ describe('runSupervisor', () => {
     const exits = [];
     const stderr = [];
     const handle = await runSupervisor({
-      root, port: 8096, isExpo: () => false, attachSignals: false,
+      root,
+      port: 8096,
+      isExpo: () => false,
+      attachSignals: false,
       onExit: (code) => exits.push(code),
       stderr: (line) => stderr.push(line),
       startBare: async () => {

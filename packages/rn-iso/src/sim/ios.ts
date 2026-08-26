@@ -67,16 +67,18 @@ export function listAllIosSims({ timeoutMs }: { timeoutMs?: number } = {}): IosS
 }
 
 export function listBootedIosSims(): IosSimRecord[] {
-  return listAllIosSims().filter(s => s.state === 'Booted');
+  return listAllIosSims().filter((s) => s.state === 'Booted');
 }
 
 // "iPhone 16 Pro (ABC-123-...)" if simctl knows about the UDID; the bare
 // UDID otherwise (deleted sim, or simctl unavailable).
 export function formatIosLabel(udid: string): string {
   try {
-    const sim = listAllIosSims().find(s => s.udid === udid);
+    const sim = listAllIosSims().find((s) => s.udid === udid);
     if (sim) return `${sim.name} (${udid})`;
-  } catch { /* simctl not available */ }
+  } catch {
+    /* simctl not available */
+  }
   return udid;
 }
 
@@ -92,7 +94,7 @@ export function parseOccupyingApps(launchctlOutput: string): string[] {
     if (!m) continue;
     const bundleId = m[1];
     if (bundleId.startsWith('com.apple.')) continue;
-    if (!/\.xctrunner$/.test(bundleId)) continue;
+    if (!bundleId.endsWith('.xctrunner')) continue;
     ids.push(bundleId);
   }
   return ids;
@@ -111,7 +113,7 @@ export function parseOccupyingApps(launchctlOutput: string): string[] {
 export function isSimOccupied(udid: string): boolean {
   let sim: IosSimRecord | undefined;
   try {
-    sim = listAllIosSims().find(s => s.udid === udid);
+    sim = listAllIosSims().find((s) => s.udid === udid);
   } catch {
     // Could not read the device list: that IS doubt, so fall through to the
     // probe and let it fail closed.
@@ -175,21 +177,24 @@ function rankIphone(name: string): { gen: number; variant: number } {
 
 // Newest iPhone device type on the newest installed runtime, unless the
 // caller pinned either by name. Pure: takes the listings as data.
-export function pickDefaultIosCreation(deviceTypes: IosDeviceType[], runtimes: IosRuntime[], { deviceType, runtime }: { deviceType?: string; runtime?: string } = {}): IosCreationPick | null {
+export function pickDefaultIosCreation(
+  deviceTypes: IosDeviceType[],
+  runtimes: IosRuntime[],
+  { deviceType, runtime }: { deviceType?: string; runtime?: string } = {},
+): IosCreationPick | null {
   const rts = [...runtimes].sort((a, b) =>
-    String(b.version).localeCompare(String(a.version), undefined, { numeric: true }));
-  const wantedRts = runtime
-    ? rts.filter(r => r.version === runtime || r.name.endsWith(runtime))
-    : rts;
+    String(b.version).localeCompare(String(a.version), undefined, { numeric: true }),
+  );
+  const wantedRts = runtime ? rts.filter((r) => r.version === runtime || r.name.endsWith(runtime)) : rts;
   for (const rt of wantedRts) {
-    const supported = (rt.supportedDeviceTypes || []).filter(d =>
-      deviceType ? d.name === deviceType : /^iPhone/i.test(d.name));
+    const supported = (rt.supportedDeviceTypes || []).filter((d) =>
+      deviceType ? d.name === deviceType : /^iPhone/i.test(d.name),
+    );
     if (supported.length === 0) continue;
     const best = [...supported].sort((a, b) => {
-      const ra = rankIphone(a.name), rb = rankIphone(b.name);
-      return (rb.gen - ra.gen)
-        || (rb.variant - ra.variant)
-        || b.name.localeCompare(a.name, undefined, { numeric: true });
+      const ra = rankIphone(a.name),
+        rb = rankIphone(b.name);
+      return rb.gen - ra.gen || rb.variant - ra.variant || b.name.localeCompare(a.name, undefined, { numeric: true });
     })[0];
     return { deviceTypeId: best.identifier, runtimeId: rt.identifier };
   }
@@ -197,7 +202,9 @@ export function pickDefaultIosCreation(deviceTypes: IosDeviceType[], runtimes: I
 }
 
 export function sanitizeDeviceLabel(label: string): string {
-  return String(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return String(label)
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 // The `rn-iso-` prefix is the ownership marker every destructive path checks,
@@ -210,15 +217,18 @@ export function ownedSimName(label: string): string {
   return `rn-iso-${clean.startsWith('rn-iso-') ? clean.slice('rn-iso-'.length) : clean}`;
 }
 
-export function createOwnedIosSim(label: string, { deviceType, runtime }: { deviceType?: string; runtime?: string } = {}): { udid: string; name: string } {
+export function createOwnedIosSim(
+  label: string,
+  { deviceType, runtime }: { deviceType?: string; runtime?: string } = {},
+): { udid: string; name: string } {
   const pick = pickDefaultIosCreation(listIosDeviceTypes(), listIosRuntimes(), { deviceType, runtime });
   if (!pick) {
-    throw new Error('No matching simulator device type / runtime is installed. Install one via Xcode, or pass --device-type / --runtime.');
+    throw new Error(
+      'No matching simulator device type / runtime is installed. Install one via Xcode, or pass --device-type / --runtime.',
+    );
   }
   const name = ownedSimName(label);
-  const udid = getExecutor()
-    .run(`xcrun simctl create "${name}" "${pick.deviceTypeId}" "${pick.runtimeId}"`)
-    .trim();
+  const udid = getExecutor().run(`xcrun simctl create "${name}" "${pick.deviceTypeId}" "${pick.runtimeId}"`).trim();
   return { udid, name };
 }
 
@@ -236,7 +246,7 @@ export function createOwnedIosSim(label: string, { deviceType, runtime }: { devi
 //                       it, or the record is stale/wrong) -- must be
 //                       reported as a skip, never shut down or deleted.
 export function resolveOwnedIosSim(udid: string): ResolvedIosSim {
-  const sim = listAllIosSims().find(s => s.udid === udid);
+  const sim = listAllIosSims().find((s) => s.udid === udid);
   if (!sim) return { missing: true };
   if (!sim.name?.startsWith('rn-iso-')) return { notOwned: sim.name };
   return { sim };
@@ -256,7 +266,9 @@ export function deleteIosSim(udid: string): void {
   const result = resolveOwnedIosSim(udid);
   if (result.missing) return;
   if (result.notOwned) {
-    throw new Error(`Refusing to delete simulator "${result.notOwned}" (${udid}): not an rn-iso-owned sim (name must start with "rn-iso-").`);
+    throw new Error(
+      `Refusing to delete simulator "${result.notOwned}" (${udid}): not an rn-iso-owned sim (name must start with "rn-iso-").`,
+    );
   }
   getExecutor().run(`xcrun simctl delete ${udid}`);
 }

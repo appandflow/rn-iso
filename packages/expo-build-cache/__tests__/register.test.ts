@@ -28,7 +28,7 @@ test('registers itself with no rn-iso installed', async () => {
   await bc.resolveBuildCache({ platform: 'ios', fingerprintHash: 'deadbeef' });
 
   const manifest = JSON.parse(readFileSync(join(home, 'caches.json'), 'utf-8'));
-  const entry = manifest.caches.find(c => c.dir === cacheDir);
+  const entry = manifest.caches.find((c) => c.dir === cacheDir);
   expect(entry).toBeTruthy();
   expect(entry.prune).toBe('entries');
 });
@@ -41,7 +41,7 @@ test('repeated registration updates rather than duplicating', async () => {
   await bc.resolveBuildCache({ platform: 'ios', fingerprintHash: 'b' });
 
   const manifest = JSON.parse(readFileSync(join(home, 'caches.json'), 'utf-8'));
-  expect(manifest.caches.filter(c => c.dir === cacheDir).length).toBe(1);
+  expect(manifest.caches.filter((c) => c.dir === cacheDir).length).toBe(1);
 });
 
 // A cache that cannot announce itself must still work: an unwritable manifest

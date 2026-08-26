@@ -52,14 +52,18 @@ test('parseAdbDevices ignores offline emulators but reports them in unhealthy', 
   const out = `List of devices attached\nemulator-5554\toffline\nemulator-5556\tdevice\n`;
   const result = parseAdbDevices(out);
   expect(result.emulators).toEqual([{ serial: 'emulator-5556', consolePort: 5556 }]);
-  expect(result.unhealthy).toEqual([{ serial: 'emulator-5554', kind: 'emulator', consolePort: 5554, status: 'offline' }]);
+  expect(result.unhealthy).toEqual([
+    { serial: 'emulator-5554', kind: 'emulator', consolePort: 5554, status: 'offline' },
+  ]);
 });
 
 test('parseAdbDevices surfaces unauthorized emulators in unhealthy', () => {
   const out = `List of devices attached\nemulator-5554\tunauthorized\n`;
   const result = parseAdbDevices(out);
   expect(result.emulators).toEqual([]);
-  expect(result.unhealthy).toEqual([{ serial: 'emulator-5554', kind: 'emulator', consolePort: 5554, status: 'unauthorized' }]);
+  expect(result.unhealthy).toEqual([
+    { serial: 'emulator-5554', kind: 'emulator', consolePort: 5554, status: 'unauthorized' },
+  ]);
 });
 
 test('parseAdbDevices surfaces unauthorized physical devices in unhealthy', () => {
@@ -92,8 +96,18 @@ test('pickDefaultSystemImage prefers highest api, then google_apis, arm64 only',
 // the plain image wins even at a LOWER api, because a p_align crash at
 // startup is a worse thing to hand an agent than an api level.
 test('pickDefaultSystemImage ranks a 16KB-page image below a plain one, api or no api', () => {
-  const ps16k = { api: 36, tag: 'google_apis_playstore_ps16k', arch: 'arm64-v8a', pkg: 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a' };
-  const plain = { api: 35, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-35;google_apis;arm64-v8a' };
+  const ps16k = {
+    api: 36,
+    tag: 'google_apis_playstore_ps16k',
+    arch: 'arm64-v8a',
+    pkg: 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a',
+  };
+  const plain = {
+    api: 35,
+    tag: 'google_apis',
+    arch: 'arm64-v8a',
+    pkg: 'system-images;android-35;google_apis;arm64-v8a',
+  };
   expect(pickDefaultSystemImage([ps16k, plain], {}).pkg).toBe(plain.pkg);
   expect(pickDefaultSystemImage([plain, ps16k], {}).pkg).toBe(plain.pkg);
   // ...and with nothing else installed it is still a working emulator, which
@@ -112,8 +126,12 @@ test('pickDefaultSystemImage honors an explicit package and returns null on no m
 
 test('deleteAvd refuses to delete an AVD not owned by rn-iso', () => {
   setExecutor({
-    run: () => { throw new Error('should not be called'); },
-    runQuiet: () => { throw new Error('should not be called'); },
+    run: () => {
+      throw new Error('should not be called');
+    },
+    runQuiet: () => {
+      throw new Error('should not be called');
+    },
     spawn: () => null,
   });
   expect(() => deleteAvd('Pixel_6_API_34')).toThrow(/rn-iso/);
@@ -122,7 +140,10 @@ test('deleteAvd refuses to delete an AVD not owned by rn-iso', () => {
 test('deleteAvd deletes an rn-iso-owned AVD', () => {
   let ran = null;
   setExecutor({
-    run: (cmd) => { ran = cmd; return null; },
+    run: (cmd) => {
+      ran = cmd;
+      return null;
+    },
     runQuiet: () => null,
     spawn: () => null,
   });
@@ -135,7 +156,9 @@ test('deleteAvd deletes an rn-iso-owned AVD', () => {
 // into a report of a device that was never actually deleted.
 test('deleteAvd propagates an avdmanager failure instead of swallowing it', () => {
   setExecutor({
-    run: () => { throw new Error('avdmanager: could not delete'); },
+    run: () => {
+      throw new Error('avdmanager: could not delete');
+    },
     runQuiet: () => null,
     spawn: () => null,
   });

@@ -158,7 +158,11 @@ function sleepSync(ms: number): void {
 // out of the lock directory, so it cannot get there. Same rule, and the same
 // reason, as cacheNameSegment in src/paths.js.
 function segment(value: string): string {
-  return String(value).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^\.+/, '') || 'unknown';
+  return (
+    String(value)
+      .replace(/[^A-Za-z0-9._-]+/g, '-')
+      .replace(/^\.+/, '') || 'unknown'
+  );
 }
 
 export function buildLocksDir(): string {
@@ -173,9 +177,7 @@ export function buildLockPath(platform: string, key: string): string {
 // throws: an unreadable or half-written record means "nobody identifiable
 // holds this", which every caller already has a branch for.
 export function readBuildLock(pathOrSpec: string | BuildLockSpec): BuildLockRecord | null {
-  const path = typeof pathOrSpec === 'string'
-    ? pathOrSpec
-    : buildLockPath(pathOrSpec.platform, pathOrSpec.key);
+  const path = typeof pathOrSpec === 'string' ? pathOrSpec : buildLockPath(pathOrSpec.platform, pathOrSpec.key);
   try {
     const parsed = JSON.parse(readFileSync(join(path, LOCK_FILE_NAME), 'utf-8'));
     if (!parsed || typeof parsed !== 'object') return null;
@@ -208,7 +210,14 @@ function dirAgeMs(path: string, now: number): number | null {
  * `isAlive` and `now` are seams; nothing else about this is injectable,
  * because the atomicity being relied on is the real mkdir's.
  */
-export function acquireBuildLock({ platform, key, root = null, logFile = null, isAlive = isPidAlive, now = Date.now }: AcquireBuildLockOptions): BuildLockHandle {
+export function acquireBuildLock({
+  platform,
+  key,
+  root = null,
+  logFile = null,
+  isAlive = isPidAlive,
+  now = Date.now,
+}: AcquireBuildLockOptions): BuildLockHandle {
   const path = buildLockPath(platform, key);
   const deadline = now() + ACQUIRE_DEADLINE_MS;
 
@@ -243,7 +252,9 @@ export function acquireBuildLock({ platform, key, root = null, logFile = null, i
       // wins, and the loop re-reads.
       try {
         rmSync(path, { recursive: true, force: true });
-      } catch { /* another taker-over got there first */ }
+      } catch {
+        /* another taker-over got there first */
+      }
       continue;
     }
 
@@ -254,7 +265,9 @@ export function acquireBuildLock({ platform, key, root = null, logFile = null, i
     if (age > RECORD_GRACE_MS) {
       try {
         rmSync(path, { recursive: true, force: true });
-      } catch { /* same race as above */ }
+      } catch {
+        /* same race as above */
+      }
       continue;
     }
     if (now() >= deadline) {
@@ -414,9 +427,9 @@ export async function waitForBuild({
     const elapsed = now() - started;
     if (elapsed >= ceilingMs) {
       const err = new Error(
-        `Waited ${formatWaited(elapsed)} for ${info.projectRoot || 'another workspace'}'s ${platform} build of ${key} `
-        + `without an artifact, and pid ${info.pid} is still alive. The lock is ${path}; `
-        + 'remove that directory if that process is not really building.'
+        `Waited ${formatWaited(elapsed)} for ${info.projectRoot || 'another workspace'}'s ${platform} build of ${key} ` +
+          `without an artifact, and pid ${info.pid} is still alive. The lock is ${path}; ` +
+          'remove that directory if that process is not really building.',
       ) as Error & { code?: string; lockPath?: string; holder?: BuildLockRecord };
       err.code = 'RN_ISO_BUILD_WAIT_TIMEOUT';
       err.lockPath = path;

@@ -92,11 +92,13 @@ describe('markerWindow', () => {
   });
 
   test('each one is the highest of its own kind, not the last seen', () => {
-    expect(markerWindow([
-      { ts: 30, src: 'metro', level: 'info', msg: 'b2', marker: true },
-      { ts: 10, src: 'metro', level: 'info', msg: 'b1', marker: true },
-      { ts: 20, src: 'build', level: 'info', msg: 'launch', marker: true },
-    ])).toEqual({ launchTs: 20, bundleTs: 30 });
+    expect(
+      markerWindow([
+        { ts: 30, src: 'metro', level: 'info', msg: 'b2', marker: true },
+        { ts: 10, src: 'metro', level: 'info', msg: 'b1', marker: true },
+        { ts: 20, src: 'build', level: 'info', msg: 'launch', marker: true },
+      ]),
+    ).toEqual({ launchTs: 20, bundleTs: 30 });
   });
 
   test('returns nulls when nothing is marked', () => {
@@ -111,7 +113,10 @@ describe('markerWindow', () => {
   // Conservative on purpose: an unrecognised marker source resets EVERYTHING,
   // so a producer added later shows more rather than silently less.
   test('a marker from any source other than metro counts as a launch', () => {
-    expect(markerWindow([{ ts: 4, src: 'device', level: 'info', msg: 'x', marker: true }])).toEqual({ launchTs: 4, bundleTs: null });
+    expect(markerWindow([{ ts: 4, src: 'device', level: 'info', msg: 'x', marker: true }])).toEqual({
+      launchTs: 4,
+      bundleTs: null,
+    });
   });
 });
 
@@ -248,7 +253,10 @@ describe('queryLogs', () => {
   });
 
   test('tail keeps the LAST n records, still ascending', () => {
-    writeLog('metro.ndjson', [1, 2, 3, 4, 5].map((ts) => ({ ts, src: 'metro', level: 'info', msg: `m${ts}` })));
+    writeLog(
+      'metro.ndjson',
+      [1, 2, 3, 4, 5].map((ts) => ({ ts, src: 'metro', level: 'info', msg: `m${ts}` })),
+    );
     expect(queryLogs({ dir, tail: 2 }).map((r) => r.msg)).toEqual(['m4', 'm5']);
     expect(queryLogs({ dir, tail: 99 }).length).toEqual(5);
   });
@@ -283,9 +291,7 @@ describe('queryLogs', () => {
         { ts: 10, src: 'client', level: 'error', msg: 'stale redbox from the last run' },
         { ts: 30, src: 'client', level: 'error', msg: 'fresh redbox' },
       ]);
-      writeLog('build-ios.ndjson', [
-        { ts: 20, src: 'build', level: 'info', msg: 'app launched', marker: true },
-      ]);
+      writeLog('build-ios.ndjson', [{ ts: 20, src: 'build', level: 'info', msg: 'app launched', marker: true }]);
       expect(queryLogs({ dir, errorsOnly: true }).map((r) => r.msg)).toEqual(['fresh redbox']);
     });
 
@@ -324,7 +330,8 @@ describe('queryLogs', () => {
   // wall-clock timestamps because the ORDER and the GAP are the whole bug: one
   // second between a crash and the marker that swallowed it.
   describe('errorsOnly, against the field capture', () => {
-    const at = (sec, ms = 0) => Date.parse(`2026-08-24T16:03:${String(sec).padStart(2, '0')}.${String(ms).padStart(3, '0')}Z`);
+    const at = (sec, ms = 0) =>
+      Date.parse(`2026-08-24T16:03:${String(sec).padStart(2, '0')}.${String(ms).padStart(3, '0')}Z`);
 
     // THE bug. The app threw at 16:03:54 while evaluating the bundle; Metro
     // wrote bundle_build_done at 16:03:55, one second LATER, because the
@@ -355,7 +362,12 @@ describe('queryLogs', () => {
     // that built is proof the resolve failure was fixed.
     test('a bundle marker still retires the metro error the rebuild fixed', () => {
       writeLog('metro.ndjson', [
-        { ts: at(40), src: 'metro', level: 'error', msg: 'iOS Bundling failed 3122ms\nUnable to resolve "./tailwind.json" from "global.css"' },
+        {
+          ts: at(40),
+          src: 'metro',
+          level: 'error',
+          msg: 'iOS Bundling failed 3122ms\nUnable to resolve "./tailwind.json" from "global.css"',
+        },
         { ts: at(55), src: 'metro', level: 'info', msg: 'bundle build done (2)', marker: true },
       ]);
       expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
@@ -384,13 +396,25 @@ describe('queryLogs', () => {
     // it from a plain query -- so whichever way that lands, this is correct.
     test('a bundling failure stored at info is not an error, but is still in the timeline', () => {
       writeLog('metro.ndjson', [
-        { ts: at(40), src: 'metro', level: 'info', raw: true, msg: 'iOS Bundling failed 3122ms\nUnable to resolve "./tailwind.json" from "global.css"' },
+        {
+          ts: at(40),
+          src: 'metro',
+          level: 'info',
+          raw: true,
+          msg: 'iOS Bundling failed 3122ms\nUnable to resolve "./tailwind.json" from "global.css"',
+        },
       ]);
       expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
       expect(queryLogs({ dir }).length).toBe(1);
       // ...and the moment its level is right, the window rule reports it.
       writeLog('metro.ndjson', [
-        { ts: at(40), src: 'metro', level: 'error', raw: true, msg: 'iOS Bundling failed 3122ms\nUnable to resolve "./tailwind.json" from "global.css"' },
+        {
+          ts: at(40),
+          src: 'metro',
+          level: 'error',
+          raw: true,
+          msg: 'iOS Bundling failed 3122ms\nUnable to resolve "./tailwind.json" from "global.css"',
+        },
       ]);
       expect(queryLogs({ dir, errorsOnly: true }).length).toBe(1);
     });
@@ -410,7 +434,13 @@ describe('queryLogs', () => {
     test('a device-only noise storm is zero errors', () => {
       const storm = [];
       for (let i = 0; i < 3004; i += 1) {
-        storm.push({ ts: 1000 + i, src: 'device', level: 'error', proc: 'MyApp', msg: `nw_socket_handle_socket_event [C${i}:1] Socket SO_ERROR [54: Connection reset by peer]` });
+        storm.push({
+          ts: 1000 + i,
+          src: 'device',
+          level: 'error',
+          proc: 'MyApp',
+          msg: `nw_socket_handle_socket_event [C${i}:1] Socket SO_ERROR [54: Connection reset by peer]`,
+        });
       }
       writeLog('device.ndjson', storm);
       expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
@@ -419,8 +449,10 @@ describe('queryLogs', () => {
       expect(queryLogs({ dir }).length).toBe(3004);
     });
 
-    test('the app\'s own error is still reported while the device is excluded', () => {
-      writeLog('device.ndjson', [{ ts: 1, src: 'device', level: 'fatal', msg: 'UIScene lifecycle will soon be required' }]);
+    test("the app's own error is still reported while the device is excluded", () => {
+      writeLog('device.ndjson', [
+        { ts: 1, src: 'device', level: 'fatal', msg: 'UIScene lifecycle will soon be required' },
+      ]);
       writeLog('client.ndjson', [{ ts: 2, src: 'client', level: 'error', msg: '[Error: Exception in HostFunction]' }]);
       expect(queryLogs({ dir, errorsOnly: true }).map((r) => r.msg)).toEqual(['[Error: Exception in HostFunction]']);
     });
@@ -429,7 +461,9 @@ describe('queryLogs', () => {
       writeLog('device.ndjson', [{ ts: 1, src: 'device', level: 'error', msg: 'native crash' }]);
       writeLog('client.ndjson', [{ ts: 2, src: 'client', level: 'error', msg: 'js crash' }]);
       expect(queryLogs({ dir, errorsOnly: true, sources: ['device'] }).map((r) => r.msg)).toEqual(['native crash']);
-      expect(queryLogs({ dir, errorsOnly: true, sources: ['metro', 'client', 'device', 'build'] }).map((r) => r.msg)).toEqual(['native crash', 'js crash']);
+      expect(
+        queryLogs({ dir, errorsOnly: true, sources: ['metro', 'client', 'device', 'build'] }).map((r) => r.msg),
+      ).toEqual(['native crash', 'js crash']);
     });
 
     test('a plain query (no --errors) still shows every source', () => {

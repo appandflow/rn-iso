@@ -27,12 +27,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { clearDevice, getConfigDir, loadConfig } from '../config.ts';
-import {
-  formatBytes,
-  isOnMountedVolume,
-  listMountedVolumes,
-  volumeRootFor,
-} from '../fs-util.ts';
+import { formatBytes, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { reclaimProject } from '../reclaim.ts';
@@ -150,7 +145,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // yet), so the device survives one full `gc --delete` and is only reaped
 // on the NEXT run. Excluding them here means dead-project pruning and its
 // device sweep land in the same run.
-export function findOrphanedDevices({ sims = [], avds = [], config, isMounted, deadProjects = [] }: {
+export function findOrphanedDevices({
+  sims = [],
+  avds = [],
+  config,
+  isMounted,
+  deadProjects = [],
+}: {
   sims?: IosSimRecord[];
   avds?: string[];
   config: Config | null;
@@ -249,9 +250,9 @@ export function findStaleProjectDevices({
   const dead = new Set(deadProjects);
 
   const liveSims = new Map<string, string>(
-    sims.filter(s => s?.name?.startsWith('rn-iso-')).map(s => [s.udid, s.name] as [string, string])
+    sims.filter((s) => s?.name?.startsWith('rn-iso-')).map((s) => [s.udid, s.name] as [string, string]),
   );
-  const liveAvds = new Set(avds.filter(a => typeof a === 'string' && a.startsWith('rn-iso-')));
+  const liveAvds = new Set(avds.filter((a) => typeof a === 'string' && a.startsWith('rn-iso-')));
 
   const stale: StaleProjectDevice[] = [];
   for (const [path, proj] of Object.entries(config?.projects || {})) {
@@ -262,7 +263,13 @@ export function findStaleProjectDevices({
 
     const ios = proj?.platforms?.ios;
     if (ios?.owned && ios.deviceUdid && liveSims.has(ios.deviceUdid)) {
-      stale.push({ kind: 'ios', id: ios.deviceUdid, name: liveSims.get(ios.deviceUdid) as string, project: path, idleDays });
+      stale.push({
+        kind: 'ios',
+        id: ios.deviceUdid,
+        name: liveSims.get(ios.deviceUdid) as string,
+        project: path,
+        idleDays,
+      });
     }
     const android = proj?.platforms?.android;
     if (android?.owned && android.avdName && liveAvds.has(android.avdName)) {
@@ -316,8 +323,8 @@ export function findStaleDeviceRecords({
   avdsChecked?: boolean;
 }): StaleDeviceRecord[] {
   const dead = new Set(deadProjects);
-  const liveSims = new Set(sims.map(s => s?.udid).filter(Boolean));
-  const liveAvds = new Set(avds.filter(a => typeof a === 'string'));
+  const liveSims = new Set(sims.map((s) => s?.udid).filter(Boolean));
+  const liveAvds = new Set(avds.filter((a) => typeof a === 'string'));
 
   const stale: StaleDeviceRecord[] = [];
   for (const [path, proj] of Object.entries(config?.projects || {})) {
@@ -343,8 +350,12 @@ export function findStaleDeviceRecords({
 // nothing was its own failure mode: a wiped config (or a throwaway
 // RN_ISO_HOME) orphaned simulators that nothing would ever surface again.
 // Report them by name so a human can judge; never act on them.
-export function describeUnverifiableDevices(simNames: string[] = [], avdNames: string[] = [], { reason = 'no rn-iso config found' }: { reason?: string } = {}) {
-  const ours = [...simNames, ...avdNames].filter(n => typeof n === 'string' && n.startsWith('rn-iso-'));
+export function describeUnverifiableDevices(
+  simNames: string[] = [],
+  avdNames: string[] = [],
+  { reason = 'no rn-iso config found' }: { reason?: string } = {},
+) {
+  const ours = [...simNames, ...avdNames].filter((n) => typeof n === 'string' && n.startsWith('rn-iso-'));
   if (ours.length === 0) return [`${reason}; device sweep skipped`];
   return [
     `${reason}, so ${ours.length} rn-iso-created device(s) cannot be verified as orphaned: ${ours.join(', ')}`,
@@ -378,8 +389,14 @@ export function formatGcReport({
   const liveLocks = buildLocks?.live ?? [];
   const staleSlots = buildSlots?.stale ?? [];
 
-  if (deadProjects.length === 0 && orphanedDevices.length === 0 && staleDevices.length === 0
-    && staleDeviceRecords.length === 0 && staleLocks.length === 0 && staleSlots.length === 0) {
+  if (
+    deadProjects.length === 0 &&
+    orphanedDevices.length === 0 &&
+    staleDevices.length === 0 &&
+    staleDeviceRecords.length === 0 &&
+    staleLocks.length === 0 &&
+    staleSlots.length === 0
+  ) {
     const reasons = [];
     if (skipped.length > 0) {
       reasons.push(`${skipped.length} entr${skipped.length === 1 ? 'y' : 'ies'} could not be checked`);
@@ -494,7 +511,7 @@ export function formatGcReport({
       else if (c.emptySkipped) lines.push(`              --all skips this cache: ${c.emptySkipped}`);
     }
     lines.push(`  total: ${formatBytes(total)}`);
-    const doomed = caches.filter(c => c.willEmpty);
+    const doomed = caches.filter((c) => c.willEmpty);
     if (doomed.length) {
       const doomedBytes = doomed.reduce((n, c) => n + (c.bytes ?? 0), 0);
       lines.push(`  --all would empty ${doomed.length} of these (${formatBytes(doomedBytes)})`);
@@ -620,9 +637,9 @@ function machineGlobalReason(cache: CacheDescriptor): string | null {
 }
 
 function planCacheEmptying(caches: CacheDescriptor[], all: boolean): GcCache[] {
-  const annotated = caches.map(c => ({ ...c, machineGlobal: machineGlobalReason(c) }));
+  const annotated = caches.map((c) => ({ ...c, machineGlobal: machineGlobalReason(c) }));
   if (!all) return annotated;
-  return annotated.map(c => {
+  return annotated.map((c) => {
     if (c.machineGlobal) {
       return { ...c, willEmpty: false, emptySkipped: c.machineGlobal };
     }
@@ -658,7 +675,12 @@ function ownsItsDirectory(cache: CacheDescriptor): boolean {
 // skipped by every path and grew without bound. `prune: 'atomic'` is the
 // contract from caches.js and cache-manifest.js; this reads it rather than
 // re-deciding which caches are index-backed.
-function emptyCache(cache: CacheDescriptor): { removed: number; bytes: number; skipped: string | null; failed?: number } {
+function emptyCache(cache: CacheDescriptor): {
+  removed: number;
+  bytes: number;
+  skipped: string | null;
+  failed?: number;
+} {
   if (cache.prune !== 'atomic') {
     return pruneCache(cache, { olderThanDays: 0, now: Date.now() + DAY_MS });
   }
@@ -699,10 +721,7 @@ export async function collectGcReport({
   // the directories, which is the cost of the report being complete.
   // With --all each row is annotated with whether it would be emptied and, if
   // not, why -- decided here so the report and the action cannot disagree.
-  const caches = planCacheEmptying(
-    sizeCaches(discoverCaches({ declared: declaredCachePaths() })),
-    all
-  );
+  const caches = planCacheEmptying(sizeCaches(discoverCaches({ declared: declaredCachePaths() })), all);
 
   // A project path that no longer exists looks "dead" -- but if it lives
   // on a volume that is simply not mounted right now (this machine's
@@ -749,11 +768,12 @@ export async function collectGcReport({
   // would come back empty, which classifies EVERY rn-iso-* sim/AVD on the
   // machine as orphaned. Checked before the scoped-home guard only so its
   // more specific message wins when both apply.
-  const unsweepableReason = cfg === null
-    ? 'no rn-iso config found'
-    : deviceSweepIsScoped(unsafeAllowScopedDeviceSweep)
-      ? 'RN_ISO_HOME scopes this config, but simulators and AVDs are machine-global'
-      : null;
+  const unsweepableReason =
+    cfg === null
+      ? 'no rn-iso config found'
+      : deviceSweepIsScoped(unsafeAllowScopedDeviceSweep)
+        ? 'RN_ISO_HOME scopes this config, but simulators and AVDs are machine-global'
+        : null;
 
   if (unsweepableReason) {
     // Name what it declined to judge, but never classify or act on it:
@@ -761,11 +781,15 @@ export async function collectGcReport({
     let simNames: string[] = [];
     let avdNames: string[] = [];
     try {
-      simNames = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }).map(s => s.name);
-    } catch { /* toolchain unavailable: report what we can */ }
+      simNames = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }).map((s) => s.name);
+    } catch {
+      /* toolchain unavailable: report what we can */
+    }
     try {
       avdNames = listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-    } catch { /* same */ }
+    } catch {
+      /* same */
+    }
     deviceSweepNotices.push(...describeUnverifiableDevices(simNames, avdNames, { reason: unsweepableReason }));
   } else {
     // Whether each listing was actually READ matters twice over. The orphan
@@ -780,7 +804,7 @@ export async function collectGcReport({
     } catch {
       simsChecked = false;
       deviceSweepNotices.push(
-        `ios device sweep skipped: simulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
+        `ios device sweep skipped: simulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`,
       );
     }
     let avds: string[] = [];
@@ -790,7 +814,7 @@ export async function collectGcReport({
     } catch {
       avdsChecked = false;
       deviceSweepNotices.push(
-        `android device sweep skipped: emulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`
+        `android device sweep skipped: emulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`,
       );
     }
 
@@ -834,12 +858,12 @@ export async function collectGcReport({
     staleDevices,
     staleDeviceRecords,
     buildLocks: {
-      stale: locks.filter(l => !l.alive),
-      live: locks.filter(l => l.alive),
+      stale: locks.filter((l) => !l.alive),
+      live: locks.filter((l) => l.alive),
     },
     buildSlots: {
-      stale: slots.filter(s => !s.alive),
-      live: slots.filter(s => s.alive),
+      stale: slots.filter((s) => !s.alive),
+      live: slots.filter((s) => s.alive),
     },
     deviceSweepNotices,
     caches,
@@ -868,19 +892,22 @@ export async function runGc(opts: RunGcOptions = {}) {
   // Caches only count as actionable with --older-than: emptying one whole is a
   // performance decision aimed at a specific cache, not something a sweep
   // should do on the way past.
-  const actionable = deadProjects.length > 0
-    || orphanedDevices.length > 0
-    || staleDevices.length > 0
-    || staleDeviceRecords.length > 0
-    || buildLocks.stale.length > 0
-    || buildSlots.stale.length > 0
-    || ((olderThan !== null || all) && caches.length > 0);
+  const actionable =
+    deadProjects.length > 0 ||
+    orphanedDevices.length > 0 ||
+    staleDevices.length > 0 ||
+    staleDeviceRecords.length > 0 ||
+    buildLocks.stale.length > 0 ||
+    buildSlots.stale.length > 0 ||
+    ((olderThan !== null || all) && caches.length > 0);
 
   if (!opts.delete) {
     if (all) console.log(chalk.dim('\nDry run. Re-run with --delete --all to empty the caches above.'));
     else if (actionable) console.log(chalk.dim('\nDry run. Re-run with --delete to reclaim.'));
     else if (caches.length) {
-      console.log(chalk.dim('\nPass --delete --older-than <days> to trim the caches above, or --delete --all to empty them.'));
+      console.log(
+        chalk.dim('\nPass --delete --older-than <days> to trim the caches above, or --delete --all to empty them.'),
+      );
     }
     return;
   }
@@ -915,9 +942,10 @@ export async function runGc(opts: RunGcOptions = {}) {
   // Every one of those guards lives in src/teardown.js and nowhere else
   // (CLAUDE.md item 4): gc never issues simctl/avdmanager itself.
   function reap(d: OrphanedDevice | StaleProjectDevice) {
-    const r = d.kind === 'ios'
-      ? teardownOwnedIosSim(d.id, { del: true, label: d.name })
-      : teardownOwnedAvd(d.name, { del: true });
+    const r =
+      d.kind === 'ios'
+        ? teardownOwnedIosSim(d.id, { del: true, label: d.name })
+        : teardownOwnedAvd(d.name, { del: true });
     const what = d.kind === 'ios' ? `ios sim ${d.name} (${d.id})` : `android avd ${d.name}`;
     if (r.status === 'torn-down') {
       console.log(chalk.green(`Deleted ${what}`));
@@ -966,7 +994,11 @@ export async function runGc(opts: RunGcOptions = {}) {
   for (const lock of buildLocks.stale) {
     try {
       rmSync(lock.path, { recursive: true, force: true });
-      console.log(chalk.green(`Cleared the ${lock.platform} build lock left by pid ${lock.pid ?? '?'} (${lock.projectRoot || 'unrecorded workspace'})`));
+      console.log(
+        chalk.green(
+          `Cleared the ${lock.platform} build lock left by pid ${lock.pid ?? '?'} (${lock.projectRoot || 'unrecorded workspace'})`,
+        ),
+      );
     } catch (err) {
       deleteFailures++;
       console.log(chalk.red(`Failed to clear the build lock at ${lock.path}: ${(err as Error)?.message || err}`));
@@ -978,7 +1010,11 @@ export async function runGc(opts: RunGcOptions = {}) {
   for (const slot of buildSlots.stale) {
     try {
       rmSync(slot.path, { recursive: true, force: true });
-      console.log(chalk.green(`Cleared build slot ${slot.index ?? '?'} left by pid ${slot.pid ?? '?'} (${slot.projectRoot || 'unrecorded workspace'})`));
+      console.log(
+        chalk.green(
+          `Cleared build slot ${slot.index ?? '?'} left by pid ${slot.pid ?? '?'} (${slot.projectRoot || 'unrecorded workspace'})`,
+        ),
+      );
     } catch (err) {
       deleteFailures++;
       console.log(chalk.red(`Failed to clear the build slot at ${slot.path}: ${(err as Error)?.message || err}`));
@@ -986,7 +1022,9 @@ export async function runGc(opts: RunGcOptions = {}) {
   }
 
   if (deleteFailures) {
-    console.log(chalk.red(`\n${deleteFailures} entr${deleteFailures === 1 ? 'y' : 'ies'} could not be deleted; see above.`));
+    console.log(
+      chalk.red(`\n${deleteFailures} entr${deleteFailures === 1 ? 'y' : 'ies'} could not be deleted; see above.`),
+    );
   }
 
   // Trimmed last and reported apart from everything above: this is not
@@ -1007,7 +1045,9 @@ export async function runGc(opts: RunGcOptions = {}) {
 
   if (olderThan === null) {
     if (caches.length) {
-      console.log(chalk.dim('Shared caches left alone: pass --older-than <days> to trim them, or --all to empty them.'));
+      console.log(
+        chalk.dim('Shared caches left alone: pass --older-than <days> to trim them, or --all to empty them.'),
+      );
     }
     return;
   }
@@ -1023,7 +1063,9 @@ export async function runGc(opts: RunGcOptions = {}) {
       console.log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
     } else if (r.removed) {
       cacheBytes += r.bytes;
-      console.log(chalk.green(`Trimmed ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`));
+      console.log(
+        chalk.green(`Trimmed ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
+      );
     } else {
       console.log(chalk.dim(`${c.name}: nothing older than ${olderThan}d`));
     }
@@ -1031,7 +1073,9 @@ export async function runGc(opts: RunGcOptions = {}) {
 
   if (cacheBytes) {
     console.log(
-      chalk.dim(`Trimmed ${formatBytes(cacheBytes)} of shared cache. The next build that wanted those entries pays to rebuild them.`)
+      chalk.dim(
+        `Trimmed ${formatBytes(cacheBytes)} of shared cache. The next build that wanted those entries pays to rebuild them.`,
+      ),
     );
   }
 }
@@ -1051,7 +1095,9 @@ function emptyCaches(caches: GcCache[]) {
       console.log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
     } else if (r.removed) {
       cacheBytes += r.bytes;
-      console.log(chalk.green(`Emptied ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`));
+      console.log(
+        chalk.green(`Emptied ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
+      );
     } else {
       console.log(chalk.dim(`${c.name}: already empty`));
     }
@@ -1061,7 +1107,9 @@ function emptyCaches(caches: GcCache[]) {
   }
   if (cacheBytes) {
     console.log(
-      chalk.dim(`Emptied ${formatBytes(cacheBytes)} of shared cache. Every build that wanted any of it now pays to rebuild it.`)
+      chalk.dim(
+        `Emptied ${formatBytes(cacheBytes)} of shared cache. Every build that wanted any of it now pays to rebuild it.`,
+      ),
     );
   }
 }
@@ -1069,16 +1117,25 @@ function emptyCaches(caches: GcCache[]) {
 export default function gcCommand(program: Command) {
   program
     .command('gc')
-    .description('Report what rn-iso has left behind: dead project entries, orphaned owned devices, records of devices that no longer exist, build locks whose builder is gone, and the shared build caches. Reports by default; pass --delete to act.')
+    .description(
+      'Report what rn-iso has left behind: dead project entries, orphaned owned devices, records of devices that no longer exist, build locks whose builder is gone, and the shared build caches. Reports by default; pass --delete to act.',
+    )
     .option('--delete', 'actually prune the reported entries and reap the reported devices')
-    .option('--older-than <days>', 'also reap owned devices whose project has been untouched this long, and trim shared cache entries nothing has used in that time', (v: string) => {
-      const n = parseInt(v, 10);
-      if (!Number.isFinite(n) || String(n) !== String(v).trim()) {
-        throw new InvalidArgumentError('must be a whole number of days, e.g. --older-than 30');
-      }
-      return n;
-    })
-    .option('--all', 'with --delete, empty every shared cache whole rather than trimming it by age -- the only way to clear an index-backed cache. Reaches caches only, never devices or project entries. Caches outside the config dir are refused while RN_ISO_HOME is set.')
+    .option(
+      '--older-than <days>',
+      'also reap owned devices whose project has been untouched this long, and trim shared cache entries nothing has used in that time',
+      (v: string) => {
+        const n = parseInt(v, 10);
+        if (!Number.isFinite(n) || String(n) !== String(v).trim()) {
+          throw new InvalidArgumentError('must be a whole number of days, e.g. --older-than 30');
+        }
+        return n;
+      },
+    )
+    .option(
+      '--all',
+      'with --delete, empty every shared cache whole rather than trimming it by age -- the only way to clear an index-backed cache. Reaches caches only, never devices or project entries. Caches outside the config dir are refused while RN_ISO_HOME is set.',
+    )
     .action(async (opts: RunGcOptions) => {
       await runGc(opts);
     });

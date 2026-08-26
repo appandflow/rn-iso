@@ -58,7 +58,9 @@ interface StatusOptions {
 export default function statusCommand(program: Command) {
   program
     .command('status')
-    .description('Show every environment on this machine: devices, ports, what is actually running, and anything stuck.')
+    .description(
+      'Show every environment on this machine: devices, ports, what is actually running, and anything stuck.',
+    )
     .option('--json', 'print the state as JSON')
     .action(async (opts: StatusOptions) => {
       const cfg = loadConfig();
@@ -91,28 +93,42 @@ export default function statusCommand(program: Command) {
           metro = await resolveOnPort(proj.metroPort, path);
         }
         const supervisor = await supervisorFacts(path, proj, metro);
-        states.push(environmentState({ ...proj, __path: path }, {
-          // Structural casts: see the *Like interfaces above.
-          simsByUdid: simsByUdid as unknown as Record<string, SimFactsLike>,
-          metro: metro as unknown as MetroFactsLike | null,
-          worktrees: worktrees as unknown as WorktreeFactsLike[],
-          simsAvailable,
-          supervisor,
-          logs: logFacts(path),
-        }));
+        states.push(
+          environmentState(
+            { ...proj, __path: path },
+            {
+              // Structural casts: see the *Like interfaces above.
+              simsByUdid: simsByUdid as unknown as Record<string, SimFactsLike>,
+              metro: metro as unknown as MetroFactsLike | null,
+              worktrees: worktrees as unknown as WorktreeFactsLike[],
+              simsAvailable,
+              supervisor,
+              logs: logFacts(path),
+            },
+          ),
+        );
       }
 
       const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
       const cap = capacity(states, totalMemoryMb);
-      const orphanWorktrees = unprovisionedWorktrees(worktrees as unknown as WorktreeFactsLike[], projects.map(([p]) => p));
+      const orphanWorktrees = unprovisionedWorktrees(
+        worktrees as unknown as WorktreeFactsLike[],
+        projects.map(([p]) => p),
+      );
 
       if (opts.json) {
-        console.log(JSON.stringify({
-          environments: states,
-          capacity: cap,
-          unprovisionedWorktrees: orphanWorktrees,
-          simctlAvailable: simsAvailable,
-        }, null, 2));
+        console.log(
+          JSON.stringify(
+            {
+              environments: states,
+              capacity: cap,
+              unprovisionedWorktrees: orphanWorktrees,
+              simctlAvailable: simsAvailable,
+            },
+            null,
+            2,
+          ),
+        );
         return;
       }
 
@@ -141,9 +157,11 @@ export default function statusCommand(program: Command) {
         // is. Only the label-only case is relabelled: a root that IS the app
         // still prints a normal app line.
         const labelOnly = proj.worktreeRoot && !proj.bundleId && !state.metro && !state.ios && !state.android;
-        console.log(labelOnly
-          ? chalk.dim('  worktree root (holds the label; the app registers its own entry)')
-          : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${proj.isExpo ? 'expo' : 'bare'})`));
+        console.log(
+          labelOnly
+            ? chalk.dim('  worktree root (holds the label; the app registers its own entry)')
+            : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${proj.isExpo ? 'expo' : 'bare'})`),
+        );
 
         if (state.metro) {
           const label = state.metro.running
@@ -161,19 +179,20 @@ export default function statusCommand(program: Command) {
         }
         if (state.logs) {
           const n = state.logs.errorsSinceMarker;
-          const errs = n > 0
-            ? chalk.yellow(` (${n} error${n === 1 ? '' : 's'} since the last marker)`)
-            : '';
+          const errs = n > 0 ? chalk.yellow(` (${n} error${n === 1 ? '' : 's'} since the last marker)`) : '';
           console.log(chalk.dim(`  logs: ${state.logs.dir}`) + errs);
         }
         if (state.ios) {
-          const booted = state.ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(state.ios.state.toLowerCase());
+          const booted =
+            state.ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(state.ios.state.toLowerCase());
           const owned = state.ios.owned ? chalk.dim(' (owned)') : '';
           console.log(`  ios: ${chalk.cyan(state.ios.name ?? state.ios.udid)} ${booted}${owned}`);
         }
         if (state.android) {
           const kind = state.android.physical ? chalk.dim('(physical)') : chalk.dim('(emulator)');
-          console.log(`  android: ${chalk.cyan(state.android.name)} ${kind}${state.android.owned ? chalk.dim(' (owned)') : ''}`);
+          console.log(
+            `  android: ${chalk.cyan(state.android.name)} ${kind}${state.android.owned ? chalk.dim(' (owned)') : ''}`,
+          );
         }
         for (const w of state.warnings) console.log(chalk.yellow(`  ! ${w}`));
       }
@@ -188,8 +207,8 @@ export default function statusCommand(program: Command) {
       const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
       console.log(
         chalk.dim(
-          `\n${cap.liveCount} live environment(s), roughly ${gb(cap.committedMb)} of ${gb(cap.totalMemoryMb)} committed.`
-        )
+          `\n${cap.liveCount} live environment(s), roughly ${gb(cap.committedMb)} of ${gb(cap.totalMemoryMb)} committed.`,
+        ),
       );
       // RAM was the only resource reported, and disk is the one that actually
       // ran out. Bounded and failure-tolerant: an unreadable df prints nothing.
@@ -205,15 +224,21 @@ export default function statusCommand(program: Command) {
       if (line) {
         const tight = tightVolumes(volumes);
         if (tight.length) {
-          const which = tight.map(v => v.volume).join(' and ');
-          console.log(chalk.yellow(`${line} A single iOS build can exhaust ${which} -- run \`rn-iso gc\` before starting another environment.`));
+          const which = tight.map((v) => v.volume).join(' and ');
+          console.log(
+            chalk.yellow(
+              `${line} A single iOS build can exhaust ${which} -- run \`rn-iso gc\` before starting another environment.`,
+            ),
+          );
         } else {
           console.log(chalk.dim(line));
         }
       }
       if (cap.overCapacity) {
         console.log(
-          chalk.yellow('Over comfortable capacity. A machine that swaps is slower than one working in sequence -- release one before starting another.')
+          chalk.yellow(
+            'Over comfortable capacity. A machine that swaps is slower than one working in sequence -- release one before starting another.',
+          ),
         );
       }
     });
@@ -262,7 +287,7 @@ interface SupervisorFacts {
 async function supervisorFacts(
   path: string,
   proj: ProjectRecord | undefined,
-  metroResolution: MetroResolution | null
+  metroResolution: MetroResolution | null,
 ): Promise<SupervisorFacts | null> {
   const state = readSupervisorState(path);
   const record: SupervisorRecordExt | null = proj?.supervisor ?? null;
@@ -274,9 +299,7 @@ async function supervisorFacts(
   if (alive && port) {
     // Reuse the resolution already paid for when the supervisor sits on the
     // reserved port, which is the normal case.
-    const resolution = port === proj?.metroPort && metroResolution
-      ? metroResolution
-      : await resolveOnPort(port, path);
+    const resolution = port === proj?.metroPort && metroResolution ? metroResolution : await resolveOnPort(port, path);
     healthy = Boolean(resolution?.metro);
   }
   return {

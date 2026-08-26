@@ -68,9 +68,7 @@ function walk(dir, acc, root) {
  * @returns {Promise<{ hash: string, sources: Array<{ type: string, filePath: string }> }>}
  */
 export async function createFingerprintAsync(projectRoot, options = {}) {
-  const platforms = Array.isArray(options?.platforms) && options.platforms.length
-    ? options.platforms
-    : ALL_PLATFORMS;
+  const platforms = Array.isArray(options?.platforms) && options.platforms.length ? options.platforms : ALL_PLATFORMS;
 
   const files = [];
   // The root package.json is a native input in the real hasher too (it names

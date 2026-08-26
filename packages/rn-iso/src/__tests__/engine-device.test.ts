@@ -37,13 +37,22 @@ describe('ensureBooted: ios', () => {
   test('returns the udid without touching simctl boot when the sim is already Booted', async () => {
     const commands = [];
     setExecutor({
-      run: (cmd) => { commands.push(cmd); return simList([{ udid: 'U1', name: 'rn-iso-app', state: 'Booted', isAvailable: true }]); },
-      runQuiet: (cmd) => { commands.push(cmd); return ''; },
+      run: (cmd) => {
+        commands.push(cmd);
+        return simList([{ udid: 'U1', name: 'rn-iso-app', state: 'Booted', isAvailable: true }]);
+      },
+      runQuiet: (cmd) => {
+        commands.push(cmd);
+        return '';
+      },
       runFile: () => '',
       spawn: () => null,
     });
-    expect(await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true } })).toEqual({ ok: true, udid: 'U1' });
-    expect(commands.filter(c => c.includes('simctl boot')).length).toBe(0);
+    expect(await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true } })).toEqual({
+      ok: true,
+      udid: 'U1',
+    });
+    expect(commands.filter((c) => c.includes('simctl boot')).length).toBe(0);
   });
 
   test('boots a shut-down owned sim and waits for the Booted state', async () => {
@@ -64,9 +73,14 @@ describe('ensureBooted: ios', () => {
       runFile: () => '',
       spawn: () => null,
     });
-    const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true }, timeoutMs: 5000, pollMs: 5 });
+    const result = await ensureBooted({
+      platform: 'ios',
+      device: { deviceUdid: 'U1', owned: true },
+      timeoutMs: 5000,
+      pollMs: 5,
+    });
     expect(result).toEqual({ ok: true, udid: 'U1' });
-    expect(commands.filter(c => c === 'xcrun simctl boot U1').length).toBe(1);
+    expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
   });
 
   // The ownership rule: a sim renamed away from the rn-iso- prefix is
@@ -77,7 +91,9 @@ describe('ensureBooted: ios', () => {
       run: () => simList([{ udid: 'U1', name: 'My iPhone', state: 'Shutdown', isAvailable: true }]),
       runQuiet: () => '',
       runFile: () => '',
-      spawn: () => { throw new Error('must not boot a foreign sim'); },
+      spawn: () => {
+        throw new Error('must not boot a foreign sim');
+      },
     });
     const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1' } });
     expect(result.ok).toBe(undefined);
@@ -93,9 +109,10 @@ describe('ensureBooted: ios', () => {
 
   test('times out with a reason instead of hanging when the sim never boots', async () => {
     setExecutor({
-      run: (cmd) => (cmd.includes('list devices')
-        ? simList([{ udid: 'U1', name: 'rn-iso-app', state: 'Booting', isAvailable: true }])
-        : ''),
+      run: (cmd) =>
+        cmd.includes('list devices')
+          ? simList([{ udid: 'U1', name: 'rn-iso-app', state: 'Booting', isAvailable: true }])
+          : '',
       runQuiet: () => '',
       runFile: () => '',
       spawn: () => null,
@@ -130,9 +147,14 @@ describe('ensureBooted: android', () => {
         return '';
       },
       runFile: () => '',
-      spawn: () => { throw new Error('must not boot an emulator that is already running'); },
+      spawn: () => {
+        throw new Error('must not boot an emulator that is already running');
+      },
     });
-    const result = await ensureBooted({ platform: 'android', device: { avdName: 'rn-iso-app', consolePort: 5554, owned: true } });
+    const result = await ensureBooted({
+      platform: 'android',
+      device: { avdName: 'rn-iso-app', consolePort: 5554, owned: true },
+    });
     expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
   });
 
@@ -142,9 +164,8 @@ describe('ensureBooted: android', () => {
     setExecutor({
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'rn-iso-app';
-        if (cmd === 'adb devices') return booted
-          ? 'List of devices attached\nemulator-5556\tdevice'
-          : 'List of devices attached';
+        if (cmd === 'adb devices')
+          return booted ? 'List of devices attached\nemulator-5556\tdevice' : 'List of devices attached';
         return '';
       },
       runQuiet: (cmd) => {
@@ -152,9 +173,17 @@ describe('ensureBooted: android', () => {
         return '';
       },
       runFile: () => '',
-      spawn: (cmd, args) => { spawned.push([cmd, ...args]); booted = true; return { unref() {} }; },
+      spawn: (cmd, args) => {
+        spawned.push([cmd, ...args]);
+        booted = true;
+        return { unref() {} };
+      },
     });
-    const result = await ensureBooted({ platform: 'android', device: { avdName: 'rn-iso-app', consolePort: 5556, owned: true }, timeoutMs: 5000 });
+    const result = await ensureBooted({
+      platform: 'android',
+      device: { avdName: 'rn-iso-app', consolePort: 5556, owned: true },
+      timeoutMs: 5000,
+    });
     expect(result).toEqual({ ok: true, serial: 'emulator-5556' });
     expect(spawned).toEqual([['emulator', '-avd', 'rn-iso-app', '-port', '5556']]);
   });
@@ -187,7 +216,11 @@ describe('ensureBooted: android', () => {
         return { unref() {} };
       },
     });
-    const result = await ensureBooted({ platform: 'android', device: { avdName: 'rn-iso-app', consolePort: 5554, owned: true }, timeoutMs: 5000 });
+    const result = await ensureBooted({
+      platform: 'android',
+      device: { avdName: 'rn-iso-app', consolePort: 5554, owned: true },
+      timeoutMs: 5000,
+    });
     expect(result.ok).toBe(true);
     expect(result.serial).not.toBe('emulator-5554');
     expect(spawned[0][4]).toBe(result.serial.replace('emulator-', ''));
@@ -198,7 +231,9 @@ describe('ensureBooted: android', () => {
       run: (cmd) => (cmd === 'emulator -list-avds' ? 'Pixel_7_API_35' : ''),
       runQuiet: () => '',
       runFile: () => '',
-      spawn: () => { throw new Error('must not boot a foreign AVD'); },
+      spawn: () => {
+        throw new Error('must not boot a foreign AVD');
+      },
     });
     const result = await ensureBooted({ platform: 'android', device: { avdName: 'Pixel_7_API_35' } });
     expect(result.reason).toMatch(/not rn-iso-owned/);
@@ -210,12 +245,23 @@ describe('ensureBooted: android', () => {
   // matters -- must issue NOTHING at that serial: no adb probe, no boot.
   test('refuses a legacy physical record without issuing a single command at it', async () => {
     setExecutor({
-      run: (cmd) => { throw new Error(`rn-iso must not run "${cmd}" for a physical record`); },
-      runQuiet: () => { throw new Error('rn-iso must not probe hardware'); },
-      runFile: () => { throw new Error('rn-iso must not probe hardware'); },
-      spawn: () => { throw new Error('rn-iso must never try to boot hardware'); },
+      run: (cmd) => {
+        throw new Error(`rn-iso must not run "${cmd}" for a physical record`);
+      },
+      runQuiet: () => {
+        throw new Error('rn-iso must not probe hardware');
+      },
+      runFile: () => {
+        throw new Error('rn-iso must not probe hardware');
+      },
+      spawn: () => {
+        throw new Error('rn-iso must never try to boot hardware');
+      },
     });
-    const result = await ensureBooted({ platform: 'android', device: { serial: 'R5CT10', kind: 'physical', owned: false } });
+    const result = await ensureBooted({
+      platform: 'android',
+      device: { serial: 'R5CT10', kind: 'physical', owned: false },
+    });
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/No owned Android emulator is recorded/);
   });
@@ -224,7 +270,6 @@ describe('ensureBooted: android', () => {
 test('ensureBooted reports an unknown platform rather than throwing', async () => {
   expect((await ensureBooted({ platform: 'web', device: {} })).reason).toMatch(/Unknown platform/);
 });
-
 
 // --- deviceTypeMismatch: pure --------------------------------------------
 //
@@ -263,14 +308,16 @@ test('deviceTypeMismatch returns null when the recorded type is unknown', () => 
 
 const DEVICE_TYPES_JSON = JSON.stringify({ devicetypes: TYPES });
 const RUNTIMES_JSON = JSON.stringify({
-  runtimes: [{
-    identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
-    name: 'iOS 26.2',
-    version: '26.2',
-    isAvailable: true,
-    platform: 'iOS',
-    supportedDeviceTypes: TYPES,
-  }],
+  runtimes: [
+    {
+      identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
+      name: 'iOS 26.2',
+      version: '26.2',
+      isAvailable: true,
+      platform: 'iOS',
+      supportedDeviceTypes: TYPES,
+    },
+  ],
 });
 
 function projectDir() {
@@ -294,9 +341,19 @@ function iosExecutor(devices) {
         if (/simctl boot/.test(cmd)) return '';
         throw new Error(`unexpected run: ${cmd}`);
       },
-      runQuiet(cmd) { try { return this.run(cmd); } catch { return null; } },
-      runFile() { return ''; },
-      spawn() { return { pid: 1, unref() {} }; },
+      runQuiet(cmd) {
+        try {
+          return this.run(cmd);
+        } catch {
+          return null;
+        }
+      },
+      runFile() {
+        return '';
+      },
+      spawn() {
+        return { pid: 1, unref() {} };
+      },
     },
   };
 }
@@ -306,18 +363,24 @@ describe('ensureOwnedDevice: ios', () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'rn-iso-old' });
-      const { run, exec } = iosExecutor([{ udid: 'U1', name: 'Renamed-By-User', state: 'Shutdown', isAvailable: true }]);
+      const { run, exec } = iosExecutor([
+        { udid: 'U1', name: 'Renamed-By-User', state: 'Shutdown', isAvailable: true },
+      ]);
       setExecutor(exec);
       const notes = [];
       const result = await ensureOwnedDevice({
-        platform: 'ios', project: getProject(root), projectPath: root, label: 'app',
-        settings: {}, note: (l) => notes.push(String(l)),
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        note: (l) => notes.push(String(l)),
       });
-      expect(run.some(c => c === 'xcrun simctl boot U1')).toBe(false);
-      expect(run.some(c => /simctl create/.test(c))).toBeTruthy();
+      expect(run.some((c) => c === 'xcrun simctl boot U1')).toBe(false);
+      expect(run.some((c) => /simctl create/.test(c))).toBeTruthy();
       expect(result.deviceUdid).toBe('NEW-UDID');
       expect(result.owned).toBe(true);
-      expect(notes.some(n => /not rn-iso-owned by name/i.test(n))).toBeTruthy();
+      expect(notes.some((n) => /not rn-iso-owned by name/i.test(n))).toBeTruthy();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -331,14 +394,18 @@ describe('ensureOwnedDevice: ios', () => {
       setExecutor(exec);
       const notes = [];
       const result = await ensureOwnedDevice({
-        platform: 'ios', project: getProject(root), projectPath: root, label: 'app',
-        settings: {}, note: (l) => notes.push(String(l)),
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        note: (l) => notes.push(String(l)),
       });
-      expect(run.some(c => /simctl boot/.test(c))).toBe(false);
-      expect(run.some(c => /simctl create/.test(c))).toBe(false);
+      expect(run.some((c) => /simctl boot/.test(c))).toBe(false);
+      expect(run.some((c) => /simctl create/.test(c))).toBe(false);
       expect(result.deviceUdid).toBe('U1');
       expect(!result.owned).toBeTruthy();
-      expect(notes.some(n => /not owned by rn-iso/i.test(n))).toBeTruthy();
+      expect(notes.some((n) => /not owned by rn-iso/i.test(n))).toBeTruthy();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -382,9 +449,20 @@ describe('ensureOwnedDevice: android', () => {
           if (/getprop /.test(cmd)) return '';
           throw new Error(`unexpected run: ${cmd}`);
         },
-        runQuiet(cmd) { try { return this.run(cmd); } catch { return null; } },
-        runFile() { return ''; },
-        spawn(cmd, args, opts) { spawn.push({ cmd, args, opts }); return { pid: 9999, unref() {} }; },
+        runQuiet(cmd) {
+          try {
+            return this.run(cmd);
+          } catch {
+            return null;
+          }
+        },
+        runFile() {
+          return '';
+        },
+        spawn(cmd, args, opts) {
+          spawn.push({ cmd, args, opts });
+          return { pid: 9999, unref() {} };
+        },
       },
     };
   }
@@ -400,13 +478,17 @@ describe('ensureOwnedDevice: android', () => {
       setExecutor(exec);
       const notes = [];
       const result = await ensureOwnedDevice({
-        platform: 'android', project: getProject(root), projectPath: root, label: 'app',
-        settings: {}, note: (l) => notes.push(String(l)),
+        platform: 'android',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        note: (l) => notes.push(String(l)),
       });
-      expect(run.some(c => c.includes('R5CT10'))).toBe(false);
+      expect(run.some((c) => c.includes('R5CT10'))).toBe(false);
       expect(result.avdName).toBe('rn-iso-app');
       expect(result.owned).toBe(true);
-      expect(notes.some(n => /no longer supports physical devices/i.test(n))).toBeTruthy();
+      expect(notes.some((n) => /no longer supports physical devices/i.test(n))).toBeTruthy();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -417,12 +499,20 @@ describe('ensureOwnedDevice: android', () => {
     const root = projectDir();
     try {
       setDevice(other, 'android', { avdName: 'rn-iso-app', consolePort: 5554, owned: true });
-      const { exec } = androidExecutor({ avds: ['rn-iso-app'], createAvdError: 'Error: AVD rn-iso-app already exists.' });
+      const { exec } = androidExecutor({
+        avds: ['rn-iso-app'],
+        createAvdError: 'Error: AVD rn-iso-app already exists.',
+      });
       setExecutor(exec);
-      await await expect(ensureOwnedDevice({
-          platform: 'android', project: getProject(root), projectPath: root, label: 'app',
+      await expect(
+        ensureOwnedDevice({
+          platform: 'android',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
           settings: {},
-        })).rejects.toThrow(/owned by another project/);
+        }),
+      ).rejects.toThrow(/owned by another project/);
     } finally {
       rmSync(other, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
@@ -439,12 +529,28 @@ describe('deviceCapacityRefusal', () => {
 
   test('unlimited (max 0) never refuses', () => {
     const sims = [booted('u1', 'rn-iso-a'), booted('u2', 'rn-iso-b')];
-    expect(deviceCapacityRefusal({ platform: 'ios', project: {}, max: 0, sims, adb: { emulators: [] }, config: { projects: {} } })).toBe(null);
+    expect(
+      deviceCapacityRefusal({
+        platform: 'ios',
+        project: {},
+        max: 0,
+        sims,
+        adb: { emulators: [] },
+        config: { projects: {} },
+      }),
+    ).toBe(null);
   });
 
   test('at the cap, a fresh workspace is refused with RN_ISO_AT_CAPACITY', () => {
     const sims = [booted('u1', 'rn-iso-a'), booted('u2', 'rn-iso-b')];
-    const refusal = deviceCapacityRefusal({ platform: 'ios', project: { platforms: {} }, max: 2, sims, adb: { emulators: [] }, config: { projects: {} } });
+    const refusal = deviceCapacityRefusal({
+      platform: 'ios',
+      project: { platforms: {} },
+      max: 2,
+      sims,
+      adb: { emulators: [] },
+      config: { projects: {} },
+    });
     expect(refusal.code).toBe('RN_ISO_AT_CAPACITY');
     expect(refusal.remedy).toMatch(/rn-iso stop|maxDevices/);
   });
@@ -452,19 +558,46 @@ describe('deviceCapacityRefusal', () => {
   test('a workspace whose OWN sim is already booted is never refused', () => {
     const sims = [booted('u1', 'rn-iso-a'), booted('u2', 'rn-iso-b')];
     const project = { platforms: { ios: { deviceUdid: 'u1', owned: true } } };
-    expect(deviceCapacityRefusal({ platform: 'ios', project, max: 2, sims, adb: { emulators: [] }, config: { projects: {} } })).toBe(null);
+    expect(
+      deviceCapacityRefusal({
+        platform: 'ios',
+        project,
+        max: 2,
+        sims,
+        adb: { emulators: [] },
+        config: { projects: {} },
+      }),
+    ).toBe(null);
   });
 
   test('only BOOTED rn-iso sims count toward the cap', () => {
     const sims = [booted('u1', 'rn-iso-a'), shutdown('u2', 'rn-iso-b'), booted('u3', 'someone-else')];
     // One booted rn-iso sim, cap of 2 -> under cap, a fresh workspace is allowed.
-    expect(deviceCapacityRefusal({ platform: 'ios', project: { platforms: {} }, max: 2, sims, adb: { emulators: [] }, config: { projects: {} } })).toBe(null);
+    expect(
+      deviceCapacityRefusal({
+        platform: 'ios',
+        project: { platforms: {} },
+        max: 2,
+        sims,
+        adb: { emulators: [] },
+        config: { projects: {} },
+      }),
+    ).toBe(null);
   });
 
   test('a running owned Android emulator counts via the registry', () => {
-    const config = { projects: { '/w/x': { platforms: { android: { avdName: 'rn-iso-x', consolePort: 5556, owned: true } } } } };
+    const config = {
+      projects: { '/w/x': { platforms: { android: { avdName: 'rn-iso-x', consolePort: 5556, owned: true } } } },
+    };
     const adb = { emulators: [{ consolePort: 5556 }] };
-    const refusal = deviceCapacityRefusal({ platform: 'android', project: { platforms: {} }, max: 1, sims: [], adb, config });
+    const refusal = deviceCapacityRefusal({
+      platform: 'android',
+      project: { platforms: {} },
+      max: 1,
+      sims: [],
+      adb,
+      config,
+    });
     expect(refusal.code).toBe('RN_ISO_AT_CAPACITY');
   });
 });

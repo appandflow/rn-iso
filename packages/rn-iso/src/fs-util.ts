@@ -68,9 +68,7 @@ function resolveWorkspaceRealish(workspacePath: string): string | null {
         } catch {
           return null;
         }
-        const resolvedTarget = target.startsWith('/')
-          ? target
-          : normalize(join(dirname(prefix), target));
+        const resolvedTarget = target.startsWith('/') ? target : normalize(join(dirname(prefix), target));
         const rest = normalized.slice(prefix.length);
         current = `${resolvedTarget}${rest}`;
         followedSymlink = true;

@@ -88,7 +88,8 @@ export function discoverAndroidProject(root: string): AndroidProjectResult {
       failed: true,
       code: BUILD_ERROR,
       reason: `No android/ directory in ${root}.`,
-      remedy: 'Generate it (`npx expo prebuild -p android`, which `rn-iso android` runs itself on an Expo project) or check out the native sources.',
+      remedy:
+        'Generate it (`npx expo prebuild -p android`, which `rn-iso android` runs itself on an Expo project) or check out the native sources.',
     };
   }
   const gradlew = gradlewPath(root);
@@ -97,7 +98,8 @@ export function discoverAndroidProject(root: string): AndroidProjectResult {
       failed: true,
       code: BUILD_ERROR,
       reason: `${gradlew} does not exist, so there is no gradle wrapper to build with.`,
-      remedy: 'Restore the wrapper (`gradle wrapper` in android/, or regenerate the project with `npx expo prebuild -p android --clean`).',
+      remedy:
+        'Restore the wrapper (`gradle wrapper` in android/, or regenerate the project with `npx expo prebuild -p android --clean`).',
     };
   }
   return { androidDir: dir, gradlew };
@@ -110,12 +112,21 @@ export function discoverAndroidProject(root: string): AndroidProjectResult {
 //
 // android/local.properties (sdk.dir=...) satisfies gradle on its own, so a
 // project carrying one is fine even with no environment variable set.
-export function androidSdkRefusal({ sdkPath, sdkExists, hasLocalProperties }: { sdkPath: string; sdkExists: boolean; hasLocalProperties: boolean }) {
+export function androidSdkRefusal({
+  sdkPath,
+  sdkExists,
+  hasLocalProperties,
+}: {
+  sdkPath: string;
+  sdkExists: boolean;
+  hasLocalProperties: boolean;
+}) {
   if (sdkExists || hasLocalProperties) return null;
   return {
     code: BUILD_ERROR,
     reason: `No Android SDK at ${sdkPath}.`,
-    remedy: 'Set ANDROID_HOME to the Android SDK (Android Studio installs it at ~/Library/Android/sdk), or write sdk.dir into android/local.properties. JAVA_HOME must point at a JDK 17 install as well.',
+    remedy:
+      'Set ANDROID_HOME to the Android SDK (Android Studio installs it at ~/Library/Android/sdk), or write sdk.dir into android/local.properties. JAVA_HOME must point at a JDK 17 install as well.',
   };
 }
 
@@ -154,7 +165,9 @@ export function parseOutputMetadata(text: unknown) {
     return null;
   }
   const elements = Array.isArray(parsed?.elements) ? parsed.elements : [];
-  const files = elements.map((e: { outputFile?: unknown }) => e?.outputFile).filter((f: unknown) => typeof f === 'string');
+  const files = elements
+    .map((e: { outputFile?: unknown }) => e?.outputFile)
+    .filter((f: unknown) => typeof f === 'string');
   return pickDebugApk(files);
 }
 
@@ -220,7 +233,11 @@ export function locateDebugApk(root: string, transcript = '') {
 // `./gradlew assembleDebug` does.
 export async function buildAndroid(
   { root, logWriter }: { root: string; logWriter?: NdjsonWriter | null },
-  { spawnFn = null, now = Date.now, env = process.env }: { spawnFn?: SpawnFn | null; now?: () => number; env?: NodeJS.ProcessEnv } = {}
+  {
+    spawnFn = null,
+    now = Date.now,
+    env = process.env,
+  }: { spawnFn?: SpawnFn | null; now?: () => number; env?: NodeJS.ProcessEnv } = {},
 ) {
   const project = discoverAndroidProject(root);
   if (project.failed) return { ...project, diagnostics: [], truncated: 0, lastLines: [] as string[], durationMs: 0 };
@@ -231,7 +248,8 @@ export async function buildAndroid(
     sdkExists: existsSync(sdk),
     hasLocalProperties: existsSync(join(project.androidDir as string, 'local.properties')),
   });
-  if (refusal) return { failed: true, ...refusal, diagnostics: [], truncated: 0, lastLines: [] as string[], durationMs: 0 };
+  if (refusal)
+    return { failed: true, ...refusal, diagnostics: [], truncated: 0, lastLines: [] as string[], durationMs: 0 };
 
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const startedAt = now();
@@ -302,7 +320,8 @@ export async function buildAndroid(
       failed: true,
       code: BUILD_ERROR,
       reason: `\`./gradlew ${ASSEMBLE_TASK}\` succeeded but produced no APK in ${debugApkDir(root)}.`,
-      remedy: 'Check that assembleDebug builds the app module (`./gradlew :app:assembleDebug` in android/) and that no flavour redirects the output.',
+      remedy:
+        'Check that assembleDebug builds the app module (`./gradlew :app:assembleDebug` in android/) and that no flavour redirects the output.',
       diagnostics: [],
       truncated: 0,
       lastLines: tail.slice(),

@@ -74,20 +74,34 @@ const COULD_NOT_RESOLVE = /^>?\s*(Could not (?:resolve|find|download|GET) .+)$/;
 // not found" is the entire answer, and without it an agent retries the build
 // instead of setting the variable.
 const REMEDIES: Array<[RegExp, string]> = [
-  [/JAVA_HOME is (?:set to an invalid directory|not set)/i,
-    'Point JAVA_HOME at a JDK 17 install (`export JAVA_HOME=$(/usr/libexec/java_home -v 17)`) and run again.'],
-  [/SDK location not found|ANDROID_HOME|ANDROID_SDK_ROOT|sdk\.dir/i,
-    'Set ANDROID_HOME to the Android SDK (usually ~/Library/Android/sdk), or write sdk.dir into android/local.properties.'],
-  [/licen[cs]es? (?:have not been|has not been) accepted|You have not accepted the license/i,
-    'Accept the SDK licences: `$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses`.'],
-  [/Failed to install the following (?:Android )?SDK packages|package is not installed/i,
-    'Install the missing SDK package with `$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "<package>"`.'],
-  [/Unsupported class file major version|invalid source release|compiled by a more recent version of the Java|Could not determine java version/i,
-    'The JDK does not match what this project builds with; select JDK 17 (`export JAVA_HOME=$(/usr/libexec/java_home -v 17)`).'],
-  [/Could not (?:resolve|find|download|GET)/i,
-    'Check network access and the repositories block. After a bad cache entry, `./gradlew --refresh-dependencies assembleDebug` in android/ re-resolves.'],
-  [/Android resource linking failed|AAPT/i,
-    'Fix the resource file and line named above (under android/app/src/main/res); aapt2 reports the exact element it could not link.'],
+  [
+    /JAVA_HOME is (?:set to an invalid directory|not set)/i,
+    'Point JAVA_HOME at a JDK 17 install (`export JAVA_HOME=$(/usr/libexec/java_home -v 17)`) and run again.',
+  ],
+  [
+    /SDK location not found|ANDROID_HOME|ANDROID_SDK_ROOT|sdk\.dir/i,
+    'Set ANDROID_HOME to the Android SDK (usually ~/Library/Android/sdk), or write sdk.dir into android/local.properties.',
+  ],
+  [
+    /licen[cs]es? (?:have not been|has not been) accepted|You have not accepted the license/i,
+    'Accept the SDK licences: `$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses`.',
+  ],
+  [
+    /Failed to install the following (?:Android )?SDK packages|package is not installed/i,
+    'Install the missing SDK package with `$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "<package>"`.',
+  ],
+  [
+    /Unsupported class file major version|invalid source release|compiled by a more recent version of the Java|Could not determine java version/i,
+    'The JDK does not match what this project builds with; select JDK 17 (`export JAVA_HOME=$(/usr/libexec/java_home -v 17)`).',
+  ],
+  [
+    /Could not (?:resolve|find|download|GET)/i,
+    'Check network access and the repositories block. After a bad cache entry, `./gradlew --refresh-dependencies assembleDebug` in android/ re-resolves.',
+  ],
+  [
+    /Android resource linking failed|AAPT/i,
+    'Fix the resource file and line named above (under android/app/src/main/res); aapt2 reports the exact element it could not link.',
+  ],
 ];
 
 export function remedyFor(message: string): string | null {
@@ -155,24 +169,44 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
 
     const kotlinUri = KOTLIN_URI.exec(line);
     if (kotlinUri) {
-      add({ file: decodePath(kotlinUri[1]), line: Number(kotlinUri[2]), column: Number(kotlinUri[3]), message: kotlinUri[4] });
+      add({
+        file: decodePath(kotlinUri[1]),
+        line: Number(kotlinUri[2]),
+        column: Number(kotlinUri[3]),
+        message: kotlinUri[4],
+      });
       continue;
     }
     const kotlinParen = KOTLIN_PAREN.exec(line);
     if (kotlinParen) {
-      add({ file: kotlinParen[1], line: Number(kotlinParen[2]), column: Number(kotlinParen[3]), message: kotlinParen[4] });
+      add({
+        file: kotlinParen[1],
+        line: Number(kotlinParen[2]),
+        column: Number(kotlinParen[3]),
+        message: kotlinParen[4],
+      });
       continue;
     }
 
     const aapt = AAPT_PREFIXED.exec(line);
     if (aapt) {
-      add({ file: aapt[1], line: Number(aapt[2]), column: aapt[3] ? Number(aapt[3]) : undefined, message: stripAaptPrefix(aapt[4]) });
+      add({
+        file: aapt[1],
+        line: Number(aapt[2]),
+        column: aapt[3] ? Number(aapt[3]) : undefined,
+        message: stripAaptPrefix(aapt[4]),
+      });
       continue;
     }
 
     const fileError = FILE_LINE_ERROR.exec(line);
     if (fileError) {
-      add({ file: fileError[1], line: Number(fileError[2]), column: fileError[3] ? Number(fileError[3]) : undefined, message: fileError[4] });
+      add({
+        file: fileError[1],
+        line: Number(fileError[2]),
+        column: fileError[3] ? Number(fileError[3]) : undefined,
+        message: fileError[4],
+      });
       continue;
     }
 
@@ -205,7 +239,10 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
 }
 
 // PURE. What goes on the terminal, and what was left in the log.
-export function capDiagnostics(diagnostics: Diagnostic[], limit = MAX_DIAGNOSTICS): { shown: Diagnostic[]; truncated: number } {
+export function capDiagnostics(
+  diagnostics: Diagnostic[],
+  limit = MAX_DIAGNOSTICS,
+): { shown: Diagnostic[]; truncated: number } {
   const all = Array.isArray(diagnostics) ? diagnostics : [];
   if (all.length <= limit) return { shown: all.slice(), truncated: 0 };
   return { shown: all.slice(0, limit), truncated: all.length - limit };
@@ -257,7 +294,9 @@ function readWhatWentWrong(lines: string[], start: number): { message: string; e
 }
 
 function stripAaptPrefix(message: string): string {
-  return String(message).replace(/^AAPT:\s*/, '').replace(/^error:\s*/i, '');
+  return String(message)
+    .replace(/^AAPT:\s*/, '')
+    .replace(/^error:\s*/i, '');
 }
 
 // kotlinc prints a file URI, and a path with a space in it comes back

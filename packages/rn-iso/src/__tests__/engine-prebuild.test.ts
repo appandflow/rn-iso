@@ -78,7 +78,10 @@ function fakeExpoChild({ lines = [], code = 0, signal = null, error = null, onEx
   child.stderr.setEncoding = () => {};
   setImmediate(() => {
     for (const line of lines) child.stdout.emit('data', `${line}\n`);
-    if (error) { child.emit('error', error); return; }
+    if (error) {
+      child.emit('error', error);
+      return;
+    }
     onExitSideEffect?.();
     child.emit('exit', code, signal);
   });
@@ -87,7 +90,13 @@ function fakeExpoChild({ lines = [], code = 0, signal = null, error = null, onEx
 
 function collectingWriter() {
   const records = [];
-  return { records, write: (r) => { records.push(r); return true; } };
+  return {
+    records,
+    write: (r) => {
+      records.push(r);
+      return true;
+    },
+  };
 }
 
 describe('runPrebuild', () => {
@@ -111,7 +120,9 @@ describe('runPrebuild', () => {
     expect(spawned.cmd).toBe(bin);
     expect(spawned.args).toEqual(['prebuild', '-p', 'ios', '--no-install']);
     expect(spawned.opts.cwd).toBe(root);
-    expect(writer.records.map(r => [r.src, r.level, r.msg])).toEqual([['build', 'debug', 'Creating native directory (./ios)']]);
+    expect(writer.records.map((r) => [r.src, r.level, r.msg])).toEqual([
+      ['build', 'debug', 'Creating native directory (./ios)'],
+    ]);
   });
 
   test('a non-zero exit comes back as {failed, lastLines}', async () => {
@@ -142,7 +153,9 @@ describe('runPrebuild', () => {
   test('refuses a bare project with no native directory, with a remedy', async () => {
     const result = await runPrebuild(root, 'ios', collectingWriter(), {
       isExpo: false,
-      spawnFn: () => { throw new Error('must not spawn prebuild for a bare project'); },
+      spawnFn: () => {
+        throw new Error('must not spawn prebuild for a bare project');
+      },
     });
     expect(result.failed).toBe(true);
     expect(result.code).toBe(PREBUILD_ERROR);
@@ -154,7 +167,9 @@ describe('runPrebuild', () => {
   test('reports a project from which expo cannot be resolved', async () => {
     const result = await runPrebuild(root, 'ios', collectingWriter(), {
       isExpo: true,
-      spawnFn: () => { throw new Error('must not spawn'); },
+      spawnFn: () => {
+        throw new Error('must not spawn');
+      },
     });
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/not resolvable/);

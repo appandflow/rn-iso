@@ -22,7 +22,12 @@ import { type AdbDevices, listAdbDevices } from './sim/android.ts';
 // The engine owns the eas-cli half (resolution, whoami, the parse); this file
 // owns what to SAY about it. Imported under a second name because the pure
 // check below is the doctor-side function of the same idea.
-import { type EasAuthResult, checkEasAuth as probeEasAuth, ownerFromConfig, providerFromConfig } from './engine/remote-cache.ts';
+import {
+  type EasAuthResult,
+  checkEasAuth as probeEasAuth,
+  ownerFromConfig,
+  providerFromConfig,
+} from './engine/remote-cache.ts';
 import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.ts';
 
 // Loosely-typed views of the JSON config files this module parses
@@ -82,7 +87,7 @@ function readJson(path: string): AnyJson | null {
 // baked in at build time and no deep link is involved. Callers pass
 // detectIsExpo(projectRoot) so this agrees with what `status` prints.
 export function checkDevClient(pkg: AnyJson | null, isExpo: boolean = true): Finding | null {
-  const deps = { ...(pkg?.dependencies || {}), ...(pkg?.devDependencies || {}) };
+  const deps = { ...pkg?.dependencies, ...pkg?.devDependencies };
   if (deps['expo-dev-client']) return null;
   // Bare React Native has its own way of reaching a non-default port and no
   // dev client to install; this advice only applies to an Expo app.
@@ -91,7 +96,7 @@ export function checkDevClient(pkg: AnyJson | null, isExpo: boolean = true): Fin
     'cost',
     'expo-dev-client is not installed',
     'A Metro port reserved by rn-iso cannot reach the app without it: --port travels in the deep link `expo run:ios` opens, and nothing handles that URL. The app falls back to port 8081 and shows "No script URL provided".',
-    'npx expo install expo-dev-client'
+    'npx expo install expo-dev-client',
   );
 }
 
@@ -111,7 +116,7 @@ export function checkMetroCache(metroConfigSource: string | null): Finding | nul
       'note',
       'No metro.config.js found',
       'Metro then caches transforms under the project itself, so a second workspace starts cold and re-transforms every module.',
-      'Add a metro.config.js with a FileStore cacheStore pointing outside the project.'
+      'Add a metro.config.js with a FileStore cacheStore pointing outside the project.',
     );
   }
   // A config that is nothing but a re-export cannot be read here at all: the
@@ -124,26 +129,26 @@ export function checkMetroCache(metroConfigSource: string | null): Finding | nul
       'note',
       `metro config delegates to ${delegate}; rn-iso cannot inspect it`,
       `metro.config.js is a re-export of ${delegate} and doctor reads this file rather than executing it, so whether a shared cacheStore is configured is decided somewhere rn-iso cannot see. This is a note, not a cost: the store may well be there.`,
-      `Check ${delegate} for a cacheStores/FileStore rooted outside every project (rn-iso's own is @rn-iso/metro's sharedCacheStores()).`
+      `Check ${delegate} for a cacheStores/FileStore rooted outside every project (rn-iso's own is @rn-iso/metro's sharedCacheStores()).`,
     );
   }
   const lines = String(metroConfigSource).split('\n');
-  const mentions = lines.filter(line => /cacheStores/.test(line));
+  const mentions = lines.filter((line) => /cacheStores/.test(line));
   if (mentions.length) {
     // One unconditional mention is enough: the store is wired for everybody.
     if (!lines.every((line, i) => !/cacheStores/.test(line) || isConditional(lines, i))) return null;
     return finding(
       'note',
       'metro.config.js mentions cacheStores, but not unconditionally',
-      `Every line naming it is inside a conditional, and doctor reads this file rather than executing it, so it cannot tell whether the store is installed on a plain \`rn-iso start\`. A cacheStores that is off by default costs exactly what having none costs: ${mentions.map(l => l.trim()).join(' / ')}`,
-      'Confirm it applies without env vars -- a store behind an opt-in flag is not shared until every workspace sets the flag.'
+      `Every line naming it is inside a conditional, and doctor reads this file rather than executing it, so it cannot tell whether the store is installed on a plain \`rn-iso start\`. A cacheStores that is off by default costs exactly what having none costs: ${mentions.map((l) => l.trim()).join(' / ')}`,
+      'Confirm it applies without env vars -- a store behind an opt-in flag is not shared until every workspace sets the flag.',
     );
   }
   return finding(
     'cost',
     'Metro cache is per-project',
     'Without a shared cacheStore each worktree transforms the whole module graph from cold -- thousands of modules, every time.',
-    "config.cacheStores = [new FileStore({ root: path.join(os.homedir(), '.<app>-metro-cache') })]"
+    "config.cacheStores = [new FileStore({ root: path.join(os.homedir(), '.<app>-metro-cache') })]",
   );
 }
 
@@ -160,7 +165,8 @@ export function checkMetroCache(metroConfigSource: string | null): Finding | nul
 // module that is not one of Metro's own config packages (a config that
 // requires `expo/metro-config` and then builds on it is an ordinary config,
 // not a delegation).
-const METRO_CORE_MODULES = /^(?:metro|metro-config|metro-cache|@react-native\/metro-config|@expo\/metro-config|expo\/metro-config|expo\/metro-config\/.*|@react-native\/metro-babel-transformer|path|node:path|fs|node:fs|os|node:os)$/;
+const METRO_CORE_MODULES =
+  /^(?:metro|metro-config|metro-cache|@react-native\/metro-config|@expo\/metro-config|expo\/metro-config|expo\/metro-config\/.*|@react-native\/metro-babel-transformer|path|node:path|fs|node:fs|os|node:os)$/;
 
 export function metroConfigDelegate(source: unknown): string | null {
   const text = String(source || '');
@@ -171,12 +177,13 @@ export function metroConfigDelegate(source: unknown): string | null {
     // every real delegation behind it.
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
-    .map(line => line.replace(/\/\/.*$/, '').trim())
-    .filter(line => line !== '' && line !== "'use strict';" && line !== '"use strict";')
+    .map((line) => line.replace(/\/\/.*$/, '').trim())
+    .filter((line) => line !== '' && line !== "'use strict';" && line !== '"use strict";')
     .join(' ');
-  const m = /^module\.exports\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)[^;]*;?$/.exec(code)
-    || /^export\s+(?:\*|\{\s*default[^}]*\})\s+from\s+['"]([^'"]+)['"];?$/.exec(code)
-    || /^export\s+default\s+require\(\s*['"]([^'"]+)['"]\s*\)[^;]*;?$/.exec(code);
+  const m =
+    /^module\.exports\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)[^;]*;?$/.exec(code) ||
+    /^export\s+(?:\*|\{\s*default[^}]*\})\s+from\s+['"]([^'"]+)['"];?$/.exec(code) ||
+    /^export\s+default\s+require\(\s*['"]([^'"]+)['"]\s*\)[^;]*;?$/.exec(code);
   if (!m) return null;
   const pkg = m[1];
   const base = pkg.startsWith('@') ? pkg.split('/').slice(0, 2).join('/') : pkg.split('/')[0];
@@ -224,14 +231,15 @@ export function checkCompilationCache(podfileSource: string | null, xcodeMajor: 
   if (!enabled) {
     // Say which Xcode this is about. Naming a version rn-iso never read would
     // read as a measurement, and the advice is wrong on anything older than 26.
-    const version = xcodeMajor != null
-      ? `On Xcode ${xcodeMajor}`
-      : 'On Xcode 26 or newer (this machine\'s Xcode version could not be read, so check yours first)';
+    const version =
+      xcodeMajor != null
+        ? `On Xcode ${xcodeMajor}`
+        : "On Xcode 26 or newer (this machine's Xcode version could not be read, so check yours first)";
     return finding(
       'note',
       'Xcode compilation caching is not enabled',
       `${version} a content-addressed cache can carry compiled output between workspaces, which is the difference between a full build and a partial one in a fresh worktree.`,
-      "In the Podfile's post_install, inside an `installer.pods_project.targets.each { |t| t.build_configurations.each { |config| ... } }` loop -- adding one if post_install has none, or has only a loop over resource bundles -- set config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES' and COMPILATION_CACHE_CAS_PATH to a path outside DerivedData."
+      "In the Podfile's post_install, inside an `installer.pods_project.targets.each { |t| t.build_configurations.each { |config| ... } }` loop -- adding one if post_install has none, or has only a loop over resource bundles -- set config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES' and COMPILATION_CACHE_CAS_PATH to a path outside DerivedData.",
     );
   }
   if (!path) {
@@ -239,7 +247,7 @@ export function checkCompilationCache(podfileSource: string | null, xcodeMajor: 
       'cost',
       'Compilation cache is enabled but left at its default path',
       'The default CAS lives at the DerivedData root, and DerivedData is per-workspace -- so nothing is actually shared between worktrees, which is the only reason to turn it on.',
-      'Set COMPILATION_CACHE_CAS_PATH to a fixed path outside DerivedData.'
+      'Set COMPILATION_CACHE_CAS_PATH to a fixed path outside DerivedData.',
     );
   }
   return null;
@@ -257,7 +265,6 @@ export function checkCompilationCache(podfileSource: string | null, xcodeMajor: 
 // `.worktreeexclude` it read sat next to package.json and `worktree create`
 // read the repo root's.
 
-
 // gitignore is a line-oriented path list, so the entry is matched as a path and
 // not as a substring: a commented-out line ignores nothing, and `/.rn-iso`,
 // `.rn-iso` and `.rn-iso/` are the same entry.
@@ -265,9 +272,9 @@ function listsWorkspaceDir(source: string | null | undefined): boolean {
   if (source == null) return false;
   return String(source)
     .split('\n')
-    .map(line => line.trim())
-    .filter(line => line && !line.startsWith('#'))
-    .some(line => line.replace(/^\/+/, '').replace(/\/+$/, '') === WORKSPACE_DIR);
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .some((line) => line.replace(/^\/+/, '').replace(/\/+$/, '') === WORKSPACE_DIR);
 }
 
 export function checkArtifactLayout({ gitignoreSource }: { gitignoreSource?: string | null } = {}): Finding | null {
@@ -275,8 +282,8 @@ export function checkArtifactLayout({ gitignoreSource }: { gitignoreSource?: str
   return finding(
     'note',
     '.rn-iso/ is not gitignored',
-    'It holds this workspace\'s build output, logs and supervisor pidfile -- location-addressed, meaningful only to the checkout that produced it. Unignored, every build offers its own DerivedData up for commit and git status stops being readable.',
-    `Add ${WORKSPACE_DIR}/ to .gitignore. (start/ios/android add it themselves on first use; this only appears when that write failed or was reverted.)`
+    "It holds this workspace's build output, logs and supervisor pidfile -- location-addressed, meaningful only to the checkout that produced it. Unignored, every build offers its own DerivedData up for commit and git status stops being readable.",
+    `Add ${WORKSPACE_DIR}/ to .gitignore. (start/ios/android add it themselves on first use; this only appears when that write failed or was reverted.)`,
   );
 }
 
@@ -291,7 +298,7 @@ export function checkCcacheConflict(podfileSource: string | null, podfilePropert
     'cost',
     'ccache and Xcode compilation caching are both enabled',
     'The ccache launcher script is what disables explicitly built modules, which compilation caching requires -- so enabling both tends to mean neither works. ccache also keys on absolute paths, so it misses across worktrees.',
-    'Pick one. On Xcode 26 the compilation cache is the one that survives a different workspace path.'
+    'Pick one. On Xcode 26 the compilation cache is the one that survives a different workspace path.',
   );
 }
 
@@ -318,7 +325,7 @@ export function checkBuildCacheProvider(
       'note',
       'No build cache hook outside Expo',
       'The provider that lets a workspace install a cached .app instead of compiling is an Expo CLI feature; the React Native community CLI has no equivalent. `@expo/fingerprint` works standalone on a bare project, so the pieces exist -- keying a stored .app on it and installing that yourself is the missing part.',
-      null
+      null,
     );
   }
   // A project whose config is code -- app.config.ts / app.config.js -- cannot be
@@ -330,10 +337,11 @@ export function checkBuildCacheProvider(
       'note',
       `Cannot check the build cache provider in ${dynamicConfig}`,
       'This config is code, so it is not readable without executing it. Confirm by hand that a buildCacheProvider is set, and that it is on the key this SDK reads.',
-      `${sdkMajor && sdkMajor <= 53
-        ? `SDK ${sdkMajor} reads expo.experiments.buildCacheProvider and ignores the top-level key in silence.`
-        : 'Use the top-level expo.buildCacheProvider; the experiments key still works as a fallback.'
-      } Run \`npx expo config --json\` and look for buildCacheProvider. If one is already set -- including "eas" -- that satisfies this; rn-iso never replaces it.`
+      `${
+        sdkMajor && sdkMajor <= 53
+          ? `SDK ${sdkMajor} reads expo.experiments.buildCacheProvider and ignores the top-level key in silence.`
+          : 'Use the top-level expo.buildCacheProvider; the experiments key still works as a fallback.'
+      } Run \`npx expo config --json\` and look for buildCacheProvider. If one is already set -- including "eas" -- that satisfies this; rn-iso never replaces it.`,
     );
   }
   if (!appConfig) return null;
@@ -346,7 +354,7 @@ export function checkBuildCacheProvider(
       'note',
       'No Expo build cache provider configured',
       'Without one, every `expo run` builds the app even when no native input changed. rn-iso ios/android have their own local cache regardless; a provider extends the same benefit to builds run outside rn-iso.',
-      'Add a buildCacheProvider to app.json -- "eas" for the remote EAS cache, or @rn-iso/expo-build-cache for the local one. An existing provider is kept as-is.'
+      'Add a buildCacheProvider to app.json -- "eas" for the remote EAS cache, or @rn-iso/expo-build-cache for the local one. An existing provider is kept as-is.',
     );
   }
   // A provider is configured. Which one is the project's own business: "eas"
@@ -361,7 +369,7 @@ export function checkBuildCacheProvider(
       'cost',
       'buildCacheProvider is at the top level, but this SDK only reads it from experiments',
       `SDK ${sdkMajor}'s CLI resolves exp.experiments.buildCacheProvider and nothing else. The top-level key is ignored in silence, so the provider is never called and every build is a full build.`,
-      'Move it to expo.experiments.buildCacheProvider.'
+      'Move it to expo.experiments.buildCacheProvider.',
     );
   }
 
@@ -370,7 +378,7 @@ export function checkBuildCacheProvider(
       'note',
       'buildCacheProvider is still under experiments',
       `It works -- SDK ${sdkMajor} falls back to the experiments key -- but the setting was promoted out of experiments, and the top-level key is the one that will keep working.`,
-      'Move it to expo.buildCacheProvider.'
+      'Move it to expo.buildCacheProvider.',
     );
   }
 
@@ -411,7 +419,7 @@ export function checkEasAuth({
       'note',
       'Could not check the EAS session',
       `\`eas whoami\` did not give a definite answer (${status.unknown}), so whether this project's EAS build cache can be reached is unknown. Offline is the ordinary reason, and it is not a problem: the cache simply does not answer until the machine is back on the network.`,
-      null
+      null,
     );
   }
 
@@ -420,7 +428,7 @@ export function checkEasAuth({
       'cost',
       'The build cache provider is "eas", but no eas-cli is installed',
       'The provider shells out to `npx eas-cli` on every lookup and every upload. With no eas-cli resolvable, npx downloads one on the fly (slow, and a version nobody chose) or the call fails -- and the provider swallows that failure and returns null, so every build looks like a cache miss and nothing says why.',
-      status.remedy ?? null
+      status.remedy ?? null,
     );
   }
 
@@ -429,7 +437,7 @@ export function checkEasAuth({
       'cost',
       'Not logged in to EAS, so the shared build cache never answers',
       'eas-build-cache-provider catches its own errors and returns null, so an unauthenticated lookup reads as a plain cache miss: every build compiles, nothing is uploaded for anybody else, and no line in any log mentions authentication.',
-      status.remedy ?? null
+      status.remedy ?? null,
     );
   }
 
@@ -438,7 +446,7 @@ export function checkEasAuth({
       'note',
       `EAS is authenticated as ${status.account}, but this project's owner is ${status.owner}`,
       `A session on an account that does not cover ${status.owner} cannot read or write that account's builds, so the shared cache silently does nothing here. This is a NOTE and not a hard failure on purpose: \`eas whoami\` only enumerates accounts for some actors (a robot prints a display name that is not an account name at all), the list may be incomplete, and access is the server's decision rather than this list's. Confirm before acting on it.`,
-      status.remedy ?? null
+      status.remedy ?? null,
     );
   }
 
@@ -461,10 +469,10 @@ export function checkConcurrency({
   return finding(
     'note',
     'Concurrency limits are set',
-    `${caps}. Right now ${liveDevices} rn-iso device(s) are booted and ${activeBuilds} build slot(s) are in use on this machine. `
-    + 'At the device cap a new `rn-iso ios`/`android` is refused with RN_ISO_AT_CAPACITY (stop an environment or raise it); '
-    + 'at the build cap a compile waits for a free slot.',
-    null
+    `${caps}. Right now ${liveDevices} rn-iso device(s) are booted and ${activeBuilds} build slot(s) are in use on this machine. ` +
+      'At the device cap a new `rn-iso ios`/`android` is refused with RN_ISO_AT_CAPACITY (stop an environment or raise it); ' +
+      'at the build cap a compile waits for a free slot.',
+    null,
   );
 }
 
@@ -502,7 +510,7 @@ export function runDoctor(
   const appConfig = readJson(join(projectRoot, 'app.json'));
   const dynamicConfig = appConfig
     ? null
-    : ['app.config.ts', 'app.config.js', 'app.config.mjs'].find(f => existsSync(join(projectRoot, f))) || null;
+    : ['app.config.ts', 'app.config.js', 'app.config.mjs'].find((f) => existsSync(join(projectRoot, f))) || null;
   const podfileProperties = readJson(join(projectRoot, 'ios', 'Podfile.properties.json'));
   const podfile = read(join('ios', 'Podfile'));
   const metroConfig = read('metro.config.js');
@@ -514,7 +522,13 @@ export function runDoctor(
   // actually depend on.
   const isExpo = detectIsExpo(projectRoot);
   const expoRange = pkg?.dependencies?.expo || '';
-  const sdkMajor = parseInt(String(expoRange).replace(/[^\d.]/g, '').split('.')[0], 10) || null;
+  const sdkMajor =
+    parseInt(
+      String(expoRange)
+        .replace(/[^\d.]/g, '')
+        .split('.')[0],
+      10,
+    ) || null;
 
   // The EAS session is only asked about when the config STATICALLY says the
   // provider is EAS. A dynamic config is not evaluated here for the same reason
@@ -523,9 +537,8 @@ export function runDoctor(
   // could not be read.
   const provider = appConfig ? providerFromConfig(appConfig) : null;
   const owner = appConfig ? ownerFromConfig(appConfig) : null;
-  const easFinding = provider === 'eas'
-    ? checkEasAuth({ provider, owner, auth: easAuth({ projectRoot, owner }) })
-    : null;
+  const easFinding =
+    provider === 'eas' ? checkEasAuth({ provider, owner, auth: easAuth({ projectRoot, owner }) }) : null;
 
   // Concurrency: gathered only when a cap is set, so an unset default costs no
   // simctl/adb enumeration and stays silent.
@@ -558,15 +571,27 @@ function countLiveDevices(): number {
   let sims: IosSimRecord[] = [];
   let adb: AdbDevices = { emulators: [], physical: [], unhealthy: [] };
   let config: Config | null = null;
-  try { sims = listAllIosSims() || []; } catch { /* fail open */ }
-  try { adb = listAdbDevices() || adb; } catch { /* fail open */ }
-  try { config = loadConfig(); } catch { /* fail open */ }
+  try {
+    sims = listAllIosSims() || [];
+  } catch {
+    /* fail open */
+  }
+  try {
+    adb = listAdbDevices() || adb;
+  } catch {
+    /* fail open */
+  }
+  try {
+    config = loadConfig();
+  } catch {
+    /* fail open */
+  }
   return liveOwnedDeviceCount({ sims, adbEmulators: adb.emulators || [], config });
 }
 
 function countActiveBuilds(): number {
   try {
-    return listBuildSlots().filter(s => s.alive).length;
+    return listBuildSlots().filter((s) => s.alive).length;
   } catch {
     return 0;
   }

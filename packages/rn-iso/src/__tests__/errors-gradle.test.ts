@@ -43,7 +43,7 @@ BUILD FAILED in 41s
     expect(diagnostics[0].message).toMatch(/Compilation error/);
     // "* Try:" is gradle telling the user to re-run with --stacktrace, which
     // is not a diagnostic.
-    expect(diagnostics.filter(d => /stacktrace/.test(d.message)).length).toBe(0);
+    expect(diagnostics.filter((d) => /stacktrace/.test(d.message)).length).toBe(0);
   });
 
   test('a failing task is named', () => {
@@ -53,57 +53,72 @@ BUILD FAILED in 41s
 
   test('kotlinc K2 diagnostics keep file, line and column', () => {
     const diagnostics = extractGradleDiagnostics(
-      "e: file:///Users/me/app/android/app/src/main/java/com/app/MainActivity.kt:23:9 Unresolved reference 'Foo'.\n"
-      + 'w: file:///Users/me/app/android/app/src/main/java/com/app/MainActivity.kt:9:1 Parameter is never used'
+      "e: file:///Users/me/app/android/app/src/main/java/com/app/MainActivity.kt:23:9 Unresolved reference 'Foo'.\n" +
+        'w: file:///Users/me/app/android/app/src/main/java/com/app/MainActivity.kt:9:1 Parameter is never used',
     );
-    expect(diagnostics).toEqual([{
-      message: "Unresolved reference 'Foo'.",
-      file: '/Users/me/app/android/app/src/main/java/com/app/MainActivity.kt',
-      line: 23,
-      column: 9,
-    }]);
+    expect(diagnostics).toEqual([
+      {
+        message: "Unresolved reference 'Foo'.",
+        file: '/Users/me/app/android/app/src/main/java/com/app/MainActivity.kt',
+        line: 23,
+        column: 9,
+      },
+    ]);
   });
 
   test('kotlinc pre-K2 diagnostics are recognized too', () => {
-    const diagnostics = extractGradleDiagnostics('e: /Users/me/app/android/app/src/main/java/com/app/Main.kt: (10, 5): Unresolved reference: foo');
-    expect(diagnostics).toEqual([{ message: 'Unresolved reference: foo', file: '/Users/me/app/android/app/src/main/java/com/app/Main.kt', line: 10, column: 5 }]);
+    const diagnostics = extractGradleDiagnostics(
+      'e: /Users/me/app/android/app/src/main/java/com/app/Main.kt: (10, 5): Unresolved reference: foo',
+    );
+    expect(diagnostics).toEqual([
+      {
+        message: 'Unresolved reference: foo',
+        file: '/Users/me/app/android/app/src/main/java/com/app/Main.kt',
+        line: 10,
+        column: 5,
+      },
+    ]);
   });
 
   test('a percent-encoded kotlinc path is decoded', () => {
-    const diagnostics = extractGradleDiagnostics('e: file:///Users/me/My%20App/android/app/src/main/java/A.kt:3:1 Expecting an expression');
+    const diagnostics = extractGradleDiagnostics(
+      'e: file:///Users/me/My%20App/android/app/src/main/java/A.kt:3:1 Expecting an expression',
+    );
     expect(diagnostics[0].file).toBe('/Users/me/My App/android/app/src/main/java/A.kt');
   });
 
   test('javac diagnostics keep the file and line', () => {
     const diagnostics = extractGradleDiagnostics(
-      '/Users/me/app/android/app/src/main/java/com/app/MainApplication.java:31: error: cannot find symbol\n'
-      + '      return Foo.getPackages();\n'
-      + '             ^\n'
-      + '  symbol:   variable Foo\n'
-      + '1 error'
+      '/Users/me/app/android/app/src/main/java/com/app/MainApplication.java:31: error: cannot find symbol\n' +
+        '      return Foo.getPackages();\n' +
+        '             ^\n' +
+        '  symbol:   variable Foo\n' +
+        '1 error',
     );
-    expect(diagnostics).toEqual([{
-      message: 'cannot find symbol',
-      file: '/Users/me/app/android/app/src/main/java/com/app/MainApplication.java',
-      line: 31,
-    }]);
+    expect(diagnostics).toEqual([
+      {
+        message: 'cannot find symbol',
+        file: '/Users/me/app/android/app/src/main/java/com/app/MainApplication.java',
+        line: 31,
+      },
+    ]);
   });
 
   test('aapt2 resource errors keep the resource file, line and column', () => {
     const diagnostics = extractGradleDiagnostics(
-      '> Task :app:processDebugResources FAILED\n'
-      + 'ERROR:/Users/me/app/android/app/src/main/res/values/strings.xml:5:5: AAPT: error: unclosed token.\n'
-      + '\n'
-      + 'error: failed linking references.\n'
+      '> Task :app:processDebugResources FAILED\n' +
+        'ERROR:/Users/me/app/android/app/src/main/res/values/strings.xml:5:5: AAPT: error: unclosed token.\n' +
+        '\n' +
+        'error: failed linking references.\n',
     );
-    const resource = diagnostics.find(d => d.file);
+    const resource = diagnostics.find((d) => d.file);
     expect(resource).toEqual({
       message: 'unclosed token.',
       file: '/Users/me/app/android/app/src/main/res/values/strings.xml',
       line: 5,
       column: 5,
     });
-    expect(diagnostics.some(d => d.message === 'failed linking references.')).toBeTruthy();
+    expect(diagnostics.some((d) => d.message === 'failed linking references.')).toBeTruthy();
   });
 
   test('dependency resolution failures come back with a remedy', () => {
@@ -134,19 +149,27 @@ A problem occurred configuring project ':app'.
   });
 
   test('a JAVA_HOME pointed at nothing carries the JDK remedy', () => {
-    const diagnostics = extractGradleDiagnostics('ERROR: JAVA_HOME is set to an invalid directory: /nope\n\nPlease set the JAVA_HOME variable in your environment to match the\nlocation of your Java installation.');
+    const diagnostics = extractGradleDiagnostics(
+      'ERROR: JAVA_HOME is set to an invalid directory: /nope\n\nPlease set the JAVA_HOME variable in your environment to match the\nlocation of your Java installation.',
+    );
     expect(diagnostics[0].remedy).toMatch(/JAVA_HOME/);
   });
 
   test('gradle rich-console carriage returns do not glue lines together', () => {
-    const diagnostics = extractGradleDiagnostics('<-------------> 0% CONFIGURING [1s]\r> Task :app:compileDebugKotlin FAILED');
+    const diagnostics = extractGradleDiagnostics(
+      '<-------------> 0% CONFIGURING [1s]\r> Task :app:compileDebugKotlin FAILED',
+    );
     expect(diagnostics).toEqual([{ message: 'Task :app:compileDebugKotlin FAILED' }]);
   });
 });
 
 describe('what is not', () => {
   test('a successful build yields nothing', () => {
-    expect(extractGradleDiagnostics('> Task :app:assembleDebug\n\nBUILD SUCCESSFUL in 12s\n41 actionable tasks: 41 executed')).toEqual([]);
+    expect(
+      extractGradleDiagnostics(
+        '> Task :app:assembleDebug\n\nBUILD SUCCESSFUL in 12s\n41 actionable tasks: 41 executed',
+      ),
+    ).toEqual([]);
   });
 
   test('non-text and empty input yield nothing', () => {
@@ -157,9 +180,10 @@ describe('what is not', () => {
   });
 
   test('warnings are not errors', () => {
-    const text = 'w: file:///a/B.kt:1:1 Variable is never used\n'
-      + 'Note: Some input files use unchecked or unsafe operations.\n'
-      + '/a/C.java:4: warning: [deprecation] foo() in Bar has been deprecated';
+    const text =
+      'w: file:///a/B.kt:1:1 Variable is never used\n' +
+      'Note: Some input files use unchecked or unsafe operations.\n' +
+      '/a/C.java:4: warning: [deprecation] foo() in Bar has been deprecated';
     expect(extractGradleDiagnostics(text)).toEqual([]);
   });
 
@@ -171,13 +195,10 @@ describe('what is not', () => {
 describe('dedupe, order and the cap', () => {
   test('the same diagnostic printed twice appears once, in transcript order', () => {
     const line = 'e: file:///a/B.kt:3:5 Unresolved reference: foo';
-    const diagnostics = extractGradleDiagnostics([
-      '> Task :app:compileDebugKotlin FAILED',
-      line,
-      'e: file:///a/B.kt:4:5 Expecting an expression',
-      line,
-    ].join('\n'));
-    expect(diagnostics.map(d => d.message)).toEqual([
+    const diagnostics = extractGradleDiagnostics(
+      ['> Task :app:compileDebugKotlin FAILED', line, 'e: file:///a/B.kt:4:5 Expecting an expression', line].join('\n'),
+    );
+    expect(diagnostics.map((d) => d.message)).toEqual([
       'Task :app:compileDebugKotlin FAILED',
       'Unresolved reference: foo',
       'Expecting an expression',
@@ -185,12 +206,16 @@ describe('dedupe, order and the cap', () => {
   });
 
   test('the same message at a different line is a different diagnostic', () => {
-    const diagnostics = extractGradleDiagnostics('e: file:///a/B.kt:3:5 Unresolved reference: foo\ne: file:///a/B.kt:9:5 Unresolved reference: foo');
+    const diagnostics = extractGradleDiagnostics(
+      'e: file:///a/B.kt:3:5 Unresolved reference: foo\ne: file:///a/B.kt:9:5 Unresolved reference: foo',
+    );
     expect(diagnostics.length).toBe(2);
   });
 
   test('capDiagnostics keeps ten and counts the rest', () => {
-    const many = Array.from({ length: 14 }, (_, i) => `e: file:///a/B.kt:${i + 1}:1 Unresolved reference: x${i}`).join('\n');
+    const many = Array.from({ length: 14 }, (_, i) => `e: file:///a/B.kt:${i + 1}:1 Unresolved reference: x${i}`).join(
+      '\n',
+    );
     const all = extractGradleDiagnostics(many);
     expect(all.length).toBe(14);
     const capped = capDiagnostics(all);
@@ -224,11 +249,11 @@ describe('against transcripts captured from a real gradle run', () => {
   test('the compile failure names the task, the file and the line', () => {
     const diagnostics = extractGradleDiagnostics(fixture('gradle-compile-failure.txt'));
     expect(diagnostics.length > 0).toBeTruthy();
-    expect(diagnostics.some(d => /FAILED/.test(d.message))).toBeTruthy();
-    const located = diagnostics.find(d => d.file && d.line);
+    expect(diagnostics.some((d) => /FAILED/.test(d.message))).toBeTruthy();
+    const located = diagnostics.find((d) => d.file && d.line);
     expect(located).toBeTruthy();
     expect(located.file).toMatch(/Broken\.java$/);
-    expect(diagnostics.map(d => d.message).join(' | ')).toMatch(/Execution failed for task/);
+    expect(diagnostics.map((d) => d.message).join(' | ')).toMatch(/Execution failed for task/);
   });
 
   test('the successful build yields nothing', () => {

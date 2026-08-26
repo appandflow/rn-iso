@@ -51,10 +51,19 @@ afterEach(() => {
 function captureAction(register) {
   let captured;
   const stub = {
-    command() { return stub; },
-    description() { return stub; },
-    option() { return stub; },
-    action(fn) { captured = fn; return stub; },
+    command() {
+      return stub;
+    },
+    description() {
+      return stub;
+    },
+    option() {
+      return stub;
+    },
+    action(fn) {
+      captured = fn;
+      return stub;
+    },
   };
   register(stub);
   return (opts = {}) => captured(opts);
@@ -67,8 +76,12 @@ function metroExecutor({ listeners = {}, cwd = root, spawnResult = null } = {}) 
   const calls = { run: [], spawn: [] };
   return {
     calls,
-    run() { return ''; },
-    runFile() { return ''; },
+    run() {
+      return '';
+    },
+    runFile() {
+      return '';
+    },
     runQuiet(cmd) {
       calls.run.push(cmd);
       const listening = /lsof -nP -iTCP:(\d+)/.exec(cmd);
@@ -108,7 +121,9 @@ async function runAction(opts) {
   let exitCode = null;
   console.log = (l) => logs.push(String(l));
   console.error = (l) => errs.push(String(l));
-  process.exit = (c) => { exitCode = c; };
+  process.exit = (c) => {
+    exitCode = c;
+  };
   process.chdir(root);
   try {
     await run(opts);
@@ -170,15 +185,25 @@ describe('liveSupervisor', () => {
   });
 
   test('a dead pid is not a supervisor: a stale record outlives its process', () => {
-    expect(liveSupervisor({
-      state: { supervisor: { pid: 12, port: 8082 } }, project: null, port: 8082, isAlive: dead,
-    })).toBe(null);
+    expect(
+      liveSupervisor({
+        state: { supervisor: { pid: 12, port: 8082 } },
+        project: null,
+        port: 8082,
+        isAlive: dead,
+      }),
+    ).toBe(null);
   });
 
   test('a supervisor recorded on another port is not the one that would answer here', () => {
-    expect(liveSupervisor({
-      state: { supervisor: { pid: 13, port: 8099 } }, project: null, port: 8082, isAlive: alive,
-    })).toBe(null);
+    expect(
+      liveSupervisor({
+        state: { supervisor: { pid: 13, port: 8099 } },
+        project: null,
+        port: 8082,
+        isAlive: alive,
+      }),
+    ).toBe(null);
   });
 
   test('no record at all is null, not a throw', () => {
@@ -189,7 +214,14 @@ describe('liveSupervisor', () => {
 
 describe('startFacts', () => {
   test('shapes the facts an agent reads', () => {
-    expect(startFacts({ port: 8082, supervisor: { pid: 91, mode: 'expo-child' }, logsDir: '/w/.rn-iso/logs', alreadyRunning: false })).toEqual({ port: 8082, supervisorPid: 91, mode: 'expo-child', logsDir: '/w/.rn-iso/logs', alreadyRunning: false });
+    expect(
+      startFacts({
+        port: 8082,
+        supervisor: { pid: 91, mode: 'expo-child' },
+        logsDir: '/w/.rn-iso/logs',
+        alreadyRunning: false,
+      }),
+    ).toEqual({ port: 8082, supervisorPid: 91, mode: 'expo-child', logsDir: '/w/.rn-iso/logs', alreadyRunning: false });
   });
 
   test('a dev server rn-iso did not start reports a null supervisor rather than a lie', () => {
@@ -291,7 +323,10 @@ describe('action: spawning the supervisor', () => {
       // here, and the pid has to be a live one or `start` correctly concludes
       // the supervisor is already gone.
       writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
-      metroListener(port).then((s) => { server = s; exec.listening = true; });
+      metroListener(port).then((s) => {
+        server = s;
+        exec.listening = true;
+      });
       return { pid: process.pid, unref() {}, on() {} };
     };
     const base = exec.runQuiet.bind(exec);
@@ -339,10 +374,18 @@ describe('action: spawning the supervisor', () => {
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
     mkdirSync(workspaceLogsDir(root), { recursive: true });
-    writeFileSync(supervisorLogFile(root), [
-      'noise 1', 'noise 2', 'noise 3', 'noise 4', 'noise 5', 'noise 6',
-      'rn-iso supervisor: failed to start the bare-inproc dev server: RN_ISO_BARE_DEPS: metro is not resolvable',
-    ].join('\n'));
+    writeFileSync(
+      supervisorLogFile(root),
+      [
+        'noise 1',
+        'noise 2',
+        'noise 3',
+        'noise 4',
+        'noise 5',
+        'noise 6',
+        'rn-iso supervisor: failed to start the bare-inproc dev server: RN_ISO_BARE_DEPS: metro is not resolvable',
+      ].join('\n'),
+    );
 
     const result = await runAction({ json: true, wait: '1' });
 
@@ -370,7 +413,13 @@ describe('action: spawning the supervisor', () => {
     const handlers = {};
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      const child = { pid: process.pid, unref() {}, on(event, cb) { handlers[event] = cb; } };
+      const child = {
+        pid: process.pid,
+        unref() {},
+        on(event, cb) {
+          handlers[event] = cb;
+        },
+      };
       // Dead before the first poll.
       setTimeout(() => handlers.exit?.(1, null), 5);
       return child;
@@ -463,7 +512,10 @@ describe('action: the reserved port', () => {
     const server = await metroListener(port);
     // Answers /status, but runs from somewhere else: not this project's.
     const exec = metroExecutor({ listeners: { [port]: 4242 }, cwd: '/somewhere/else' });
-    exec.spawn = (cmd, args, opts) => { exec.calls.spawn.push({ cmd, args, opts }); return { pid: 1, unref() {}, on() {} }; };
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      return { pid: 1, unref() {}, on() {} };
+    };
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
 
@@ -484,7 +536,10 @@ describe('action: the reserved port', () => {
 
   test('a project with no reservation gets one', async () => {
     const exec = metroExecutor({ listeners: {} });
-    exec.spawn = (cmd, args, opts) => { exec.calls.spawn.push({ cmd, args, opts }); return { pid: 1, unref() {}, on() {} }; };
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      return { pid: 1, unref() {}, on() {} };
+    };
     setExecutor(exec);
 
     const result = await runAction({ json: true, wait: '1' });
@@ -535,7 +590,10 @@ describe('action: an existing supervisor that is not answering', () => {
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
-    metroListener(port).then((s) => { server = s; exec.listening = true; });
+    metroListener(port).then((s) => {
+      server = s;
+      exec.listening = true;
+    });
 
     let result;
     try {

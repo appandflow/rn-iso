@@ -11,7 +11,7 @@ import { join } from 'path';
 import { createServer } from 'http';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import {saveConfig} from '../config.ts';
+import { saveConfig } from '../config.ts';
 import statusCommand, { readVolumes } from '../commands/status.ts';
 
 let tmpHome;
@@ -36,7 +36,9 @@ beforeEach(() => {
       if (cmd.includes('simctl list devices --json')) return listJson;
       return null;
     },
-    spawn() { throw new Error('spawn should not be called from status'); },
+    spawn() {
+      throw new Error('spawn should not be called from status');
+    },
   });
 });
 
@@ -79,15 +81,14 @@ test('status tags owned devices and leaves unowned devices untagged', async () =
 
   const logs = await runStatus();
 
-  const iosLine = logs.find(l => /ios:/.test(l));
+  const iosLine = logs.find((l) => /ios:/.test(l));
   expect(iosLine).toBeTruthy();
   expect(iosLine).toMatch(/\(owned\)/);
 
-  const androidLine = logs.find(l => /android:/.test(l));
+  const androidLine = logs.find((l) => /android:/.test(l));
   expect(androidLine).toBeTruthy();
   expect(androidLine).not.toMatch(/\(owned\)/);
 });
-
 
 test('status says nothing extra for a project that has only a Metro port', async () => {
   saveConfig({
@@ -103,7 +104,7 @@ test('status says nothing extra for a project that has only a Metro port', async
 
   const logs = await runStatus();
 
-  expect(logs.some(l => /!/.test(l))).toBe(false);
+  expect(logs.some((l) => /!/.test(l))).toBe(false);
 });
 
 // "simctl did not answer" and "simctl answered with zero sims" are different
@@ -115,8 +116,12 @@ test('status reports simctl as unreadable instead of warning that every sim is g
       if (cmd.includes('simctl list devices --json')) throw new Error('xcrun: simctl not found');
       return '';
     },
-    runQuiet() { return null; },
-    spawn() { throw new Error('spawn should not be called from status'); },
+    runQuiet() {
+      return null;
+    },
+    spawn() {
+      throw new Error('spawn should not be called from status');
+    },
   });
   saveConfig({
     version: 2,
@@ -128,11 +133,11 @@ test('status reports simctl as unreadable instead of warning that every sim is g
 
   const logs = await runStatus();
 
-  expect(logs.some(l => /no longer exists/.test(l))).toBe(false);
-  const simctlLine = logs.find(l => /simctl could not be read/.test(l));
+  expect(logs.some((l) => /no longer exists/.test(l))).toBe(false);
+  const simctlLine = logs.find((l) => /simctl could not be read/.test(l));
   expect(simctlLine).toBeTruthy();
   expect(simctlLine).toMatch(/simctl not found/);
-  expect(logs.some(l => /ios:.*unknown/.test(l))).toBeTruthy();
+  expect(logs.some((l) => /ios:.*unknown/.test(l))).toBeTruthy();
 });
 
 // A simctl that DOES answer, with a listing that lacks the recorded sim, is
@@ -147,7 +152,7 @@ test('status still warns about a recorded sim missing from a readable listing', 
 
   const logs = await runStatus();
 
-  expect(logs.some(l => /recorded sim UDID-GONE no longer exists/.test(l))).toBeTruthy();
+  expect(logs.some((l) => /recorded sim UDID-GONE no longer exists/.test(l))).toBeTruthy();
 });
 
 // --- v3: supervisor and logs ------------------------------------------------
@@ -168,10 +173,7 @@ async function runStatusJson() {
 
 function writeLogs(root, records) {
   mkdirSync(join(root, '.rn-iso', 'logs'), { recursive: true });
-  writeFileSync(
-    join(root, '.rn-iso', 'logs', 'metro.ndjson'),
-    records.map((r) => JSON.stringify(r)).join('\n') + '\n'
-  );
+  writeFileSync(join(root, '.rn-iso', 'logs', 'metro.ndjson'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
 }
 
 function writeState(root, supervisor) {
@@ -196,7 +198,9 @@ test('status reports a supervisor whose port answers as this project as healthy'
         if (cmd.startsWith('ps -o pgid=')) return String(process.pid);
         return null;
       },
-      spawn() { throw new Error('spawn should not be called from status'); },
+      spawn() {
+        throw new Error('spawn should not be called from status');
+      },
     });
     writeState(root, { pid: process.pid, port, mode: 'bare-inproc', startedAt: 1700000000000 });
     writeLogs(root, [
@@ -244,11 +248,17 @@ test('status counts a device-only noise storm as zero errors', async () => {
     mkdirSync(join(root, '.rn-iso', 'logs'), { recursive: true });
     const storm = [];
     for (let i = 0; i < 3004; i += 1) {
-      storm.push({ ts: 1700000000000 + i, src: 'device', level: 'error', proc: 'MyApp', msg: `nw_socket_handle_socket_event [C${i}:1] Socket SO_ERROR [54: Connection reset by peer]` });
+      storm.push({
+        ts: 1700000000000 + i,
+        src: 'device',
+        level: 'error',
+        proc: 'MyApp',
+        msg: `nw_socket_handle_socket_event [C${i}:1] Socket SO_ERROR [54: Connection reset by peer]`,
+      });
     }
     writeFileSync(
       join(root, '.rn-iso', 'logs', 'device.ndjson'),
-      storm.map((r) => JSON.stringify(r)).join('\n') + '\n'
+      storm.map((r) => JSON.stringify(r)).join('\n') + '\n',
     );
     saveConfig({
       version: 2,
@@ -268,11 +278,13 @@ test('status warns about a supervisor record whose process is gone', async () =>
     writeState(root, { pid: 999999, port: 8083, mode: 'expo-child', startedAt: 5 });
     saveConfig({
       version: 2,
-      projects: { [root]: { label: 'agent-1', metroPort: 8083, supervisor: { pid: 999999, port: 8083 }, platforms: {} } },
+      projects: {
+        [root]: { label: 'agent-1', metroPort: 8083, supervisor: { pid: 999999, port: 8083 }, platforms: {} },
+      },
     });
 
     const logs = await runStatus();
-    expect(logs.some(l => /stale supervisor record/.test(l))).toBeTruthy();
+    expect(logs.some((l) => /stale supervisor record/.test(l))).toBeTruthy();
 
     const payload = await runStatusJson();
     expect(payload.environments[0].supervisor.healthy).toBe(false);
@@ -302,8 +314,8 @@ test('the printed lines name the supervisor and the error count', async () => {
     saveConfig({ version: 2, projects: { [root]: { label: 'agent-1', metroPort: 8083, platforms: {} } } });
 
     const logs = await runStatus();
-    expect(logs.some(l => /supervisor: pid 999999/.test(l))).toBeTruthy();
-    expect(logs.some(l => /1 error/.test(l))).toBeTruthy();
+    expect(logs.some((l) => /supervisor: pid 999999/.test(l))).toBeTruthy();
+    expect(logs.some((l) => /1 error/.test(l))).toBeTruthy();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -319,21 +331,27 @@ test('the printed lines name the supervisor and the error count', async () => {
 function dfOutput({ totalKb, availableKb }) {
   const usedKb = totalKb - availableKb;
   const capacity = Math.round((usedKb / totalKb) * 100);
-  return `Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on\n`
-    + `/dev/disk3s5 ${totalKb} ${usedKb} ${availableKb} ${capacity}% 100 200 1% /somewhere\n`;
+  return (
+    `Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on\n` +
+    `/dev/disk3s5 ${totalKb} ${usedKb} ${availableKb} ${capacity}% 100 200 1% /somewhere\n`
+  );
 }
 
 function dfExecutor(byVolume) {
   const asked = [];
   setExecutor({
-    run() { return ''; },
+    run() {
+      return '';
+    },
     runQuiet(cmd) {
       const m = /^df -k '(.*)'$/.exec(cmd);
       if (!m) return null;
       asked.push(m[1]);
       return byVolume[m[1]] ?? null;
     },
-    spawn() { throw new Error('spawn should not be called from status'); },
+    spawn() {
+      throw new Error('spawn should not be called from status');
+    },
   });
   return asked;
 }
@@ -342,7 +360,7 @@ test('a project on the boot volume reports one volume', async () => {
   const asked = dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });
   const volumes = readVolumes('/Users/someone/code/app');
   expect(asked).toEqual(['/']);
-  expect(volumes.map(v => v.volume)).toEqual(['/']);
+  expect(volumes.map((v) => v.volume)).toEqual(['/']);
 });
 
 test('a project on another volume reports that volume alongside the boot one', async () => {
@@ -352,7 +370,7 @@ test('a project on another volume reports that volume alongside the boot one', a
   });
   const volumes = readVolumes('/Volumes/ExternalSSD/Developer/app');
   expect(asked).toEqual(['/', '/Volumes/ExternalSSD']);
-  expect(volumes.map(v => v.volume)).toEqual(['/', '/Volumes/ExternalSSD']);
+  expect(volumes.map((v) => v.volume)).toEqual(['/', '/Volumes/ExternalSSD']);
   expect(volumes[1].disk.availableMb).toBe(1536 * 1024);
 });
 
@@ -360,5 +378,5 @@ test('a project on another volume reports that volume alongside the boot one', a
 test('a volume df cannot answer for is dropped, not reported as empty', async () => {
   dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });
   const volumes = readVolumes('/Volumes/Unplugged/app');
-  expect(volumes.map(v => v.volume)).toEqual(['/']);
+  expect(volumes.map((v) => v.volume)).toEqual(['/']);
 });

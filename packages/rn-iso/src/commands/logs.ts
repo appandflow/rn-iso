@@ -17,7 +17,7 @@ import type { NdjsonRecord } from '../ndjson.ts';
 import { buildCriteria, compileGrep, fileSizes, followLogs, parseSince, queryLogs } from '../logs-query.ts';
 
 const LEVEL_WIDTH = 5; // 'debug' / 'fatal'
-const SRC_WIDTH = 6;   // 'client' / 'device'
+const SRC_WIDTH = 6; // 'client' / 'device'
 const INDENT = '    ';
 
 // Stack frames arrive as {file,line,column,fn} straight off the wire, and any
@@ -52,7 +52,10 @@ export function formatStackFrame(frame: StackFrame | null | undefined) {
 
 // Pure: `paint` defaults to identity so the formatter never depends on whether
 // chalk decided stdout is a TTY. The command passes the colouring in.
-export function formatRecord(record: Partial<NdjsonRecord> | null | undefined, { paint }: { paint?: (t: string) => string } = {}) {
+export function formatRecord(
+  record: Partial<NdjsonRecord> | null | undefined,
+  { paint }: { paint?: (t: string) => string } = {},
+) {
   const colour = paint || ((t: string) => t);
   const level = String(record?.level ?? '').padEnd(LEVEL_WIDTH);
   const src = String(record?.src ?? '').padEnd(SRC_WIDTH);
@@ -96,7 +99,9 @@ export function validateSources(sources: string | string[] | undefined | null): 
   if (list.includes('all')) return { sources: [...SOURCES] };
   const unknown = list.filter((s) => !SOURCES.includes(s));
   if (unknown.length > 0) {
-    return { error: `Unknown --source value(s): ${unknown.join(', ')}. Use one or more of: ${SOURCES.join(', ')}, or all.` };
+    return {
+      error: `Unknown --source value(s): ${unknown.join(', ')}. Use one or more of: ${SOURCES.join(', ')}, or all.`,
+    };
   }
   return { sources: list };
 }
@@ -145,13 +150,18 @@ interface LogsOptions {
 export default function logsCommand(program: Command) {
   program
     .command('logs')
-    .description("Query this workspace's merged NDJSON log timeline (bundler, client, device, build). Prints and exits; nothing matching is a successful, empty result. Use --follow to stream.")
+    .description(
+      "Query this workspace's merged NDJSON log timeline (bundler, client, device, build). Prints and exits; nothing matching is a successful, empty result. Use --follow to stream.",
+    )
     .option('--source <s...>', 'Only these sources: metro, client, device, build, or all')
     .option('--level <l>', `Minimum level: ${LEVELS.join(', ')}`)
     .option('--since <d>', 'Only records newer than this, e.g. 30s, 5m, 2h')
     .option('--grep <re>', 'Only records whose message matches this regular expression')
     .option('--tail <n>', 'Only the last n matching records')
-    .option('--errors', 'Only errors and fatals since the last marker, from metro, client and build (the agent-loop query). Device errors are the OS talking, not the app -- the app\'s own crashes reach the client and metro streams -- so add --source device or --source all to include them.')
+    .option(
+      '--errors',
+      "Only errors and fatals since the last marker, from metro, client and build (the agent-loop query). Device errors are the OS talking, not the app -- the app's own crashes reach the client and metro streams -- so add --source device or --source all to include them.",
+    )
     .option('--follow', 'Keep streaming new records until interrupted')
     .option('--json', 'Emit the raw records, one per line (valid NDJSON)')
     .action((opts: LogsOptions) => {
@@ -219,9 +229,10 @@ export default function logsCommand(program: Command) {
 
       const records = queryLogs(query);
       // An explicit --tail is the caller choosing a length, so it wins.
-      const capped = opts.errors && !opts.json && tail === undefined && records.length > ERRORS_PRINT_CAP
-        ? records.slice(0, ERRORS_PRINT_CAP)
-        : records;
+      const capped =
+        opts.errors && !opts.json && tail === undefined && records.length > ERRORS_PRINT_CAP
+          ? records.slice(0, ERRORS_PRINT_CAP)
+          : records;
       for (const record of capped) emit(record);
       const hidden = records.length - capped.length;
       if (hidden > 0) {

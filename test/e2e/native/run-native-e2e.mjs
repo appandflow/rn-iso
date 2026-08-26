@@ -40,9 +40,7 @@
 // from packages/rn-iso, so it also serves as a black-box check of the published
 // surface.
 import { spawnSync } from 'node:child_process';
-import {
-  existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync,
-} from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,15 +59,14 @@ const EXPECTED_MODE = FRAMEWORK === 'expo' ? 'expo-child' : 'bare-inproc';
 const ARTIFACT_EXT = PLATFORM === 'ios' ? '.app' : '.apk';
 // The compiler signatures that must be ABSENT from the second worktree's build
 // log -- their presence would mean it compiled instead of installing the cache.
-const COMPILE_SIGNS = PLATFORM === 'ios'
-  ? [/xcodebuild/i, /CompileC\b/i, /Ld /]
-  : [/gradlew/i, /:app:compile/i, /Task :app:/i];
+const COMPILE_SIGNS =
+  PLATFORM === 'ios' ? [/xcodebuild/i, /CompileC\b/i, /Ld /] : [/gradlew/i, /:app:compile/i, /Task :app:/i];
 
 // Throwaway home so the run never touches the developer's real registry or the
 // real ~/.rn-iso/build-cache. The CI cache job maps a persistent build-cache
 // into this path deliberately (see e2e-native.yml); locally it is ephemeral.
 // --dry-run makes NO side effects, so it does not even create temp dirs.
-const HOME_DIR = args.dryRun ? '<dry-run>' : (args.home || mkdtempSync(join(tmpdir(), `rn-iso-native-${VARIANT}-home-`)));
+const HOME_DIR = args.dryRun ? '<dry-run>' : args.home || mkdtempSync(join(tmpdir(), `rn-iso-native-${VARIANT}-home-`));
 const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `rn-iso-native-${VARIANT}-`));
 const ENV = { ...process.env, RN_ISO_HOME: HOME_DIR, CI: '1' };
 // Set by the CI job when actions/cache RESTORED a persisted build cache: the
@@ -109,9 +106,11 @@ async function main() {
   log(`wt1 start mode: ${start1.mode}`);
   const build1 = buildAndAssert(wt1, { expectCacheHit: false });
   if (WARM_CACHE) {
-    log(build1.cacheHit
-      ? `wt1 warm-started from the cross-run cache (${build1.cacheHit}) -- cross-run cache path exercised`
-      : 'wt1 cold build: the restored cross-run cache held no matching fingerprint');
+    log(
+      build1.cacheHit
+        ? `wt1 warm-started from the cross-run cache (${build1.cacheHit}) -- cross-run cache path exercised`
+        : 'wt1 cold build: the restored cross-run cache held no matching fingerprint',
+    );
   } else {
     assert(build1.cacheHit === false, `cold build must be a cache MISS, got ${JSON.stringify(build1.cacheHit)}`);
   }
@@ -124,8 +123,10 @@ async function main() {
   const start2 = startAndAssertMode(wt2);
   log(`wt2 start mode: ${start2.mode}`);
   const build2 = buildAndAssert(wt2, { expectCacheHit: true });
-  assert(build2.cacheHit === 'local' || build2.cacheHit === 'remote',
-    `second worktree must HIT the cache, got ${JSON.stringify(build2.cacheHit)}`);
+  assert(
+    build2.cacheHit === 'local' || build2.cacheHit === 'remote',
+    `second worktree must HIT the cache, got ${JSON.stringify(build2.cacheHit)}`,
+  );
   assertArtifact(build2.appPath);
   assertNoCompile(wt2);
   handleLaunch(build2, 'wt2');
@@ -176,8 +177,12 @@ function createFixture() {
   // done here so the cache path is reachable. (Expo templates already resolve
   // it through the `expo` dependency.)
   if (FRAMEWORK === 'bare') {
-    const r2 = spawnSync('npm', ['install', '--no-audit', '--no-fund', '-D', '@expo/fingerprint'],
-      { cwd: appDir, env: ENV, stdio: 'inherit', timeout: 10 * 60 * 1000 });
+    const r2 = spawnSync('npm', ['install', '--no-audit', '--no-fund', '-D', '@expo/fingerprint'], {
+      cwd: appDir,
+      env: ENV,
+      stdio: 'inherit',
+      timeout: 10 * 60 * 1000,
+    });
     if (r2.status !== 0) die('installing @expo/fingerprint into the bare fixture failed');
   }
 
@@ -199,22 +204,29 @@ function worktreeCreate(name, appDir) {
 
 function startAndAssertMode(cwd) {
   const facts = cliJson(['start', '--json'], { cwd });
-  assert(facts.mode === EXPECTED_MODE,
-    `start mode for a ${FRAMEWORK} app must be ${EXPECTED_MODE}, got ${JSON.stringify(facts.mode)} `
-    + '(this is exactly the detectIsExpo path a field test caught misfiring)');
+  assert(
+    facts.mode === EXPECTED_MODE,
+    `start mode for a ${FRAMEWORK} app must be ${EXPECTED_MODE}, got ${JSON.stringify(facts.mode)} ` +
+      '(this is exactly the detectIsExpo path a field test caught misfiring)',
+  );
   return facts;
 }
 
 function buildAndAssert(cwd, { expectCacheHit }) {
   log(`building ${PLATFORM} in ${cwd} (expect cache ${expectCacheHit ? 'HIT' : 'MISS'})...`);
   const facts = cliJson([PLATFORM, '--json'], { cwd, timeout: 40 * 60 * 1000 });
-  log(`build facts: cacheHit=${JSON.stringify(facts.cacheHit)} launched=${JSON.stringify(facts.launched)} `
-    + `waitedForBuild=${JSON.stringify(facts.waitedForBuild)} durationMs=${facts.durationMs}`);
+  log(
+    `build facts: cacheHit=${JSON.stringify(facts.cacheHit)} launched=${JSON.stringify(facts.launched)} ` +
+      `waitedForBuild=${JSON.stringify(facts.waitedForBuild)} durationMs=${facts.durationMs}`,
+  );
   return facts;
 }
 
 function assertArtifact(appPath) {
-  assert(typeof appPath === 'string' && appPath.endsWith(ARTIFACT_EXT), `appPath should be a ${ARTIFACT_EXT}, got ${JSON.stringify(appPath)}`);
+  assert(
+    typeof appPath === 'string' && appPath.endsWith(ARTIFACT_EXT),
+    `appPath should be a ${ARTIFACT_EXT}, got ${JSON.stringify(appPath)}`,
+  );
   assert(existsSync(appPath), `the built artifact does not exist on disk: ${appPath}`);
   log(`artifact ok: ${appPath}`);
 }
@@ -224,8 +236,14 @@ function assertArtifact(appPath) {
 // (a picker awaiting a tap, a confirmation alert). The protocol says follow
 // rn-iso's own guidance and judge; here we record it and continue.
 function handleLaunch(facts, label) {
-  if (facts.launched === true) { log(`${label} launched and verified.`); return; }
-  if (facts.launched === 'unverified') { log(`${label} launched but UNVERIFIED (no bundle request seen) -- tolerated per protocol.`); return; }
+  if (facts.launched === true) {
+    log(`${label} launched and verified.`);
+    return;
+  }
+  if (facts.launched === 'unverified') {
+    log(`${label} launched but UNVERIFIED (no bundle request seen) -- tolerated per protocol.`);
+    return;
+  }
   throw new Error(`${label} did not launch (launched=${JSON.stringify(facts.launched)})`);
 }
 
@@ -234,10 +252,16 @@ function handleLaunch(facts, label) {
 // compiler, independent of the JSON's cacheHit field.
 function assertNoCompile(cwd) {
   const log_ = buildLog(cwd);
-  if (!log_) { log('warn: no build-*.ndjson to inspect for compile signatures'); return; }
+  if (!log_) {
+    log('warn: no build-*.ndjson to inspect for compile signatures');
+    return;
+  }
   const text = readFileSync(log_, 'utf-8');
   for (const sign of COMPILE_SIGNS) {
-    assert(!sign.test(text), `the cached build's log contains a compile signature ${sign} -- it should have installed, not compiled:\n${log_}`);
+    assert(
+      !sign.test(text),
+      `the cached build's log contains a compile signature ${sign} -- it should have installed, not compiled:\n${log_}`,
+    );
   }
   log('no-compile proof: the second worktree build log holds no compiler invocation.');
 }
@@ -296,8 +320,20 @@ const FIXTURE_COMMANDS = {
   // changes the flags.
   bare(appDir) {
     if (process.env.RN_ISO_E2E_BARE_INIT) return withDir(process.env.RN_ISO_E2E_BARE_INIT, appDir);
-    return ['npx', '--yes', '@react-native-community/cli@latest', 'init', 'RnIsoE2E',
-      '--directory', appDir, '--skip-git-init', '--install-pods', 'false', '--pm', 'npm'];
+    return [
+      'npx',
+      '--yes',
+      '@react-native-community/cli@latest',
+      'init',
+      'RnIsoE2E',
+      '--directory',
+      appDir,
+      '--skip-git-init',
+      '--install-pods',
+      'false',
+      '--pm',
+      'npm',
+    ];
   },
   // Managed Expo via a MINIMAL template (blank), so rn-iso's `expo prebuild`
   // path is exercised on first build. Override with RN_ISO_E2E_EXPO_INIT.
@@ -310,7 +346,10 @@ const FIXTURE_COMMANDS = {
 function withDir(tmplStr, appDir) {
   // Split a shell-ish override on whitespace and substitute {dir}. Kept simple:
   // the override is a trusted CI/reviewer value, not user input.
-  return tmplStr.split(/\s+/).filter(Boolean).map((t) => (t === '{dir}' ? appDir : t));
+  return tmplStr
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((t) => (t === '{dir}' ? appDir : t));
 }
 
 // ---- git --------------------------------------------------------------------
@@ -338,7 +377,13 @@ function ensureGitignore(appDir) {
   const gi = join(appDir, '.gitignore');
   const needed = ['node_modules/', 'ios/Pods/', 'ios/build/', 'android/.gradle/', 'android/app/build/', '.rn-iso/'];
   let text = existsSync(gi) ? readFileSync(gi, 'utf-8') : '';
-  const missing = needed.filter((n) => !text.split('\n').map((l) => l.trim()).includes(n.replace(/\/$/, '')) && !text.includes(n));
+  const missing = needed.filter(
+    (n) =>
+      !text
+        .split('\n')
+        .map((l) => l.trim())
+        .includes(n.replace(/\/$/, '')) && !text.includes(n),
+  );
   if (missing.length) {
     const add = `\n# rn-iso native e2e\n${missing.join('\n')}\n`;
     spawnSync('sh', ['-c', `printf '%s' ${quote(add)} >> ${quote(gi)}`], { stdio: 'inherit' });
@@ -367,15 +412,19 @@ function cliJson(argv, opts = {}) {
 // CI log shows progress while assertions still get the text.
 function sh(file, argv, opts = {}) {
   const r = spawnSync(file, argv, {
-    cwd: opts.cwd, env: opts.env || ENV, encoding: 'utf-8',
-    timeout: opts.timeout || 5 * 60 * 1000, maxBuffer: 64 * 1024 * 1024,
+    cwd: opts.cwd,
+    env: opts.env || ENV,
+    encoding: 'utf-8',
+    timeout: opts.timeout || 5 * 60 * 1000,
+    maxBuffer: 64 * 1024 * 1024,
   });
   const stdout = r.stdout || '';
   const stderr = r.stderr || '';
   if (stderr) process.stderr.write(stderr);
   if (r.error && !opts.allowFail) die(`${file} ${argv.join(' ')} could not run: ${r.error.message}`);
   const code = r.status ?? (r.signal ? 1 : 0);
-  if (code !== 0 && !opts.allowFail) die(`${file} ${argv.slice(0, 3).join(' ')} exited ${code}:\n${lastLines(stderr, 40)}`);
+  if (code !== 0 && !opts.allowFail)
+    die(`${file} ${argv.slice(0, 3).join(' ')} exited ${code}:\n${lastLines(stderr, 40)}`);
   return { code, stdout, stderr };
 }
 
@@ -391,7 +440,9 @@ function requireTool(file, argv) {
 function buildLog(cwd) {
   const dir = join(cwd, '.rn-iso', 'logs');
   if (!existsSync(dir)) return null;
-  const candidates = readdirSync(dir).filter((f) => /^build-.*\.ndjson$/.test(f)).map((f) => join(dir, f));
+  const candidates = readdirSync(dir)
+    .filter((f) => /^build-.*\.ndjson$/.test(f))
+    .map((f) => join(dir, f));
   return candidates.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0] || null;
 }
 
@@ -402,7 +453,10 @@ function dumpDiagnostics() {
   banner('DIAGNOSTICS (build log tails)');
   for (const wt of created) {
     const log_ = buildLog(wt);
-    if (!log_) { log(`no build log under ${wt}`); continue; }
+    if (!log_) {
+      log(`no build log under ${wt}`);
+      continue;
+    }
     log(`--- ${log_} (tail) ---`);
     process.stderr.write(lastLines(readFileSync(log_, 'utf-8'), 60) + '\n');
   }
@@ -410,14 +464,26 @@ function dumpDiagnostics() {
 
 function cleanupTmp() {
   for (const dir of [WORK_DIR, args.home ? null : HOME_DIR].filter(Boolean)) {
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best effort */
+    }
   }
 }
 
 // ---- small utils ------------------------------------------------------------
 
 function parseArgs(argv) {
-  const out = { framework: null, platform: null, appDir: null, keep: false, fixtureOnly: false, dryRun: false, home: null };
+  const out = {
+    framework: null,
+    platform: null,
+    appDir: null,
+    keep: false,
+    fixtureOnly: false,
+    dryRun: false,
+    home: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--framework') out.framework = argv[++i];
@@ -436,20 +502,42 @@ function plan() {
   log(`framework=${FRAMEWORK} platform=${PLATFORM} expectedMode=${EXPECTED_MODE} artifact=*${ARTIFACT_EXT}`);
   log(`RN_ISO_HOME=${HOME_DIR}`);
   log(`work dir=${WORK_DIR}`);
-  log(args.appDir ? `using existing app: ${resolve(args.appDir)}` : `fixture: ${FIXTURE_COMMANDS[FRAMEWORK]('<appDir>').map(quote).join(' ')}`);
+  log(
+    args.appDir
+      ? `using existing app: ${resolve(args.appDir)}`
+      : `fixture: ${FIXTURE_COMMANDS[FRAMEWORK]('<appDir>').map(quote).join(' ')}`,
+  );
 }
 
-function assert(cond, msg) { if (!cond) throw new Error(msg); }
-function log(msg) { process.stderr.write(`[native-e2e ${VARIANT}] ${msg}\n`); }
-function banner(msg) { log('='.repeat(4) + ` ${msg} ` + '='.repeat(4)); }
-function die(msg, code = 1) { log(`ERROR: ${msg}`); process.exit(code); }
-function lastLines(s, n) { return String(s || '').split('\n').slice(-n).join('\n'); }
-function quote(s) { return /[^\w./@:{}-]/.test(s) ? `'${String(s).replace(/'/g, "'\\''")}'` : String(s); }
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg);
+}
+function log(msg) {
+  process.stderr.write(`[native-e2e ${VARIANT}] ${msg}\n`);
+}
+function banner(msg) {
+  log('='.repeat(4) + ` ${msg} ` + '='.repeat(4));
+}
+function die(msg, code = 1) {
+  log(`ERROR: ${msg}`);
+  process.exit(code);
+}
+function lastLines(s, n) {
+  return String(s || '')
+    .split('\n')
+    .slice(-n)
+    .join('\n');
+}
+function quote(s) {
+  return /[^\w./@:{}-]/.test(s) ? `'${String(s).replace(/'/g, "'\\''")}'` : String(s);
+}
 
 // ---- entry (last, so every top-level const/function is initialized) --------
 
 if (!['bare', 'expo'].includes(FRAMEWORK) || !['ios', 'android'].includes(PLATFORM)) {
-  die('usage: run-native-e2e.mjs --framework <bare|expo> --platform <ios|android> [--app-dir P] [--keep] [--fixture-only] [--dry-run]');
+  die(
+    'usage: run-native-e2e.mjs --framework <bare|expo> --platform <ios|android> [--app-dir P] [--keep] [--fixture-only] [--dry-run]',
+  );
 }
 
 banner(`native e2e: ${VARIANT} (expected start mode: ${EXPECTED_MODE})`);
@@ -460,7 +548,11 @@ if (args.dryRun) {
 }
 
 main().then(
-  () => { log(`PASS ${VARIANT}`); if (!args.keep) cleanupTmp(); process.exit(0); },
+  () => {
+    log(`PASS ${VARIANT}`);
+    if (!args.keep) cleanupTmp();
+    process.exit(0);
+  },
   (err) => {
     log(`FAIL ${VARIANT}: ${err?.message || err}`);
     dumpDiagnostics();

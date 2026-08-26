@@ -53,7 +53,7 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
     if (isPlainObject(value)) {
       // Only recurse into a namespace we know; an entirely unknown object is
       // reported once rather than leaf by leaf.
-      const hasKnownChildren = [...KNOWN_SETTINGS].some(k => k.startsWith(`${path}.`));
+      const hasKnownChildren = [...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`));
       if (hasKnownChildren) unknown.push(...unknownSettingKeys(value, path));
       else unknown.push(path);
       continue;
@@ -77,7 +77,15 @@ export function readCommittedSettings(repoRoot?: string | null): SettingsObject 
   }
 }
 
-export function resolveSettings({ projectPath, gitCommonDir, repoRoot }: { projectPath?: string | null; gitCommonDir?: string | null; repoRoot?: string | null }): SettingsObject {
+export function resolveSettings({
+  projectPath,
+  gitCommonDir,
+  repoRoot,
+}: {
+  projectPath?: string | null;
+  gitCommonDir?: string | null;
+  repoRoot?: string | null;
+}): SettingsObject {
   return mergeSettingsLayers([
     projectPath ? getProjectSettings(projectPath) : null,
     gitCommonDir ? getRepoSettings(gitCommonDir) : null,

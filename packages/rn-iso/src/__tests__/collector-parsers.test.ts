@@ -48,7 +48,7 @@ describe('ios: log stream ndjson', () => {
   const lines = fixture('ios-log-stream.ndjson').split('\n').filter(Boolean);
 
   test('the real capture yields Contract-1 records for the log events only', () => {
-    const records = lines.map(l => parseLogStreamLine(l)).filter(Boolean);
+    const records = lines.map((l) => parseLogStreamLine(l)).filter(Boolean);
     // 5 captured lines: the banner and the activityCreateEvent are dropped.
     expect(lines.length).toBe(5);
     expect(records.length).toBe(3);
@@ -71,14 +71,17 @@ describe('ios: log stream ndjson', () => {
   // activityCreateEvent / activityTransitionEvent are tracing scaffolding
   // with no messageType; in the real capture they were a third of the volume.
   test('activity events are dropped: they carry a message but no level', () => {
-    const activity = lines.find(l => l.includes('"activityCreateEvent"'));
+    const activity = lines.find((l) => l.includes('"activityCreateEvent"'));
     expect(activity).toBeTruthy();
     expect(parseLogStreamLine(activity)).toBe(null);
   });
 
   test('messageType maps onto Contract 1, with Fault as fatal', () => {
     const byLevel = Object.fromEntries(
-      lines.map(l => parseLogStreamLine(l)).filter(Boolean).map(r => [r.level, r])
+      lines
+        .map((l) => parseLogStreamLine(l))
+        .filter(Boolean)
+        .map((r) => [r.level, r]),
     );
     expect(byLevel.info).toBeTruthy();
     expect(byLevel.error).toBeTruthy();
@@ -87,15 +90,15 @@ describe('ios: log stream ndjson', () => {
   });
 
   test('the record carries the executable name from processImagePath', () => {
-    const records = lines.map(l => parseLogStreamLine(l)).filter(Boolean);
-    expect(records.map(r => r.proc).sort()).toEqual(['gamecontrollerd', 'locationd', 'pairedsyncd']);
+    const records = lines.map((l) => parseLogStreamLine(l)).filter(Boolean);
+    expect(records.map((r) => r.proc).sort()).toEqual(['gamecontrollerd', 'locationd', 'pairedsyncd']);
   });
 
   // Apple's stamp is "2026-08-25 13:18:05.196749-0400": a space separator and
   // six fractional digits. `now` is pinned to 0 so a fallback would be
   // obvious rather than plausible.
   test("Apple's timestamp is parsed rather than replaced by the read time", () => {
-    const logEvent = lines.find(l => l.includes('"logEvent"'));
+    const logEvent = lines.find((l) => l.includes('"logEvent"'));
     const captured = JSON.parse(logEvent).timestamp;
     expect(captured).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}[-+]\d{4}$/);
     expect(parseLogStreamLine(logEvent, { now: () => 0 }).ts).toBe(Date.parse(captured));
@@ -114,7 +117,11 @@ describe('ios: log stream ndjson', () => {
   });
 
   test('procFromImagePath takes the executable, not the bundle directory', () => {
-    expect(procFromImagePath('/Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/ABC/MyApp.app/MyApp')).toBe('MyApp');
+    expect(
+      procFromImagePath(
+        '/Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/ABC/MyApp.app/MyApp',
+      ),
+    ).toBe('MyApp');
     expect(procFromImagePath(null)).toBe(null);
   });
 
@@ -124,10 +131,15 @@ describe('ios: log stream ndjson', () => {
 
   test('logStreamArgs is the exact argv, with the predicate quoted for the device', () => {
     expect(logStreamArgs('U1', 'MyApp')).toEqual([
-      'simctl', 'spawn', 'U1',
-      'log', 'stream',
-      '--style', 'ndjson',
-      '--predicate', 'processImagePath CONTAINS[c] "MyApp"',
+      'simctl',
+      'spawn',
+      'U1',
+      'log',
+      'stream',
+      '--style',
+      'ndjson',
+      '--predicate',
+      'processImagePath CONTAINS[c] "MyApp"',
     ]);
   });
 
@@ -149,7 +161,8 @@ describe('ios: log stream ndjson', () => {
 // The events below are written in the log-stream ndjson shape, with the
 // subsystem/category/message combinations the capture actually carried.
 describe('ios: demoting device noise', () => {
-  const app = '/Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/ABC/MyApp.app/MyApp';
+  const app =
+    '/Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/ABC/MyApp.app/MyApp';
   const event = (over) => ({
     eventType: 'logEvent',
     messageType: 'Error',
@@ -164,11 +177,23 @@ describe('ios: demoting device noise', () => {
   // and HTTP to the dev server, so com.apple.network never stops complaining.
   test('the nw_socket flood is captured at info, not reported as an error', () => {
     const flood = [
-      event({ subsystem: 'com.apple.network', category: 'connection', eventMessage: 'nw_socket_handle_socket_event [C1.1.1:2] Socket SO_ERROR [54: Connection reset by peer]' }),
-      event({ subsystem: 'com.apple.network', category: 'boringssl', eventMessage: 'boringssl_context_handle_fatal_alert(1938) [C4.1.1:2][0x10c0a4b60] read alert, level: fatal, description: certificate unknown' }),
+      event({
+        subsystem: 'com.apple.network',
+        category: 'connection',
+        eventMessage: 'nw_socket_handle_socket_event [C1.1.1:2] Socket SO_ERROR [54: Connection reset by peer]',
+      }),
+      event({
+        subsystem: 'com.apple.network',
+        category: 'boringssl',
+        eventMessage:
+          'boringssl_context_handle_fatal_alert(1938) [C4.1.1:2][0x10c0a4b60] read alert, level: fatal, description: certificate unknown',
+      }),
       // The same emitter through CFNetwork's legacy path: no subsystem at all,
       // so there is nothing but the message to match on.
-      event({ eventMessage: 'nw_connection_copy_connected_local_endpoint_block_invoke [C2] Client called nw_connection_copy_connected_local_endpoint on unconnected nw_connection' }),
+      event({
+        eventMessage:
+          'nw_connection_copy_connected_local_endpoint_block_invoke [C2] Client called nw_connection_copy_connected_local_endpoint on unconnected nw_connection',
+      }),
       event({ eventMessage: 'nw_read_request_report [C3] Receive failed with error "Socket is not connected"' }),
     ];
     for (const e of flood) {
@@ -183,24 +208,59 @@ describe('ios: demoting device noise', () => {
 
   // The one record the field capture classified FATAL on a healthy app.
   test('the UIScene deprecation notice is a notice, not a fatal', () => {
-    const record = parseLogStreamLine(JSON.stringify(event({
-      messageType: 'Fault',
-      subsystem: 'com.apple.UIKit',
-      category: 'lifecycle',
-      eventMessage: 'BUG IN CLIENT OF UIKIT: UIScene lifecycle will soon be required. Please update your app to adopt UIScene lifecycle.',
-    })));
+    const record = parseLogStreamLine(
+      JSON.stringify(
+        event({
+          messageType: 'Fault',
+          subsystem: 'com.apple.UIKit',
+          category: 'lifecycle',
+          eventMessage:
+            'BUG IN CLIENT OF UIKIT: UIScene lifecycle will soon be required. Please update your app to adopt UIScene lifecycle.',
+        }),
+      ),
+    );
     expect(record.level).toBe('info');
-    expect(noiseRuleId(JSON.parse(JSON.stringify(event({ eventMessage: 'The app must migrate to UIScene lifecycle before iOS 27.' }))))).toBe('uiscene-deprecation');
+    expect(
+      noiseRuleId(
+        JSON.parse(JSON.stringify(event({ eventMessage: 'The app must migrate to UIScene lifecycle before iOS 27.' }))),
+      ),
+    ).toBe('uiscene-deprecation');
   });
 
   test('the rest of the proven offenders are demoted, each by its own rule', () => {
     const cases = [
-      ['sectrust', event({ subsystem: 'com.apple.securityd', category: 'SecTrust', eventMessage: 'SecTrustEvaluateIfNecessary' })],
-      ['sectrust-default-subsystem', event({ eventMessage: 'SecTrustReportNetworkingAnalytics: Failed to acquire the trust result' })],
-      ['webkit', event({ subsystem: 'com.apple.WebKit', category: 'Process', eventMessage: 'Failed to terminate process: Error Domain=com.apple.extensionKit.errorDomain Code=18' })],
+      [
+        'sectrust',
+        event({ subsystem: 'com.apple.securityd', category: 'SecTrust', eventMessage: 'SecTrustEvaluateIfNecessary' }),
+      ],
+      [
+        'sectrust-default-subsystem',
+        event({ eventMessage: 'SecTrustReportNetworkingAnalytics: Failed to acquire the trust result' }),
+      ],
+      [
+        'webkit',
+        event({
+          subsystem: 'com.apple.WebKit',
+          category: 'Process',
+          eventMessage: 'Failed to terminate process: Error Domain=com.apple.extensionKit.errorDomain Code=18',
+        }),
+      ],
       ['webkit-default-subsystem', event({ eventMessage: 'WebPrivacy: Failed to acquire the WebPrivacy resource' })],
-      ['audio-factory', event({ eventMessage: 'AddInstanceForFactory: No factory registered for id <CFUUID 0x600000284840> F8BB1C28-BAE8-11D6-9C31-00039315CD46' })],
-      ['coreui', event({ subsystem: 'com.apple.coreui', category: 'default', eventMessage: 'Invalid asset name supplied: (null)' })],
+      [
+        'audio-factory',
+        event({
+          eventMessage:
+            'AddInstanceForFactory: No factory registered for id <CFUUID 0x600000284840> F8BB1C28-BAE8-11D6-9C31-00039315CD46',
+        }),
+      ],
+      [
+        'coreui',
+        event({
+          subsystem: 'com.apple.coreui',
+          category: 'default',
+          eventMessage: 'Invalid asset name supplied: (null)',
+        }),
+      ],
       ['coreui-default-subsystem', event({ eventMessage: 'CUICatalog: Invalid asset name supplied: (null)' })],
     ];
     for (const [id, e] of cases) {
@@ -208,19 +268,28 @@ describe('ios: demoting device noise', () => {
       expect(levelForEvent(e)).toBe('info');
     }
     // Every rule in the list is exercised above or in the tests around it.
-    const covered = new Set([...cases.map(([id]) => id), 'network', 'network-default-subsystem', 'uiscene-deprecation']);
+    const covered = new Set([
+      ...cases.map(([id]) => id),
+      'network',
+      'network-default-subsystem',
+      'uiscene-deprecation',
+    ]);
     expect(NOISE_RULES.map((r) => r.id).filter((id) => !covered.has(id))).toEqual([]);
   });
 
   // The direction that matters: the list is an allowlist for DEMOTION, not a
   // filter for what counts as an error. Anything not on it keeps its level.
-  test('the app\'s own error is untouched, and so is an unlisted system one', () => {
+  test("the app's own error is untouched, and so is an unlisted system one", () => {
     const own = event({ eventMessage: '[Error: Exception in HostFunction]' });
     expect(noiseRuleId(own)).toBe(null);
     expect(parseLogStreamLine(JSON.stringify(own)).level).toBe('error');
 
     // From the real fixture: pairedsync and locationd are not on the list.
-    const unlisted = event({ subsystem: 'com.apple.pairedsync', category: 'daemon', eventMessage: 'Fatal error: pairing store path was nil for PSDFileManager.' });
+    const unlisted = event({
+      subsystem: 'com.apple.pairedsync',
+      category: 'daemon',
+      eventMessage: 'Fatal error: pairing store path was nil for PSDFileManager.',
+    });
     expect(levelForEvent(unlisted)).toBe('error');
     expect(levelForEvent({ ...unlisted, messageType: 'Fault' })).toBe('fatal');
   });
@@ -228,7 +297,11 @@ describe('ios: demoting device noise', () => {
   // A rule can only ever demote. A subsystem on the list that logs at Default
   // must not be pushed up, and a demotion must not change anything else.
   test('demotion never promotes, and never fires below error', () => {
-    const chatty = event({ messageType: 'Default', subsystem: 'com.apple.network', eventMessage: 'nw_socket ordinary chatter' });
+    const chatty = event({
+      messageType: 'Default',
+      subsystem: 'com.apple.network',
+      eventMessage: 'nw_socket ordinary chatter',
+    });
     expect(levelForEvent(chatty)).toBe('info');
     expect(levelForEvent({ ...chatty, messageType: 'Debug' })).toBe('debug');
   });
@@ -238,7 +311,9 @@ describe('ios: demoting device noise', () => {
   // component and keeps its errors.
   test('a subsystem rule matches dotted children, not lookalike names', () => {
     expect(noiseRuleId(event({ subsystem: 'com.apple.network.tcp' }))).toBe('network');
-    expect(noiseRuleId(event({ subsystem: 'com.apple.networkextension', eventMessage: 'provider failed to start' }))).toBe(null);
+    expect(
+      noiseRuleId(event({ subsystem: 'com.apple.networkextension', eventMessage: 'provider failed to start' })),
+    ).toBe(null);
   });
 
   test('an event with no subsystem, category or message at all is not noise', () => {
@@ -251,7 +326,7 @@ describe('android: logcat -v time', () => {
   const lines = fixture('android-logcat-time.txt').split('\n').filter(Boolean);
 
   test('every real level line parses into a Contract-1 record', () => {
-    const records = lines.map(l => parseLogcatLine(l)).filter(Boolean);
+    const records = lines.map((l) => parseLogcatLine(l)).filter(Boolean);
     expect(lines.length).toBe(6);
     expect(records.length).toBe(5);
     for (const record of records) {
@@ -267,27 +342,44 @@ describe('android: logcat -v time', () => {
   });
 
   test('the real V/D/I/W/E lines map onto Contract 1 levels', () => {
-    const levels = lines.map(l => parseLogcatLine(l)).filter(Boolean).map(r => r.level);
+    const levels = lines
+      .map((l) => parseLogcatLine(l))
+      .filter(Boolean)
+      .map((r) => r.level);
     expect([...levels].sort()).toEqual(['debug', 'debug', 'error', 'info', 'warn']);
   });
 
   test('the tag and pid become proc, and the message keeps its own colons', () => {
-    const record = parseLogcatLine('08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183 - system/security/keystore2/src/security_level.rs:680');
+    const record = parseLogcatLine(
+      '08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183 - system/security/keystore2/src/security_level.rs:680',
+    );
     expect(record.proc).toBe('keystore2(245)');
     expect(record.level).toBe('error');
-    expect(record.msg).toBe('system/security/keystore2/src/error.rs:183 - system/security/keystore2/src/security_level.rs:680');
+    expect(record.msg).toBe(
+      'system/security/keystore2/src/error.rs:183 - system/security/keystore2/src/security_level.rs:680',
+    );
   });
 
   // SYNTHESIZED: the emulator's buffer held no F(atal) line at capture time.
   // The format is the same `-v time` layout documented in `man logcat`.
   test('a fatal line maps to fatal (synthesized: no F line was in the captured buffer)', () => {
-    const record = parseLogcatLine('08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182 (com.example.app)');
+    const record = parseLogcatLine(
+      '08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182 (com.example.app)',
+    );
     expect(record.level).toBe('fatal');
     expect(record.msg).toMatch(/SIGSEGV/);
   });
 
   test('levelFromLogcatLetter covers the priority letters and defaults to info', () => {
-    expect(['V', 'D', 'I', 'W', 'E', 'F', 'A'].map(levelFromLogcatLetter)).toEqual(['debug', 'debug', 'info', 'warn', 'error', 'fatal', 'fatal']);
+    expect(['V', 'D', 'I', 'W', 'E', 'F', 'A'].map(levelFromLogcatLetter)).toEqual([
+      'debug',
+      'debug',
+      'info',
+      'warn',
+      'error',
+      'fatal',
+      'fatal',
+    ]);
     expect(levelFromLogcatLetter('?')).toBe('info');
   });
 
@@ -330,7 +422,7 @@ describe('android: logcat -v time', () => {
         '08-21 17:51:19.669 E/EGL_emulation( 9182): tid 9182: eglSurfaceAttrib(1376): error 0x3009 (EGL_BAD_MATCH)',
         '08-21 17:51:19.669 E/eglCodecCommon( 9182): glUtilsParamSize: unknow param 0x00008cdf',
         '08-21 17:51:19.669 E/OpenGLRenderer( 9182): Unable to match the desired swap behavior.',
-        '08-21 17:51:19.669 E/ziparchive( 9182): Unable to open \'/data/app/~~x==/com.example.app-1/base.dm\': No such file or directory',
+        "08-21 17:51:19.669 E/ziparchive( 9182): Unable to open '/data/app/~~x==/com.example.app-1/base.dm': No such file or directory",
         '08-21 17:51:19.669 E/vulkan  ( 9182): unknown gralloc4 metadata type',
       ];
       for (const line of noisy) {
@@ -340,17 +432,23 @@ describe('android: logcat -v time', () => {
       }
     });
 
-    test('an unlisted tag keeps its E, including the app\'s own', () => {
-      expect(parseLogcatLine('08-21 17:51:19.669 E/ReactNativeJS( 9182): [Error: Exception in HostFunction]').level).toBe('error');
+    test("an unlisted tag keeps its E, including the app's own", () => {
+      expect(
+        parseLogcatLine('08-21 17:51:19.669 E/ReactNativeJS( 9182): [Error: Exception in HostFunction]').level,
+      ).toBe('error');
       // From the real fixture.
-      expect(parseLogcatLine('08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183').level).toBe('error');
+      expect(
+        parseLogcatLine('08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183').level,
+      ).toBe('error');
     });
 
     // There is no benign F inside an app process: it is libc reporting a
     // signal or ART aborting. A noisy tag does not buy an exemption from that.
     test('F is never demoted, even from a listed tag', () => {
       expect(levelForLogcat('F', 'libEGL')).toBe('fatal');
-      expect(parseLogcatLine('08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182').level).toBe('fatal');
+      expect(
+        parseLogcatLine('08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182').level,
+      ).toBe('fatal');
       expect(!NOISE_TAGS.has('libc')).toBeTruthy();
     });
 
@@ -370,10 +468,20 @@ describe('watchAppPid', () => {
   function driver() {
     const queue = [];
     return {
-      setTimer: (fn) => { queue.push(fn); return queue.length; },
-      clearTimer: () => { queue.length = 0; },
-      async tick() { const fn = queue.shift(); if (fn) await fn(); },
-      get pending() { return queue.length; },
+      setTimer: (fn) => {
+        queue.push(fn);
+        return queue.length;
+      },
+      clearTimer: () => {
+        queue.length = 0;
+      },
+      async tick() {
+        const fn = queue.shift();
+        if (fn) await fn();
+      },
+      get pending() {
+        return queue.length;
+      },
     };
   }
 
@@ -382,9 +490,14 @@ describe('watchAppPid', () => {
     const seen = [];
     let answer = 3132;
     const w = watchAppPid({
-      serial: 'emulator-5554', packageName: 'com.x', pid: 3132, intervalMs: 1,
-      resolve: () => answer, onChange: (pid) => seen.push(pid),
-      setTimer: d.setTimer, clearTimer: d.clearTimer,
+      serial: 'emulator-5554',
+      packageName: 'com.x',
+      pid: 3132,
+      intervalMs: 1,
+      resolve: () => answer,
+      onChange: (pid) => seen.push(pid),
+      setTimer: d.setTimer,
+      clearTimer: d.clearTimer,
     });
     await d.tick();
     expect(seen).toEqual([]);
@@ -401,9 +514,14 @@ describe('watchAppPid', () => {
     const seen = [];
     let answer = null;
     const w = watchAppPid({
-      serial: 'emulator-5554', packageName: 'com.x', pid: 3132, intervalMs: 1,
-      resolve: () => answer, onChange: (pid) => seen.push(pid),
-      setTimer: d.setTimer, clearTimer: d.clearTimer,
+      serial: 'emulator-5554',
+      packageName: 'com.x',
+      pid: 3132,
+      intervalMs: 1,
+      resolve: () => answer,
+      onChange: (pid) => seen.push(pid),
+      setTimer: d.setTimer,
+      clearTimer: d.clearTimer,
     });
     await d.tick();
     expect(seen).toEqual([]);
@@ -418,10 +536,17 @@ describe('watchAppPid', () => {
     const seen = [];
     let throwing = true;
     const w = watchAppPid({
-      serial: 'emulator-5554', packageName: 'com.x', pid: 3132, intervalMs: 1,
-      resolve: () => { if (throwing) throw new Error('device offline'); return 4200; },
+      serial: 'emulator-5554',
+      packageName: 'com.x',
+      pid: 3132,
+      intervalMs: 1,
+      resolve: () => {
+        if (throwing) throw new Error('device offline');
+        return 4200;
+      },
       onChange: (pid) => seen.push(pid),
-      setTimer: d.setTimer, clearTimer: d.clearTimer,
+      setTimer: d.setTimer,
+      clearTimer: d.clearTimer,
     });
     await d.tick();
     expect(seen).toEqual([]);
@@ -437,9 +562,16 @@ describe('watchAppPid', () => {
     const d = driver();
     let answer = 4200;
     const w = watchAppPid({
-      serial: 'emulator-5554', packageName: 'com.x', pid: 3132, intervalMs: 1,
-      resolve: () => answer, onChange: () => { throw new Error('reattach failed'); },
-      setTimer: d.setTimer, clearTimer: d.clearTimer,
+      serial: 'emulator-5554',
+      packageName: 'com.x',
+      pid: 3132,
+      intervalMs: 1,
+      resolve: () => answer,
+      onChange: () => {
+        throw new Error('reattach failed');
+      },
+      setTimer: d.setTimer,
+      clearTimer: d.clearTimer,
     });
     await d.tick();
     expect(d.pending).toBe(1);
@@ -449,9 +581,14 @@ describe('watchAppPid', () => {
   test('stop() is what lets the collector process exit', async () => {
     const d = driver();
     const w = watchAppPid({
-      serial: 'emulator-5554', packageName: 'com.x', pid: 3132, intervalMs: 1,
-      resolve: () => 3132, onChange: () => {},
-      setTimer: d.setTimer, clearTimer: d.clearTimer,
+      serial: 'emulator-5554',
+      packageName: 'com.x',
+      pid: 3132,
+      intervalMs: 1,
+      resolve: () => 3132,
+      onChange: () => {},
+      setTimer: d.setTimer,
+      clearTimer: d.clearTimer,
     });
     expect(d.pending).toBe(1);
     w.stop();

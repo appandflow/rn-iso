@@ -35,10 +35,7 @@ interface InstallPlanEntry {
 // per skill -- so a second bundled skill installs alongside, not on top of, the
 // first.
 export function skillTargets(home = homedir(), name = 'rn-iso') {
-  return [
-    join(home, '.claude', 'skills', name),
-    join(home, '.agents', 'skills', name),
-  ];
+  return [join(home, '.claude', 'skills', name), join(home, '.agents', 'skills', name)];
 }
 
 // Every skill this package ships: the always-on one describing the CLI, and the
@@ -71,7 +68,11 @@ export function parseSkillVersion(text: string) {
 
 // The version stamped into each installed copy, or null for a copy that
 // predates stamping (which is itself a stale copy worth reporting).
-export function installedSkillVersions(home = homedir(), name = 'rn-iso', { read = readFileSync, exists = existsSync } = {}): InstalledSkillVersion[] {
+export function installedSkillVersions(
+  home = homedir(),
+  name = 'rn-iso',
+  { read = readFileSync, exists = existsSync } = {},
+): InstalledSkillVersion[] {
   const found: InstalledSkillVersion[] = [];
   for (const dir of skillTargets(home, name)) {
     const file = join(dir, 'SKILL.md');
@@ -90,7 +91,7 @@ export function installedSkillVersions(home = homedir(), name = 'rn-iso', { read
 // case, where the docs an agent reads describe commands the running CLI does
 // not have.
 export function staleSkillCopies(installed: InstalledSkillVersion[], cliVersion: string) {
-  return (installed || []).filter(s => s.version !== cliVersion);
+  return (installed || []).filter((s) => s.version !== cliVersion);
 }
 
 // Pure: the ONE line to print about stale copies, or null when there are none.
@@ -105,9 +106,11 @@ export function staleSkillWarning(installed: InstalledSkillVersion[], cliVersion
   if (!cliVersion) return null;
   const stale = staleSkillCopies(installed, cliVersion);
   if (stale.length === 0) return null;
-  const versions = [...new Set(stale.map(s => s.version ?? 'an unstamped older version'))];
-  return `Installed rn-iso skill is ${versions.join(' / ')} but this CLI is ${cliVersion}. `
-    + 'Run `npx rn-iso skill install` so the docs your agent reads match the binary.';
+  const versions = [...new Set(stale.map((s) => s.version ?? 'an unstamped older version'))];
+  return (
+    `Installed rn-iso skill is ${versions.join(' / ')} but this CLI is ${cliVersion}. ` +
+    'Run `npx rn-iso skill install` so the docs your agent reads match the binary.'
+  );
 }
 
 export function bundledSkillPath() {
@@ -118,7 +121,7 @@ export function bundledSkillPath() {
 // touching a filesystem.
 export function planSkillInstall(
   targets: string[],
-  { exists, readVersion }: { exists: (dir: string) => boolean; readVersion: (file: string) => string | null }
+  { exists, readVersion }: { exists: (dir: string) => boolean; readVersion: (file: string) => string | null },
 ): InstallPlanEntry[] {
   return targets.map((dir) => {
     const file = join(dir, 'SKILL.md');
@@ -129,13 +132,13 @@ export function planSkillInstall(
 }
 
 export default function skillCommand(program: Command, version: string) {
-  const skill = program
-    .command('skill')
-    .description('Manage the bundled agent skill (the docs other AI agents read)');
+  const skill = program.command('skill').description('Manage the bundled agent skill (the docs other AI agents read)');
 
   skill
     .command('install')
-    .description('Copy this version\'s SKILL.md into ~/.claude/skills and ~/.agents/skills, replacing any older copy. Run after upgrading rn-iso so the skill and the CLI stay in step.')
+    .description(
+      "Copy this version's SKILL.md into ~/.claude/skills and ~/.agents/skills, replacing any older copy. Run after upgrading rn-iso so the skill and the CLI stay in step.",
+    )
     .option('--print', 'Write the bundled SKILL.md to stdout instead of installing it')
     .action((opts: { print?: boolean }) => {
       const source = bundledSkillPath();
@@ -153,7 +156,10 @@ export default function skillCommand(program: Command, version: string) {
         for (const dir of skillTargets(homedir(), skillToInstall.name)) {
           try {
             mkdirSync(dir, { recursive: true });
-            writeFileSync(join(dir, 'SKILL.md'), stampSkillVersion(readFileSync(skillToInstall.source, 'utf-8'), version));
+            writeFileSync(
+              join(dir, 'SKILL.md'),
+              stampSkillVersion(readFileSync(skillToInstall.source, 'utf-8'), version),
+            );
             console.log(chalk.green(`Installed ${skillToInstall.name} ${version} skill -> ${join(dir, 'SKILL.md')}`));
             installed++;
           } catch (e) {

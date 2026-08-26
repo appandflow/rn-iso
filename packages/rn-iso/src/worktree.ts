@@ -39,7 +39,9 @@ export function isWorkspaceArtifact(rel: string): boolean {
 const CARRY_SKIP_BASENAMES = new Set([WORKSPACE_DIR, '.DerivedData']);
 
 export function isCarrySkipped(rel: string): boolean {
-  return String(rel).split('/').some(seg => CARRY_SKIP_BASENAMES.has(seg));
+  return String(rel)
+    .split('/')
+    .some((seg) => CARRY_SKIP_BASENAMES.has(seg));
 }
 
 // Entry-level isCarrySkipped only sees the entry `git ls-files --directory`
@@ -127,8 +129,8 @@ function readPatternFile(p: string): string[] | null {
   if (!existsSync(p)) return null;
   return readFileSync(p, 'utf-8')
     .split('\n')
-    .map(l => l.trim())
-    .filter(l => l && !l.startsWith('#'));
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'));
 }
 
 // `--directory` is the load-bearing flag here: when an entire directory is
@@ -146,13 +148,16 @@ function readPatternFile(p: string): string[] | null {
 // wholly-ignored directory) still comes back.
 export function listGitignoredFiles(root: string): string[] {
   const out = getExecutor().runQuiet(
-    `git -C "${root}" ls-files --others --ignored --exclude-standard --directory -- . ":(exclude,glob)**/node_modules/**"`
+    `git -C "${root}" ls-files --others --ignored --exclude-standard --directory -- . ":(exclude,glob)**/node_modules/**"`,
   );
   if (!out) return [];
   // A collapsed directory entry (trailing slash) is not a file
   // carryOverFiles can copy; drop it here rather than make every caller
   // re-filter.
-  return out.split('\n').filter(Boolean).filter(f => !f.endsWith('/'));
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .filter((f) => !f.endsWith('/'));
 }
 
 // Paths the worktree at `dir` TRACKS. NUL-delimited because `ls-files`
@@ -209,7 +214,7 @@ export function trackedGuard(dir: string): TrackedGuard {
     set.add(p);
     for (let i = p.indexOf('/'); i !== -1; i = p.indexOf('/', i + 1)) set.add(p.slice(0, i));
   }
-  return { known: true, covers: rel => set.has(rel) };
+  return { known: true, covers: (rel) => set.has(rel) };
 }
 
 // One decision, shared by both carry paths, so they cannot drift apart:
@@ -229,15 +234,29 @@ function refuseReason(guard: TrackedGuard, rel: string, destPath: string): 'trac
 // collected rather than thrown -- a single unreadable file must not abort
 // worktree creation -- but they are returned (not swallowed) so the caller
 // can warn about them.
-interface SkippedEntry { file: string; reason: string; }
-interface FailedEntry { file: string; error: string; }
+interface SkippedEntry {
+  file: string;
+  reason: string;
+}
+interface FailedEntry {
+  file: string;
+  error: string;
+}
 interface CarryResult {
   copied: string[];
   skipped: SkippedEntry[];
   failed: FailedEntry[];
 }
 
-export function carryOverFiles({ root, target, patterns }: { root: string; target: string; patterns: string[] | null | undefined }): CarryResult {
+export function carryOverFiles({
+  root,
+  target,
+  patterns,
+}: {
+  root: string;
+  target: string;
+  patterns: string[] | null | undefined;
+}): CarryResult {
   if (!patterns || patterns.length === 0) return { copied: [], skipped: [], failed: [] };
   const copied: string[] = [];
   const skipped: SkippedEntry[] = [];
@@ -272,10 +291,13 @@ export function carryOverFiles({ root, target, patterns }: { root: string; targe
 // -- they are the whole point here -- and does not exclude node_modules.
 export function listGitignoredEntries(root: string): string[] {
   const out = getExecutor().runQuiet(
-    `git -C "${root}" ls-files --others --ignored --exclude-standard --directory --no-empty-directory`
+    `git -C "${root}" ls-files --others --ignored --exclude-standard --directory --no-empty-directory`,
   );
   if (!out) return [];
-  return out.split('\n').filter(Boolean).map(e => (e.endsWith('/') ? e.slice(0, -1) : e));
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .map((e) => (e.endsWith('/') ? e.slice(0, -1) : e));
 }
 
 // An exclude list rather than an include list: the failure mode of naming what
@@ -294,7 +316,15 @@ interface CloneResult extends CarryResult {
   cloned: boolean;
 }
 
-export function cloneIgnoredEntries({ root, target, patterns }: { root: string; target: string; patterns: string[] | null | undefined }): CloneResult {
+export function cloneIgnoredEntries({
+  root,
+  target,
+  patterns,
+}: {
+  root: string;
+  target: string;
+  patterns: string[] | null | undefined;
+}): CloneResult {
   const copied: string[] = [];
   const skipped: SkippedEntry[] = [];
   const failed: FailedEntry[] = [];
@@ -306,7 +336,9 @@ export function cloneIgnoredEntries({ root, target, patterns }: { root: string; 
     const from = join(root, rel);
     const to = join(target, rel);
     let isDir = false;
-    try { isDir = statSync(from).isDirectory(); } catch {}
+    try {
+      isDir = statSync(from).isDirectory();
+    } catch {}
     const reason = refuseReason(guard, rel, to);
     if (reason) {
       skipped.push({ file: rel, reason });
@@ -361,7 +393,7 @@ export function cloneIgnoredEntries({ root, target, patterns }: { root: string; 
 export function podsOutOfSync(
   target: string,
   copiedEntries: string[] | null | undefined,
-  { read = readFileSync }: { read?: typeof readFileSync } = {}
+  { read = readFileSync }: { read?: typeof readFileSync } = {},
 ): { dir: string; reason: 'missing' | 'mismatch' }[] {
   const problems: { dir: string; reason: 'missing' | 'mismatch' }[] = [];
   for (const rel of copiedEntries || []) {
@@ -412,7 +444,10 @@ export function hasUncommittedWork(dir: string): boolean | null {
 export function dirtyPaths(dir: string, { limit = 10 }: { limit?: number } = {}): string[] {
   const out = getExecutor().runQuiet(`git -C "${dir}" status --porcelain`);
   if (out === null) return [];
-  const lines = out.split('\n').map(l => normalizePorcelainLine(l.trimEnd())).filter(Boolean);
+  const lines = out
+    .split('\n')
+    .map((l) => normalizePorcelainLine(l.trimEnd()))
+    .filter(Boolean);
   return lines.slice(0, limit);
 }
 
@@ -456,7 +491,7 @@ export function restoreFile(dir: string, file: string): boolean {
 // when it applies.
 export function isPodInstallChurn(paths: string[] | null | undefined): boolean {
   if (!paths || paths.length === 0) return false;
-  return paths.every(line => /(?:^|\/)(?:Podfile\.lock|project\.pbxproj)$/.test(line.slice(3).trim()));
+  return paths.every((line) => /(?:^|\/)(?:Podfile\.lock|project\.pbxproj)$/.test(line.slice(3).trim()));
 }
 
 // Commits reachable from HEAD but from no remote ref. Removing the worktree
@@ -472,11 +507,12 @@ export function isPodInstallChurn(paths: string[] | null | undefined): boolean {
 // answer from git -- see hasUncommittedWork above for why that distinction
 // matters here.
 export function unpushedCommits(dir: string): string[] | null {
-  const out = getExecutor().runQuiet(
-    `git -C "${dir}" log --oneline HEAD --not --remotes`
-  );
+  const out = getExecutor().runQuiet(`git -C "${dir}" log --oneline HEAD --not --remotes`);
   if (out === null) return null;
-  return out.split('\n').map(l => l.trim()).filter(Boolean);
+  return out
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
 }
 
 // Whether the repo at `dir` has any remote configured at all. Used to make
@@ -526,9 +562,14 @@ export function branchExists(cwd: string, branch: string): boolean {
 export function resolveRef(cwd: string, ref: string): string | null {
   try {
     const out = getExecutor().runFile('git', [
-      '-C', cwd,
-      'rev-parse', '--verify', '--quiet', '--short',
-      '--end-of-options', `${ref}^{commit}`,
+      '-C',
+      cwd,
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      '--short',
+      '--end-of-options',
+      `${ref}^{commit}`,
     ]);
     return out && out.trim() ? out.trim() : null;
   } catch {
@@ -547,10 +588,14 @@ export function resolveRef(cwd: string, ref: string): string | null {
 // belt-and-suspenders on top of it.
 function assertSafeWorktreePath(path: string): void {
   if (typeof path !== 'string' || path.startsWith('-')) {
-    throw new Error(`Refusing worktree path ${JSON.stringify(path)}: a path beginning with "-" would be parsed as a git option.`);
+    throw new Error(
+      `Refusing worktree path ${JSON.stringify(path)}: a path beginning with "-" would be parsed as a git option.`,
+    );
   }
   if (/[`$"\\]/.test(path)) {
-    throw new Error(`Refusing worktree path ${JSON.stringify(path)}: it contains shell metacharacters that have no place in a path.`);
+    throw new Error(
+      `Refusing worktree path ${JSON.stringify(path)}: it contains shell metacharacters that have no place in a path.`,
+    );
   }
 }
 
@@ -563,11 +608,23 @@ function assertSafeWorktreePath(path: string): void {
 // path, where the ref is actually handed to git.
 function assertSafeBaseRef(baseRef: string): void {
   if (typeof baseRef !== 'string' || baseRef.startsWith('-')) {
-    throw new Error(`Refusing base ref ${JSON.stringify(baseRef)}: a ref beginning with "-" would be parsed as a git option.`);
+    throw new Error(
+      `Refusing base ref ${JSON.stringify(baseRef)}: a ref beginning with "-" would be parsed as a git option.`,
+    );
   }
 }
 
-export function addWorktree({ path, branch, baseRef, cwd }: { path: string; branch: string; baseRef: string; cwd: string }): string {
+export function addWorktree({
+  path,
+  branch,
+  baseRef,
+  cwd,
+}: {
+  path: string;
+  branch: string;
+  baseRef: string;
+  cwd: string;
+}): string {
   assertSafeWorktreePath(path);
   mkdirSync(dirname(path), { recursive: true });
   // Name reuse is likely from phone/agent-spawned sessions ("fix-login",

@@ -145,7 +145,9 @@ describe('the output listing', () => {
 
   test('parseApkFromTranscript picks up the paths the toolchain prints', () => {
     expect(parseApkFromTranscript("Installing APK 'app-debug.apk' on 'Pixel_7(AVD) - 16'")).toBe('app-debug.apk');
-    expect(parseApkFromTranscript('> Task :app:assembleDebug\nWrote APK to /tmp/out/app-debug.apk')).toBe('/tmp/out/app-debug.apk');
+    expect(parseApkFromTranscript('> Task :app:assembleDebug\nWrote APK to /tmp/out/app-debug.apk')).toBe(
+      '/tmp/out/app-debug.apk',
+    );
     expect(parseApkFromTranscript('BUILD SUCCESSFUL in 12s')).toBe(null);
     expect(parseApkFromTranscript(null)).toBe(null);
   });
@@ -160,7 +162,10 @@ describe('locateDebugApk', () => {
   test('the output listing is used when the transcript says nothing', () => {
     writeApk('app-debug.apk');
     const flavoured = writeApk('app-staging-debug.apk');
-    writeFileSync(join(debugApkDir(root), 'output-metadata.json'), JSON.stringify({ elements: [{ outputFile: 'app-staging-debug.apk' }] }));
+    writeFileSync(
+      join(debugApkDir(root), 'output-metadata.json'),
+      JSON.stringify({ elements: [{ outputFile: 'app-staging-debug.apk' }] }),
+    );
     // The listing names the flavoured APK this build actually produced, so
     // the AGP-default name on disk (left by an earlier run) does not win.
     expect(locateDebugApk(root, 'BUILD SUCCESSFUL in 3s')).toBe(flavoured);
@@ -212,13 +217,22 @@ describe('buildAndroid', () => {
     makeAndroidProject();
     const writer = recordingWriter();
     const calls = [];
-    const result = await buildAndroid({ root, logWriter: writer }, {
-      spawnFn: (cmd, args, opts) => {
-        calls.push({ cmd, args, opts });
-        return fakeChild({ lines: ['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s'], onExit: () => writeApk() });
+    const result = await buildAndroid(
+      { root, logWriter: writer },
+      {
+        spawnFn: (cmd, args, opts) => {
+          calls.push({ cmd, args, opts });
+          return fakeChild({
+            lines: ['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s'],
+            onExit: () => writeApk(),
+          });
+        },
+        now: (() => {
+          let t = 1000;
+          return () => (t += 41000);
+        })(),
       },
-      now: (() => { let t = 1000; return () => (t += 41000); })(),
-    });
+    );
 
     expect(calls.length).toBe(1);
     expect(calls[0].cmd).toBe(join(root, 'android', 'gradlew'));
@@ -233,7 +247,7 @@ describe('buildAndroid', () => {
     expect((result as any).apkPath).toBe(join(debugApkDir(root), 'app-debug.apk'));
     expect(result.durationMs).toBe(41000);
     // Contract 1: the raw transcript is src "build", level debug.
-    expect(writer.records.map(r => r.msg)).toEqual(['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s']);
+    expect(writer.records.map((r) => r.msg)).toEqual(['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s']);
     for (const record of writer.records) {
       expect(record.src).toBe('build');
       expect(record.level).toBe('debug');
@@ -243,39 +257,53 @@ describe('buildAndroid', () => {
 
   test('a failing build comes back as data with the diagnostics extracted, never a throw', async () => {
     makeAndroidProject();
-    const transcript = readFileSync(join(import.meta.dirname, 'fixtures', 'gradle-compile-failure.txt'), 'utf-8').split('\n');
+    const transcript = readFileSync(join(import.meta.dirname, 'fixtures', 'gradle-compile-failure.txt'), 'utf-8').split(
+      '\n',
+    );
     const writer = recordingWriter();
-    const result = await buildAndroid({ root, logWriter: writer }, {
-      spawnFn: () => fakeChild({ lines: transcript, code: 1 }),
-      now: (() => { let t = 0; return () => (t += 2000); })(),
-    });
+    const result = await buildAndroid(
+      { root, logWriter: writer },
+      {
+        spawnFn: () => fakeChild({ lines: transcript, code: 1 }),
+        now: (() => {
+          let t = 0;
+          return () => (t += 2000);
+        })(),
+      },
+    );
 
     expect(result.failed).toBe(true);
     expect(result.code).toBe(BUILD_ERROR);
     expect(result.reason).toMatch(/exit code 1/);
     expect(result.durationMs).toBe(2000);
     expect(result.diagnostics.length > 0).toBeTruthy();
-    expect(result.diagnostics.some(d => /Broken\.java$/.test(d.file || ''))).toBeTruthy();
+    expect(result.diagnostics.some((d) => (d.file || '').endsWith('Broken.java'))).toBeTruthy();
     expect(result.truncated).toBe(0);
     // The tail is what the command prints when nothing could be extracted.
     expect(result.lastLines.length > 0).toBeTruthy();
-    expect(result.lastLines.every(l => typeof l === 'string')).toBeTruthy();
+    expect(result.lastLines.every((l) => typeof l === 'string')).toBeTruthy();
   });
 
   test('a build killed by a signal reports the signal', async () => {
     makeAndroidProject();
-    const result = await buildAndroid({ root, logWriter: recordingWriter() }, {
-      spawnFn: () => fakeChild({ lines: ['> Task :app:compileDebugKotlin'], code: null, signal: 'SIGKILL' }),
-    });
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: () => fakeChild({ lines: ['> Task :app:compileDebugKotlin'], code: null, signal: 'SIGKILL' }),
+      },
+    );
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/signal SIGKILL/);
   });
 
   test('exit 0 with no APK is a failure, not a success with nothing to install', async () => {
     makeAndroidProject();
-    const result = await buildAndroid({ root, logWriter: recordingWriter() }, {
-      spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 3s'] }),
-    });
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 3s'] }),
+      },
+    );
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/produced no APK/);
     expect((result as any).remedy).toMatch(/assembleDebug/);
@@ -284,9 +312,14 @@ describe('buildAndroid', () => {
   test('a wrapper that will not execute names the permission bit', async () => {
     makeAndroidProject();
     const denied = Object.assign(new Error('spawn EACCES'), { code: 'EACCES' });
-    const result = await buildAndroid({ root, logWriter: recordingWriter() }, {
-      spawnFn: () => { throw denied; },
-    });
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: () => {
+          throw denied;
+        },
+      },
+    );
     expect(result.failed).toBe(true);
     expect((result as any).remedy).toMatch(/chmod \+x/);
   });
@@ -295,9 +328,12 @@ describe('buildAndroid', () => {
   // would hang here forever.
   test('a spawn that errors after starting still resolves', async () => {
     makeAndroidProject();
-    const result = await buildAndroid({ root, logWriter: recordingWriter() }, {
-      spawnFn: () => fakeChild({ lines: ['starting'], error: new Error('boom') }),
-    });
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: () => fakeChild({ lines: ['starting'], error: new Error('boom') }),
+      },
+    );
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/boom/);
     expect(result.lastLines).toEqual(['starting']);
@@ -305,9 +341,15 @@ describe('buildAndroid', () => {
 
   test('a missing android/ is reported before anything is spawned', async () => {
     let spawned = false;
-    const result = await buildAndroid({ root, logWriter: recordingWriter() }, {
-      spawnFn: () => { spawned = true; return fakeChild(); },
-    });
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: () => {
+          spawned = true;
+          return fakeChild();
+        },
+      },
+    );
     expect(spawned).toBe(false);
     expect(result.failed).toBe(true);
     expect((result as any).remedy).toMatch(/prebuild/);
@@ -318,9 +360,15 @@ describe('buildAndroid', () => {
     makeAndroidProject();
     process.env.ANDROID_HOME = join(root, 'no-such-sdk');
     let spawned = false;
-    const result = await buildAndroid({ root, logWriter: recordingWriter() }, {
-      spawnFn: () => { spawned = true; return fakeChild(); },
-    });
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: () => {
+          spawned = true;
+          return fakeChild();
+        },
+      },
+    );
     expect(spawned).toBe(false);
     expect(result.failed).toBe(true);
     expect((result as any).remedy).toMatch(/ANDROID_HOME/);
@@ -330,9 +378,12 @@ describe('buildAndroid', () => {
     makeAndroidProject();
     process.env.ANDROID_HOME = join(root, 'no-such-sdk');
     writeFileSync(join(root, 'android', 'local.properties'), 'sdk.dir=/opt/android-sdk\n');
-    const result = await buildAndroid({ root, logWriter: recordingWriter() }, {
-      spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() }),
-    });
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() }),
+      },
+    );
     expect((result as any).ok).toBe(true);
   });
 });

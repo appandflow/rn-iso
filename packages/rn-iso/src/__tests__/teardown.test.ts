@@ -26,8 +26,8 @@ test('teardownOwnedIosSim shuts down and deletes an owned, unoccupied sim', () =
   const r = teardownOwnedIosSim('U1', { del: true });
   expect(r.status).toBe('torn-down');
   expect(r.label).toBe('rn-iso-app');
-  expect(exec.calls.some(c => /simctl shutdown U1/.test(c))).toBeTruthy();
-  expect(exec.calls.some(c => /simctl delete U1/.test(c))).toBeTruthy();
+  expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
+  expect(exec.calls.some((c) => /simctl delete U1/.test(c))).toBeTruthy();
 });
 
 test('teardownOwnedIosSim shuts down WITHOUT deleting when del is false', () => {
@@ -35,8 +35,8 @@ test('teardownOwnedIosSim shuts down WITHOUT deleting when del is false', () => 
   setExecutor(exec);
   const r = teardownOwnedIosSim('U1', { del: false });
   expect(r.status).toBe('torn-down');
-  expect(exec.calls.some(c => /simctl shutdown U1/.test(c))).toBeTruthy();
-  expect(!exec.calls.some(c => /simctl delete/.test(c))).toBeTruthy();
+  expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
+  expect(!exec.calls.some((c) => /simctl delete/.test(c))).toBeTruthy();
 });
 
 test('teardownOwnedIosSim refuses a sim renamed away from rn-iso ownership', () => {
@@ -45,7 +45,7 @@ test('teardownOwnedIosSim refuses a sim renamed away from rn-iso ownership', () 
   const r = teardownOwnedIosSim('U1', { del: true });
   expect(r.status).toBe('skipped');
   expect(r.reason).toMatch(/not rn-iso-owned/);
-  expect(!exec.calls.some(c => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
+  expect(!exec.calls.some((c) => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
 });
 
 test('teardownOwnedIosSim reports missing without erroring', () => {
@@ -56,12 +56,15 @@ test('teardownOwnedIosSim reports missing without erroring', () => {
 // Occupancy protects a device that will SURVIVE. `shutdown` spares an occupied
 // sim because it is still there to come back to.
 test('teardownOwnedIosSim skips an occupied sim it is only shutting down', () => {
-  const exec = iosExecutor({ sims: [OWNED], occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n' });
+  const exec = iosExecutor({
+    sims: [OWNED],
+    occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n',
+  });
   setExecutor(exec);
   const r = teardownOwnedIosSim('U1', { del: false });
   expect(r.status).toBe('skipped');
   expect(r.reason).toMatch(/occupied/);
-  expect(!exec.calls.some(c => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
+  expect(!exec.calls.some((c) => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
 });
 
 // ...but a sim being DELETED is going away regardless: it is one rn-iso
@@ -69,11 +72,14 @@ test('teardownOwnedIosSim skips an occupied sim it is only shutting down', () =>
 // the caller's own UI-test runner. Skipping here leaked booted sims out of
 // `worktree remove` and only deferred the same decision to gc.
 test('teardownOwnedIosSim deletes an occupied sim anyway, without needing force', () => {
-  const exec = iosExecutor({ sims: [OWNED], occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n' });
+  const exec = iosExecutor({
+    sims: [OWNED],
+    occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n',
+  });
   setExecutor(exec);
   const r = teardownOwnedIosSim('U1', { del: true });
   expect(r.status).toBe('torn-down');
-  expect(exec.calls.some(c => /simctl delete U1/.test(c))).toBeTruthy();
+  expect(exec.calls.some((c) => /simctl delete U1/.test(c))).toBeTruthy();
 });
 
 // Ownership is still absolute: aggression applies to what rn-iso created, and
@@ -84,7 +90,7 @@ test('teardownOwnedIosSim still refuses a sim that is not rn-iso-owned, even whe
   const r = teardownOwnedIosSim('U1', { del: true });
   expect(r.status).toBe('skipped');
   expect(r.kind).toBe('not-owned');
-  expect(!exec.calls.some(c => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
+  expect(!exec.calls.some((c) => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
 });
 
 // A delete that fails leaves the sim on disk. The outcome must be 'failed', so
@@ -128,8 +134,8 @@ test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', () 
   setExecutor(exec);
   const r = teardownOwnedAvd('rn-iso-app', { del: true });
   expect(r.status).toBe('torn-down');
-  expect(exec.calls.some(c => /emu kill/.test(c))).toBeTruthy();
-  expect(exec.calls.some(c => /delete avd -n/.test(c))).toBeTruthy();
+  expect(exec.calls.some((c) => /emu kill/.test(c))).toBeTruthy();
+  expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeTruthy();
 });
 
 test('teardownOwnedAvd refuses an AVD that is not rn-iso-owned by name', () => {
@@ -137,7 +143,7 @@ test('teardownOwnedAvd refuses an AVD that is not rn-iso-owned by name', () => {
   setExecutor(exec);
   const r = teardownOwnedAvd('Pixel_6_API_34', { del: true });
   expect(r.status).toBe('skipped');
-  expect(!exec.calls.some(c => /emu kill|avdmanager delete/.test(c))).toBeTruthy();
+  expect(!exec.calls.some((c) => /emu kill|avdmanager delete/.test(c))).toBeTruthy();
 });
 
 test('teardownOwnedAvd reports missing for an AVD that no longer exists', () => {
@@ -146,12 +152,14 @@ test('teardownOwnedAvd reports missing for an AVD that no longer exists', () => 
 });
 
 test('teardownOwnedAvd contains a throw instead of propagating it', () => {
-  setExecutor(androidExecutor({
-    avds: ['rn-iso-app'],
-    adb: 'List of devices attached\nemulator-5554\tdevice\n',
-    avdName: 'rn-iso-app',
-    throwOn: 'delete avd',
-  }));
+  setExecutor(
+    androidExecutor({
+      avds: ['rn-iso-app'],
+      adb: 'List of devices attached\nemulator-5554\tdevice\n',
+      avdName: 'rn-iso-app',
+      throwOn: 'delete avd',
+    }),
+  );
   const r = teardownOwnedAvd('rn-iso-app', { del: true });
   expect(r.status).toBe('failed');
   expect(r.reason).toMatch(/boom/);

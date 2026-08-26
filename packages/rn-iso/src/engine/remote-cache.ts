@@ -279,10 +279,8 @@ export function runOptionsFor(platform?: string | null): { variant: string } | {
 export function isProviderPlugin(plugin: unknown): plugin is ProviderPlugin {
   if (!plugin || typeof plugin !== 'object') return false;
   const p = plugin as ProviderPlugin;
-  const resolves = typeof p.resolveBuildCache === 'function'
-    || typeof p.resolveRemoteBuildCache === 'function';
-  const uploads = typeof p.uploadBuildCache === 'function'
-    || typeof p.uploadRemoteBuildCache === 'function';
+  const resolves = typeof p.resolveBuildCache === 'function' || typeof p.resolveRemoteBuildCache === 'function';
+  const uploads = typeof p.uploadBuildCache === 'function' || typeof p.uploadRemoteBuildCache === 'function';
   return resolves && uploads;
 }
 
@@ -307,7 +305,13 @@ export function cacheLevel(value: unknown): 'local' | 'remote' | false {
 // commands put on stdout (the --json payload a caller captured with `$(...)`),
 // which is why the exit rides on the write's callback. `exit` is read at call
 // time, so a test that stubbed process.exit gets its own stub back.
-export function exitAfterFlush(code = 0, { exit = (c: number) => process.exit(c), stream = process.stdout }: { exit?: (code: number) => void; stream?: NodeJS.WriteStream } = {}): void {
+export function exitAfterFlush(
+  code = 0,
+  {
+    exit = (c: number) => process.exit(c),
+    stream = process.stdout,
+  }: { exit?: (code: number) => void; stream?: NodeJS.WriteStream } = {},
+): void {
   try {
     stream.write('', () => exit(code));
   } catch {
@@ -326,7 +330,10 @@ export function exitAfterFlush(code = 0, { exit = (c: number) => process.exit(c)
 // answers from a different SDK's rules. Failure to evaluate is `unavailable`,
 // never a guess: this codebase does not execute the config in-process either,
 // because that would run arbitrary project code inside rn-iso.
-export function readProjectConfig(root: string, { run = null, timeoutMs = CONFIG_TIMEOUT_MS }: { run?: ExecFileFn | null; timeoutMs?: number } = {}): ReadProjectConfigResult {
+export function readProjectConfig(
+  root: string,
+  { run = null, timeoutMs = CONFIG_TIMEOUT_MS }: { run?: ExecFileFn | null; timeoutMs?: number } = {},
+): ReadProjectConfigResult {
   const dynamic = dynamicConfigFile(root);
   if (!dynamic) {
     const file = join(root, 'app.json');
@@ -348,9 +355,10 @@ export function readProjectConfig(root: string, { run = null, timeoutMs = CONFIG
   const bin = expoBinPath(root);
   if (!bin) {
     return {
-      unavailable: `${dynamic} is code, so it has to be evaluated to read its buildCacheProvider, `
-        + 'and the `expo` package is not resolvable from this project '
-        + '(no expo/package.json to read a bin from, and no node_modules/.bin/expo here or in any parent)',
+      unavailable:
+        `${dynamic} is code, so it has to be evaluated to read its buildCacheProvider, ` +
+        'and the `expo` package is not resolvable from this project ' +
+        '(no expo/package.json to read a bin from, and no node_modules/.bin/expo here or in any parent)',
     };
   }
   const exec: ExecFileFn = run || ((file, args, opts) => getExecutor().runFile(file, args, opts));
@@ -381,10 +389,12 @@ export function readProjectConfig(root: string, { run = null, timeoutMs = CONFIG
 // require() first (every published provider is CommonJS, and the EAS one is), with
 // a dynamic import() fallback for an ESM module, whose require() throws
 // ERR_REQUIRE_ESM on the Node versions this CLI supports.
-export async function loadPlugin(projectRoot: string, reference: string, { requireFrom = null }: { requireFrom?: ((root: string) => NodeRequire) | null } = {}): Promise<ProviderPlugin> {
-  const require_ = requireFrom
-    ? requireFrom(projectRoot)
-    : createRequire(join(projectRoot, 'package.json'));
+export async function loadPlugin(
+  projectRoot: string,
+  reference: string,
+  { requireFrom = null }: { requireFrom?: ((root: string) => NodeRequire) | null } = {},
+): Promise<ProviderPlugin> {
+  const require_ = requireFrom ? requireFrom(projectRoot) : createRequire(join(projectRoot, 'package.json'));
   const file = require_.resolve(reference);
   let mod;
   try {
@@ -412,12 +422,20 @@ export async function loadPlugin(projectRoot: string, reference: string, { requi
  * loaded is worth ONE line, because the alternative is a project that believes
  * it has a remote cache and silently rebuilds forever.
  */
-export async function loadProjectProvider(projectRoot: string, {
-  isExpo = true,
-  run = null,
-  requireFrom = null,
-  timeoutMs = CONFIG_TIMEOUT_MS,
-}: { isExpo?: boolean; run?: ExecFileFn | null; requireFrom?: ((root: string) => NodeRequire) | null; timeoutMs?: number } = {}): Promise<LoadProjectProviderResult> {
+export async function loadProjectProvider(
+  projectRoot: string,
+  {
+    isExpo = true,
+    run = null,
+    requireFrom = null,
+    timeoutMs = CONFIG_TIMEOUT_MS,
+  }: {
+    isExpo?: boolean;
+    run?: ExecFileFn | null;
+    requireFrom?: ((root: string) => NodeRequire) | null;
+    timeoutMs?: number;
+  } = {},
+): Promise<LoadProjectProviderResult> {
   // Bare React Native: the community CLI has no provider concept, so there is
   // no config to read and nothing to call. No config evaluation, no network.
   if (!isExpo) return { none: true };
@@ -439,12 +457,13 @@ export async function loadProjectProvider(projectRoot: string, {
   } catch (err) {
     const missing = (err as NodeJS.ErrnoException)?.code === 'MODULE_NOT_FOUND';
     return {
-      unavailable: normalized.name === 'eas' && missing
-        // The Expo CLI installs this package on the fly. rn-iso reports it
-        // instead (see the header): installing into someone's project mid-loop
-        // is not a broker's call.
-        ? `the EAS build cache needs the \`${EAS_PROVIDER_PACKAGE}\` package, which is not installed in this project`
-        : `${normalized.name} could not be loaded: ${firstLine(err)}`,
+      unavailable:
+        normalized.name === 'eas' && missing
+          ? // The Expo CLI installs this package on the fly. rn-iso reports it
+            // instead (see the header): installing into someone's project mid-loop
+            // is not a broker's call.
+            `the EAS build cache needs the \`${EAS_PROVIDER_PACKAGE}\` package, which is not installed in this project`
+          : `${normalized.name} could not be loaded: ${firstLine(err)}`,
     };
   }
   // The owner rides along because the caller has no other cheap way to get it:
@@ -519,14 +538,21 @@ const EAS_CLI_BIN = 'eas';
 // returns null for it), and it is the reason wrong-account is a warning
 // everywhere rather than a rule: an account list that could not be read must
 // never contradict a configured owner.
-export function parseWhoami({ stdout = '', stderr = '', exitCode = 0 }: { stdout?: string; stderr?: string; exitCode?: number } = {}): WhoamiResult {
+export function parseWhoami({
+  stdout = '',
+  stderr = '',
+  exitCode = 0,
+}: { stdout?: string; stderr?: string; exitCode?: number } = {}): WhoamiResult {
   const out = stripAnsi(stdout);
   const combined = `${out}\n${stripAnsi(stderr)}`;
   if (/^\s*Not logged in\s*$/m.test(combined)) return { loggedOut: true };
   if (exitCode !== 0) {
     return { unknown: firstLine(combined.trim() || `eas whoami exited ${exitCode}`) };
   }
-  const lines = out.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+  const lines = out
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
   if (lines.length === 0) return { unknown: 'eas whoami printed nothing' };
 
   const raw = lines[0];
@@ -542,7 +568,7 @@ export function parseWhoami({ stdout = '', stderr = '', exitCode = 0 }: { stdout
     const m = /^\u2022\s*(\S+)\s*\(Role:/.exec(line);
     if (m) accounts.push(m[1]);
   }
-  if (accounts.length === 0 && !/\(robot\)$/.test(display) && display !== 'robot') {
+  if (accounts.length === 0 && !display.endsWith('(robot)') && display !== 'robot') {
     // No Accounts block is printed when the personal account is the only one,
     // so the display name IS the account list (account/view.js filters the
     // list by `account.name !== actor.username` and prints nothing when that
@@ -564,12 +590,14 @@ export function parseWhoami({ stdout = '', stderr = '', exitCode = 0 }: { stdout
 export function isEasAuthFailureText(text?: string | null): boolean {
   const t = stripAnsi(text || '');
   if (t.trim() === '') return false;
-  return /not logged in/i.test(t)
-    || /\beas login\b/i.test(t)
-    || /EXPO_TOKEN/.test(t)
-    || /unauthorized/i.test(t)
-    || /not authorized/i.test(t)
-    || /authentication (failed|required)/i.test(t);
+  return (
+    /not logged in/i.test(t) ||
+    /\beas login\b/i.test(t) ||
+    /EXPO_TOKEN/.test(t) ||
+    /unauthorized/i.test(t) ||
+    /not authorized/i.test(t) ||
+    /authentication (failed|required)/i.test(t)
+  );
 }
 
 // PURE. The ONE line a build prints about this, or null.
@@ -584,12 +612,16 @@ export function easAuthNote(status?: EasAuthNoteStatus | null): string | null {
   const { code, account, owner, reason, phase = 'resolve' } = status || {};
   const because = reason ? ` (${reason})` : '';
   if (code === 'logged-out') {
-    return `eas is not authenticated${because} -- run \`eas login\` (or set EXPO_TOKEN); `
-      + (phase === 'upload' ? 'this build stayed in the local cache' : 'building with the local cache only');
+    return (
+      `eas is not authenticated${because} -- run \`eas login\` (or set EXPO_TOKEN); ` +
+      (phase === 'upload' ? 'this build stayed in the local cache' : 'building with the local cache only')
+    );
   }
   if (code === 'wrong-account') {
-    return `eas is authenticated as ${account}, and this project's owner is ${owner} -- `
-      + `run \`eas login\` as a member of ${owner} (or set EXPO_TOKEN); consulting the EAS cache anyway`;
+    return (
+      `eas is authenticated as ${account}, and this project's owner is ${owner} -- ` +
+      `run \`eas login\` as a member of ${owner} (or set EXPO_TOKEN); consulting the EAS cache anyway`
+    );
   }
   return null;
 }
@@ -604,18 +636,18 @@ export function easAuthNote(status?: EasAuthNoteStatus | null): string | null {
 // globally (npm i -g eas-cli, or Homebrew, which is what this machine has) is
 // the ordinary way to hold a session, and the session it reads is the same
 // ~/.expo/state.json either way.
-export function resolveEasCliBin(projectRoot: string, { lookupPath = null, timeoutMs = 5000 }: { lookupPath?: (() => string | null) | null; timeoutMs?: number } = {}): { file: string; source: 'project' | 'path' } | null {
-  const fromPackage = expoBinFromPackage(
-    resolvePackageJson(projectRoot, EAS_CLI_PACKAGE),
-    EAS_CLI_BIN
-  );
+export function resolveEasCliBin(
+  projectRoot: string,
+  { lookupPath = null, timeoutMs = 5000 }: { lookupPath?: (() => string | null) | null; timeoutMs?: number } = {},
+): { file: string; source: 'project' | 'path' } | null {
+  const fromPackage = expoBinFromPackage(resolvePackageJson(projectRoot, EAS_CLI_PACKAGE), EAS_CLI_BIN);
   if (fromPackage) return { file: fromPackage, source: 'project' };
   const shim = findBinUpward(projectRoot, EAS_CLI_BIN);
   if (shim) return { file: shim, source: 'project' };
-  const onPath = lookupPath
-    ? lookupPath()
-    : getExecutor().runQuiet(`command -v ${EAS_CLI_BIN}`, { timeoutMs });
-  const file = String(onPath || '').split('\n')[0].trim();
+  const onPath = lookupPath ? lookupPath() : getExecutor().runQuiet(`command -v ${EAS_CLI_BIN}`, { timeoutMs });
+  const file = String(onPath || '')
+    .split('\n')[0]
+    .trim();
   return file ? { file, source: 'path' } : null;
 }
 
@@ -672,7 +704,19 @@ export function checkEasAuth({
   return answer;
 }
 
-function probeEasAuth({ projectRoot, owner, run, resolveBin, timeoutMs }: { projectRoot: string; owner?: string | null; run?: ExecFileFn | null; resolveBin?: ((root: string) => { file: string; source: 'project' | 'path' } | null) | null; timeoutMs?: number }): EasAuthResult {
+function probeEasAuth({
+  projectRoot,
+  owner,
+  run,
+  resolveBin,
+  timeoutMs,
+}: {
+  projectRoot: string;
+  owner?: string | null;
+  run?: ExecFileFn | null;
+  resolveBin?: ((root: string) => { file: string; source: 'project' | 'path' } | null) | null;
+  timeoutMs?: number;
+}): EasAuthResult {
   const bin = (resolveBin || resolveEasCliBin)(projectRoot);
   if (!bin) {
     return {
@@ -724,8 +768,9 @@ function probeEasAuth({ projectRoot, owner, run, resolveBin, timeoutMs }: { proj
       account: parsed.account,
       accounts: parsed.accounts,
       owner,
-      reason: `eas is authenticated as ${parsed.account} (accounts: ${parsed.accounts.join(', ')}), `
-        + `which does not include this project's owner ${owner}`,
+      reason:
+        `eas is authenticated as ${parsed.account} (accounts: ${parsed.accounts.join(', ')}), ` +
+        `which does not include this project's owner ${owner}`,
       remedy: `Run \`eas login\` as a member of ${owner}, or set EXPO_TOKEN to a token for it.`,
     };
   }
@@ -787,12 +832,19 @@ const capturing: CaptureFrame[] = [];
 // write arrives inside their async context.
 const abandoned = new Set<CaptureFrame>();
 // The originals, while the patch is installed. Null when it is not.
-let patched: { stdout: NodeJS.WriteStream; write: NodeJS.WriteStream['write']; log: typeof console.log; patchedWrite: NodeJS.WriteStream['write']; patchedLog: typeof console.log } | null = null;
+let patched: {
+  stdout: NodeJS.WriteStream;
+  write: NodeJS.WriteStream['write'];
+  log: typeof console.log;
+  patchedWrite: NodeJS.WriteStream['write'];
+  patchedLog: typeof console.log;
+} | null = null;
 
 const PROVIDER_CONTEXT = new AsyncLocalStorage<CaptureFrame>();
 
 // PURE. ANSI colour codes stripped, so a record and a parse both see the text.
 export function stripAnsi(text?: string | null): string {
+  // oxlint-disable-next-line no-control-regex -- intentional ANSI escape match
   return String(text ?? '').replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
 }
 
@@ -923,7 +975,12 @@ interface BeginCaptureOptions {
   onLine?: ((line: string) => void) | null;
 }
 
-function beginCapture({ logWriter = null, projectRoot = null, platform = null, onLine = null }: BeginCaptureOptions = {}): CaptureFrame {
+function beginCapture({
+  logWriter = null,
+  projectRoot = null,
+  platform = null,
+  onLine = null,
+}: BeginCaptureOptions = {}): CaptureFrame {
   let own: NdjsonWriter | null = null;
   const frame: CaptureFrame = {
     lines: [],
@@ -970,7 +1027,10 @@ function abandonCapture(frame: CaptureFrame | null, work: Promise<unknown>): voi
   const at = capturing.lastIndexOf(frame);
   if (at !== -1) capturing.splice(at, 1);
   abandoned.add(frame);
-  Promise.resolve(work).then(() => endCapture(frame), () => endCapture(frame));
+  Promise.resolve(work).then(
+    () => endCapture(frame),
+    () => endCapture(frame),
+  );
 }
 
 // --- calling it ------------------------------------------------------------
@@ -1008,17 +1068,21 @@ export async function resolveRemote({
   if (!provider?.plugin || !fingerprintHash) return null;
   const opts = runOptions || runOptionsFor(platform);
 
-  const outcome = await withBudget(async () => {
-    const hash = await providerFingerprint({ provider, platform, projectRoot, runOptions: opts })
-      ?? fingerprintHash;
-    const props = { fingerprintHash: hash, platform, runOptions: opts, projectRoot };
-    // The deprecated name is still what an older provider exports, and the
-    // Expo CLI still calls it (build-cache-providers/index.ts:84-90).
-    return typeof provider.plugin.resolveBuildCache === 'function'
-      ? provider.plugin.resolveBuildCache(props, provider.options)
-      // isProviderPlugin already guaranteed one of the pair exists.
-      : provider.plugin.resolveRemoteBuildCache!(props, provider.options);
-  }, timeoutMs, { logWriter, projectRoot, platform });
+  const outcome = await withBudget(
+    async () => {
+      const hash =
+        (await providerFingerprint({ provider, platform, projectRoot, runOptions: opts })) ?? fingerprintHash;
+      const props = { fingerprintHash: hash, platform, runOptions: opts, projectRoot };
+      // The deprecated name is still what an older provider exports, and the
+      // Expo CLI still calls it (build-cache-providers/index.ts:84-90).
+      return typeof provider.plugin.resolveBuildCache === 'function'
+        ? provider.plugin.resolveBuildCache(props, provider.options)
+        : // isProviderPlugin already guaranteed one of the pair exists.
+          provider.plugin.resolveRemoteBuildCache!(props, provider.options);
+    },
+    timeoutMs,
+    { logWriter, projectRoot, platform },
+  );
 
   if (outcome.timedOut) return { timedOut: true };
   if (outcome.error) return { failed: firstLine(outcome.error) };
@@ -1084,15 +1148,19 @@ export async function uploadRemote({
     note(providerNote(`uploading to ${dest}`));
   };
 
-  const outcome = await withBudget(async () => {
-    const hash = await providerFingerprint({ provider, platform, projectRoot, runOptions: opts })
-      ?? fingerprintHash;
-    const props = { projectRoot, platform, fingerprintHash: hash, buildPath, runOptions: opts };
-    return typeof provider.plugin.uploadBuildCache === 'function'
-      ? provider.plugin.uploadBuildCache(props, provider.options)
-      // isProviderPlugin already guaranteed one of the pair exists.
-      : provider.plugin.uploadRemoteBuildCache!(props, provider.options);
-  }, timeoutMs, { logWriter, projectRoot, platform, onLine });
+  const outcome = await withBudget(
+    async () => {
+      const hash =
+        (await providerFingerprint({ provider, platform, projectRoot, runOptions: opts })) ?? fingerprintHash;
+      const props = { projectRoot, platform, fingerprintHash: hash, buildPath, runOptions: opts };
+      return typeof provider.plugin.uploadBuildCache === 'function'
+        ? provider.plugin.uploadBuildCache(props, provider.options)
+        : // isProviderPlugin already guaranteed one of the pair exists.
+          provider.plugin.uploadRemoteBuildCache!(props, provider.options);
+    },
+    timeoutMs,
+    { logWriter, projectRoot, platform, onLine },
+  );
 
   if (outcome.timedOut) return { timedOut: true };
   if (outcome.error) return { failed: firstLine(outcome.error) };
@@ -1109,12 +1177,22 @@ export async function uploadRemote({
 // sources are uploaded with it -- a hash rn-iso cannot compute. A plugin that
 // returns nothing, or throws, leaves the caller's own fingerprint in place:
 // it is the same hash `expo run:ios` would have sent by default.
-async function providerFingerprint({ provider, platform, projectRoot, runOptions }: { provider: LoadedProvider; platform?: string | null; projectRoot?: string | null; runOptions: Record<string, any> }): Promise<string | null> {
+async function providerFingerprint({
+  provider,
+  platform,
+  projectRoot,
+  runOptions,
+}: {
+  provider: LoadedProvider;
+  platform?: string | null;
+  projectRoot?: string | null;
+  runOptions: Record<string, any>;
+}): Promise<string | null> {
   if (typeof provider.plugin.calculateFingerprintHash !== 'function') return null;
   try {
     const hash = await provider.plugin.calculateFingerprintHash(
       { projectRoot, platform, runOptions },
-      provider.options
+      provider.options,
     );
     return typeof hash === 'string' && hash.trim() !== '' ? hash.trim() : null;
   } catch {
@@ -1130,7 +1208,11 @@ async function providerFingerprint({ provider, platform, projectRoot, runOptions
 // keep it alive), and why the capture is ABANDONED rather than ended: the call
 // can still print, and it still must not print onto the payload.
 // The timer is unref'd so THIS module never becomes the thing that does.
-async function withBudget(factory: () => Promise<any>, ms: number, capture?: BeginCaptureOptions | null): Promise<BudgetOutcome> {
+async function withBudget(
+  factory: () => Promise<any>,
+  ms: number,
+  capture?: BeginCaptureOptions | null,
+): Promise<BudgetOutcome> {
   let timer: NodeJS.Timeout | null = null;
   const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
     timer = setTimeout(() => resolve(TIMED_OUT), ms);
@@ -1142,7 +1224,10 @@ async function withBudget(factory: () => Promise<any>, ms: number, capture?: Beg
   // always handled rather than surfacing as an unhandled rejection.
   const work = Promise.resolve()
     .then(() => PROVIDER_CONTEXT.run(frame, factory))
-    .then((value) => ({ value }), (error) => ({ error }));
+    .then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
   try {
     const settled = await Promise.race([work, timeout]);
     if (settled === TIMED_OUT) {

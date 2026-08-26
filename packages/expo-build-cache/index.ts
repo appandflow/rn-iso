@@ -82,16 +82,22 @@ const SIMULATOR_UDID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 const EMULATOR_SERIAL = /^emulator-\d+$/;
 
 function slug(value: unknown): string {
-  return String(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 // The Xcode configuration on iOS, the gradle variant on Android. `expo run:ios`
 // defaults to Debug and `expo run:android` to debug, so an absent value is that
 // and not "unknown".
 function buildVariant(platform: string, options: RunOptions): string {
-  const raw = platform === 'android'
-    ? options.variant
-    : (options.configuration != null ? options.configuration : options.buildConfiguration);
+  const raw =
+    platform === 'android'
+      ? options.variant
+      : options.configuration != null
+        ? options.configuration
+        : options.buildConfiguration;
   return (typeof raw === 'string' ? slug(raw) : '') || 'debug';
 }
 
@@ -141,7 +147,7 @@ function shortKey(key: string, fingerprintHash: string): string {
 // The cached artifact is the single .app / .apk inside the entry directory.
 function artifactIn(dir: string): string | null {
   if (!fs.existsSync(dir)) return null;
-  const found = fs.readdirSync(dir).find(f => f.endsWith('.app') || f.endsWith('.apk'));
+  const found = fs.readdirSync(dir).find((f) => f.endsWith('.app') || f.endsWith('.apk'));
   return found ? path.join(dir, found) : null;
 }
 
@@ -169,7 +175,7 @@ function registerCache({ dir, name, prune, note, entriesDepth }: RegisterOptions
     }
     // Keyed on the directory so repeated calls update rather than accumulate --
     // these run on every build.
-    const others = manifest.caches.filter(c => c.dir !== dir);
+    const others = manifest.caches.filter((c) => c.dir !== dir);
     const record: Record<string, unknown> = { dir, name, prune, note, registeredBy: process.cwd() };
     // Only written when the caller sets it: an absent depth means the entries
     // are the directory's immediate children, which is the common case.
@@ -207,9 +213,15 @@ function registerOnce(): void {
 // pod checksums can carry machine-specific paths. Use it directly rather than
 // recomputing: fingerprinting walks node_modules and is otherwise the single
 // largest cost of a cache hit.
-export async function resolveBuildCache(
-  { platform, fingerprintHash, runOptions }: { platform: string; fingerprintHash: string; runOptions?: RunOptions },
-): Promise<string | null> {
+export async function resolveBuildCache({
+  platform,
+  fingerprintHash,
+  runOptions,
+}: {
+  platform: string;
+  fingerprintHash: string;
+  runOptions?: RunOptions;
+}): Promise<string | null> {
   registerOnce();
   const key = buildCacheKey(platform, fingerprintHash, runOptions);
   const hit = artifactIn(entryDir(platform, key));
@@ -225,10 +237,17 @@ export async function resolveBuildCache(
   return null;
 }
 
-export async function uploadBuildCache(
-  { platform, fingerprintHash, buildPath, runOptions }:
-    { platform: string; fingerprintHash: string; buildPath?: string; runOptions?: RunOptions },
-): Promise<string | null> {
+export async function uploadBuildCache({
+  platform,
+  fingerprintHash,
+  buildPath,
+  runOptions,
+}: {
+  platform: string;
+  fingerprintHash: string;
+  buildPath?: string;
+  runOptions?: RunOptions;
+}): Promise<string | null> {
   registerOnce();
   if (!buildPath || !fs.existsSync(buildPath)) return null;
 

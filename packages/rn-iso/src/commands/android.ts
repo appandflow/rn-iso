@@ -34,7 +34,13 @@ import type { AndroidFacts, WaitedForBuild } from '../types.ts';
 import { getConcurrencyLimits, getProject, upsertProject, type ProjectRecord } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.ts';
-import { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild, type BuildLockHandle, type WaitForBuildResult } from '../engine/build-lock.ts';
+import {
+  acquireBuildLock,
+  releaseBuildLock,
+  waitForBuild as waitForOtherBuild,
+  type BuildLockHandle,
+  type WaitForBuildResult,
+} from '../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
@@ -56,7 +62,15 @@ import { resolveSettings } from '../settings.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 import { readCollectors } from '../collector/state.ts';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
-import { DEFAULT_METRO_PORT, LAUNCH_UNVERIFIED, androidDevClientUrl, installAndroidApp, launchAndroidApp, unverifiedLaunchLines, verifyLaunch } from '../engine/app-install.ts';
+import {
+  DEFAULT_METRO_PORT,
+  LAUNCH_UNVERIFIED,
+  androidDevClientUrl,
+  installAndroidApp,
+  launchAndroidApp,
+  unverifiedLaunchLines,
+  verifyLaunch,
+} from '../engine/app-install.ts';
 import { androidHome } from '../sim/android.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
@@ -248,24 +262,32 @@ interface AaptTool {
 // Build-tools directory names are versions: "36.0.0", "35.0.0", "34.0.0".
 // PURE, so the ordering is testable without an SDK.
 export function newestBuildTools(names: unknown): string | null {
-  return [...(Array.isArray(names) ? names : [])]
-    .filter((n) => /^\d+(\.\d+)*(-\w+)?$/.test(String(n)))
-    .sort((a, b) => {
-      const pa = String(a).split(/[.-]/).map(Number);
-      const pb = String(b).split(/[.-]/).map(Number);
-      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-        const d = (pb[i] || 0) - (pa[i] || 0);
-        if (d) return d;
-      }
-      return 0;
-    })[0] ?? null;
+  return (
+    [...(Array.isArray(names) ? names : [])]
+      .filter((n) => /^\d+(\.\d+)*(-\w+)?$/.test(String(n)))
+      .sort((a, b) => {
+        const pa = String(a).split(/[.-]/).map(Number);
+        const pb = String(b).split(/[.-]/).map(Number);
+        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+          const d = (pb[i] || 0) - (pa[i] || 0);
+          if (d) return d;
+        }
+        return 0;
+      })[0] ?? null
+  );
 }
 
 // aapt / aapt2, newest build-tools first. Neither is on PATH on a normal
 // machine (verified: `which aapt` finds nothing with a fully installed SDK),
 // so they are addressed through ANDROID_HOME the way sim/android.js addresses
 // avdmanager.
-export function findAapt(home: string = androidHome(), { readDir = readdirSync, exists = existsSync }: { readDir?: (path: string) => string[]; exists?: (path: string) => boolean } = {}): AaptTool | null {
+export function findAapt(
+  home: string = androidHome(),
+  {
+    readDir = readdirSync,
+    exists = existsSync,
+  }: { readDir?: (path: string) => string[]; exists?: (path: string) => boolean } = {},
+): AaptTool | null {
   const root = join(home, 'build-tools');
   let versions: string[] = [];
   try {
@@ -288,15 +310,19 @@ export function findAapt(home: string = androidHome(), { readDir = readdirSync, 
 // The manifest tree, as text. Null on anything at all going wrong: a missing
 // SDK, an apk aapt cannot read, a build-tools install without aapt. The
 // app.json fallback is behind this and a missing scheme is survivable.
-export function dumpApkManifest(apkPath: unknown, { exec = null, aapt = null }: { exec?: import('../exec.ts').Executor | null; aapt?: AaptTool | null } = {}): string | null {
+export function dumpApkManifest(
+  apkPath: unknown,
+  { exec = null, aapt = null }: { exec?: import('../exec.ts').Executor | null; aapt?: AaptTool | null } = {},
+): string | null {
   if (typeof apkPath !== 'string' || apkPath.trim() === '') return null;
   const tool = aapt || findAapt();
   if (!tool) return null;
   const e = exec || getExecutor();
   // The two spellings of the same dump; aapt2 wants the entry behind --file.
-  const args = tool.tool === 'aapt2'
-    ? ['dump', 'xmltree', '--file', 'AndroidManifest.xml', apkPath]
-    : ['dump', 'xmltree', apkPath, 'AndroidManifest.xml'];
+  const args =
+    tool.tool === 'aapt2'
+      ? ['dump', 'xmltree', '--file', 'AndroidManifest.xml', apkPath]
+      : ['dump', 'xmltree', apkPath, 'AndroidManifest.xml'];
   try {
     const out = e.runFile(tool.path, args);
     return typeof out === 'string' && out.includes('E: manifest') ? out : null;
@@ -376,7 +402,9 @@ export function apkDevClientFacts(text: unknown): ApkDevClientFacts {
     if (typeof name === 'string' && name.startsWith('expo.modules.devlauncher')) facts.devClient = true;
     if (node.tag !== 'activity' && node.tag !== 'activity-alias') return;
     const filters = node.children.filter((c) => c.tag === 'intent-filter');
-    const isLauncher = filters.some((f) => f.children.some((c) => c.tag === 'action' && c.attrs['android:name'] === 'android.intent.action.MAIN'));
+    const isLauncher = filters.some((f) =>
+      f.children.some((c) => c.tag === 'action' && c.attrs['android:name'] === 'android.intent.action.MAIN'),
+    );
     if (!isLauncher || launchable) return;
     launchable = node;
     for (const filter of filters) {
@@ -396,7 +424,15 @@ export function apkDevClientFacts(text: unknown): ApkDevClientFacts {
 // expo-dev-launcher in it is not a dev client, and sending it a deep link
 // would just fail to resolve. Only when the apk cannot be read at all does
 // this fall back to the project config, exactly as iOS does.
-export function androidDevClientScheme(root: string, apkPath: unknown, { exec = null, dump = dumpApkManifest, aapt = null }: { exec?: import('../exec.ts').Executor | null; dump?: typeof dumpApkManifest; aapt?: AaptTool | null } = {}): string | null | undefined {
+export function androidDevClientScheme(
+  root: string,
+  apkPath: unknown,
+  {
+    exec = null,
+    dump = dumpApkManifest,
+    aapt = null,
+  }: { exec?: import('../exec.ts').Executor | null; dump?: typeof dumpApkManifest; aapt?: AaptTool | null } = {},
+): string | null | undefined {
   const text = dump(apkPath, { exec, aapt });
   if (text) {
     const facts = apkDevClientFacts(text);
@@ -445,7 +481,22 @@ export function formatDuration(ms: unknown): string {
 }
 
 // PURE. The --json payload.
-export function androidFacts({ serial, avdName = null, deviceName = null, fingerprint, cacheHit, cacheSkipped = false, waitedForBuild = null, appPath, bundleId, launched, logs, debugHttpHost = null, debugHttpHostNote = null, devClientUrl = null }: {
+export function androidFacts({
+  serial,
+  avdName = null,
+  deviceName = null,
+  fingerprint,
+  cacheHit,
+  cacheSkipped = false,
+  waitedForBuild = null,
+  appPath,
+  bundleId,
+  launched,
+  logs,
+  debugHttpHost = null,
+  debugHttpHostNote = null,
+  devClientUrl = null,
+}: {
   serial?: string | null;
   avdName?: string | null;
   deviceName?: string | null;
@@ -508,7 +559,20 @@ export function androidFacts({ serial, avdName = null, deviceName = null, finger
 }
 
 // PURE. Contract 4, the state.json.lastBuild record.
-export function lastBuildRecord({ fingerprint, cacheKey, cacheHit, cacheSkipped = false, durationMs, appPath, bundleId, startedAt, status, errorCode = null, avdName = null, deviceName = null }: {
+export function lastBuildRecord({
+  fingerprint,
+  cacheKey,
+  cacheHit,
+  cacheSkipped = false,
+  durationMs,
+  appPath,
+  bundleId,
+  startedAt,
+  status,
+  errorCode = null,
+  avdName = null,
+  deviceName = null,
+}: {
   fingerprint?: string | null;
   cacheKey?: string | null;
   cacheHit?: boolean | string;
@@ -548,7 +612,18 @@ export function lastBuildRecord({ fingerprint, cacheKey, cacheHit, cacheSkipped 
 // device.ndjson, and the older one is attached to the pid of an app that has
 // just been replaced. A dead pid is the normal case (the app was killed, the
 // collector noticed and exited), so ESRCH is not a failure.
-export function killPreviousCollector(root: string, { platform = PLATFORM, kill = (pid: number, signal: NodeJS.Signals) => process.kill(pid, signal), collectors = null }: { platform?: string; kill?: (pid: number, signal: NodeJS.Signals) => boolean; collectors?: Record<string, { pid?: number }> | null } = {}): number | null {
+export function killPreviousCollector(
+  root: string,
+  {
+    platform = PLATFORM,
+    kill = (pid: number, signal: NodeJS.Signals) => process.kill(pid, signal),
+    collectors = null,
+  }: {
+    platform?: string;
+    kill?: (pid: number, signal: NodeJS.Signals) => boolean;
+    collectors?: Record<string, { pid?: number }> | null;
+  } = {},
+): number | null {
   const record = (collectors ?? readCollectors(root))?.[platform] as { pid?: number } | undefined;
   const pid = Number(record?.pid);
   if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) return null;
@@ -570,12 +645,18 @@ export function registerAndroid(program: Command): void {
   program
     .command('android')
     .description(
-      'Build (or install from the shared cache), install and launch this workspace\'s Android app on its owned '
-      + 'emulator, wired to the reserved Metro port. Never starts the bundler -- run `rn-iso start` first.'
+      "Build (or install from the shared cache), install and launch this workspace's Android app on its owned " +
+        'emulator, wired to the reserved Metro port. Never starts the bundler -- run `rn-iso start` first.',
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
-    .option('--no-metro-check', 'Skip the reserved-port Metro health check (the app will load no bundle unless something else serves it)')
-    .option('--no-build-cache', 'Build fresh, ignoring cached artifacts (local and the project\'s build-cache provider); the fresh build still replaces the cache entry')
+    .option(
+      '--no-metro-check',
+      'Skip the reserved-port Metro health check (the app will load no bundle unless something else serves it)',
+    )
+    .option(
+      '--no-build-cache',
+      "Build fresh, ignoring cached artifacts (local and the project's build-cache provider); the fresh build still replaces the cache entry",
+    )
     .action(async (opts: AndroidCommandOptions) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
@@ -652,50 +733,52 @@ interface RunAndroidResult {
 // Every side effect is a seam with the real thing as its default, so the flow
 // is testable without an emulator, a gradle daemon, or a network. The command
 // action above passes none of them.
-export async function runAndroid({
-  root,
-  json = false,
-  metroCheck = true,
-  // --no-build-cache turns off every LOOKUP -- the local cache and the
-  // project's provider both -- and nothing else: the fresh build is still
-  // stored (over the entry it was told not to trust) and still uploaded.
-  useBuildCache = true,
-  getLimits = getConcurrencyLimits,
-  checkCapacity = checkDeviceCapacity,
-  acquireSlot = acquireBuildSlot,
-  releaseSlot = releaseBuildSlot,
-  ensureDevice = ensureOwnedDevice,
-  ensureDeviceBooted = ensureBooted,
-  resolveMetro = resolveProjectMetro,
-  resolveMetroRetrying = resolveMetroWithRetry,
-  readState = readWorkspaceState,
-  pidAlive = isPidAlive,
-  verifyLaunched = verifyLaunch,
-  ensureIgnored = ensureWorkspaceIgnoredSafely,
-  fingerprint = fingerprintProject,
-  resolveCached = resolveBuild,
-  storeCached = storeBuild,
-  acquireLock = acquireBuildLock,
-  releaseLock = releaseBuildLock,
-  waitForBuild = waitForOtherBuild,
-  loadProvider = loadProjectProvider,
-  easAuth = checkEasAuth,
-  resolveRemoteBuild = resolveRemote,
-  uploadRemoteBuild = uploadRemote,
-  needsPrebuildFor = needsPrebuild,
-  prebuild = runPrebuild,
-  build = buildAndroid,
-  install = installAndroidApp,
-  launch = launchAndroidApp,
-  resolveDevClientScheme = androidDevClientScheme,
-  spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
-  kill = (pid, signal) => process.kill(pid, signal),
-  createWriter = createNdjsonWriter,
-  writeState = writeWorkspaceState,
-  now = Date.now,
-  out = (line) => console.error(line),
-  emit = (line) => console.log(line),
-}: RunAndroidOptions = {} as RunAndroidOptions): Promise<RunAndroidResult> {
+export async function runAndroid(
+  {
+    root,
+    json = false,
+    metroCheck = true,
+    // --no-build-cache turns off every LOOKUP -- the local cache and the
+    // project's provider both -- and nothing else: the fresh build is still
+    // stored (over the entry it was told not to trust) and still uploaded.
+    useBuildCache = true,
+    getLimits = getConcurrencyLimits,
+    checkCapacity = checkDeviceCapacity,
+    acquireSlot = acquireBuildSlot,
+    releaseSlot = releaseBuildSlot,
+    ensureDevice = ensureOwnedDevice,
+    ensureDeviceBooted = ensureBooted,
+    resolveMetro = resolveProjectMetro,
+    resolveMetroRetrying = resolveMetroWithRetry,
+    readState = readWorkspaceState,
+    pidAlive = isPidAlive,
+    verifyLaunched = verifyLaunch,
+    ensureIgnored = ensureWorkspaceIgnoredSafely,
+    fingerprint = fingerprintProject,
+    resolveCached = resolveBuild,
+    storeCached = storeBuild,
+    acquireLock = acquireBuildLock,
+    releaseLock = releaseBuildLock,
+    waitForBuild = waitForOtherBuild,
+    loadProvider = loadProjectProvider,
+    easAuth = checkEasAuth,
+    resolveRemoteBuild = resolveRemote,
+    uploadRemoteBuild = uploadRemote,
+    needsPrebuildFor = needsPrebuild,
+    prebuild = runPrebuild,
+    build = buildAndroid,
+    install = installAndroidApp,
+    launch = launchAndroidApp,
+    resolveDevClientScheme = androidDevClientScheme,
+    spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
+    kill = (pid, signal) => process.kill(pid, signal),
+    createWriter = createNdjsonWriter,
+    writeState = writeWorkspaceState,
+    now = Date.now,
+    out = (line) => console.error(line),
+    emit = (line) => console.log(line),
+  }: RunAndroidOptions = {} as RunAndroidOptions,
+): Promise<RunAndroidResult> {
   const started = now();
   const startedAt = new Date(started).toISOString();
   // Before ANY write into <root>/.rn-iso -- the build log opened on the next
@@ -707,7 +790,15 @@ export async function runAndroid({
 
   // Failure state that lands in Contract 4 is accumulated as the run goes, so
   // a failure at any step after the fingerprint records what it knew.
-  const record: AndroidRecord = { fingerprint: null, cacheKey: null, cacheHit: false, appPath: null, bundleId: null, avdName: null, deviceName: null };
+  const record: AndroidRecord = {
+    fingerprint: null,
+    cacheKey: null,
+    cacheHit: false,
+    appPath: null,
+    bundleId: null,
+    avdName: null,
+    deviceName: null,
+  };
 
   // The build lock, when this run is the one compiling (engine/build-lock.js).
   // Released from the `finally` around the build below, on success, on a
@@ -722,7 +813,12 @@ export async function runAndroid({
     try {
       releaseLock(held);
     } catch (err) {
-      out(phaseLine('build', chalk.dim(`could not release the build lock at ${held.path}: ${(err as Error)?.message || err}`)));
+      out(
+        phaseLine(
+          'build',
+          chalk.dim(`could not release the build lock at ${held.path}: ${(err as Error)?.message || err}`),
+        ),
+      );
     }
   };
 
@@ -745,9 +841,23 @@ export async function runAndroid({
   // One formatter for every refusal, so a failed run reads the same whatever
   // step failed: the code and the message, then whatever was extracted, then
   // the remedy, then the log that holds the rest. Never the transcript.
-  const fail = (code: string | undefined, message?: string | null, remedy?: string | null, { lastBuildStatus = false, diagnostics = [], lines = [], logPath = null }: FailExtra = {}): RunAndroidResult => {
+  const fail = (
+    code: string | undefined,
+    message?: string | null,
+    remedy?: string | null,
+    { lastBuildStatus = false, diagnostics = [], lines = [], logPath = null }: FailExtra = {},
+  ): RunAndroidResult => {
     if (lastBuildStatus) {
-      persistLastBuild({ writeState, root, record, startedAt, durationMs: now() - started, status: 'failed', errorCode: code, out });
+      persistLastBuild({
+        writeState,
+        root,
+        record,
+        startedAt,
+        durationMs: now() - started,
+        status: 'failed',
+        errorCode: code,
+        out,
+      });
     }
     out(phaseLine('error', chalk.red(`${code}: ${message}`)));
     for (const diagnostic of diagnostics) out(phaseLine('error', chalk.red(diagnostic)));
@@ -770,7 +880,11 @@ export async function runAndroid({
   // Recorded as soon as it is known, so a failure before the launch step
   // still says which app it was about.
   record.bundleId = androidPackage;
-  upsertProject(root, { bundleId: detectBundleId(root) ?? undefined, androidPackage: androidPackage ?? undefined, isExpo });
+  upsertProject(root, {
+    bundleId: detectBundleId(root) ?? undefined,
+    androidPackage: androidPackage ?? undefined,
+    isExpo,
+  });
   const project = getProject(root);
   const label = projectShortcut(root, project);
 
@@ -785,8 +899,16 @@ export async function runAndroid({
   // default drops `platform`/`project`/`max` (no default of their own) from
   // the inferred parameter type. The local signature is what this file
   // actually calls it with.
-  type CheckDeviceCapacityFn = (args: { platform: string; project: ProjectRecord | null; max: number }) => DeviceCapacityRefusalLike | null;
-  const capacity = (checkCapacity as unknown as CheckDeviceCapacityFn)({ platform: PLATFORM, project, max: limits.maxDevices });
+  type CheckDeviceCapacityFn = (args: {
+    platform: string;
+    project: ProjectRecord | null;
+    max: number;
+  }) => DeviceCapacityRefusalLike | null;
+  const capacity = (checkCapacity as unknown as CheckDeviceCapacityFn)({
+    platform: PLATFORM,
+    project,
+    max: limits.maxDevices,
+  });
   if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
 
   // ---- device --------------------------------------------------------
@@ -806,7 +928,7 @@ export async function runAndroid({
     return fail(
       NO_DEVICE,
       `Could not ensure an owned Android emulator: ${(err as Error)?.message || err}`,
-      'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).'
+      'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
     );
   }
 
@@ -819,7 +941,11 @@ export async function runAndroid({
   const reservedPort = project?.metroPort ?? null;
   if (metroCheck) {
     if (!reservedPort) {
-      return fail(NO_METRO, 'No Metro port is reserved for this workspace.', 'Run `rn-iso start` first, or pass --no-metro-check.');
+      return fail(
+        NO_METRO,
+        'No Metro port is reserved for this workspace.',
+        'Run `rn-iso start` first, or pass --no-metro-check.',
+      );
     }
     // Retried: `start` returns when the server is LISTENING, and a bare
     // in-process Metro then blocks its event loop crawling a monorepo's file
@@ -827,7 +953,11 @@ export async function runAndroid({
     // resolveMetroWithRetry in commands/ios.js -- one implementation, both
     // platforms.
     const held = await resolveMetroRetrying(resolveMetro, reservedPort, root, {
-      onRetry: ({ delayMs }) => phase('metro', `port ${reservedPort} did not verify yet; retrying in ${Math.round(delayMs / 1000)}s (Metro may still be indexing)`),
+      onRetry: ({ delayMs }) =>
+        phase(
+          'metro',
+          `port ${reservedPort} did not verify yet; retrying in ${Math.round(delayMs / 1000)}s (Metro may still be indexing)`,
+        ),
     });
     if (!held.metro) {
       const supervisor = (readState(root)?.supervisor ?? null) as SupervisorLike | null;
@@ -835,21 +965,32 @@ export async function runAndroid({
       return fail(
         NO_METRO,
         noMetroMessage({ port: reservedPort, resolution: held, supervisor, supervisorAlive }),
-        noMetroRemedy({ port: reservedPort, supervisor, supervisorAlive })
+        noMetroRemedy({ port: reservedPort, supervisor, supervisorAlive }),
       );
     }
     phase('metro', `port ${reservedPort} (pid ${held.metro?.pid})`);
   } else {
-    phase('metro', reservedPort ? `port ${reservedPort} (not checked)` : `no reservation; using ${DEFAULT_METRO_PORT} (not checked)`);
+    phase(
+      'metro',
+      reservedPort ? `port ${reservedPort} (not checked)` : `no reservation; using ${DEFAULT_METRO_PORT} (not checked)`,
+    );
   }
   const metroPort = reservedPort ?? DEFAULT_METRO_PORT;
 
   // ensureBooted is still untyped in engine/device.ts; its `= {}` default
   // drops `platform`/`device` (no default of their own) from the inferred type.
-  type EnsureBootedFn = (args: { platform: string; device: unknown; out?: (line: string) => void }) => Promise<BootedLike>;
+  type EnsureBootedFn = (args: {
+    platform: string;
+    device: unknown;
+    out?: (line: string) => void;
+  }) => Promise<BootedLike>;
   const booted = await (ensureDeviceBooted as unknown as EnsureBootedFn)({ platform: PLATFORM, device, out });
   if (booted.failed) {
-    return fail(NO_DEVICE, booted.reason, 'Run `rn-iso status` to see what rn-iso thinks it owns; re-running `rn-iso android` creates a fresh owned AVD.');
+    return fail(
+      NO_DEVICE,
+      booted.reason,
+      'Run `rn-iso status` to see what rn-iso thinks it owns; re-running `rn-iso android` creates a fresh owned AVD.',
+    );
   }
   const serial = booted.serial;
   record.avdName = device.avdName ?? null;
@@ -864,13 +1005,17 @@ export async function runAndroid({
     // cross-worktree build a miss. See src/build-cache.js.
     hash = await fingerprint(root, { platform: PLATFORM });
   } catch (err) {
-    return fail(NO_FINGERPRINT, `@expo/fingerprint could not fingerprint ${root}: ${(err as Error)?.message || err}`, 'Fix the error above, or install a working copy with `npm i -D @expo/fingerprint`.');
+    return fail(
+      NO_FINGERPRINT,
+      `@expo/fingerprint could not fingerprint ${root}: ${(err as Error)?.message || err}`,
+      'Fix the error above, or install a working copy with `npm i -D @expo/fingerprint`.',
+    );
   }
   if (!hash) {
     return fail(
       NO_FINGERPRINT,
       `@expo/fingerprint is not resolvable from ${root} or from rn-iso, so the build cache cannot be addressed.`,
-      'Install it in the project: `npm i -D @expo/fingerprint`.'
+      'Install it in the project: `npm i -D @expo/fingerprint`.',
     );
   }
   record.fingerprint = hash;
@@ -933,7 +1078,12 @@ export async function runAndroid({
     // property this call sends has no default there, so TS infers a parameter
     // type with NO overlap at all against the object below. The local
     // signature is what this file actually calls it with.
-    type ResolveRemoteFn = (args: { provider: unknown; platform: string; projectRoot: string; fingerprintHash: string }) => Promise<RemoteHitLike | null>;
+    type ResolveRemoteFn = (args: {
+      provider: unknown;
+      platform: string;
+      projectRoot: string;
+      fingerprintHash: string;
+    }) => Promise<RemoteHitLike | null>;
     const hit = await (resolveRemoteBuild as unknown as ResolveRemoteFn)({
       provider: remote.provider,
       platform: PLATFORM,
@@ -954,13 +1104,17 @@ export async function runAndroid({
       phase('cache', `remote hit (${remote.name})${stored ? ' -> stored locally' : ''}`);
     } else if (hit?.timedOut) {
       abandonedRemote = true;
-      phase('cache', chalk.yellow(`${remote.name} did not answer within ${formatDuration(RESOLVE_TIMEOUT_MS)}; building instead`));
+      phase(
+        'cache',
+        chalk.yellow(`${remote.name} did not answer within ${formatDuration(RESOLVE_TIMEOUT_MS)}; building instead`),
+      );
     } else if (hit?.failed) {
       // An auth failure the provider DID surface gets the same specific note
       // the pre-flight would have printed, rather than the generic one.
-      const authNote = remote.name === 'eas' && isEasAuthFailureText(hit.failed)
-        ? easAuthNote({ code: 'logged-out', reason: hit.failed })
-        : null;
+      const authNote =
+        remote.name === 'eas' && isEasAuthFailureText(hit.failed)
+          ? easAuthNote({ code: 'logged-out', reason: hit.failed })
+          : null;
       phase('cache', chalk.yellow(authNote || `${remote.name} could not be used: ${hit.failed}; building instead`));
     } else {
       phase('cache', `remote miss (${remote.name})`);
@@ -995,8 +1149,11 @@ export async function runAndroid({
     } else if (attempt?.held) {
       const holder = attempt.held;
       const who = holder.projectRoot || 'another workspace';
-      phase('build', `${who} is already building ${shortHash(hash)} (pid ${holder.pid})`
-        + `${holder.logFile ? ` -- tail ${holder.logFile}` : ''}`);
+      phase(
+        'build',
+        `${who} is already building ${shortHash(hash)} (pid ${holder.pid})` +
+          `${holder.logFile ? ` -- tail ${holder.logFile}` : ''}`,
+      );
 
       let waited: WaitForBuildResult | null = null;
       try {
@@ -1008,7 +1165,7 @@ export async function runAndroid({
           'RN_ISO_BUILD_WAIT_TIMEOUT',
           wtErr.message,
           `Check pid ${holder.pid}; if it is not really building, remove ${wtErr.lockPath} and run \`rn-iso android\` again.`,
-          { lastBuildStatus: true }
+          { lastBuildStatus: true },
         );
       }
 
@@ -1025,11 +1182,16 @@ export async function runAndroid({
         // third workspace waits on this run instead of starting a third
         // compile; if someone else took it first, build without it rather than
         // queueing again -- a redundant build is the cheaper failure.
-        phase('build', chalk.yellow(`${who}'s build ended without an artifact (${waited?.builderFailed}); building here`));
+        phase(
+          'build',
+          chalk.yellow(`${who}'s build ended without an artifact (${waited?.builderFailed}); building here`),
+        );
         try {
           const takeover = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
           if (takeover?.acquired) buildLock = takeover;
-        } catch { /* contained the same way as the first attempt */ }
+        } catch {
+          /* contained the same way as the first attempt */
+        }
       }
     }
   }
@@ -1050,14 +1212,21 @@ export async function runAndroid({
         try {
           buildSlot = await acquireSlot({ max: limits.maxBuilds, root, logFile: buildLog, out });
         } catch (err) {
-          phase('build', chalk.yellow(`could not take a build slot: ${(err as Error)?.message || err}; building anyway`));
+          phase(
+            'build',
+            chalk.yellow(`could not take a build slot: ${(err as Error)?.message || err}; building anyway`),
+          );
         }
       }
 
       if (needsPrebuildFor(root, PLATFORM, isExpo)) {
         const pre: PrebuildResultLike = await prebuild(root, PLATFORM, writer, { isExpo });
         if (pre.failed) {
-          return fail(pre.code!, pre.reason, pre.remedy, { lastBuildStatus: true, lines: tail(pre.lastLines), logPath: displayPath(root, buildLog) });
+          return fail(pre.code!, pre.reason, pre.remedy, {
+            lastBuildStatus: true,
+            lines: tail(pre.lastLines),
+            logPath: displayPath(root, buildLog),
+          });
         }
         phase('prebuild', `android/ generated (${formatDuration(pre.durationMs)})`);
         // The package name may only exist once the manifest has been written.
@@ -1081,7 +1250,9 @@ export async function runAndroid({
         phase('build', chalk.red(`FAILED after ${formatDuration(built.durationMs)}`));
         const extracted = diagnostics.map(formatDiagnostic);
         if ((built.truncated ?? 0) > 0) extracted.push(`... and ${built.truncated} more diagnostic(s) in the log`);
-        return fail(built.code!, built.reason,
+        return fail(
+          built.code!,
+          built.reason,
           // The remedy of a diagnostic beats the generic one: "set ANDROID_HOME"
           // is the whole answer where it applies, and "read the log" is not.
           diagnostics.find((d) => d.remedy)?.remedy || built.remedy || null,
@@ -1092,7 +1263,8 @@ export async function runAndroid({
             // the worst of both worlds otherwise -- tokens, and no diagnosis.
             lines: extracted.length ? [] : tail(built.lastLines),
             logPath: displayPath(root, buildLog),
-          });
+          },
+        );
       }
       // apkPath is provably set here: this branch only runs after a build that
       // did not report `failed`, and buildAndroid's success shape always carries one.
@@ -1114,7 +1286,13 @@ export async function runAndroid({
       // install instead of being added to it. Nothing in this run depends on it.
       if (remote) {
         // uploadRemote has the same untyped-default shape as resolveRemote above.
-        type UploadRemoteFn = (args: { provider: unknown; platform: string; projectRoot: string; fingerprintHash: string; buildPath: string }) => Promise<RemoteUploadLike>;
+        type UploadRemoteFn = (args: {
+          provider: unknown;
+          platform: string;
+          projectRoot: string;
+          fingerprintHash: string;
+          buildPath: string;
+        }) => Promise<RemoteUploadLike>;
         uploadPending = (uploadRemoteBuild as unknown as UploadRemoteFn)({
           provider: remote.provider,
           platform: PLATFORM,
@@ -1137,9 +1315,17 @@ export async function runAndroid({
   const installStarted = now();
   const installed: InstallResultLike = install({ serial: serial!, apkPath: apkPath! });
   if (installed.failed) {
-    return fail(installed.code || INSTALL_FAILED, installed.reason, `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`, { lastBuildStatus: true });
+    return fail(
+      installed.code || INSTALL_FAILED,
+      installed.reason,
+      `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`,
+      { lastBuildStatus: true },
+    );
   }
-  phase('install', `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} (${formatDuration(now() - installStarted)})`);
+  phase(
+    'install',
+    `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} (${formatDuration(now() - installStarted)})`,
+  );
 
   // ---- launch (Contract 6) ---------------------------------------------
   androidPackage = androidPackage || detectAndroidPackage(root);
@@ -1147,9 +1333,9 @@ export async function runAndroid({
   if (!androidPackage) {
     return fail(
       LAUNCH_FAILED,
-      'Could not determine this app\'s Android package name, so there is nothing to launch.',
+      "Could not determine this app's Android package name, so there is nothing to launch.",
       'Set `expo.android.package` in app.json / app.config.js, or `namespace` in android/app/build.gradle.',
-      { lastBuildStatus: true }
+      { lastBuildStatus: true },
     );
   }
   // The scheme comes from the APK that was just installed, for the reason the
@@ -1159,9 +1345,19 @@ export async function runAndroid({
   const launchedAt = now();
   // launchAndroidApp returns one of four flat shapes (see engine/app-install.ts);
   // read through the local, all-optional interface rather than the union.
-  const launched: LaunchResultLike = launch({ serial: serial!, packageName: androidPackage, metroPort, devClientScheme: scheme });
+  const launched: LaunchResultLike = launch({
+    serial: serial!,
+    packageName: androidPackage,
+    metroPort,
+    devClientScheme: scheme,
+  });
   if (launched.failed) {
-    return fail(launched.code || LAUNCH_FAILED, launched.reason, `Check the app installed correctly (\`adb -s ${serial} shell pm list packages ${androidPackage}\`).`, { lastBuildStatus: true });
+    return fail(
+      launched.code || LAUNCH_FAILED,
+      launched.reason,
+      `Check the app installed correctly (\`adb -s ${serial} shell pm list packages ${androidPackage}\`).`,
+      { lastBuildStatus: true },
+    );
   }
   writer.write({
     src: 'build',
@@ -1185,9 +1381,17 @@ export async function runAndroid({
   // months in which the prefs write could not have worked (it emitted an
   // invalid script) looked exactly like the months in which it did.
   if (launched.debugHttpHost) {
-    phase('wired', `debug_http_host ${launched.debugHttpHost} + adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}`);
+    phase(
+      'wired',
+      `debug_http_host ${launched.debugHttpHost} + adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}`,
+    );
   } else {
-    phase('wired', chalk.yellow(`adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}; ${launched.debugHttpHostNote || 'debug_http_host not written'}`));
+    phase(
+      'wired',
+      chalk.yellow(
+        `adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}; ${launched.debugHttpHostNote || 'debug_http_host not written'}`,
+      ),
+    );
     writer.write({
       src: 'build',
       level: 'warn',
@@ -1210,11 +1414,15 @@ export async function runAndroid({
       phase('cache', `uploaded (${remote?.name})`);
     } else if (upload?.timedOut) {
       abandonedRemote = true;
-      phase('cache', chalk.yellow(`${remote?.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`));
+      phase(
+        'cache',
+        chalk.yellow(`${remote?.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`),
+      );
     } else if (upload?.failed) {
-      const authNote = remote?.name === 'eas' && isEasAuthFailureText(upload.failed)
-        ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
-        : null;
+      const authNote =
+        remote?.name === 'eas' && isEasAuthFailureText(upload.failed)
+          ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
+          : null;
       phase('cache', chalk.yellow(authNote || `${remote?.name} upload failed: ${upload.failed}`));
     }
   }
@@ -1257,7 +1465,7 @@ export async function runAndroid({
     phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
   } else {
     launchState = LAUNCH_UNVERIFIED;
-    phase('verify', chalk.yellow('UNVERIFIED: no bundle request reached this workspace\'s Metro'));
+    phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
     for (const line of unverifiedLaunchLines({
       platform: PLATFORM,
       metroPort,
@@ -1266,7 +1474,8 @@ export async function runAndroid({
       serial,
       devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort) : null,
       mode: isExpo ? MODE_EXPO : MODE_BARE,
-    })) phase('', chalk.yellow(line));
+    }))
+      phase('', chalk.yellow(line));
   }
 
   // The outcome in the timeline too, where `rn-iso logs` will find it.
@@ -1274,9 +1483,10 @@ export async function runAndroid({
     src: 'build',
     level: launchState === LAUNCH_UNVERIFIED ? 'warn' : 'info',
     event: launchState === LAUNCH_UNVERIFIED ? 'launch_unverified' : 'launch_verified',
-    msg: launchState === LAUNCH_UNVERIFIED
-      ? `no bundle request from ${androidPackage} reached this workspace's Metro on port ${metroPort}`
-      : `${androidPackage} fetched a bundle from this workspace's Metro on port ${metroPort}`,
+    msg:
+      launchState === LAUNCH_UNVERIFIED
+        ? `no bundle request from ${androidPackage} reached this workspace's Metro on port ${metroPort}`
+        : `${androidPackage} fetched a bundle from this workspace's Metro on port ${metroPort}`,
   });
 
   const facts = androidFacts({
@@ -1321,7 +1531,16 @@ export function cacheOutcome(cacheHit: unknown, providerName: string | null = nu
   return 'built';
 }
 
-function persistLastBuild({ writeState, root, record, startedAt, durationMs, status, errorCode = null, out }: {
+function persistLastBuild({
+  writeState,
+  root,
+  record,
+  startedAt,
+  durationMs,
+  status,
+  errorCode = null,
+  out,
+}: {
   writeState: typeof writeWorkspaceState;
   root: string;
   record: AndroidRecord;
@@ -1344,7 +1563,14 @@ function persistLastBuild({ writeState, root, record, startedAt, durationMs, sta
   return lastBuild;
 }
 
-function startCollector({ root, serial, packageName, spawn, kill, out }: {
+function startCollector({
+  root,
+  serial,
+  packageName,
+  spawn,
+  kill,
+  out,
+}: {
   root: string;
   serial?: string;
   packageName: string;
@@ -1365,7 +1591,7 @@ function startCollector({ root, serial, packageName, spawn, kill, out }: {
         detached: true,
         stdio: 'ignore',
         env: process.env,
-      }
+      },
     );
     child?.unref?.();
     return child?.pid ?? null;

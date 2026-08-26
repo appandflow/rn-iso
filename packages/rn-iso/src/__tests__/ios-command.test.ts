@@ -69,10 +69,19 @@ afterEach(() => {
 function captureAction(register, deps) {
   let captured;
   const stub = {
-    command() { return stub; },
-    description() { return stub; },
-    option() { return stub; },
-    action(fn) { captured = fn; return stub; },
+    command() {
+      return stub;
+    },
+    description() {
+      return stub;
+    },
+    option() {
+      return stub;
+    },
+    action(fn) {
+      captured = fn;
+      return stub;
+    },
   };
   register(stub, deps);
   return (opts = {}) => captured(opts);
@@ -82,7 +91,10 @@ function captureAction(register, deps) {
 // cache MISS; each test overrides the one fact it is about.
 function harness(overrides = {}) {
   const calls = { order: [], args: {} };
-  const record = (name, value) => { calls.order.push(name); calls.args[name] = value; };
+  const record = (name, value) => {
+    calls.order.push(name);
+    calls.args[name] = value;
+  };
   const appPath = join(root, 'build', 'Fixture.app');
 
   const deps = {
@@ -187,14 +199,17 @@ function harness(overrides = {}) {
     },
     // The gate's retry is REAL here (it is the thing under test in one case
     // below); only its sleep is removed, so a refusal costs no wall time.
-    resolveMetroWithRetry: (resolve, port, path, opts) => resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
+    resolveMetroWithRetry: (resolve, port, path, opts) =>
+      resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
     // The default is a launch that verified: the app fetched a bundle from
     // this workspace's Metro. The unverified path has its own tests.
     verifyLaunch: async (args) => {
       record('verifyLaunch', args);
       return { verified: true, waitedMs: 2500, record: { event: 'bundle_build_started' } };
     },
-    ensureWorkspaceIgnored: async (dir) => { record('ensureWorkspaceIgnored', dir); },
+    ensureWorkspaceIgnored: async (dir) => {
+      record('ensureWorkspaceIgnored', dir);
+    },
     ...overrides,
   };
   return { deps, calls, appPath };
@@ -211,7 +226,9 @@ async function run(opts = {}, overrides = {}) {
   let exitCode = null;
   console.log = (l) => logs.push(String(l));
   console.error = (l) => errs.push(String(l));
-  process.exit = (c) => { exitCode = c; };
+  process.exit = (c) => {
+    exitCode = c;
+  };
   try {
     await action(opts);
   } finally {
@@ -239,9 +256,12 @@ describe('the Metro gate', () => {
   // costs the device RECORD, and not the ~10s boot poll behind it.
   test('fires before the boot and before fingerprinting: a dead port costs a second, not a build', async () => {
     reserve();
-    const { errs, exitCode, calls } = await run({}, {
-      resolveProjectMetro: async () => ({ missing: true }),
-    });
+    const { errs, exitCode, calls } = await run(
+      {},
+      {
+        resolveProjectMetro: async () => ({ missing: true }),
+      },
+    );
     expect(exitCode).toBe(1);
     expect(calls.order.includes('ensureOwnedDevice')).toBeTruthy();
     expect(!calls.order.includes('ensureBooted')).toBeTruthy();
@@ -253,9 +273,12 @@ describe('the Metro gate', () => {
 
   test('a foreign listener on the reserved port is refused, not built against', async () => {
     reserve();
-    const { errs, exitCode } = await run({}, {
-      resolveProjectMetro: async () => ({ notOurs: 'pid 42 on port 8082 runs from /elsewhere' }),
-    });
+    const { errs, exitCode } = await run(
+      {},
+      {
+        resolveProjectMetro: async () => ({ notOurs: 'pid 42 on port 8082 runs from /elsewhere' }),
+      },
+    );
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/NOT this workspace's dev server/);
     expect(errs.join('\n')).toMatch(/RN_ISO_NO_METRO/);
@@ -300,14 +323,18 @@ describe('the Metro gate retries an indexing Metro', () => {
   test('a port that verifies on the third attempt is not refused', async () => {
     reserve();
     let attempts = 0;
-    const { exitCode, calls } = await run({}, {
-      resolveProjectMetro: async () => {
-        attempts += 1;
-        // Listening, event loop blocked by the file-map crawl.
-        if (attempts < 3) return { notOurs: 'pid 42 on port 8082 does not answer Metro\'s /status', kind: 'unresponsive' };
-        return { metro: { pid: 42, leader: 42, cwd: root } };
+    const { exitCode, calls } = await run(
+      {},
+      {
+        resolveProjectMetro: async () => {
+          attempts += 1;
+          // Listening, event loop blocked by the file-map crawl.
+          if (attempts < 3)
+            return { notOurs: "pid 42 on port 8082 does not answer Metro's /status", kind: 'unresponsive' };
+          return { metro: { pid: 42, leader: 42, cwd: root } };
+        },
       },
-    });
+    );
     expect(exitCode).toBe(null);
     expect(attempts).toBe(3);
     expect(calls.order.includes('buildIos')).toBeTruthy();
@@ -316,12 +343,15 @@ describe('the Metro gate retries an indexing Metro', () => {
   test('a FOREIGN listener is refused immediately: waiting cannot make it ours', async () => {
     reserve();
     let attempts = 0;
-    const { exitCode, errs } = await run({}, {
-      resolveProjectMetro: async () => {
-        attempts += 1;
-        return { notOurs: 'pid 42 on port 8082 runs from /elsewhere, outside ' + root, kind: 'foreign-cwd' };
+    const { exitCode, errs } = await run(
+      {},
+      {
+        resolveProjectMetro: async () => {
+          attempts += 1;
+          return { notOurs: 'pid 42 on port 8082 runs from /elsewhere, outside ' + root, kind: 'foreign-cwd' };
+        },
       },
-    });
+    );
     expect(exitCode).toBe(1);
     expect(attempts).toBe(1);
     expect(errs.join('\n')).toMatch(/NOT this workspace's dev server/);
@@ -338,9 +368,15 @@ describe('the Metro gate retries an indexing Metro', () => {
   test('the refusal distinguishes "our supervisor is still indexing" from a foreign listener', async () => {
     reserve();
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port: 8082, mode: 'bare-inproc', startedAt: 'now' } });
-    const { errs, exitCode } = await run({}, {
-      resolveProjectMetro: async () => ({ notOurs: 'pid 4242 on port 8082 does not answer Metro\'s /status', kind: 'unresponsive' }),
-    });
+    const { errs, exitCode } = await run(
+      {},
+      {
+        resolveProjectMetro: async () => ({
+          notOurs: "pid 4242 on port 8082 does not answer Metro's /status",
+          kind: 'unresponsive',
+        }),
+      },
+    );
     expect(exitCode).toBe(1);
     const text = errs.join('\n');
     expect(text).toMatch(/A supervisor record exists for port 8082/);
@@ -360,9 +396,15 @@ describe('the Metro gate retries an indexing Metro', () => {
 
   test('noMetroMessage names a supervisor only when it is for THIS port and alive', () => {
     const supervisor = { pid: 7, port: 8082, mode: 'expo-child' };
-    expect(noMetroMessage({ port: 8082, resolution: { missing: true }, supervisor, supervisorAlive: true })).toMatch(/supervisor record exists/);
-    expect(noMetroMessage({ port: 8082, resolution: { missing: true }, supervisor, supervisorAlive: false })).toMatch(/Nothing is serving/);
-    expect(noMetroMessage({ port: 8099, resolution: { missing: true }, supervisor, supervisorAlive: true })).toMatch(/Nothing is serving/);
+    expect(noMetroMessage({ port: 8082, resolution: { missing: true }, supervisor, supervisorAlive: true })).toMatch(
+      /supervisor record exists/,
+    );
+    expect(noMetroMessage({ port: 8082, resolution: { missing: true }, supervisor, supervisorAlive: false })).toMatch(
+      /Nothing is serving/,
+    );
+    expect(noMetroMessage({ port: 8099, resolution: { missing: true }, supervisor, supervisorAlive: true })).toMatch(
+      /Nothing is serving/,
+    );
   });
 });
 
@@ -384,10 +426,13 @@ describe('launch verification', () => {
 
   test('the picker: an unverified launch is launched: "unverified", exit 0, and a loud warning', async () => {
     reserve();
-    const { logs, errs, exitCode } = await run({ json: true }, {
-      verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
-      detectIsExpo: () => true,
-    });
+    const { logs, errs, exitCode } = await run(
+      { json: true },
+      {
+        verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
+        detectIsExpo: () => true,
+      },
+    );
     // Exit 0: the app IS launched, and refusing here would break every slow
     // launch. What changes is the FACT, which is what an agent branches on.
     expect(exitCode).toBe(null);
@@ -400,14 +445,21 @@ describe('launch verification', () => {
 
   test('the alert stall: the warning carries the exact openurl to retry', async () => {
     reserve();
-    writeFileSync(join(root, 'package.json'), JSON.stringify({
-      name: 'fixture', dependencies: { expo: '52.0.0', 'expo-dev-client': '5.0.0' },
-    }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({
+        name: 'fixture',
+        dependencies: { expo: '52.0.0', 'expo-dev-client': '5.0.0' },
+      }),
+    );
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { scheme: 'fixture' } }));
-    const { errs, logs } = await run({ json: true }, {
-      devClientScheme,
-      verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
-    });
+    const { errs, logs } = await run(
+      { json: true },
+      {
+        devClientScheme,
+        verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
+      },
+    );
     const text = errs.join('\n');
     expect(text).toMatch(/Open in/);
     expect(text).toMatch(new RegExp(`xcrun simctl openurl ${UDID}`));
@@ -464,11 +516,14 @@ describe('the cache', () => {
   test('a hit skips prebuild, pods AND xcodebuild entirely', async () => {
     reserve();
     const cachedApp = join(tmpHome, 'build-cache', 'ios', 'k', 'Fixture.app');
-    const { exitCode, calls, logs } = await run({ json: true }, {
-      resolveBuild: () => cachedApp,
-      needsPrebuild: () => true,
-      readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
-    });
+    const { exitCode, calls, logs } = await run(
+      { json: true },
+      {
+        resolveBuild: () => cachedApp,
+        needsPrebuild: () => true,
+        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+      },
+    );
     expect(exitCode).toBe(null);
     expect(!calls.order.includes('buildIos')).toBeTruthy();
     expect(!calls.order.includes('runPrebuild')).toBeTruthy();
@@ -482,25 +537,47 @@ describe('the cache', () => {
 
   test('a hit reads the bundle id from the cached binary, not from the config', async () => {
     reserve();
-    const { calls } = await run({}, {
-      resolveBuild: () => '/cache/Fixture.app',
-      readBundleId: () => 'com.example.fromplist',
-      detectBundleId: () => 'com.example.fromconfig',
-    });
+    const { calls } = await run(
+      {},
+      {
+        resolveBuild: () => '/cache/Fixture.app',
+        readBundleId: () => 'com.example.fromplist',
+        detectBundleId: () => 'com.example.fromconfig',
+      },
+    );
     expect(calls.args.launchIosApp.bundleId).toBe('com.example.fromplist');
   });
 
   test('a miss runs prebuild, then pods, then the build, then stores it', async () => {
     reserve();
-    const { exitCode, calls, appPath } = await run({}, {
-      detectIsExpo: () => true,
-      needsPrebuild: () => true,
-      readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
-    });
+    const { exitCode, calls, appPath } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        needsPrebuild: () => true,
+        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+      },
+    );
     expect(exitCode).toBe(null);
-    const order = calls.order.filter((c) => ['fingerprintProject', 'runPrebuild', 'runPodInstall', 'buildIos', 'storeBuild', 'installIosApp', 'launchIosApp'].includes(c));
+    const order = calls.order.filter((c) =>
+      [
+        'fingerprintProject',
+        'runPrebuild',
+        'runPodInstall',
+        'buildIos',
+        'storeBuild',
+        'installIosApp',
+        'launchIosApp',
+      ].includes(c),
+    );
     expect(order).toEqual([
-      'fingerprintProject', 'runPrebuild', 'runPodInstall', 'buildIos', 'storeBuild', 'installIosApp', 'launchIosApp',
+      'fingerprintProject',
+      'runPrebuild',
+      'runPodInstall',
+      'buildIos',
+      'storeBuild',
+      'installIosApp',
+      'launchIosApp',
     ]);
     expect(calls.args.storeBuild.path).toBe(appPath);
     expect(calls.args.storeBuild.platform).toBe('ios');
@@ -517,11 +594,18 @@ describe('the cache', () => {
   test('--no-build-cache looks nothing up: not the local cache, not the provider', async () => {
     reserve();
     const cachedApp = join(tmpHome, 'build-cache', 'ios', 'k', 'Fixture.app');
-    const { exitCode, calls, logs } = await run({ json: true, buildCache: false }, {
-      resolveBuild: () => { throw new Error('the local cache must not be consulted'); },
-      loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
-      resolveRemote: () => { throw new Error('the provider must not be consulted'); },
-    });
+    const { exitCode, calls, logs } = await run(
+      { json: true, buildCache: false },
+      {
+        resolveBuild: () => {
+          throw new Error('the local cache must not be consulted');
+        },
+        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+        resolveRemote: () => {
+          throw new Error('the provider must not be consulted');
+        },
+      },
+    );
     expect(exitCode).toBe(null);
     expect(calls.order.includes('buildIos')).toBeTruthy();
     expect(!calls.order.includes('resolveRemote')).toBeTruthy();
@@ -535,9 +619,12 @@ describe('the cache', () => {
   // the old entry would mean the very next run trusts it again.
   test('--no-build-cache still STORES -- over the entry it was told not to trust -- and still uploads', async () => {
     reserve();
-    const { exitCode, calls } = await run({ buildCache: false }, {
-      loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
-    });
+    const { exitCode, calls } = await run(
+      { buildCache: false },
+      {
+        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      },
+    );
     expect(exitCode).toBe(null);
     expect(calls.args.storeBuild.options).toEqual({ overwrite: true });
     expect(calls.order.includes('uploadRemote')).toBeTruthy();
@@ -551,9 +638,14 @@ describe('the cache', () => {
 
   test('a cache store that fails does not fail a successful build', async () => {
     reserve();
-    const { exitCode, errs, calls } = await run({}, {
-      storeBuild: () => { throw new Error('no space left on device'); },
-    });
+    const { exitCode, errs, calls } = await run(
+      {},
+      {
+        storeBuild: () => {
+          throw new Error('no space left on device');
+        },
+      },
+    );
     expect(exitCode).toBe(null);
     expect(calls.order.includes('launchIosApp')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/Could not store the build/);
@@ -599,15 +691,18 @@ describe('the remote cache', () => {
     const remoteApp = join(root, 'downloaded', 'Fixture.app');
     const storedApp = join(tmpHome, 'build-cache', 'ios', 'key', 'Fixture.app');
     const stored = [];
-    const { exitCode, calls, logs, errs } = await run({ json: true }, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => provider(),
-      resolveRemote: async () => ({ appPath: remoteApp }),
-      storeBuild: (platform, key, path, options) => {
-        stored.push({ platform, key, path, options });
-        return storedApp;
+    const { exitCode, calls, logs, errs } = await run(
+      { json: true },
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => provider(),
+        resolveRemote: async () => ({ appPath: remoteApp }),
+        storeBuild: (platform, key, path, options) => {
+          stored.push({ platform, key, path, options });
+          return storedApp;
+        },
       },
-    });
+    );
     expect(exitCode).toBe(null);
     expect(!calls.order.includes('buildIos')).toBeTruthy();
     expect(!calls.order.includes('runPrebuild')).toBeTruthy();
@@ -622,7 +717,7 @@ describe('the remote cache', () => {
     expect(readWorkspaceState(root).lastBuild.cacheHit).toBe('remote');
   });
 
-  test('the provider is asked with this workspace\'s fingerprint and platform', async () => {
+  test("the provider is asked with this workspace's fingerprint and platform", async () => {
     reserve();
     const { calls } = await run({}, { detectIsExpo: () => true, loadProjectProvider: async () => provider('./p.cjs') });
     expect(calls.args.resolveRemote.platform).toBe('ios');
@@ -632,13 +727,25 @@ describe('the remote cache', () => {
 
   test('a remote MISS builds, stores locally, and uploads the result', async () => {
     reserve();
-    const { exitCode, calls, errs, appPath } = await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => provider(),
-    });
+    const { exitCode, calls, errs, appPath } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => provider(),
+      },
+    );
     expect(exitCode).toBe(null);
-    const relevant = calls.order.filter((c) => ['resolveBuild', 'resolveRemote', 'buildIos', 'storeBuild', 'uploadRemote', 'installIosApp'].includes(c));
-    expect(relevant).toEqual(['resolveBuild', 'resolveRemote', 'buildIos', 'storeBuild', 'uploadRemote', 'installIosApp']);
+    const relevant = calls.order.filter((c) =>
+      ['resolveBuild', 'resolveRemote', 'buildIos', 'storeBuild', 'uploadRemote', 'installIosApp'].includes(c),
+    );
+    expect(relevant).toEqual([
+      'resolveBuild',
+      'resolveRemote',
+      'buildIos',
+      'storeBuild',
+      'uploadRemote',
+      'installIosApp',
+    ]);
     expect(calls.args.uploadRemote.buildPath).toBe(appPath);
     expect(calls.args.uploadRemote.fingerprintHash).toBe(FINGERPRINT);
     expect(errs.join('\n')).toMatch(/^cache {7}uploaded \(eas\)$/m);
@@ -648,11 +755,14 @@ describe('the remote cache', () => {
   // running inside an agent's dev loop.
   test('a provider that THROWS degrades to a local-only run with a note', async () => {
     reserve();
-    const { exitCode, calls, errs } = await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => provider(),
-      resolveRemote: async () => ({ failed: 'EAS session expired' }),
-    });
+    const { exitCode, calls, errs } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => provider(),
+        resolveRemote: async () => ({ failed: 'EAS session expired' }),
+      },
+    );
     expect(exitCode).toBe(null);
     expect(calls.order.includes('buildIos')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/cache.*EAS session expired.*building instead/);
@@ -662,15 +772,20 @@ describe('the remote cache', () => {
     reserve();
     const exits = [];
     const originalExit = process.exit;
-    process.exit = (code) => { exits.push(code); };
+    process.exit = (code) => {
+      exits.push(code);
+    };
     let errs;
     let calls;
     try {
-      ({ errs, calls } = await run({}, {
-        detectIsExpo: () => true,
-        loadProjectProvider: async () => provider(),
-        resolveRemote: async () => ({ timedOut: true }),
-      }));
+      ({ errs, calls } = await run(
+        {},
+        {
+          detectIsExpo: () => true,
+          loadProjectProvider: async () => provider(),
+          resolveRemote: async () => ({ timedOut: true }),
+        },
+      ));
       // The exit is scheduled behind a stdout flush.
       await new Promise((r) => setTimeout(r, 20));
     } finally {
@@ -683,14 +798,22 @@ describe('the remote cache', () => {
 
   test('a provider that cannot be loaded says so ONCE and builds', async () => {
     reserve();
-    const { exitCode, calls, errs } = await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => ({ unavailable: 'the EAS build cache needs the `eas-build-cache-provider` package' }),
-    });
+    const { exitCode, calls, errs } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => ({
+          unavailable: 'the EAS build cache needs the `eas-build-cache-provider` package',
+        }),
+      },
+    );
     expect(exitCode).toBe(null);
     expect(!calls.order.includes('resolveRemote')).toBeTruthy();
     expect(calls.order.includes('buildIos')).toBeTruthy();
-    const lines = errs.join('\n').split('\n').filter((l) => /provider not usable/.test(l));
+    const lines = errs
+      .join('\n')
+      .split('\n')
+      .filter((l) => /provider not usable/.test(l));
     expect(lines.length).toBe(1);
     expect(lines[0]).toMatch(/eas-build-cache-provider/);
   });
@@ -698,12 +821,17 @@ describe('the remote cache', () => {
   test('a remote hit that cannot be stored locally is still installed from where it landed', async () => {
     reserve();
     const remoteApp = join(root, 'downloaded', 'Fixture.app');
-    const { exitCode, calls, errs } = await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => provider(),
-      resolveRemote: async () => ({ appPath: remoteApp }),
-      storeBuild: () => { throw new Error('no space left on device'); },
-    });
+    const { exitCode, calls, errs } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => provider(),
+        resolveRemote: async () => ({ appPath: remoteApp }),
+        storeBuild: () => {
+          throw new Error('no space left on device');
+        },
+      },
+    );
     expect(exitCode).toBe(null);
     expect(calls.args.installIosApp.appPath).toBe(remoteApp);
     expect(errs.join('\n')).toMatch(/could not be stored locally/);
@@ -715,16 +843,22 @@ describe('the remote cache', () => {
   // anywhere says why. The pre-flight is what turns that into one line.
   test('a logged-out EAS session skips the remote tier and says so, once', async () => {
     reserve();
-    const { exitCode, calls, errs } = await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
-      checkEasAuth: () => ({ failed: true, code: 'logged-out', reason: 'Not logged in' }),
-    });
+    const { exitCode, calls, errs } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
+        checkEasAuth: () => ({ failed: true, code: 'logged-out', reason: 'Not logged in' }),
+      },
+    );
     expect(exitCode).toBe(null);
     expect(calls.order.includes('buildIos')).toBeTruthy();
     expect(!calls.order.includes('resolveRemote')).toBeTruthy();
     expect(!calls.order.includes('uploadRemote')).toBeTruthy();
-    const lines = errs.join('\n').split('\n').filter((l) => /eas is not authenticated/.test(l));
+    const lines = errs
+      .join('\n')
+      .split('\n')
+      .filter((l) => /eas is not authenticated/.test(l));
     expect(lines.length).toBe(1);
     expect(lines[0]).toMatch(/eas login/);
     expect(lines[0]).toMatch(/EXPO_TOKEN/);
@@ -734,11 +868,17 @@ describe('the remote cache', () => {
   test('the session is checked with the owner the config named, and only once', async () => {
     reserve();
     const asked = [];
-    await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
-      checkEasAuth: (args) => { asked.push(args); return { ok: true, account: 'janic' }; },
-    });
+    await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
+        checkEasAuth: (args) => {
+          asked.push(args);
+          return { ok: true, account: 'janic' };
+        },
+      },
+    );
     expect(asked.length).toBe(1);
     expect(asked[0].owner).toBe('th3rd-wave');
     expect(asked[0].projectRoot).toBe(root);
@@ -747,11 +887,17 @@ describe('the remote cache', () => {
   test('a custom provider is never asked about EAS at all', async () => {
     reserve();
     let asked = false;
-    const { calls } = await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => provider('./p.cjs'),
-      checkEasAuth: () => { asked = true; return { failed: true, code: 'logged-out' }; },
-    });
+    const { calls } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => provider('./p.cjs'),
+        checkEasAuth: () => {
+          asked = true;
+          return { failed: true, code: 'logged-out' };
+        },
+      },
+    );
     expect(asked).toBe(false);
     expect(calls.order.includes('resolveRemote')).toBeTruthy();
   });
@@ -760,24 +906,33 @@ describe('the remote cache', () => {
   // exists, so an unknown answer has to leave the run exactly as it was.
   test('a session that could not be established changes nothing', async () => {
     reserve();
-    const { calls, errs } = await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => provider(),
-      checkEasAuth: () => ({ unknown: 'eas whoami timed out after 15000ms' }),
-    });
+    const { calls, errs } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => provider(),
+        checkEasAuth: () => ({ unknown: 'eas whoami timed out after 15000ms' }),
+      },
+    );
     expect(calls.order.includes('resolveRemote')).toBeTruthy();
     expect(!/not authenticated/.test(errs.join('\n'))).toBeTruthy();
   });
 
   test('a session on the wrong account warns, naming both, and still consults the cache', async () => {
     reserve();
-    const { calls, errs } = await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
-      checkEasAuth: () => ({ failed: true, code: 'wrong-account', account: 'janic', owner: 'th3rd-wave' }),
-    });
+    const { calls, errs } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
+        checkEasAuth: () => ({ failed: true, code: 'wrong-account', account: 'janic', owner: 'th3rd-wave' }),
+      },
+    );
     expect(calls.order.includes('resolveRemote')).toBeTruthy();
-    const line = errs.join('\n').split('\n').find((l) => /janic/.test(l));
+    const line = errs
+      .join('\n')
+      .split('\n')
+      .find((l) => /janic/.test(l));
     expect(line).toMatch(/th3rd-wave/);
     expect(line).toMatch(/anyway/);
   });
@@ -786,23 +941,29 @@ describe('the remote cache', () => {
   // same specific note rather than the generic "could not be used".
   test('a provider failure that reads as auth gets the auth note, not the generic one', async () => {
     reserve();
-    const { errs } = await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => provider(),
-      checkEasAuth: () => ({ unknown: 'offline' }),
-      resolveRemote: async () => ({ failed: 'Error: Not logged in' }),
-    });
+    const { errs } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => provider(),
+        checkEasAuth: () => ({ unknown: 'offline' }),
+        resolveRemote: async () => ({ failed: 'Error: Not logged in' }),
+      },
+    );
     expect(errs.join('\n')).toMatch(/eas is not authenticated \(Error: Not logged in\)/);
     expect(!/could not be used/.test(errs.join('\n'))).toBeTruthy();
   });
 
   test('a failed upload is a note, never a failed run', async () => {
     reserve();
-    const { exitCode, errs, logs } = await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => provider(),
-      uploadRemote: async () => ({ failed: '403 forbidden' }),
-    });
+    const { exitCode, errs, logs } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => provider(),
+        uploadRemote: async () => ({ failed: '403 forbidden' }),
+      },
+    );
     expect(exitCode).toBe(null);
     expect(logs.length).toBe(1);
     expect(errs.join('\n')).toMatch(/upload failed: 403 forbidden/);
@@ -819,18 +980,35 @@ describe('the remote cache', () => {
 // winner always releases, and that --no-build-cache is outside all of it.
 describe('single-flight builds', () => {
   const heldBy = (pid = 41233, projectRoot = '/w/app-999') => ({
-    held: { pid, projectRoot, startedAt: '2026-08-25T10:00:00.000Z', logFile: `${projectRoot}/.rn-iso/logs/build-ios.ndjson` },
+    held: {
+      pid,
+      projectRoot,
+      startedAt: '2026-08-25T10:00:00.000Z',
+      logFile: `${projectRoot}/.rn-iso/logs/build-ios.ndjson`,
+    },
     path: '/home/build-locks/ios-key.lock',
   });
 
   test('the lock is attempted only after BOTH cache levels have missed', async () => {
     reserve();
-    const { calls } = await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
-    });
-    const order = calls.order.filter((c) => ['resolveBuild', 'resolveRemote', 'acquireBuildLock', 'buildIos', 'storeBuild', 'releaseBuildLock'].includes(c));
-    expect(order).toEqual(['resolveBuild', 'resolveRemote', 'acquireBuildLock', 'buildIos', 'storeBuild', 'releaseBuildLock']);
+    const { calls } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      },
+    );
+    const order = calls.order.filter((c) =>
+      ['resolveBuild', 'resolveRemote', 'acquireBuildLock', 'buildIos', 'storeBuild', 'releaseBuildLock'].includes(c),
+    );
+    expect(order).toEqual([
+      'resolveBuild',
+      'resolveRemote',
+      'acquireBuildLock',
+      'buildIos',
+      'storeBuild',
+      'releaseBuildLock',
+    ]);
     expect(calls.args.acquireBuildLock.platform).toBe('ios');
     expect(calls.args.acquireBuildLock.key).toBe(calls.args.resolveBuild.key);
     expect(calls.args.acquireBuildLock.root).toBe(root);
@@ -848,11 +1026,14 @@ describe('single-flight builds', () => {
   // compile of the same fingerprint would be slower than what we already have.
   test('a remote hit never takes the lock either', async () => {
     reserve();
-    const { calls } = await run({}, {
-      detectIsExpo: () => true,
-      loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
-      resolveRemote: async () => ({ appPath: '/downloads/Fixture.app' }),
-    });
+    const { calls } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+        resolveRemote: async () => ({ appPath: '/downloads/Fixture.app' }),
+      },
+    );
     expect(!calls.order.includes('acquireBuildLock')).toBeTruthy();
   });
 
@@ -862,22 +1043,32 @@ describe('single-flight builds', () => {
   // they were not asking for.
   test('--no-build-cache neither waits nor acquires', async () => {
     reserve();
-    const { calls } = await run({ buildCache: false }, {
-      acquireBuildLock: () => { throw new Error('the lock must not be attempted'); },
-      waitForBuild: () => { throw new Error('nothing may be waited for'); },
-    });
+    const { calls } = await run(
+      { buildCache: false },
+      {
+        acquireBuildLock: () => {
+          throw new Error('the lock must not be attempted');
+        },
+        waitForBuild: () => {
+          throw new Error('nothing may be waited for');
+        },
+      },
+    );
     expect(calls.order.includes('buildIos')).toBeTruthy();
   });
 
   test('the loser waits, installs the artifact, and compiles nothing', async () => {
     reserve();
     const waited = '/cache/ios/key/Fixture.app';
-    const { exitCode, calls, logs, stderr } = await run({ json: true }, {
-      acquireBuildLock: () => heldBy(41233, '/w/app-999'),
-      waitForBuild: async () => ({ hit: waited, waitedMs: 761000 }),
-      needsPrebuild: () => true,
-      readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
-    });
+    const { exitCode, calls, logs, stderr } = await run(
+      { json: true },
+      {
+        acquireBuildLock: () => heldBy(41233, '/w/app-999'),
+        waitForBuild: async () => ({ hit: waited, waitedMs: 761000 }),
+        needsPrebuild: () => true,
+        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+      },
+    );
     expect(exitCode).toBe(null);
     expect(!calls.order.includes('buildIos')).toBeTruthy();
     expect(!calls.order.includes('runPrebuild')).toBeTruthy();
@@ -900,10 +1091,13 @@ describe('single-flight builds', () => {
 
   test('the wait is announced when it starts, naming who is building and what to tail', async () => {
     reserve();
-    const { stderr } = await run({}, {
-      acquireBuildLock: () => heldBy(41233, '/w/app-999'),
-      waitForBuild: async () => ({ hit: '/cache/Fixture.app', waitedMs: 1000 }),
-    });
+    const { stderr } = await run(
+      {},
+      {
+        acquireBuildLock: () => heldBy(41233, '/w/app-999'),
+        waitForBuild: async () => ({ hit: '/cache/Fixture.app', waitedMs: 1000 }),
+      },
+    );
     expect(stderr).toMatch(/\/w\/app-999/);
     expect(stderr).toMatch(/41233/);
     expect(stderr).toMatch(/build-ios\.ndjson/);
@@ -911,13 +1105,16 @@ describe('single-flight builds', () => {
 
   test('the wait gets the progress line onto stderr as it happens', async () => {
     reserve();
-    const { stderr, logs } = await run({ json: true }, {
-      acquireBuildLock: () => heldBy(),
-      waitForBuild: async ({ out }) => {
-        out('build       waiting on /w/app-999 (pid 41233, 4m elapsed) -- tail /w/app-999/x.ndjson');
-        return { hit: '/cache/Fixture.app', waitedMs: 240000 };
+    const { stderr, logs } = await run(
+      { json: true },
+      {
+        acquireBuildLock: () => heldBy(),
+        waitForBuild: async ({ out }) => {
+          out('build       waiting on /w/app-999 (pid 41233, 4m elapsed) -- tail /w/app-999/x.ndjson');
+          return { hit: '/cache/Fixture.app', waitedMs: 240000 };
+        },
       },
-    });
+    );
     expect(stderr).toMatch(/waiting on \/w\/app-999 \(pid 41233, 4m elapsed\)/);
     expect(logs.length).toBe(1);
   });
@@ -928,10 +1125,17 @@ describe('single-flight builds', () => {
   test('a builder that failed makes the waiter take over and build', async () => {
     reserve();
     let acquires = 0;
-    const { exitCode, calls, stderr } = await run({}, {
-      acquireBuildLock: () => (++acquires === 1 ? heldBy() : { acquired: true, path: '/lock', lock: { pid: process.pid } }),
-      waitForBuild: async () => ({ builderFailed: 'the build lock was released without an artifact', waitedMs: 4000 }),
-    });
+    const { exitCode, calls, stderr } = await run(
+      {},
+      {
+        acquireBuildLock: () =>
+          ++acquires === 1 ? heldBy() : { acquired: true, path: '/lock', lock: { pid: process.pid } },
+        waitForBuild: async () => ({
+          builderFailed: 'the build lock was released without an artifact',
+          waitedMs: 4000,
+        }),
+      },
+    );
     expect(exitCode).toBe(null);
     expect(acquires).toBe(2);
     expect(calls.order.includes('buildIos')).toBeTruthy();
@@ -945,10 +1149,16 @@ describe('single-flight builds', () => {
   test('losing the takeover race builds anyway rather than queueing again', async () => {
     reserve();
     let waits = 0;
-    const { exitCode, calls } = await run({}, {
-      acquireBuildLock: () => heldBy(),
-      waitForBuild: async () => { waits++; return { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 }; },
-    });
+    const { exitCode, calls } = await run(
+      {},
+      {
+        acquireBuildLock: () => heldBy(),
+        waitForBuild: async () => {
+          waits++;
+          return { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 };
+        },
+      },
+    );
     expect(exitCode).toBe(null);
     expect(waits).toBe(1);
     expect(calls.order.includes('buildIos')).toBeTruthy();
@@ -960,9 +1170,12 @@ describe('single-flight builds', () => {
   // workspace on the fingerprint waiting for an artifact nobody is making.
   test('a FAILED build releases the lock', async () => {
     reserve();
-    const { exitCode, calls } = await run({}, {
-      buildIos: async () => ({ failed: true, code: 'RN_ISO_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
-    });
+    const { exitCode, calls } = await run(
+      {},
+      {
+        buildIos: async () => ({ failed: true, code: 'RN_ISO_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
+      },
+    );
     expect(exitCode).toBe(1);
     expect(calls.order.includes('releaseBuildLock')).toBeTruthy();
   });
@@ -972,21 +1185,34 @@ describe('single-flight builds', () => {
   test('a build that THROWS releases the lock on the way out', async () => {
     reserve();
     let released = null;
-    await await expect(() => run({}, {
-      buildIos: async () => { throw new Error('xcodebuild exploded'); },
-      releaseBuildLock: (handle) => { released = handle; return true; },
-    })).rejects.toThrow(/xcodebuild exploded/);
+    await expect(() =>
+      run(
+        {},
+        {
+          buildIos: async () => {
+            throw new Error('xcodebuild exploded');
+          },
+          releaseBuildLock: (handle) => {
+            released = handle;
+            return true;
+          },
+        },
+      ),
+    ).rejects.toThrow(/xcodebuild exploded/);
     expect(released).toBeTruthy();
     expect(released.lock.pid).toBe(process.pid);
   });
 
   test('a prebuild or pod failure releases the lock too', async () => {
     reserve();
-    const { exitCode, calls } = await run({}, {
-      detectIsExpo: () => true,
-      needsPrebuild: () => true,
-      runPrebuild: async () => ({ failed: true, code: 'RN_ISO_PREBUILD_FAILED', reason: 'no' }),
-    });
+    const { exitCode, calls } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        needsPrebuild: () => true,
+        runPrebuild: async () => ({ failed: true, code: 'RN_ISO_PREBUILD_FAILED', reason: 'no' }),
+      },
+    );
     expect(exitCode).toBe(1);
     expect(!calls.order.includes('buildIos')).toBeTruthy();
     expect(calls.order.includes('releaseBuildLock')).toBeTruthy();
@@ -996,15 +1222,18 @@ describe('single-flight builds', () => {
   // a ceiling. It surfaces as an ordinary refusal with a code, not a stack.
   test('a wait that hits its ceiling is a refusal with a code, not a crash', async () => {
     reserve();
-    const { exitCode, errs, logs, calls } = await run({ json: true }, {
-      acquireBuildLock: () => heldBy(),
-      waitForBuild: async () => {
-        const err = new Error('Waited 90m ... The lock is /home/build-locks/ios-key.lock');
-        err.code = 'RN_ISO_BUILD_WAIT_TIMEOUT';
-        err.lockPath = '/home/build-locks/ios-key.lock';
-        throw err;
+    const { exitCode, errs, logs, calls } = await run(
+      { json: true },
+      {
+        acquireBuildLock: () => heldBy(),
+        waitForBuild: async () => {
+          const err = new Error('Waited 90m ... The lock is /home/build-locks/ios-key.lock');
+          err.code = 'RN_ISO_BUILD_WAIT_TIMEOUT';
+          err.lockPath = '/home/build-locks/ios-key.lock';
+          throw err;
+        },
       },
-    });
+    );
     expect(exitCode).toBe(1);
     expect(!calls.order.includes('buildIos')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/RN_ISO_BUILD_WAIT_TIMEOUT/);
@@ -1015,9 +1244,14 @@ describe('single-flight builds', () => {
   // optimisation, and an optimisation that cannot run must not stop a build.
   test('a lock that cannot be created is a note, and the build proceeds', async () => {
     reserve();
-    const { exitCode, calls, errs } = await run({}, {
-      acquireBuildLock: () => { throw new Error('EROFS: read-only file system'); },
-    });
+    const { exitCode, calls, errs } = await run(
+      {},
+      {
+        acquireBuildLock: () => {
+          throw new Error('EROFS: read-only file system');
+        },
+      },
+    );
     expect(exitCode).toBe(null);
     expect(calls.order.includes('buildIos')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/read-only file system/);
@@ -1027,9 +1261,12 @@ describe('single-flight builds', () => {
 describe('pods', () => {
   test('a sandbox that does not match the lock is installed before the build', async () => {
     reserve();
-    const { calls, errs } = await run({}, {
-      readPodState: () => ({ hasPodfile: true, lockText: 'PODS: A', manifestText: 'PODS: B' }),
-    });
+    const { calls, errs } = await run(
+      {},
+      {
+        readPodState: () => ({ hasPodfile: true, lockText: 'PODS: A', manifestText: 'PODS: B' }),
+      },
+    );
     expect(calls.order.includes('runPodInstall')).toBeTruthy();
     expect(calls.order.indexOf('runPodInstall') < calls.order.indexOf('buildIos')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/^pods {8}.*differ -> installed \(18s\)/m);
@@ -1037,32 +1274,41 @@ describe('pods', () => {
 
   test('a Podfile whose pods have never been installed is installed too', async () => {
     reserve();
-    const { calls } = await run({}, {
-      readPodState: () => ({ hasPodfile: true, lockText: null, manifestText: null }),
-    });
+    const { calls } = await run(
+      {},
+      {
+        readPodState: () => ({ hasPodfile: true, lockText: null, manifestText: null }),
+      },
+    );
     expect(calls.order.includes('runPodInstall')).toBeTruthy();
   });
 
   test('a project with no CocoaPods at all is skipped silently', async () => {
     reserve();
-    const { calls, errs } = await run({}, {
-      readPodState: () => ({ hasPodfile: false, lockText: null, manifestText: null }),
-    });
+    const { calls, errs } = await run(
+      {},
+      {
+        readPodState: () => ({ hasPodfile: false, lockText: null, manifestText: null }),
+      },
+    );
     expect(!calls.order.includes('runPodInstall')).toBeTruthy();
     expect(!/^pods/m.test(errs.join('\n'))).toBeTruthy();
   });
 
   test('a failed pod install stops the run with RN_ISO_DEPS_FAILED', async () => {
     reserve();
-    const { errs, exitCode, calls } = await run({}, {
-      readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
-      runPodInstall: async () => ({
-        failed: true,
-        code: 'RN_ISO_DEPS_FAILED',
-        reason: '`pod install` failed (exit code 1).',
-        lastLines: ['[!] CocoaPods could not find compatible versions'],
-      }),
-    });
+    const { errs, exitCode, calls } = await run(
+      {},
+      {
+        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+        runPodInstall: async () => ({
+          failed: true,
+          code: 'RN_ISO_DEPS_FAILED',
+          reason: '`pod install` failed (exit code 1).',
+          lastLines: ['[!] CocoaPods could not find compatible versions'],
+        }),
+      },
+    );
     expect(exitCode).toBe(1);
     expect(!calls.order.includes('buildIos')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/RN_ISO_DEPS_FAILED/);
@@ -1073,20 +1319,26 @@ describe('pods', () => {
 describe('failure output', () => {
   test('a failed build prints the extracted diagnostics and the log path, never the transcript', async () => {
     reserve();
-    const { errs, logs, exitCode } = await run({ json: true }, {
-      buildIos: async () => ({
-        failed: true,
-        code: 'RN_ISO_BUILD_FAILED',
-        durationMs: 161000,
-        truncated: 3,
-        exitCode: 65,
-        diagnostics: [
-          { file: '/w/ios/AppDelegate.mm', line: 12, column: 4, message: "use of undeclared identifier 'foo'" },
-          { message: 'The sandbox is not in sync with the Podfile.lock', remedy: 'Run `pod install` in ios/ and build again.' },
-        ],
-        tail: ['** BUILD FAILED **'],
-      }),
-    });
+    const { errs, logs, exitCode } = await run(
+      { json: true },
+      {
+        buildIos: async () => ({
+          failed: true,
+          code: 'RN_ISO_BUILD_FAILED',
+          durationMs: 161000,
+          truncated: 3,
+          exitCode: 65,
+          diagnostics: [
+            { file: '/w/ios/AppDelegate.mm', line: 12, column: 4, message: "use of undeclared identifier 'foo'" },
+            {
+              message: 'The sandbox is not in sync with the Podfile.lock',
+              remedy: 'Run `pod install` in ios/ and build again.',
+            },
+          ],
+          tail: ['** BUILD FAILED **'],
+        }),
+      },
+    );
     expect(exitCode).toBe(1);
     // --json is a contract about stdout in BOTH directions: exactly one
     // parseable line, whether the run succeeded or failed. A caller capturing
@@ -1134,21 +1386,37 @@ describe('failure output', () => {
 
   test('a build with no recognizable diagnostic falls back to the transcript tail', async () => {
     reserve();
-    const { errs } = await run({}, {
-      buildIos: async () => ({
-        failed: true, code: 'RN_ISO_BUILD_FAILED', durationMs: 1000, truncated: 0,
-        diagnostics: [], tail: ['xcodebuild: error: something inscrutable'],
-      }),
-    });
+    const { errs } = await run(
+      {},
+      {
+        buildIos: async () => ({
+          failed: true,
+          code: 'RN_ISO_BUILD_FAILED',
+          durationMs: 1000,
+          truncated: 0,
+          diagnostics: [],
+          tail: ['xcodebuild: error: something inscrutable'],
+        }),
+      },
+    );
     expect(errs.join('\n')).toMatch(/no recognizable diagnostic/);
     expect(errs.join('\n')).toMatch(/something inscrutable/);
   });
 
   test('a failed build writes a Contract-4 record with the error code', async () => {
     reserve();
-    await run({}, {
-      buildIos: async () => ({ failed: true, code: 'RN_ISO_BUILD_FAILED', durationMs: 5000, diagnostics: [], tail: [] }),
-    });
+    await run(
+      {},
+      {
+        buildIos: async () => ({
+          failed: true,
+          code: 'RN_ISO_BUILD_FAILED',
+          durationMs: 5000,
+          diagnostics: [],
+          tail: [],
+        }),
+      },
+    );
     const { lastBuild } = readWorkspaceState(root);
     expect(lastBuild.status).toBe('failed');
     expect(lastBuild.errorCode).toBe('RN_ISO_BUILD_FAILED');
@@ -1160,9 +1428,12 @@ describe('failure output', () => {
 
   test('a device that will not boot is refused before anything is fingerprinted or built', async () => {
     reserve();
-    const { errs, exitCode, calls } = await run({}, {
-      ensureBooted: async () => ({ failed: true, reason: 'Simulator BF2A no longer exists.' }),
-    });
+    const { errs, exitCode, calls } = await run(
+      {},
+      {
+        ensureBooted: async () => ({ failed: true, reason: 'Simulator BF2A no longer exists.' }),
+      },
+    );
     expect(exitCode).toBe(1);
     expect(!calls.order.includes('fingerprintProject')).toBeTruthy();
     expect(!calls.order.includes('buildIos')).toBeTruthy();
@@ -1171,9 +1442,12 @@ describe('failure output', () => {
 
   test('a failed install is reported with its own code and a failed record', async () => {
     reserve();
-    const { errs, exitCode } = await run({}, {
-      installIosApp: () => ({ failed: true, code: 'RN_ISO_INSTALL_FAILED', reason: 'simctl install failed' }),
-    });
+    const { errs, exitCode } = await run(
+      {},
+      {
+        installIosApp: () => ({ failed: true, code: 'RN_ISO_INSTALL_FAILED', reason: 'simctl install failed' }),
+      },
+    );
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/RN_ISO_INSTALL_FAILED/);
     expect(readWorkspaceState(root).lastBuild.errorCode).toBe('RN_ISO_INSTALL_FAILED');
@@ -1228,9 +1502,13 @@ describe('Contract 6: the dev-client scheme', () => {
   test('is passed when the app config has one and the dev client is installed', async () => {
     reserve();
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { scheme: 'fixture' } }));
-    writeFileSync(join(root, 'package.json'), JSON.stringify({
-      name: 'fixture', dependencies: { expo: '52.0.0', 'expo-dev-client': '5.0.0' },
-    }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({
+        name: 'fixture',
+        dependencies: { expo: '52.0.0', 'expo-dev-client': '5.0.0' },
+      }),
+    );
     const { calls } = await run({}, { devClientScheme });
     expect(calls.args.launchIosApp.devClientScheme).toBe('fixture');
   });
@@ -1238,9 +1516,13 @@ describe('Contract 6: the dev-client scheme', () => {
   test('is undefined when the app config has no scheme: a plain launch plus RCT_jsLocation works everywhere', async () => {
     reserve();
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'fixture' } }));
-    writeFileSync(join(root, 'package.json'), JSON.stringify({
-      name: 'fixture', dependencies: { 'expo-dev-client': '5.0.0' },
-    }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({
+        name: 'fixture',
+        dependencies: { 'expo-dev-client': '5.0.0' },
+      }),
+    );
     const { calls } = await run({}, { devClientScheme });
     expect(calls.args.launchIosApp.devClientScheme).toBe(undefined);
   });
@@ -1294,7 +1576,11 @@ describe('the collector', () => {
   test('a previous collector that is already gone (ESRCH) is not an error', async () => {
     const h = collectorHarness({
       state: { collectors: { ios: { pid: 999 } } },
-      killImpl: () => { const e = new Error('kill ESRCH'); e.code = 'ESRCH'; throw e; },
+      killImpl: () => {
+        const e = new Error('kill ESRCH');
+        e.code = 'ESRCH';
+        throw e;
+      },
     });
     const result = await replaceCollector(h.opts);
     expect(result.killed).toBe(null);
@@ -1309,11 +1595,16 @@ describe('the collector', () => {
     expect(args[0]).toBe(collectorEntry());
     expect(existsSync(collectorEntry())).toBeTruthy();
     expect(args.slice(1)).toEqual([
-      '--platform', 'ios',
-      '--root', root,
-      '--udid', UDID,
-      '--bundle', 'com.example.app',
-      '--app-name', 'FixtureDev',
+      '--platform',
+      'ios',
+      '--root',
+      root,
+      '--udid',
+      UDID,
+      '--bundle',
+      'com.example.app',
+      '--app-name',
+      'FixtureDev',
     ]);
     expect(opts.detached).toBe(true);
     expect(opts.cwd).toBe(root);
@@ -1321,9 +1612,16 @@ describe('the collector', () => {
 
   test('the command hands it the app name derived from the .app basename', async () => {
     reserve();
-    const { calls } = await run({}, {
-      buildIos: async () => ({ appPath: '/tmp/dd/Build/Products/Debug-iphonesimulator/FixtureDev.app', bundleId: 'com.example.app', durationMs: 1000 }),
-    });
+    const { calls } = await run(
+      {},
+      {
+        buildIos: async () => ({
+          appPath: '/tmp/dd/Build/Products/Debug-iphonesimulator/FixtureDev.app',
+          bundleId: 'com.example.app',
+          durationMs: 1000,
+        }),
+      },
+    );
     expect(calls.args.replaceCollector.appName).toBe('FixtureDev');
     expect(calls.args.replaceCollector.bundleId).toBe('com.example.app');
     expect(calls.args.replaceCollector.udid).toBe(UDID);
@@ -1350,7 +1648,9 @@ describe('Contract 4: the state file', () => {
   test('writeLastBuild survives a workspace it cannot write', () => {
     const record = lastBuildRecord({ startedAt: 'T', status: 'ok' });
     const written = writeLastBuild(root, record, {
-      write: () => { throw new Error('EROFS'); },
+      write: () => {
+        throw new Error('EROFS');
+      },
     });
     expect(written).toBe(record);
   });
@@ -1392,7 +1692,10 @@ describe('formatting', () => {
 
 describe('podAction', () => {
   test('stale means install, and carries the reason to print', () => {
-    expect(podAction({ hasPodfile: true }, { stale: true, reason: 'they differ' })).toEqual({ install: true, reason: 'they differ' });
+    expect(podAction({ hasPodfile: true }, { stale: true, reason: 'they differ' })).toEqual({
+      install: true,
+      reason: 'they differ',
+    });
   });
 
   test('no pods AND a Podfile is a fresh checkout: install', () => {
@@ -1443,7 +1746,7 @@ describe('devClientScheme', () => {
   // The BUILT app is the truth. app.json alone was the source, and a project
   // with a dynamic config (app.config.ts) has no scheme there at all -- so the
   // deep link was skipped and the app opened the dev-launcher's server picker.
-  test('prefers the built app\'s Info.plist over app.json', () => {
+  test("prefers the built app's Info.plist over app.json", () => {
     const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
     const exec = {
       runFile: (cmd, args) => {
@@ -1458,18 +1761,30 @@ describe('devClientScheme', () => {
 
   test('falls back to app.json when the bundle cannot be read', () => {
     const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
-    const exec = { runFile: () => { throw new Error('plutil: file does not exist'); } };
+    const exec = {
+      runFile: () => {
+        throw new Error('plutil: file does not exist');
+      },
+    };
     expect(devClientScheme(dir, '/b/Fixture.app', { exec })).toBe('from-app-json');
   });
 
   test('reads CFBundleURLTypes the way @expo/config-plugins does', () => {
-    expect(schemesFromInfoPlist({ CFBundleURLTypes: [{ CFBundleURLSchemes: ['a'] }, { CFBundleTypeRole: 'Editor' }, { CFBundleURLSchemes: ['b', 'c'] }] })).toEqual(['a', 'b', 'c']);
+    expect(
+      schemesFromInfoPlist({
+        CFBundleURLTypes: [
+          { CFBundleURLSchemes: ['a'] },
+          { CFBundleTypeRole: 'Editor' },
+          { CFBundleURLSchemes: ['b', 'c'] },
+        ],
+      }),
+    ).toEqual(['a', 'b', 'c']);
     expect(schemesFromInfoPlist({})).toEqual([]);
     expect(schemesFromInfoPlist(null)).toEqual([]);
   });
 
   describe('pickDevClientScheme', () => {
-    test('prefers exp+<slug>, as Expo\'s own CLI does', () => {
+    test("prefers exp+<slug>, as Expo's own CLI does", () => {
       expect(pickDevClientScheme(['myapp', 'exp+my-app'])).toBe('exp+my-app');
     });
 
@@ -1477,11 +1792,15 @@ describe('devClientScheme', () => {
       // Verbatim from a real app's Info.plist. Expo's rule (longest wins)
       // picks the Google one; `fb...` is also declared by the Facebook app, so
       // which app iOS opens depends on what else is installed.
-      const real = ['th3rdwave', 'fb555544564655381', 'com.googleusercontent.apps.869857856617-96dju1hh2u2361k8o6becusfvq74tv80'];
+      const real = [
+        'th3rdwave',
+        'fb555544564655381',
+        'com.googleusercontent.apps.869857856617-96dju1hh2u2361k8o6becusfvq74tv80',
+      ];
       expect(pickDevClientScheme(real)).toBe('th3rdwave');
     });
 
-    test('otherwise the longest, which is Expo\'s uniqueness tie-break', () => {
+    test("otherwise the longest, which is Expo's uniqueness tie-break", () => {
       expect(pickDevClientScheme(['a', 'io.tlon.groups'])).toBe('io.tlon.groups');
       expect(pickDevClientScheme(['https', 'mailto'])).toBe(null);
       expect(pickDevClientScheme([])).toBe(null);
@@ -1493,25 +1812,50 @@ describe('devClientScheme', () => {
 describe('iosFacts', () => {
   test('launched is three-valued: true, or the string "unverified"', () => {
     const base = {
-      udid: UDID, fingerprint: 'abc', cacheKey: 'k', cacheHit: false, appPath: '/a.app',
-      bundleId: 'com.x', metroPort: 8082, logsDir: '/l', durationMs: 1,
+      udid: UDID,
+      fingerprint: 'abc',
+      cacheKey: 'k',
+      cacheHit: false,
+      appPath: '/a.app',
+      bundleId: 'com.x',
+      metroPort: 8082,
+      logsDir: '/l',
+      durationMs: 1,
     };
     expect(iosFacts(base).launched).toBe(true);
     expect(iosFacts({ ...base, launched: 'unverified' }).launched).toBe('unverified');
   });
 
   test('is the shape an agent parses', () => {
-    expect(iosFacts({
-        udid: UDID, deviceName: 'rn-iso-x', fingerprint: 'abc', cacheKey: 'abc-debug-sim',
-        cacheHit: 'local', appPath: '/a/b.app', bundleId: 'com.x', metroPort: 8082,
-        logsDir: '/w/.rn-iso/logs', durationMs: 1234,
-      })).toEqual({
-        platform: 'ios', udid: UDID, deviceName: 'rn-iso-x', fingerprint: 'abc',
-        cacheKey: 'abc-debug-sim', cacheHit: 'local', cacheSkipped: false, waitedForBuild: null,
+    expect(
+      iosFacts({
+        udid: UDID,
+        deviceName: 'rn-iso-x',
+        fingerprint: 'abc',
+        cacheKey: 'abc-debug-sim',
+        cacheHit: 'local',
         appPath: '/a/b.app',
-        bundleId: 'com.x', launched: true, metroPort: 8082, logs: { dir: '/w/.rn-iso/logs' },
+        bundleId: 'com.x',
+        metroPort: 8082,
+        logsDir: '/w/.rn-iso/logs',
         durationMs: 1234,
-      });
+      }),
+    ).toEqual({
+      platform: 'ios',
+      udid: UDID,
+      deviceName: 'rn-iso-x',
+      fingerprint: 'abc',
+      cacheKey: 'abc-debug-sim',
+      cacheHit: 'local',
+      cacheSkipped: false,
+      waitedForBuild: null,
+      appPath: '/a/b.app',
+      bundleId: 'com.x',
+      launched: true,
+      metroPort: 8082,
+      logs: { dir: '/w/.rn-iso/logs' },
+      durationMs: 1234,
+    });
   });
 
   // A wait is reported ALONGSIDE cacheHit: 'local', never instead of it. The
@@ -1553,7 +1897,15 @@ describe('cacheDescription', () => {
 test('ios fingerprints with platforms scoped to ios', async () => {
   reserve();
   const seen = [];
-  await run({}, { fingerprintProject: async (path, options) => { seen.push({ path, options }); return FINGERPRINT; } });
+  await run(
+    {},
+    {
+      fingerprintProject: async (path, options) => {
+        seen.push({ path, options });
+        return FINGERPRINT;
+      },
+    },
+  );
   expect(seen.length).toBe(1);
   expect(seen[0].path).toBe(root);
   expect(seen[0].options?.platform).toBe('ios');
@@ -1564,12 +1916,20 @@ test('ios fingerprints with platforms scoped to ios', async () => {
 // `--json` payload is all an unattended caller sees.
 test('--json says so when a build failed with no recognizable diagnostic', async () => {
   reserve();
-  const { logs, exitCode } = await run({ json: true }, {
-    buildIos: async () => ({
-      failed: true, code: 'RN_ISO_BUILD_FAILED', durationMs: 1000, truncated: 0,
-      exitCode: 70, diagnostics: [], tail: ['xcodebuild: error: something inscrutable'],
-    }),
-  });
+  const { logs, exitCode } = await run(
+    { json: true },
+    {
+      buildIos: async () => ({
+        failed: true,
+        code: 'RN_ISO_BUILD_FAILED',
+        durationMs: 1000,
+        truncated: 0,
+        exitCode: 70,
+        diagnostics: [],
+        tail: ['xcodebuild: error: something inscrutable'],
+      }),
+    },
+  );
   expect(exitCode).toBe(1);
   const payload = JSON.parse(logs[0]);
   expect(payload.message).toMatch(/no recognizable diagnostic/);
@@ -1581,10 +1941,16 @@ describe('concurrency limits', () => {
   test('unset limits change nothing: no slot is taken, no capacity check refuses', async () => {
     reserve();
     let slotAcquired = 0;
-    const { exitCode, calls } = await run({}, {
-      getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 0 }),
-      acquireBuildSlot: async () => { slotAcquired++; return { acquired: true }; },
-    });
+    const { exitCode, calls } = await run(
+      {},
+      {
+        getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 0 }),
+        acquireBuildSlot: async () => {
+          slotAcquired++;
+          return { acquired: true };
+        },
+      },
+    );
     expect(exitCode).toBe(null);
     expect(slotAcquired).toBe(0);
     expect(calls.order.includes('buildIos')).toBeTruthy();
@@ -1593,13 +1959,20 @@ describe('concurrency limits', () => {
   test('maxDevices at capacity refuses with RN_ISO_AT_CAPACITY, before ensuring a device', async () => {
     reserve();
     let capacityArgs = null;
-    const { errs, exitCode, calls } = await run({}, {
-      getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 2 }),
-      checkDeviceCapacity: (args) => {
-        capacityArgs = args;
-        return { code: 'RN_ISO_AT_CAPACITY', message: 'at capacity', remedy: 'stop an environment (rn-iso stop) or raise concurrency.maxDevices' };
+    const { errs, exitCode, calls } = await run(
+      {},
+      {
+        getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 2 }),
+        checkDeviceCapacity: (args) => {
+          capacityArgs = args;
+          return {
+            code: 'RN_ISO_AT_CAPACITY',
+            message: 'at capacity',
+            remedy: 'stop an environment (rn-iso stop) or raise concurrency.maxDevices',
+          };
+        },
       },
-    });
+    );
     expect(exitCode).toBe(1);
     expect(capacityArgs.max).toBe(2);
     expect(errs.join('\n')).toMatch(/RN_ISO_AT_CAPACITY/);
@@ -1611,14 +1984,38 @@ describe('concurrency limits', () => {
     reserve();
     const seq = [];
     let slotArgs = null;
-    const { exitCode } = await run({}, {
-      getConcurrencyLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
-      acquireBuildLock: () => { seq.push('lock'); return { acquired: true, path: '/lock', lock: { pid: process.pid } }; },
-      releaseBuildLock: () => { seq.push('releaseLock'); return true; },
-      acquireBuildSlot: async (args) => { seq.push('slot'); slotArgs = args; return { acquired: true, path: '/slot', index: 0, slot: { pid: process.pid } }; },
-      releaseBuildSlot: () => { seq.push('releaseSlot'); return true; },
-      buildIos: async () => { seq.push('build'); return { appPath: join(root, 'build', 'Fixture.app'), bundleId: 'com.example.app', durationMs: 1000, scheme: 'Fixture' }; },
-    });
+    const { exitCode } = await run(
+      {},
+      {
+        getConcurrencyLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
+        acquireBuildLock: () => {
+          seq.push('lock');
+          return { acquired: true, path: '/lock', lock: { pid: process.pid } };
+        },
+        releaseBuildLock: () => {
+          seq.push('releaseLock');
+          return true;
+        },
+        acquireBuildSlot: async (args) => {
+          seq.push('slot');
+          slotArgs = args;
+          return { acquired: true, path: '/slot', index: 0, slot: { pid: process.pid } };
+        },
+        releaseBuildSlot: () => {
+          seq.push('releaseSlot');
+          return true;
+        },
+        buildIos: async () => {
+          seq.push('build');
+          return {
+            appPath: join(root, 'build', 'Fixture.app'),
+            bundleId: 'com.example.app',
+            durationMs: 1000,
+            scheme: 'Fixture',
+          };
+        },
+      },
+    );
     expect(exitCode).toBe(null);
     // Slot comes after the single-flight lock, before the compile, and is
     // released with the lock once the artifact is stored.
@@ -1627,17 +2024,31 @@ describe('concurrency limits', () => {
     expect(slotArgs.root).toBe(root);
   });
 
-  test('a waiter that installs another workspace\'s artifact never consumes a slot', async () => {
+  test("a waiter that installs another workspace's artifact never consumes a slot", async () => {
     reserve();
     let slotAcquired = 0;
     let built = 0;
-    const { exitCode } = await run({}, {
-      getConcurrencyLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
-      acquireBuildLock: () => ({ held: { pid: 41233, projectRoot: '/w/other', logFile: null } }),
-      waitForBuild: async () => ({ hit: join(root, 'build', 'Fixture.app'), waitedMs: 5000 }),
-      acquireBuildSlot: async () => { slotAcquired++; return { acquired: true }; },
-      buildIos: async () => { built++; return { appPath: join(root, 'build', 'Fixture.app'), bundleId: 'com.example.app', durationMs: 1, scheme: 'F' }; },
-    });
+    const { exitCode } = await run(
+      {},
+      {
+        getConcurrencyLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
+        acquireBuildLock: () => ({ held: { pid: 41233, projectRoot: '/w/other', logFile: null } }),
+        waitForBuild: async () => ({ hit: join(root, 'build', 'Fixture.app'), waitedMs: 5000 }),
+        acquireBuildSlot: async () => {
+          slotAcquired++;
+          return { acquired: true };
+        },
+        buildIos: async () => {
+          built++;
+          return {
+            appPath: join(root, 'build', 'Fixture.app'),
+            bundleId: 'com.example.app',
+            durationMs: 1,
+            scheme: 'F',
+          };
+        },
+      },
+    );
     expect(exitCode).toBe(null);
     expect(slotAcquired).toBe(0);
     expect(built).toBe(0);

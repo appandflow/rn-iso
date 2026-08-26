@@ -85,19 +85,24 @@ export function resolveRegisteredProject(arg?: string | null): ResolveResult {
   if (!arg) {
     const root = findProjectRoot(process.cwd());
     if (!root) return { found: null, error: 'Not in a React Native project (no package.json found).' };
-    if (!projects[root]) return { found: null, error: `No rn-iso entry for ${root}. Run \`rn-iso start\` or \`rn-iso ios\` there first.` };
+    if (!projects[root])
+      return { found: null, error: `No rn-iso entry for ${root}. Run \`rn-iso start\` or \`rn-iso ios\` there first.` };
     return { found: root };
   }
 
   // Exact path match. realpath() canonicalizes symlinks the same way
   // findProjectRoot does, so the keys line up.
   let abs: string;
-  try { abs = realpathSync(resolve(arg)); } catch { abs = resolve(arg); }
+  try {
+    abs = realpathSync(resolve(arg));
+  } catch {
+    abs = resolve(arg);
+  }
   if (projects[abs]) return { found: abs };
   if (projects[arg]) return { found: arg };
 
   // Shortcut match (label or basename).
-  const matches = Object.keys(projects).filter(p => projectShortcut(p, projects[p]) === arg);
+  const matches = Object.keys(projects).filter((p) => projectShortcut(p, projects[p]) === arg);
   if (matches.length === 1) return { found: matches[0] };
   if (matches.length > 1) {
     return {
@@ -171,7 +176,7 @@ export function detectIsExpo(projectRoot: string): boolean {
     if (/\breact-native\s+run-ios\b/.test(iosScript)) return false;
   }
   if (!pkg) return false;
-  const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  const deps = { ...pkg.dependencies, ...pkg.devDependencies };
   const hasExpoDep = 'expo' in deps;
   const resolvable = () => isPackageResolvable(projectRoot, 'expo');
   if (!hasExpoDep && !resolvable()) return false;
@@ -196,8 +201,17 @@ export function looksLikeExpoConfig(appJson: AnyJson | null): boolean {
   if (!appJson || typeof appJson !== 'object' || Array.isArray(appJson)) return false;
   if (appJson.expo) return true;
   const keys = [
-    'slug', 'plugins', 'sdkVersion', 'experiments', 'runtimeVersion', 'updates',
-    'buildCacheProvider', 'assetBundlePatterns', 'splash', 'orientation', 'userInterfaceStyle',
+    'slug',
+    'plugins',
+    'sdkVersion',
+    'experiments',
+    'runtimeVersion',
+    'updates',
+    'buildCacheProvider',
+    'assetBundlePatterns',
+    'splash',
+    'orientation',
+    'userInterfaceStyle',
   ];
   if (keys.some((key) => appJson[key] !== undefined)) return true;
   return Boolean(appJson.extra && typeof appJson.extra === 'object' && appJson.extra.eas);
@@ -232,7 +246,9 @@ function readAppConfigText(projectRoot: string): string | null {
     if (existsSync(p)) {
       try {
         return readFileSync(p, 'utf-8');
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
   return null;
@@ -286,13 +302,19 @@ export function detectBundleIdFromPbxproj(projectRoot: string): string | null {
     const pbx = join(iosDir, entry.name, 'project.pbxproj');
     if (!existsSync(pbx)) continue;
     let text: string;
-    try { text = readFileSync(pbx, 'utf-8'); } catch { continue; }
-    const all = [...text.matchAll(/PRODUCT_BUNDLE_IDENTIFIER\s*=\s*([^;\s"]+)\s*;/g)].map(m => m[1]);
-    const concrete = all.filter(id => id && !id.startsWith('$') && !id.includes('('));
+    try {
+      text = readFileSync(pbx, 'utf-8');
+    } catch {
+      continue;
+    }
+    const all = [...text.matchAll(/PRODUCT_BUNDLE_IDENTIFIER\s*=\s*([^;\s"]+)\s*;/g)].map((m) => m[1]);
+    const concrete = all.filter((id) => id && !id.startsWith('$') && !id.includes('('));
     if (concrete.length === 0) continue;
     const counts: Record<string, number> = {};
     for (const id of concrete) counts[id] = (counts[id] || 0) + 1;
-    let best: string | null = null, bestCount = 0, bestLen = Infinity;
+    let best: string | null = null,
+      bestCount = 0,
+      bestLen = Infinity;
     for (const [id, count] of Object.entries(counts)) {
       if (count > bestCount || (count === bestCount && id.length < bestLen)) {
         best = id;
@@ -309,7 +331,11 @@ export function detectAndroidPackageFromGradle(projectRoot: string): string | nu
   const gradle = join(projectRoot, 'android', 'app', 'build.gradle');
   if (!existsSync(gradle)) return null;
   let text: string;
-  try { text = readFileSync(gradle, 'utf-8'); } catch { return null; }
+  try {
+    text = readFileSync(gradle, 'utf-8');
+  } catch {
+    return null;
+  }
   // Try `namespace "com.foo"` (modern AGP) first, then fall back to
   // `applicationId "com.foo"`.
   const ns = text.match(/namespace\s+["']([^"']+)["']/);

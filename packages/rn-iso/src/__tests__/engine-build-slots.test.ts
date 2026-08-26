@@ -94,7 +94,7 @@ describe('listBuildSlots', () => {
     writeFileSync(join(mkslot(0), 'slot.json'), JSON.stringify({ pid: process.pid, index: 0, projectRoot: '/w/live' }));
     writeFileSync(join(mkslot(1), 'slot.json'), JSON.stringify({ pid: 999999, index: 1, projectRoot: '/w/dead' }));
     const slots = listBuildSlots({ isAlive: (pid) => pid === process.pid });
-    const byIndex = Object.fromEntries(slots.map(s => [s.index, s]));
+    const byIndex = Object.fromEntries(slots.map((s) => [s.index, s]));
     expect(byIndex[0].alive).toBe(true);
     expect(byIndex[1].alive).toBe(false);
     expect(byIndex[1].projectRoot).toBe('/w/dead');
@@ -108,31 +108,36 @@ describe('live: 2 slots, 3 processes', () => {
   test('the third process waits for a slot and gets one on release', async () => {
     const script = join(tmpHome, 'holder.mjs');
     const slotsUrl = new URL('../engine/build-slots.ts', import.meta.url).href;
-    writeFileSync(script, [
-      `const { acquireBuildSlot, releaseBuildSlot } = await import(${JSON.stringify(slotsUrl)});`,
-      'const [id, dir] = process.argv.slice(2);',
-      'const { writeFileSync, existsSync } = await import("node:fs");',
-      'const { join } = await import("node:path");',
-      'const handle = await acquireBuildSlot({ max: 2, root: "/w/" + id, intervalMs: 25, progressMs: 1e9 });',
-      'writeFileSync(join(dir, "acquired-" + id), String(Date.now()));',
-      // Hold until told to release.
-      'while (!existsSync(join(dir, "release-" + id))) {',
-      '  await new Promise(r => setTimeout(r, 20));',
-      '}',
-      'releaseBuildSlot(handle);',
-      'writeFileSync(join(dir, "released-" + id), String(Date.now()));',
-    ].join('\n'));
+    writeFileSync(
+      script,
+      [
+        `const { acquireBuildSlot, releaseBuildSlot } = await import(${JSON.stringify(slotsUrl)});`,
+        'const [id, dir] = process.argv.slice(2);',
+        'const { writeFileSync, existsSync } = await import("node:fs");',
+        'const { join } = await import("node:path");',
+        'const handle = await acquireBuildSlot({ max: 2, root: "/w/" + id, intervalMs: 25, progressMs: 1e9 });',
+        'writeFileSync(join(dir, "acquired-" + id), String(Date.now()));',
+        // Hold until told to release.
+        'while (!existsSync(join(dir, "release-" + id))) {',
+        '  await new Promise(r => setTimeout(r, 20));',
+        '}',
+        'releaseBuildSlot(handle);',
+        'writeFileSync(join(dir, "released-" + id), String(Date.now()));',
+      ].join('\n'),
+    );
 
     const dir = tmpHome;
-    const spawn = (id) => new Promise((resolve, reject) => {
-      execFile(process.execPath, [script, id, dir], { env: { ...process.env, RN_ISO_HOME: tmpHome } },
-        (err) => (err ? reject(err) : resolve()));
-    });
+    const spawn = (id) =>
+      new Promise((resolve, reject) => {
+        execFile(process.execPath, [script, id, dir], { env: { ...process.env, RN_ISO_HOME: tmpHome } }, (err) =>
+          err ? reject(err) : resolve(),
+        );
+      });
     const waitFor = async (file, timeoutMs = 8000) => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
         if (existsSync(join(dir, file))) return true;
-        await new Promise(r => setTimeout(r, 20));
+        await new Promise((r) => setTimeout(r, 20));
       }
       return false;
     };
@@ -145,7 +150,7 @@ describe('live: 2 slots, 3 processes', () => {
 
     const c = spawn('C');
     // With both slots full, C cannot have acquired yet.
-    await new Promise(r => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 400));
     expect(existsSync(join(dir, 'acquired-C'))).toBe(false);
 
     // Free one slot; C should now get in.

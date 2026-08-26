@@ -1,4 +1,13 @@
-import { capacity, diskIsTight, diskLine, environmentState, formatSpace, parseDfFree, tightVolumes, unprovisionedWorktrees } from '../status.ts';
+import {
+  capacity,
+  diskIsTight,
+  diskLine,
+  environmentState,
+  formatSpace,
+  parseDfFree,
+  tightVolumes,
+  unprovisionedWorktrees,
+} from '../status.ts';
 
 const BOOTED = { udid: 'U1', name: 'rn-iso-app', state: 'Booted' };
 const SHUTDOWN = { udid: 'U1', name: 'rn-iso-app', state: 'Shutdown' };
@@ -78,7 +87,7 @@ test('capacity says nothing when the machine size is unknown', () => {
 
 test('unprovisioned worktrees are the ones with no registered environment', () => {
   const worktrees = [{ path: '/wt/a' }, { path: '/wt/b' }];
-  expect(unprovisionedWorktrees(worktrees, ['/wt/a']).map(w => w.path)).toEqual(['/wt/b']);
+  expect(unprovisionedWorktrees(worktrees, ['/wt/a']).map((w) => w.path)).toEqual(['/wt/b']);
 });
 
 // rn-iso reported RAM commitment and said nothing about disk. Disk is what
@@ -198,14 +207,21 @@ test('every pre-v3 field survives the extension', () => {
 // describes a volume nothing is building on, and the volume that can actually
 // fill up (build output is workspace-local) goes unmentioned.
 test('one volume keeps the free-of-total form', () => {
-  expect(diskLine([{ volume: '/', disk: { availableMb: 38 * 1024, totalMb: 926 * 1024 } }])).toBe('38 GB free of 926 GB on disk.');
+  expect(diskLine([{ volume: '/', disk: { availableMb: 38 * 1024, totalMb: 926 * 1024 } }])).toBe(
+    '38 GB free of 926 GB on disk.',
+  );
 });
 
 test('a project on another volume gets both volumes, named', () => {
-  expect(diskLine([
+  expect(
+    diskLine([
       { volume: '/', disk: { availableMb: 38 * 1024, totalMb: 926 * 1024 } },
-      { volume: '/Volumes/ExternalSSD', disk: { availableMb: Math.round(1.5 * 1024 * 1024), totalMb: 2 * 1024 * 1024 } },
-    ])).toBe('38 GB free on /, 1.5 TB free on /Volumes/ExternalSSD.');
+      {
+        volume: '/Volumes/ExternalSSD',
+        disk: { availableMb: Math.round(1.5 * 1024 * 1024), totalMb: 2 * 1024 * 1024 },
+      },
+    ]),
+  ).toBe('38 GB free on /, 1.5 TB free on /Volumes/ExternalSSD.');
 });
 
 test('an unreadable df prints no disk line at all rather than a broken one', () => {
@@ -228,6 +244,6 @@ test('tightVolumes names only the volumes that are actually tight', () => {
     { volume: '/', disk: { availableMb: 5 * 1024, totalMb: 926 * 1024 } },
     { volume: '/Volumes/ExternalSSD', disk: { availableMb: 900 * 1024, totalMb: 2048 * 1024 } },
   ];
-  expect(tightVolumes(volumes).map(v => v.volume)).toEqual(['/']);
+  expect(tightVolumes(volumes).map((v) => v.volume)).toEqual(['/']);
   expect(tightVolumes([])).toEqual([]);
 });

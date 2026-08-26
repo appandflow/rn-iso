@@ -51,16 +51,24 @@ export function registerCreate(worktree: Command): void {
   worktree
     .command('create <name>')
     .description('Create a git worktree with its environment set up. Prints the worktree path on stdout.')
-    .option('--base <ref>', 'base ref: "fresh" (origin/HEAD, default), "head", or any ref this repo resolves (branch, tag, sha)')
+    .option(
+      '--base <ref>',
+      'base ref: "fresh" (origin/HEAD, default), "head", or any ref this repo resolves (branch, tag, sha)',
+    )
     .option('--label <label>', 'rn-iso shortcut for the worktree (defaults to the worktree name)')
-    .option('--carry-ignored', 'clone every gitignored path (node_modules, Pods, build output) except those in .worktreeexclude')
+    .option(
+      '--carry-ignored',
+      'clone every gitignored path (node_modules, Pods, build output) except those in .worktreeexclude',
+    )
     .action(async (name, opts) => {
       // `name` comes from a hook (session text), not a hand-typed argument,
       // and flows unescaped into a shell command (`-b "worktree-${name}"`)
       // and into a filesystem join. Reject anything outside a safe charset
       // before creating anything.
       if (!/^[A-Za-z0-9._-]+$/.test(name)) {
-        console.error(chalk.red(`Invalid worktree name: "${name}". Use only letters, numbers, dots, dashes, and underscores.`));
+        console.error(
+          chalk.red(`Invalid worktree name: "${name}". Use only letters, numbers, dots, dashes, and underscores.`),
+        );
         process.exitCode = 1;
         return;
       }
@@ -106,8 +114,12 @@ export function registerCreate(worktree: Command): void {
       const baseRef = base === 'fresh' || base === 'head' ? resolveBaseRef(root, base) : base;
       const baseSha = resolveRef(root, baseRef);
       if (!baseSha) {
-        console.error(chalk.red(`Invalid --base: "${base}". This repo cannot resolve ${JSON.stringify(baseRef)} to a commit.`));
-        console.error(chalk.dim('  Use "fresh" (origin/HEAD), "head", or any branch, tag or sha `git rev-parse` accepts.'));
+        console.error(
+          chalk.red(`Invalid --base: "${base}". This repo cannot resolve ${JSON.stringify(baseRef)} to a commit.`),
+        );
+        console.error(
+          chalk.dim('  Use "fresh" (origin/HEAD), "head", or any branch, tag or sha `git rev-parse` accepts.'),
+        );
         process.exitCode = 1;
         return;
       }
@@ -132,11 +144,23 @@ export function registerCreate(worktree: Command): void {
       // and keeps the attach behaviour unchanged -- as does a branch that is
       // already AT the requested base, where there is nothing to disagree about.
       if (opts.base && reusedBranch && branchSha !== baseSha) {
-        console.error(chalk.red(`Refusing to create ${name}: the branch ${branch} already exists at ${branchSha || 'an unresolvable commit'}, but --base ${base} resolves to ${baseSha}.`));
-        console.error(chalk.dim('  `git worktree add` attaches to an existing branch and ignores the base, so this worktree would NOT be based on what you asked for.'));
+        console.error(
+          chalk.red(
+            `Refusing to create ${name}: the branch ${branch} already exists at ${branchSha || 'an unresolvable commit'}, but --base ${base} resolves to ${baseSha}.`,
+          ),
+        );
+        console.error(
+          chalk.dim(
+            '  `git worktree add` attaches to an existing branch and ignores the base, so this worktree would NOT be based on what you asked for.',
+          ),
+        );
         console.error(chalk.dim('  Either create it under a different name:'));
         console.error(chalk.dim(`    rn-iso worktree create <other-name> --base ${base}`));
-        console.error(chalk.dim('  or delete the leftover branch (it is what an earlier `worktree remove` left behind; removing a worktree never deletes its branch) and retry:'));
+        console.error(
+          chalk.dim(
+            '  or delete the leftover branch (it is what an earlier `worktree remove` left behind; removing a worktree never deletes its branch) and retry:',
+          ),
+        );
         console.error(chalk.dim(`    git -C ${root} branch -D ${branch}`));
         process.exitCode = 1;
         return;
@@ -153,15 +177,19 @@ export function registerCreate(worktree: Command): void {
       // Testers could not tell what the worktree had been cut from -- which is
       // the one fact `--base` exists to control. stdout carries only the path
       // (item 7 in CLAUDE.md), so this is stderr like every other status line.
-      console.error(chalk.dim(reusedBranch
-        ? `Attached to the existing branch ${branch}${branchSha ? ` (${branchSha})` : ''}; --base does not apply.`
-        : `Branched ${branch} from ${baseRef} (${baseSha}).`));
+      console.error(
+        chalk.dim(
+          reusedBranch
+            ? `Attached to the existing branch ${branch}${branchSha ? ` (${branchSha})` : ''}; --base does not apply.`
+            : `Branched ${branch} from ${baseRef} (${baseSha}).`,
+        ),
+      );
 
       // Fall back to settings on emptiness, not just on null: a
       // `.worktreeinclude` that exists but is blank/comment-only returns
       // `[]`, which is truthy, and must not shadow the settings fallback.
       const included = readWorktreeInclude(root);
-      const patterns = included && included.length ? included : (settings?.worktree?.include || []);
+      const patterns = included && included.length ? included : settings?.worktree?.include || [];
       const { copied, failed } = carryOverFiles({ root, target, patterns });
       if (copied.length) console.error(chalk.dim(`Carried over ${copied.length} file(s).`));
       for (const f of failed) {
@@ -172,31 +200,42 @@ export function registerCreate(worktree: Command): void {
       let carriedDeps = false;
       if (opts.carryIgnored) {
         const excluded = readWorktreeExclude(root);
-        const skip = excluded && excluded.length ? excluded : (settings?.worktree?.exclude || []);
+        const skip = excluded && excluded.length ? excluded : settings?.worktree?.exclude || [];
         const res = cloneIgnoredEntries({ root, target, patterns: skip });
         carriedIgnored = res.copied.length > 0;
-        carriedDeps = res.copied.some(rel => rel === 'node_modules' || rel.endsWith('/node_modules'));
+        carriedDeps = res.copied.some((rel) => rel === 'node_modules' || rel.endsWith('/node_modules'));
         if (res.copied.length) console.error(chalk.dim(`Cloned ${res.copied.length} gitignored path(s).`));
         // A count reads like success. It is not: the clone can only carry what
         // the source worktree has, and a source with no node_modules produces a
         // healthy-looking count and a worktree that cannot build.
         if (carriedIgnored && !carriedDeps) {
-          console.error(chalk.yellow('No node_modules among them -- the source worktree has none. Install dependencies before building.'));
+          console.error(
+            chalk.yellow(
+              'No node_modules among them -- the source worktree has none. Install dependencies before building.',
+            ),
+          );
         }
         if (!res.cloned) {
-          console.error(chalk.yellow('Copy-on-write clone unavailable (not APFS, or a different volume) -- these are full copies using real disk.'));
+          console.error(
+            chalk.yellow(
+              'Copy-on-write clone unavailable (not APFS, or a different volume) -- these are full copies using real disk.',
+            ),
+          );
         }
         for (const f of res.failed) {
           console.error(chalk.yellow(`Failed to clone ${f.file}: ${f.error}`));
         }
         for (const p of podsOutOfSync(target, res.copied)) {
           const where = p.dir === '.' ? 'Podfile.lock' : `${p.dir}/Podfile.lock`;
-          console.error(chalk.yellow(p.reason === 'missing'
-            ? `Carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} but there is no ${where}. Run \`pod install\` before building.`
-            : `Carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} does not match ${where}. Pods are gitignored and cloned; Podfile.lock is tracked and comes from the branch, so the two can disagree. Run \`pod install\` before building, or xcodebuild fails with "sandbox is not in sync" only after every pod has compiled.`));
+          console.error(
+            chalk.yellow(
+              p.reason === 'missing'
+                ? `Carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} but there is no ${where}. Run \`pod install\` before building.`
+                : `Carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} does not match ${where}. Pods are gitignored and cloned; Podfile.lock is tracked and comes from the branch, so the two can disagree. Run \`pod install\` before building, or xcodebuild fails with "sandbox is not in sync" only after every pod has compiled.`,
+            ),
+          );
         }
       }
-
 
       // Register the label now, before `rn-iso ios` ever runs, and mark this
       // entry as a worktree root. Without the label, the project would later
@@ -210,9 +249,13 @@ export function registerCreate(worktree: Command): void {
 
       // Cloned dependencies match the source worktree, not necessarily this
       // branch's manifests -- same contract as restoring a CI cache.
-      console.error(chalk.dim(carriedIgnored
-        ? 'Worktree ready. Cloned dependencies may be stale; reinstall if this branch changes them.'
-        : 'Worktree ready. Install dependencies yourself before building.'));
+      console.error(
+        chalk.dim(
+          carriedIgnored
+            ? 'Worktree ready. Cloned dependencies may be stale; reinstall if this branch changes them.'
+            : 'Worktree ready. Install dependencies yourself before building.',
+        ),
+      );
 
       // The WorktreeCreate hook reads stdout as the directory to use. Nothing
       // else may be written here.
@@ -252,7 +295,7 @@ export function porcelainPath(line: string): string | null {
 // `??` line appearing at all -- this is the guard for every workspace that
 // predates that, and for a repo whose .gitignore cannot be written.
 export function excludeWorkspaceArtifacts(lines: string[] | null | undefined): string[] {
-  return (lines || []).filter(line => {
+  return (lines || []).filter((line) => {
     const path = porcelainPath(line);
     return path === null || !isWorkspaceArtifact(path);
   });
@@ -301,7 +344,11 @@ export function workspaceArtifactPaths(lines: string[] | null | undefined): stri
 // `.rn-iso/` stay the one entry git treats them as.
 export function addsOnlyWorkspaceIgnoreBlock(diff: string | null | undefined): boolean {
   if (typeof diff !== 'string' || diff.trim() === '') return false;
-  const allowed = new Set(renderWorkspaceIgnoreBlock().split('\n').map(l => l.trim()));
+  const allowed = new Set(
+    renderWorkspaceIgnoreBlock()
+      .split('\n')
+      .map((l) => l.trim()),
+  );
   allowed.add('');
   let added = 0;
   let sawEntry = false;
@@ -309,7 +356,10 @@ export function addsOnlyWorkspaceIgnoreBlock(diff: string | null | undefined): b
   for (const line of diff.split('\n')) {
     // Everything before the first @@ is the file header, where `+++ b/path`
     // would otherwise read as an added line.
-    if (line.startsWith('@@')) { inHunk = true; continue; }
+    if (line.startsWith('@@')) {
+      inHunk = true;
+      continue;
+    }
     if (!inHunk) continue;
     if (line.startsWith('\\')) continue; // "\ No newline at end of file"
     if (line.startsWith('-')) return false;
@@ -340,7 +390,11 @@ export function addsOnlyWorkspaceIgnoreBlock(diff: string | null | undefined): b
 // cannot drift from the writer.
 export function isOnlyWorkspaceIgnoreBlock(content: string | null | undefined): boolean {
   if (typeof content !== 'string' || content.trim() === '') return false;
-  const allowed = new Set(renderWorkspaceIgnoreBlock().split('\n').map(l => l.trim()));
+  const allowed = new Set(
+    renderWorkspaceIgnoreBlock()
+      .split('\n')
+      .map((l) => l.trim()),
+  );
   let sawEntry = false;
   for (const raw of content.split('\n')) {
     const line = raw.trim();
@@ -379,16 +433,14 @@ interface SelfHealedIgnoresResult {
 
 export function excludeSelfHealedIgnores(
   lines: string[] | null | undefined,
-  { diff, read }: { diff: (file: string) => string | null; read: (file: string) => string }
+  { diff, read }: { diff: (file: string) => string | null; read: (file: string) => string },
 ): SelfHealedIgnoresResult {
   const kept: string[] = [];
   const healed: string[] = [];
   const created: string[] = [];
   for (const line of lines || []) {
     const path = porcelainPath(line);
-    const isIgnoreFile = path
-      && /(?:^|\/)\.gitignore$/.test(path)
-      && SAFE_DIFF_PATH.test(path);
+    const isIgnoreFile = path && /(?:^|\/)\.gitignore$/.test(path) && SAFE_DIFF_PATH.test(path);
     if (isIgnoreFile && String(line).startsWith(' M ') && addsOnlyWorkspaceIgnoreBlock(diff(path))) {
       healed.push(path);
       continue;
@@ -452,10 +504,7 @@ export function excludePodChurn(lines: string[] | null | undefined): PodChurnRes
   const restore: string[] = [];
   for (const line of lines || []) {
     const path = porcelainPath(line);
-    if (path
-      && String(line).startsWith(' M ')
-      && SAFE_DIFF_PATH.test(path)
-      && POD_CHURN_PATH.test(path)) {
+    if (path && String(line).startsWith(' M ') && SAFE_DIFF_PATH.test(path) && POD_CHURN_PATH.test(path)) {
       restore.push(path);
       continue;
     }
@@ -485,7 +534,10 @@ interface MatchedWorktreeEntry {
   path: string;
 }
 
-export function matchWorktreeEntry(entries: WorktreeEntry[] | null | undefined, path: string): MatchedWorktreeEntry | null {
+export function matchWorktreeEntry(
+  entries: WorktreeEntry[] | null | undefined,
+  path: string,
+): MatchedWorktreeEntry | null {
   let best: MatchedWorktreeEntry | null = null;
   (entries || []).forEach((entry, index) => {
     if (!entry?.path || !isPathPrefix(entry.path, path)) return;
@@ -502,7 +554,10 @@ export function matchWorktreeEntry(entries: WorktreeEntry[] | null | undefined, 
 // refusal again and concluded the only way out was --force. Untracked files need
 // `git clean -fd` (or an rm); tracked ones need checkout; a tree with both needs
 // to be told both.
-export function removalRemedy(dirtyLines: string[] | null | undefined, { worktree = '<worktree>' }: { worktree?: string } = {}): string[] {
+export function removalRemedy(
+  dirtyLines: string[] | null | undefined,
+  { worktree = '<worktree>' }: { worktree?: string } = {},
+): string[] {
   const tracked: string[] = [];
   const untracked: string[] = [];
   for (const line of dirtyLines || []) {
@@ -542,10 +597,11 @@ export function removalRemedy(dirtyLines: string[] | null | undefined, { worktre
 // above it.
 function pathArgs(lines: string[] | null | undefined, limit = 5): string {
   const paths = (lines || []).map(porcelainPath).filter((p): p is string => Boolean(p));
-  const shown = paths.slice(0, limit)
+  const shown = paths
+    .slice(0, limit)
     // porcelainPath strips the quoting git adds around an awkward path; it goes
     // back on before the path is printed as part of a command to run.
-    .map(p => (/[\s"'\\$`]/.test(p) ? JSON.stringify(p) : p));
+    .map((p) => (/[\s"'\\$`]/.test(p) ? JSON.stringify(p) : p));
   return `${shown.join(' ')}${paths.length > shown.length ? ' ...' : ''}`;
 }
 
@@ -714,7 +770,9 @@ function purgeWorkspaceArtifacts(root: string, dirtyLines: string[] | null | und
 export function registerRemove(worktree: Command): void {
   worktree
     .command('remove [target]')
-    .description('Remove a worktree and reclaim its build artifacts, owned devices, and Metro port. Defaults to the current workspace.')
+    .description(
+      'Remove a worktree and reclaim its build artifacts, owned devices, and Metro port. Defaults to the current workspace.',
+    )
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work')
     .action(async (target, opts) => {
       // Defaults to the current workspace, like every other v3 command: an
@@ -759,7 +817,11 @@ export function registerRemove(worktree: Command): void {
       const entry = matchWorktreeEntry(entries, path);
       if (!entry) {
         console.error(chalk.red(`Refusing to remove ${path}: it is not inside any worktree known to git.`));
-        console.error(chalk.dim('  Run it from inside the worktree, or pass the worktree root path, e.g. as printed by `git worktree list`.'));
+        console.error(
+          chalk.dim(
+            '  Run it from inside the worktree, or pass the worktree root path, e.g. as printed by `git worktree list`.',
+          ),
+        );
         process.exitCode = 1;
         return;
       }
@@ -793,10 +855,10 @@ export function registerRemove(worktree: Command): void {
         lines: afterIgnores,
         healed: selfHealedIgnores,
         created: selfCreatedIgnores,
-      } = excludeSelfHealedIgnores(
-        excludeWorkspaceArtifacts(allDirty),
-        { diff: (file) => unstagedDiff(path, file), read: (file) => readInside(path, file) }
-      );
+      } = excludeSelfHealedIgnores(excludeWorkspaceArtifacts(allDirty), {
+        diff: (file) => unstagedDiff(path, file),
+        read: (file) => readInside(path, file),
+      });
       // ... and last, the churn a `pod install` leaves behind, but ONLY when it
       // is all that is left once rn-iso's own writes are out. See
       // excludePodChurn: the refusal protects uncommitted work, and these two
@@ -842,7 +904,9 @@ export function registerRemove(worktree: Command): void {
         // fails in a way that reads like the tool being broken.
         for (const line of removalRemedy(dirtyLines, { worktree: path })) console.error(chalk.dim(line));
         console.error(chalk.dim('Otherwise: commit or push the branch. --force is a last resort -- it discards'));
-        console.error(chalk.dim('uncommitted changes and untracked files permanently; committed work stays on the branch.'));
+        console.error(
+          chalk.dim('uncommitted changes and untracked files permanently; committed work stays on the branch.'),
+        );
         process.exitCode = 1;
         return;
       }
@@ -938,26 +1002,40 @@ export function registerRemove(worktree: Command): void {
         // below) so the user knows which sim was freed and whether their
         // bundler is gone, instead of just "tracking was cleared".
         console.error(chalk.red(`git worktree remove failed: ${String((e as Error)?.message || e)}`));
-        console.error(chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`));
-        if (result.dereferenced.length) console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
+        console.error(
+          chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`),
+        );
+        if (result.dereferenced.length)
+          console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
         for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
-        if (result.deletedDevices.length) console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+        if (result.deletedDevices.length)
+          console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
         for (const s of result.skippedDevices) console.error(chalk.dim(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
         for (const kept of result.keptEntries) {
-          console.error(chalk.dim(`  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`));
+          console.error(
+            chalk.dim(
+              `  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
+            ),
+          );
         }
         process.exitCode = 1;
         return;
       }
       console.log(chalk.green(`Removed worktree ${path}`));
-      if (result.dereferenced.length) console.log(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
+      if (result.dereferenced.length)
+        console.log(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
       for (const pid of result.killedPids) console.log(chalk.dim(`  killed Metro pid ${pid}`));
-      if (result.deletedDevices.length) console.log(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+      if (result.deletedDevices.length)
+        console.log(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
       for (const s of result.skippedDevices) {
         console.log(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
       }
       for (const kept of result.keptEntries) {
-        console.log(chalk.yellow(`  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`));
+        console.log(
+          chalk.yellow(
+            `  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
+          ),
+        );
       }
     });
 }

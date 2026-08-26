@@ -42,11 +42,18 @@ export interface TeardownOutcome {
   serial?: string | null;
 }
 
-export function teardownOwnedIosSim(udid: string, { del = false, label }: { del?: boolean; label?: string } = {}): TeardownOutcome {
+export function teardownOwnedIosSim(
+  udid: string,
+  { del = false, label }: { del?: boolean; label?: string } = {},
+): TeardownOutcome {
   try {
     const resolved = resolveOwnedIosSim(udid);
     if (resolved.notOwned) {
-      return { status: 'skipped', kind: 'not-owned', reason: `sim is now named "${resolved.notOwned}", not rn-iso-owned by name` };
+      return {
+        status: 'skipped',
+        kind: 'not-owned',
+        reason: `sim is now named "${resolved.notOwned}", not rn-iso-owned by name`,
+      };
     }
     if (resolved.missing) return { status: 'missing' };
     // Occupancy only protects a device that is going to SURVIVE. `del` means

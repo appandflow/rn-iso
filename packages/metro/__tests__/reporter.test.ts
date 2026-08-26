@@ -22,7 +22,7 @@ function records(dir, file) {
   return text
     .split('\n')
     .filter(Boolean)
-    .map(line => JSON.parse(line));
+    .map((line) => JSON.parse(line));
 }
 
 function withDir(fn) {
@@ -36,7 +36,7 @@ function withDir(fn) {
 }
 
 test('a client_log becomes one client.ndjson record with the level mapped and the data joined', () => {
-  withDir(dir => {
+  withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
     const before = Date.now();
     reporter.update({ type: 'client_log', level: 'log', data: ['hello', 42, { a: 1 }] });
@@ -54,7 +54,7 @@ test('a client_log becomes one client.ndjson record with the level mapped and th
 });
 
 test('client_log levels map onto the contract, and a stack passes through', () => {
-  withDir(dir => {
+  withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
     const stack = [{ file: '/src/App.js', line: 12, column: 3, fn: 'render' }];
     reporter.update({ type: 'client_log', level: 'warn', data: ['careful'] });
@@ -62,14 +62,14 @@ test('client_log levels map onto the contract, and a stack passes through', () =
     reporter.update({ type: 'client_log', level: 'trace', data: ['tracing'] });
 
     const lines = records(dir, 'client.ndjson');
-    expect(lines.map(r => r.level)).toEqual(['warn', 'error', 'debug']);
+    expect(lines.map((r) => r.level)).toEqual(['warn', 'error', 'debug']);
     expect(lines[1].stack).toEqual(stack);
     expect(lines[0].stack).toBe(undefined);
   });
 });
 
 test('bundling_error and transformer_error are metro-side errors with the message extracted', () => {
-  withDir(dir => {
+  withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
     const error = new Error('Unable to resolve module ./nope from /src/App.js');
     reporter.update({ type: 'bundling_error', error });
@@ -77,8 +77,8 @@ test('bundling_error and transformer_error are metro-side errors with the messag
 
     const lines = records(dir, 'metro.ndjson');
     expect(lines.length).toBe(2);
-    expect(lines.map(r => r.level)).toEqual(['error', 'error']);
-    expect(lines.map(r => r.src)).toEqual(['metro', 'metro']);
+    expect(lines.map((r) => r.level)).toEqual(['error', 'error']);
+    expect(lines.map((r) => r.src)).toEqual(['metro', 'metro']);
     expect(lines[0].msg).toBe('Unable to resolve module ./nope from /src/App.js');
     expect(lines[0].event).toBe('bundling_error');
     expect(lines[1].msg).toBe('transform failed');
@@ -86,7 +86,7 @@ test('bundling_error and transformer_error are metro-side errors with the messag
 });
 
 test('bundle_build_done is the marker that resets the --errors window', () => {
-  withDir(dir => {
+  withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
     reporter.update({ type: 'bundle_build_done', buildID: 'build_1' });
 
@@ -100,7 +100,7 @@ test('bundle_build_done is the marker that resets the --errors window', () => {
 });
 
 test('unstable_server_log carries its own level', () => {
-  withDir(dir => {
+  withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
     reporter.update({ type: 'unstable_server_log', level: 'warn', data: ['port', 8081] });
 
@@ -116,22 +116,27 @@ test('unstable_server_log carries its own level', () => {
 // because the event name is often the only evidence of what the server was
 // doing before it failed.
 test('every other event is kept at debug with its event name', () => {
-  withDir(dir => {
+  withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
     reporter.update({ type: 'dep_graph_loading' });
-    reporter.update({ type: 'bundle_transform_progressed', buildID: 'build_1', transformedFileCount: 3, totalFileCount: 9 });
+    reporter.update({
+      type: 'bundle_transform_progressed',
+      buildID: 'build_1',
+      transformedFileCount: 3,
+      totalFileCount: 9,
+    });
 
     const lines = records(dir, 'metro.ndjson');
-    expect(lines.map(r => r.level)).toEqual(['debug', 'debug']);
-    expect(lines.map(r => r.event)).toEqual(['dep_graph_loading', 'bundle_transform_progressed']);
-    expect(lines.every(r => typeof r.msg === 'string')).toBeTruthy();
+    expect(lines.map((r) => r.level)).toEqual(['debug', 'debug']);
+    expect(lines.map((r) => r.event)).toEqual(['dep_graph_loading', 'bundle_transform_progressed']);
+    expect(lines.every((r) => typeof r.msg === 'string')).toBeTruthy();
   });
 });
 
 // A reporter that throws takes the dev server down with it, and the shapes it
 // is handed come from a package rn-iso does not version.
 test('unknown and malformed shapes never throw, and never write a corrupt line', () => {
-  withDir(dir => {
+  withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
     const circular = { self: null };
     circular.self = circular;
@@ -160,7 +165,7 @@ test('unknown and malformed shapes never throw, and never write a corrupt line',
 });
 
 test('the log directory is created on the first write, not on construction', () => {
-  withDir(outer => {
+  withDir((outer) => {
     const dir = path.join(outer, 'logs');
     const reporter = ndjsonReporter({ dir });
     expect(fs.existsSync(dir)).toBe(false);
@@ -170,29 +175,32 @@ test('the log directory is created on the first write, not on construction', () 
 });
 
 // Logging failure is not server failure: it is counted and swallowed.
-test.skipIf(Boolean(process.getuid) && process.getuid!() === 0)('an unwritable directory costs records, not the server', () => {
-  withDir(dir => {
-    // Locked before the first write on purpose: a read-only directory stops the
-    // log files being CREATED, while a file that already exists goes on taking
-    // appends regardless of the directory's mode.
-    const reporter = ndjsonReporter({ dir });
-    fs.chmodSync(dir, 0o500);
-    expect(() => {
-      reporter.update({ type: 'client_log', level: 'log', data: ['lost'] });
-      reporter.update({ type: 'bundling_error', error: new Error('also lost') });
-    }).not.toThrow();
-    expect(reporter.drops).toBe(2);
-    expect(fs.existsSync(path.join(dir, 'metro.ndjson'))).toBe(false);
+test.skipIf(Boolean(process.getuid) && process.getuid!() === 0)(
+  'an unwritable directory costs records, not the server',
+  () => {
+    withDir((dir) => {
+      // Locked before the first write on purpose: a read-only directory stops the
+      // log files being CREATED, while a file that already exists goes on taking
+      // appends regardless of the directory's mode.
+      const reporter = ndjsonReporter({ dir });
+      fs.chmodSync(dir, 0o500);
+      expect(() => {
+        reporter.update({ type: 'client_log', level: 'log', data: ['lost'] });
+        reporter.update({ type: 'bundling_error', error: new Error('also lost') });
+      }).not.toThrow();
+      expect(reporter.drops).toBe(2);
+      expect(fs.existsSync(path.join(dir, 'metro.ndjson'))).toBe(false);
 
-    fs.chmodSync(dir, 0o700);
-    reporter.update({ type: 'bundle_build_done' });
-    expect(records(dir, 'metro.ndjson').length).toBe(1);
-    expect(reporter.drops).toBe(2);
-  });
-});
+      fs.chmodSync(dir, 0o700);
+      reporter.update({ type: 'bundle_build_done' });
+      expect(records(dir, 'metro.ndjson').length).toBe(1);
+      expect(reporter.drops).toBe(2);
+    });
+  },
+);
 
 test('dir defaults to .rn-iso/logs under the working directory', () => {
-  withDir(dir => {
+  withDir((dir) => {
     const cwd = process.cwd();
     process.chdir(dir);
     try {
@@ -206,11 +214,11 @@ test('dir defaults to .rn-iso/logs under the working directory', () => {
 });
 
 test('records append rather than replace', () => {
-  withDir(dir => {
+  withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
     for (let i = 0; i < 5; i++) reporter.update({ type: 'unstable_server_log', level: 'info', data: [`line ${i}`] });
     const lines = records(dir, 'metro.ndjson');
     expect(lines.length).toBe(5);
-    expect(lines.map(r => r.msg)).toEqual(['line 0', 'line 1', 'line 2', 'line 3', 'line 4']);
+    expect(lines.map((r) => r.msg)).toEqual(['line 0', 'line 1', 'line 2', 'line 3', 'line 4']);
   });
 });

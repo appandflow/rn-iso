@@ -1,6 +1,14 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { skillTargets, bundledSkillPath, planSkillInstall, stampSkillVersion, parseSkillVersion, staleSkillCopies, staleSkillWarning } from '../commands/skill.ts';
+import {
+  skillTargets,
+  bundledSkillPath,
+  planSkillInstall,
+  stampSkillVersion,
+  parseSkillVersion,
+  staleSkillCopies,
+  staleSkillWarning,
+} from '../commands/skill.ts';
 
 test('the bundled skill actually ships in the package', () => {
   expect(existsSync(bundledSkillPath())).toBeTruthy();
@@ -50,8 +58,12 @@ test('staleSkillCopies reports any disagreement with the running CLI', () => {
     { file: '/b/SKILL.md', version: '0.14.0' },
     { file: '/c/SKILL.md', version: null },
   ];
-  expect(staleSkillCopies(installed, '0.14.0').map(s => s.file)).toEqual(['/a/SKILL.md', '/c/SKILL.md']);
-  expect(staleSkillCopies(installed, '0.6.2').map(s => s.file)).toEqual(['/a/SKILL.md', '/b/SKILL.md', '/c/SKILL.md']);
+  expect(staleSkillCopies(installed, '0.14.0').map((s) => s.file)).toEqual(['/a/SKILL.md', '/c/SKILL.md']);
+  expect(staleSkillCopies(installed, '0.6.2').map((s) => s.file)).toEqual([
+    '/a/SKILL.md',
+    '/b/SKILL.md',
+    '/c/SKILL.md',
+  ]);
   expect(staleSkillCopies([], '0.14.0')).toEqual([]);
 });
 
@@ -74,10 +86,13 @@ test('however many copies are stale, the warning is one line', () => {
 // Two copies stamped differently is a real fact about the machine, so both
 // versions are named rather than collapsed into whichever came first.
 test('copies stamped with different versions are all named, still on one line', () => {
-  const warning = staleSkillWarning([
-    { file: '/a/SKILL.md', version: '0.10.0' },
-    { file: '/b/SKILL.md', version: null },
-  ], '0.14.0');
+  const warning = staleSkillWarning(
+    [
+      { file: '/a/SKILL.md', version: '0.10.0' },
+      { file: '/b/SKILL.md', version: null },
+    ],
+    '0.14.0',
+  );
   expect(warning.split('\n').length).toBe(1);
   expect(warning).toMatch(/0\.10\.0/);
   expect(warning).toMatch(/unstamped/);

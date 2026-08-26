@@ -153,7 +153,9 @@ function claimSlot(path: string, { isAlive, now }: { isAlive: (pid: number) => b
   // Stale (dead pid, or an aged-out recordless directory): reclaim and retry.
   try {
     rmSync(path, { recursive: true, force: true });
-  } catch { /* another taker-over got there first */ }
+  } catch {
+    /* another taker-over got there first */
+  }
   try {
     mkdirSync(path);
     return true;
@@ -164,7 +166,13 @@ function claimSlot(path: string, { isAlive, now }: { isAlive: (pid: number) => b
 
 // One non-blocking pass over the slate. Returns the handle on success, or null
 // when every slot is held by a live builder. Seams (`isAlive`, `now`) for tests.
-export function tryAcquireBuildSlot({ max, root = null, logFile = null, isAlive = isPidAlive, now = Date.now }: TryAcquireBuildSlotOptions): BuildSlotHandle | null {
+export function tryAcquireBuildSlot({
+  max,
+  root = null,
+  logFile = null,
+  isAlive = isPidAlive,
+  now = Date.now,
+}: TryAcquireBuildSlotOptions): BuildSlotHandle | null {
   if (!max || max <= 0) return { acquired: true, unlimited: true };
   mkdirSync(buildSlotsDir(), { recursive: true });
   for (let index = 0; index < max; index++) {
@@ -220,9 +228,11 @@ export async function acquireBuildSlot({
     const elapsed = now() - started;
     if (elapsed >= ceilingMs) {
       const err = new Error(
-        `Waited ${formatWaited(elapsed)} for one of ${max} build slots, and every slot is held by a `
-        + 'process that is still alive. Slots live under ' + buildSlotsDir() + '; '
-        + 'remove a slot directory whose builder is not really building, or raise concurrency.maxBuilds.'
+        `Waited ${formatWaited(elapsed)} for one of ${max} build slots, and every slot is held by a ` +
+          'process that is still alive. Slots live under ' +
+          buildSlotsDir() +
+          '; ' +
+          'remove a slot directory whose builder is not really building, or raise concurrency.maxBuilds.',
       ) as Error & { code?: string };
       err.code = 'RN_ISO_BUILD_SLOT_TIMEOUT';
       throw err;

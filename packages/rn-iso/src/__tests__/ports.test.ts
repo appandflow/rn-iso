@@ -120,7 +120,7 @@ test('computeNextPort reuses a gap left by a released project when it is genuine
 
 test('computeNextPort throws rather than returning an occupied port when the range is exhausted', async () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
-  await await expect(() => computeNextPort(async () => false)).rejects.toThrow(/no free Metro port/i);
+  await expect(() => computeNextPort(async () => false)).rejects.toThrow(/no free Metro port/i);
 });
 
 // Cross-PROCESS on purpose. An in-process bind test passes even when the
@@ -132,13 +132,15 @@ test('isPortFree detects a listener held by ANOTHER process', async () => {
   const { spawn } = await import('node:child_process');
   const { isPortFree } = await import('../ports.ts');
   const port = 8131;
-  const child = spawn(process.execPath, ['-e',
-    `require('http').createServer((q,r)=>r.end('x')).listen(${port},'127.0.0.1')`,
-  ], { stdio: 'ignore' });
+  const child = spawn(
+    process.execPath,
+    ['-e', `require('http').createServer((q,r)=>r.end('x')).listen(${port},'127.0.0.1')`],
+    { stdio: 'ignore' },
+  );
   try {
     for (let i = 0; i < 40; i++) {
       if (!(await isPortFree(port))) break;
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 100));
     }
     expect(await isPortFree(port)).toBe(false);
     expect(await isPortFree(8132)).toBe(true);
@@ -215,8 +217,8 @@ test('reserveMetroPort records the port it hands back', async () => {
 test('allocatePort does not reuse a reclaimable port that is now occupied', async () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   claimMetroPort('/a', 8082);
-  const deadMetro = async () => false;      // /a's Metro is gone
-  const isFree = async (p) => p !== 8082;   // ...but 8082 is held by something else
+  const deadMetro = async () => false; // /a's Metro is gone
+  const isFree = async (p) => p !== 8082; // ...but 8082 is held by something else
   const port = await allocatePort('/new', deadMetro, isFree);
   expect(port).not.toBe(8082);
   expect(port).toBe(8083);

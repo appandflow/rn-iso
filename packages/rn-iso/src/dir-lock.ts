@@ -42,7 +42,15 @@ interface DirLockOptions {
   ensureParent?: () => void;
 }
 
-function acquire(lockPath: string, { staleMs, waitMs, pollMs, ensureParent }: Required<Pick<DirLockOptions, 'staleMs' | 'waitMs' | 'pollMs'>> & Pick<DirLockOptions, 'ensureParent'>) {
+function acquire(
+  lockPath: string,
+  {
+    staleMs,
+    waitMs,
+    pollMs,
+    ensureParent,
+  }: Required<Pick<DirLockOptions, 'staleMs' | 'waitMs' | 'pollMs'>> & Pick<DirLockOptions, 'ensureParent'>,
+) {
   ensureParent?.();
   const deadline = Date.now() + waitMs;
   for (;;) {
@@ -62,13 +70,15 @@ function acquire(lockPath: string, { staleMs, waitMs, pollMs, ensureParent }: Re
     if (ageMs > staleMs) {
       try {
         rmSync(lockPath, { recursive: true, force: true });
-      } catch { /* another waiter took it over first */ }
+      } catch {
+        /* another waiter took it over first */
+      }
       continue;
     }
     if (Date.now() >= deadline) {
       const err = new Error(
         `Timed out waiting for the lock at ${lockPath}. ` +
-        'Another rn-iso process is holding it; if none is running, remove that directory.'
+          'Another rn-iso process is holding it; if none is running, remove that directory.',
       );
       (err as Error & { code?: string; lockPath?: string }).code = 'RN_ISO_LOCK_TIMEOUT';
       (err as Error & { code?: string; lockPath?: string }).lockPath = lockPath;
@@ -81,7 +91,9 @@ function acquire(lockPath: string, { staleMs, waitMs, pollMs, ensureParent }: Re
 function release(lockPath: string) {
   try {
     rmSync(lockPath, { recursive: true, force: true });
-  } catch { /* already taken over as stale */ }
+  } catch {
+    /* already taken over as stale */
+  }
 }
 
 // Runs `fn` with the lock at `lockPath` held. Reentrant within this process per
@@ -89,7 +101,11 @@ function release(lockPath: string) {
 // is the lock directory's mtime, so a hold longer than `staleMs` can be taken
 // over by another process. `ensureParent`, when given, creates the directory
 // the lock lives in before the first mkdir.
-export function withDirLock<T>(lockPath: string, fn: () => T, { staleMs = DEFAULT_STALE_MS, waitMs = DEFAULT_WAIT_MS, pollMs = DEFAULT_POLL_MS, ensureParent }: DirLockOptions = {}): T {
+export function withDirLock<T>(
+  lockPath: string,
+  fn: () => T,
+  { staleMs = DEFAULT_STALE_MS, waitMs = DEFAULT_WAIT_MS, pollMs = DEFAULT_POLL_MS, ensureParent }: DirLockOptions = {},
+): T {
   const depth = depths.get(lockPath) || 0;
   if (depth > 0) {
     depths.set(lockPath, depth + 1);

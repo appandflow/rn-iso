@@ -41,7 +41,7 @@ echo "Last published: v$last"
 git log "v$last..HEAD" --oneline
 ```
 
-If `git describe --tags --abbrev=0` is *higher* than `v$last`, a previous
+If `git describe --tags --abbrev=0` is _higher_ than `v$last`, a previous
 release got tagged but never landed on npm. **Retry that publish before
 bumping again** (re-run step 6 with the existing version) rather than
 incrementing past it.
@@ -49,7 +49,7 @@ incrementing past it.
 Look at every commit in the list and decide:
 
 - **Patch** (`0.2.0 -> 0.2.1`) — bug fixes, doc-only changes, internal refactors with no user-visible effect.
-- **Minor** (`0.2.0 -> 0.3.0`) — new commands, new flags, additions to existing commands. **Pre-1.0, breaking changes also go here** (e.g. 0.1 -> 0.2 was a major surface trim that landed as a minor). On 0.x a breaking change does *not* force a major — bumping to a new major is reserved for 1.0 stabilization or a deliberate grouped-breaking-changes cut.
+- **Minor** (`0.2.0 -> 0.3.0`) — new commands, new flags, additions to existing commands. **Pre-1.0, breaking changes also go here** (e.g. 0.1 -> 0.2 was a major surface trim that landed as a minor). On 0.x a breaking change does _not_ force a major — bumping to a new major is reserved for 1.0 stabilization or a deliberate grouped-breaking-changes cut.
 - **Major** (`0.x -> 1.0`, `1.x -> 2.0`) — only post-1.0, or when intentionally cutting a 1.0.
 
 If anything in the list is breaking, plan to call it out under "Removed
@@ -73,10 +73,12 @@ If `git status` isn't clean, commit / discard before tagging.
 1. **Bump the version in lockstep.** All three `package.json` files carry the
    same number, and `bin/cli.js` reads it from its own `package.json`, so no
    source file needs editing:
+
    ```bash
    npm version X.Y.Z --workspaces --no-git-tag-version
    npm install --package-lock-only
    ```
+
    `--workspaces` bumps all three; `--no-git-tag-version` keeps the commit and
    the tag as step 3 and step 4 below, where the ordering is deliberate. The
    `npm install` refreshes `package-lock.json`, which duplicates every
@@ -85,14 +87,17 @@ If `git status` isn't clean, commit / discard before tagging.
 
    Then confirm all three moved, and that the peer ranges in the two cache
    packages still name a version of `rn-iso` that exists:
+
    ```bash
    grep -H '"version"' packages/*/package.json
    grep -H '"rn-iso"' packages/expo-build-cache/package.json packages/metro/package.json
    ```
+
    The cache packages declare `rn-iso` as an OPTIONAL peer, so a range naming
    an unpublished version does not break an install -- it only misleads. Widen
    it (`>=X.Y.Z`) when a release adds something the caches depend on, such as a
    new field in the cache manifest.
+
 2. **Verify each npm tarball** ships only what should ship, and that each one
    carries its own README (a package with no `README.md` in its own directory
    publishes with "No README data found" on npm):
@@ -121,12 +126,14 @@ If `git status` isn't clean, commit / discard before tagging.
 6. **Publish to npm, `rn-iso` first.** The two cache packages name it as a peer
    and their READMEs link to it, so a registry that has a cache package but not
    the CLI version it points at is the wrong order to be interrupted in:
+
    ```bash
    npm whoami                                          # confirm login; if 401, `npm login` first
    npm publish --workspace rn-iso                      # add --otp <code> if 2FA prompts
    npm publish --workspace @rn-iso/expo-build-cache
    npm publish --workspace @rn-iso/metro
    ```
+
    2FA is on for this account, so each `npm publish` will prompt for an OTP.
    Both scoped packages are already published as public, so they need no
    `--access` flag; a brand-new scoped package would need `--access public` on
@@ -134,6 +141,7 @@ If `git status` isn't clean, commit / discard before tagging.
 
    If one publish fails after another succeeded, do NOT bump the version to
    retry — re-run only the failed publish at the same version.
+
 7. **Smoke-test the published versions** from a scratch directory:
    ```bash
    cd /tmp && npx rn-iso@latest --version

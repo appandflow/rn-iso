@@ -37,9 +37,9 @@ ${WORKSPACE_DIR}/
 export function listsWorkspaceDir(source: unknown) {
   return String(source || '')
     .split('\n')
-    .map(line => line.trim())
-    .filter(line => line && !line.startsWith('#'))
-    .some(line => line.replace(/^\/+/, '').replace(/\/+$/, '') === WORKSPACE_DIR);
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .some((line) => line.replace(/^\/+/, '').replace(/\/+$/, '') === WORKSPACE_DIR);
 }
 
 // Idempotent. Adds the entry when it is missing, creates the file when there is

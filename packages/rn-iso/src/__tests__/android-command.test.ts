@@ -47,7 +47,10 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'rn-iso-home-'));
   process.env.RN_ISO_HOME = home;
   root = mkdtempSync(join(tmpdir(), 'rn-iso-android-'));
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', scripts: { android: 'react-native run-android' } }));
+  writeFileSync(
+    join(root, 'package.json'),
+    JSON.stringify({ name: 'app', scripts: { android: 'react-native run-android' } }),
+  );
   mkdirSync(join(root, 'android', 'app'), { recursive: true });
   writeFileSync(join(root, 'android', 'app', 'build.gradle'), 'android {\n  namespace "com.example.app"\n}\n');
   upsertProject(root, { metroPort: 8082 });
@@ -69,15 +72,34 @@ function fakeApk(name = 'app-debug.apk') {
   return path;
 }
 
-const never = (what) => () => { throw new Error(`${what} must not run in this case`); };
+const never = (what) => () => {
+  throw new Error(`${what} must not run in this case`);
+};
 
 function harness(overrides = {}) {
   const calls = {
-    ensureDevice: [], booted: [], metro: [], fingerprint: [], resolveCached: [], storeCached: [],
-    prebuild: [], build: [], install: [], launch: [], scheme: [], spawn: [], kill: [],
-    loadProvider: [], resolveRemoteBuild: [], uploadRemoteBuild: [], easAuth: [],
-    acquireLock: [], releaseLock: [], waitForBuild: [],
-    verify: [], ensureIgnored: [],
+    ensureDevice: [],
+    booted: [],
+    metro: [],
+    fingerprint: [],
+    resolveCached: [],
+    storeCached: [],
+    prebuild: [],
+    build: [],
+    install: [],
+    launch: [],
+    scheme: [],
+    spawn: [],
+    kill: [],
+    loadProvider: [],
+    resolveRemoteBuild: [],
+    uploadRemoteBuild: [],
+    easAuth: [],
+    acquireLock: [],
+    releaseLock: [],
+    waitForBuild: [],
+    verify: [],
+    ensureIgnored: [],
     // The sequence of the steps that decide who compiles, which is what the
     // single-flight tests below are actually about.
     order: [],
@@ -86,44 +108,126 @@ function harness(overrides = {}) {
   const stdout = [];
   const options = {
     root,
-    ensureDevice: async (args) => { calls.ensureDevice.push(args); return { avdName: 'rn-iso-app-412', consolePort: 5584, owned: true }; },
-    ensureDeviceBooted: async (args) => { calls.booted.push(args); return { ok: true, serial: 'emulator-5584' }; },
-    resolveMetro: async (port, path) => { calls.metro.push([port, path]); return { metro: { pid: 41233, leader: 41233, cwd: root } }; },
-    fingerprint: async (path) => { calls.fingerprint.push(path); return FINGERPRINT; },
-    resolveCached: (platform, key) => { calls.order.push('resolveCached'); calls.resolveCached.push([platform, key]); return null; },
-    storeCached: (platform, key, path, opts) => { calls.order.push('storeCached'); calls.storeCached.push([platform, key, path, opts]); return path; },
+    ensureDevice: async (args) => {
+      calls.ensureDevice.push(args);
+      return { avdName: 'rn-iso-app-412', consolePort: 5584, owned: true };
+    },
+    ensureDeviceBooted: async (args) => {
+      calls.booted.push(args);
+      return { ok: true, serial: 'emulator-5584' };
+    },
+    resolveMetro: async (port, path) => {
+      calls.metro.push([port, path]);
+      return { metro: { pid: 41233, leader: 41233, cwd: root } };
+    },
+    fingerprint: async (path) => {
+      calls.fingerprint.push(path);
+      return FINGERPRINT;
+    },
+    resolveCached: (platform, key) => {
+      calls.order.push('resolveCached');
+      calls.resolveCached.push([platform, key]);
+      return null;
+    },
+    storeCached: (platform, key, path, opts) => {
+      calls.order.push('storeCached');
+      calls.storeCached.push([platform, key, path, opts]);
+      return path;
+    },
     // Level two. The default is the ordinary case: no provider configured, so
     // nothing is asked and nothing is called.
-    loadProvider: async (projectRoot, opts) => { calls.loadProvider.push([projectRoot, opts]); return { none: true }; },
+    loadProvider: async (projectRoot, opts) => {
+      calls.loadProvider.push([projectRoot, opts]);
+      return { none: true };
+    },
     // Never the real one: it shells out to `eas whoami`, which is a network
     // call. The EAS-session tests override it with the state they are about.
-    easAuth: (args) => { calls.easAuth.push(args); return { ok: true, account: 'janic' }; },
-    resolveRemoteBuild: async (args) => { calls.order.push('resolveRemoteBuild'); calls.resolveRemoteBuild.push(args); return null; },
+    easAuth: (args) => {
+      calls.easAuth.push(args);
+      return { ok: true, account: 'janic' };
+    },
+    resolveRemoteBuild: async (args) => {
+      calls.order.push('resolveRemoteBuild');
+      calls.resolveRemoteBuild.push(args);
+      return null;
+    },
     // Single flight. The default is the ordinary case: nothing else on this
     // machine is building this fingerprint, so this run is the one builder.
-    acquireLock: (args) => { calls.order.push('acquireLock'); calls.acquireLock.push(args); return { acquired: true, path: join(home, 'build-locks', 'android-k.lock'), lock: { pid: process.pid } }; },
-    releaseLock: (handle) => { calls.order.push('releaseLock'); calls.releaseLock.push(handle); return true; },
-    waitForBuild: async (args) => { calls.waitForBuild.push(args); throw new Error('nothing should be waited for unless the lock was held'); },
-    uploadRemoteBuild: async (args) => { calls.uploadRemoteBuild.push(args); return { uploaded: true }; },
-    prebuild: async (...args) => { calls.prebuild.push(args); return { ok: true, durationMs: 12000 }; },
-    build: async (args) => { calls.order.push('build'); calls.build.push(args); return { ok: true, apkPath: fakeApk(), durationMs: 161000 }; },
-    install: (args) => { calls.install.push(args); return { ok: true }; },
+    acquireLock: (args) => {
+      calls.order.push('acquireLock');
+      calls.acquireLock.push(args);
+      return { acquired: true, path: join(home, 'build-locks', 'android-k.lock'), lock: { pid: process.pid } };
+    },
+    releaseLock: (handle) => {
+      calls.order.push('releaseLock');
+      calls.releaseLock.push(handle);
+      return true;
+    },
+    waitForBuild: async (args) => {
+      calls.waitForBuild.push(args);
+      throw new Error('nothing should be waited for unless the lock was held');
+    },
+    uploadRemoteBuild: async (args) => {
+      calls.uploadRemoteBuild.push(args);
+      return { uploaded: true };
+    },
+    prebuild: async (...args) => {
+      calls.prebuild.push(args);
+      return { ok: true, durationMs: 12000 };
+    },
+    build: async (args) => {
+      calls.order.push('build');
+      calls.build.push(args);
+      return { ok: true, apkPath: fakeApk(), durationMs: 161000 };
+    },
+    install: (args) => {
+      calls.install.push(args);
+      return { ok: true };
+    },
     // The default is what launchAndroidApp returns for a project with no
     // dev-client scheme: the launcher activity, both port mechanisms in
     // place. The dev-client shape has its own tests below.
-    launch: (args) => { calls.launch.push(args); return { ok: true, mode: 'am-start', reversed: ['tcp:8081->tcp:8082', 'tcp:8082->tcp:8082'], debugHttpHost: '10.0.2.2:8082', debugHttpHostNote: null }; },
+    launch: (args) => {
+      calls.launch.push(args);
+      return {
+        ok: true,
+        mode: 'am-start',
+        reversed: ['tcp:8081->tcp:8082', 'tcp:8082->tcp:8082'],
+        debugHttpHost: '10.0.2.2:8082',
+        debugHttpHostNote: null,
+      };
+    },
     // Reading the scheme out of the APK shells out to aapt; the resolver has
     // its own tests (against a real dump), so the flow injects the answer.
-    resolveDevClientScheme: (projectRoot, apkPath) => { calls.scheme.push([projectRoot, apkPath]); return undefined; },
-    spawn: (cmd, args, opts) => { calls.spawn.push({ cmd, args, opts }); return { pid: 9001, unref: () => { calls.spawn.at(-1).unrefed = true; } }; },
-    kill: (pid, signal) => { calls.kill.push([pid, signal]); },
+    resolveDevClientScheme: (projectRoot, apkPath) => {
+      calls.scheme.push([projectRoot, apkPath]);
+      return undefined;
+    },
+    spawn: (cmd, args, opts) => {
+      calls.spawn.push({ cmd, args, opts });
+      return {
+        pid: 9001,
+        unref: () => {
+          calls.spawn.at(-1).unrefed = true;
+        },
+      };
+    },
+    kill: (pid, signal) => {
+      calls.kill.push([pid, signal]);
+    },
     // The retry is real (one test below is about it); only the sleep is
     // removed, so a refusal costs no wall time.
-    resolveMetroRetrying: (resolve, port, path, opts) => resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
+    resolveMetroRetrying: (resolve, port, path, opts) =>
+      resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
     // The default is a launch that verified -- the app fetched a bundle from
     // THIS workspace's Metro. The picker case has its own tests.
-    verifyLaunched: async (args) => { calls.verify.push(args); return { verified: true, waitedMs: 3100 }; },
-    ensureIgnored: async (dir) => { calls.ensureIgnored.push(dir); },
+    verifyLaunched: async (args) => {
+      calls.verify.push(args);
+      return { verified: true, waitedMs: 3100 };
+    },
+    ensureIgnored: async (dir) => {
+      calls.ensureIgnored.push(dir);
+    },
     out: (line) => stderr.push(line),
     emit: (line) => stdout.push(line),
     ...overrides,
@@ -131,7 +235,7 @@ function harness(overrides = {}) {
   return { calls, stderr, stdout, run: () => runAndroid(options as any) };
 }
 
-const labelled = (lines, label) => lines.filter(l => l.startsWith(`  ${label}`));
+const labelled = (lines, label) => lines.filter((l) => l.startsWith(`  ${label}`));
 const readState = () => JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
 
 // --- the flow --------------------------------------------------------------
@@ -156,7 +260,7 @@ describe('a cache hit', () => {
     expect(labelled(h.stderr, 'build').length).toBe(0);
   });
 
-  test('prints the phases the spec\'s worked example prints, and one line on stdout', async () => {
+  test("prints the phases the spec's worked example prints, and one line on stdout", async () => {
     const h = harness({ resolveCached: () => '/cache/app-debug.apk', build: never('the build') });
     await h.run();
 
@@ -213,7 +317,11 @@ describe('a cache miss', () => {
   });
 
   test('a cache that cannot be written is a warning, not a failed run', async () => {
-    const h = harness({ storeCached: () => { throw new Error('disk full'); } });
+    const h = harness({
+      storeCached: () => {
+        throw new Error('disk full');
+      },
+    });
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(labelled(h.stderr, 'cache')[0]).toMatch(/disk full/);
@@ -222,11 +330,20 @@ describe('a cache miss', () => {
   test('an Expo project with no android/ prebuilds first, then builds', async () => {
     rmSync(join(root, 'android'), { recursive: true, force: true });
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '54.0.0' } }));
-    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'app', android: { package: 'com.example.app' } } }));
+    writeFileSync(
+      join(root, 'app.json'),
+      JSON.stringify({ expo: { name: 'app', android: { package: 'com.example.app' } } }),
+    );
     const order = [];
     const h = harness({
-      prebuild: async (...args) => { order.push('prebuild'); return { ok: true, durationMs: 12000 }; },
-      build: async () => { order.push('build'); return { ok: true, apkPath: fakeApk(), durationMs: 1000 }; },
+      prebuild: async (...args) => {
+        order.push('prebuild');
+        return { ok: true, durationMs: 12000 };
+      },
+      build: async () => {
+        order.push('build');
+        return { ok: true, apkPath: fakeApk(), durationMs: 1000 };
+      },
     });
     const result = await h.run();
 
@@ -263,7 +380,10 @@ describe('metro is verified before any build work', () => {
   });
 
   test('a foreign holder of the port is named rather than built against', async () => {
-    const h = harness({ resolveMetro: async () => ({ notOurs: 'pid 900 runs from /elsewhere', kind: 'foreign-cwd' }), build: never('the build') });
+    const h = harness({
+      resolveMetro: async () => ({ notOurs: 'pid 900 runs from /elsewhere', kind: 'foreign-cwd' }),
+      build: never('the build'),
+    });
     const result = await h.run();
     expect(result.error.code).toBe(NO_METRO);
     expect(result.error.message).toMatch(/pid 900 runs from \/elsewhere/);
@@ -276,7 +396,8 @@ describe('metro is verified before any build work', () => {
     const h = harness({
       resolveMetro: async () => {
         attempts += 1;
-        if (attempts < 3) return { notOurs: 'pid 42 on port 8082 does not answer Metro\'s /status', kind: 'unresponsive' };
+        if (attempts < 3)
+          return { notOurs: "pid 42 on port 8082 does not answer Metro's /status", kind: 'unresponsive' };
         return { metro: { pid: 42, leader: 42, cwd: root } };
       },
     });
@@ -288,7 +409,10 @@ describe('metro is verified before any build work', () => {
   test('a refusal names our own supervisor when there is a record for this port', async () => {
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port: 8082, mode: 'bare-inproc', startedAt: 'now' } });
     const h = harness({
-      resolveMetro: async () => ({ notOurs: 'pid 4242 on port 8082 does not answer Metro\'s /status', kind: 'unresponsive' }),
+      resolveMetro: async () => ({
+        notOurs: "pid 4242 on port 8082 does not answer Metro's /status",
+        kind: 'unresponsive',
+      }),
       build: never('the build'),
     });
     const result = await h.run();
@@ -327,14 +451,23 @@ describe('metro is verified before any build work', () => {
 
 describe('the other refusals', () => {
   test('an unresolvable @expo/fingerprint names the package to install', async () => {
-    const h = harness({ fingerprint: async () => null, resolveCached: never('the cache lookup'), build: never('the build') });
+    const h = harness({
+      fingerprint: async () => null,
+      resolveCached: never('the cache lookup'),
+      build: never('the build'),
+    });
     const result = await h.run();
     expect(result.error.code).toBe(NO_FINGERPRINT);
     expect(result.error.remedy).toMatch(/npm i -D @expo\/fingerprint/);
   });
 
   test('a fingerprint that throws is reported, not propagated', async () => {
-    const h = harness({ fingerprint: async () => { throw new Error('bad app.json'); }, build: never('the build') });
+    const h = harness({
+      fingerprint: async () => {
+        throw new Error('bad app.json');
+      },
+      build: never('the build'),
+    });
     const result = await h.run();
     expect(result.error.code).toBe(NO_FINGERPRINT);
     expect(result.error.message).toMatch(/bad app\.json/);
@@ -356,18 +489,31 @@ describe('the other refusals', () => {
   test('a prebuild failure carries its own code and transcript tail', async () => {
     const h = harness({
       needsPrebuildFor: () => true,
-      prebuild: async () => ({ failed: true, code: PREBUILD_ERROR, reason: 'expo prebuild failed (exit code 1).', remedy: 'Run npm install.', lastLines: ['boom'] }),
+      prebuild: async () => ({
+        failed: true,
+        code: PREBUILD_ERROR,
+        reason: 'expo prebuild failed (exit code 1).',
+        remedy: 'Run npm install.',
+        lastLines: ['boom'],
+      }),
       build: never('the build'),
     });
     const result = await h.run();
     expect(result.error.code).toBe(PREBUILD_ERROR);
-    expect(h.stderr.some(l => /boom/.test(l))).toBeTruthy();
+    expect(h.stderr.some((l) => /boom/.test(l))).toBeTruthy();
     expect(readState().lastBuild.status).toBe('failed');
     expect(readState().lastBuild.errorCode).toBe(PREBUILD_ERROR);
   });
 
   test('an install failure is reported with the device in the remedy', async () => {
-    const h = harness({ install: () => ({ failed: true, code: 'RN_ISO_INSTALL_FAILED', reason: 'adb install failed: INSTALL_FAILED_INSUFFICIENT_STORAGE' }), launch: never('the launch') });
+    const h = harness({
+      install: () => ({
+        failed: true,
+        code: 'RN_ISO_INSTALL_FAILED',
+        reason: 'adb install failed: INSTALL_FAILED_INSUFFICIENT_STORAGE',
+      }),
+      launch: never('the launch'),
+    });
     const result = await h.run();
     expect(result.error.code).toBe('RN_ISO_INSTALL_FAILED');
     expect(result.error.remedy).toMatch(/emulator-5584/);
@@ -389,7 +535,12 @@ describe('a failed build', () => {
     reason: '`./gradlew assembleDebug` failed (exit code 1).',
     diagnostics: [
       { message: 'Task :app:compileDebugKotlin FAILED' },
-      { file: '/p/android/app/src/main/java/com/app/MainActivity.kt', line: 23, column: 9, message: "Unresolved reference 'Foo'." },
+      {
+        file: '/p/android/app/src/main/java/com/app/MainActivity.kt',
+        line: 23,
+        column: 9,
+        message: "Unresolved reference 'Foo'.",
+      },
     ],
     truncated: 3,
     lastLines: ['> Task :app:compileDebugKotlin FAILED', 'BUILD FAILED in 2m41s'],
@@ -404,8 +555,8 @@ describe('a failed build', () => {
     expect(result.error.code).toBe(BUILD_ERROR);
     expect(labelled(h.stderr, 'build')[0]).toMatch(/FAILED after 2m41s/);
     const errors = labelled(h.stderr, 'error');
-    expect(errors.some(l => /MainActivity\.kt:23:9: Unresolved reference 'Foo'\./.test(l))).toBeTruthy();
-    expect(errors.some(l => /and 3 more diagnostic/.test(l))).toBeTruthy();
+    expect(errors.some((l) => /MainActivity\.kt:23:9: Unresolved reference 'Foo'\./.test(l))).toBeTruthy();
+    expect(errors.some((l) => /and 3 more diagnostic/.test(l))).toBeTruthy();
     // The spec's shape: the log path relative to the workspace, not absolute.
     expect(labelled(h.stderr, 'log')[0]).toMatch(/^ {2}log {9}\.rn-iso\/logs\/build-android\.ndjson$/);
   });
@@ -416,7 +567,7 @@ describe('a failed build', () => {
       install: never('the install'),
     });
     await h.run();
-    expect(h.stderr.some(l => /BUILD FAILED in 2m41s/.test(l))).toBeTruthy();
+    expect(h.stderr.some((l) => /BUILD FAILED in 2m41s/.test(l))).toBeTruthy();
     expect(labelled(h.stderr, 'log')[0]).toMatch(/build-android\.ndjson/);
   });
 
@@ -424,7 +575,7 @@ describe('a failed build', () => {
     const h = harness({ build: failingBuild, install: never('the install') });
     await h.run();
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
-    const errors = records.filter(r => r.level === 'error');
+    const errors = records.filter((r) => r.level === 'error');
     expect(errors.length).toBe(2);
     expect(errors[0].src).toBe('build');
     expect(errors[1].msg).toMatch(/MainActivity\.kt:23:9/);
@@ -473,9 +624,14 @@ describe('the remote cache', () => {
   });
 
   test('an Expo project with no provider configured builds exactly as before', async () => {
-    writeFileSync(join(root, 'package.json'), JSON.stringify({
-      name: 'app', scripts: { ios: 'expo run:ios' }, dependencies: { expo: '54.0.0' },
-    }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({
+        name: 'app',
+        scripts: { ios: 'expo run:ios' },
+        dependencies: { expo: '54.0.0' },
+      }),
+    );
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
     const h = harness();
     const result = await h.run();
@@ -492,7 +648,10 @@ describe('the remote cache', () => {
     const h = harness({
       loadProvider: async () => provider(),
       resolveRemoteBuild: async () => ({ appPath: downloaded }),
-      storeCached: (platform, key, path, opts) => { h_calls.push([platform, key, path, opts]); return stored; },
+      storeCached: (platform, key, path, opts) => {
+        h_calls.push([platform, key, path, opts]);
+        return stored;
+      },
       build: never('the build'),
       prebuild: never('prebuild'),
     });
@@ -507,7 +666,7 @@ describe('the remote cache', () => {
     expect(readState().lastBuild.cacheHit).toBe('remote');
   });
 
-  test('the provider is asked with this workspace\'s fingerprint and platform', async () => {
+  test("the provider is asked with this workspace's fingerprint and platform", async () => {
     const h = harness({ loadProvider: async () => provider('./p.cjs') });
     await h.run();
     expect(h.calls.resolveRemoteBuild[0].platform).toBe('android');
@@ -540,7 +699,9 @@ describe('the remote cache', () => {
   test('a provider that TIMES OUT does not stall the loop, and the command stops holding the process open', async () => {
     const exits = [];
     const originalExit = process.exit;
-    process.exit = ((code) => { exits.push(code); }) as typeof process.exit;
+    process.exit = ((code) => {
+      exits.push(code);
+    }) as typeof process.exit;
     let h;
     try {
       h = harness({
@@ -697,14 +858,23 @@ describe('--no-build-cache', () => {
 // never builds, and that a builder always releases.
 describe('single-flight builds', () => {
   const heldBy = (pid = 41233, projectRoot = '/w/app-999') => ({
-    held: { pid, projectRoot, startedAt: '2026-08-25T10:00:00.000Z', logFile: `${projectRoot}/.rn-iso/logs/build-android.ndjson` },
+    held: {
+      pid,
+      projectRoot,
+      startedAt: '2026-08-25T10:00:00.000Z',
+      logFile: `${projectRoot}/.rn-iso/logs/build-android.ndjson`,
+    },
     path: '/home/build-locks/android-key.lock',
   });
 
   test('the lock is attempted only after BOTH cache levels have missed, and released after the store', async () => {
     const h = harness({ loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }) });
     await h.run();
-    expect(h.calls.order.filter(o => ['resolveCached', 'resolveRemoteBuild', 'acquireLock', 'build', 'storeCached', 'releaseLock'].includes(o))).toEqual(['resolveCached', 'resolveRemoteBuild', 'acquireLock', 'build', 'storeCached', 'releaseLock']);
+    expect(
+      h.calls.order.filter((o) =>
+        ['resolveCached', 'resolveRemoteBuild', 'acquireLock', 'build', 'storeCached', 'releaseLock'].includes(o),
+      ),
+    ).toEqual(['resolveCached', 'resolveRemoteBuild', 'acquireLock', 'build', 'storeCached', 'releaseLock']);
     expect(h.calls.acquireLock[0].platform).toBe('android');
     expect(h.calls.acquireLock[0].key).toBe(CACHE_KEY);
     expect(h.calls.acquireLock[0].root).toBe(root);
@@ -793,7 +963,10 @@ describe('single-flight builds', () => {
     let waits = 0;
     const h = harness({
       acquireLock: () => heldBy(),
-      waitForBuild: async () => { waits++; return { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 }; },
+      waitForBuild: async () => {
+        waits++;
+        return { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 };
+      },
     });
     expect((await h.run()).ok).toBe(true);
     expect(waits).toBe(1);
@@ -804,7 +977,13 @@ describe('single-flight builds', () => {
   // fingerprint waiting for an APK nobody is making.
   test('a FAILED build releases the lock', async () => {
     const h = harness({
-      build: async () => ({ failed: true, code: BUILD_ERROR, reason: 'gradle said no', diagnostics: [], lastLines: [] }),
+      build: async () => ({
+        failed: true,
+        code: BUILD_ERROR,
+        reason: 'gradle said no',
+        diagnostics: [],
+        lastLines: [],
+      }),
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
@@ -812,8 +991,12 @@ describe('single-flight builds', () => {
   });
 
   test('a build that THROWS releases the lock on the way out', async () => {
-    const h = harness({ build: async () => { throw new Error('gradle exploded'); } });
-    await await expect(() => h.run()).rejects.toThrow(/gradle exploded/);
+    const h = harness({
+      build: async () => {
+        throw new Error('gradle exploded');
+      },
+    });
+    await expect(() => h.run()).rejects.toThrow(/gradle exploded/);
     expect(h.calls.releaseLock.length).toBe(1);
   });
 
@@ -836,7 +1019,11 @@ describe('single-flight builds', () => {
   // The lock is an optimisation, and one that cannot run must never stop a
   // build -- the same containment the cache store and the provider get.
   test('a lock that cannot be created is a note, and the build proceeds', async () => {
-    const h = harness({ acquireLock: () => { throw new Error('EROFS: read-only file system'); } });
+    const h = harness({
+      acquireLock: () => {
+        throw new Error('EROFS: read-only file system');
+      },
+    });
     expect((await h.run()).ok).toBe(true);
     expect(h.calls.build.length).toBe(1);
     expect(h.stderr.join('\n')).toMatch(/read-only file system/);
@@ -874,21 +1061,34 @@ describe('Contract 4: state.json.lastBuild', () => {
   });
 
   test('a state file that cannot be written is a warning, not a failed run', async () => {
-    const h = harness({ writeState: () => { throw new Error('read-only volume'); } });
+    const h = harness({
+      writeState: () => {
+        throw new Error('read-only volume');
+      },
+    });
     const result = await h.run();
     expect(result.ok).toBe(true);
-    expect(h.stderr.some(l => /read-only volume/.test(l))).toBeTruthy();
+    expect(h.stderr.some((l) => /read-only volume/.test(l))).toBeTruthy();
   });
 });
 
 describe('Contract 5: the device-log collector', () => {
-  test('is spawned detached and unreferenced with this platform\'s identity', async () => {
+  test("is spawned detached and unreferenced with this platform's identity", async () => {
     const h = harness();
     await h.run();
     expect(h.calls.spawn.length).toBe(1);
     const { args, opts, unrefed } = h.calls.spawn[0];
     expect(args[0]).toMatch(/collector\/run\.ts$/);
-    expect(args.slice(1)).toEqual(['--platform', 'android', '--root', root, '--serial', 'emulator-5584', '--package', 'com.example.app']);
+    expect(args.slice(1)).toEqual([
+      '--platform',
+      'android',
+      '--root',
+      root,
+      '--serial',
+      'emulator-5584',
+      '--package',
+      'com.example.app',
+    ]);
     expect(opts.detached).toBe(true);
     expect(opts.stdio).toBe('ignore');
     expect(opts.cwd).toBe(root);
@@ -896,7 +1096,9 @@ describe('Contract 5: the device-log collector', () => {
   });
 
   test('the previous android collector is killed first -- replaced, not duplicated', async () => {
-    writeWorkspaceState(root, { collectors: { android: { pid: 4242, startedAt: 'then' }, ios: { pid: 777, startedAt: 'then' } } });
+    writeWorkspaceState(root, {
+      collectors: { android: { pid: 4242, startedAt: 'then' }, ios: { pid: 777, startedAt: 'then' } },
+    });
     const h = harness();
     await h.run();
     expect(h.calls.kill).toEqual([[4242, 'SIGTERM']]);
@@ -911,7 +1113,11 @@ describe('Contract 5: the device-log collector', () => {
   });
 
   test('a collector that cannot be spawned does not fail the run', async () => {
-    const h = harness({ spawn: () => { throw new Error('EAGAIN'); } });
+    const h = harness({
+      spawn: () => {
+        throw new Error('EAGAIN');
+      },
+    });
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(labelled(h.stderr, 'logs')[0]).toMatch(/EAGAIN/);
@@ -922,7 +1128,7 @@ describe('Contract 1: the launch marker', () => {
   test('a launch writes a marker record into the build log', async () => {
     await harness().run();
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
-    const marker = records.find(r => r.marker === true);
+    const marker = records.find((r) => r.marker === true);
     expect(marker).toBeTruthy();
     expect(marker.src).toBe('build');
     expect(marker.event).toBe('app_launched');
@@ -959,48 +1165,104 @@ describe('the pure parts', () => {
 
   test('androidFacts and lastBuildRecord fill every field of their contracts', () => {
     expect(androidFacts({})).toEqual({
-      platform: 'android', serial: null, avdName: null, deviceName: null, fingerprint: null,
-      cacheHit: false, cacheSkipped: false, waitedForBuild: null, appPath: null, bundleId: null, launched: false,
-      debugHttpHost: null, debugHttpHostNote: null, devClientUrl: null, logs: null,
+      platform: 'android',
+      serial: null,
+      avdName: null,
+      deviceName: null,
+      fingerprint: null,
+      cacheHit: false,
+      cacheSkipped: false,
+      waitedForBuild: null,
+      appPath: null,
+      bundleId: null,
+      launched: false,
+      debugHttpHost: null,
+      debugHttpHostNote: null,
+      devClientUrl: null,
+      logs: null,
     });
     // A device tool is addressed by AVD name, not by console-port slot, and
     // deviceName falls back to it rather than being separately null.
-    expect({ avdName: androidFacts({ avdName: 'rn-iso-app-412' }).avdName, deviceName: androidFacts({ avdName: 'rn-iso-app-412' }).deviceName }).toEqual({ avdName: 'rn-iso-app-412', deviceName: 'rn-iso-app-412' });
+    expect({
+      avdName: androidFacts({ avdName: 'rn-iso-app-412' }).avdName,
+      deviceName: androidFacts({ avdName: 'rn-iso-app-412' }).deviceName,
+    }).toEqual({ avdName: 'rn-iso-app-412', deviceName: 'rn-iso-app-412' });
     // cacheHit is a LEVEL, not a boolean: 'local' | 'remote' | false.
     expect(androidFacts({ cacheHit: 'remote' }).cacheHit).toBe('remote');
     expect(androidFacts({ cacheHit: true }).cacheHit).toBe(false);
     // A wait is reported ALONGSIDE cacheHit: 'local', never instead of it: the
     // APK did come from the local cache, it just was not there yet when the
     // run started.
-    expect(androidFacts({ cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } }).waitedForBuild).toEqual({ pid: 41233, ms: 761000 });
+    expect(androidFacts({ cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } }).waitedForBuild).toEqual({
+      pid: 41233,
+      ms: 761000,
+    });
     const record = lastBuildRecord({ startedAt: 'now', status: 'ok' });
-    expect(Object.keys(record)).toEqual(['platform', 'avdName', 'deviceName', 'fingerprint', 'cacheKey', 'cacheHit', 'cacheSkipped', 'durationMs', 'appPath', 'bundleId', 'startedAt', 'status']);
+    expect(Object.keys(record)).toEqual([
+      'platform',
+      'avdName',
+      'deviceName',
+      'fingerprint',
+      'cacheKey',
+      'cacheHit',
+      'cacheSkipped',
+      'durationMs',
+      'appPath',
+      'bundleId',
+      'startedAt',
+      'status',
+    ]);
     expect(lastBuildRecord({ startedAt: 'now', status: 'failed', errorCode: BUILD_ERROR }).errorCode).toBe(BUILD_ERROR);
   });
 
   test('killPreviousCollector signals a recorded pid and tolerates a dead one', () => {
     const signalled = [];
-    expect(killPreviousCollector(root, { collectors: { android: { pid: 4242 } }, kill: (pid, sig) => signalled.push([pid, sig]) as any })).toBe(4242);
+    expect(
+      killPreviousCollector(root, {
+        collectors: { android: { pid: 4242 } },
+        kill: (pid, sig) => signalled.push([pid, sig]) as any,
+      }),
+    ).toBe(4242);
     expect(signalled).toEqual([[4242, 'SIGTERM']]);
-    expect(killPreviousCollector(root, { collectors: { android: { pid: 4242 } }, kill: () => { throw new Error('ESRCH'); } })).toBe(null);
-    expect(killPreviousCollector(root, { collectors: {}, kill: () => { throw new Error('must not be called'); } })).toBe(null);
+    expect(
+      killPreviousCollector(root, {
+        collectors: { android: { pid: 4242 } },
+        kill: () => {
+          throw new Error('ESRCH');
+        },
+      }),
+    ).toBe(null);
+    expect(
+      killPreviousCollector(root, {
+        collectors: {},
+        kill: () => {
+          throw new Error('must not be called');
+        },
+      }),
+    ).toBe(null);
     // Never our own pid: the collector helpers share this process in tests.
-    expect(killPreviousCollector(root, { collectors: { android: { pid: process.pid } }, kill: () => { throw new Error('must not be called'); } })).toBe(null);
+    expect(
+      killPreviousCollector(root, {
+        collectors: { android: { pid: process.pid } },
+        kill: () => {
+          throw new Error('must not be called');
+        },
+      }),
+    ).toBe(null);
   });
 });
-
 
 // The launch is not the proof: an expo-dev-client app that opens its
 // DEVELOPMENT SERVERS picker has fetched nothing, and `am start` returned 0
 // all the same.
 describe('launch verification', () => {
-  test('a verified launch reports launched: true and polls this workspace\'s timeline', async () => {
+  test("a verified launch reports launched: true and polls this workspace's timeline", async () => {
     const h = harness();
     const result = await h.run();
     expect(result.facts.launched).toBe(true);
     expect(h.calls.verify[0].logsDir).toBe(workspaceLogsDir(root));
     expect(Number.isFinite(h.calls.verify[0].since)).toBeTruthy();
-    expect(h.stderr.some(l => /verify.*bundle requested from Metro port 8082/.test(l))).toBeTruthy();
+    expect(h.stderr.some((l) => /verify.*bundle requested from Metro port 8082/.test(l))).toBeTruthy();
   });
 
   test('the picker: no bundle request makes it launched: "unverified", still exit ok', async () => {
@@ -1024,7 +1286,7 @@ describe('the launch outcome reaches the timeline', () => {
     const h = harness({ verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) });
     await h.run();
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
-    const record = records.find(r => r.event === 'launch_unverified');
+    const record = records.find((r) => r.event === 'launch_unverified');
     expect(record).toBeTruthy();
     expect(record.level).toBe('warn');
   });
@@ -1050,14 +1312,22 @@ describe('the port wiring is reported', () => {
   test('a successful debug_http_host write is a phase line and two facts', async () => {
     const h = harness();
     const result = await h.run();
-    expect(labelled(h.stderr, 'wired')[0]).toMatch(/debug_http_host 10\.0\.2\.2:8082 \+ adb reverse tcp:8081 -> tcp:8082/);
+    expect(labelled(h.stderr, 'wired')[0]).toMatch(
+      /debug_http_host 10\.0\.2\.2:8082 \+ adb reverse tcp:8081 -> tcp:8082/,
+    );
     expect(result.facts.debugHttpHost).toBe('10.0.2.2:8082');
     expect(result.facts.debugHttpHostNote).toBe(null);
   });
 
   test('a failed one is a WARNING, a note in the facts, and a record in the timeline', async () => {
     const h = harness({
-      launch: () => ({ ok: true, mode: 'am-start', reversed: ['tcp:8081->tcp:8082'], debugHttpHost: null, debugHttpHostNote: 'debug_http_host not written (run-as: package not debuggable); relying on adb reverse' }),
+      launch: () => ({
+        ok: true,
+        mode: 'am-start',
+        reversed: ['tcp:8081->tcp:8082'],
+        debugHttpHost: null,
+        debugHttpHostNote: 'debug_http_host not written (run-as: package not debuggable); relying on adb reverse',
+      }),
     });
     const result = await h.run();
     // The run still succeeds -- the reverse covers the 8081 path on its own.
@@ -1068,7 +1338,7 @@ describe('the port wiring is reported', () => {
     expect(result.facts.debugHttpHost).toBe(null);
     expect(result.facts.debugHttpHostNote).toMatch(/relying on adb reverse/);
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
-    const record = records.find(r => r.event === 'debug_http_host_failed');
+    const record = records.find((r) => r.event === 'debug_http_host_failed');
     expect(record).toBeTruthy();
     expect(record.level).toBe('warn');
   });
@@ -1078,7 +1348,12 @@ describe('the port wiring is reported', () => {
 describe('the dev-client deep link', () => {
   test('the scheme is read from the APK that was just installed, and passed to the launch', async () => {
     const asked = [];
-    const h = harness({ resolveDevClientScheme: (projectRoot, apkPath) => { asked.push([projectRoot, apkPath]); return 'exp+app'; } });
+    const h = harness({
+      resolveDevClientScheme: (projectRoot, apkPath) => {
+        asked.push([projectRoot, apkPath]);
+        return 'exp+app';
+      },
+    });
     await h.run();
     expect(asked.length).toBe(1);
     expect(h.calls.launch[0].devClientScheme).toBe('exp+app');
@@ -1101,13 +1376,20 @@ describe('the dev-client deep link', () => {
   test('a deep link that resolved nothing is a warning, not a failure', async () => {
     const h = harness({
       resolveDevClientScheme: () => 'exp+app',
-      launch: () => ({ ok: true, mode: 'am-start', devClientNote: 'am start -d exp+app://... did not start anything on emulator-5584: Error: Activity not started, unable to resolve Intent; fell back to the launcher activity', reversed: [], debugHttpHost: '10.0.2.2:8082' }),
+      launch: () => ({
+        ok: true,
+        mode: 'am-start',
+        devClientNote:
+          'am start -d exp+app://... did not start anything on emulator-5584: Error: Activity not started, unable to resolve Intent; fell back to the launcher activity',
+        reversed: [],
+        debugHttpHost: '10.0.2.2:8082',
+      }),
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
-    expect(labelled(h.stderr, 'wired').some(l => /unable to resolve Intent/.test(l))).toBeTruthy();
+    expect(labelled(h.stderr, 'wired').some((l) => /unable to resolve Intent/.test(l))).toBeTruthy();
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
-    expect(records.find(r => r.event === 'dev_client_link_failed')).toBeTruthy();
+    expect(records.find((r) => r.event === 'dev_client_link_failed')).toBeTruthy();
   });
 
   test('an unverified launch names the deep link FIRST, as a command that can be pasted', async () => {
@@ -1116,7 +1398,7 @@ describe('the dev-client deep link', () => {
       verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
     });
     await h.run();
-    const steps = h.stderr.filter(l => /^\s+\d+\./.test(l.replace(/^\s{2}\s*/, '  ')));
+    const steps = h.stderr.filter((l) => /^\s+\d+\./.test(l.replace(/^\s{2}\s*/, '  ')));
     const text = h.stderr.join('\n');
     const link = text.indexOf('am start -a android.intent.action.VIEW');
     const picker = text.indexOf('DEVELOPMENT SERVERS');
@@ -1124,7 +1406,9 @@ describe('the dev-client deep link', () => {
     expect(link < picker).toBeTruthy();
     // The exact command, with the exact url: 10.0.2.2, this workspace's port,
     // percent-encoded, quoted for the shell it is pasted into.
-    expect(text).toMatch(/adb -s emulator-5584 shell am start -a android\.intent\.action\.VIEW -d 'exp\+app:\/\/expo-development-client\/\?url=http%3A%2F%2F10\.0\.2\.2%3A8082'/);
+    expect(text).toMatch(
+      /adb -s emulator-5584 shell am start -a android\.intent\.action\.VIEW -d 'exp\+app:\/\/expo-development-client\/\?url=http%3A%2F%2F10\.0\.2\.2%3A8082'/,
+    );
     expect(steps.length >= 2).toBeTruthy();
   });
 
@@ -1169,7 +1453,7 @@ describe('the device identity is recorded', () => {
 describe('the APK dev-client scheme', () => {
   const dump = () => readFileSync(join(import.meta.dirname, 'fixtures', 'aapt-xmltree-devclient.txt'), 'utf-8');
 
-  test('the scheme is the launchable activity\'s, not the longest in the manifest', () => {
+  test("the scheme is the launchable activity's, not the longest in the manifest", () => {
     const facts = apkDevClientFacts(dump());
     expect(facts.devClient).toBe(true);
     expect(facts.schemes).toEqual(['th3rdwave']);
@@ -1177,7 +1461,7 @@ describe('the APK dev-client scheme', () => {
     expect(JSON.stringify(facts.schemes)).not.toMatch(/expo-dev-launcher|stripe/);
   });
 
-  test('aapt2\'s namespace-qualified spelling parses to the same thing', () => {
+  test("aapt2's namespace-qualified spelling parses to the same thing", () => {
     const aapt2 = dump().replace(/A: android:/g, 'A: http://schemas.android.com/apk/res/android:');
     expect(apkDevClientFacts(aapt2)).toEqual(apkDevClientFacts(dump()));
   });
@@ -1186,14 +1470,20 @@ describe('the APK dev-client scheme', () => {
     // MainActivity's first VIEW filter carries `android:scheme=@0x7f1300c6`.
     const tree = parseXmltree(dump());
     const values = [];
-    const walk = (n) => { if ('android:scheme' in n.attrs) values.push(n.attrs['android:scheme']); n.children.forEach(walk); };
+    const walk = (n) => {
+      if ('android:scheme' in n.attrs) values.push(n.attrs['android:scheme']);
+      n.children.forEach(walk);
+    };
     walk(tree);
     expect(values.includes(null)).toBeTruthy();
     expect(!apkDevClientFacts(dump()).schemes.includes(null)).toBeTruthy();
   });
 
   test('an app with no expo-dev-launcher in it is not a dev client', () => {
-    const plain = dump().split('\n').filter(l => !l.includes('devlauncher')).join('\n');
+    const plain = dump()
+      .split('\n')
+      .filter((l) => !l.includes('devlauncher'))
+      .join('\n');
     expect(apkDevClientFacts(plain).devClient).toBe(false);
   });
 
@@ -1208,7 +1498,10 @@ describe('the APK dev-client scheme', () => {
     // fall through to app.json, which would deep-link an app with no
     // launcher to handle it.
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { scheme: 'fromconfig' } }));
-    const plain = dump().split('\n').filter(l => !l.includes('devlauncher')).join('\n');
+    const plain = dump()
+      .split('\n')
+      .filter((l) => !l.includes('devlauncher'))
+      .join('\n');
     expect(androidDevClientScheme(root, '/x/app.apk', { dump: () => plain })).toBe(undefined);
   });
 
@@ -1217,7 +1510,10 @@ describe('the APK dev-client scheme', () => {
     // No expo-dev-client in this fixture project's dependencies, so the
     // config reader refuses too: a plain launch, not a link nothing answers.
     expect(androidDevClientScheme(root, '/x/app.apk', { dump: () => null })).toBe(undefined);
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'expo-dev-client': '^5.0.0' } }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'app', dependencies: { 'expo-dev-client': '^5.0.0' } }),
+    );
     expect(androidDevClientScheme(root, '/x/app.apk', { dump: () => null })).toBe('fromconfig');
   });
 
@@ -1234,23 +1530,46 @@ describe('the APK dev-client scheme', () => {
       exists: (path) => path === join('/sdk', 'build-tools', '35.0.0', 'aapt2'),
     });
     expect(found).toEqual({ path: join('/sdk', 'build-tools', '35.0.0', 'aapt2'), tool: 'aapt2', version: '35.0.0' });
-    expect(findAapt('/sdk', { readDir: () => { throw new Error('ENOENT'); }, exists: () => false })).toBe(null);
+    expect(
+      findAapt('/sdk', {
+        readDir: () => {
+          throw new Error('ENOENT');
+        },
+        exists: () => false,
+      }),
+    ).toBe(null);
     expect(findAapt('/sdk', { readDir: () => ['36.0.0'], exists: () => false })).toBe(null);
   });
 
   test('dumpApkManifest spells the dump the way each tool wants, and swallows failures', () => {
     const calls = [];
-    const exec = { runFile: (file, args) => { calls.push([file, ...args]); return 'E: manifest (line=2)\n'; } };
+    const exec = {
+      runFile: (file, args) => {
+        calls.push([file, ...args]);
+        return 'E: manifest (line=2)\n';
+      },
+    };
     dumpApkManifest('/x/app.apk', { exec, aapt: { path: '/sdk/aapt', tool: 'aapt' } } as any);
     dumpApkManifest('/x/app.apk', { exec, aapt: { path: '/sdk/aapt2', tool: 'aapt2' } } as any);
     expect(calls).toEqual([
       ['/sdk/aapt', 'dump', 'xmltree', '/x/app.apk', 'AndroidManifest.xml'],
       ['/sdk/aapt2', 'dump', 'xmltree', '--file', 'AndroidManifest.xml', '/x/app.apk'],
     ]);
-    const throwing = { runFile: () => { throw new Error('Invalid file'); } };
-    expect(dumpApkManifest('/x/app.apk', { exec: throwing, aapt: { path: '/sdk/aapt', tool: 'aapt' } } as any)).toBe(null);
+    const throwing = {
+      runFile: () => {
+        throw new Error('Invalid file');
+      },
+    };
+    expect(dumpApkManifest('/x/app.apk', { exec: throwing, aapt: { path: '/sdk/aapt', tool: 'aapt' } } as any)).toBe(
+      null,
+    );
     // Output that is not a manifest tree is not a manifest tree.
-    expect(dumpApkManifest('/x/app.apk', { exec: { runFile: () => 'ERROR: dump failed' }, aapt: { path: '/sdk/aapt', tool: 'aapt' } } as any)).toBe(null);
+    expect(
+      dumpApkManifest('/x/app.apk', {
+        exec: { runFile: () => 'ERROR: dump failed' },
+        aapt: { path: '/sdk/aapt', tool: 'aapt' },
+      } as any),
+    ).toBe(null);
     expect(dumpApkManifest(null, { exec: throwing } as any)).toBe(null);
   });
 });
@@ -1261,7 +1580,12 @@ describe('the APK dev-client scheme', () => {
 // See the field note above fingerprintProject in src/build-cache.js.
 test('android fingerprints with platforms scoped to android', async () => {
   const seen = [];
-  const h = harness({ fingerprint: async (path, options) => { seen.push({ path, options }); return FINGERPRINT; } });
+  const h = harness({
+    fingerprint: async (path, options) => {
+      seen.push({ path, options });
+      return FINGERPRINT;
+    },
+  });
   await h.run();
   expect(seen.length).toBe(1);
   expect(seen[0].path).toBe(root);
@@ -1274,7 +1598,10 @@ describe('concurrency limits', () => {
     let slotAcquired = 0;
     const h = harness({
       getLimits: () => ({ maxBuilds: 0, maxDevices: 0 }),
-      acquireSlot: async () => { slotAcquired++; return { acquired: true }; },
+      acquireSlot: async () => {
+        slotAcquired++;
+        return { acquired: true };
+      },
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
@@ -1287,7 +1614,11 @@ describe('concurrency limits', () => {
       getLimits: () => ({ maxBuilds: 0, maxDevices: 3 }),
       checkCapacity: (args) => {
         capacityArgs = args;
-        return { code: 'RN_ISO_AT_CAPACITY', message: 'at capacity', remedy: 'stop an environment (rn-iso stop) or raise concurrency.maxDevices' };
+        return {
+          code: 'RN_ISO_AT_CAPACITY',
+          message: 'at capacity',
+          remedy: 'stop an environment (rn-iso stop) or raise concurrency.maxDevices',
+        };
       },
     });
     const result = await h.run();
@@ -1303,8 +1634,14 @@ describe('concurrency limits', () => {
     let released = 0;
     const h = harness({
       getLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
-      acquireSlot: async (args) => { slotArgs = args; return { acquired: true, path: '/slot', index: 0, slot: { pid: process.pid } }; },
-      releaseSlot: () => { released++; return true; },
+      acquireSlot: async (args) => {
+        slotArgs = args;
+        return { acquired: true, path: '/slot', index: 0, slot: { pid: process.pid } };
+      },
+      releaseSlot: () => {
+        released++;
+        return true;
+      },
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
@@ -1314,15 +1651,21 @@ describe('concurrency limits', () => {
     expect(released).toBe(1);
   });
 
-  test('a waiter that installs another workspace\'s artifact never consumes a slot', async () => {
+  test("a waiter that installs another workspace's artifact never consumes a slot", async () => {
     let slotAcquired = 0;
     let built = 0;
     const h = harness({
       getLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
       acquireLock: () => ({ held: { pid: 41233, projectRoot: '/w/other', logFile: null } }),
       waitForBuild: async () => ({ hit: fakeApk(), waitedMs: 5000 }),
-      acquireSlot: async () => { slotAcquired++; return { acquired: true }; },
-      build: async () => { built++; return { ok: true, apkPath: fakeApk(), durationMs: 1 }; },
+      acquireSlot: async () => {
+        slotAcquired++;
+        return { acquired: true };
+      },
+      build: async () => {
+        built++;
+        return { ok: true, apkPath: fakeApk(), durationMs: 1 };
+      },
     });
     const result = await h.run();
     expect(result.ok).toBe(true);

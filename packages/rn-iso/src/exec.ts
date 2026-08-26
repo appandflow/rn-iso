@@ -33,7 +33,11 @@ const defaultExecutor: Executor = {
   // which has to return even when the simulator daemon is wedged) can bound
   // the wait instead of blocking forever.
   run(cmd, { timeoutMs } = {}) {
-    const opts: Parameters<typeof execSync>[1] = { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: MAX_BUFFER };
+    const opts: Parameters<typeof execSync>[1] = {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      maxBuffer: MAX_BUFFER,
+    };
     if (timeoutMs) opts.timeout = timeoutMs;
     return String(execSync(cmd, opts)).trim();
   },
@@ -41,7 +45,11 @@ const defaultExecutor: Executor = {
   // program as one literal argument. Use this whenever an argument is a path
   // the user chose rather than a string this codebase composed.
   runFile(file, args = [], { timeoutMs } = {}) {
-    const opts: Parameters<typeof execFileSync>[2] = { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: MAX_BUFFER };
+    const opts: Parameters<typeof execFileSync>[2] = {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      maxBuffer: MAX_BUFFER,
+    };
     if (timeoutMs) opts.timeout = timeoutMs;
     return String(execFileSync(file, args, opts)).trim();
   },

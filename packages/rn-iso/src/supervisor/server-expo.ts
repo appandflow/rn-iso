@@ -65,7 +65,7 @@ export function expoBinFromPackage(packageJsonPath: string | null, binName = 'ex
     return null;
   }
   const bin = pkg?.bin;
-  const rel = typeof bin === 'string' ? bin : (bin && typeof bin === 'object' ? bin[binName] : null);
+  const rel = typeof bin === 'string' ? bin : bin && typeof bin === 'object' ? bin[binName] : null;
   if (typeof rel !== 'string' || rel.trim() === '') return null;
   const file = join(dirname(packageJsonPath), rel);
   return isExecutableFile(file) ? file : null;
@@ -75,7 +75,11 @@ export function expoBinFromPackage(packageJsonPath: string | null, binName = 'ex
 // install puts it at the workspace root; stopping at the project would miss
 // every monorepo, which is the bug this exists for. Bounded by the root
 // directory, and it stops at the first hit, so the nearest copy wins.
-export function findBinUpward(startDir: string, name: string, { exists = existsSync }: { exists?: (p: string) => boolean } = {}): string | null {
+export function findBinUpward(
+  startDir: string,
+  name: string,
+  { exists = existsSync }: { exists?: (p: string) => boolean } = {},
+): string | null {
   let dir = startDir;
   const stop = parse(startDir).root;
   while (true) {
@@ -103,18 +107,24 @@ function isExecutableFile(file: string): boolean {
 // The refusal when no expo binary can be found. Its remedy has to be true on
 // a monorepo: "run npm install" was printed at two repos whose dependencies
 // were installed, and it sent the reader looking in the wrong place.
-export function expoBinRefusal(root: string, what = 'start an Expo dev server for'): { message: string; remedy: string } {
+export function expoBinRefusal(
+  root: string,
+  what = 'start an Expo dev server for',
+): { message: string; remedy: string } {
   return {
-    message: `Cannot ${what} ${root}: the \`expo\` package is not resolvable from it`
-      + ' (require.resolve("expo/package.json") failed, and no node_modules/.bin/expo exists in it or in any parent).',
-    remedy: 'Install the project\'s dependencies (in a monorepo, from the workspace root), or check that this package really depends on `expo`.',
+    message:
+      `Cannot ${what} ${root}: the \`expo\` package is not resolvable from it` +
+      ' (require.resolve("expo/package.json") failed, and no node_modules/.bin/expo exists in it or in any parent).',
+    remedy:
+      "Install the project's dependencies (in a monorepo, from the workspace root), or check that this package really depends on `expo`.",
   };
 }
 
 // CSI sequences (colour, cursor moves) and OSC sequences (window titles,
 // hyperlinks). Expo colours nearly every line, and an escape sequence inside a
 // JSON string is unreadable in a log and unmatchable by `logs --grep`.
-const ANSI = /\u001B\[[0-9;?]*[ -\/]*[@-~]|\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g;
+// oxlint-disable-next-line no-control-regex -- intentional ANSI escape match
+const ANSI = /\u001B\[[0-9;?]*[ -/]*[@-~]|\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g;
 
 export function stripAnsi(text: unknown): string {
   return String(text).replace(ANSI, '');
@@ -124,8 +134,8 @@ export function stripAnsi(text: unknown): string {
 // are recognized. Anything else is info: over-reporting a line as an error is
 // worse than under-reporting it, because `logs --errors` is the query an agent
 // loop branches on.
-const CROSS = '\u2716';        // heavy multiplication x, Expo's error bullet
-const CROSS_MARK = '\u274C';   // cross mark emoji
+const CROSS = '\u2716'; // heavy multiplication x, Expo's error bullet
+const CROSS_MARK = '\u274C'; // cross mark emoji
 const WARNING_SIGN = '\u26A0'; // warning sign
 
 // --- the one demotion this stream carries ---------------------------------
@@ -150,7 +160,8 @@ const WARNING_SIGN = '\u26A0'; // warning sign
 // plain `logs`, and only stops counting as an error. Same treatment, and the
 // same reason, as the device-noise lists in collector/ios.js and
 // collector/android.js.
-const UNHANDLED_NAVIGATE = /The action '(?:NAVIGATE|NAVIGATE_DEPRECATED)' with payload .*was not handled by any navigator/;
+const UNHANDLED_NAVIGATE =
+  /The action '(?:NAVIGATE|NAVIGATE_DEPRECATED)' with payload .*was not handled by any navigator/;
 const DEV_CLIENT_ROUTE = 'expo-development-client';
 
 // PURE. Whether this line is rn-iso's own dev-client deep link arriving in a
@@ -323,7 +334,10 @@ export async function startExpoServer({
     serverPid: child.pid ?? null,
     child,
     onExit(cb: (info: ExpoExitInfo | null) => void) {
-      if (exited) { cb(exitInfo); return; }
+      if (exited) {
+        cb(exitInfo);
+        return;
+      }
       listeners.push(cb);
     },
     async close() {
@@ -331,19 +345,28 @@ export async function startExpoServer({
       const dead = new Promise<void>((resolve) => {
         child.once('exit', () => resolve());
       });
-      const expire = (ms: number) => new Promise<void>((resolve) => {
-        const t = setTimeout(resolve, ms);
-        if (typeof t.unref === 'function') t.unref();
-      });
+      const expire = (ms: number) =>
+        new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, ms);
+          if (typeof t.unref === 'function') t.unref();
+        });
       // The child pid, not its group: detached:false means it shares the
       // supervisor's group, so a group signal would kill the supervisor before
       // it could write its final record and clear its registration.
-      try { process.kill(child.pid, 'SIGTERM'); } catch { return; }
+      try {
+        process.kill(child.pid, 'SIGTERM');
+      } catch {
+        return;
+      }
       await Promise.race([dead, expire(killTimeoutMs)]);
       if (!exited) {
         // An Expo that ignored SIGTERM would otherwise keep the port and
         // outlive the supervisor that is supposed to own it.
-        try { process.kill(child.pid, 'SIGKILL'); } catch { /* already gone */ }
+        try {
+          process.kill(child.pid, 'SIGKILL');
+        } catch {
+          /* already gone */
+        }
         await Promise.race([dead, expire(killTimeoutMs)]);
       }
     },

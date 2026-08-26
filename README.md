@@ -9,11 +9,11 @@ for an agent rather than for a human at a terminal.
 
 This repository is a workspace. Everything published lives under `packages/`.
 
-| Package | What it is |
-|---|---|
-| [`rn-iso`](./packages/rn-iso) | The CLI. `start` runs the dev server under a per-workspace supervisor; `ios` / `android` boot an owned simulator/emulator, install from a shared fingerprint cache when nothing native changed, and launch the app wired to a collision-free Metro port; `logs --errors` queries the captured timeline. Never prompts, prints ~10 lines, `--json` everywhere. |
-| [`@rn-iso/metro`](./packages/metro) | One Metro transform cache shared by every worktree, instead of Metro's per-project default that makes each new workspace re-transform the whole module graph. Plus the NDJSON reporter that turns the dev server's events into structured logs. |
-| [`@rn-iso/expo-build-cache`](./packages/expo-build-cache) | A local Expo build cache provider. When no native input changed, the Expo CLI installs a cached `.app` / `.apk` instead of compiling. |
+| Package                                                   | What it is                                                                                                                                                                                                                                                                                                                                                    |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`rn-iso`](./packages/rn-iso)                             | The CLI. `start` runs the dev server under a per-workspace supervisor; `ios` / `android` boot an owned simulator/emulator, install from a shared fingerprint cache when nothing native changed, and launch the app wired to a collision-free Metro port; `logs --errors` queries the captured timeline. Never prompts, prints ~10 lines, `--json` everywhere. |
+| [`@rn-iso/metro`](./packages/metro)                       | One Metro transform cache shared by every worktree, instead of Metro's per-project default that makes each new workspace re-transform the whole module graph. Plus the NDJSON reporter that turns the dev server's events into structured logs.                                                                                                               |
+| [`@rn-iso/expo-build-cache`](./packages/expo-build-cache) | A local Expo build cache provider. When no native input changed, the Expo CLI installs a cached `.app` / `.apk` instead of compiling.                                                                                                                                                                                                                         |
 
 **[Read the rn-iso documentation](./packages/rn-iso/README.md)** -- the commands,
 the ownership model, worktrees, settings, and cache housekeeping all live there.

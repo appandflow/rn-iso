@@ -96,7 +96,13 @@ function fakePodChild({ lines = [], code = 0, signal = null, error = null } = {}
 
 function collectingWriter() {
   const records = [];
-  return { records, write: (r) => { records.push(r); return true; } };
+  return {
+    records,
+    write: (r) => {
+      records.push(r);
+      return true;
+    },
+  };
 }
 
 describe('runPodInstall', () => {
@@ -109,19 +115,29 @@ describe('runPodInstall', () => {
         spawned = { cmd, args, opts };
         return fakePodChild({ lines: ['Analyzing dependencies', 'Pod installation complete!'] });
       },
-      now: (() => { let t = 1000; return () => (t += 500); })(),
+      now: (() => {
+        let t = 1000;
+        return () => (t += 500);
+      })(),
     });
     expect(result.ok).toBe(true);
     expect(spawned.cmd).toBe('pod');
     expect(spawned.args).toEqual(['install']);
     expect(spawned.opts.cwd).toBe(join(root, 'ios'));
-    expect(writer.records.map(r => [r.src, r.level, r.msg])).toEqual([['build', 'debug', 'Analyzing dependencies'], ['build', 'debug', 'Pod installation complete!']]);
+    expect(writer.records.map((r) => [r.src, r.level, r.msg])).toEqual([
+      ['build', 'debug', 'Analyzing dependencies'],
+      ['build', 'debug', 'Pod installation complete!'],
+    ]);
   });
 
   test('a non-zero exit comes back as {failed, lastLines}, never a throw', async () => {
     mkdirSync(join(root, 'ios'), { recursive: true });
     const result = await runPodInstall(root, collectingWriter(), {
-      spawnFn: () => fakePodChild({ lines: ['Analyzing dependencies', "[!] CocoaPods could not find compatible versions for pod \"RCT-Folly\""], code: 1 }),
+      spawnFn: () =>
+        fakePodChild({
+          lines: ['Analyzing dependencies', '[!] CocoaPods could not find compatible versions for pod "RCT-Folly"'],
+          code: 1,
+        }),
     });
     expect(result.failed).toBe(true);
     expect(result.code).toBe(DEPS_ERROR);
@@ -137,7 +153,9 @@ describe('runPodInstall', () => {
     const err = new Error('spawn pod ENOENT');
     err.code = 'ENOENT';
     const result = await runPodInstall(root, collectingWriter(), {
-      spawnFn: () => { throw err; },
+      spawnFn: () => {
+        throw err;
+      },
     });
     expect(result.failed).toBe(true);
     expect(result.code).toBe(DEPS_ERROR);
@@ -157,7 +175,9 @@ describe('runPodInstall', () => {
 
   test('refuses when there is no ios/ directory at all', async () => {
     const result = await runPodInstall(root, collectingWriter(), {
-      spawnFn: () => { throw new Error('must not spawn'); },
+      spawnFn: () => {
+        throw new Error('must not spawn');
+      },
     });
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/No ios\/ directory/);

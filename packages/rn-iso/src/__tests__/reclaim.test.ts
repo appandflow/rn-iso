@@ -26,9 +26,7 @@ test('describeDereferenced lists ios and android device records', () => {
 });
 
 test('describeDereferenced reports a physical android device when there is no avd', () => {
-  expect(describeDereferenced({ platforms: { android: { serial: 'R5CT' } } })).toEqual([
-    'android device R5CT',
-  ]);
+  expect(describeDereferenced({ platforms: { android: { serial: 'R5CT' } } })).toEqual(['android device R5CT']);
 });
 
 test('describeDereferenced returns an empty list when nothing is claimed', () => {
@@ -54,16 +52,22 @@ test('reclaimProject removes the config entry', async () => {
 test('reclaimProject scans and sizes no build output at all', async () => {
   const calls = [];
   setExecutor({
-    run: (cmd) => { calls.push(cmd); return ''; },
-    runQuiet: (cmd) => { calls.push(cmd); return null; },
+    run: (cmd) => {
+      calls.push(cmd);
+      return '';
+    },
+    runQuiet: (cmd) => {
+      calls.push(cmd);
+      return null;
+    },
     spawn: () => {},
   });
   const { reclaimProject } = await import('../reclaim.ts');
   upsertProject('/proj', { metroPort: 8082 });
 
   await reclaimProject('/proj');
-  expect(calls.some(c => c.startsWith('du -sk'))).toBe(false);
-  expect(calls.some(c => c.startsWith('plutil'))).toBe(false);
+  expect(calls.some((c) => c.startsWith('du -sk'))).toBe(false);
+  expect(calls.some((c) => c.startsWith('plutil'))).toBe(false);
 });
 
 // A device whose delete FAILED is still on the machine. Dropping the entry

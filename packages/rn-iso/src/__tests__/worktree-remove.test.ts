@@ -116,12 +116,13 @@ test('pod-install churn keeps its exact restore command', () => {
 // which reads like rn-iso being broken and sends the reader to --force. The
 // paths are already in hand and already repo-relative; print those.
 test('pod-install churn names the paths git actually reported, not an ios/ example', () => {
-  const lines = removalRemedy(
-    [' M apps/mobile/ios/Podfile.lock', ' M apps/mobile/ios/App.xcodeproj/project.pbxproj'],
-    { worktree: '/tmp/wt' }
-  ).join('\n');
+  const lines = removalRemedy([' M apps/mobile/ios/Podfile.lock', ' M apps/mobile/ios/App.xcodeproj/project.pbxproj'], {
+    worktree: '/tmp/wt',
+  }).join('\n');
   expect(lines).toMatch(/pod install` rewrites/);
-  expect(lines).toMatch(/git -C \/tmp\/wt checkout -- apps\/mobile\/ios\/Podfile\.lock apps\/mobile\/ios\/App\.xcodeproj\/project\.pbxproj/);
+  expect(lines).toMatch(
+    /git -C \/tmp\/wt checkout -- apps\/mobile\/ios\/Podfile\.lock apps\/mobile\/ios\/App\.xcodeproj\/project\.pbxproj/,
+  );
   expect(!lines.includes('"ios/*.xcodeproj/project.pbxproj"')).toBeTruthy();
   expect(!/ ios\/Podfile\.lock/.test(lines)).toBeTruthy();
 });
@@ -133,7 +134,9 @@ test('the remedy names the worktree when it is given one', () => {
 // A remedy is a command to run, so it carries the paths it is about rather than
 // a `<path>...` the reader has to fill in from the listing above it.
 test('the remedy carries the paths themselves, capped, quoting what needs it', () => {
-  expect(removalRemedy([' M src/app.js', '?? scratch.txt'], { worktree: '/tmp/wt' }).join('\n')).toMatch(/checkout -- src\/app\.js/);
+  expect(removalRemedy([' M src/app.js', '?? scratch.txt'], { worktree: '/tmp/wt' }).join('\n')).toMatch(
+    /checkout -- src\/app\.js/,
+  );
   expect(removalRemedy(['?? "we ird.txt"'], { worktree: '/tmp/wt' }).join('\n')).toMatch(/clean -fd "we ird\.txt"/);
   const many = removalRemedy([' M a', ' M b', ' M c', ' M d', ' M e', ' M f'], { worktree: '/tmp/wt' }).join('\n');
   expect(many).toMatch(/checkout -- a b c d e \.\.\./);
@@ -167,10 +170,19 @@ function canon(p) {
 function captureAction(register) {
   let captured;
   const stub = {
-    command() { return stub; },
-    description() { return stub; },
-    option() { return stub; },
-    action(fn) { captured = fn; return stub; },
+    command() {
+      return stub;
+    },
+    description() {
+      return stub;
+    },
+    option() {
+      return stub;
+    },
+    action(fn) {
+      captured = fn;
+      return stub;
+    },
   };
   register(stub);
   return (target, opts = {}) => captured(target, opts);
@@ -178,7 +190,10 @@ function captureAction(register) {
 
 function porcelain(entries) {
   return entries
-    .map(e => `worktree ${e.path}\nHEAD 0000000000000000000000000000000000000000\n${e.branch ? `branch refs/heads/${e.branch}` : 'detached'}\n`)
+    .map(
+      (e) =>
+        `worktree ${e.path}\nHEAD 0000000000000000000000000000000000000000\n${e.branch ? `branch refs/heads/${e.branch}` : 'detached'}\n`,
+    )
     .join('\n');
 }
 
@@ -191,7 +206,15 @@ function porcelain(entries) {
 // `occupied` maps udid -> true to simulate a foreign .xctrunner UI-test
 // runner still attached (isSimOccupied's `xcrun simctl spawn <udid>
 // launchctl list` probe -- see parseOccupyingApps in src/sim/ios.js).
-function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees = '', simctlList = '{"devices":{}}', occupied = {}, diffs = {} } = {}) {
+function makeExecutor({
+  dirty = '',
+  unpushed = '',
+  remote = 'origin',
+  worktrees = '',
+  simctlList = '{"devices":{}}',
+  occupied = {},
+  diffs = {},
+} = {}) {
   const runCalls = [];
   const runQuietCalls = [];
   const exec = {
@@ -213,13 +236,11 @@ function makeExecutor({ dirty = '', unpushed = '', remote = 'origin', worktrees 
       if (/ checkout -- /.test(cmd)) return '';
       if (/log --oneline HEAD --not --remotes/.test(cmd)) return unpushed;
       if (/worktree list --porcelain/.test(cmd)) return worktrees;
-      if (/remote$/.test(cmd)) return remote;
+      if (cmd.endsWith('remote')) return remote;
       const spawnMatch = cmd.match(/simctl spawn (\S+) launchctl list/);
       if (spawnMatch) {
         const udid = spawnMatch[1];
-        return occupied[udid]
-          ? '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]'
-          : '';
+        return occupied[udid] ? '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]' : '';
       }
       return null;
     },
@@ -263,7 +284,7 @@ test('action: refuses on the main checkout, leaving config untouched and never c
 
   expect(process.exitCode).toBe(1);
   expect(getProject(mainDir)).toEqual(before);
-  expect(!exec.calls.run.some(c => /worktree remove/.test(c))).toBeTruthy();
+  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });
 
 test('action: --force does not bypass the main-checkout refusal', async () => {
@@ -277,7 +298,7 @@ test('action: --force does not bypass the main-checkout refusal', async () => {
 
   expect(process.exitCode).toBe(1);
   expect(getProject(mainDir)).toEqual(before);
-  expect(!exec.calls.run.some(c => /worktree remove/.test(c))).toBeTruthy();
+  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });
 
 test('action: refuses when git cannot answer the status check, leaving config untouched', async () => {
@@ -285,7 +306,10 @@ test('action: refuses when git cannot answer the status check, leaving config un
   const before = getProject(wtDir);
   const exec = makeExecutor({
     dirty: null, // simulates hasUncommittedWork's runQuiet failing outright
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
   });
   setExecutor(exec);
 
@@ -294,13 +318,16 @@ test('action: refuses when git cannot answer the status check, leaving config un
 
   expect(process.exitCode).toBe(1);
   expect(getProject(wtDir)).toEqual(before);
-  expect(!exec.calls.run.some(c => /worktree remove/.test(c))).toBeTruthy();
+  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });
 
 test('action: on success, reclaimProject clears rn-iso tracking before removeWorktree runs', async () => {
   upsertProject(wtDir, { metroPort: 8083 });
   const exec = makeExecutor({
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
   });
   // The property this whole task exists to guarantee: by the time `git
   // worktree remove` runs, reclaimProject must already have dropped the
@@ -321,7 +348,7 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
 
   expect(process.exitCode).not.toBe(1);
   expect(getProject(wtDir)).toBe(null);
-  expect(exec.calls.run.some(c => /worktree remove/.test(c))).toBeTruthy();
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });
 
 // Regression: in a monorepo, `rn-iso ios` registers a nested app dir (e.g.
@@ -335,7 +362,10 @@ test('action: reclaims a nested monorepo app-dir project registered under the wo
   upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
   upsertProject(nestedDir, { metroPort: 8085, platforms: { ios: { deviceUdid: 'UDID-1' } } });
   const exec = makeExecutor({
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
   });
   setExecutor(exec);
 
@@ -355,7 +385,10 @@ test('action: on success, deletes an owned iOS sim via simctl', async () => {
     platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'rn-iso-x' } },
   });
   const exec = makeExecutor({
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
     simctlList: simctlJson([{ udid: 'U1', name: 'rn-iso-x', state: 'Shutdown', isAvailable: true }]),
   });
   setExecutor(exec);
@@ -364,7 +397,7 @@ test('action: on success, deletes an owned iOS sim via simctl', async () => {
   await run(wtDir, {});
 
   expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some(c => /xcrun simctl delete U1/.test(c))).toBeTruthy();
+  expect(exec.calls.run.some((c) => /xcrun simctl delete U1/.test(c))).toBeTruthy();
   expect(getProject(wtDir)).toBe(null);
 });
 
@@ -377,7 +410,10 @@ test('action: does not delete a legacy (non-owned) iOS device', async () => {
     platforms: { ios: { deviceUdid: 'U2' } },
   });
   const exec = makeExecutor({
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
   });
   setExecutor(exec);
 
@@ -388,7 +424,7 @@ test('action: does not delete a legacy (non-owned) iOS device', async () => {
   // Stronger than checking for the absence of a delete: U2 must never be
   // named in ANY issued command (no shutdown, no occupancy probe, no
   // delete) -- a legacy record is not rn-iso's to touch at all.
-  expect(![...exec.calls.run, ...exec.calls.runQuiet].some(c => c.includes('U2'))).toBeTruthy();
+  expect(![...exec.calls.run, ...exec.calls.runQuiet].some((c) => c.includes('U2'))).toBeTruthy();
   expect(getProject(wtDir)).toBe(null);
 });
 
@@ -408,7 +444,10 @@ test('action: reaps owned sims under two nested monorepo app-dir keys, both of t
     platforms: { ios: { deviceUdid: 'U4', owned: true, deviceName: 'rn-iso-b' } },
   });
   const exec = makeExecutor({
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
     simctlList: simctlJson([
       { udid: 'U3', name: 'rn-iso-a', state: 'Shutdown', isAvailable: true },
       { udid: 'U4', name: 'rn-iso-b', state: 'Shutdown', isAvailable: true },
@@ -420,8 +459,8 @@ test('action: reaps owned sims under two nested monorepo app-dir keys, both of t
   await run(wtDir, {});
 
   expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some(c => /xcrun simctl delete U3/.test(c))).toBeTruthy();
-  expect(exec.calls.run.some(c => /xcrun simctl delete U4/.test(c))).toBeTruthy();
+  expect(exec.calls.run.some((c) => /xcrun simctl delete U3/.test(c))).toBeTruthy();
+  expect(exec.calls.run.some((c) => /xcrun simctl delete U4/.test(c))).toBeTruthy();
   expect(getProject(nestedDir1)).toBe(null);
   expect(getProject(nestedDir2)).toBe(null);
 });
@@ -443,7 +482,10 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
     platforms: { ios: { deviceUdid: 'U6', owned: true, deviceName: 'rn-iso-d' } },
   });
   const exec = makeExecutor({
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
     simctlList: simctlJson([
       { udid: 'U5', name: 'rn-iso-c', state: 'Booted', isAvailable: true },
       { udid: 'U6', name: 'rn-iso-d', state: 'Shutdown', isAvailable: true },
@@ -464,14 +506,14 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
 
   // The worktree itself was still removed.
   expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some(c => /worktree remove/.test(c))).toBeTruthy();
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 
   // Both sims go, occupied or not: they are rn-iso's own, created for a project
   // that is being removed, and the holder is almost always the caller's own
   // UI-test runner. Sparing U5 here is what used to leak a booted sim and a
   // live runner out of `worktree remove`.
-  expect(exec.calls.run.some(c => /xcrun simctl delete U5/.test(c))).toBeTruthy();
-  expect(exec.calls.run.some(c => /xcrun simctl delete U6/.test(c))).toBeTruthy();
+  expect(exec.calls.run.some((c) => /xcrun simctl delete U5/.test(c))).toBeTruthy();
+  expect(exec.calls.run.some((c) => /xcrun simctl delete U6/.test(c))).toBeTruthy();
 
   // Both config entries are cleared either way -- reclaiming rn-iso's own
   // tracking does not depend on whether the device itself could be torn
@@ -481,7 +523,7 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
 
   // Nothing is reported as kept: there is no occupied-skip path left for a
   // device being deleted, so no "kept ..." line should appear at all.
-  expect(!logs.some(l => /kept/i.test(l))).toBeTruthy();
+  expect(!logs.some((l) => /kept/i.test(l))).toBeTruthy();
 });
 
 // The whole field-test failure, end to end: a workspace whose ONLY dirty path is
@@ -492,7 +534,10 @@ test('action: a tree dirty only with .rn-iso/ removes without --force', async ()
   upsertProject(wtDir, { metroPort: 8090 });
   const exec = makeExecutor({
     dirty: '?? .rn-iso/\n',
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
   });
   setExecutor(exec);
 
@@ -500,8 +545,8 @@ test('action: a tree dirty only with .rn-iso/ removes without --force', async ()
   await run(wtDir, {});
 
   expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some(c => /worktree remove/.test(c))).toBeTruthy();
-  expect(!exec.calls.run.some(c => /worktree remove --force/.test(c))).toBeTruthy();
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
+  expect(!exec.calls.run.some((c) => /worktree remove --force/.test(c))).toBeTruthy();
   expect(getProject(wtDir)).toBe(null);
 });
 
@@ -509,7 +554,10 @@ test('action: real work beside .rn-iso/ still refuses, and names both remedies',
   upsertProject(wtDir, { metroPort: 8091 });
   const exec = makeExecutor({
     dirty: '?? .rn-iso/\n M src/app.js\n?? scratch.txt\n',
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
   });
   setExecutor(exec);
 
@@ -524,7 +572,7 @@ test('action: real work beside .rn-iso/ still refuses, and names both remedies',
   }
 
   expect(process.exitCode).toBe(1);
-  expect(!exec.calls.run.some(c => /worktree remove/.test(c))).toBeTruthy();
+  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
   const text = errs.join('\n');
   expect(text).toMatch(/checkout --/);
   expect(text).toMatch(/clean -fd/);
@@ -542,7 +590,10 @@ test('action: the workspace directory is deleted before git worktree remove is c
   writeFileSync(join(wtDir, '.rn-iso', 'state.json'), '{}');
   const exec = makeExecutor({
     dirty: '?? .rn-iso/\n',
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
   });
   // Fail the removal the way real git does when the directory is still there,
   // so the assertion is about ORDER rather than about our own rmSync.
@@ -568,10 +619,15 @@ test('action: a dirty path escaping the worktree is never removed', async () => 
   upsertProject(wtDir, { metroPort: 8093 });
   const outside = join(mainDir, '.rn-iso');
   mkdirSync(outside, { recursive: true });
-  setExecutor(makeExecutor({
-    dirty: '?? ../rn-iso-test-main-escape/.rn-iso/\n',
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
-  }));
+  setExecutor(
+    makeExecutor({
+      dirty: '?? ../rn-iso-test-main-escape/.rn-iso/\n',
+      worktrees: porcelain([
+        { path: mainDir, branch: 'main' },
+        { path: wtDir, branch: 'feat-x' },
+      ]),
+    }),
+  );
 
   const run = captureAction(registerRemove);
   await run(wtDir, {});
@@ -595,16 +651,21 @@ function ignoreDiff({ file = 'apps/x/.gitignore', added = [], removed = [], cont
     `--- a/${file}`,
     `+++ b/${file}`,
     '@@ -1 +1,6 @@',
-    ...context.map(l => ` ${l}`),
-    ...removed.map(l => `-${l}`),
-    ...added.map(l => `+${l}`),
+    ...context.map((l) => ` ${l}`),
+    ...removed.map((l) => `-${l}`),
+    ...added.map((l) => `+${l}`),
     '',
   ].join('\n');
 }
 
 // The exact lines ensureWorkspaceIgnored appends, blank separator included.
 function ourBlockLines() {
-  return ['', ...renderWorkspaceIgnoreBlock().split('\n').filter(l => l !== '')];
+  return [
+    '',
+    ...renderWorkspaceIgnoreBlock()
+      .split('\n')
+      .filter((l) => l !== ''),
+  ];
 }
 
 test('a .gitignore diff that adds only rn-iso own block is recognized as ours', () => {
@@ -624,7 +685,11 @@ test('a removed line is never ours, whatever was added', () => {
 test('an empty, missing or entry-less diff is not ours', () => {
   expect(addsOnlyWorkspaceIgnoreBlock('')).toBe(false);
   expect(addsOnlyWorkspaceIgnoreBlock(null)).toBe(false);
-  expect(addsOnlyWorkspaceIgnoreBlock(ignoreDiff({ added: ['# rn-iso: this workspace\'s build output, logs and supervisor pidfile.'] }))).toBe(false);
+  expect(
+    addsOnlyWorkspaceIgnoreBlock(
+      ignoreDiff({ added: ["# rn-iso: this workspace's build output, logs and supervisor pidfile."] }),
+    ),
+  ).toBe(false);
 });
 
 // The other half of the same dead end, and the one a repo with NO .gitignore
@@ -643,7 +708,9 @@ test('anything else in the file is the repo own, and refuses', () => {
   expect(isOnlyWorkspaceIgnoreBlock(`node_modules/\n${renderWorkspaceIgnoreBlock()}`)).toBe(false);
   expect(isOnlyWorkspaceIgnoreBlock('')).toBe(false);
   expect(isOnlyWorkspaceIgnoreBlock(null)).toBe(false);
-  expect(isOnlyWorkspaceIgnoreBlock('# rn-iso: this workspace\'s build output, logs and supervisor pidfile.\n')).toBe(false);
+  expect(isOnlyWorkspaceIgnoreBlock("# rn-iso: this workspace's build output, logs and supervisor pidfile.\n")).toBe(
+    false,
+  );
 });
 
 test('excludeSelfHealedIgnores drops an untracked .gitignore rn-iso wrote whole', () => {
@@ -653,14 +720,22 @@ test('excludeSelfHealedIgnores drops an untracked .gitignore rn-iso wrote whole'
   expect(result.created).toEqual(['apps/x/.gitignore']);
   expect(result.healed).toEqual([]);
 
-  expect(excludeSelfHealedIgnores(['?? apps/x/.gitignore'], { diff: () => '', read: () => `${renderWorkspaceIgnoreBlock()}.env\n` }).lines).toEqual(['?? apps/x/.gitignore']);
+  expect(
+    excludeSelfHealedIgnores(['?? apps/x/.gitignore'], {
+      diff: () => '',
+      read: () => `${renderWorkspaceIgnoreBlock()}.env\n`,
+    }).lines,
+  ).toEqual(['?? apps/x/.gitignore']);
   expect(excludeSelfHealedIgnores(['?? scratch.txt'], { diff: () => '', read }).lines).toEqual(['?? scratch.txt']);
 });
 
 test('excludeSelfHealedIgnores drops only an unstaged .gitignore whose diff is ours', () => {
   const ours = ignoreDiff({ added: ourBlockLines() });
   const seen = [];
-  const diff = (file) => { seen.push(file); return ours; };
+  const diff = (file) => {
+    seen.push(file);
+    return ours;
+  };
 
   const clean = excludeSelfHealedIgnores([' M apps/x/.gitignore'], { diff, read: () => '' });
   expect(clean.lines).toEqual([]);
@@ -670,7 +745,9 @@ test('excludeSelfHealedIgnores drops only an unstaged .gitignore whose diff is o
 
   // A STAGED change to the same file is a different thing: `git checkout --`
   // would not clear it and git would refuse anyway. Fail closed.
-  expect(excludeSelfHealedIgnores(['M  apps/x/.gitignore'], { diff, read: () => '' }).lines).toEqual(['M  apps/x/.gitignore']);
+  expect(excludeSelfHealedIgnores(['M  apps/x/.gitignore'], { diff, read: () => '' }).lines).toEqual([
+    'M  apps/x/.gitignore',
+  ]);
   expect(excludeSelfHealedIgnores([' M src/app.js'], { diff, read: () => '' }).lines).toEqual([' M src/app.js']);
 });
 
@@ -681,10 +758,15 @@ test('action: a worktree dirty only with a .gitignore rn-iso created removes, de
   writeFileSync(join(wtDir, '.gitignore'), renderWorkspaceIgnoreBlock());
   mkdirSync(join(wtDir, '.rn-iso'), { recursive: true });
   writeFileSync(join(wtDir, '.rn-iso', 'state.json'), '{}');
-  setExecutor(makeExecutor({
-    dirty: '?? .gitignore\n',
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
-  }));
+  setExecutor(
+    makeExecutor({
+      dirty: '?? .gitignore\n',
+      worktrees: porcelain([
+        { path: mainDir, branch: 'main' },
+        { path: wtDir, branch: 'feat-x' },
+      ]),
+    }),
+  );
 
   const errs = [];
   const original = console.error;
@@ -703,10 +785,15 @@ test('action: a worktree dirty only with a .gitignore rn-iso created removes, de
 
 test('action: a .gitignore with the repo own lines in it still refuses', async () => {
   writeFileSync(join(wtDir, '.gitignore'), `${renderWorkspaceIgnoreBlock()}.env.local\n`);
-  setExecutor(makeExecutor({
-    dirty: '?? .gitignore\n',
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
-  }));
+  setExecutor(
+    makeExecutor({
+      dirty: '?? .gitignore\n',
+      worktrees: porcelain([
+        { path: mainDir, branch: 'main' },
+        { path: wtDir, branch: 'feat-x' },
+      ]),
+    }),
+  );
 
   const errs = [];
   const original = console.error;
@@ -728,7 +815,10 @@ test('action: a worktree dirty only with rn-iso own gitignore append removes, re
   const exec = makeExecutor({
     dirty: ' M apps/x/.gitignore\n',
     diffs: { 'apps/x/.gitignore': ignoreDiff({ added: ourBlockLines() }) },
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
   });
   setExecutor(exec);
 
@@ -743,11 +833,11 @@ test('action: a worktree dirty only with rn-iso own gitignore append removes, re
   }
 
   expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some(c => /worktree remove/.test(c))).toBeTruthy();
-  expect(!exec.calls.run.some(c => /worktree remove --force/.test(c))).toBeTruthy();
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
+  expect(!exec.calls.run.some((c) => /worktree remove --force/.test(c))).toBeTruthy();
   // git runs its OWN cleanliness check, so the file has to be back before it
   // looks -- proven against real git in the integration test below.
-  const restore = exec.calls.runQuiet.findIndex(c => /checkout -- "apps\/x\/\.gitignore"/.test(c));
+  const restore = exec.calls.runQuiet.findIndex((c) => /checkout -- "apps\/x\/\.gitignore"/.test(c));
   expect(restore >= 0).toBeTruthy();
   expect(errs.join('\n')).toMatch(/restoring apps\/x\/\.gitignore \(only rn-iso's own entry was added\)/);
 });
@@ -757,7 +847,10 @@ test('action: our block plus a user line still refuses', async () => {
   const exec = makeExecutor({
     dirty: ' M apps/x/.gitignore\n',
     diffs: { 'apps/x/.gitignore': ignoreDiff({ added: [...ourBlockLines(), '.env.local'] }) },
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
   });
   setExecutor(exec);
 
@@ -772,7 +865,7 @@ test('action: our block plus a user line still refuses', async () => {
   }
 
   expect(process.exitCode).toBe(1);
-  expect(!exec.calls.run.some(c => /worktree remove/.test(c))).toBeTruthy();
+  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
   expect(errs.join('\n')).toMatch(/apps\/x\/\.gitignore/);
 });
 
@@ -783,7 +876,10 @@ test('action: a removed line in the .gitignore still refuses', async () => {
     diffs: {
       'apps/x/.gitignore': ignoreDiff({ added: ourBlockLines(), removed: ['node_modules/'], context: [] }),
     },
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
   });
   setExecutor(exec);
 
@@ -791,7 +887,7 @@ test('action: a removed line in the .gitignore still refuses', async () => {
   await run(wtDir, {});
 
   expect(process.exitCode).toBe(1);
-  expect(!exec.calls.run.some(c => /worktree remove/.test(c))).toBeTruthy();
+  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });
 
 // --- item 2: the default path, the remedy placeholders, the dead reference --
@@ -799,7 +895,10 @@ test('action: a removed line in the .gitignore still refuses', async () => {
 test('matchWorktreeEntry walks up to the enclosing worktree root', () => {
   const entries = [{ path: '/repo' }, { path: '/repo-worktrees/feat-x' }];
   expect(matchWorktreeEntry(entries, '/repo-worktrees/feat-x')).toEqual({ index: 1, path: '/repo-worktrees/feat-x' });
-  expect(matchWorktreeEntry(entries, '/repo-worktrees/feat-x/apps/mobile')).toEqual({ index: 1, path: '/repo-worktrees/feat-x' });
+  expect(matchWorktreeEntry(entries, '/repo-worktrees/feat-x/apps/mobile')).toEqual({
+    index: 1,
+    path: '/repo-worktrees/feat-x',
+  });
   expect(matchWorktreeEntry(entries, '/repo/apps/mobile')).toEqual({ index: 0, path: '/repo' });
   expect(matchWorktreeEntry(entries, '/repo-worktrees/feat-xy')).toBe(null);
   expect(matchWorktreeEntry(entries, '/elsewhere')).toBe(null);
@@ -812,7 +911,10 @@ test('action: run from a monorepo app dir, it removes the enclosing worktree', a
   upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
   upsertProject(nestedDir, { metroPort: 8099 });
   const exec = makeExecutor({
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
   });
   setExecutor(exec);
 
@@ -820,7 +922,7 @@ test('action: run from a monorepo app dir, it removes the enclosing worktree', a
   await run(nestedDir, {});
 
   expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some(c => c.includes(`worktree remove "${wtDir}"`))).toBeTruthy();
+  expect(exec.calls.run.some((c) => c.includes(`worktree remove "${wtDir}"`))).toBeTruthy();
   expect(getProject(wtDir)).toBe(null);
   expect(getProject(nestedDir)).toBe(null);
 });
@@ -840,7 +942,7 @@ test('action: a path inside no worktree at all is still refused, pointing at git
   }
 
   expect(process.exitCode).toBe(1);
-  expect(!exec.calls.run.some(c => /worktree remove/.test(c))).toBeTruthy();
+  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
   const text = errs.join('\n');
   expect(text).toMatch(/git worktree list/);
   expect(!/rn-iso worktree list/.test(text)).toBeTruthy();
@@ -848,10 +950,15 @@ test('action: a path inside no worktree at all is still refused, pointing at git
 
 test('action: the dirty-tree remedy names the real worktree, not a placeholder', async () => {
   upsertProject(wtDir, { metroPort: 8100 });
-  setExecutor(makeExecutor({
-    dirty: ' M src/app.js\n?? scratch.txt\n',
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }, { path: wtDir, branch: 'feat-x' }]),
-  }));
+  setExecutor(
+    makeExecutor({
+      dirty: ' M src/app.js\n?? scratch.txt\n',
+      worktrees: porcelain([
+        { path: mainDir, branch: 'main' },
+        { path: wtDir, branch: 'feat-x' },
+      ]),
+    }),
+  );
 
   const errs = [];
   const original = console.error;
@@ -1101,7 +1208,10 @@ function podChurnRepo(base, { extraDirt = false } = {}) {
   // What the repo's own postinstall `pod install` does to a fresh worktree:
   // the hermes-engine podspec bakes the absolute path in, so the lockfile is
   // modified before any rn-iso command has run.
-  writeFileSync(join(wt, 'apps', 'app', 'ios', 'Podfile.lock'), `PODS:\n  - hermes-engine (from \`${wt}/node_modules\`)\n`);
+  writeFileSync(
+    join(wt, 'apps', 'app', 'ios', 'Podfile.lock'),
+    `PODS:\n  - hermes-engine (from \`${wt}/node_modules\`)\n`,
+  );
   writeFileSync(join(wt, 'apps', 'app', 'ios', 'Tlon.xcodeproj', 'project.pbxproj'), '// !$*UTF8*$!\n// regenerated\n');
   if (extraDirt) writeFileSync(join(wt, 'apps', 'app', 'App.tsx'), 'export default 2;\n');
   return wt;
@@ -1116,7 +1226,9 @@ test('against a real repo: a worktree dirty only with pod-install churn is resto
   const originalLog = console.log;
   try {
     const wt = podChurnRepo(base);
-    expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe('M apps/app/ios/Podfile.lock\n M apps/app/ios/Tlon.xcodeproj/project.pbxproj');
+    expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe(
+      'M apps/app/ios/Podfile.lock\n M apps/app/ios/Tlon.xcodeproj/project.pbxproj',
+    );
 
     console.error = (m) => errs.push(String(m));
     console.log = () => {};

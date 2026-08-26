@@ -24,9 +24,9 @@ const PACKAGES = join(fileURLToPath(import.meta.url), '..', '..', '..', '..');
 async function waitForRegistration(dir, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const found = readManifest().caches.find(c => c.dir === dir);
+    const found = readManifest().caches.find((c) => c.dir === dir);
     if (found) return found;
-    await new Promise(r => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 10));
   }
   return null;
 }

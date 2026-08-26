@@ -25,16 +25,16 @@ import {
 } from '../engine/errors-xcode.ts';
 
 const REAL_COMPILE_FAILURE = [
-  'CompileC /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/rn-iso-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target \'Scratch\' from project \'Scratch\')',
+  "CompileC /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/rn-iso-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
   '    cd /tmp/rn-iso-xc',
   '    ',
   '    Using response file: /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/e6072d4f65d7061329687fe24e3d63a7-common-args.resp',
   '    ',
   '    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x  [argv elided] cratch.build/Objects-normal/arm64/main.o',
-  '/tmp/rn-iso-xc/Scratch/main.m:5:18: error: use of undeclared identifier \'undefinedThing\'',
+  "/tmp/rn-iso-xc/Scratch/main.m:5:18: error: use of undeclared identifier 'undefinedThing'",
   '    5 |     NSLog(@"%@", undefinedThing);',
   '      |                  ^~~~~~~~~~~~~~',
-  '/tmp/rn-iso-xc/Scratch/main.m:6:19: error: implicit conversion of \'int\' to \'NSString *\' is disallowed with ARC',
+  "/tmp/rn-iso-xc/Scratch/main.m:6:19: error: implicit conversion of 'int' to 'NSString *' is disallowed with ARC",
   '    6 |     NSString *s = 42;',
   '      |                   ^~',
   '2 errors generated.',
@@ -43,13 +43,13 @@ const REAL_COMPILE_FAILURE = [
   '',
   '',
   'The following build commands failed:',
-  '\tCompileC /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/rn-iso-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target \'Scratch\' from project \'Scratch\')',
+  "\tCompileC /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/rn-iso-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
   '\tBuilding project Scratch with scheme Scratch and configuration Debug',
   '(2 failures)',
 ].join('\n');
 
 const REAL_LINK_FAILURE = [
-  'Ld /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/Binary/Scratch normal arm64 (in target \'Scratch\' from project \'Scratch\')',
+  "Ld /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/Binary/Scratch normal arm64 (in target 'Scratch' from project 'Scratch')",
   '    cd /tmp/rn-iso-xc',
   '    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xl [argv elided] uild/Objects-normal/arm64/Binary/Scratch',
   'Undefined symbols for architecture arm64:',
@@ -58,7 +58,7 @@ const REAL_LINK_FAILURE = [
   'ld: symbol(s) not found for architecture arm64',
   '/tmp/rn-iso-xc/Scratch.xcodeproj: Scratch: clang: error: linker command failed with exit code 1 (use -v to see invocation)',
   '',
-  'Ld /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/x86_64/Binary/Scratch normal x86_64 (in target \'Scratch\' from project \'Scratch\')',
+  "Ld /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/x86_64/Binary/Scratch normal x86_64 (in target 'Scratch' from project 'Scratch')",
   '    cd /tmp/rn-iso-xc',
   '    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xl [argv elided] ild/Objects-normal/x86_64/Binary/Scratch',
   'Undefined symbols for architecture x86_64:',
@@ -69,23 +69,23 @@ const REAL_LINK_FAILURE = [
   '',
   '',
   'The following build commands failed:',
-  '\tLd /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/Binary/Scratch normal arm64 (in target \'Scratch\' from project \'Scratch\')',
+  "\tLd /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/Binary/Scratch normal arm64 (in target 'Scratch' from project 'Scratch')",
   '\tBuilding project Scratch with scheme Scratch and configuration Debug',
   '(2 failures)',
 ].join('\n');
 
 const REAL_PODS_FAILURE = [
   '',
-  'PhaseScriptExecution [CP]\\ Check\\ Pods\\ Manifest.lock /tmp/rn-iso-xc-pods/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Script-AA00000000000000000020.sh (in target \'Scratch\' from project \'Scratch\')',
+  "PhaseScriptExecution [CP]\\ Check\\ Pods\\ Manifest.lock /tmp/rn-iso-xc-pods/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Script-AA00000000000000000020.sh (in target 'Scratch' from project 'Scratch')",
   '    cd /tmp/rn-iso-xc-pods',
   '    /bin/sh -c /tmp/rn-iso-xc-pods/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Script-AA00000000000000000020.sh',
-  'error: The sandbox is not in sync with the Podfile.lock. Run \'pod install\' or update your CocoaPods installation.',
+  "error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.",
   '',
-  'ProcessInfoPlistFile /tmp/rn-iso-xc-pods/dd/Build/Products/Debug-iphonesimulator/Scratch.app/Info.plist /tmp/rn-iso-xc-pods/Scratch/Info.plist (in target \'Scratch\' from project \'Scratch\')',
+  "ProcessInfoPlistFile /tmp/rn-iso-xc-pods/dd/Build/Products/Debug-iphonesimulator/Scratch.app/Info.plist /tmp/rn-iso-xc-pods/Scratch/Info.plist (in target 'Scratch' from project 'Scratch')",
   '    cd /tmp/rn-iso-xc-pods',
   '    builtin-infoPlistUtility /tmp/rn-iso-xc-pods/Scratch/Info.plist -producttype com.apple.product-type.application -genpkginfo /tmp/rn-iso-xc-pods/dd/Build/Products/Debug-iphonesimulator/Scratch.app/PkgInfo -expandbuildsettings -format binary -platform iphonesimulator -o /tmp/rn-iso-xc-pods/dd/Build/Products/Debug-iphonesimulator/Scratch.app/Info.plist',
   '',
-  'warning: Run script build phase \'[CP] Check Pods Manifest.lock\' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target \'Scratch\' from project \'Scratch\')',
+  "warning: Run script build phase '[CP] Check Pods Manifest.lock' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking \"Based on dependency analysis\" in the script phase. (in target 'Scratch' from project 'Scratch')",
   '** BUILD FAILED **',
   '',
 ].join('\n');
@@ -93,7 +93,7 @@ const REAL_PODS_FAILURE = [
 const REAL_SIGNING_FAILURE = [
   'Build description signature: 5aff88b39ca8e2b9798e399e4ba14334',
   'Build description path: /tmp/rn-iso-xc/dd-dev/Build/Intermediates.noindex/XCBuildData/5aff88b39ca8e2b9798e399e4ba14334.xcbuilddata',
-  '/tmp/rn-iso-xc/Scratch.xcodeproj: error: No profiles for \'com.rniso.scratch\' were found: Xcode couldn\'t find any iOS App Development provisioning profiles matching \'com.rniso.scratch\'. Automatic signing is disabled and unable to generate a profile. To enable automatic signing, pass -allowProvisioningUpdates to xcodebuild. (in target \'Scratch\' from project \'Scratch\')',
+  "/tmp/rn-iso-xc/Scratch.xcodeproj: error: No profiles for 'com.rniso.scratch' were found: Xcode couldn't find any iOS App Development provisioning profiles matching 'com.rniso.scratch'. Automatic signing is disabled and unable to generate a profile. To enable automatic signing, pass -allowProvisioningUpdates to xcodebuild. (in target 'Scratch' from project 'Scratch')",
   '** BUILD FAILED **',
   '',
 ].join('\n');
@@ -111,22 +111,21 @@ const REAL_SCHEME_FAILURE = [
 ].join('\n');
 
 const REAL_SUCCESS_TAIL = [
-  'RegisterExecutionPolicyException /tmp/rn-iso-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target \'Scratch\' from project \'Scratch\')',
+  "RegisterExecutionPolicyException /tmp/rn-iso-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
   '    cd /tmp/rn-iso-xc',
   '    builtin-RegisterExecutionPolicyException /tmp/rn-iso-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app',
   '',
-  'Validate /tmp/rn-iso-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target \'Scratch\' from project \'Scratch\')',
+  "Validate /tmp/rn-iso-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
   '    cd /tmp/rn-iso-xc',
   '    builtin-validationUtility /tmp/rn-iso-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app -shallow-bundle -infoplist-subpath Info.plist',
   '',
-  'Touch /tmp/rn-iso-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target \'Scratch\' from project \'Scratch\')',
+  "Touch /tmp/rn-iso-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
   '    cd /tmp/rn-iso-xc',
   '    /usr/bin/touch -c /tmp/rn-iso-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app',
   '',
   '** BUILD SUCCEEDED **',
   '',
 ].join('\n');
-
 
 describe('real transcripts', () => {
   test('a clang compile failure yields file, line, column and message, and nothing else', () => {
@@ -168,7 +167,7 @@ describe('real transcripts', () => {
       'CompileC /dd/b.o /a/b.m normal arm64 objective-c',
       'error: a recap line at column zero',
     ].join('\n');
-    expect(extractXcodeDiagnostics(transcript).map(d => d.message)).toEqual(['the real one']);
+    expect(extractXcodeDiagnostics(transcript).map((d) => d.message)).toEqual(['the real one']);
   });
 
   test('a link failure reports the missing symbol ONCE across both simulator slices', () => {
@@ -176,7 +175,7 @@ describe('real transcripts', () => {
     // "for architecture arm64" and "for architecture x86_64". An agent has one
     // symbol to add, not two.
     const found = extractXcodeDiagnostics(REAL_LINK_FAILURE);
-    expect(found.map(d => d.message)).toEqual([
+    expect(found.map((d) => d.message)).toEqual([
       'Undefined symbol: _rnIsoMissingFunction',
       'ld: symbol(s) not found for architecture arm64',
       'linker command failed with exit code 1 (use -v to see invocation)',
@@ -245,13 +244,8 @@ describe('what is and is not a diagnostic', () => {
   });
 
   test('ld: warning is excluded, ld: anything else is not', () => {
-    const transcript = [
-      'ld: warning: ignoring duplicate libraries: -lc++',
-      'ld: framework not found Foo',
-    ].join('\n');
-    expect(extractXcodeDiagnostics(transcript)).toEqual([
-      { message: 'ld: framework not found Foo' },
-    ]);
+    const transcript = ['ld: warning: ignoring duplicate libraries: -lc++', 'ld: framework not found Foo'].join('\n');
+    expect(extractXcodeDiagnostics(transcript)).toEqual([{ message: 'ld: framework not found Foo' }]);
   });
 
   test('the Xcode 15+ linker spelling of an undefined symbol is recognized too', () => {
@@ -264,28 +258,28 @@ describe('what is and is not a diagnostic', () => {
       '',
       'clang: error: linker command failed with exit code 1',
     ].join('\n');
-    expect(extractXcodeDiagnostics(transcript).map(d => d.message)).toEqual([
+    expect(extractXcodeDiagnostics(transcript).map((d) => d.message)).toEqual([
       'Undefined symbol: _RCTRegisterModule',
       'linker command failed with exit code 1',
     ]);
   });
 
   test('a Swift diagnostic without a column keeps its line and omits the column', () => {
-    const transcript = '/app/ios/App/AppDelegate.swift:42: error: cannot find \'Foo\' in scope';
+    const transcript = "/app/ios/App/AppDelegate.swift:42: error: cannot find 'Foo' in scope";
     expect(extractXcodeDiagnostics(transcript)).toEqual([
       { file: '/app/ios/App/AppDelegate.swift', line: 42, message: "cannot find 'Foo' in scope" },
     ]);
   });
 
   test('`fatal error:` is the same diagnostic with a different word in front', () => {
-    const transcript = '/app/ios/App/Bridge.m:3:9: fatal error: \'React/RCTBridge.h\' file not found';
+    const transcript = "/app/ios/App/Bridge.m:3:9: fatal error: 'React/RCTBridge.h' file not found";
     expect(extractXcodeDiagnostics(transcript)).toEqual([
       { file: '/app/ios/App/Bridge.m', line: 3, column: 9, message: "'React/RCTBridge.h' file not found" },
     ]);
   });
 
   test('a development team error is a signing error however it is phrased', () => {
-    const transcript = "/app/ios/App.xcodeproj: error: Signing for \"App\" requires a development team.";
+    const transcript = '/app/ios/App.xcodeproj: error: Signing for "App" requires a development team.';
     const found = extractXcodeDiagnostics(transcript);
     expect(found.length).toBe(1);
     expect(found[0].remedy).toMatch(/needs no signing/);
@@ -314,17 +308,17 @@ describe('dedupe and order', () => {
   test('the same message at two different sites is two diagnostics', () => {
     // Dedupe is on the location, not the text: two call sites are two edits.
     const transcript = [
-      '/a/One.m:10:5: error: use of undeclared identifier \'x\'',
-      '/a/Two.m:20:5: error: use of undeclared identifier \'x\'',
+      "/a/One.m:10:5: error: use of undeclared identifier 'x'",
+      "/a/Two.m:20:5: error: use of undeclared identifier 'x'",
     ].join('\n');
     expect(extractXcodeDiagnostics(transcript).length).toBe(2);
   });
 
   test('the same message at the same site is one, however many arch slices report it', () => {
     const transcript = [
-      '/a/One.m:10:5: error: use of undeclared identifier \'x\'',
-      '/a/One.m:10:5: error: use of undeclared identifier \'x\'',
-      '/a/One.m:10:5: error: use of undeclared identifier \'x\'',
+      "/a/One.m:10:5: error: use of undeclared identifier 'x'",
+      "/a/One.m:10:5: error: use of undeclared identifier 'x'",
+      "/a/One.m:10:5: error: use of undeclared identifier 'x'",
     ].join('\n');
     expect(extractXcodeDiagnostics(transcript).length).toBe(1);
   });
@@ -335,7 +329,7 @@ describe('dedupe and order', () => {
       '/a/One.m:1:1: error: first',
       '/a/Two.m:2:1: error: second',
     ].join('\n');
-    expect(extractXcodeDiagnostics(transcript).map(d => d.message)).toEqual(['third', 'first', 'second']);
+    expect(extractXcodeDiagnostics(transcript).map((d) => d.message)).toEqual(['third', 'first', 'second']);
   });
 });
 

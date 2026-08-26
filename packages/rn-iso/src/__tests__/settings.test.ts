@@ -17,10 +17,7 @@ afterEach(() => {
 });
 
 test('earlier layers win over later ones', () => {
-  const merged = mergeSettingsLayers([
-    { packageManager: 'bun' },
-    { packageManager: 'pnpm', worktreeDir: '/b' },
-  ]);
+  const merged = mergeSettingsLayers([{ packageManager: 'bun' }, { packageManager: 'pnpm', worktreeDir: '/b' }]);
   expect(merged).toEqual({ packageManager: 'bun', worktreeDir: '/b' });
 });
 
@@ -37,10 +34,7 @@ test('ignores null and undefined layers', () => {
 });
 
 test('an array value is replaced wholesale, not concatenated', () => {
-  const merged = mergeSettingsLayers([
-    { worktree: { install: ['a'] } },
-    { worktree: { install: ['b', 'c'] } },
-  ]);
+  const merged = mergeSettingsLayers([{ worktree: { install: ['a'] } }, { worktree: { install: ['b', 'c'] } }]);
   expect(merged.worktree.install).toEqual(['a']);
 });
 
@@ -58,7 +52,7 @@ test('readCommittedSettings returns empty for missing or malformed files', () =>
 test('resolveSettings orders project over repo over committed', () => {
   writeFileSync(
     join(tmpHome, '.rn-iso.json'),
-    JSON.stringify({ packageManager: 'yarn', worktree: { baseRef: 'fresh' } })
+    JSON.stringify({ packageManager: 'yarn', worktree: { baseRef: 'fresh' } }),
   );
   setRepoSetting('/repo/.git', 'packageManager', 'pnpm');
   upsertProject('/proj', {});
@@ -82,12 +76,14 @@ test('unknownSettingKeys reports keys rn-iso no longer reads', () => {
 });
 
 test('unknownSettingKeys accepts every key that is still honoured', () => {
-  expect(unknownSettingKeys({
-    ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' },
-    android: { systemImage: 'pkg' },
-    worktree: { baseRef: 'fresh', include: ['.env'] },
-    worktreeDir: '/tmp/wt',
-  })).toEqual([]);
+  expect(
+    unknownSettingKeys({
+      ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' },
+      android: { systemImage: 'pkg' },
+      worktree: { baseRef: 'fresh', include: ['.env'] },
+      worktreeDir: '/tmp/wt',
+    }),
+  ).toEqual([]);
 });
 
 test('unknownSettingKeys reports a nested unknown without flagging its parent', () => {
@@ -107,10 +103,13 @@ test('unknownSettingKeys tolerates empty and malformed input', () => {
 test('committed caches and device settings resolve with their JSON types intact', () => {
   const repo = mkdtempSync(join(tmpdir(), 'rn-iso-repo-'));
   try {
-    writeFileSync(join(repo, '.rn-iso.json'), JSON.stringify({
-      caches: ['~/.myapp-metro-cache', '/tmp/build-cache'],
-      ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' },
-    }));
+    writeFileSync(
+      join(repo, '.rn-iso.json'),
+      JSON.stringify({
+        caches: ['~/.myapp-metro-cache', '/tmp/build-cache'],
+        ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' },
+      }),
+    );
     const resolved = resolveSettings({ repoRoot: repo });
     expect(resolved.caches).toEqual(['~/.myapp-metro-cache', '/tmp/build-cache']);
     expect(resolved.ios.deviceType).toBe('iPhone 17 Pro');

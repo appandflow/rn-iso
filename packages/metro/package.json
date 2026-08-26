@@ -2,6 +2,12 @@
   "name": "@rn-iso/metro",
   "version": "1.1.0",
   "description": "Metro integration for rn-iso: one transform cache shared by every worktree, plus an NDJSON reporter for structured logs.",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -11,12 +17,6 @@
       "default": "./dist/index.js"
     }
   },
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
-  "license": "MIT",
   "scripts": {
     "test": "node --test test/*.test.js",
     "build": "tsdown"

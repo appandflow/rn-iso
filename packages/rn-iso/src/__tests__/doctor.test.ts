@@ -154,7 +154,13 @@ test('detectXcodeMajor agrees with the real xcodebuild, when there is one', () =
 });
 
 test('detectXcodeMajor reports unknown rather than throwing when xcodebuild is missing', () => {
-  setExecutor({ run: () => { throw new Error('not found'); }, runQuiet: () => null, spawn: () => {} });
+  setExecutor({
+    run: () => {
+      throw new Error('not found');
+    },
+    runQuiet: () => null,
+    spawn: () => {},
+  });
   try {
     expect(detectXcodeMajor()).toBe(null);
   } finally {
@@ -203,7 +209,9 @@ test('a missing .gitignore is the same diagnosis as one that does not mention it
 test('the entry is recognised however it is written, and comments do not count', () => {
   expect(checkArtifactLayout({ gitignoreSource: '/.rn-iso\n' })).toBe(null);
   expect(checkArtifactLayout({ gitignoreSource: '.rn-iso\n' })).toBe(null);
-  expect(checkArtifactLayout({ gitignoreSource: '# ignore .rn-iso/ one day\nnode_modules\n' }).title).toMatch(/not gitignored/);
+  expect(checkArtifactLayout({ gitignoreSource: '# ignore .rn-iso/ one day\nnode_modules\n' }).title).toMatch(
+    /not gitignored/,
+  );
 });
 
 // --- cacheStores that is only wired some of the time ------------------------
@@ -238,7 +246,11 @@ test('a cacheStores set inside an if is a note for the same reason', () => {
 // stays silent, exactly as before.
 test('an unconditional cacheStores stays silent', () => {
   expect(checkMetroCache("config.cacheStores = [new FileStore({ root: '/x' })];")).toBe(null);
-  expect(checkMetroCache("const { sharedCacheStores } = require('@rn-iso/metro');\nconfig.cacheStores = sharedCacheStores('app');")).toBe(null);
+  expect(
+    checkMetroCache(
+      "const { sharedCacheStores } = require('@rn-iso/metro');\nconfig.cacheStores = sharedCacheStores('app');",
+    ),
+  ).toBe(null);
 });
 
 // A metro.config.js that is one line of delegation decides NOTHING here, and
@@ -272,14 +284,21 @@ test('an ordinary config that BUILDS on a metro package is not a delegation', ()
   // configuring it is a config doctor can read, and it must still get the
   // real finding.
   expect(metroConfigDelegate("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);")).toBe(null);
-  expect(metroConfigDelegate("const { getDefaultConfig } = require('@react-native/metro-config');\nconst config = getDefaultConfig(__dirname);\nmodule.exports = config;")).toBe(null);
-  expect(checkMetroCache("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);").level).toBe('cost');
+  expect(
+    metroConfigDelegate(
+      "const { getDefaultConfig } = require('@react-native/metro-config');\nconst config = getDefaultConfig(__dirname);\nmodule.exports = config;",
+    ),
+  ).toBe(null);
+  expect(checkMetroCache("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);").level).toBe(
+    'cost',
+  );
 });
 
 test('a delegating config that DOES mention cacheStores is read normally', () => {
   // Delegation is only interesting because the file says nothing about the
   // cache. One that does is inspectable after all.
-  const source = "const base = require('@acme/metro');\nbase.cacheStores = [new FileStore({ root: '/x' })];\nmodule.exports = base;";
+  const source =
+    "const base = require('@acme/metro');\nbase.cacheStores = [new FileStore({ root: '/x' })];\nmodule.exports = base;";
   expect(metroConfigDelegate(source)).toBe(null);
   expect(checkMetroCache(source)).toBe(null);
 });
@@ -320,20 +339,31 @@ test('the dynamic-config note says an existing provider is kept, as the static o
 // exactly what a cold cache looks like. doctor is the place that can say so.
 test('a project with no EAS provider is not asked about EAS at all', () => {
   let asked = false;
-  const f = checkEasAuth({ provider: { plugin: './local.js' }, auth: () => { asked = true; } } as any);
+  const f = checkEasAuth({
+    provider: { plugin: './local.js' },
+    auth: () => {
+      asked = true;
+    },
+  } as any);
   expect(f).toBe(null);
   expect(asked).toBe(false);
 });
 
 test('the EAS provider with no eas-cli anywhere is a cost, with an install remedy', () => {
-  const f = checkEasAuth({ provider: 'eas', auth: { failed: true, code: 'no-cli', reason: 'no `eas` executable', remedy: 'Install eas-cli.' } });
+  const f = checkEasAuth({
+    provider: 'eas',
+    auth: { failed: true, code: 'no-cli', reason: 'no `eas` executable', remedy: 'Install eas-cli.' },
+  });
   expect(f.level).toBe('cost');
   expect(f.title).toMatch(/eas-cli/);
   expect(f.fix).toMatch(/Install eas-cli/);
 });
 
 test('the EAS provider with no session is a cost naming both ways back in', () => {
-  const f = checkEasAuth({ provider: 'eas', auth: { failed: true, code: 'logged-out', reason: 'Not logged in', remedy: 'Run `eas login` (or set EXPO_TOKEN).' } });
+  const f = checkEasAuth({
+    provider: 'eas',
+    auth: { failed: true, code: 'logged-out', reason: 'Not logged in', remedy: 'Run `eas login` (or set EXPO_TOKEN).' },
+  });
   expect(f.level).toBe('cost');
   expect(f.detail).toMatch(/miss/i);
   expect(f.fix).toMatch(/eas login/);
@@ -347,7 +377,14 @@ test('a session on an account that does not cover the owner is a NOTE naming bot
   const f = checkEasAuth({
     provider: 'eas',
     owner: 'th3rd-wave',
-    auth: { failed: true, code: 'wrong-account', account: 'janic', accounts: ['janic'], owner: 'th3rd-wave', remedy: 'Run `eas login` as a member of th3rd-wave.' },
+    auth: {
+      failed: true,
+      code: 'wrong-account',
+      account: 'janic',
+      accounts: ['janic'],
+      owner: 'th3rd-wave',
+      remedy: 'Run `eas login` as a member of th3rd-wave.',
+    },
   });
   expect(f.level).toBe('note');
   expect(f.title).toMatch(/janic/);
@@ -365,7 +402,9 @@ test('an unestablished session is a note about the check, not an accusation', ()
 });
 
 test('a good session is reported as nothing at all', () => {
-  expect(checkEasAuth({ provider: 'eas', owner: 'janic', auth: { ok: true, account: 'janic', accounts: ['janic'] } })).toBe(null);
+  expect(
+    checkEasAuth({ provider: 'eas', owner: 'janic', auth: { ok: true, account: 'janic', accounts: ['janic'] } }),
+  ).toBe(null);
 });
 
 // The experiments key is where SDK 53 keeps it, and "eas" there is still EAS.
@@ -376,11 +415,17 @@ test('the provider is recognised on either key', () => {
 
 test('runDoctor probes the session only for an EAS project, and passes it the owner', () => {
   const probes = [];
-  const auth = (args) => { probes.push(args); return { ok: true, account: 'janic', accounts: ['janic'] }; };
+  const auth = (args) => {
+    probes.push(args);
+    return { ok: true, account: 'janic', accounts: ['janic'] };
+  };
 
   const easProject = mkdtempSync(join(tmpdir(), 'rn-iso-doctor-'));
   writeFileSync(join(easProject, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
-  writeFileSync(join(easProject, 'app.json'), JSON.stringify({ expo: { owner: 'th3rd-wave', buildCacheProvider: 'eas' } }));
+  writeFileSync(
+    join(easProject, 'app.json'),
+    JSON.stringify({ expo: { owner: 'th3rd-wave', buildCacheProvider: 'eas' } }),
+  );
   runDoctor(easProject, { easAuth: auth as any });
   expect(probes.length).toBe(1);
   expect(probes[0].projectRoot).toBe(easProject);
@@ -388,7 +433,10 @@ test('runDoctor probes the session only for an EAS project, and passes it the ow
 
   const otherProject = mkdtempSync(join(tmpdir(), 'rn-iso-doctor-'));
   writeFileSync(join(otherProject, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
-  writeFileSync(join(otherProject, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: { plugin: '@rn-iso/expo-build-cache' } } }));
+  writeFileSync(
+    join(otherProject, 'app.json'),
+    JSON.stringify({ expo: { buildCacheProvider: { plugin: '@rn-iso/expo-build-cache' } } }),
+  );
   runDoctor(otherProject, { easAuth: auth as any });
   expect(probes.length).toBe(1);
 
@@ -403,7 +451,7 @@ test('the EAS finding reaches the report runDoctor returns', () => {
   const findings = runDoctor(dir, {
     easAuth: () => ({ failed: true, code: 'logged-out', remedy: 'Run `eas login` (or set EXPO_TOKEN).' }),
   });
-  expect(findings.some(f => /EAS/.test(f.title) && f.level === 'cost')).toBeTruthy();
+  expect(findings.some((f) => /EAS/.test(f.title) && f.level === 'cost')).toBeTruthy();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -424,7 +472,7 @@ test('runDoctor stays silent about concurrency when nothing is set', () => {
   const project = mkdtempSync(join(tmpdir(), 'rn-iso-doc-conc-'));
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
   const findings = runDoctor(project, { concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }) });
-  expect(!findings.some(f => /concurrency/i.test(f.title))).toBeTruthy();
+  expect(!findings.some((f) => /concurrency/i.test(f.title))).toBeTruthy();
   rmSync(project, { recursive: true, force: true });
 });
 
@@ -436,7 +484,7 @@ test('runDoctor emits one concurrency note when a limit is set', () => {
     liveDevices: () => 0,
     activeBuilds: () => 0,
   });
-  const notes = findings.filter(f => /concurrency/i.test(f.title));
+  const notes = findings.filter((f) => /concurrency/i.test(f.title));
   expect(notes.length).toBe(1);
   rmSync(project, { recursive: true, force: true });
 });

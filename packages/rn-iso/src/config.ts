@@ -10,14 +10,7 @@ import { withDirLock } from './dir-lock.ts';
 // rather than closed interfaces. They live in the shared vocabulary
 // (src/types.ts) now, and are re-exported here so existing importers of
 // `./config.ts` are unaffected.
-import type {
-  Config,
-  ConcurrencyLimits,
-  DeviceRecord,
-  ProjectRecord,
-  RepoRecord,
-  SupervisorRecord,
-} from './types.ts';
+import type { Config, ConcurrencyLimits, DeviceRecord, ProjectRecord, RepoRecord, SupervisorRecord } from './types.ts';
 export type { Config, ConcurrencyLimits, DeviceRecord, ProjectRecord, RepoRecord, SupervisorRecord };
 
 export function getConfigDir(): string {
@@ -68,8 +61,8 @@ export function loadConfig(): Config | null {
     // let the user decide instead.
     const corrupt = new Error(
       `rn-iso config at ${p} is not valid JSON: ${(err as Error).message}\n` +
-      'It holds the records of the simulators and emulators rn-iso owns, so it is never reset automatically.\n' +
-      `Repair the file, or move it aside to start over: mv "${p}" "${p}.broken"`
+        'It holds the records of the simulators and emulators rn-iso owns, so it is never reset automatically.\n' +
+        `Repair the file, or move it aside to start over: mv "${p}" "${p}.broken"`,
     );
     // Flagged so bin/cli.js prints the message alone: this is a state the user
     // has to fix, not a bug whose stack trace helps anyone.
@@ -91,7 +84,9 @@ export function saveConfig(config: Config): void {
   } catch (err) {
     try {
       unlinkSync(tmp);
-    } catch { /* nothing to clean up */ }
+    } catch {
+      /* nothing to clean up */
+    }
     throw err;
   }
 }
@@ -254,7 +249,7 @@ export function getConcurrencyLimits({ env = process.env }: { env?: NodeJS.Proce
 
 function resolveLimit(envVal: unknown, cfgVal: unknown): number {
   const hasEnv = envVal !== undefined && envVal !== null && envVal !== '';
-  const raw = hasEnv ? Number(envVal) : (typeof cfgVal === 'number' ? cfgVal : Number.NaN);
+  const raw = hasEnv ? Number(envVal) : typeof cfgVal === 'number' ? cfgVal : Number.NaN;
   if (!Number.isFinite(raw) || raw <= 0) return 0;
   return Math.floor(raw);
 }
@@ -398,8 +393,8 @@ export function allMetroPorts(): number[] {
   const cfg = loadConfig();
   if (!cfg?.projects) return [];
   return Object.values(cfg.projects)
-    .map(p => p.metroPort)
-    .filter(p => typeof p === 'number');
+    .map((p) => p.metroPort)
+    .filter((p) => typeof p === 'number');
 }
 
 export function findProjectByMetroPort(port: number): string | null {
@@ -414,7 +409,9 @@ export function findProjectByMetroPort(port: number): string | null {
 // device directly on the owning project. The only thing that still needs a
 // cross-project view is avoiding console-port / physical-serial collisions
 // when creating a new owned Android device.
-export function allConsolePortsAndSerials({ isMounted = isOnMountedVolume }: { isMounted?: (p: string) => boolean } = {}): { androidConsolePorts: number[]; androidPhysicalSerials: string[] } {
+export function allConsolePortsAndSerials({
+  isMounted = isOnMountedVolume,
+}: { isMounted?: (p: string) => boolean } = {}): { androidConsolePorts: number[]; androidPhysicalSerials: string[] } {
   const cfg = loadConfig();
   const result: { androidConsolePorts: number[]; androidPhysicalSerials: string[] } = {
     androidConsolePorts: [],

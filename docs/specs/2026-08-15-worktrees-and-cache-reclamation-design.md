@@ -10,7 +10,7 @@ Two additions to rn-iso:
 1. **`rn-iso worktree create|remove|list`** — create a git worktree with its
    environment set up (carry-over files, dependency install, workspace package
    build) and tear it down completely.
-2. **`rn-iso gc`** — reclaim build artifacts that live *outside* a worktree and
+2. **`rn-iso gc`** — reclaim build artifacts that live _outside_ a worktree and
    are therefore orphaned when the worktree is deleted.
 
 The motivating workflow is Claude Code's `remote-control --spawn=worktree`,
@@ -28,24 +28,24 @@ All figures from tlon-apps at `origin/develop` (35a08a89d, RN 0.86.0) on an
 M4 Mac mini, 16 GB, repos on an APFS USB SSD. These are the numbers the design
 is calibrated against.
 
-| Phase | Time |
-|---|---|
-| `git worktree add` | 0.45 s |
-| `.env` carry-over (1 file) | instant |
-| `pnpm install` (1544 pkgs) | 43 s |
-| `npx install-skia` (skipped postinstall) | 2.5 s |
-| `pnpm build:packages` | 10 s |
-| **worktree ready** | **~56 s** |
-| Cold native build (pod install + compile) | 423 s |
-| Teardown (release + remove + DerivedData) | 55 s |
+| Phase                                     | Time      |
+| ----------------------------------------- | --------- |
+| `git worktree add`                        | 0.45 s    |
+| `.env` carry-over (1 file)                | instant   |
+| `pnpm install` (1544 pkgs)                | 43 s      |
+| `npx install-skia` (skipped postinstall)  | 2.5 s     |
+| `pnpm build:packages`                     | 10 s      |
+| **worktree ready**                        | **~56 s** |
+| Cold native build (pod install + compile) | 423 s     |
+| Teardown (release + remove + DerivedData) | 55 s      |
 
 Disk, for one worktree with one complete build:
 
-| Artifact | Size | Location | Dies with `git worktree remove`? |
-|---|---|---|---|
-| `node_modules` | 3.1 GB | inside worktree | yes |
-| Pods, `.expo`, `android/build` | ~2 GB | inside worktree | yes |
-| **DerivedData** | **4.3 GB** | **outside worktree** | **no — orphaned** |
+| Artifact                       | Size       | Location             | Dies with `git worktree remove`? |
+| ------------------------------ | ---------- | -------------------- | -------------------------------- |
+| `node_modules`                 | 3.1 GB     | inside worktree      | yes                              |
+| Pods, `.expo`, `android/build` | ~2 GB      | inside worktree      | yes                              |
+| **DerivedData**                | **4.3 GB** | **outside worktree** | **no — orphaned**                |
 
 The 4.3 GB is the entire justification for `gc`. Everything inside the worktree
 already dies correctly; only the path-hashed DerivedData directory survives.
@@ -125,12 +125,12 @@ disks, anything installation-specific.
 ```jsonc
 {
   "version": 2,
-  "projects": { "/abs/path": { /* unchanged */ } },
+  "projects": { "/abs/path": {/* unchanged */} },
   "repos": {
     "/Volumes/ExternalSSD/Developer/tlon-apps/.git": {
-      "settings": { "worktreeDir": "..." }
-    }
-  }
+      "settings": { "worktreeDir": "..." },
+    },
+  },
 }
 ```
 
@@ -367,12 +367,12 @@ The rule is that ambiguity always resolves toward not deleting.
 A non-zero exit from a `WorktreeCreate` hook kills the session spawn, so
 failures are graded:
 
-| Failure | Behavior |
-|---|---|
-| Worktree path exists and is valid | Print path, exit 0 (idempotent — hook retries must not fail) |
-| Not a git repo, or `git worktree add` fails | Surface git's stderr verbatim, exit 1 (nothing was created) |
-| Carry-over copy fails | Warn on stderr, continue |
-| Setup pipeline command fails | Print path on stdout, warn loudly on stderr, **record status**, exit 0 |
+| Failure                                     | Behavior                                                               |
+| ------------------------------------------- | ---------------------------------------------------------------------- |
+| Worktree path exists and is valid           | Print path, exit 0 (idempotent — hook retries must not fail)           |
+| Not a git repo, or `git worktree add` fails | Surface git's stderr verbatim, exit 1 (nothing was created)            |
+| Carry-over copy fails                       | Warn on stderr, continue                                               |
+| Setup pipeline command fails                | Print path on stdout, warn loudly on stderr, **record status**, exit 0 |
 
 The last row is deliberate: a worktree with a broken install is recoverable
 in-session, but a failed spawn loses the session entirely. The recorded status

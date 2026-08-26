@@ -159,39 +159,46 @@ export function environmentState(
     warnings,
     ios: ios
       ? {
-        name: sim?.name ?? null,
-        udid: ios.deviceUdid as string,
-        owned: Boolean(ios.owned),
-        state: sim?.state ?? (simsAvailable ? 'missing' : 'unknown'),
-      }
+          name: sim?.name ?? null,
+          udid: ios.deviceUdid as string,
+          owned: Boolean(ios.owned),
+          state: sim?.state ?? (simsAvailable ? 'missing' : 'unknown'),
+        }
       : null,
     android: android
-      ? { name: android.avdName ?? android.serial, owned: Boolean(android.owned), physical: Boolean(android.serial && !android.avdName) }
+      ? {
+          name: android.avdName ?? android.serial,
+          owned: Boolean(android.owned),
+          physical: Boolean(android.serial && !android.avdName),
+        }
       : null,
     metro: project.metroPort
       ? { port: project.metroPort, running: metroRunning, pid: metro?.metro?.pid ?? null }
       : null,
     supervisor: supervisor
       ? {
-        pid: supervisor.pid ?? null,
-        mode: supervisor.mode ?? null,
-        startedAt: supervisor.startedAt ?? null,
-        healthy: Boolean(supervisor.healthy),
-      }
+          pid: supervisor.pid ?? null,
+          mode: supervisor.mode ?? null,
+          startedAt: supervisor.startedAt ?? null,
+          healthy: Boolean(supervisor.healthy),
+        }
       : null,
     logs: logs ? { dir: logs.dir, errorsSinceMarker: logs.errorsSinceMarker ?? 0 } : null,
     // A worktree whose environment is registered is the normal case; one without
     // is a workspace nobody has provisioned yet, which is worth seeing.
-    worktree: worktrees.find(w => w.path === project.__path) ?? null,
+    worktree: worktrees.find((w) => w.path === project.__path) ?? null,
   };
 }
 
 // Over capacity is the interesting verdict, not exact numbers: past the point
 // where committed memory exceeds what the machine has, more parallelism makes
 // everything slower, and nothing else in the system will say so.
-export function capacity(states: EnvironmentState[], totalMemoryMb: number): { liveCount: number; committedMb: number; totalMemoryMb: number; overCapacity: boolean } {
+export function capacity(
+  states: EnvironmentState[],
+  totalMemoryMb: number,
+): { liveCount: number; committedMb: number; totalMemoryMb: number; overCapacity: boolean } {
   const committedMb = states.reduce((n: number, s) => n + s.memoryMb, 0);
-  const liveCount = states.filter(s => s.live).length;
+  const liveCount = states.filter((s) => s.live).length;
   return {
     liveCount,
     committedMb,
@@ -210,7 +217,9 @@ export function capacity(states: EnvironmentState[], totalMemoryMb: number): { l
 // `df -k` rather than `-h` so the number needs no unit parsing. Returns null on
 // any surprise: this is a hint printed beside a summary, never a gate.
 export function parseDfFree(output: unknown): DiskInfo | null {
-  const lines = String(output || '').trim().split('\n');
+  const lines = String(output || '')
+    .trim()
+    .split('\n');
   if (lines.length < 2) return null;
   // Fields: Filesystem 1024-blocks Used Available Capacity ... Mounted-on.
   // The filesystem name can contain spaces, so count from the RIGHT of the
@@ -260,12 +269,12 @@ export function diskLine(volumes: VolumeInfo[] | null | undefined): string | nul
     const { disk } = usable[0];
     return `${formatSpace(disk.availableMb)} free of ${formatSpace(disk.totalMb)} on disk.`;
   }
-  return `${usable.map(v => `${formatSpace(v.disk.availableMb)} free on ${v.volume}`).join(', ')}.`;
+  return `${usable.map((v) => `${formatSpace(v.disk.availableMb)} free on ${v.volume}`).join(', ')}.`;
 }
 
 // Pure. Which of the reported volumes are tight enough to fail a build partway.
 export function tightVolumes(volumes: VolumeInfo[] | null | undefined): VolumeInfo[] {
-  return (volumes || []).filter(v => v && diskIsTight(v.disk));
+  return (volumes || []).filter((v) => v && diskIsTight(v.disk));
 }
 
 // Worktrees rn-iso knows nothing about: a workspace someone created by hand, or
@@ -273,5 +282,5 @@ export function tightVolumes(volumes: VolumeInfo[] | null | undefined): VolumeIn
 // replacement for `worktree list` rather than a second thing to check.
 export function unprovisionedWorktrees(worktrees: WorktreeFacts[], projectPaths: string[]): WorktreeFacts[] {
   const known = new Set(projectPaths);
-  return worktrees.filter(w => !known.has(w.path));
+  return worktrees.filter((w) => !known.has(w.path));
 }

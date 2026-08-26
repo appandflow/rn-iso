@@ -12,20 +12,8 @@
 // path through this file that touches hardware, and every ambiguous record
 // resolves toward creating an owned emulator instead.
 import chalk from 'chalk';
-import {
-  allConsolePortsAndSerials,
-  loadConfig,
-  setDevice,
-  type Config,
-  type ProjectRecord,
-} from '../config.ts';
-import {
-  bootIosSim,
-  createOwnedIosSim,
-  listAllIosSims,
-  listIosDeviceTypes,
-  resolveOwnedIosSim,
-} from '../sim/ios.ts';
+import { allConsolePortsAndSerials, loadConfig, setDevice, type Config, type ProjectRecord } from '../config.ts';
+import { bootIosSim, createOwnedIosSim, listAllIosSims, listIosDeviceTypes, resolveOwnedIosSim } from '../sim/ios.ts';
 import {
   bootAndroidEmulator,
   createOwnedAvd,
@@ -114,7 +102,7 @@ export async function ensureOwnedDevice({
   note?: Notify;
   out?: Notify;
 }): Promise<OwnedDeviceRecord> {
-  const record = ((project?.platforms?.[platform] as OwnedDeviceRecord | undefined) ?? null);
+  const record = (project?.platforms?.[platform] as OwnedDeviceRecord | undefined) ?? null;
   if (platform === 'ios') {
     return ensureOwnedIosDevice({ record, projectPath, label, settings, flags, note, out });
   }
@@ -146,7 +134,11 @@ function ensureOwnedIosDevice({
       // rn-iso- ownership (or the record is stale/mistyped).
       const resolved = resolveOwnedIosSim(record.deviceUdid);
       if (resolved.notOwned) {
-        note(chalk.yellow(`Note: recorded sim is now named "${resolved.notOwned}", not rn-iso-owned by name -- creating a fresh owned sim instead of booting it.`));
+        note(
+          chalk.yellow(
+            `Note: recorded sim is now named "${resolved.notOwned}", not rn-iso-owned by name -- creating a fresh owned sim instead of booting it.`,
+          ),
+        );
         // Fall through to creation below; do NOT boot a sim we don't own.
       } else if (resolved.missing) {
         // Sim was deleted out from under the record: fall through to creation.
@@ -161,7 +153,7 @@ function ensureOwnedIosDevice({
         if (mismatch) {
           throw new Error(
             `${mismatch}. rn-iso will not silently boot a different model. ` +
-            'Run `rn-iso worktree remove` (or `rn-iso gc --delete`) to reap the current sim, then `rn-iso ios` again to create the requested one.'
+              'Run `rn-iso worktree remove` (or `rn-iso gc --delete`) to reap the current sim, then `rn-iso ios` again to create the requested one.',
           );
         }
         if (sim.state !== 'Booted') {
@@ -174,11 +166,19 @@ function ensureOwnedIosDevice({
       }
     } else {
       // Legacy: reuse only if already live; never boot it ourselves.
-      const sim = listAllIosSims().find(s => s.udid === record.deviceUdid);
+      const sim = listAllIosSims().find((s) => s.udid === record.deviceUdid);
       if (sim) {
         if (sim.state !== 'Booted') {
-          note(chalk.yellow(`Note: assigned sim ${sim.name} (${sim.udid}) is shut down and is not owned by rn-iso, so it will not be booted automatically.`));
-          note(chalk.dim('Boot it yourself, or run `rn-iso gc --delete` to clear the assignment so rn-iso can create an owned sim.'));
+          note(
+            chalk.yellow(
+              `Note: assigned sim ${sim.name} (${sim.udid}) is shut down and is not owned by rn-iso, so it will not be booted automatically.`,
+            ),
+          );
+          note(
+            chalk.dim(
+              'Boot it yourself, or run `rn-iso gc --delete` to clear the assignment so rn-iso can create an owned sim.',
+            ),
+          );
         }
         return record;
       }
@@ -239,7 +239,11 @@ async function ensureOwnedAndroidDevice({
       // adb-reverse onto, and report the facts of, someone else's emulator.
       const resolved = resolveOwnedAvdSerial(record.avdName);
       if (resolved.notOwned) {
-        note(chalk.yellow(`Note: recorded AVD ${record.avdName} is not rn-iso-owned by name -- creating a fresh owned AVD instead of reusing it.`));
+        note(
+          chalk.yellow(
+            `Note: recorded AVD ${record.avdName} is not rn-iso-owned by name -- creating a fresh owned AVD instead of reusing it.`,
+          ),
+        );
         // Fall through to creation below.
       } else if (resolved.serial) {
         // Ours is genuinely running at this serial: reuse it as recorded.
@@ -257,8 +261,17 @@ async function ensureOwnedAndroidDevice({
         // foreign emulator. Boot OUR avd on a newly allocated port instead
         // of trusting the recorded one -- the union port-picking logic
         // below already avoids ports currently in use.
-        out(chalk.dim(`Recorded port for owned AVD ${record.avdName} is not currently ours; booting it on a freshly allocated port...`));
-        return await bootOwnedAvdOnFreshPort({ avdName: record.avdName, projectPath, deviceName: record.deviceName, out });
+        out(
+          chalk.dim(
+            `Recorded port for owned AVD ${record.avdName} is not currently ours; booting it on a freshly allocated port...`,
+          ),
+        );
+        return await bootOwnedAvdOnFreshPort({
+          avdName: record.avdName,
+          projectPath,
+          deviceName: record.deviceName,
+          out,
+        });
       }
       // resolved.missing: AVD was deleted out from under the record --
       // fall through to creation below.
@@ -267,10 +280,18 @@ async function ensureOwnedAndroidDevice({
       const avdExists = listAvds().includes(record.avdName);
       if (avdExists) {
         const adb = listAdbDevices();
-        const running = adb.emulators.some(e => e.consolePort === record.consolePort);
+        const running = adb.emulators.some((e) => e.consolePort === record.consolePort);
         if (!running) {
-          note(chalk.yellow(`Note: assigned AVD ${record.avdName} (emulator-${record.consolePort}) is shut down and is not owned by rn-iso, so it will not be booted automatically.`));
-          note(chalk.dim('Boot it yourself, or run `rn-iso gc --delete` to clear the assignment so rn-iso can create an owned AVD.'));
+          note(
+            chalk.yellow(
+              `Note: assigned AVD ${record.avdName} (emulator-${record.consolePort}) is shut down and is not owned by rn-iso, so it will not be booted automatically.`,
+            ),
+          );
+          note(
+            chalk.dim(
+              'Boot it yourself, or run `rn-iso gc --delete` to clear the assignment so rn-iso can create an owned AVD.',
+            ),
+          );
         }
         return record;
       }
@@ -282,7 +303,11 @@ async function ensureOwnedAndroidDevice({
     // can honour this record. It is reported once and then ignored: the run
     // falls through to creating an owned emulator, which is the direction that
     // never sends a command at hardware rn-iso does not own.
-    note(chalk.yellow(`Note: this project is assigned physical device ${record.serial}, and rn-iso no longer supports physical devices.`));
+    note(
+      chalk.yellow(
+        `Note: this project is assigned physical device ${record.serial}, and rn-iso no longer supports physical devices.`,
+      ),
+    );
     note(chalk.dim('Creating an owned emulator instead. The serial is not touched, connected or not.'));
   }
 
@@ -305,7 +330,10 @@ async function ensureOwnedAndroidDevice({
       // app-dir projects with no distinguishing --label).
       const owner = findOtherProjectOwningAvd(avdName, projectPath);
       if (owner) {
-        throw new Error(`AVD ${avdName} already exists and is owned by another project (${owner}). Pass a distinct --label to avoid the collision instead of hijacking it.`);
+        throw new Error(
+          `AVD ${avdName} already exists and is owned by another project (${owner}). Pass a distinct --label to avoid the collision instead of hijacking it.`,
+          { cause: e },
+        );
       }
       created = { avdName };
       out(chalk.dim(`Recovered existing owned AVD ${avdName} (unrecorded from a prior run)`));
@@ -340,8 +368,8 @@ async function bootOwnedAvdOnFreshPort({
   // straight onto it.
   const adbLive = listAdbDevices();
   const livePorts: number[] = [
-    ...adbLive.emulators.map(e => e.consolePort),
-    ...adbLive.unhealthy.map(u => u.consolePort).filter((p): p is number => p != null),
+    ...adbLive.emulators.map((e) => e.consolePort),
+    ...adbLive.unhealthy.map((u) => u.consolePort).filter((p): p is number => p != null),
   ];
   const claimedPorts = [...allConsolePortsAndSerials().androidConsolePorts, ...livePorts];
   const consolePort = nextConsolePort(claimedPorts);
@@ -384,10 +412,15 @@ export function liveOwnedDeviceCount({
   for (const sim of sims) {
     if (sim?.state === 'Booted' && sim.name?.startsWith('rn-iso-')) count++;
   }
-  const livePorts = new Set(adbEmulators.map(e => e.consolePort));
+  const livePorts = new Set(adbEmulators.map((e) => e.consolePort));
   for (const proj of Object.values(config?.projects || {})) {
     const android = proj?.platforms?.android;
-    if (android?.owned && android.avdName && typeof android.consolePort === 'number' && livePorts.has(android.consolePort)) {
+    if (
+      android?.owned &&
+      android.avdName &&
+      typeof android.consolePort === 'number' &&
+      livePorts.has(android.consolePort)
+    ) {
       count++;
     }
   }
@@ -400,14 +433,19 @@ export function workspaceHasLiveDevice({
   project,
   sims = [],
   adbEmulators = [],
-}: Partial<{ platform: string; project: ProjectRecord | null; sims: SimRecord[]; adbEmulators: EmulatorRecord[] }> = {}) {
+}: Partial<{
+  platform: string;
+  project: ProjectRecord | null;
+  sims: SimRecord[];
+  adbEmulators: EmulatorRecord[];
+}> = {}) {
   if (!platform) return false;
   const record = project?.platforms?.[platform];
   if (!record) return false;
   if (platform === 'ios') {
-    return sims.some(s => s.udid === record.deviceUdid && s.state === 'Booted');
+    return sims.some((s) => s.udid === record.deviceUdid && s.state === 'Booted');
   }
-  return typeof record.consolePort === 'number' && adbEmulators.some(e => e.consolePort === record.consolePort);
+  return typeof record.consolePort === 'number' && adbEmulators.some((e) => e.consolePort === record.consolePort);
 }
 
 // PURE. The refusal, or null when a device may be booted. `null` covers three
@@ -462,15 +500,21 @@ export function checkDeviceCapacity({
   let simList: SimRecord[] = [];
   let adbRes: AdbDevices = { emulators: [], physical: [], unhealthy: [] };
   try {
-    simList = typeof sims === 'function' ? (sims() || []) : (sims || []);
-  } catch { /* fail open */ }
+    simList = typeof sims === 'function' ? sims() || [] : sims || [];
+  } catch {
+    /* fail open */
+  }
   try {
-    adbRes = typeof adb === 'function' ? (adb() || adbRes) : (adb || adbRes);
-  } catch { /* fail open */ }
+    adbRes = typeof adb === 'function' ? adb() || adbRes : adb || adbRes;
+  } catch {
+    /* fail open */
+  }
   let cfg: Config | null = null;
   try {
     cfg = typeof config === 'function' ? config() : (config ?? null);
-  } catch { /* fail open */ }
+  } catch {
+    /* fail open */
+  }
   return deviceCapacityRefusal({ platform, project, max, sims: simList, adb: adbRes, config: cfg });
 }
 
@@ -480,12 +524,16 @@ export function checkDeviceCapacity({
 // different model against an existing environment silently booted the old one
 // and the setting looked broken. Returns null when either side is unknown: an unrecognized requested
 // name is creation's error to report, not ours.
-export function deviceTypeMismatch(recordedTypeId: string | undefined | null, requestedName: string | undefined | null, deviceTypes: DeviceTypeInfo[]) {
+export function deviceTypeMismatch(
+  recordedTypeId: string | undefined | null,
+  requestedName: string | undefined | null,
+  deviceTypes: DeviceTypeInfo[],
+) {
   if (!requestedName || !recordedTypeId) return null;
-  const wanted = (deviceTypes || []).find(d => d.name === requestedName);
+  const wanted = (deviceTypes || []).find((d) => d.name === requestedName);
   if (!wanted) return null;
   if (wanted.identifier === recordedTypeId) return null;
-  const recorded = (deviceTypes || []).find(d => d.identifier === recordedTypeId);
+  const recorded = (deviceTypes || []).find((d) => d.identifier === recordedTypeId);
   return `this project's sim is ${recorded ? recorded.name : recordedTypeId}, but --device-type asked for ${requestedName}`;
 }
 
@@ -520,7 +568,13 @@ export async function ensureBooted({
   timeoutMs = 120000,
   pollMs = BOOT_POLL_MS,
   out = () => {},
-}: Partial<{ platform: string; device: OwnedDeviceRecord | null; timeoutMs: number; pollMs: number; out: Notify }> = {}): Promise<BootResult> {
+}: Partial<{
+  platform: string;
+  device: OwnedDeviceRecord | null;
+  timeoutMs: number;
+  pollMs: number;
+  out: Notify;
+}> = {}): Promise<BootResult> {
   if (platform === 'ios') return ensureIosBooted({ device, timeoutMs, pollMs, out });
   if (platform === 'android') return ensureAndroidBooted({ device, timeoutMs, out });
   return { failed: true, reason: `Unknown platform "${platform}".` };
@@ -531,7 +585,12 @@ async function ensureIosBooted({
   timeoutMs,
   pollMs,
   out,
-}: { device?: OwnedDeviceRecord | null; timeoutMs: number; pollMs: number; out: Notify }): Promise<BootResult> {
+}: {
+  device?: OwnedDeviceRecord | null;
+  timeoutMs: number;
+  pollMs: number;
+  out: Notify;
+}): Promise<BootResult> {
   const udid = device?.deviceUdid;
   if (!udid) return { failed: true, reason: 'No iOS simulator is recorded for this project.' };
 
@@ -545,10 +604,16 @@ async function ensureIosBooted({
     return { failed: true, reason: `Could not list simulators: ${(e as Error)?.message || e}` };
   }
   if (resolved.missing) {
-    return { failed: true, reason: `Simulator ${udid} no longer exists. Run \`rn-iso ios\` again to create a fresh owned sim.` };
+    return {
+      failed: true,
+      reason: `Simulator ${udid} no longer exists. Run \`rn-iso ios\` again to create a fresh owned sim.`,
+    };
   }
   if (resolved.notOwned) {
-    return { failed: true, reason: `Simulator ${udid} is now named "${resolved.notOwned}" and is not rn-iso-owned; refusing to boot it.` };
+    return {
+      failed: true,
+      reason: `Simulator ${udid} is now named "${resolved.notOwned}" and is not rn-iso-owned; refusing to boot it.`,
+    };
   }
   // Neither notOwned nor missing: resolveOwnedIosSim's third outcome, `{ sim }`.
   const sim = resolved.sim as SimRecord;
@@ -566,21 +631,28 @@ async function ensureIosBooted({
     await sleep(pollMs);
     let state = null;
     try {
-      state = listAllIosSims().find(s => s.udid === udid)?.state ?? null;
+      state = listAllIosSims().find((s) => s.udid === udid)?.state ?? null;
     } catch {
       // simctl can fail transiently while a device set is being written;
       // keep polling until the deadline rather than failing on one bad read.
     }
     if (state === 'Booted') return { ok: true, udid };
   }
-  return { failed: true, reason: `Simulator ${udid} did not reach the Booted state within ${Math.round(timeoutMs / 1000)}s.` };
+  return {
+    failed: true,
+    reason: `Simulator ${udid} did not reach the Booted state within ${Math.round(timeoutMs / 1000)}s.`,
+  };
 }
 
 async function ensureAndroidBooted({
   device,
   timeoutMs,
   out,
-}: { device?: OwnedDeviceRecord | null; timeoutMs: number; out: Notify }): Promise<BootResult> {
+}: {
+  device?: OwnedDeviceRecord | null;
+  timeoutMs: number;
+  out: Notify;
+}): Promise<BootResult> {
   // Every device this reaches is an owned AVD: ensureOwnedDevice creates one
   // rather than ever handing back a physical record. A record with no avdName
   // is therefore a bug or a legacy leftover, not a phone to go looking for.
@@ -597,7 +669,10 @@ async function ensureAndroidBooted({
     return { failed: true, reason: `Could not list AVDs: ${(e as Error)?.message || e}` };
   }
   if (resolved.missing) {
-    return { failed: true, reason: `AVD ${device.avdName} no longer exists. Run \`rn-iso android\` again to create a fresh owned AVD.` };
+    return {
+      failed: true,
+      reason: `AVD ${device.avdName} no longer exists. Run \`rn-iso android\` again to create a fresh owned AVD.`,
+    };
   }
   if (resolved.notOwned) {
     return { failed: true, reason: `AVD ${device.avdName} is not rn-iso-owned by name; refusing to boot it.` };
@@ -608,7 +683,10 @@ async function ensureAndroidBooted({
     // with "Can't find service: package".
     const ready = await waitForBoot(resolved.serial, timeoutMs);
     if (!ready.ok) {
-      return { failed: true, reason: `Emulator ${resolved.serial} never reported boot completion. Diagnostic: ${JSON.stringify(ready.diagnostic)}` };
+      return {
+        failed: true,
+        reason: `Emulator ${resolved.serial} never reported boot completion. Diagnostic: ${JSON.stringify(ready.diagnostic)}`,
+      };
     }
     return { ok: true, serial: resolved.serial };
   }
@@ -620,11 +698,17 @@ async function ensureAndroidBooted({
   try {
     bootAndroidEmulator(device.avdName, Number(serial.replace(/^emulator-/, '')));
   } catch (e) {
-    return { failed: true, reason: `Could not start emulator for AVD ${device.avdName}: ${(e as Error)?.message || e}` };
+    return {
+      failed: true,
+      reason: `Could not start emulator for AVD ${device.avdName}: ${(e as Error)?.message || e}`,
+    };
   }
   const ready = await waitForBoot(serial, timeoutMs);
   if (!ready.ok) {
-    return { failed: true, reason: `Emulator ${serial} did not finish booting within ${Math.round(timeoutMs / 1000)}s. Diagnostic: ${JSON.stringify(ready.diagnostic)}` };
+    return {
+      failed: true,
+      reason: `Emulator ${serial} did not finish booting within ${Math.round(timeoutMs / 1000)}s. Diagnostic: ${JSON.stringify(ready.diagnostic)}`,
+    };
   }
   return { ok: true, serial };
 }
@@ -636,13 +720,13 @@ async function ensureAndroidBooted({
 function pickConsolePort(recorded: number | undefined) {
   const adb = listAdbDevices();
   const live: number[] = [
-    ...adb.emulators.map(e => e.consolePort),
-    ...adb.unhealthy.map(u => u.consolePort).filter((p): p is number => p != null),
+    ...adb.emulators.map((e) => e.consolePort),
+    ...adb.unhealthy.map((u) => u.consolePort).filter((p): p is number => p != null),
   ];
   if (recorded && !live.includes(Number(recorded))) return Number(recorded);
   return nextConsolePort([...allConsolePortsAndSerials().androidConsolePorts, ...live]);
 }
 
 function sleep(ms: number) {
-  return new Promise(r => setTimeout(r, ms));
+  return new Promise((r) => setTimeout(r, ms));
 }

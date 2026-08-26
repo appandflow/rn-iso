@@ -24,10 +24,19 @@ import logsCommand, {
 function captureAction(register) {
   let captured;
   const stub = {
-    command() { return stub; },
-    description() { return stub; },
-    option() { return stub; },
-    action(fn) { captured = fn; return stub; },
+    command() {
+      return stub;
+    },
+    description() {
+      return stub;
+    },
+    option() {
+      return stub;
+    },
+    action(fn) {
+      captured = fn;
+      return stub;
+    },
   };
   register(stub);
   return (opts = {}) => captured(opts);
@@ -60,7 +69,9 @@ describe('formatting', () => {
   });
 
   test('formatStackFrame renders fn, file, line and column', () => {
-    expect(formatStackFrame({ file: 'src/App.js', line: 12, column: 3, fn: 'render' })).toBe('at render (src/App.js:12:3)');
+    expect(formatStackFrame({ file: 'src/App.js', line: 12, column: 3, fn: 'render' })).toBe(
+      'at render (src/App.js:12:3)',
+    );
   });
 
   test('formatStackFrame degrades when fields are missing', () => {
@@ -181,7 +192,10 @@ describe('logs command', () => {
     origExit = process.exit;
     console.log = (...a) => out.push(a.join(' '));
     console.error = (...a) => errOut.push(a.join(' '));
-    process.exit = (code) => { exitCode = code; throw new Error('exit'); };
+    process.exit = (code) => {
+      exitCode = code;
+      throw new Error('exit');
+    };
   });
 
   afterEach(() => {
@@ -391,7 +405,8 @@ describe('logs command', () => {
 
     test('a result at the cap prints no trailer', () => {
       const many = [];
-      for (let i = 0; i < ERRORS_PRINT_CAP; i += 1) many.push({ ts: 1000 + i, src: 'client', level: 'error', msg: `boom ${i}` });
+      for (let i = 0; i < ERRORS_PRINT_CAP; i += 1)
+        many.push({ ts: 1000 + i, src: 'client', level: 'error', msg: `boom ${i}` });
       writeLog('client.ndjson', many);
       run({ errors: true });
       expect(out.length).toBe(ERRORS_PRINT_CAP);
@@ -403,8 +418,12 @@ describe('logs command', () => {
     test('a bundle marker one second after a startup crash does not hide it', () => {
       const at = (sec) => Date.parse(`2026-08-24T16:03:${sec}Z`);
       writeLog('build-ios.ndjson', [{ ts: at(50), src: 'build', level: 'info', msg: 'launched', marker: true }]);
-      writeLog('client.ndjson', [{ ts: at(54), src: 'client', level: 'error', msg: '[Error: Exception in HostFunction]' }]);
-      writeLog('metro.ndjson', [{ ts: at(55), src: 'metro', level: 'info', msg: 'bundle build done (1)', marker: true }]);
+      writeLog('client.ndjson', [
+        { ts: at(54), src: 'client', level: 'error', msg: '[Error: Exception in HostFunction]' },
+      ]);
+      writeLog('metro.ndjson', [
+        { ts: at(55), src: 'metro', level: 'info', msg: 'bundle build done (1)', marker: true },
+      ]);
       run({ errors: true, json: true });
       expect(out.map((l) => parseNdjsonLine(l).msg)).toEqual(['[Error: Exception in HostFunction]']);
     });

@@ -22,7 +22,11 @@ import {
 // assert.throws does not hand back the error, and every assertion below is
 // about the error's contents.
 function caught(fn) {
-  try { fn(); } catch (err) { return err; }
+  try {
+    fn();
+  } catch (err) {
+    return err;
+  }
   throw new Error('expected a throw');
 }
 
@@ -59,12 +63,14 @@ function fakeRequire(modules, { throwOnLoad = {} } = {}) {
 }
 
 const OK_MODULES = () => ({
-  'metro': { loadConfig: async () => ({}), runServer: async () => ({}) },
+  metro: { loadConfig: async () => ({}), runServer: async () => ({}) },
   '@react-native/dev-middleware': { createDevMiddleware: () => ({ middleware: 'dm', websocketEndpoints: {} }) },
-  '@react-native-community/cli-server-api': { createDevServerMiddleware: () => ({ middleware: 'cm', websocketEndpoints: {} }) },
+  '@react-native-community/cli-server-api': {
+    createDevServerMiddleware: () => ({ middleware: 'cm', websocketEndpoints: {} }),
+  },
 });
 
-describe('resolving the project\'s own dev server packages', () => {
+describe("resolving the project's own dev server packages", () => {
   test('every missing package is named at once, with an npm install remedy', () => {
     const modules = OK_MODULES();
     delete modules['@react-native/dev-middleware'];
@@ -81,9 +87,11 @@ describe('resolving the project\'s own dev server packages', () => {
   });
 
   test('a package that is installed but throws while loading is NOT reported as missing', () => {
-    const err = caught(() => resolveBareDeps(root, {
-      requireFrom: fakeRequire(OK_MODULES(), { throwOnLoad: { 'metro': 'Unexpected token' } }),
-    }));
+    const err = caught(() =>
+      resolveBareDeps(root, {
+        requireFrom: fakeRequire(OK_MODULES(), { throwOnLoad: { metro: 'Unexpected token' } }),
+      }),
+    );
     expect(err.code).toBe('RN_ISO_BARE_LOAD');
     expect(err.message).toMatch(/metro is installed/);
     expect(err.message).toMatch(/Unexpected token/);
@@ -124,7 +132,7 @@ describe('module interop', () => {
 
   test('checkBareApi reports every missing export, not just the first', () => {
     const problems = checkBareApi({
-      'metro': {},
+      metro: {},
       '@react-native/dev-middleware': {},
       '@react-native-community/cli-server-api': {},
     });
@@ -165,7 +173,11 @@ describe('the dev-middleware logger', () => {
   });
 
   test('a throwing reporter never reaches the dev server', () => {
-    const logger = reporterLogger({ update: () => { throw new Error('disk full'); } });
+    const logger = reporterLogger({
+      update: () => {
+        throw new Error('disk full');
+      },
+    });
     expect(() => logger.error('boom')).not.toThrow();
   });
 });
@@ -180,7 +192,9 @@ describe('loadNdjsonReporter', () => {
 
   test('returns null rather than throwing when the package is nowhere', () => {
     const nothing = () => {
-      const req = (id) => { throw new Error(`Cannot find module '${id}'`); };
+      const req = (id) => {
+        throw new Error(`Cannot find module '${id}'`);
+      };
       req.resolve = req;
       return req;
     };
@@ -193,9 +207,16 @@ describe('startBareServer wiring', () => {
     const calls = {};
     const httpServer = {
       handlers: {},
-      on(event, cb) { this.handlers[event] = cb; },
-      closeAllConnections() { calls.closedConnections = true; },
-      close(cb) { calls.closed = true; cb?.(); },
+      on(event, cb) {
+        this.handlers[event] = cb;
+      },
+      closeAllConnections() {
+        calls.closedConnections = true;
+      },
+      close(cb) {
+        calls.closed = true;
+        cb?.();
+      },
     };
     const deps = {
       metro: {
@@ -228,8 +249,14 @@ describe('startBareServer wiring', () => {
     const { deps, calls } = fakeDeps();
     const reporter = { update() {} };
     await startBareServer({
-      root, port: 8099, logsDir: join(root, '.rn-iso', 'logs'), deps,
-      reporterFactory: (opts) => { calls.reporterDir = opts.dir; return reporter; },
+      root,
+      port: 8099,
+      logsDir: join(root, '.rn-iso', 'logs'),
+      deps,
+      reporterFactory: (opts) => {
+        calls.reporterDir = opts.dir;
+        return reporter;
+      },
     });
     expect(calls.loadConfig).toEqual({ cwd: root, port: 8099 });
     expect(calls.runServer.config.reporter).toBe(reporter);
@@ -240,7 +267,13 @@ describe('startBareServer wiring', () => {
 
   test('wires both middlewares and merges both websocket endpoint sets', async () => {
     const { deps, calls } = fakeDeps();
-    await startBareServer({ root, port: 8100, logsDir: join(root, 'logs'), deps, reporterFactory: () => ({ update() {} }) });
+    await startBareServer({
+      root,
+      port: 8100,
+      logsDir: join(root, 'logs'),
+      deps,
+      reporterFactory: () => ({ update() {} }),
+    });
 
     expect(calls.createDevServerMiddleware).toEqual({ host: 'localhost', port: 8100, watchFolders: ['/w'] });
     expect(calls.createDevMiddleware.serverBaseUrl).toBe('http://localhost:8100');
@@ -256,7 +289,10 @@ describe('startBareServer wiring', () => {
     const { deps, calls } = fakeDeps();
     const written = [];
     const handle = await startBareServer({
-      root, port: 8101, logsDir: join(root, 'logs'), deps,
+      root,
+      port: 8101,
+      logsDir: join(root, 'logs'),
+      deps,
       reporterFactory: null,
       writer: { write: (r) => written.push(r) },
     });
@@ -272,7 +308,13 @@ describe('startBareServer wiring', () => {
 
   test('the handle closes the http server, connections and all', async () => {
     const { deps, calls } = fakeDeps();
-    const handle = await startBareServer({ root, port: 8102, logsDir: join(root, 'logs'), deps, reporterFactory: () => ({ update() {} }) });
+    const handle = await startBareServer({
+      root,
+      port: 8102,
+      logsDir: join(root, 'logs'),
+      deps,
+      reporterFactory: () => ({ update() {} }),
+    });
     expect(handle.mode).toBe('bare-inproc');
     expect(handle.serverPid).toBe(null);
     await handle.close();
@@ -282,7 +324,13 @@ describe('startBareServer wiring', () => {
 
   test('an http server that closes on its own reports an unexpected exit', async () => {
     const { deps, httpServer } = fakeDeps();
-    const handle = await startBareServer({ root, port: 8103, logsDir: join(root, 'logs'), deps, reporterFactory: () => ({ update() {} }) });
+    const handle = await startBareServer({
+      root,
+      port: 8103,
+      logsDir: join(root, 'logs'),
+      deps,
+      reporterFactory: () => ({ update() {} }),
+    });
     const seen = [];
     handle.onExit((info) => seen.push(info));
     httpServer.handlers.close();
@@ -292,7 +340,13 @@ describe('startBareServer wiring', () => {
 
   test('our own close does not report an unexpected exit', async () => {
     const { deps, httpServer } = fakeDeps();
-    const handle = await startBareServer({ root, port: 8104, logsDir: join(root, 'logs'), deps, reporterFactory: () => ({ update() {} }) });
+    const handle = await startBareServer({
+      root,
+      port: 8104,
+      logsDir: join(root, 'logs'),
+      deps,
+      reporterFactory: () => ({ update() {} }),
+    });
     const seen = [];
     handle.onExit((info) => seen.push(info));
     await handle.close();

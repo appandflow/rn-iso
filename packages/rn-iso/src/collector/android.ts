@@ -51,9 +51,18 @@ export function levelFromLogcatLetter(letter: string): string {
 export const NOISE_TAGS = new Set([
   // Emulator graphics: the goldfish/ranchu GLES and Vulkan bridge logs at E
   // for unimplemented entry points and for buffer metadata it does not know.
-  'libEGL', 'EGL_emulation', 'eglCodecCommon', 'emuglGLESv2_enc', 'HostConnection',
-  'OpenGLRenderer', 'gralloc4', 'Gralloc4', 'vulkan', 'GraphicBufferAllocator',
-  'BufferQueueProducer', 'Surface',
+  'libEGL',
+  'EGL_emulation',
+  'eglCodecCommon',
+  'emuglGLESv2_enc',
+  'HostConnection',
+  'OpenGLRenderer',
+  'gralloc4',
+  'Gralloc4',
+  'vulkan',
+  'GraphicBufferAllocator',
+  'BufferQueueProducer',
+  'Surface',
   // Loaders: ziparchive reports every optional entry it did not find in the
   // apk (`.dm`, per-abi libs) at E, on every cold start.
   'ziparchive',
@@ -80,7 +89,14 @@ const LOGCAT_TIME = /^(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{3})\s+([A-Z])
 // months in the future -- a record ahead of `now` sorts to the end of the
 // merged timeline and would be the first thing `logs` shows.
 export function parseLogcatTimestamp(
-  { month, day, hour, minute, second, millis }: { month: number; day: number; hour: number; minute: number; second: number; millis: number },
+  {
+    month,
+    day,
+    hour,
+    minute,
+    second,
+    millis,
+  }: { month: number; day: number; hour: number; minute: number; second: number; millis: number },
   now: number = Date.now(),
 ): number {
   const ref = new Date(now);
@@ -105,10 +121,17 @@ export function parseLogcatLine(line: string, { now = Date.now }: { now?: () => 
   const [, month, day, hour, minute, second, millis, letter, tag, pid, msg] = m;
   if (!msg.trim()) return null;
   return {
-    ts: parseLogcatTimestamp({
-      month: Number(month), day: Number(day), hour: Number(hour),
-      minute: Number(minute), second: Number(second), millis: Number(millis),
-    }, now()),
+    ts: parseLogcatTimestamp(
+      {
+        month: Number(month),
+        day: Number(day),
+        hour: Number(hour),
+        minute: Number(minute),
+        second: Number(second),
+        millis: Number(millis),
+      },
+      now(),
+    ),
     src: 'device',
     level: levelForLogcat(letter, tag),
     msg,
@@ -126,12 +149,18 @@ export function logcatArgs(serial: string, pid: number | string): string[] {
 // emulator: `adb -s emulator-5554 shell pidof -s com.android.settings` ->
 // "3132" (exit 0), and an unknown package prints nothing.
 export function parsePidof(text: unknown): number | null {
-  const first = String(text ?? '').trim().split(/\s+/)[0];
+  const first = String(text ?? '')
+    .trim()
+    .split(/\s+/)[0];
   const pid = Number(first);
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-export function resolveAppPid(serial: string, packageName: string, { exec = null }: { exec?: Executor | null } = {}): number | null {
+export function resolveAppPid(
+  serial: string,
+  packageName: string,
+  { exec = null }: { exec?: Executor | null } = {},
+): number | null {
   const e = exec || getExecutor();
   try {
     return parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', '-s', packageName]));
@@ -177,14 +206,17 @@ export async function waitForAppPid({
     const pid = resolveAppPid(serial, packageName, { exec });
     if (pid) return { ok: true, pid };
     if (now() >= deadline) {
-      return { failed: true, reason: `No process for ${packageName} appeared on ${serial} within ${Math.round(timeoutMs / 1000)}s.` };
+      return {
+        failed: true,
+        reason: `No process for ${packageName} appeared on ${serial} within ${Math.round(timeoutMs / 1000)}s.`,
+      };
     }
     await sleep(pollMs);
   }
 }
 
 function defaultSleep(ms: number): Promise<void> {
-  return new Promise<void>(r => setTimeout(r, ms));
+  return new Promise<void>((r) => setTimeout(r, ms));
 }
 
 export function startAndroidLogcat({
@@ -299,6 +331,8 @@ export function watchAppPid({
         return null;
       }
     },
-    get pid() { return current; },
+    get pid() {
+      return current;
+    },
   };
 }

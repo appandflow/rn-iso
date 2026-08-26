@@ -14,7 +14,7 @@ terminal noise. An AI agent driving a build loop has close to the opposite
 needs — never prompt, print little, capture everything, expose state as data,
 and let long-running things run in the background where they can be polled.
 
-rn-iso v2 answered part of this by becoming a pure *broker*: it arbitrates the
+rn-iso v2 answered part of this by becoming a pure _broker_: it arbitrates the
 two genuinely contended resources on a machine (an owned simulator/emulator and
 a Metro port) and refuses to invoke project tooling. That was the right call
 against the alternative available at the time, which was reconstructing other
@@ -28,9 +28,9 @@ optimized end to end for an agent loop rather than a terminal.
 
 ## Reversing the metro handoff
 
-The 2026-08-20 spec deleted `start` and `logs`, on this reasoning: *how to
+The 2026-08-20 spec deleted `start` and `logs`, on this reasoning: _how to
 invoke a project's tooling is project-specific judgment, and encoding it
-centrally means perpetually chasing idiosyncrasies.* The evidence was concrete
+centrally means perpetually chasing idiosyncrasies._ The evidence was concrete
 — on `member-app`, whose own start script is `react-native start
 --client-logs`, rn-iso composed `react-native start --port 8082` and silently
 dropped the project's flag.
@@ -46,7 +46,7 @@ guessing at the project.
 The `--client-logs` example is the clearest illustration of why the option
 surface shrinks rather than grows. That flag exists in the RN CLI because
 forwarding client logs to a human's terminal is noisy; `metro-config` defaults
-`server.forwardClientLogs` to `true` and the RN CLI turns it *off* unless the
+`server.forwardClientLogs` to `true` and the RN CLI turns it _off_ unless the
 flag is passed. v3's destination is always a queryable file, so noise costs
 nothing and the flag has no reason to exist: client logs are captured
 unconditionally. A large fraction of both CLIs' options are in this category
@@ -65,7 +65,7 @@ These are the "for agents" claim, stated concretely enough to be violated.
    removed from the package.
 2. **Small stdout, complete files.** Every command prints on the order of ten
    lines of outcome. Bundler, xcodebuild and gradle output goes to a log file
-   referenced by path. A failing build prints the *extracted* error, not four
+   referenced by path. A failing build prints the _extracted_ error, not four
    thousand lines of transcript.
 3. **Capture is unconditional.** Nothing is ephemeral. Every flag that exists
    to control terminal verbosity is deleted rather than ported.
@@ -107,9 +107,9 @@ The organizing rule:
 
 rn-iso today carries `src/artifacts.js` (~350 lines) plus the unmounted-volume
 guard recorded as item 8 in `CLAUDE.md`, and effectively all of it exists to
-answer one question: *which workspace owns this
+answer one question: _which workspace owns this
 `~/Library/Developer/Xcode/DerivedData/<hash>`, and is that workspace actually
-gone or merely on an unplugged volume?* Directing DerivedData into the worktree
+gone or merely on an unplugged volume?_ Directing DerivedData into the worktree
 via `-derivedDataPath` dissolves the question. Build output is inside the thing
 being removed, so `worktree remove` reclaims it definitionally, and no
 classifier has to guess. The orphaned-artifact sweep goes, and with it
@@ -118,8 +118,8 @@ classifier has to guess. The orphaned-artifact sweep goes, and with it
 
 **The mounted-volume guard does not go with it**, and the first draft of this
 spec was wrong to say so. It protects two different things. Guarding
-*DerivedData classification* becomes unnecessary, because there is no longer a
-global directory to reverse-map to a workspace. Guarding the *project registry*
+_DerivedData classification_ becomes unnecessary, because there is no longer a
+global directory to reverse-map to a workspace. Guarding the _project registry_
 does not: `findReclaimablePort` in `ports.js` still must not reclaim the port of
 a project whose volume is merely unplugged, since that removes the whole entry
 and drops its device claim. `isOnMountedVolume`, `listMountedVolumes`,
@@ -170,8 +170,8 @@ This code is battle-tested and its invariants carry forward verbatim — in
 particular the ownership rule and centralized, ownership-verified teardown.
 
 One simplification falls out of dropping physical-device support (below): the
-ownership rule loses its only carve-out. Today `CLAUDE.md` item 2 reads *"the
-one exception is physical devices: hardware cannot be spawned."* With `--serial`
+ownership rule loses its only carve-out. Today `CLAUDE.md` item 2 reads _"the
+one exception is physical devices: hardware cannot be spawned."_ With `--serial`
 gone, **every device v3 touches is one v3 created**, and teardown loses its
 unowned branch entirely.
 
@@ -215,7 +215,7 @@ only pin one version, and would drift from any project on a different SDK — th
 decisive argument against that alternative, given that an SDK 53 and an SDK 55
 project routinely share a machine.
 
-The consequence is that v3's own dependency list gets *shorter* than v2's:
+The consequence is that v3's own dependency list gets _shorter_ than v2's:
 `commander` and `chalk`, with `prompts` deleted under principle 1.
 
 ## Dev server hosting
@@ -232,7 +232,7 @@ binding.
 **Expo is protocol-bearing and cannot be rehosted.** Its dev server also serves
 `ManifestMiddleware`, `ExpoGoManifestHandlerMiddleware`,
 `InterstitialPageMiddleware`, `DevToolsPluginMiddleware`, expo-router route
-serving and DOM components. Those *are* the protocol `expo-dev-client` speaks;
+serving and DOM components. Those _are_ the protocol `expo-dev-client` speaks;
 reimplementing them is forking Expo, not trimming fluff. Expo also exposes no
 reporter-injection hook — there is no `customLogReporterPath` equivalent.
 
@@ -320,7 +320,7 @@ into settings files and the latter two into `ios`/`android`.
 ### `start`
 
 Reserves or reuses the workspace's Metro port, spawns the detached supervisor,
-waits for the server to answer `/status` with `packager-status:running` *and*
+waits for the server to answer `/status` with `packager-status:running` _and_
 to verify as this project's (v2's `resolveProjectMetro` identity check, not a
 bare probe), then exits 0 printing the facts. A foreign holder of the reserved
 port triggers re-reservation, as in v2. If a healthy supervisor already exists,
@@ -445,7 +445,7 @@ project indefinitely. Sweeping stale devices is machine hygiene, which is
 already what `gc` is for — and it keeps destruction in two commands rather than
 three.
 
-What `gc` *loses* is the DerivedData sweep and its mounted-volume ambiguity,
+What `gc` _loses_ is the DerivedData sweep and its mounted-volume ambiguity,
 which the artifact layout made unnecessary. v2's `cache register` / `forget` /
 `list` verbs collapse into `gc`'s report, since v3 prescribes the cache paths.
 `rn-iso/cache-manifest` survives as a **programmatic** export, because that is
@@ -462,7 +462,7 @@ and its version, so an ecosystem mismatch is visible before a build hits it.
 
 ## Worked example: an agent fixing a bug ticket
 
-*APP-412 — "Tapping Save on the profile screen crashes on iOS."* This is the
+_APP-412 — "Tapping Save on the profile screen crashes on iOS."_ This is the
 path every command has to justify itself against.
 
 ### Once per repo, not per ticket
@@ -483,7 +483,7 @@ $ rn-iso init
 
 `doctor` is the read-only half and `init` the writing half of one question:
 what is silently costing build time? Splitting them matters because an agent
-must be able to *inspect* a repo it does not own without modifying it.
+must be able to _inspect_ a repo it does not own without modifying it.
 
 ### The ticket
 
@@ -555,17 +555,17 @@ $ rn-iso worktree remove                # done with the branch entirely
 Every remaining entry point earns its place on a path this happy sequence never
 touches:
 
-| Command | Invoked when |
-|---|---|
-| `rn-iso status` | Session start, to orient: what is already running on this machine, which ports and devices are taken, is anything wedged. Also the answer to "the build is slow" — it reports RAM over-commitment and tight disk, the two causes nothing else surfaces. |
-| `rn-iso status --all` | Several agents share the Mac and one needs to know whether it is the fourth environment on a 16 GB box. |
-| `rn-iso android` | The same ticket on the other platform, or a bug that only reproduces there. |
-| `rn-iso logs --source device` | A native crash that never reached JS, so `--errors` on the client stream is empty but `logcat` / `simctl log stream` is not. |
-| `rn-iso logs --follow` | Watching a manual reproduction in real time rather than querying after. |
-| `rn-iso gc` | Disk is filling, or a machine has accumulated environments from deleted checkouts. Reports dead entries, orphaned devices and cache sizes. |
-| `rn-iso gc --delete --older-than 14` | Reclaim without destroying the working set. Emptying costs every project on the machine its next build; trimming costs only what nothing has used. |
-| `rn-iso stop` | Reclaim ~1.5 GB from a branch you are not finished with, or release the main checkout, which `worktree remove` cannot act on. |
-| `rn-iso doctor` | After an SDK upgrade, or when builds are unexpectedly slow — it names the cause instead of leaving the agent to guess. |
+| Command                              | Invoked when                                                                                                                                                                                                                                            |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rn-iso status`                      | Session start, to orient: what is already running on this machine, which ports and devices are taken, is anything wedged. Also the answer to "the build is slow" — it reports RAM over-commitment and tight disk, the two causes nothing else surfaces. |
+| `rn-iso status --all`                | Several agents share the Mac and one needs to know whether it is the fourth environment on a 16 GB box.                                                                                                                                                 |
+| `rn-iso android`                     | The same ticket on the other platform, or a bug that only reproduces there.                                                                                                                                                                             |
+| `rn-iso logs --source device`        | A native crash that never reached JS, so `--errors` on the client stream is empty but `logcat` / `simctl log stream` is not.                                                                                                                            |
+| `rn-iso logs --follow`               | Watching a manual reproduction in real time rather than querying after.                                                                                                                                                                                 |
+| `rn-iso gc`                          | Disk is filling, or a machine has accumulated environments from deleted checkouts. Reports dead entries, orphaned devices and cache sizes.                                                                                                              |
+| `rn-iso gc --delete --older-than 14` | Reclaim without destroying the working set. Emptying costs every project on the machine its next build; trimming costs only what nothing has used.                                                                                                      |
+| `rn-iso stop`                        | Reclaim ~1.5 GB from a branch you are not finished with, or release the main checkout, which `worktree remove` cannot act on.                                                                                                                           |
+| `rn-iso doctor`                      | After an SDK upgrade, or when builds are unexpectedly slow — it names the cause instead of leaving the agent to guess.                                                                                                                                  |
 
 ### The failure paths, which are where the design earns its keep
 
@@ -594,9 +594,11 @@ rarely, and never as tokens.
 ## Error contract
 
 ```json
-{ "code": "RN_ISO_NO_METRO",
+{
+  "code": "RN_ISO_NO_METRO",
   "message": "No Metro server holds reserved port 8082.",
-  "remedy": "Run `rn-iso start` first, or pass --no-metro-check." }
+  "remedy": "Run `rn-iso start` first, or pass --no-metro-check."
+}
 ```
 
 Codes are stable identifiers an agent can branch on. Every refusal in the CLI

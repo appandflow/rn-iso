@@ -1,4 +1,6 @@
 {
   "name": "sample-app",
-  "dependencies": { "expo": "~50.0.0" }
+  "dependencies": {
+    "expo": "~50.0.0"
+  }
 }

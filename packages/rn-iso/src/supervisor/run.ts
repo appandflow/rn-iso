@@ -31,13 +31,7 @@ import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { supervisorPidFile, workspaceLogsDir } from '../paths.ts';
 import { detectIsExpo } from '../project.ts';
 import { describeError } from './errors.ts';
-import {
-  MODE_BARE,
-  MODE_EXPO,
-  clearWorkspaceSupervisor,
-  writePidFile,
-  writeWorkspaceState,
-} from './state.ts';
+import { MODE_BARE, MODE_EXPO, clearWorkspaceSupervisor, writePidFile, writeWorkspaceState } from './state.ts';
 
 // The state + pid helpers now live in a guard-free module (state.ts) so the CLI
 // commands can import them without dragging this daemon entry in. Re-exported
@@ -65,8 +59,14 @@ export function parseArgs(argv: string[]): ParsedSupervisorArgs {
   let port: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--root') { root = argv[++i]; continue; }
-    if (arg === '--port') { port = argv[++i]; continue; }
+    if (arg === '--root') {
+      root = argv[++i];
+      continue;
+    }
+    if (arg === '--port') {
+      port = argv[++i];
+      continue;
+    }
     return { error: `Unknown supervisor argument "${arg}". Usage: run.js --root <path> --port <n>` };
   }
   if (!root) return { error: 'Missing --root. Usage: run.js --root <path> --port <n>' };
@@ -77,7 +77,6 @@ export function parseArgs(argv: string[]): ParsedSupervisorArgs {
   }
   return { root: resolve(root), port: parsedPort };
 }
-
 
 // --- the supervisor itself ------------------------------------------------
 
@@ -100,7 +99,12 @@ export interface ServerHandle {
   serverPid?: number | null;
 }
 
-type ServerStarter = (opts: { root: string; port: number; logsDir: string; writer?: NdjsonWriter | null }) => Promise<ServerHandle>;
+type ServerStarter = (opts: {
+  root: string;
+  port: number;
+  logsDir: string;
+  writer?: NdjsonWriter | null;
+}) => Promise<ServerHandle>;
 
 export interface RunSupervisorOptions {
   root: string;
@@ -148,7 +152,12 @@ export async function runSupervisor({
     // deleted; the workspace copy above is the one `stop` reads first. Losing
     // the global one degrades `status`, and is not worth refusing to
     // serve a dev server over.
-    writer.write({ src: 'metro', level: 'warn', event: 'supervisor_registration_failed', msg: `Could not record the supervisor in the global config: ${describeError(err)}` });
+    writer.write({
+      src: 'metro',
+      level: 'warn',
+      event: 'supervisor_registration_failed',
+      msg: `Could not record the supervisor in the global config: ${describeError(err)}`,
+    });
     stderr(`rn-iso supervisor: global registration failed: ${describeError(err)}`);
   }
 
@@ -162,21 +171,36 @@ export async function runSupervisor({
   let stopping = false;
   const finish = (code: number, event: string, level: string, msg: string) => {
     writer.write({ src: 'metro', level, event, msg });
-    try { clearSupervisor(root); } catch { /* the registry is best-effort at exit */ }
-    try { clearWorkspaceSupervisor(root); } catch { /* same */ }
-    try { rmSync(supervisorPidFile(root), { force: true }); } catch { /* same */ }
+    try {
+      clearSupervisor(root);
+    } catch {
+      /* the registry is best-effort at exit */
+    }
+    try {
+      clearWorkspaceSupervisor(root);
+    } catch {
+      /* same */
+    }
+    try {
+      rmSync(supervisorPidFile(root), { force: true });
+    } catch {
+      /* same */
+    }
     const closed = writer.close();
     if (closed.dropped > 0) {
-      stderr(`rn-iso supervisor: dropped ${closed.dropped} log record(s); last error: ${describeError(closed.lastError)}`);
+      stderr(
+        `rn-iso supervisor: dropped ${closed.dropped} log record(s); last error: ${describeError(closed.lastError)}`,
+      );
     }
     onExit(code);
   };
 
   let server: ServerHandle | undefined;
   try {
-    const start: ServerStarter = mode === MODE_EXPO
-      ? (startExpo || (await import('./server-expo.ts')).startExpoServer)
-      : (startBare || (await import('./server-bare.ts')).startBareServer);
+    const start: ServerStarter =
+      mode === MODE_EXPO
+        ? startExpo || (await import('./server-expo.ts')).startExpoServer
+        : startBare || (await import('./server-bare.ts')).startBareServer;
     server = await start({ root, port, logsDir, writer });
   } catch (err) {
     // The message is the whole output: `start` shows the tail of
@@ -220,7 +244,11 @@ export async function runSupervisor({
   readyServer.onExit?.((info) => {
     if (stopping) return;
     const detail = info?.signal ? `signal ${info.signal}` : `exit code ${info?.code ?? 'unknown'}`;
-    shutdown(1, 'supervisor_stopped', `the ${mode} dev server exited unexpectedly (${detail}); shutting the supervisor down`);
+    shutdown(
+      1,
+      'supervisor_stopped',
+      `the ${mode} dev server exited unexpectedly (${detail}); shutting the supervisor down`,
+    );
   });
 
   if (attachSignals) {
@@ -252,7 +280,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   // from inside the project. `start` already spawns us with this cwd; doing it
   // again here is what makes a hand-run `node run.js --root X` identify the
   // same way.
-  try { process.chdir(root); } catch { /* keep the inherited cwd */ }
+  try {
+    process.chdir(root);
+  } catch {
+    /* keep the inherited cwd */
+  }
   process.title = 'rn-iso-supervisor';
   await runSupervisor({ root, port: parsed.port as number });
 }

@@ -110,25 +110,56 @@ test('no reservation left falls back to the in-workspace record', () => {
 // --- runStop: the sequence --------------------------------------------------
 
 function seams(over = {}) {
-  const calls = { signals: [], teardowns: [], freed: [], cleared: 0, stateCleared: 0, killedMetro: [], collectorSignals: [], collectorsCleared: 0 };
+  const calls = {
+    signals: [],
+    teardowns: [],
+    freed: [],
+    cleared: 0,
+    stateCleared: 0,
+    killedMetro: [],
+    collectorSignals: [],
+    collectorsCleared: 0,
+  };
   const base = {
     root: '/proj/a',
     project: { metroPort: 8083, platforms: {} },
     state: null,
     collectors: {},
-    signalCollector: (pid) => { calls.collectorSignals.push(pid); },
-    clearCollectors: () => { calls.collectorsCleared += 1; },
+    signalCollector: (pid) => {
+      calls.collectorSignals.push(pid);
+    },
+    clearCollectors: () => {
+      calls.collectorsCleared += 1;
+    },
     isAlive: () => false,
-    killGroup: (pid) => { calls.signals.push(pid); return true; },
+    killGroup: (pid) => {
+      calls.signals.push(pid);
+      return true;
+    },
     waitForDeath: async () => true,
     resolveMetro: async () => ({ missing: true }),
-    killMetro: (leader) => { calls.killedMetro.push(leader); return true; },
+    killMetro: (leader) => {
+      calls.killedMetro.push(leader);
+      return true;
+    },
     findListener: () => null,
-    teardownIos: (udid, opts) => { calls.teardowns.push({ udid, opts }); return { status: 'torn-down', label: 'rn-iso-a' }; },
-    teardownAvd: (name, opts) => { calls.teardowns.push({ avd: name, opts }); return { status: 'torn-down', label: name }; },
-    freePort: (root, port) => { calls.freed.push({ root, port }); },
-    clearRegistration: async () => { calls.cleared += 1; },
-    clearState: () => { calls.stateCleared += 1; },
+    teardownIos: (udid, opts) => {
+      calls.teardowns.push({ udid, opts });
+      return { status: 'torn-down', label: 'rn-iso-a' };
+    },
+    teardownAvd: (name, opts) => {
+      calls.teardowns.push({ avd: name, opts });
+      return { status: 'torn-down', label: name };
+    },
+    freePort: (root, port) => {
+      calls.freed.push({ root, port });
+    },
+    clearRegistration: async () => {
+      calls.cleared += 1;
+    },
+    clearState: () => {
+      calls.stateCleared += 1;
+    },
     report: () => {},
   };
   return { calls, opts: { ...base, ...over } };
@@ -151,7 +182,9 @@ test('a live supervisor is SIGTERMed as a group and its Metro is left to it', as
   const { calls, opts } = seams({
     state: { pid: 4242, port: 8083, mode: 'expo-child' },
     isAlive: (pid) => pid === 4242,
-    resolveMetro: async () => { throw new Error('the metro fallback must not run for a live supervisor'); },
+    resolveMetro: async () => {
+      throw new Error('the metro fallback must not run for a live supervisor');
+    },
   });
   const r = await runStop(opts);
   expect(r.ok).toBe(true);
@@ -337,7 +370,10 @@ test('readSupervisorState reads the supervisor block, and tolerates corruption',
 test('clearSupervisorState drops the supervisor key and keeps the rest of state.json', () => {
   mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(supervisorPidFile(tmpRoot), '7');
-  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 }, lastBuild: { fingerprint: 'abc' } }));
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({ supervisor: { pid: 7 }, lastBuild: { fingerprint: 'abc' } }),
+  );
 
   clearSupervisorState(tmpRoot);
 
@@ -413,7 +449,6 @@ test('stopping clears the global supervisor registration', async () => {
   expect(getProject(tmpRoot).supervisor).toBe(undefined);
 });
 
-
 // --- Contract 5: the collectors ---------------------------------------------
 //
 // A collector is a detached `simctl log stream` / `adb logcat` this workspace
@@ -474,7 +509,11 @@ test('a collector that exits between the liveness check and the signal is not an
   const { opts } = seams({
     collectors: { ios: { pid: 111 } },
     isAlive: () => true,
-    signalCollector: () => { const e = new Error('ESRCH'); e.code = 'ESRCH'; throw e; },
+    signalCollector: () => {
+      const e = new Error('ESRCH');
+      e.code = 'ESRCH';
+      throw e;
+    },
   });
   const r = await runStop(opts);
   expect(r.ok).toBe(true);
@@ -520,11 +559,14 @@ test('readCollectorState reads the collectors block and tolerates corruption', (
 // guaranteed cache miss.
 test('clearCollectorState drops only the collectors key', () => {
   mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
-  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({
-    supervisor: { pid: 7 },
-    collectors: { ios: { pid: 9 } },
-    lastBuild: { fingerprint: 'abc' },
-  }));
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({
+      supervisor: { pid: 7 },
+      collectors: { ios: { pid: 9 } },
+      lastBuild: { fingerprint: 'abc' },
+    }),
+  );
   clearCollectorState(tmpRoot);
   const left = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
   expect(left).toEqual({ supervisor: { pid: 7 }, lastBuild: { fingerprint: 'abc' } });

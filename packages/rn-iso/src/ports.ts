@@ -6,16 +6,18 @@ import { isOnMountedVolume, listMountedVolumes } from './fs-util.ts';
 
 export function isMetroRunning(port: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    const req = request(
-      { hostname: 'localhost', port, path: '/status', timeout: 2000 },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => resolve(data.includes('packager-status:running')));
-      }
-    );
+    const req = request({ hostname: 'localhost', port, path: '/status', timeout: 2000 }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      res.on('end', () => resolve(data.includes('packager-status:running')));
+    });
     req.on('error', () => resolve(false));
-    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
     req.end();
   });
 }
@@ -42,9 +44,9 @@ export function isPortFree(port: number, { timeoutMs = 400 }: { timeoutMs?: numb
       resolve(free);
     };
     sock.setTimeout(timeoutMs);
-    sock.once('connect', () => done(false));   // something is listening
-    sock.once('error', () => done(true));      // ECONNREFUSED: nothing there
-    sock.once('timeout', () => done(false));   // filtered/hung: assume taken
+    sock.once('connect', () => done(false)); // something is listening
+    sock.once('error', () => done(true)); // ECONNREFUSED: nothing there
+    sock.once('timeout', () => done(false)); // filtered/hung: assume taken
   });
 }
 
@@ -65,7 +67,7 @@ export async function computeNextPort(isFree: (port: number) => Promise<boolean>
   }
   throw new Error(
     `Found no free Metro port between ${FIRST_PORT} and ${FIRST_PORT + PORT_SCAN_LIMIT - 1}. ` +
-    'Free one up, or stop a stale bundler (`rn-iso status`, `rn-iso stop <port>`).'
+      'Free one up, or stop a stale bundler (`rn-iso status`, `rn-iso stop <port>`).',
   );
 }
 
@@ -77,7 +79,10 @@ export interface ReclaimableCandidate {
 export async function findReclaimablePort(
   excludeProjectPath: string,
   probe: (port: number) => Promise<boolean> = isMetroRunning,
-  { isMounted = isOnMountedVolume, mountedVolumes }: { isMounted?: (path: string, mountedVolumes?: string[]) => boolean; mountedVolumes?: string[] } = {},
+  {
+    isMounted = isOnMountedVolume,
+    mountedVolumes,
+  }: { isMounted?: (path: string, mountedVolumes?: string[]) => boolean; mountedVolumes?: string[] } = {},
 ): Promise<ReclaimableCandidate | null> {
   const cfg = loadConfig();
   if (!cfg?.projects) return null;
@@ -115,7 +120,7 @@ export async function allocatePort(
   // A reclaimable port belongs to a project whose directory is gone AND whose
   // Metro no longer answers -- but something unrelated may have taken it since,
   // so it still has to pass the same bind check as a fresh port.
-  if (reclaim && await isFree(reclaim.port)) {
+  if (reclaim && (await isFree(reclaim.port))) {
     removeProject(reclaim.ownerPath);
     return reclaim.port;
   }
@@ -140,6 +145,6 @@ export async function reserveMetroPort(
     if (claimed !== null) return claimed;
   }
   throw new Error(
-    `Could not reserve a Metro port after ${RESERVE_ATTEMPTS} attempts: another rn-iso run claimed each one first. Retry.`
+    `Could not reserve a Metro port after ${RESERVE_ATTEMPTS} attempts: another rn-iso run claimed each one first. Retry.`,
   );
 }

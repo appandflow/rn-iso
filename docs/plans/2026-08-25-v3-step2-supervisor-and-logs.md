@@ -11,6 +11,7 @@
 ## Global Constraints
 
 Same as step 1 (ESM, ASCII, exec.js wrapper, config lock, RN_ISO_HOME, fail closed, no new deps). Plus:
+
 - The supervisor must never outlive usefulness silently: every exit path writes a final NDJSON record and clears its global registration.
 - No command blocks by default; waiting is explicit (`start` waits for health because that is its contract; `logs` exits unless `--follow`).
 
@@ -27,6 +28,7 @@ One JSON object per line. Required fields:
 Optional: `event` (producer event name, e.g. Metro reporter type), `stack` (array of `{file,line,column,fn}`), `proc` (device process), `raw: true` (parsed from stdout, structure inferred), `marker: true` (resets the `--errors` window: written on bundle-build-done and app launch).
 
 Files, per workspace (paths from `src/paths.js`):
+
 ```
 <root>/.rn-iso/logs/metro.ndjson    bundler + expo-child stdout
 <root>/.rn-iso/logs/client.ndjson   forwarded client console/errors (bare in-process)
@@ -52,6 +54,7 @@ Files, per workspace (paths from `src/paths.js`):
 **Files:** Create `src/ndjson.js`, `src/logs-query.js`, `src/commands/logs.js`; tests `test/ndjson.test.js`, `test/logs-query.test.js`, `test/logs-command.test.js`. Do NOT touch bin/cli.js (orchestrator wires it).
 
 **Produces:**
+
 - `createNdjsonWriter(file)` -> `{ write(record), close() }`. Appends; creates parent dirs on first write; stamps `ts` if absent; never throws on write failure (a logging failure must not kill the supervisor — count drops, surface in close()).
 - `parseNdjsonLine(line)` -> record or null (corrupt lines are skipped, not fatal).
 - `queryLogs({ dir, sources, minLevel, since, grep, tail, errorsOnly, now })` -> merged records ascending by ts across all files. `since` accepts `30s|5m|2h` strings (pure parser `parseSince`). `errorsOnly`: level error|fatal with ts >= the last `marker:true` record's ts (no marker = whole log).
@@ -63,12 +66,13 @@ Files, per workspace (paths from `src/paths.js`):
 **Files:** `git mv`-equivalent by orchestrator is NOT available — create `packages/metro/` with package name `@rn-iso/metro`, move index.js content, delete `packages/metro-cache/`. Update `test/cache-packages.test.js` imports and the registered cache `name` only if tests demand. Keep CJS; keep zero rn-iso imports.
 
 **Produces:** existing `sharedCacheStores(name)` unchanged, plus `ndjsonReporter({ dir })` -> a Metro `Reporter` (`{ update(event) }`) writing Contract-1 records to `dir/metro.ndjson` and `dir/client.ndjson`:
+
 - `client_log` events -> client.ndjson, level from `event.level` (log->info), msg joined from `event.data`, `stack` passed through when present.
 - `bundling_error` / `transformer_error` -> metro.ndjson level error with the message extracted.
 - `bundle_build_done` -> metro.ndjson info with `marker: true`.
 - `unstable_server_log` -> level from event, msg from data.
 - everything else -> level debug, `event` preserved, msg best-effort. Unknown event shapes must never throw.
-`dir` defaults to `join(process.cwd(), '.rn-iso', 'logs')`.
+  `dir` defaults to `join(process.cwd(), '.rn-iso', 'logs')`.
 
 ### Task C: supervisor + `start`
 
@@ -91,4 +95,5 @@ Files, per workspace (paths from `src/paths.js`):
 bin/cli.js registrations (logs, start; stop already registered), guide topics, SKILL.md, README; live-verify per CLAUDE.md item 9 on a real bare-RN fixture and an Expo project; commit sequencing.
 
 ## Out of scope for step 2
+
 Device log collectors (steps 3/4 attach them), `ios`/`android`, removal of `up`/`device`/`release`/`shutdown` (step 3), symbolication (follow-up: reporter passes stacks through as-is this step).

@@ -59,9 +59,15 @@ function recordingExec({ fail = null, outputs = {} }: any = {}): any {
       }
       return '';
     },
-    run() { throw new Error('app-install must use runFile, not the shell'); },
-    runQuiet() { throw new Error('app-install must use runFile, not the shell'); },
-    spawn() { throw new Error('app-install does not spawn'); },
+    run() {
+      throw new Error('app-install must use runFile, not the shell');
+    },
+    runQuiet() {
+      throw new Error('app-install must use runFile, not the shell');
+    },
+    spawn() {
+      throw new Error('app-install does not spawn');
+    },
   };
 }
 
@@ -113,7 +119,10 @@ describe('ios', () => {
 
   test('launchIosApp opens the dev-client URL when a scheme is given, still after the defaults write', () => {
     const exec = recordingExec();
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' }, { exec });
+    const result = launchIosApp(
+      { udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
+      { exec },
+    );
     expect(result.mode).toBe('openurl');
     expect(exec.calls).toEqual([
       ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'write', 'com.example.app', 'RCT_jsLocation', 'localhost:8082'],
@@ -131,7 +140,9 @@ describe('ios', () => {
 
   test('a failed launch is reported, not thrown', () => {
     const exec = recordingExec({ fail: 'simctl launch' });
-    expect(launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec }).reason).toMatch(/simctl launch/);
+    expect(launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec }).reason).toMatch(
+      /simctl launch/,
+    );
   });
 });
 
@@ -139,7 +150,8 @@ describe('android: resolve-activity parsing', () => {
   // Captured verbatim from a live emulator (Android 16):
   //   adb -s emulator-5554 shell cmd package resolve-activity --brief \
   //     -c android.intent.category.LAUNCHER com.android.settings
-  const REAL = 'priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\ncom.android.settings/.Settings\n';
+  const REAL =
+    'priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\ncom.android.settings/.Settings\n';
 
   test('takes the component line, not the key=value header', () => {
     expect(parseResolvedActivity(REAL)).toBe('com.android.settings/.Settings');
@@ -156,7 +168,9 @@ describe('android: resolve-activity parsing', () => {
   });
 
   test('handles a fully qualified activity name', () => {
-    expect(parseResolvedActivity('priority=0 isDefault=true\ncom.example.app/com.example.app.MainActivity\n')).toBe('com.example.app/com.example.app.MainActivity');
+    expect(parseResolvedActivity('priority=0 isDefault=true\ncom.example.app/com.example.app.MainActivity\n')).toBe(
+      'com.example.app/com.example.app.MainActivity',
+    );
   });
 });
 
@@ -188,8 +202,13 @@ describe('android: install and launch', () => {
   });
 
   test('launchAndroidApp reverses, resolves the activity, and am starts it', () => {
-    const exec = recordingExec({ outputs: { 'resolve-activity': 'priority=0 isDefault=true\ncom.example.app/.MainActivity\n' } });
-    const result: any = launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 }, { exec });
+    const exec = recordingExec({
+      outputs: { 'resolve-activity': 'priority=0 isDefault=true\ncom.example.app/.MainActivity\n' },
+    });
+    const result: any = launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
+      { exec },
+    );
     expect(result.mode).toBe('am-start');
     expect(exec.calls).toEqual([
       ['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8081', 'tcp:8082'],
@@ -197,7 +216,19 @@ describe('android: install and launch', () => {
       // The debug_http_host write sits between the reverses and the launch:
       // exact position pinned so neither mechanism can silently disappear.
       exec.calls[2],
-      ['adb', '-s', 'emulator-5554', 'shell', 'cmd', 'package', 'resolve-activity', '--brief', '-c', 'android.intent.category.LAUNCHER', 'com.example.app'],
+      [
+        'adb',
+        '-s',
+        'emulator-5554',
+        'shell',
+        'cmd',
+        'package',
+        'resolve-activity',
+        '--brief',
+        '-c',
+        'android.intent.category.LAUNCHER',
+        'com.example.app',
+      ],
       ['adb', '-s', 'emulator-5554', 'shell', 'am', 'start', '-n', 'com.example.app/.MainActivity'],
     ]);
     expect(exec.calls[2].slice(0, 6)).toEqual(['adb', '-s', 'emulator-5554', 'shell', 'run-as', 'com.example.app']);
@@ -206,7 +237,10 @@ describe('android: install and launch', () => {
 
   test('falls back to monkey when no launcher activity resolves', () => {
     const exec = recordingExec({ outputs: { 'resolve-activity': 'No activity found\n' } });
-    const result: any = launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 }, { exec });
+    const result: any = launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
+      { exec },
+    );
     expect(result.mode).toBe('monkey');
     expect(exec.calls.at(-1)).toEqual(['adb', '-s', 'emulator-5554', 'shell', 'monkey', '-p', 'com.example.app', '1']);
   });
@@ -216,20 +250,32 @@ describe('android: install and launch', () => {
   // which is a much worse diagnostic than the adb failure itself.
   test('a failed reverse stops the launch', () => {
     const exec = recordingExec({ fail: 'reverse' });
-    const result: any = launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 }, { exec });
+    const result: any = launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
+      { exec },
+    );
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(result.reason).toMatch(/adb reverse/);
     expect(exec.calls.length).toBe(1);
   });
 
   test('an am start failure is reported, not thrown', () => {
-    const exec = recordingExec({ fail: 'am start', outputs: { 'resolve-activity': 'priority=0\ncom.example.app/.MainActivity\n' } });
-    expect((launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 }, { exec }) as any).reason).toMatch(/am start/);
+    const exec = recordingExec({
+      fail: 'am start',
+      outputs: { 'resolve-activity': 'priority=0\ncom.example.app/.MainActivity\n' },
+    });
+    expect(
+      (launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 }, { exec }) as any)
+        .reason,
+    ).toMatch(/am start/);
   });
 
   test('an adb failure while resolving the activity falls through to monkey', () => {
     const exec = recordingExec({ fail: 'resolve-activity' });
-    const result: any = launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 }, { exec });
+    const result: any = launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
+      { exec },
+    );
     expect(result.mode).toBe('monkey');
   });
 });
@@ -237,7 +283,12 @@ describe('android: install and launch', () => {
 // --- debug_http_host (the react-native-worktree trick) ----------------------
 test('writeDebugHttpHost writes host:port via run-as and reports it', () => {
   const calls = [];
-  const exec: any = { runFile: (cmd, args) => { calls.push([cmd, ...args]); return ''; } };
+  const exec: any = {
+    runFile: (cmd, args) => {
+      calls.push([cmd, ...args]);
+      return '';
+    },
+  };
   const r = writeDebugHttpHost({ serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082 }, { exec });
   expect(r.ok).toBe(true);
   expect(r.host).toBe('10.0.2.2:8082');
@@ -251,7 +302,10 @@ test('writeDebugHttpHost writes host:port via run-as and reports it', () => {
 test('a failed prefs write does not fail the launch', () => {
   const exec: any = {
     runFile: (cmd, args) => {
-      if (args.includes('run-as')) { const e = new Error('run-as: package not debuggable'); throw e; }
+      if (args.includes('run-as')) {
+        const e = new Error('run-as: package not debuggable');
+        throw e;
+      }
       return '';
     },
     runQuiet: () => 'com.x/.MainActivity',
@@ -279,8 +333,12 @@ function fakeClock(start = 1000) {
   let t = start;
   return {
     now: () => t,
-    sleep: async (ms) => { t += ms; },
-    advance: (ms) => { t += ms; },
+    sleep: async (ms) => {
+      t += ms;
+    },
+    advance: (ms) => {
+      t += ms;
+    },
     at: () => t,
   };
 }
@@ -294,8 +352,18 @@ describe('isBundleProof', () => {
   });
 
   test('an expo-child stdout line is the same proof by another route', () => {
-    expect(isBundleProof({ ts: 150, src: 'metro', raw: true, event: 'expo_stdout', msg: 'iOS Bundling complete 812ms' }, 100)).toBe(true);
-    expect(isBundleProof({ ts: 150, src: 'metro', raw: true, event: 'expo_stdout', msg: 'iOS Bundled 812ms index.js (1150 modules)' }, 100)).toBe(true);
+    expect(
+      isBundleProof(
+        { ts: 150, src: 'metro', raw: true, event: 'expo_stdout', msg: 'iOS Bundling complete 812ms' },
+        100,
+      ),
+    ).toBe(true);
+    expect(
+      isBundleProof(
+        { ts: 150, src: 'metro', raw: true, event: 'expo_stdout', msg: 'iOS Bundled 812ms index.js (1150 modules)' },
+        100,
+      ),
+    ).toBe(true);
     // The predicate the supervisor exports and the one this module keeps must
     // not drift apart.
     expect(isBundleActivityLine('Android Bundling failed 91ms')).toBe(true);
@@ -310,8 +378,12 @@ describe('isBundleProof', () => {
   });
 
   test('server chatter is not proof', () => {
-    expect(isBundleProof({ ts: 150, src: 'metro', event: 'supervisor_started', msg: 'supervisor pid 1 starting' }, 100)).toBe(false);
-    expect(isBundleProof({ ts: 150, src: 'metro', event: 'expo_stdout', msg: 'Waiting on http://localhost:8082' }, 100)).toBe(false);
+    expect(
+      isBundleProof({ ts: 150, src: 'metro', event: 'supervisor_started', msg: 'supervisor pid 1 starting' }, 100),
+    ).toBe(false);
+    expect(
+      isBundleProof({ ts: 150, src: 'metro', event: 'expo_stdout', msg: 'Waiting on http://localhost:8082' }, 100),
+    ).toBe(false);
     expect(isBundleProof(null, 100)).toBe(false);
   });
 });
@@ -346,7 +418,12 @@ describe('verifyLaunch', () => {
       // The dev launcher is showing its server list. The dev server logs its
       // own startup and nothing else -- no bundle is ever requested.
       readRecords: () => [
-        { ts: clock.at(), src: 'metro', event: 'supervisor_started', msg: 'supervisor pid 3 starting the expo-child dev server on port 8082' },
+        {
+          ts: clock.at(),
+          src: 'metro',
+          event: 'supervisor_started',
+          msg: 'supervisor pid 3 starting the expo-child dev server on port 8082',
+        },
       ],
     });
     expect(result.verified).toBe(false);
@@ -362,9 +439,7 @@ describe('verifyLaunch', () => {
       since: clock.at(),
       now: clock.now,
       sleep: clock.sleep,
-      readRecords: () => (clock.at() > 1000 + 30000
-        ? [{ ts: clock.at(), event: 'bundle_build_started' }]
-        : []),
+      readRecords: () => (clock.at() > 1000 + 30000 ? [{ ts: clock.at(), event: 'bundle_build_started' }] : []),
     });
     expect(result.verified).toBe(false);
     expect(result.timedOut).toBe(true);
@@ -382,14 +457,16 @@ describe('verifyLaunch', () => {
     expect(result.verified).toBe(false);
   });
 
-  test('reads the workspace\'s own metro.ndjson, half-written last line and all', async () => {
+  test("reads the workspace's own metro.ndjson, half-written last line and all", async () => {
     const dir = mkdtempSync(join(tmpdir(), 'rn-iso-verify-'));
     try {
       const clock = fakeClock();
-      writeFileSync(join(dir, 'metro.ndjson'),
-        `${JSON.stringify({ ts: clock.at() - 5, event: 'bundle_build_done' })}\n`
-        + `${JSON.stringify({ ts: clock.at() + 10, event: 'bundle_build_started' })}\n`
-        + '{"ts":123,"event":"half-writ');
+      writeFileSync(
+        join(dir, 'metro.ndjson'),
+        `${JSON.stringify({ ts: clock.at() - 5, event: 'bundle_build_done' })}\n` +
+          `${JSON.stringify({ ts: clock.at() + 10, event: 'bundle_build_started' })}\n` +
+          '{"ts":123,"event":"half-writ',
+      );
       const result = await verifyLaunch({ logsDir: dir, since: clock.at(), now: clock.now, sleep: clock.sleep });
       expect(result.verified).toBe(true);
       expect(result.record.ts).toBe(clock.at() + 10);
@@ -423,7 +500,12 @@ describe('unverifiedLaunchLines', () => {
   });
 
   test('Android names its own re-launch, not simctl', () => {
-    const text = unverifiedLaunchLines({ platform: 'android', metroPort: 8082, bundleId: 'com.x', serial: 'emulator-5584' }).join('\n');
+    const text = unverifiedLaunchLines({
+      platform: 'android',
+      metroPort: 8082,
+      bundleId: 'com.x',
+      serial: 'emulator-5584',
+    }).join('\n');
     expect(text).not.toMatch(/simctl/);
     expect(text).toMatch(/adb -s emulator-5584 shell monkey -p com\.x 1/);
     expect(text).toMatch(/DEVELOPMENT SERVERS/);
@@ -449,9 +531,9 @@ describe('unverifiedLaunchLines: the action comes first', () => {
 
   test('confirming the alert is step one, the picker is next, the retry is last', () => {
     const lines = iosLines();
-    const alert = lines.findIndex(l => /confirm it with your device tool/.test(l));
-    const picker = lines.findIndex(l => /DEVELOPMENT SERVERS/.test(l));
-    const retry = lines.findIndex(l => /simctl openurl/.test(l));
+    const alert = lines.findIndex((l) => /confirm it with your device tool/.test(l));
+    const picker = lines.findIndex((l) => /DEVELOPMENT SERVERS/.test(l));
+    const retry = lines.findIndex((l) => /simctl openurl/.test(l));
     expect(alert !== -1 && picker !== -1 && retry !== -1).toBeTruthy();
     expect(alert < picker).toBeTruthy();
     expect(picker < retry).toBeTruthy();
@@ -459,23 +541,28 @@ describe('unverifiedLaunchLines: the action comes first', () => {
   });
 
   test('the retry is conditioned on there being no alert, so it cannot loop', () => {
-    const retry = iosLines().find(l => /simctl openurl/.test(l));
+    const retry = iosLines().find((l) => /simctl openurl/.test(l));
     expect(retry).toMatch(/only if no alert is showing/i);
   });
 
   test('the picker line still carries THIS workspace port, from the facts', () => {
-    const picker = iosLines().find(l => /DEVELOPMENT SERVERS/.test(l));
+    const picker = iosLines().find((l) => /DEVELOPMENT SERVERS/.test(l));
     expect(picker).toMatch(/localhost:8082/);
     expect(picker).toMatch(/NOT another workspace/);
   });
 
   test('android has no such alert, so it leads with the picker', () => {
-    const lines = unverifiedLaunchLines({ platform: 'android', metroPort: 8082, bundleId: 'com.x', serial: 'emulator-5584' });
-    const picker = lines.findIndex(l => /DEVELOPMENT SERVERS/.test(l));
-    const relaunch = lines.findIndex(l => /monkey -p com\.x/.test(l));
+    const lines = unverifiedLaunchLines({
+      platform: 'android',
+      metroPort: 8082,
+      bundleId: 'com.x',
+      serial: 'emulator-5584',
+    });
+    const picker = lines.findIndex((l) => /DEVELOPMENT SERVERS/.test(l));
+    const relaunch = lines.findIndex((l) => /monkey -p com\.x/.test(l));
     expect(picker !== -1 && relaunch !== -1).toBeTruthy();
     expect(picker < relaunch).toBeTruthy();
-    expect(!lines.some(l => /Open in <app>/.test(l))).toBeTruthy();
+    expect(!lines.some((l) => /Open in <app>/.test(l))).toBeTruthy();
   });
 });
 
@@ -504,12 +591,24 @@ describe('the debug_http_host script, run for real under sh', () => {
   const PKG = 'com.example.app';
   const prefsPath = () => join(dir, 'shared_prefs', `${PKG}_preferences.xml`);
 
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'rn-iso-prefs-')); });
-  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'rn-iso-prefs-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   // The device shell, then the script's shell. Throws (non-zero exit) exactly
   // where adb would report a failure.
-  const runScript = (port) => execFileSync('/bin/sh', ['-c', `sh -c ${deviceShellArg(debugHttpHostScript({ packageName: PKG, host: `10.0.2.2:${port}`, dataDir: dir }))}`], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const runScript = (port) =>
+    execFileSync(
+      '/bin/sh',
+      [
+        '-c',
+        `sh -c ${deviceShellArg(debugHttpHostScript({ packageName: PKG, host: `10.0.2.2:${port}`, dataDir: dir }))}`,
+      ],
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
 
   // A strict-enough XML reader: it fails on unbalanced or unclosed tags, so
   // "the file parses" is an assertion and not a grep. Returns the <map>'s
@@ -533,7 +632,10 @@ describe('the debug_http_host script, run for real under sh', () => {
       }
       const attrMap = {};
       for (const a of attrs.matchAll(/([\w:.-]+)\s*=\s*"([^"]*)"/g)) attrMap[a[1]] = a[2];
-      if (selfClosing) { if (name === 'string') entries[attrMap.name] = ''; continue; }
+      if (selfClosing) {
+        if (name === 'string') entries[attrMap.name] = '';
+        continue;
+      }
       stack.push({ name, attrs: attrMap });
     }
     expect(stack).toEqual([]);
@@ -557,15 +659,18 @@ describe('the debug_http_host script, run for real under sh', () => {
 
   test('case 3: a prefs file WITHOUT the key keeps every other entry', () => {
     execFileSync('/bin/sh', ['-c', `mkdir -p ${join(dir, 'shared_prefs')}`]);
-    writeFileSync(prefsPath(), [
-      // Android's own writer: single-quoted declaration, four-space indent.
-      "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>",
-      '<map>',
-      '    <string name="onboarding">done</string>',
-      '    <string name="last_route">/settings?tab=1&amp;q=x</string>',
-      '</map>',
-      '',
-    ].join('\n'));
+    writeFileSync(
+      prefsPath(),
+      [
+        // Android's own writer: single-quoted declaration, four-space indent.
+        "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>",
+        '<map>',
+        '    <string name="onboarding">done</string>',
+        '    <string name="last_route">/settings?tab=1&amp;q=x</string>',
+        '</map>',
+        '',
+      ].join('\n'),
+    );
     runScript(8085);
     expect(parsePrefs(readFileSync(prefsPath(), 'utf-8'))).toEqual({
       onboarding: 'done',
@@ -574,7 +679,7 @@ describe('the debug_http_host script, run for real under sh', () => {
     });
   });
 
-  test('case 4: Android\'s empty-prefs form, `<map />`', () => {
+  test("case 4: Android's empty-prefs form, `<map />`", () => {
     execFileSync('/bin/sh', ['-c', `mkdir -p ${join(dir, 'shared_prefs')}`]);
     writeFileSync(prefsPath(), "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map />\n");
     runScript(8085);
@@ -603,24 +708,36 @@ describe('the debug_http_host script, run for real under sh', () => {
 // --- the dev-client deep link, Android half --------------------------------
 describe('the Android dev-client deep link', () => {
   test('the url is the iOS shape pointed at the emulator loopback', () => {
-    expect(androidDevClientUrl('exp+app', 8085)).toBe('exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085');
+    expect(androidDevClientUrl('exp+app', 8085)).toBe(
+      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085',
+    );
     // Same builder, same shape, different host: iOS keeps localhost.
     expect(devClientUrl('exp+app', 8085)).toBe('exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085');
   });
 
   test('launchAndroidApp sends it, quoted for the device shell, and skips resolve-activity', () => {
     const exec = recordingExec();
-    const result = launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' }, { exec });
+    const result = launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' },
+      { exec },
+    );
     expect(result.mode).toBe('deep-link');
     expect(result.devClientUrl).toBe('exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082');
     expect(exec.calls.at(-1)).toEqual([
-      'adb', '-s', 'emulator-5554', 'shell', 'am', 'start',
-      '-a', 'android.intent.action.VIEW',
+      'adb',
+      '-s',
+      'emulator-5554',
+      'shell',
+      'am',
+      'start',
+      '-a',
+      'android.intent.action.VIEW',
       // Quoted: adb hands the joined argv to the device's shell, and this url
       // carries `?`.
-      '-d', `'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082'`,
+      '-d',
+      `'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082'`,
     ]);
-    expect(!exec.calls.some(c => c.includes('resolve-activity'))).toBeTruthy();
+    expect(!exec.calls.some((c) => c.includes('resolve-activity'))).toBeTruthy();
     // The port wiring still ran first, both halves of it.
     expect(result.debugHttpHost).toBe('10.0.2.2:8082');
     expect(result.reversed).toEqual(['tcp:8081->tcp:8082', 'tcp:8082->tcp:8082']);
@@ -629,28 +746,49 @@ describe('the Android dev-client deep link', () => {
   test('am start exits 0 on an intent it could not resolve, so the OUTPUT is read', () => {
     // Captured shape from `am start` itself: it prints the error and returns
     // 0, which is why the exit code cannot be the check.
-    expect(amStartError('Starting: Intent { act=android.intent.action.VIEW dat=exp+app://expo-development-client/... }\nError: Activity not started, unable to resolve Intent')).toMatch(/unable to resolve Intent/);
+    expect(
+      amStartError(
+        'Starting: Intent { act=android.intent.action.VIEW dat=exp+app://expo-development-client/... }\nError: Activity not started, unable to resolve Intent',
+      ),
+    ).toMatch(/unable to resolve Intent/);
     expect(amStartError('Starting: Intent { act=android.intent.action.VIEW dat=exp+app://... }')).toBe(null);
     // An app already in the foreground: a Warning, and a success.
-    expect(amStartError('Starting: Intent { ... }\nWarning: Activity not started, its current task has been brought to the front')).toBe(null);
+    expect(
+      amStartError(
+        'Starting: Intent { ... }\nWarning: Activity not started, its current task has been brought to the front',
+      ),
+    ).toBe(null);
     expect(amStartError('')).toBe(null);
   });
 
   test('a deep link nothing answers falls back to the launcher and says so', () => {
     const exec = recordingExec({
       outputs: {
-        'android.intent.action.VIEW': 'Starting: Intent { act=android.intent.action.VIEW dat=exp+app://expo-development-client/... }\nError: Activity not started, unable to resolve Intent { act=android.intent.action.VIEW }',
+        'android.intent.action.VIEW':
+          'Starting: Intent { act=android.intent.action.VIEW dat=exp+app://expo-development-client/... }\nError: Activity not started, unable to resolve Intent { act=android.intent.action.VIEW }',
         'resolve-activity': 'priority=0 isDefault=true\ncom.example.app/.MainActivity\n',
       },
     });
-    const result = launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' }, { exec });
+    const result = launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' },
+      { exec },
+    );
     // The app is installed and a launcher start still gives the developer
     // something: refusing the run here would be strictly worse.
     expect(result.ok).toBe(true);
     expect(result.mode).toBe('am-start');
     expect(result.devClientNote).toMatch(/unable to resolve Intent/);
     expect(result.devClientNote).toMatch(/fell back to the launcher activity/);
-    expect(exec.calls.at(-1)).toEqual(['adb', '-s', 'emulator-5554', 'shell', 'am', 'start', '-n', 'com.example.app/.MainActivity']);
+    expect(exec.calls.at(-1)).toEqual([
+      'adb',
+      '-s',
+      'emulator-5554',
+      'shell',
+      'am',
+      'start',
+      '-n',
+      'com.example.app/.MainActivity',
+    ]);
   });
 
   test('openAndroidDevClientUrl reports an adb failure rather than throwing', () => {

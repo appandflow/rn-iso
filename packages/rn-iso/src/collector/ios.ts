@@ -65,10 +65,21 @@ export const NOISE_RULES: NoiseRule[] = [
   // is reset, retried or torn down, and an RN app holds a websocket to Metro
   // plus HTTP to the dev server, so it never stops.
   { id: 'network', subsystem: 'com.apple.network' },
-  { id: 'network-default-subsystem', messagePrefix: [
-    'nw_socket', 'nw_connection', 'nw_protocol', 'nw_endpoint', 'nw_path',
-    'nw_resolver', 'nw_flow', 'nw_read_request', 'nw_write_request', 'tcp_input',
-  ] },
+  {
+    id: 'network-default-subsystem',
+    messagePrefix: [
+      'nw_socket',
+      'nw_connection',
+      'nw_protocol',
+      'nw_endpoint',
+      'nw_path',
+      'nw_resolver',
+      'nw_flow',
+      'nw_read_request',
+      'nw_write_request',
+      'tcp_input',
+    ],
+  },
   // Trust evaluation: one Error-typed line per TLS handshake whose trust
   // result is not already cached -- i.e. per cold launch, per host.
   { id: 'sectrust', subsystem: 'com.apple.securityd' },
@@ -88,11 +99,14 @@ export const NOISE_RULES: NoiseRule[] = [
   // UIScene migration notice as a Fault; it is a deprecation notice with a
   // deadline, not a crash. Matched on the notice's sentence rather than on
   // "UIScene", so a real UIScene fault is still a fault.
-  { id: 'uiscene-deprecation', messageIncludes: [
-    'UIScene lifecycle will soon be required',
-    'must migrate to UIScene',
-    'migrate to UIScene lifecycle',
-  ] },
+  {
+    id: 'uiscene-deprecation',
+    messageIncludes: [
+      'UIScene lifecycle will soon be required',
+      'must migrate to UIScene',
+      'migrate to UIScene lifecycle',
+    ],
+  },
 ];
 
 interface NoiseRule {
@@ -109,7 +123,10 @@ interface NoiseRule {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type LogStreamEvent = any;
 
-function ruleMatches(rule: NoiseRule, { subsystem, category, message }: { subsystem: string; category: string; message: string }): boolean {
+function ruleMatches(
+  rule: NoiseRule,
+  { subsystem, category, message }: { subsystem: string; category: string; message: string },
+): boolean {
   if (rule.subsystem && subsystem !== rule.subsystem && !subsystem.startsWith(`${rule.subsystem}.`)) return false;
   if (rule.category && category !== rule.category) return false;
   if (rule.messagePrefix && !rule.messagePrefix.some((p) => message.startsWith(p))) return false;
@@ -164,7 +181,10 @@ export function tsFromEvent(event: LogStreamEvent, now: () => number = Date.now)
 // with no messageType: they carry an eventMessage ("Incoming Connection") but
 // no level, and in a real capture they are a third of the volume. Dropping
 // them keeps device.ndjson to what the app actually logged.
-export function recordFromLogEvent(event: LogStreamEvent, { now = Date.now }: { now?: () => number } = {}): NdjsonRecord | null {
+export function recordFromLogEvent(
+  event: LogStreamEvent,
+  { now = Date.now }: { now?: () => number } = {},
+): NdjsonRecord | null {
   if (!event || typeof event !== 'object') return null;
   const eventType = event.eventType;
   if (eventType && eventType !== 'logEvent') return null;
@@ -205,10 +225,15 @@ export function parseLogStreamLine(line: string, { now = Date.now }: { now?: () 
 // PURE. The exact argv, so a test can assert it without a device.
 export function logStreamArgs(udid: string, appName: string): string[] {
   return [
-    'simctl', 'spawn', udid,
-    'log', 'stream',
-    '--style', 'ndjson',
-    '--predicate', `processImagePath CONTAINS[c] "${appName}"`,
+    'simctl',
+    'spawn',
+    udid,
+    'log',
+    'stream',
+    '--style',
+    'ndjson',
+    '--predicate',
+    `processImagePath CONTAINS[c] "${appName}"`,
   ];
 }
 

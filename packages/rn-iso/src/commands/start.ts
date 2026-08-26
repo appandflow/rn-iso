@@ -95,8 +95,8 @@ export function liveSupervisor({
   port?: number;
   isAlive?: (pid: number) => boolean;
 } = {}): LiveSupervisor | null {
-  const candidates = [state?.supervisor, project?.supervisor].filter(
-    (s): s is SupervisorCandidate => Boolean(s && Number.isFinite(Number(s.pid)))
+  const candidates = [state?.supervisor, project?.supervisor].filter((s): s is SupervisorCandidate =>
+    Boolean(s && Number.isFinite(Number(s.pid))),
   );
   for (const candidate of candidates) {
     if (Number(candidate.port) !== Number(port)) continue;
@@ -118,7 +118,12 @@ export function liveSupervisor({
 // rn-iso did not start it -- an agent that ran the project's own `npm start`
 // first. That is reported rather than fought: the port has what it needs, and
 // starting a second bundler over it would be the actual failure.
-export function startFacts({ port, supervisor, logsDir, alreadyRunning }: {
+export function startFacts({
+  port,
+  supervisor,
+  logsDir,
+  alreadyRunning,
+}: {
   port: number;
   supervisor?: SupervisorRecord | null;
   logsDir: string;
@@ -140,7 +145,11 @@ export function startFacts({ port, supervisor, logsDir, alreadyRunning }: {
 // `guide facts` promises the build commands never make you do. The shape is
 // theirs: a stable code to branch on, a message, and a remedy (null when there
 // is nothing to suggest beyond what was already printed).
-export function startError({ code, message, remedy = null }: {
+export function startError({
+  code,
+  message,
+  remedy = null,
+}: {
   code: string;
   message: string;
   remedy?: string | null;
@@ -149,7 +158,9 @@ export function startError({ code, message, remedy = null }: {
 }
 
 export function tailLines(text: unknown, n = LOG_TAIL_LINES): string[] {
-  const lines = String(text || '').split('\n').filter((l) => l.trim() !== '');
+  const lines = String(text || '')
+    .split('\n')
+    .filter((l) => l.trim() !== '');
   return lines.slice(-n);
 }
 
@@ -181,21 +192,29 @@ export function registerStart(program: Command, cliVersion: string | null = null
   program
     .command('start')
     .description(
-      'Start this workspace\'s dev server under a detached supervisor and wait until it verifies as this project\'s. '
-      + 'Idempotent: a healthy dev server on the reserved port is a no-op. Structured logs land in .rn-iso/logs.'
+      "Start this workspace's dev server under a detached supervisor and wait until it verifies as this project's. " +
+        'Idempotent: a healthy dev server on the reserved port is a no-op. Structured logs land in .rn-iso/logs.',
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option('--wait <seconds>', `How long to wait for the dev server to answer (default ${DEFAULT_WAIT_SECONDS})`)
     .action(async (opts: StartOptions) => {
       const json = Boolean(opts.json);
-      const out = (line: string) => { if (json) console.error(line); else console.log(line); };
+      const out = (line: string) => {
+        if (json) console.error(line);
+        else console.log(line);
+      };
       const note = (line: string) => console.error(line);
       // Every failure exits the same way: the diagnostic, whatever evidence
       // there is for it, the remedy, and -- under --json -- the error contract
       // as the single line on stdout. Same shape `ios` / `android` use, because
       // an agent branching on `code` must not have to know which command it
       // called.
-      const fail = ({ code, message, remedy = null, lines = [] }: {
+      const fail = ({
+        code,
+        message,
+        remedy = null,
+        lines = [],
+      }: {
         code: string;
         message: string;
         remedy?: string | null;
@@ -276,7 +295,11 @@ export function registerStart(program: Command, cliVersion: string | null = null
       // spawning a second one would leave the workspace with two supervisors
       // and one port, so we wait on the one that exists instead.
       if (supervisor) {
-        note(chalk.dim(`Supervisor pid ${supervisor.pid} is already running for this workspace; waiting for it to answer on port ${port}...`));
+        note(
+          chalk.dim(
+            `Supervisor pid ${supervisor.pid} is already running for this workspace; waiting for it to answer on port ${port}...`,
+          ),
+        );
         const healthy = await waitForMetro({ root, port, seconds: waitSeconds });
         if (!healthy) {
           return fail({
@@ -298,24 +321,24 @@ export function registerStart(program: Command, cliVersion: string | null = null
       // record of a supervisor that died before it could write a structured
       // one, which is why the failure path below quotes it.
       const fd = openSync(logFile, 'a');
-      const child = getExecutor().spawn(
-        process.execPath,
-        [supervisorEntry(), '--root', root, '--port', String(port)],
-        {
-          cwd: root,
-          // detached: the supervisor leads its own process group, so it
-          // survives this command exiting and `stop` can signal that group
-          // without reaching the caller's shell.
-          detached: true,
-          stdio: ['ignore', fd, fd],
-          env: process.env,
-        }
-      );
+      const child = getExecutor().spawn(process.execPath, [supervisorEntry(), '--root', root, '--port', String(port)], {
+        cwd: root,
+        // detached: the supervisor leads its own process group, so it
+        // survives this command exiting and `stop` can signal that group
+        // without reaching the caller's shell.
+        detached: true,
+        stdio: ['ignore', fd, fd],
+        env: process.env,
+      });
       child.unref?.();
 
       let childExit: ChildExitInfo | null = null;
-      child.on?.('exit', (code, signal) => { childExit = { code, signal }; });
-      child.on?.('error', (err) => { childExit = { code: null, signal: null, error: err }; });
+      child.on?.('exit', (code, signal) => {
+        childExit = { code, signal };
+      });
+      child.on?.('error', (err) => {
+        childExit = { code: null, signal: null, error: err };
+      });
 
       out(chalk.dim(`Supervisor pid ${child.pid} starting the dev server on port ${port}...`));
 
@@ -340,27 +363,31 @@ export function registerStart(program: Command, cliVersion: string | null = null
         // type here.
         const exitInfo = childExit as ChildExitInfo | null;
         const how = exitInfo
-          ? (exitInfo.signal ? `signal ${exitInfo.signal}` : `code ${exitInfo.code}`)
+          ? exitInfo.signal
+            ? `signal ${exitInfo.signal}`
+            : `code ${exitInfo.code}`
           : 'without being observed';
-        return fail(gone
-          ? {
-            code: 'RN_ISO_SUPERVISOR_EXITED',
-            message: `The supervisor exited (${how}) before the dev server came up on port ${port}.`,
-            lines: logTailLines(logFile),
-            remedy: 'Fix the error above and run `rn-iso start` again.',
-          }
-          : {
-            code: 'RN_ISO_METRO_TIMEOUT',
-            message: `The dev server did not answer on port ${port} within ${waitSeconds}s.`,
-            lines: logTailLines(logFile),
-            remedy: 'It may still be starting. Run `rn-iso stop` to halt it, or `rn-iso logs` to follow along.',
-          });
+        return fail(
+          gone
+            ? {
+                code: 'RN_ISO_SUPERVISOR_EXITED',
+                message: `The supervisor exited (${how}) before the dev server came up on port ${port}.`,
+                lines: logTailLines(logFile),
+                remedy: 'Fix the error above and run `rn-iso start` again.',
+              }
+            : {
+                code: 'RN_ISO_METRO_TIMEOUT',
+                message: `The dev server did not answer on port ${port} within ${waitSeconds}s.`,
+                lines: logTailLines(logFile),
+                remedy: 'It may still be starting. Run `rn-iso stop` to halt it, or `rn-iso logs` to follow along.',
+              },
+        );
       }
 
-      supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port })
+      supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) ||
         // child.pid is only undefined if the spawn itself failed, which the
         // health check above would already have turned into a failure.
-        || { pid: child.pid as number, port, mode: null, startedAt: null };
+        { pid: child.pid as number, port, mode: null, startedAt: null };
       report({ json, out, port, supervisor, logsDir, alreadyRunning: false });
     });
 }
@@ -415,7 +442,14 @@ function logTailLines(logFile: string): string[] {
   return [...readLogTail(logFile), `Supervisor log: ${logFile}`];
 }
 
-function report({ json, out, port, supervisor, logsDir, alreadyRunning }: {
+function report({
+  json,
+  out,
+  port,
+  supervisor,
+  logsDir,
+  alreadyRunning,
+}: {
   json: boolean;
   out: (line: string) => void;
   port: number;
@@ -427,7 +461,12 @@ function report({ json, out, port, supervisor, logsDir, alreadyRunning }: {
   // is the loose index-signature bag startFacts (and the wider --json
   // contract) is written against. Structurally compatible, cast for the
   // index signature and the null-vs-undefined difference on mode/startedAt.
-  const facts = startFacts({ port, supervisor: supervisor as unknown as SupervisorRecord | null, logsDir, alreadyRunning });
+  const facts = startFacts({
+    port,
+    supervisor: supervisor as unknown as SupervisorRecord | null,
+    logsDir,
+    alreadyRunning,
+  });
   if (json) {
     console.log(JSON.stringify(facts));
     return facts;

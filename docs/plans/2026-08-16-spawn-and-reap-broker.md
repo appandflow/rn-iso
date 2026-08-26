@@ -28,10 +28,12 @@
 ### Task 1: iOS owned-device primitives
 
 **Files:**
+
 - Modify: `src/sim/ios.js`
 - Test: `test/sim-ios.test.js`
 
 **Interfaces:**
+
 - Consumes: existing `listIosDeviceTypes()`, `listIosRuntimes()`, `bootIosSim`, `getExecutor`.
 - Produces: `pickDefaultIosCreation(deviceTypes, runtimes, {deviceType, runtime})` (pure) returning `{deviceTypeId, runtimeId} | null`; `sanitizeDeviceLabel(label)` (pure); `createOwnedIosSim(label, {deviceType, runtime})` returning `{udid, name}`; `deleteIosSim(udid)`.
 
@@ -47,10 +49,18 @@ test('pickDefaultIosCreation picks the newest iPhone on the newest runtime', () 
     { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', name: 'iPhone 17 Pro' },
   ];
   const runtimes = [
-    { identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2', name: 'iOS 26.2', version: '26.2',
-      supportedDeviceTypes: deviceTypes },
-    { identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5', name: 'iOS 26.5', version: '26.5',
-      supportedDeviceTypes: deviceTypes },
+    {
+      identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
+      name: 'iOS 26.2',
+      version: '26.2',
+      supportedDeviceTypes: deviceTypes,
+    },
+    {
+      identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+      name: 'iOS 26.5',
+      version: '26.5',
+      supportedDeviceTypes: deviceTypes,
+    },
   ];
   const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
   assert.equal(pick.runtimeId, 'com.apple.CoreSimulator.SimRuntime.iOS-26-5');
@@ -93,34 +103,35 @@ Expected: FAIL — `pickDefaultIosCreation is not defined`.
 // caller pinned either by name. Pure: takes the listings as data.
 export function pickDefaultIosCreation(deviceTypes, runtimes, { deviceType, runtime } = {}) {
   const rts = [...runtimes].sort((a, b) =>
-    String(b.version).localeCompare(String(a.version), undefined, { numeric: true }));
-  const wantedRts = runtime
-    ? rts.filter(r => r.version === runtime || r.name.endsWith(runtime))
-    : rts;
+    String(b.version).localeCompare(String(a.version), undefined, { numeric: true }),
+  );
+  const wantedRts = runtime ? rts.filter((r) => r.version === runtime || r.name.endsWith(runtime)) : rts;
   for (const rt of wantedRts) {
-    const supported = (rt.supportedDeviceTypes || []).filter(d =>
-      deviceType ? d.name === deviceType : /^iPhone/i.test(d.name));
+    const supported = (rt.supportedDeviceTypes || []).filter((d) =>
+      deviceType ? d.name === deviceType : /^iPhone/i.test(d.name),
+    );
     if (supported.length === 0) continue;
-    const best = [...supported].sort((a, b) =>
-      b.name.localeCompare(a.name, undefined, { numeric: true }))[0];
+    const best = [...supported].sort((a, b) => b.name.localeCompare(a.name, undefined, { numeric: true }))[0];
     return { deviceTypeId: best.identifier, runtimeId: rt.identifier };
   }
   return null;
 }
 
 export function sanitizeDeviceLabel(label) {
-  return String(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return String(label)
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 export function createOwnedIosSim(label, { deviceType, runtime } = {}) {
   const pick = pickDefaultIosCreation(listIosDeviceTypes(), listIosRuntimes(), { deviceType, runtime });
   if (!pick) {
-    throw new Error('No matching simulator device type / runtime is installed. Install one via Xcode, or pass --device-type / --runtime.');
+    throw new Error(
+      'No matching simulator device type / runtime is installed. Install one via Xcode, or pass --device-type / --runtime.',
+    );
   }
   const name = `rn-iso-${sanitizeDeviceLabel(label)}`;
-  const udid = getExecutor()
-    .run(`xcrun simctl create "${name}" "${pick.deviceTypeId}" "${pick.runtimeId}"`)
-    .trim();
+  const udid = getExecutor().run(`xcrun simctl create "${name}" "${pick.deviceTypeId}" "${pick.runtimeId}"`).trim();
   return { udid, name };
 }
 
@@ -162,10 +173,12 @@ git commit -m "feat(ios): owned-sim creation and deletion primitives"
 ### Task 2: Android owned-AVD primitives
 
 **Files:**
+
 - Modify: `src/sim/android.js`
 - Test: `test/sim-android.test.js`
 
 **Interfaces:**
+
 - Consumes: `getExecutor`; filesystem under `$ANDROID_HOME/system-images`.
 - Produces: `androidHome()`; `listInstalledSystemImages()` returning `[{api, tag, arch, pkg}]` where `pkg` is `system-images;android-36;google_apis;arm64-v8a`; `pickDefaultSystemImage(images, {systemImage})` (pure); `createOwnedAvd(label, {systemImage})` returning `{avdName}`; `deleteAvd(avdName)`.
 
@@ -231,22 +244,29 @@ export function listInstalledSystemImages() {
 }
 
 function safeList(dir) {
-  try { return readdirSync(dir); } catch { return []; }
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
 }
 
 // Highest API first; google_apis over other tags; Apple Silicon needs arm64.
 export function pickDefaultSystemImage(images, { systemImage } = {}) {
-  if (systemImage) return images.find(i => i.pkg === systemImage) || null;
-  const arm = images.filter(i => i.arch === 'arm64-v8a');
+  if (systemImage) return images.find((i) => i.pkg === systemImage) || null;
+  const arm = images.filter((i) => i.arch === 'arm64-v8a');
   if (arm.length === 0) return null;
-  return [...arm].sort((a, b) =>
-    b.api - a.api || (b.tag === 'google_apis' ? 1 : 0) - (a.tag === 'google_apis' ? 1 : 0))[0];
+  return [...arm].sort(
+    (a, b) => b.api - a.api || (b.tag === 'google_apis' ? 1 : 0) - (a.tag === 'google_apis' ? 1 : 0),
+  )[0];
 }
 
 export function createOwnedAvd(label, { systemImage } = {}) {
   const pick = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage });
   if (!pick) {
-    throw new Error('No arm64 Android system image is installed. Install one, e.g.: sdkmanager "system-images;android-36;google_apis;arm64-v8a"');
+    throw new Error(
+      'No arm64 Android system image is installed. Install one, e.g.: sdkmanager "system-images;android-36;google_apis;arm64-v8a"',
+    );
   }
   const avdName = `rn-iso-${sanitizeAvdLabel(label)}`;
   // avdmanager prompts "Do you wish to create a custom hardware profile?";
@@ -256,7 +276,9 @@ export function createOwnedAvd(label, { systemImage } = {}) {
 }
 
 export function sanitizeAvdLabel(label) {
-  return String(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return String(label)
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 export function deleteAvd(avdName) {
@@ -296,11 +318,13 @@ git commit -m "feat(android): owned-AVD creation and deletion primitives"
 ### Task 3: `rn-iso up <platform>`
 
 **Files:**
+
 - Create: `src/commands/up.js`
 - Modify: `bin/cli.js`, `src/config.js`
 - Test: `test/up.test.js`
 
 **Interfaces:**
+
 - Consumes: Task 1/2 primitives; `allocatePort` (`src/ports.js`); `ensureMetro`, `waitForMetroReady` (`src/metro.js`); `resolveSettings` (`src/settings.js`); `gitCommonDir`, `repoRoot` (`src/worktree.js`); `findProjectRoot`, `detectIsExpo`, `detectBundleId`, `detectAndroidPackage` (`src/project.js`); `bootIosSim`, `isSimOccupied` (`src/sim/ios.js`); `bootAndroidEmulator`, `waitForBoot`, `adbReverse`, `nextConsolePort`, `listAdbDevices` (`src/sim/android.js`); `getSetupStatus`, `getProject`, `upsertProject`, `setDevice` (`src/config.js`).
 - Produces: `buildFacts({platform, project, port, metro, setup})` (pure) returning the JSON payload object; `ensureOwnedDevice({platform, project, projectPath, label, settings, flags})` returning the device record; the registered `up` command.
 
@@ -336,9 +360,16 @@ test('buildFacts shapes the ios payload', () => {
     setup: { complete: true, commands: [] },
   });
   assert.deepEqual(facts, {
-    platform: 'ios', udid: 'U1', owned: true, deviceName: 'rn-iso-app',
-    metroPort: 8082, metroPid: 12, metroHealthy: true, metroLog: '/l.log',
-    bundleId: 'com.app', setup: { complete: true, commands: [] },
+    platform: 'ios',
+    udid: 'U1',
+    owned: true,
+    deviceName: 'rn-iso-app',
+    metroPort: 8082,
+    metroPid: 12,
+    metroHealthy: true,
+    metroLog: '/l.log',
+    bundleId: 'com.app',
+    setup: { complete: true, commands: [] },
   });
 });
 
@@ -450,11 +481,13 @@ git commit -m "feat(up): broker command - ensure owned device, port, metro, fact
 ### Task 4: The deletion wave
 
 **Files:**
+
 - Delete: `src/commands/ios.js`, `src/commands/android.js`, `src/commands/reserve.js`, `src/commands/unreserve.js`
 - Modify: `bin/cli.js`, `src/sim/ios.js`, `src/sim/android.js`, `src/config.js`, `src/runner.js`, `src/commands/device.js`, `src/commands/status.js` (import fixes only), `src/labels.js` (if it imported removed code)
 - Test: delete/trim the tests of removed code across `test/*.test.js`
 
 **Interfaces:**
+
 - Consumes: nothing new. Produces: a smaller surface; everything remaining must still pass.
 
 - [ ] **Step 1: Remove the commands**
@@ -499,10 +532,12 @@ git commit -m "refactor: delete build wrappers, claims machinery, and reserve"
 ### Task 5: `release` deletes owned devices
 
 **Files:**
+
 - Modify: `src/commands/release.js`
 - Test: `test/release.test.js`
 
 **Interfaces:**
+
 - Consumes: `deleteIosSim`, `isSimOccupied`, `shutdownIosSim` (ios); `deleteAvd`, `shutdownAndroidEmulator` (android); existing `shouldShutdown`.
 - Produces: `releaseAction({record, occupied, force})` (pure) returning `{action: 'delete' | 'clear', reason: string | null}`.
 
@@ -512,8 +547,10 @@ Add to `test/release.test.js`:
 
 ```js
 test('owned device is deleted', () => {
-  assert.deepEqual(releaseAction({ record: { owned: true }, occupied: false, force: false }),
-    { action: 'delete', reason: null });
+  assert.deepEqual(releaseAction({ record: { owned: true }, occupied: false, force: false }), {
+    action: 'delete',
+    reason: null,
+  });
 });
 
 test('occupied owned device is cleared, not deleted, without --force', () => {
@@ -544,7 +581,10 @@ Run: `node --test test/release.test.js` → FAIL, `releaseAction` not exported.
 export function releaseAction({ record, occupied, force }) {
   if (!record?.owned) return { action: 'clear', reason: null };
   if (occupied && !force) {
-    return { action: 'clear', reason: 'device is in use by another tool; claim cleared, device kept. Pass --force to delete it anyway' };
+    return {
+      action: 'clear',
+      reason: 'device is in use by another tool; claim cleared, device kept. Pass --force to delete it anyway',
+    };
   }
   return { action: 'delete', reason: null };
 }
@@ -568,10 +608,12 @@ git commit -m "feat(release): delete owned devices, clear legacy and physical"
 ### Task 6: `worktree remove` reaps devices; `shutdown` honors ownership and occupancy
 
 **Files:**
+
 - Modify: `src/commands/worktree.js`, `src/commands/shutdown.js`, `src/reclaim.js`
 - Test: `test/worktree-remove.test.js`, `test/shutdown.test.js`
 
 **Interfaces:**
+
 - Consumes: Task 5's `releaseAction`; `deleteIosSim`/`deleteAvd`; `isSimOccupied`; `shouldShutdown`.
 - Produces: `reclaimProject` gains `{deleteOwnedDevices}` and returns `deletedDevices: string[]`.
 
@@ -607,10 +649,12 @@ git commit -m "feat(reclaim): worktree remove reaps owned devices, shutdown guar
 ### Task 7: `gc` device sweep and `status` visibility
 
 **Files:**
+
 - Modify: `src/commands/gc.js`, `src/commands/status.js`, `src/artifacts.js` (only if a shared helper fits there)
 - Test: `test/gc.test.js`, `test/status.test.js` (create if absent)
 
 **Interfaces:**
+
 - Consumes: `listAllIosSims`, `listAvds`, `loadConfig`, `isOnMountedVolume` (already in `src/artifacts.js` from the prior branch), `deleteIosSim`, `deleteAvd`.
 - Produces: `findOrphanedDevices({sims, avds, config, isMounted})` (pure) returning `{orphaned: [{kind, id, name}], kept: [{kind, id, name, reason}]}`.
 
@@ -627,13 +671,19 @@ test('findOrphanedDevices proposes only rn-iso devices absent from config', () =
       { udid: 'U3', name: 'iPhone 17 Pro' },
     ],
     avds: ['rn-iso-old', 'Pixel_7'],
-    config: { projects: { '/p': { platforms: {
-      ios: { deviceUdid: 'U2', owned: true },
-      android: { avdName: 'rn-iso-kept', owned: true },
-    } } } },
+    config: {
+      projects: {
+        '/p': {
+          platforms: {
+            ios: { deviceUdid: 'U2', owned: true },
+            android: { avdName: 'rn-iso-kept', owned: true },
+          },
+        },
+      },
+    },
     isMounted: () => true,
   });
-  assert.deepEqual(result.orphaned.map(o => o.id).sort(), ['U1', 'rn-iso-old']);
+  assert.deepEqual(result.orphaned.map((o) => o.id).sort(), ['U1', 'rn-iso-old']);
 });
 
 test('devices referenced by a project on an unmounted volume are kept', () => {
@@ -675,6 +725,7 @@ git commit -m "feat(gc,status): orphaned-device sweep and owned/setup visibility
 ### Task 8: Carried test hardening and `--base` validation
 
 **Files:**
+
 - Modify: `src/commands/worktree.js`, `src/worktree.js`
 - Test: `test/worktree-create.test.js`, `test/worktree.test.js`
 
@@ -704,6 +755,7 @@ git commit -m "test(worktree): stdout contract, real-git unpushed guard, base va
 ### Task 9: Documentation rewrite
 
 **Files:**
+
 - Modify: `skill/SKILL.md`, `README.md`, `CLAUDE.md`
 
 - [ ] **Step 1: SKILL.md** — full rewrite per the spec's "SKILL.md restructure" section: lifecycle-led (`worktree create` → `up <platform> --json` → run the project's own build → `worktree remove`), the facts contract, the common-setups table (copy it from the spec verbatim as the starting point), Metro rules (managed-only; never start your own; `rn-iso logs` first on a red box), destructive rules (`gc --delete` and `worktree remove --force` require asking; `release` now DELETES the device), the capacity note, and the physical-device exception. Delete every rule that taught wrapper quirks (`--managed-metro`, `--auto` picker behavior, take-over flows, reserve).

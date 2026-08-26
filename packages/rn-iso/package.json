@@ -2,7 +2,25 @@
   "name": "rn-iso",
   "version": "1.1.0",
   "description": "Isolated React Native dev environments per project/worktree",
-  "type": "module",
+  "keywords": [
+    "agent",
+    "emulator",
+    "expo",
+    "metro",
+    "react-native",
+    "simulator",
+    "worktree"
+  ],
+  "homepage": "https://github.com/janicduplessis/rn-iso#readme",
+  "bugs": {
+    "url": "https://github.com/janicduplessis/rn-iso/issues"
+  },
+  "license": "MIT",
+  "author": "Janic Duplessis",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/janicduplessis/rn-iso.git"
+  },
   "bin": {
     "rn-iso": "dist/cli.js"
   },
@@ -12,41 +30,23 @@
     "LICENSE",
     "README.md"
   ],
-  "scripts": {
-    "test": "node --test test/*.test.js",
-    "build": "tsdown"
-  },
-  "dependencies": {
-    "chalk": "^5.4.1",
-    "commander": "^13.1.0",
-    "@rn-iso/metro": "^1.1.0"
-  },
-  "engines": {
-    "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/janicduplessis/rn-iso.git"
-  },
-  "homepage": "https://github.com/janicduplessis/rn-iso#readme",
-  "bugs": {
-    "url": "https://github.com/janicduplessis/rn-iso/issues"
-  },
-  "keywords": [
-    "react-native",
-    "expo",
-    "metro",
-    "simulator",
-    "emulator",
-    "worktree",
-    "agent"
-  ],
-  "license": "MIT",
-  "author": "Janic Duplessis",
+  "type": "module",
   "exports": {
     "./cache-manifest": {
       "types": "./dist/cache-manifest.d.ts",
       "default": "./dist/cache-manifest.js"
     }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@rn-iso/metro": "^1.1.0",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

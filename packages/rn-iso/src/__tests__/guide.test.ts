@@ -30,7 +30,19 @@ test('the facts topic documents the fields each --json payload actually carries'
   };
   const fields = {
     start: ['port', 'supervisorPid', 'mode', 'logsDir', 'alreadyRunning'],
-    ios: ['udid', 'deviceName', 'fingerprint', 'cacheKey', 'cacheHit', 'cacheSkipped', 'waitedForBuild', 'appPath', 'bundleId', 'launched', 'metroPort'],
+    ios: [
+      'udid',
+      'deviceName',
+      'fingerprint',
+      'cacheKey',
+      'cacheHit',
+      'cacheSkipped',
+      'waitedForBuild',
+      'appPath',
+      'bundleId',
+      'launched',
+      'metroPort',
+    ],
     android: ['serial', 'fingerprint', 'cacheHit', 'cacheSkipped', 'waitedForBuild', 'appPath', 'bundleId', 'launched'],
   };
   for (const [command, names] of Object.entries(fields)) {
@@ -77,7 +89,15 @@ test('no topic teaches a command this binary does not have', () => {
   // name of the config FILE in two error messages, and as an explicit "there is
   // no such command" in the settings topic. Its INVOCATION forms are checked
   // separately below.
-  const gone = ['rn-iso up', 'rn-iso release', 'rn-iso shutdown', 'rn-iso device', 'build-cache resolve', '--wait-metro', '--serial'];
+  const gone = [
+    'rn-iso up',
+    'rn-iso release',
+    'rn-iso shutdown',
+    'rn-iso device',
+    'build-cache resolve',
+    '--wait-metro',
+    '--serial',
+  ];
   for (const name of topicNames()) {
     const body = renderTopic(name);
     for (const dead of gone) {
@@ -106,7 +126,7 @@ test('the errors topic documents every code the build commands can emit', () => 
 test('the settings topic lists exactly the keys settings.js honours', () => {
   const body = renderTopic('settings');
   const src = readFileSync(new URL('../settings.ts', import.meta.url), 'utf-8');
-  const known = [...src.matchAll(/^\s*'([a-zA-Z.]+)',$/gm)].map(m => m[1]);
+  const known = [...src.matchAll(/^\s*'([a-zA-Z.]+)',$/gm)].map((m) => m[1]);
   expect(known.length > 0).toBeTruthy();
   for (const key of known) {
     expect(body.includes(key)).toBeTruthy();
@@ -136,8 +156,22 @@ test('the skill still carries the rules an agent must not have to look up', () =
 test('the skill advertises exactly the commands bin/cli.js registers', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   const cli = readFileSync(new URL('../../bin/cli.ts', import.meta.url), 'utf-8');
-  const registered = [...cli.matchAll(/^import (\w+)Command from '\.\.\/src\/commands\/([\w-]+)\.ts';$/gm)].map((m) => m[2]);
-  expect(registered.sort()).toEqual(['android', 'doctor', 'gc', 'guide', 'ios', 'logs', 'skill', 'start', 'status', 'stop', 'worktree']);
+  const registered = [...cli.matchAll(/^import (\w+)Command from '\.\.\/src\/commands\/([\w-]+)\.ts';$/gm)].map(
+    (m) => m[2],
+  );
+  expect(registered.sort()).toEqual([
+    'android',
+    'doctor',
+    'gc',
+    'guide',
+    'ios',
+    'logs',
+    'skill',
+    'start',
+    'status',
+    'stop',
+    'worktree',
+  ]);
   const surface = skill.slice(skill.indexOf('## Command surface'), skill.indexOf('## When things go wrong'));
   for (const command of registered) {
     expect(surface.includes(`\`${command}\``) || surface.includes(`\`${command} `)).toBeTruthy();

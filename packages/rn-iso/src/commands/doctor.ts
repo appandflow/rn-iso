@@ -19,7 +19,9 @@ interface DoctorOptions {
 export default function doctorCommand(program: Command) {
   program
     .command('doctor')
-    .description('Report configuration that makes a second workspace slower than it needs to be. Read-only; changes nothing.')
+    .description(
+      'Report configuration that makes a second workspace slower than it needs to be. Read-only; changes nothing.',
+    )
     .option('--json', 'print the findings as JSON')
     .action(async (opts: DoctorOptions) => {
       const root = findProjectRoot(process.cwd());
@@ -35,7 +37,7 @@ export default function doctorCommand(program: Command) {
         xcodeMajor: detectXcodeMajor() as any,
       });
       const findings: DoctorFinding[] = (rawFindings as (DoctorFinding | null)[]).filter(
-        (f): f is DoctorFinding => f != null
+        (f): f is DoctorFinding => f != null,
       );
 
       if (opts.json) {
@@ -45,7 +47,11 @@ export default function doctorCommand(program: Command) {
 
       if (findings.length === 0) {
         console.log(chalk.green('Nothing to flag.'));
-        console.log(chalk.dim('Checked: dev client, Metro cache, compilation cache, ccache conflict, .gitignore entry, build cache provider, EAS session.'));
+        console.log(
+          chalk.dim(
+            'Checked: dev client, Metro cache, compilation cache, ccache conflict, .gitignore entry, build cache provider, EAS session.',
+          ),
+        );
         return;
       }
 

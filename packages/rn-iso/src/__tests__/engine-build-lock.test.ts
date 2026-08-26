@@ -133,9 +133,15 @@ describe('acquireBuildLock', () => {
   test('a lock held by a DEAD pid is taken over', () => {
     const path = buildLockPath(PLATFORM, KEY);
     mkdirSync(path, { recursive: true });
-    writeFileSync(join(path, 'lock.json'), JSON.stringify({
-      pid: 999999, projectRoot: '/gone/worktree', startedAt: new Date().toISOString(), logFile: '/gone/build.ndjson',
-    }));
+    writeFileSync(
+      join(path, 'lock.json'),
+      JSON.stringify({
+        pid: 999999,
+        projectRoot: '/gone/worktree',
+        startedAt: new Date().toISOString(),
+        logFile: '/gone/build.ndjson',
+      }),
+    );
 
     const got = acquireBuildLock(spec({ isAlive: () => false }));
     expect(got.acquired).toBe(true);
@@ -170,9 +176,15 @@ describe('acquireBuildLock', () => {
   // delete a lock that is now someone else's, and TWO builders would compile.
   test('releaseBuildLock refuses to remove a lock another pid took over', () => {
     const got = acquireBuildLock(spec());
-    writeFileSync(join(got.path, 'lock.json'), JSON.stringify({
-      pid: 424242, projectRoot: '/another/worktree', startedAt: new Date().toISOString(), logFile: null,
-    }));
+    writeFileSync(
+      join(got.path, 'lock.json'),
+      JSON.stringify({
+        pid: 424242,
+        projectRoot: '/another/worktree',
+        startedAt: new Date().toISOString(),
+        logFile: null,
+      }),
+    );
     expect(releaseBuildLock(got)).toBe(false);
     expect(existsSync(got.path)).toBe(true);
   });
@@ -203,9 +215,15 @@ describe('listBuildLocks', () => {
     acquireBuildLock(spec());
     const dead = buildLockPath('android', 'deadkey-debug-sim');
     mkdirSync(dead, { recursive: true });
-    writeFileSync(join(dead, 'lock.json'), JSON.stringify({
-      pid: 999999, projectRoot: '/gone/worktree', startedAt: '2026-08-25T10:00:00.000Z', logFile: '/gone/b.ndjson',
-    }));
+    writeFileSync(
+      join(dead, 'lock.json'),
+      JSON.stringify({
+        pid: 999999,
+        projectRoot: '/gone/worktree',
+        startedAt: '2026-08-25T10:00:00.000Z',
+        logFile: '/gone/b.ndjson',
+      }),
+    );
 
     const locks = listBuildLocks({ isAlive: (pid) => pid === process.pid });
     expect(locks.length).toBe(2);
@@ -234,7 +252,12 @@ describe('listBuildLocks', () => {
 // --- the wait ---------------------------------------------------------------
 
 describe('waitForBuild', () => {
-  const held = { pid: process.pid, projectRoot: '/other/worktree', startedAt: new Date().toISOString(), logFile: '/other/build.ndjson' };
+  const held = {
+    pid: process.pid,
+    projectRoot: '/other/worktree',
+    startedAt: new Date().toISOString(),
+    logFile: '/other/build.ndjson',
+  };
 
   function lockOn(info = held) {
     const path = buildLockPath(PLATFORM, KEY);
@@ -258,11 +281,13 @@ describe('waitForBuild', () => {
     lockOn();
     let polls = 0;
     let clock = 1000;
-    const result = await waitForBuild(opts({
-      resolve: () => (++polls < 3 ? null : '/cache/ios/key/Fixture.app'),
-      isAlive: () => true,
-      now: () => (clock += 5000),
-    }));
+    const result = await waitForBuild(
+      opts({
+        resolve: () => (++polls < 3 ? null : '/cache/ios/key/Fixture.app'),
+        isAlive: () => true,
+        now: () => (clock += 5000),
+      }),
+    );
     expect(result.hit).toBe('/cache/ios/key/Fixture.app');
     expect(result.waitedMs > 0).toBeTruthy();
     expect(polls).toBe(3);
@@ -272,11 +297,15 @@ describe('waitForBuild', () => {
     lockOn();
     const path = buildLockPath(PLATFORM, KEY);
     let polls = 0;
-    const result = await waitForBuild(opts({
-      resolve: () => null,
-      isAlive: () => true,
-      sleep: async () => { if (++polls === 1) rmSync(path, { recursive: true, force: true }); },
-    }));
+    const result = await waitForBuild(
+      opts({
+        resolve: () => null,
+        isAlive: () => true,
+        sleep: async () => {
+          if (++polls === 1) rmSync(path, { recursive: true, force: true });
+        },
+      }),
+    );
     expect(result.hit).toBe(undefined);
     expect(result.builderFailed).toBeTruthy();
     expect(result.builderFailed).toMatch(/lock/i);
@@ -296,25 +325,31 @@ describe('waitForBuild', () => {
   test('an artifact that lands as the lock is released is still a hit', async () => {
     const path = lockOn();
     let stored = null;
-    const result = await waitForBuild(opts({
-      resolve: () => stored,
-      isAlive: () => true,
-      sleep: async () => {
-        stored = '/cache/ios/key/Fixture.app';
-        rmSync(path, { recursive: true, force: true });
-      },
-    }));
+    const result = await waitForBuild(
+      opts({
+        resolve: () => stored,
+        isAlive: () => true,
+        sleep: async () => {
+          stored = '/cache/ios/key/Fixture.app';
+          rmSync(path, { recursive: true, force: true });
+        },
+      }),
+    );
     expect(result.hit).toBe('/cache/ios/key/Fixture.app');
   });
 
   test('there is no wait at all when the artifact is already there', async () => {
     lockOn();
     let slept = 0;
-    const result = await waitForBuild(opts({
-      resolve: () => '/cache/ios/key/Fixture.app',
-      isAlive: () => true,
-      sleep: async () => { slept++; },
-    }));
+    const result = await waitForBuild(
+      opts({
+        resolve: () => '/cache/ios/key/Fixture.app',
+        isAlive: () => true,
+        sleep: async () => {
+          slept++;
+        },
+      }),
+    );
     expect(result.hit).toBe('/cache/ios/key/Fixture.app');
     expect(slept).toBe(0);
   });
@@ -327,15 +362,19 @@ describe('waitForBuild', () => {
     let clock = 0;
     const lines = [];
     let polls = 0;
-    await waitForBuild(opts({
-      resolve: () => (++polls < 200 ? null : '/cache/ios/key/Fixture.app'),
-      isAlive: () => true,
-      now: () => (clock += 1000),
-      out: (l) => lines.push(l),
-    }));
+    await waitForBuild(
+      opts({
+        resolve: () => (++polls < 200 ? null : '/cache/ios/key/Fixture.app'),
+        isAlive: () => true,
+        now: () => (clock += 1000),
+        out: (l) => lines.push(l),
+      }),
+    );
     expect(lines.length >= 5).toBeTruthy();
     expect(lines.length < 20).toBeTruthy();
-    expect(lines[0]).toMatch(/^build\s+waiting on \/other\/worktree \(pid \d+, .+ elapsed\) -- tail \/other\/build\.ndjson$/);
+    expect(lines[0]).toMatch(
+      /^build\s+waiting on \/other\/worktree \(pid \d+, .+ elapsed\) -- tail \/other\/build\.ndjson$/,
+    );
   });
 
   // pid-liveness is the real guard; the ceiling is only there so a builder
@@ -346,12 +385,14 @@ describe('waitForBuild', () => {
     let clock = 0;
     let err: any;
     try {
-      await waitForBuild(opts({
-        resolve: () => null,
-        isAlive: () => true,
-        now: () => (clock += 60 * 1000),
-        ceilingMs: 90 * 60 * 1000,
-      }));
+      await waitForBuild(
+        opts({
+          resolve: () => null,
+          isAlive: () => true,
+          now: () => (clock += 60 * 1000),
+          ceilingMs: 90 * 60 * 1000,
+        }),
+      );
     } catch (e) {
       err = e;
     }
@@ -364,8 +405,15 @@ describe('waitForBuild', () => {
 
 describe('waitingLine', () => {
   test('is one phase line, in the same column as every other', () => {
-    const line = waitingLine({ projectRoot: '/w/app-412', pid: 41233, elapsedMs: 8 * 60 * 1000, logFile: '/w/app-412/.rn-iso/logs/build-ios.ndjson' });
-    expect(line).toBe('build       waiting on /w/app-412 (pid 41233, 8m elapsed) -- tail /w/app-412/.rn-iso/logs/build-ios.ndjson');
+    const line = waitingLine({
+      projectRoot: '/w/app-412',
+      pid: 41233,
+      elapsedMs: 8 * 60 * 1000,
+      logFile: '/w/app-412/.rn-iso/logs/build-ios.ndjson',
+    });
+    expect(line).toBe(
+      'build       waiting on /w/app-412 (pid 41233, 8m elapsed) -- tail /w/app-412/.rn-iso/logs/build-ios.ndjson',
+    );
   });
 
   test('reads in seconds before the first minute is up', () => {
@@ -396,34 +444,42 @@ describe('a real race between real processes', () => {
 
   function runNode(path, args = [], env = {}) {
     return new Promise((resolve, reject) => {
-      execFile(process.execPath, [path, ...args], {
-        env: { ...process.env, RN_ISO_HOME: home, ...env },
-        timeout: 60000,
-      }, (err, stdout, stderr) => {
-        if (err && err.code === undefined) return reject(err);
-        resolve({ code: err?.code ?? 0, stdout: String(stdout), stderr: String(stderr) });
-      });
+      execFile(
+        process.execPath,
+        [path, ...args],
+        {
+          env: { ...process.env, RN_ISO_HOME: home, ...env },
+          timeout: 60000,
+        },
+        (err, stdout, stderr) => {
+          if (err && err.code === undefined) return reject(err);
+          resolve({ code: err?.code ?? 0, stdout: String(stdout), stderr: String(stderr) });
+        },
+      );
     });
   }
 
   test('exactly one of six processes acquires the same lock', async () => {
-    const racer = script('racer.mjs', [
-      `const { acquireBuildLock } = await import(${JSON.stringify(LOCK_URL)});`,
-      'const got = acquireBuildLock({',
-      '  platform: "ios", key: process.argv[2], root: `/worktree/${process.argv[3]}`,',
-      '  logFile: `/worktree/${process.argv[3]}/build.ndjson`,',
-      '});',
-      // Held long enough that every sibling has certainly reached the mkdir.
-      'await new Promise(r => setTimeout(r, 1500));',
-      'console.log(JSON.stringify({ pid: process.pid, ...got }));',
-    ].join('\n'));
+    const racer = script(
+      'racer.mjs',
+      [
+        `const { acquireBuildLock } = await import(${JSON.stringify(LOCK_URL)});`,
+        'const got = acquireBuildLock({',
+        '  platform: "ios", key: process.argv[2], root: `/worktree/${process.argv[3]}`,',
+        '  logFile: `/worktree/${process.argv[3]}/build.ndjson`,',
+        '});',
+        // Held long enough that every sibling has certainly reached the mkdir.
+        'await new Promise(r => setTimeout(r, 1500));',
+        'console.log(JSON.stringify({ pid: process.pid, ...got }));',
+      ].join('\n'),
+    );
 
     const results = await Promise.all(
-      ['a', 'b', 'c', 'd', 'e', 'f'].map(name => runNode(racer, ['race-debug-sim', name]))
+      ['a', 'b', 'c', 'd', 'e', 'f'].map((name) => runNode(racer, ['race-debug-sim', name])),
     );
-    const answers = results.map(r => JSON.parse(r.stdout.trim()));
-    const winners = answers.filter(a => a.acquired);
-    const losers = answers.filter(a => a.held);
+    const answers = results.map((r) => JSON.parse(r.stdout.trim()));
+    const winners = answers.filter((a) => a.acquired);
+    const losers = answers.filter((a) => a.held);
 
     expect(winners.length).toBe(1);
     expect(losers.length).toBe(5);
@@ -440,39 +496,45 @@ describe('a real race between real processes', () => {
   // releases; the other waits and installs what appeared.
   test('a waiter resolves the artifact the builder stores', async () => {
     const key = 'shared-debug-sim';
-    const builder = script('builder.mjs', [
-      `const { acquireBuildLock, releaseBuildLock } = await import(${JSON.stringify(LOCK_URL)});`,
-      `const { storeBuild } = await import(${JSON.stringify(CACHE_URL)});`,
-      'const { mkdirSync, writeFileSync } = await import("node:fs");',
-      'const { join } = await import("node:path");',
-      `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: process.argv[2], logFile: join(process.argv[2], "build.ndjson") });`,
-      'if (!got.acquired) { console.log(JSON.stringify({ raced: true })); process.exit(0); }',
-      'try {',
-      '  await new Promise(r => setTimeout(r, 900));',   // the "build"
-      '  const app = join(process.argv[2], "Fixture.app");',
-      '  mkdirSync(app, { recursive: true });',
-      '  writeFileSync(join(app, "Fixture"), "binary");',
-      `  const stored = storeBuild("ios", ${JSON.stringify(key)}, app);`,
-      '  console.log(JSON.stringify({ built: true, stored }));',
-      '} finally {',
-      '  releaseBuildLock(got);',
-      '}',
-    ].join('\n'));
+    const builder = script(
+      'builder.mjs',
+      [
+        `const { acquireBuildLock, releaseBuildLock } = await import(${JSON.stringify(LOCK_URL)});`,
+        `const { storeBuild } = await import(${JSON.stringify(CACHE_URL)});`,
+        'const { mkdirSync, writeFileSync } = await import("node:fs");',
+        'const { join } = await import("node:path");',
+        `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: process.argv[2], logFile: join(process.argv[2], "build.ndjson") });`,
+        'if (!got.acquired) { console.log(JSON.stringify({ raced: true })); process.exit(0); }',
+        'try {',
+        '  await new Promise(r => setTimeout(r, 900));', // the "build"
+        '  const app = join(process.argv[2], "Fixture.app");',
+        '  mkdirSync(app, { recursive: true });',
+        '  writeFileSync(join(app, "Fixture"), "binary");',
+        `  const stored = storeBuild("ios", ${JSON.stringify(key)}, app);`,
+        '  console.log(JSON.stringify({ built: true, stored }));',
+        '} finally {',
+        '  releaseBuildLock(got);',
+        '}',
+      ].join('\n'),
+    );
 
-    const waiter = script('waiter.mjs', [
-      `const { acquireBuildLock, waitForBuild } = await import(${JSON.stringify(LOCK_URL)});`,
-      `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: process.argv[2], logFile: null });`,
-      'if (got.acquired) { console.log(JSON.stringify({ wonInstead: true })); process.exit(0); }',
-      `const result = await waitForBuild({ platform: "ios", key: ${JSON.stringify(key)}, intervalMs: 50, out: (l) => console.error(l) });`,
-      'console.log(JSON.stringify({ ...result, held: got.held }));',
-    ].join('\n'));
+    const waiter = script(
+      'waiter.mjs',
+      [
+        `const { acquireBuildLock, waitForBuild } = await import(${JSON.stringify(LOCK_URL)});`,
+        `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: process.argv[2], logFile: null });`,
+        'if (got.acquired) { console.log(JSON.stringify({ wonInstead: true })); process.exit(0); }',
+        `const result = await waitForBuild({ platform: "ios", key: ${JSON.stringify(key)}, intervalMs: 50, out: (l) => console.error(l) });`,
+        'console.log(JSON.stringify({ ...result, held: got.held }));',
+      ].join('\n'),
+    );
 
     const buildRoot = join(root, 'builder');
     mkdirSync(buildRoot, { recursive: true });
     const started = runNode(builder, [buildRoot]);
     // Give the builder the lock first: this test is about the WAITER's path,
     // and the race itself is the test above.
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 300));
     const [built, waited] = await Promise.all([started, runNode(waiter, [join(root, 'waiter')])]);
 
     const builderOut = JSON.parse(built.stdout.trim());
@@ -491,12 +553,15 @@ describe('a real race between real processes', () => {
   // that from wedging every other workspace on the fingerprint.
   test('a builder killed mid-build leaves a lock the waiter takes over', async () => {
     const key = 'crash-debug-sim';
-    const suicide = script('suicide.mjs', [
-      `const { acquireBuildLock } = await import(${JSON.stringify(LOCK_URL)});`,
-      `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: "/worktree/doomed", logFile: "/worktree/doomed/build.ndjson" });`,
-      'console.log(JSON.stringify(got));',
-      'process.kill(process.pid, "SIGKILL");',
-    ].join('\n'));
+    const suicide = script(
+      'suicide.mjs',
+      [
+        `const { acquireBuildLock } = await import(${JSON.stringify(LOCK_URL)});`,
+        `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: "/worktree/doomed", logFile: "/worktree/doomed/build.ndjson" });`,
+        'console.log(JSON.stringify(got));',
+        'process.kill(process.pid, "SIGKILL");',
+      ].join('\n'),
+    );
 
     const dead = await runNode(suicide);
     expect(JSON.parse(dead.stdout.trim()).acquired).toBe(true);

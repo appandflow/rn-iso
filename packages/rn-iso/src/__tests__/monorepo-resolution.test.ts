@@ -39,26 +39,35 @@ beforeEach(() => {
   app = join(ws, 'packages', 'app');
 
   write(join(ws, 'package.json'), JSON.stringify({ name: 'ws', private: true, workspaces: ['packages/*'] }));
-  write(join(ws, 'node_modules', 'expo', 'package.json'), JSON.stringify({
-    name: 'expo',
-    version: '57.0.8',
-    bin: { expo: 'bin/cli', fingerprint: 'bin/fingerprint' },
-  }));
+  write(
+    join(ws, 'node_modules', 'expo', 'package.json'),
+    JSON.stringify({
+      name: 'expo',
+      version: '57.0.8',
+      bin: { expo: 'bin/cli', fingerprint: 'bin/fingerprint' },
+    }),
+  );
   write(join(ws, 'node_modules', 'expo', 'bin', 'cli'), '#!/usr/bin/env node\n', { exec: true });
   write(join(ws, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n', { exec: true });
 
   // The app: `expo` in dependencies, app.json WITHOUT the expo wrapper key
   // (Expo accepts that, and a real repo ships it), and no `ios` script at all.
-  write(join(app, 'package.json'), JSON.stringify({
-    name: '@ws/app',
-    dependencies: { expo: '^57.0.8', 'expo-dev-client': '~57.0.9', react: '19.0.0' },
-  }));
-  write(join(app, 'app.json'), JSON.stringify({
-    name: 'app',
-    platforms: ['ios', 'android'],
-    plugins: ['expo-dev-client'],
-    extra: { eas: { projectId: '439cfc57-af9a-461c-9d3c-89b985233942' } },
-  }));
+  write(
+    join(app, 'package.json'),
+    JSON.stringify({
+      name: '@ws/app',
+      dependencies: { expo: '^57.0.8', 'expo-dev-client': '~57.0.9', react: '19.0.0' },
+    }),
+  );
+  write(
+    join(app, 'app.json'),
+    JSON.stringify({
+      name: 'app',
+      platforms: ['ios', 'android'],
+      plugins: ['expo-dev-client'],
+      extra: { eas: { projectId: '439cfc57-af9a-461c-9d3c-89b985233942' } },
+    }),
+  );
 });
 
 afterEach(() => {
@@ -67,7 +76,7 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-describe('finding the project\'s expo binary', () => {
+describe("finding the project's expo binary", () => {
   test('resolves the HOISTED package from an app with no node_modules of its own', () => {
     // The bug: join(app, 'node_modules', '.bin', 'expo') does not exist here,
     // and never does in a monorepo.
@@ -75,13 +84,15 @@ describe('finding the project\'s expo binary', () => {
     expect(expoBinPath(app)).toBe(join(ws, 'node_modules', 'expo', 'bin', 'cli'));
   });
 
-  test('derives the executable from the package\'s own bin field, not a guessed path', () => {
+  test("derives the executable from the package's own bin field, not a guessed path", () => {
     const pkg = join(ws, 'node_modules', 'expo', 'package.json');
     expect(expoBinFromPackage(pkg)).toBe(join(ws, 'node_modules', 'expo', 'bin', 'cli'));
     // The string form of `bin` is the other half of the field's shape.
     write(join(ws, 'node_modules', 'other', 'package.json'), JSON.stringify({ name: 'other', bin: 'cli.js' }));
     write(join(ws, 'node_modules', 'other', 'cli.js'), '#!/usr/bin/env node\n', { exec: true });
-    expect(expoBinFromPackage(join(ws, 'node_modules', 'other', 'package.json'), 'other')).toBe(join(ws, 'node_modules', 'other', 'cli.js'));
+    expect(expoBinFromPackage(join(ws, 'node_modules', 'other', 'package.json'), 'other')).toBe(
+      join(ws, 'node_modules', 'other', 'cli.js'),
+    );
   });
 
   test('a bin file that is not executable falls through to the .bin shim', () => {
@@ -118,7 +129,10 @@ describe('detectIsExpo on a hoisted workspace', () => {
     const fresh = realpathSync(mkdtempSync(join(tmpdir(), 'rn-iso-fresh-')));
     try {
       write(join(fresh, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '^57.0.0' } }));
-      write(join(fresh, 'app.json'), JSON.stringify({ name: 'app', plugins: ['expo-dev-client'], extra: { eas: { projectId: 'x' } } }));
+      write(
+        join(fresh, 'app.json'),
+        JSON.stringify({ name: 'app', plugins: ['expo-dev-client'], extra: { eas: { projectId: 'x' } } }),
+      );
       expect(isPackageResolvable(fresh, 'expo')).toBe(false);
       expect(detectIsExpo(fresh)).toBe(true);
     } finally {
@@ -138,11 +152,14 @@ describe('detectIsExpo on a hoisted workspace', () => {
   });
 
   test('an explicit react-native run-ios script still wins: a bare project stays bare', () => {
-    write(join(app, 'package.json'), JSON.stringify({
-      name: '@ws/app',
-      dependencies: { expo: '^57.0.8' },
-      scripts: { ios: 'react-native run-ios' },
-    }));
+    write(
+      join(app, 'package.json'),
+      JSON.stringify({
+        name: '@ws/app',
+        dependencies: { expo: '^57.0.8' },
+        scripts: { ios: 'react-native run-ios' },
+      }),
+    );
     expect(detectIsExpo(app)).toBe(false);
   });
 });
@@ -175,8 +192,8 @@ describe('detectIsExpo is the single source', () => {
     // (`expo-dev-client` IS in this fixture's deps, so the finding that fires
     // is the build-cache one; what matters is that doctor did not take the
     // bare branch, which suppresses them all.)
-    const titles = runDoctor(app).map(f => f.title);
-    expect(titles.some(t => /build.?cache.?provider/i.test(t))).toBeTruthy();
+    const titles = runDoctor(app).map((f) => f.title);
+    expect(titles.some((t) => /build.?cache.?provider/i.test(t))).toBeTruthy();
   });
 
   test('and a bare project gets the bare server and none of the Expo findings', async () => {
@@ -193,11 +210,13 @@ describe('detectIsExpo is the single source', () => {
           startedBare = true;
           return { mode: MODE_BARE, serverPid: null, onExit() {}, async close() {} };
         },
-        startExpo: async () => { throw new Error('a bare project must not spawn `expo start`'); },
+        startExpo: async () => {
+          throw new Error('a bare project must not spawn `expo start`');
+        },
       });
       expect(startedBare).toBe(true);
-      const titles = runDoctor(bare).map(f => f.title);
-      expect(!titles.some(t => /build.?cache.?provider|expo-dev-client/i.test(t))).toBeTruthy();
+      const titles = runDoctor(bare).map((f) => f.title);
+      expect(!titles.some((t) => /build.?cache.?provider|expo-dev-client/i.test(t))).toBeTruthy();
     } finally {
       rmSync(bare, { recursive: true, force: true });
     }

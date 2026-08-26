@@ -28,7 +28,9 @@ import {
 afterEach(() => resetExecutor());
 
 test('default worktree dir is a sibling of the repo', () => {
-  expect(defaultWorktreeDir('/Volumes/ExternalSSD/Developer/tlon-apps')).toBe('/Volumes/ExternalSSD/Developer/tlon-apps-worktrees');
+  expect(defaultWorktreeDir('/Volumes/ExternalSSD/Developer/tlon-apps')).toBe(
+    '/Volumes/ExternalSSD/Developer/tlon-apps-worktrees',
+  );
 });
 
 test('worktreePath joins the dir and the name', () => {
@@ -117,7 +119,14 @@ test('unpushedCommits against a real repo: empty right after push, reports a com
 
 test('resolveBaseRef("head") returns HEAD and never touches origin/HEAD', () => {
   const calls = [];
-  setExecutor({ run: () => '', runQuiet: (cmd) => { calls.push(cmd); return ''; }, spawn: () => {} });
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd) => {
+      calls.push(cmd);
+      return '';
+    },
+    spawn: () => {},
+  });
   expect(resolveBaseRef('/repo', 'head')).toBe('HEAD');
   expect(calls).toEqual([]);
 });
@@ -272,7 +281,9 @@ test('cloneIgnoredEntries skips excluded paths and reports a clone that fell bac
   try {
     const fileCalls = [];
     setExecutor({
-      run: (cmd) => { throw new Error(`unexpected shell run: ${cmd}`); },
+      run: (cmd) => {
+        throw new Error(`unexpected shell run: ${cmd}`);
+      },
       runFile: (file, args) => {
         fileCalls.push([file, args]);
         // `cp -Rc` is the APFS-clone probe; throwing is how the real executor
@@ -392,7 +403,7 @@ test('listGitignoredFiles and carryOverFiles still find the target file when raw
 
     const rawBytes = parseInt(
       execSync(`git -C "${root}" ls-files --others --ignored --exclude-standard | wc -c`, { encoding: 'utf-8' }).trim(),
-      10
+      10,
     );
     expect(rawBytes > 1024 * 1024).toBeTruthy();
 
@@ -414,8 +425,13 @@ test('addWorktree runs git via runFile (no shell) with a `--` terminator, path a
     const path = join(tmp, 'my worktree', 'repo');
     const calls = [];
     setExecutor({
-      run: (cmd) => { throw new Error(`unexpected shell run: ${cmd}`); },
-      runFile: (file, args) => { calls.push([file, args]); return ''; },
+      run: (cmd) => {
+        throw new Error(`unexpected shell run: ${cmd}`);
+      },
+      runFile: (file, args) => {
+        calls.push([file, args]);
+        return '';
+      },
       runQuiet: () => '',
       spawn: () => {},
     });
@@ -443,8 +459,13 @@ test('addWorktree attaches to an existing branch instead of erroring on -b', () 
     const path = join(tmp, 'repo2');
     const calls = [];
     setExecutor({
-      run: (cmd) => { throw new Error(`unexpected shell run: ${cmd}`); },
-      runFile: (file, args) => { calls.push([file, args]); return ''; },
+      run: (cmd) => {
+        throw new Error(`unexpected shell run: ${cmd}`);
+      },
+      runFile: (file, args) => {
+        calls.push([file, args]);
+        return '';
+      },
       // Simulate the branch already existing (left behind by an earlier
       // `worktree remove`): rev-parse --verify succeeds and prints a sha.
       runQuiet: (cmd) => (/rev-parse --verify --quiet/.test(cmd) ? 'deadbeef' : ''),
@@ -467,8 +488,13 @@ test('addWorktree uses -b for a genuinely new branch name', () => {
     const path = join(tmp, 'repo3');
     const calls = [];
     setExecutor({
-      run: (cmd) => { throw new Error(`unexpected shell run: ${cmd}`); },
-      runFile: (file, args) => { calls.push([file, args]); return ''; },
+      run: (cmd) => {
+        throw new Error(`unexpected shell run: ${cmd}`);
+      },
+      runFile: (file, args) => {
+        calls.push([file, args]);
+        return '';
+      },
       runQuiet: () => null, // branch does not exist
       spawn: () => {},
     });
@@ -573,7 +599,12 @@ test('pod-install churn is recognised so the restore advice only fires when it w
 // is right, so it is code rather than a line in a file someone has to remember
 // to write. A monorepo has one per app directory, hence the depth cases.
 test('isWorkspaceArtifact matches the workspace dir at any depth, and nothing else', () => {
-  for (const rel of ['.rn-iso', '.rn-iso/logs/metro.ndjson', 'apps/mobile/.rn-iso', 'apps/mobile/.rn-iso/derived-data']) {
+  for (const rel of [
+    '.rn-iso',
+    '.rn-iso/logs/metro.ndjson',
+    'apps/mobile/.rn-iso',
+    'apps/mobile/.rn-iso/derived-data',
+  ]) {
     expect(isWorkspaceArtifact(rel)).toBe(true);
   }
   for (const rel of ['node_modules', 'apps/mobile/.rn-isotope', 'docs/rn-iso.md', 'apps/.rn-iso-old']) {
@@ -933,9 +964,14 @@ test('C1: addWorktree never lets a $(...) baseRef reach a shell, and still creat
     process.chdir(root);
     // A `$(...)` baseRef must not execute. git will simply fail to resolve the
     // literal commit-ish, so addWorktree throws -- but no shell runs.
-    expect(() => addWorktree({
-      path: join(base, 'wt-evil'), branch: 'worktree-evil', baseRef: '$(touch PWNED2)', cwd: root,
-    })).toThrow();
+    expect(() =>
+      addWorktree({
+        path: join(base, 'wt-evil'),
+        branch: 'worktree-evil',
+        baseRef: '$(touch PWNED2)',
+        cwd: root,
+      }),
+    ).toThrow();
     expect(existsSync(join(root, 'PWNED2'))).toBe(false);
 
     // A real base ref still produces a working worktree on a fresh branch.
@@ -952,23 +988,37 @@ test('C1: addWorktree never lets a $(...) baseRef reach a shell, and still creat
 test('C1: addWorktree rejects a leading-dash baseRef with a clear error (defense in depth)', () => {
   const path = join(tmpdir(), 'rn-iso-test-sec-dash', 'repo');
   setExecutor({
-    run: (cmd) => { throw new Error(`unexpected shell run: ${cmd}`); },
-    runFile: (file, args) => { throw new Error(`git must not be invoked: ${file} ${args.join(' ')}`); },
+    run: (cmd) => {
+      throw new Error(`unexpected shell run: ${cmd}`);
+    },
+    runFile: (file, args) => {
+      throw new Error(`git must not be invoked: ${file} ${args.join(' ')}`);
+    },
     runQuiet: () => null, // branch does not exist -> fresh path, where baseRef is used
     spawn: () => {},
   });
-  expect(() => addWorktree({ path, branch: 'worktree-x', baseRef: '--upload-pack=touch EVIL', cwd: dirname(path) })).toThrow(/Refusing base ref/);
+  expect(() =>
+    addWorktree({ path, branch: 'worktree-x', baseRef: '--upload-pack=touch EVIL', cwd: dirname(path) }),
+  ).toThrow(/Refusing base ref/);
 });
 
 test('C1: addWorktree rejects a worktree path with a leading dash or shell metacharacters', () => {
   setExecutor({
-    run: (cmd) => { throw new Error(`unexpected shell run: ${cmd}`); },
-    runFile: (file, args) => { throw new Error(`git must not be invoked: ${file} ${args.join(' ')}`); },
+    run: (cmd) => {
+      throw new Error(`unexpected shell run: ${cmd}`);
+    },
+    runFile: (file, args) => {
+      throw new Error(`git must not be invoked: ${file} ${args.join(' ')}`);
+    },
     runQuiet: () => null,
     spawn: () => {},
   });
-  expect(() => addWorktree({ path: '-evil/repo', branch: 'worktree-x', baseRef: 'HEAD', cwd: '/tmp' })).toThrow(/a path beginning with "-"/);
-  expect(() => addWorktree({ path: '/tmp/a$(touch X)/repo', branch: 'worktree-x', baseRef: 'HEAD', cwd: '/tmp' })).toThrow(/shell metacharacters/);
+  expect(() => addWorktree({ path: '-evil/repo', branch: 'worktree-x', baseRef: 'HEAD', cwd: '/tmp' })).toThrow(
+    /a path beginning with "-"/,
+  );
+  expect(() =>
+    addWorktree({ path: '/tmp/a$(touch X)/repo', branch: 'worktree-x', baseRef: 'HEAD', cwd: '/tmp' }),
+  ).toThrow(/shell metacharacters/);
 });
 
 test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a literal file, never executing it', () => {
@@ -1009,7 +1059,6 @@ test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a l
     rmSync(base, { recursive: true, force: true });
   }
 });
-
 
 test('isCarrySkipped skips .rn-iso and .DerivedData at any depth, and nothing that merely resembles them', () => {
   for (const rel of [

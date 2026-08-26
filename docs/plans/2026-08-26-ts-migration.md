@@ -5,6 +5,7 @@ TypeScript + oxlint + oxfmt + tsdown + vitest(-on-rolldown), tests colocated in
 `__tests__/`, and CI updated to run the new toolchain.
 
 ## Constraints
+
 - **Cache packages `@rn-iso/metro` + `@rn-iso/expo-build-cache` MUST emit CJS.**
   `metro.config.js` and the Expo provider load them via `require()`. tsdown
   `format: 'cjs'`.
@@ -20,6 +21,7 @@ TypeScript + oxlint + oxfmt + tsdown + vitest(-on-rolldown), tests colocated in
   the arbiter of style now.
 
 ## Phases
+
 0. **Scaffold + recipe**: add devDeps, tsconfig(s), vitest.config (rolldown),
    tsdown.config per package, oxlint/oxfmt config, root scripts. Prove the whole
    chain on a small converted slice. Produce the exact per-file conversion recipe.
@@ -31,8 +33,9 @@ TypeScript + oxlint + oxfmt + tsdown + vitest(-on-rolldown), tests colocated in
 6. **CI**: ci.yml = install -> oxlint -> oxfmt --check -> typecheck -> vitest ->
    build -> test:e2e. Keep e2e-native.yml.
 7. Green -> bump all packages to 1.2.0 (engines >=22) -> merge to main.
-6b. **Validate CI for real**: push branch, watch Actions until ci.yml is green on the runner, trigger e2e-native.yml once (bare+expo x ios+android) to prove the native path, not just YAML parse.
+   6b. **Validate CI for real**: push branch, watch Actions until ci.yml is green on the runner, trigger e2e-native.yml once (bare+expo x ios+android) to prove the native path, not just YAML parse.
 
 ## Definition of done (the goal)
+
 All packages TypeScript; `tsc`/vitest/tsdown/oxlint/oxfmt all green; CI runs
 the new toolchain; merged to main.

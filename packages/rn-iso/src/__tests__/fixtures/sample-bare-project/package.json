@@ -1,4 +1,6 @@
 {
   "name": "bare-app",
-  "dependencies": { "react-native": "0.74.0" }
+  "dependencies": {
+    "react-native": "0.74.0"
+  }
 }

@@ -38,7 +38,8 @@ export const IOS_DIR = 'ios';
 // own flow prebuilds before it gets here, so reaching this means either the
 // project is not a CNG project (nothing will generate ios/ for it) or the
 // prebuild did not run.
-const PREBUILD_REMEDY = 'Generate it with `npx expo prebuild -p ios` (rn-iso ios does this automatically for an Expo project with no ios/ directory), or commit the native project.';
+const PREBUILD_REMEDY =
+  'Generate it with `npx expo prebuild -p ios` (rn-iso ios does this automatically for an Expo project with no ios/ directory), or commit the native project.';
 
 // A "here is what to build" descriptor OR a failure -- flat and all-optional
 // (CLAUDE.md pattern 3), matching the defensive JS shape that either carries
@@ -73,16 +74,16 @@ function buildFailure(message: string, remedy: string | null): XcodeProject {
 //
 // Pure: takes a directory listing, returns a choice. Nothing here touches fs.
 export function pickXcodeProject(entries: unknown): { kind: string; flag: string; file: string; name: string } | null {
-  const names = (Array.isArray(entries) ? entries : []).filter(e => typeof e === 'string');
-  const workspaces = names.filter(e => e.endsWith('.xcworkspace')).sort();
-  const projects = names.filter(e => e.endsWith('.xcodeproj')).sort();
+  const names = (Array.isArray(entries) ? entries : []).filter((e) => typeof e === 'string');
+  const workspaces = names.filter((e) => e.endsWith('.xcworkspace')).sort();
+  const projects = names.filter((e) => e.endsWith('.xcodeproj')).sort();
 
   if (workspaces.length > 0) {
     // With more than one workspace, the one named after a project beside it is
     // the pods workspace; anything else is a deterministic alphabetical pick,
     // so two runs on the same tree never choose differently.
-    const projectNames = new Set(projects.map(p => basename(p, '.xcodeproj')));
-    const match = workspaces.find(w => projectNames.has(basename(w, '.xcworkspace')));
+    const projectNames = new Set(projects.map((p) => basename(p, '.xcodeproj')));
+    const match = workspaces.find((w) => projectNames.has(basename(w, '.xcworkspace')));
     const file = match || workspaces[0];
     return { kind: 'workspace', flag: '-workspace', file, name: basename(file, '.xcworkspace') };
   }
@@ -107,10 +108,7 @@ export function discoverXcodeProject(root: string): XcodeProject {
   }
   const picked = pickXcodeProject(entries);
   if (!picked) {
-    return buildFailure(
-      `${dir} contains no .xcworkspace and no .xcodeproj.`,
-      PREBUILD_REMEDY
-    );
+    return buildFailure(`${dir} contains no .xcworkspace and no .xcodeproj.`, PREBUILD_REMEDY);
   }
   return { ...picked, dir, path: join(dir, picked.file) };
 }
@@ -163,16 +161,18 @@ const TEST_SCHEME = /(?:UI)?Tests$/;
 //      minutes later install something the agent did not ask for. A structured
 //      RN_ISO_NO_SCHEME the agent can answer is worth more than a coin flip.
 export function pickScheme(schemes: unknown, containerName: unknown) {
-  const list: string[] = (Array.isArray(schemes) ? schemes : []).filter((s: unknown) => typeof s === 'string' && s.trim() !== '');
+  const list: string[] = (Array.isArray(schemes) ? schemes : []).filter(
+    (s: unknown) => typeof s === 'string' && s.trim() !== '',
+  );
   if (list.length === 0) return null;
   const name = typeof containerName === 'string' ? containerName.trim() : '';
   if (name) {
-    const exact = list.find(s => s === name);
+    const exact = list.find((s) => s === name);
     if (exact) return exact;
-    const insensitive = list.find(s => s.toLowerCase() === name.toLowerCase());
+    const insensitive = list.find((s) => s.toLowerCase() === name.toLowerCase());
     if (insensitive) return insensitive;
   }
-  const app = list.filter(s => !TEST_SCHEME.test(s));
+  const app = list.filter((s) => !TEST_SCHEME.test(s));
   return app.length === 1 ? app[0] : null;
 }
 
@@ -189,11 +189,9 @@ const LIST_TIMEOUT_MS = 180000;
 export function listSchemes(project: XcodeProject, { exec = null }: { exec?: Executor | null } = {}) {
   const executor = exec || getExecutor();
   try {
-    const out = executor.runFile(
-      'xcodebuild',
-      [project.flag as string, project.path as string, '-list', '-json'],
-      { timeoutMs: LIST_TIMEOUT_MS }
-    );
+    const out = executor.runFile('xcodebuild', [project.flag as string, project.path as string, '-list', '-json'], {
+      timeoutMs: LIST_TIMEOUT_MS,
+    });
     return parseSchemeList(out);
   } catch {
     return null;
@@ -220,7 +218,8 @@ export function resolveScheme(project: XcodeProject, { exec = null }: { exec?: E
       error: {
         code: 'RN_ISO_NO_SCHEME',
         message: `No buildable scheme found in ${project.path} (schemes: ${found}).`,
-        remedy: 'Share the app scheme in Xcode (Product > Scheme > Manage Schemes, tick Shared) so xcodebuild can see it.',
+        remedy:
+          'Share the app scheme in Xcode (Product > Scheme > Manage Schemes, tick Shared) so xcodebuild can see it.',
       },
     };
   }
@@ -252,12 +251,18 @@ export function xcodebuildArgs({
   extraArgs?: string[];
 }): string[] {
   return [
-    project.flag as string, project.path as string,
-    '-scheme', scheme,
-    '-configuration', configuration,
-    '-sdk', sdk,
-    '-destination', destination || `id=${udid}`,
-    '-derivedDataPath', derivedDataPath,
+    project.flag as string,
+    project.path as string,
+    '-scheme',
+    scheme,
+    '-configuration',
+    configuration,
+    '-sdk',
+    sdk,
+    '-destination',
+    destination || `id=${udid}`,
+    '-derivedDataPath',
+    derivedDataPath,
     ...extraArgs,
     'build',
   ];
@@ -419,7 +424,8 @@ export async function buildIos({
   exec?: Executor | null;
 }) {
   if (!root || typeof root !== 'string') throw new TypeError('buildIos requires {root}');
-  if (!logWriter || typeof logWriter.write !== 'function') throw new TypeError('buildIos requires {logWriter} with a write() method');
+  if (!logWriter || typeof logWriter.write !== 'function')
+    throw new TypeError('buildIos requires {logWriter} with a write() method');
   if (!udid && !destination) throw new TypeError('buildIos requires {udid} (or an explicit {destination})');
 
   const executor = exec || getExecutor();
@@ -428,7 +434,13 @@ export async function buildIos({
   const elapsed = () => now() - startedAt;
 
   const reportError = (message: string, remedy?: string | null) => {
-    logWriter.write({ src: 'build', level: 'error', msg: message, event: 'build_diagnostic', ...(remedy ? { remedy } : {}) });
+    logWriter.write({
+      src: 'build',
+      level: 'error',
+      msg: message,
+      event: 'build_diagnostic',
+      ...(remedy ? { remedy } : {}),
+    });
   };
 
   let target: XcodeProject | null = project;
@@ -531,20 +543,22 @@ export async function buildIos({
   // its stdio pipes have been drained. Waiting for close is what guarantees
   // the last diagnostic -- usually the most important line in the file -- is
   // in the transcript rather than lost in a pipe.
-  const outcome = await new Promise<{ code?: number | null; signal?: NodeJS.Signals | null; error?: Error }>((resolve) => {
-    let settled = false;
-    const finish = (value: { code?: number | null; signal?: NodeJS.Signals | null; error?: Error }) => {
-      if (settled) return;
-      settled = true;
-      outReader.flush();
-      errReader.flush();
-      resolve(value);
-    };
-    child.on('close', (code, signal) => finish({ code, signal }));
-    // A spawn that fails after the call returned (ENOENT resolved
-    // asynchronously) emits `error` and may never emit `close`.
-    child.on('error', (error) => finish({ code: null, signal: null, error }));
-  });
+  const outcome = await new Promise<{ code?: number | null; signal?: NodeJS.Signals | null; error?: Error }>(
+    (resolve) => {
+      let settled = false;
+      const finish = (value: { code?: number | null; signal?: NodeJS.Signals | null; error?: Error }) => {
+        if (settled) return;
+        settled = true;
+        outReader.flush();
+        errReader.flush();
+        resolve(value);
+      };
+      child.on('close', (code, signal) => finish({ code, signal }));
+      // A spawn that fails after the call returned (ENOENT resolved
+      // asynchronously) emits `error` and may never emit `close`.
+      child.on('error', (error) => finish({ code: null, signal: null, error }));
+    },
+  );
 
   const durationMs = elapsed();
   const text = transcript.join('\n');
@@ -571,7 +585,7 @@ export async function buildIos({
       // to wonder whether extraction ran at all.
       reportError(
         `xcodebuild exited ${outcome.code ?? `on ${outcome.signal}`} with no recognizable diagnostic; see the transcript above.`,
-        null
+        null,
       );
     }
     return failedResult({
@@ -608,7 +622,7 @@ export async function buildIos({
   const bundleId = readBundleId(appPath, { exec: executor });
   if (!bundleId) {
     const message = `No readable CFBundleIdentifier in ${join(appPath, 'Info.plist')}.`;
-    const remedy = 'Check PRODUCT_BUNDLE_IDENTIFIER in the target\'s Debug configuration.';
+    const remedy = "Check PRODUCT_BUNDLE_IDENTIFIER in the target's Debug configuration.";
     reportError(message, remedy);
     return failedResult({
       code: 'RN_ISO_BUILD_FAILED',

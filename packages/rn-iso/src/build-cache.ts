@@ -54,15 +54,16 @@ const SIMULATOR_UDID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 const EMULATOR_SERIAL = /^emulator-\d+$/;
 
 function slug(value: unknown): string {
-  return String(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 // The Xcode configuration on iOS, the gradle variant on Android. Both CLIs
 // default to Debug/debug, so an absent value is that and not "unknown".
 function buildVariant(platform: string, options: BuildRunOptions): string {
-  const raw = platform === 'android'
-    ? options.variant
-    : (options.configuration ?? options.buildConfiguration);
+  const raw = platform === 'android' ? options.variant : (options.configuration ?? options.buildConfiguration);
   return (typeof raw === 'string' ? slug(raw) : '') || 'debug';
 }
 
@@ -104,7 +105,7 @@ export function artifactIn(dir: string): string | null {
   if (!existsSync(dir)) return null;
   let found;
   try {
-    found = readdirSync(dir).find(f => f.endsWith('.app') || f.endsWith('.apk'));
+    found = readdirSync(dir).find((f) => f.endsWith('.app') || f.endsWith('.apk'));
   } catch {
     return null;
   }
@@ -121,7 +122,10 @@ export function artifactIn(dir: string): string | null {
 // dynamically (require of a package that may or may not be installed), but
 // what is done with it afterward is fixed and worth typing honestly.
 export interface Fingerprinter {
-  createFingerprintAsync(projectRoot: string, options?: { platforms: string[] } | undefined): Promise<{ hash?: string | null } | null | undefined>;
+  createFingerprintAsync(
+    projectRoot: string,
+    options?: { platforms: string[] } | undefined,
+  ): Promise<{ hash?: string | null } | null | undefined>;
 }
 
 export function loadFingerprinter(projectRoot: string): Fingerprinter | null {
@@ -160,7 +164,10 @@ const FINGERPRINT_PLATFORMS = new Set(['ios', 'android']);
  */
 export async function fingerprintProject(
   projectRoot: string,
-  { platform, load = loadFingerprinter }: { platform?: string; load?: (projectRoot: string) => Fingerprinter | null } = {},
+  {
+    platform,
+    load = loadFingerprinter,
+  }: { platform?: string; load?: (projectRoot: string) => Fingerprinter | null } = {},
 ): Promise<string | null> {
   const fp = load(projectRoot);
   if (!fp) return null;
@@ -223,7 +230,7 @@ export function storeBuild(
   buildPath: string,
   rootOrOptions: string | { root?: string; overwrite?: boolean } = {},
 ): string | null {
-  const options = typeof rootOrOptions === 'string' ? { root: rootOrOptions } : (rootOrOptions || {});
+  const options = typeof rootOrOptions === 'string' ? { root: rootOrOptions } : rootOrOptions || {};
   const root = options.root || cacheRoot();
   const overwrite = Boolean(options.overwrite);
 

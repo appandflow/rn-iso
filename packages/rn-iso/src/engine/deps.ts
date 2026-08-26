@@ -110,7 +110,7 @@ function readOrNull(file: string) {
 export async function runPodInstall(
   root: string,
   logWriter: NdjsonWriter | null | undefined,
-  { spawnFn = null, now = Date.now }: { spawnFn?: SpawnFn | null; now?: () => number } = {}
+  { spawnFn = null, now = Date.now }: { spawnFn?: SpawnFn | null; now?: () => number } = {},
 ) {
   const iosDir = join(root, 'ios');
   if (!existsSync(iosDir)) {
@@ -144,12 +144,14 @@ export async function runPodInstall(
       env: { ...process.env, FORCE_COLOR: '0', CLICOLOR: '0' },
     });
   } catch (err) {
-    return missingPod(err) || {
-      failed: true,
-      code: DEPS_ERROR,
-      reason: `Could not run \`pod install\`: ${(err as Error)?.message || err}`,
-      lastLines: [] as string[],
-    };
+    return (
+      missingPod(err) || {
+        failed: true,
+        code: DEPS_ERROR,
+        reason: `Could not run \`pod install\`: ${(err as Error)?.message || err}`,
+        lastLines: [] as string[],
+      }
+    );
   }
 
   const reader = { out: createLineReader(push), err: createLineReader(push) };
@@ -164,13 +166,15 @@ export async function runPodInstall(
   const durationMs = now() - startedAt;
 
   if (result.error) {
-    return missingPod(result.error) || {
-      failed: true,
-      code: DEPS_ERROR,
-      reason: `Could not run \`pod install\`: ${result.error?.message || result.error}`,
-      lastLines: tail.slice(),
-      durationMs,
-    };
+    return (
+      missingPod(result.error) || {
+        failed: true,
+        code: DEPS_ERROR,
+        reason: `Could not run \`pod install\`: ${result.error?.message || result.error}`,
+        lastLines: tail.slice(),
+        durationMs,
+      }
+    );
   }
   if (result.code !== 0) {
     const how = result.signal ? `signal ${result.signal}` : `exit code ${result.code}`;
@@ -208,7 +212,12 @@ export function missingPod(err: unknown) {
 export function waitForChild(child: ChildProcess): Promise<ChildResult> {
   return new Promise((resolve) => {
     let settled = false;
-    const done = (value: ChildResult) => { if (!settled) { settled = true; resolve(value); } };
+    const done = (value: ChildResult) => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
     child.on('exit', (code, signal) => done({ code, signal }));
     child.on('error', (error) => done({ error }));
   });

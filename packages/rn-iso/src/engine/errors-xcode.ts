@@ -114,7 +114,7 @@ function remedyFor(message: string): string | null {
   if (PODS_OUT_OF_SYNC.test(message)) {
     // The plan's flow syncs pods before building precisely so this never
     // fires; when it does, the lockfiles moved under the build.
-    return "Run `pod install` in ios/ (rn-iso ios does this when Podfile.lock and Pods/Manifest.lock disagree), then build again.";
+    return 'Run `pod install` in ios/ (rn-iso ios does this when Podfile.lock and Pods/Manifest.lock disagree), then build again.';
   }
   if (NO_SUCH_SCHEME.test(message)) {
     return 'Run `xcodebuild -list` in ios/ to see the schemes this project defines, and share the app scheme so it is visible to the build.';
@@ -123,7 +123,7 @@ function remedyFor(message: string): string | null {
     if (pattern.test(message)) {
       // rn-iso builds Debug for the simulator and nothing else, so a signing
       // requirement here is always a setting that should not apply.
-      return 'rn-iso builds Debug for the simulator, which needs no signing. Check CODE_SIGNING_REQUIRED / DEVELOPMENT_TEAM in the target\'s Debug configuration.';
+      return "rn-iso builds Debug for the simulator, which needs no signing. Check CODE_SIGNING_REQUIRED / DEVELOPMENT_TEAM in the target's Debug configuration.";
     }
   }
   return null;
@@ -142,7 +142,17 @@ function fileFromPrefix(prefix: string): string | null {
   return head;
 }
 
-function makeDiagnostic({ file = null, line = null, column = null, message }: { file?: string | null; line?: number | null; column?: number | null; message: string }): Diagnostic {
+function makeDiagnostic({
+  file = null,
+  line = null,
+  column = null,
+  message,
+}: {
+  file?: string | null;
+  line?: number | null;
+  column?: number | null;
+  message: string;
+}): Diagnostic {
   const text = String(message).trim();
   const out: Diagnostic = { message: text };
   if (file) out.file = file;
@@ -206,12 +216,14 @@ export function extractXcodeDiagnostics(transcript: string): Diagnostic[] {
 
     const positioned = POSITIONED.exec(raw);
     if (positioned) {
-      push(makeDiagnostic({
-        file: positioned[1],
-        line: Number(positioned[2]),
-        column: positioned[3] === undefined ? null : Number(positioned[3]),
-        message: positioned[4],
-      }));
+      push(
+        makeDiagnostic({
+          file: positioned[1],
+          line: Number(positioned[2]),
+          column: positioned[3] === undefined ? null : Number(positioned[3]),
+          message: positioned[4],
+        }),
+      );
       continue;
     }
 
@@ -229,7 +241,10 @@ export function extractXcodeDiagnostics(transcript: string): Diagnostic[] {
 // (a future `logs --errors` over a stored build log) is not fighting a
 // presentation decision baked into the parser. `truncated` is the count the
 // CLI prints as "+N more", and is 0, not absent, when nothing was dropped.
-export function capDiagnostics(diagnostics: Diagnostic[], max = MAX_DIAGNOSTICS): { diagnostics: Diagnostic[]; truncated: number } {
+export function capDiagnostics(
+  diagnostics: Diagnostic[],
+  max = MAX_DIAGNOSTICS,
+): { diagnostics: Diagnostic[]; truncated: number } {
   const list = Array.isArray(diagnostics) ? diagnostics : [];
   if (list.length <= max) return { diagnostics: list.slice(), truncated: 0 };
   return { diagnostics: list.slice(0, max), truncated: list.length - max };

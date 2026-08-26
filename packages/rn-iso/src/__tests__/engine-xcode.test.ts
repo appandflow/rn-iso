@@ -88,8 +88,13 @@ function recordingWriter(file = '/dev/null/not-used'): any {
   return {
     file,
     records,
-    write(record) { records.push(record); return true; },
-    close() { return { file, written: records.length, dropped: 0, lastError: null }; },
+    write(record) {
+      records.push(record);
+      return true;
+    },
+    close() {
+      return { file, written: records.length, dropped: 0, lastError: null };
+    },
   };
 }
 
@@ -261,7 +266,10 @@ describe('listSchemes and resolveScheme', () => {
     setExecutor({
       run: () => '',
       runQuiet: () => null,
-      runFile: (file, args) => { calls.push([file, args]); return REAL_PROJECT_LIST_JSON; },
+      runFile: (file, args) => {
+        calls.push([file, args]);
+        return REAL_PROJECT_LIST_JSON;
+      },
       spawn: () => {},
     });
     expect(listSchemes(project)).toEqual({ name: 'Scratch', schemes: ['Scratch'] });
@@ -270,16 +278,24 @@ describe('listSchemes and resolveScheme', () => {
 
   test('a tool failure is null, which is not the same as a listing with no schemes', () => {
     setExecutor({
-      run: () => '', runQuiet: () => null, spawn: () => {},
-      runFile: () => { throw new Error('xcodebuild: error: unable to read project'); },
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: () => {
+        throw new Error('xcodebuild: error: unable to read project');
+      },
     });
     expect(listSchemes(project)).toBe(null);
   });
 
   test('resolveScheme maps a failed listing to RN_ISO_NO_SCHEME with the command to run', () => {
     setExecutor({
-      run: () => '', runQuiet: () => null, spawn: () => {},
-      runFile: () => { throw new Error('boom'); },
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: () => {
+        throw new Error('boom');
+      },
     });
     const { error } = resolveScheme(project);
     expect(error.code).toBe('RN_ISO_NO_SCHEME');
@@ -289,7 +305,9 @@ describe('listSchemes and resolveScheme', () => {
 
   test('resolveScheme names the schemes it did find when none of them is buildable', () => {
     setExecutor({
-      run: () => '', runQuiet: () => null, spawn: () => {},
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
       runFile: () => '{"project":{"name":"App","schemes":["one","two"]}}',
     });
     const { error } = resolveScheme(project);
@@ -300,7 +318,9 @@ describe('listSchemes and resolveScheme', () => {
 
   test('resolveScheme returns the scheme and the full list on success', () => {
     setExecutor({
-      run: () => '', runQuiet: () => null, spawn: () => {},
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
       runFile: () => REAL_PROJECT_LIST_JSON,
     });
     expect(resolveScheme({ ...project, name: 'Scratch' })).toEqual({
@@ -314,20 +334,30 @@ describe('xcodebuildArgs', () => {
   const project = { flag: '-workspace', path: '/p/ios/App.xcworkspace' };
 
   test('is exactly the invocation the plan specifies, in order', () => {
-    expect(xcodebuildArgs({ project, scheme: 'App', udid: 'BF2A-1234', derivedDataPath: '/p/.rn-iso/derived-data' })).toEqual([
-        '-workspace', '/p/ios/App.xcworkspace',
-        '-scheme', 'App',
-        '-configuration', 'Debug',
-        '-sdk', 'iphonesimulator',
-        '-destination', 'id=BF2A-1234',
-        '-derivedDataPath', '/p/.rn-iso/derived-data',
-        'build',
-      ]);
+    expect(
+      xcodebuildArgs({ project, scheme: 'App', udid: 'BF2A-1234', derivedDataPath: '/p/.rn-iso/derived-data' }),
+    ).toEqual([
+      '-workspace',
+      '/p/ios/App.xcworkspace',
+      '-scheme',
+      'App',
+      '-configuration',
+      'Debug',
+      '-sdk',
+      'iphonesimulator',
+      '-destination',
+      'id=BF2A-1234',
+      '-derivedDataPath',
+      '/p/.rn-iso/derived-data',
+      'build',
+    ]);
   });
 
   test('an explicit destination replaces the udid one, for a build with no device', () => {
     const args = xcodebuildArgs({
-      project, scheme: 'App', udid: 'BF2A-1234',
+      project,
+      scheme: 'App',
+      udid: 'BF2A-1234',
       destination: 'generic/platform=iOS Simulator',
       derivedDataPath: '/dd',
     });
@@ -336,7 +366,10 @@ describe('xcodebuildArgs', () => {
 
   test('extra args land before the `build` action, where xcodebuild expects options', () => {
     const args = xcodebuildArgs({
-      project, scheme: 'App', udid: 'u', derivedDataPath: '/dd',
+      project,
+      scheme: 'App',
+      udid: 'u',
+      derivedDataPath: '/dd',
       extraArgs: ['-quiet'],
     });
     expect(args.slice(-2)).toEqual(['-quiet', 'build']);
@@ -346,7 +379,9 @@ describe('xcodebuildArgs', () => {
 describe('locating the product', () => {
   test('productsDir mirrors the layout xcodebuild writes under -derivedDataPath', () => {
     expect(productsDir('/p/.rn-iso/derived-data')).toBe('/p/.rn-iso/derived-data/Build/Products/Debug-iphonesimulator');
-    expect(productsDir('/dd', { configuration: 'Release', sdk: 'iphoneos' })).toBe('/dd/Build/Products/Release-iphoneos');
+    expect(productsDir('/dd', { configuration: 'Release', sdk: 'iphoneos' })).toBe(
+      '/dd/Build/Products/Release-iphoneos',
+    );
   });
 
   test('pickAppBundle prefers the app named after the scheme', () => {
@@ -391,8 +426,13 @@ describe('reading the bundle id', () => {
   test('readBundleId asks plutil first, with the .plist path', () => {
     const calls = [];
     setExecutor({
-      run: () => '', runQuiet: () => null, spawn: () => {},
-      runFile: (file, args) => { calls.push([file, args]); return '{"CFBundleIdentifier":"com.example.app"}'; },
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: (file, args) => {
+        calls.push([file, args]);
+        return '{"CFBundleIdentifier":"com.example.app"}';
+      },
     });
     expect(readBundleId('/dd/App.app')).toBe('com.example.app');
     expect(calls).toEqual([['plutil', ['-convert', 'json', '-o', '-', '/dd/App.app/Info.plist']]]);
@@ -401,7 +441,9 @@ describe('reading the bundle id', () => {
   test('falls back to `defaults read`, which takes the path WITHOUT the extension', () => {
     const calls = [];
     setExecutor({
-      run: () => '', runQuiet: () => null, spawn: () => {},
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
       runFile: (file, args) => {
         calls.push(file);
         if (file === 'plutil') throw new Error('plutil missing');
@@ -414,8 +456,12 @@ describe('reading the bundle id', () => {
 
   test('both failing is null rather than a throw out of a build', () => {
     setExecutor({
-      run: () => '', runQuiet: () => null, spawn: () => {},
-      runFile: () => { throw new Error('nope'); },
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: () => {
+        throw new Error('nope');
+      },
     });
     expect(readBundleId('/dd/App.app')).toBe(null);
   });
@@ -433,7 +479,10 @@ describe('tailLines', () => {
 describe('buildIos with a mocked executor', () => {
   // Everything a build needs except an actual Xcode: a project on disk, a
   // scheme listing, a fake child to drive, and a plutil that answers.
-  function harness(root, { child, listing = '{"project":{"name":"App","schemes":["App"]}}', bundleId = 'com.example.app' }: any = {}) {
+  function harness(
+    root,
+    { child, listing = '{"project":{"name":"App","schemes":["App"]}}', bundleId = 'com.example.app' }: any = {},
+  ) {
     const spawnCalls = [];
     setExecutor({
       run: () => '',
@@ -446,7 +495,10 @@ describe('buildIos with a mocked executor', () => {
         }
         throw new Error(`unexpected runFile ${file} ${args.join(' ')}`);
       },
-      spawn: (cmd, args, opts) => { spawnCalls.push({ cmd, args, opts }); return child; },
+      spawn: (cmd, args, opts) => {
+        spawnCalls.push({ cmd, args, opts });
+        return child;
+      },
     });
     stubProject(root, { name: 'App' });
     return spawnCalls;
@@ -472,12 +524,18 @@ describe('buildIos with a mocked executor', () => {
     const { cmd, args, opts } = spawnCalls[0];
     expect(cmd).toBe('xcodebuild');
     expect(args).toEqual([
-      '-project', join(tmp, 'ios', 'App.xcodeproj'),
-      '-scheme', 'App',
-      '-configuration', 'Debug',
-      '-sdk', 'iphonesimulator',
-      '-destination', 'id=BF2A-1111-2222',
-      '-derivedDataPath', dd,
+      '-project',
+      join(tmp, 'ios', 'App.xcodeproj'),
+      '-scheme',
+      'App',
+      '-configuration',
+      'Debug',
+      '-sdk',
+      'iphonesimulator',
+      '-destination',
+      'id=BF2A-1111-2222',
+      '-derivedDataPath',
+      dd,
       'build',
     ]);
     expect(opts.cwd).toBe(join(tmp, 'ios'));
@@ -502,15 +560,15 @@ describe('buildIos with a mocked executor', () => {
     const dd = join(tmp, 'dd');
     const promise = buildIos({ root: tmp, udid: 'u', logWriter: writer, derivedDataPath: dd });
 
-    expect(writer.records.map(r => r.event)).toEqual(['build_start']);
+    expect(writer.records.map((r) => r.event)).toEqual(['build_start']);
 
     child.stdout.emit('data', 'CompileC main.o\nCompile');
     child.stdout.emit('data', 'Swift App.swift\n');
     child.stderr.emit('data', 'note: from stderr\n');
 
-    const streamed = writer.records.filter(r => r.level === 'debug');
-    expect(streamed.map(r => r.msg)).toEqual(['CompileC main.o', 'CompileSwift App.swift', 'note: from stderr']);
-    expect(streamed.every(r => r.src === 'build')).toBeTruthy();
+    const streamed = writer.records.filter((r) => r.level === 'debug');
+    expect(streamed.map((r) => r.msg)).toEqual(['CompileC main.o', 'CompileSwift App.swift', 'note: from stderr']);
+    expect(streamed.every((r) => r.src === 'build')).toBeTruthy();
 
     makeProduct(dd);
     child.emit('close', 0, null);
@@ -526,7 +584,7 @@ describe('buildIos with a mocked executor', () => {
     child.emit('close', 65, null);
     const result: any = await promise;
     expect(result.failed).toBe(true);
-    expect(result.diagnostics.map(d => d.message)).toEqual(['died mid-line with no newline']);
+    expect(result.diagnostics.map((d) => d.message)).toEqual(['died mid-line with no newline']);
   });
 
   test('blank lines are kept for extraction and dropped from the log', async () => {
@@ -540,7 +598,7 @@ describe('buildIos with a mocked executor', () => {
     child.emit('close', 0, null);
     const result: any = await promise;
     expect(result.transcriptLines).toBe(4);
-    expect(writer.records.filter(r => r.level === 'debug').length).toBe(2);
+    expect(writer.records.filter((r) => r.level === 'debug').length).toBe(2);
   });
 
   test('success returns the app, its bundle id and the elapsed time', async () => {
@@ -551,7 +609,10 @@ describe('buildIos with a mocked executor', () => {
     const writer = recordingWriter();
     let clock = 1000;
     const promise = buildIos({
-      root: tmp, udid: 'u', logWriter: writer, derivedDataPath: dd,
+      root: tmp,
+      udid: 'u',
+      logWriter: writer,
+      derivedDataPath: dd,
       now: () => clock,
     });
     clock = 161500;
@@ -563,7 +624,7 @@ describe('buildIos with a mocked executor', () => {
     expect(result.bundleId).toBe('com.example.app');
     expect(result.durationMs).toBe(160500);
     expect(result.scheme).toBe('App');
-    const done = writer.records.find(r => r.event === 'build_done');
+    const done = writer.records.find((r) => r.event === 'build_done');
     expect(done.level).toBe('info');
     expect(done.msg).toMatch(/BUILD SUCCEEDED/);
   });
@@ -573,13 +634,16 @@ describe('buildIos with a mocked executor', () => {
     harness(tmp, { child });
     const writer = recordingWriter();
     const promise = buildIos({ root: tmp, udid: 'u', logWriter: writer, derivedDataPath: join(tmp, 'dd') });
-    child.stdout.emit('data', [
-      'CompileC /dd/main.o /src/App/AppDelegate.m normal arm64',
-      "/src/App/AppDelegate.m:42:8: error: cannot find 'Foo' in scope",
-      '1 error generated.',
-      '** BUILD FAILED **',
-      '',
-    ].join('\n'));
+    child.stdout.emit(
+      'data',
+      [
+        'CompileC /dd/main.o /src/App/AppDelegate.m normal arm64',
+        "/src/App/AppDelegate.m:42:8: error: cannot find 'Foo' in scope",
+        '1 error generated.',
+        '** BUILD FAILED **',
+        '',
+      ].join('\n'),
+    );
     child.emit('close', 65, null);
     const result: any = await promise;
 
@@ -593,8 +657,8 @@ describe('buildIos with a mocked executor', () => {
 
     // Contract 1: diagnostics land in the same file as the transcript, at
     // level error, so `logs --errors` finds them without a second source.
-    const errors = writer.records.filter(r => r.level === 'error');
-    expect(errors.map(r => r.msg)).toEqual(["/src/App/AppDelegate.m:42:8: cannot find 'Foo' in scope"]);
+    const errors = writer.records.filter((r) => r.level === 'error');
+    expect(errors.map((r) => r.msg)).toEqual(["/src/App/AppDelegate.m:42:8: cannot find 'Foo' in scope"]);
     expect(errors[0].src).toBe('build');
   });
 
@@ -609,7 +673,7 @@ describe('buildIos with a mocked executor', () => {
     const result: any = await promise;
     expect(result.diagnostics.length).toBe(10);
     expect(result.truncated).toBe(3);
-    expect(writer.records.filter(r => r.level === 'error').length).toBe(10);
+    expect(writer.records.filter((r) => r.level === 'error').length).toBe(10);
   });
 
   test('an unrecognizable failure says so and hands back the log tail', async () => {
@@ -622,7 +686,7 @@ describe('buildIos with a mocked executor', () => {
     const result: any = await promise;
     expect(result.diagnostics).toEqual([]);
     expect(result.tail).toEqual(['something', 'went', 'wrong', 'somehow', 'entirely']);
-    const errors = writer.records.filter(r => r.level === 'error');
+    const errors = writer.records.filter((r) => r.level === 'error');
     expect(errors[0].msg).toMatch(/no recognizable diagnostic/);
   });
 
@@ -635,7 +699,7 @@ describe('buildIos with a mocked executor', () => {
     expect(result.code).toBe('RN_ISO_BUILD_FAILED');
     expect(result.diagnostics[0].remedy).toMatch(/prebuild/);
     expect(spawnCalls).toEqual([]);
-    expect(writer.records.filter(r => r.level === 'error').length).toBe(1);
+    expect(writer.records.filter((r) => r.level === 'error').length).toBe(1);
   });
 
   test('an unresolvable scheme fails as RN_ISO_NO_SCHEME before anything is spawned', async () => {
@@ -650,9 +714,12 @@ describe('buildIos with a mocked executor', () => {
   test('a spawn that throws (no Xcode) is a failure with a remedy, not an exception', async () => {
     stubProject(tmp, { name: 'App' });
     setExecutor({
-      run: () => '', runQuiet: () => null,
+      run: () => '',
+      runQuiet: () => null,
       runFile: () => '{"project":{"name":"App","schemes":["App"]}}',
-      spawn: () => { throw Object.assign(new Error('spawn xcodebuild ENOENT'), { code: 'ENOENT' }); },
+      spawn: () => {
+        throw Object.assign(new Error('spawn xcodebuild ENOENT'), { code: 'ENOENT' });
+      },
     });
     const result: any = await buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter() });
     expect(result.failed).toBe(true);
@@ -697,10 +764,10 @@ describe('buildIos with a mocked executor', () => {
 
   test('programmer errors throw, because they are bugs in the caller and not build outcomes', async () => {
     const writer = recordingWriter();
-    await await expect(() => buildIos({ udid: 'u', logWriter: writer } as any)).rejects.toThrow(TypeError);
-    await await expect(() => buildIos({ root: tmp, udid: 'u' } as any)).rejects.toThrow(TypeError);
-    await await expect(() => buildIos({ root: tmp, udid: 'u', logWriter: {} as any })).rejects.toThrow(TypeError);
-    await await expect(() => buildIos({ root: tmp, logWriter: writer })).rejects.toThrow(TypeError);
+    await expect(() => buildIos({ udid: 'u', logWriter: writer } as any)).rejects.toThrow(TypeError);
+    await expect(() => buildIos({ root: tmp, udid: 'u' } as any)).rejects.toThrow(TypeError);
+    await expect(() => buildIos({ root: tmp, udid: 'u', logWriter: {} as any })).rejects.toThrow(TypeError);
+    await expect(() => buildIos({ root: tmp, logWriter: writer })).rejects.toThrow(TypeError);
   });
 });
 
@@ -968,8 +1035,10 @@ function writeScratchProject(root, { main = WORKING_MAIN, workspace = false } = 
   if (workspace) {
     const ws = join(ios, 'Scratch.xcworkspace');
     mkdirSync(ws, { recursive: true });
-    writeFileSync(join(ws, 'contents.xcworkspacedata'),
-      '<?xml version="1.0" encoding="UTF-8"?>\n<Workspace version = "1.0">\n   <FileRef location = "group:Scratch.xcodeproj"></FileRef>\n</Workspace>\n');
+    writeFileSync(
+      join(ws, 'contents.xcworkspacedata'),
+      '<?xml version="1.0" encoding="UTF-8"?>\n<Workspace version = "1.0">\n   <FileRef location = "group:Scratch.xcodeproj"></FileRef>\n</Workspace>\n',
+    );
   }
   return ios;
 }
@@ -1022,7 +1091,9 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as any }, () => {
 
     expect(result.failed).toBe(undefined);
     expect(result.scheme).toBe('Scratch');
-    expect(result.appPath).toBe(join(tmp, '.rn-iso', 'derived-data', 'Build', 'Products', 'Debug-iphonesimulator', 'Scratch.app'));
+    expect(result.appPath).toBe(
+      join(tmp, '.rn-iso', 'derived-data', 'Build', 'Products', 'Debug-iphonesimulator', 'Scratch.app'),
+    );
     expect(existsSync(result.appPath)).toBeTruthy();
     // A built Info.plist is a BINARY plist: this is the assertion that
     // catches reading it as text or as XML.
@@ -1032,12 +1103,12 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as any }, () => {
     const records = parseNdjsonText(readFileSync(logFile, 'utf-8'));
     expect(records[0].event).toBe('build_start');
     expect(records[0].msg).toMatch(/^xcodebuild -project .*-derivedDataPath .* build$/);
-    const transcript = records.filter(r => r.level === 'debug');
+    const transcript = records.filter((r) => r.level === 'debug');
     expect(transcript.length > 20).toBeTruthy();
-    expect(transcript.every(r => r.src === 'build')).toBeTruthy();
-    expect(transcript.some(r => r.msg.includes('BUILD SUCCEEDED'))).toBeTruthy();
+    expect(transcript.every((r) => r.src === 'build')).toBeTruthy();
+    expect(transcript.some((r) => r.msg.includes('BUILD SUCCEEDED'))).toBeTruthy();
     expect(records.at(-1).event).toBe('build_done');
-    expect(records.filter(r => r.level === 'error').length).toBe(0);
+    expect(records.filter((r) => r.level === 'error').length).toBe(0);
   });
 
   test('fails for real: a broken source file becomes one diagnostic with file, line and column', async () => {
@@ -1074,9 +1145,9 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as any }, () => {
     expect(result.tail.at(-1)).toMatch(/^\(\d+ failures\)$/);
 
     const records = parseNdjsonText(readFileSync(logFile, 'utf-8'));
-    const errors = records.filter(r => r.level === 'error');
+    const errors = records.filter((r) => r.level === 'error');
     expect(errors.length).toBe(1);
     expect(errors[0].msg).toMatch(/main\.m:5:18: use of undeclared identifier/);
-    expect(records.some(r => r.level === 'debug' && r.msg.includes('** BUILD FAILED **'))).toBeTruthy();
+    expect(records.some((r) => r.level === 'debug' && r.msg.includes('** BUILD FAILED **'))).toBeTruthy();
   });
 });

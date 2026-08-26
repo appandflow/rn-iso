@@ -59,8 +59,7 @@ export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
 }
 
 export function writeWorkspaceState(root: string, patch: WorkspaceState): WorkspaceState {
-  return withWorkspaceStateLock(root, () =>
-    replaceWorkspaceState(root, { ...(readWorkspaceState(root) || {}), ...patch }));
+  return withWorkspaceStateLock(root, () => replaceWorkspaceState(root, { ...readWorkspaceState(root), ...patch }));
 }
 
 // The whole file, not a merge. Kept separate because clearing a key through
@@ -85,7 +84,11 @@ export function clearWorkspaceSupervisor(root: string): void {
     delete state.supervisor;
     const file = workspaceStateFile(root);
     if (Object.keys(state).length === 0) {
-      try { rmSync(file, { force: true }); } catch { /* already gone */ }
+      try {
+        rmSync(file, { force: true });
+      } catch {
+        /* already gone */
+      }
       return;
     }
     replaceWorkspaceState(root, state);

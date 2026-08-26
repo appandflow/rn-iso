@@ -1,7 +1,14 @@
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve, join } from 'path';
-import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage, resolveRegisteredProject, projectShortcut } from '../project.ts';
+import {
+  findProjectRoot,
+  detectIsExpo,
+  detectBundleId,
+  detectAndroidPackage,
+  resolveRegisteredProject,
+  projectShortcut,
+} from '../project.ts';
 import { upsertProject, getProject } from '../config.ts';
 
 const FIXTURES = resolve(import.meta.dirname, 'fixtures');
@@ -32,10 +39,13 @@ test('detectIsExpo trusts the ios script: react-native script wins even with exp
   const { tmpdir } = await import('os');
   const tmp = mkdtempSync(join((await import('os')).tmpdir(), 'rn-iso-detect-'));
   try {
-    writeFileSync(join(tmp, 'package.json'), JSON.stringify({
-      dependencies: { expo: '54.0.33' },
-      scripts: { ios: "react-native run-ios --simulator='iPhone 16 Pro'" },
-    }));
+    writeFileSync(
+      join(tmp, 'package.json'),
+      JSON.stringify({
+        dependencies: { expo: '54.0.33' },
+        scripts: { ios: "react-native run-ios --simulator='iPhone 16 Pro'" },
+      }),
+    );
     expect(detectIsExpo(tmp)).toBe(false);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -46,10 +56,13 @@ test('detectIsExpo trusts the ios script: expo run:ios wins', async () => {
   const { mkdtempSync, writeFileSync, rmSync } = await import('fs');
   const tmp = mkdtempSync(join((await import('os')).tmpdir(), 'rn-iso-detect-'));
   try {
-    writeFileSync(join(tmp, 'package.json'), JSON.stringify({
-      dependencies: { 'react-native': '0.74.0' },
-      scripts: { ios: 'expo run:ios' },
-    }));
+    writeFileSync(
+      join(tmp, 'package.json'),
+      JSON.stringify({
+        dependencies: { 'react-native': '0.74.0' },
+        scripts: { ios: 'expo run:ios' },
+      }),
+    );
     expect(detectIsExpo(tmp)).toBe(true);
   } finally {
     rmSync(tmp, { recursive: true, force: true });

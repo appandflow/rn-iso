@@ -9,11 +9,7 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  ensureWorkspaceIgnored,
-  listsWorkspaceDir,
-  renderWorkspaceIgnoreBlock,
-} from '../engine/workspace.ts';
+import { ensureWorkspaceIgnored, listsWorkspaceDir, renderWorkspaceIgnoreBlock } from '../engine/workspace.ts';
 
 function scratch(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'rn-iso-ws-ignore-'));
@@ -45,7 +41,7 @@ test('a commented-out entry does not count, and neither does a longer path', () 
 });
 
 test('adds the entry to an existing .gitignore, once', () => {
-  scratch(dir => {
+  scratch((dir) => {
     writeFileSync(join(dir, '.gitignore'), 'node_modules\n');
     expect(ensureWorkspaceIgnored(dir).added).toBe(true);
     const after = readFileSync(join(dir, '.gitignore'), 'utf-8');
@@ -58,7 +54,7 @@ test('adds the entry to an existing .gitignore, once', () => {
 });
 
 test('creates a .gitignore when the repo has none', () => {
-  scratch(dir => {
+  scratch((dir) => {
     const result = ensureWorkspaceIgnored(dir);
     expect(result.added).toBe(true);
     expect(result.path).toBe(join(dir, '.gitignore'));
@@ -67,7 +63,7 @@ test('creates a .gitignore when the repo has none', () => {
 });
 
 test('a file that does not end in a newline keeps its last line intact', () => {
-  scratch(dir => {
+  scratch((dir) => {
     writeFileSync(join(dir, '.gitignore'), 'node_modules');
     ensureWorkspaceIgnored(dir);
     const lines = readFileSync(join(dir, '.gitignore'), 'utf-8').split('\n');
@@ -79,7 +75,7 @@ test('a file that does not end in a newline keeps its last line intact', () => {
 // `start` calls this on the way to spawning a dev server. A read-only checkout
 // is not a reason for that to fail.
 test('an unwritable .gitignore comes back as an error, not a throw', () => {
-  scratch(dir => {
+  scratch((dir) => {
     const path = join(dir, '.gitignore');
     writeFileSync(path, 'node_modules\n');
     chmodSync(path, 0o444);

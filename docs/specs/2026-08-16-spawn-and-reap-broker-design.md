@@ -16,7 +16,7 @@ so neither stepped on the other. The tool's center of gravity has moved:
 agents get **disposable environments** (a worktree, created unattended, often
 from a phone), work in them, and tear them down. For that consumer:
 
-1. **Spawn-and-reap replaces claim-and-lock.** An environment *creates* its
+1. **Spawn-and-reap replaces claim-and-lock.** An environment _creates_ its
    simulator/emulator rather than claiming one from a shared pool. Locking
    machinery exists because resources are shared; owned resources need none.
 2. **rn-iso becomes a pure environment broker.** The `ios`/`android` build
@@ -172,14 +172,14 @@ Structure:
    never assume `booted`.
 3. **Common setups reference** (a table, extended as new shapes appear):
 
-   | Project shape | Build invocation |
-   |---|---|
+   | Project shape                    | Build invocation                                                                                |
+   | -------------------------------- | ----------------------------------------------------------------------------------------------- |
    | Expo (`expo run:ios` in scripts) | `<pm> ios -- --device <udid> --port <port>` or `npx expo run:ios --device <udid> --port <port>` |
-   | Bare RN | `npx react-native run-ios --udid <udid> --port <port>` (older CLIs: `--simulator "<name>"`) |
-   | Expo Android | `npx expo run:android --device <serial> --port <port>` (adb reverse already applied by `up`) |
-   | Bare RN Android | `npx react-native run-android --device <serial>` with `RCT_METRO_PORT=<port>` |
-   | Monorepo | run from the app directory (`apps/<app>`), not the repo root |
-   | Custom variants/flavors | prefer the project's own script (it bakes in the right flags); append device/port |
+   | Bare RN                          | `npx react-native run-ios --udid <udid> --port <port>` (older CLIs: `--simulator "<name>"`)     |
+   | Expo Android                     | `npx expo run:android --device <serial> --port <port>` (adb reverse already applied by `up`)    |
+   | Bare RN Android                  | `npx react-native run-android --device <serial>` with `RCT_METRO_PORT=<port>`                   |
+   | Monorepo                         | run from the app directory (`apps/<app>`), not the repo root                                    |
+   | Custom variants/flavors          | prefer the project's own script (it bakes in the right flags); append device/port               |
 
 4. **Metro rules:** Metro is managed by rn-iso; never start your own; check
    `rn-iso logs` first on a blank screen or red box (unchanged advice).

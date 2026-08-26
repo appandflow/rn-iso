@@ -65,7 +65,9 @@ test('storeBuild stages elsewhere and renames, so a partial copy is never visibl
 
   const calls = [];
   setExecutor({
-    run: () => { throw new Error('the copy must not go through a shell'); },
+    run: () => {
+      throw new Error('the copy must not go through a shell');
+    },
     runFile: (file, args) => {
       calls.push({ file, args });
       // Stand in for `cp -R`: create the destination the real command would.
@@ -113,7 +115,9 @@ test('storeBuild with { overwrite } REPLACES an existing entry, so a poisoned on
   mkdirSync(join(root, 'fresh'), { recursive: true });
   writeFileSync(fresh, 'rebuilt');
   setExecutor({
-    run: () => { throw new Error('the copy must not go through a shell'); },
+    run: () => {
+      throw new Error('the copy must not go through a shell');
+    },
     runFile: (file, args) => {
       // Stand in for `cp -R`, which copies a file here.
       writeFileSync(args[2], readFileSync(args[1], 'utf-8'));
@@ -152,7 +156,9 @@ test('storeBuild passes the build path as one argument, never through a shell', 
 
   let seen = null;
   setExecutor({
-    run: () => { throw new Error('the copy must not go through a shell'); },
+    run: () => {
+      throw new Error('the copy must not go through a shell');
+    },
     runFile: (file, args) => {
       seen = args;
       mkdirSync(args[2], { recursive: true });
@@ -190,7 +196,9 @@ test('the cache key separates Debug from Release and a simulator from real hardw
   expect(buildCacheKey('ios', hash, { configuration: 'Release' })).not.toBe(debugSim);
   expect(buildCacheKey('ios', hash, { configuration: 'Debug' })).toBe(debugSim);
   expect(buildCacheKey('ios', hash, { device: 'Janic iPhone' })).not.toBe(debugSim);
-  expect(buildCacheKey('ios', hash, { configuration: 'Release' })).not.toBe(buildCacheKey('ios', hash, { configuration: 'Release', device: 'Janic iPhone' }));
+  expect(buildCacheKey('ios', hash, { configuration: 'Release' })).not.toBe(
+    buildCacheKey('ios', hash, { configuration: 'Release', device: 'Janic iPhone' }),
+  );
 });
 
 // rn-iso hands `expo run:ios` the udid of the simulator it owns, so a udid must
@@ -240,7 +248,7 @@ test('storing a build registers the cache root at the depth its entries actually
   storeBuild('ios', 'fp6', build, root);
 
   const { registeredCaches } = await import('../cache-manifest.ts');
-  const record = registeredCaches().find(c => c.dir === root);
+  const record = registeredCaches().find((c) => c.dir === root);
   expect(record).toBeTruthy();
   expect(record.entriesDepth).toBe(2);
 });
@@ -272,7 +280,12 @@ test('fingerprintProject scopes the hash to the platform being built', async () 
 // nothing native".
 test('fingerprintProject without a platform passes no platforms option', async () => {
   let options = 'unset';
-  const load = () => ({ createFingerprintAsync: async (_dir, opts) => { options = opts; return { hash: 'h' }; } });
+  const load = () => ({
+    createFingerprintAsync: async (_dir, opts) => {
+      options = opts;
+      return { hash: 'h' };
+    },
+  });
   expect(await fingerprintProject(root, { load })).toBe('h');
   expect((options as any)?.platforms).toBe(undefined);
 });
@@ -281,7 +294,12 @@ test('fingerprintProject without a platform passes no platforms option', async (
 // would hash nothing and produce one key for every project on the machine.
 test('fingerprintProject ignores a platform it does not know', async () => {
   let options = 'unset';
-  const load = () => ({ createFingerprintAsync: async (_dir, opts) => { options = opts; return { hash: 'h' }; } });
+  const load = () => ({
+    createFingerprintAsync: async (_dir, opts) => {
+      options = opts;
+      return { hash: 'h' };
+    },
+  });
   await fingerprintProject(root, { platform: 'web', load });
   expect((options as any)?.platforms).toBe(undefined);
 });

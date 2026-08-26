@@ -5,7 +5,7 @@ import { join } from 'path';
 import { registerCreate } from '../commands/worktree.ts';
 import { resetExecutor } from '../exec.ts';
 import { defaultWorktreeDir } from '../worktree.ts';
-import {upsertProject, findEnclosingWorktreeRoot} from '../config.ts';
+import { upsertProject, findEnclosingWorktreeRoot } from '../config.ts';
 
 let tmpHome;
 
@@ -66,10 +66,19 @@ function canon(p) {
 function captureAction(register) {
   let captured;
   const stub = {
-    command() { return stub; },
-    description() { return stub; },
-    option() { return stub; },
-    action(fn) { captured = fn; return stub; },
+    command() {
+      return stub;
+    },
+    description() {
+      return stub;
+    },
+    option() {
+      return stub;
+    },
+    action(fn) {
+      captured = fn;
+      return stub;
+    },
   };
   register(stub);
   return (name, opts = {}) => captured(name, opts);
@@ -125,7 +134,6 @@ test('create action: success path writes exactly one stdout line, the worktree p
   }
 });
 
-
 // --- action-level tests: --base validation -----------------------------
 //
 // Real git throughout (CLAUDE.md item 9): the whole point of this validator is
@@ -142,7 +150,7 @@ test('create action: rejects a --base this repo cannot resolve, before creating 
     const { logs, errs } = await runCreateInRepo(repo, 'feat-z', { base: 'origin/HEAD' });
 
     expect(logs).toEqual([]);
-    expect(errs.some(e => /Invalid --base/.test(e))).toBeTruthy();
+    expect(errs.some((e) => /Invalid --base/.test(e))).toBeTruthy();
     expect(process.exitCode).toBe(1);
     expect(existsSync(join(defaultWorktreeDir(repo), 'feat-z'))).toBe(false);
   } finally {
@@ -169,7 +177,11 @@ test('create action: --base takes any ref this repo resolves, and branches from 
     git('git checkout -q -');
     git('git tag v1 release');
 
-    for (const [name, ref] of [['feat-branch', 'release'], ['feat-tag', 'v1'], ['feat-sha', releaseSha]]) {
+    for (const [name, ref] of [
+      ['feat-branch', 'release'],
+      ['feat-tag', 'v1'],
+      ['feat-sha', releaseSha],
+    ]) {
       const { logs, errs } = await runCreateInRepo(repo, name, { base: ref, install: false });
       const target = join(defaultWorktreeDir(repo), name);
       expect(logs).toEqual([target]);
@@ -177,7 +189,7 @@ test('create action: --base takes any ref this repo resolves, and branches from 
       expect(execSync('git rev-parse HEAD', { cwd: target, encoding: 'utf-8' }).trim()).toBe(releaseSha);
       // Testers could not tell what a worktree had been cut from. Say it, on
       // stderr, with the sha -- a ref name alone moves.
-      const branchedFrom = errs.filter(e => /^Branched /.test(String(e)));
+      const branchedFrom = errs.filter((e) => String(e).startsWith('Branched '));
       expect(branchedFrom.length).toBe(1);
       expect(String(branchedFrom[0])).toMatch(new RegExp(`from ${ref.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')} \\(`));
       expect(String(branchedFrom[0])).toMatch(new RegExp(releaseSha.slice(0, 7)));
@@ -203,8 +215,8 @@ test('create action: an existing branch is reported as attached, not as branched
     const { logs, errs } = await runCreateInRepo(repo, 'feat-again', { install: false });
 
     expect(logs).toEqual([join(defaultWorktreeDir(repo), 'feat-again')]);
-    expect(errs.some(e => /Attached to the existing branch worktree-feat-again/.test(String(e)))).toBeTruthy();
-    expect(!errs.some(e => /^Branched /.test(String(e)))).toBeTruthy();
+    expect(errs.some((e) => /Attached to the existing branch worktree-feat-again/.test(String(e)))).toBeTruthy();
+    expect(!errs.some((e) => String(e).startsWith('Branched '))).toBeTruthy();
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
@@ -244,7 +256,7 @@ test('create action: refuses when a leftover branch would void an explicit --bas
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
-    git('git branch worktree-feat-stale');            // the leftover, at the old tip
+    git('git branch worktree-feat-stale'); // the leftover, at the old tip
     writeFileSync(join(repo, 'NEW'), 'new');
     git('git add NEW');
     git('git commit -q -m second');
@@ -278,7 +290,7 @@ test('create action: a leftover branch already AT the base is attached to, not r
 
     expect(logs).toEqual([join(defaultWorktreeDir(repo), 'feat-same')]);
     expect(process.exitCode).not.toBe(1);
-    expect(errs.some(e => /Attached to the existing branch worktree-feat-same/.test(String(e)))).toBeTruthy();
+    expect(errs.some((e) => /Attached to the existing branch worktree-feat-same/.test(String(e)))).toBeTruthy();
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });

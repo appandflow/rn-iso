@@ -97,7 +97,7 @@ test('loadConfig keeps a corrupt config on disk rather than resetting it', () =>
 // content lands in a temp file and is renamed over the target in one step.
 test('saveConfig writes through a temp file and leaves none behind', () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
-  const strays = readdirSync(tmpHome).filter(name => name.endsWith('.tmp'));
+  const strays = readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'));
   expect(strays).toEqual([]);
   expect(loadConfig()).toEqual({ version: 2, projects: {}, repos: {} });
 });
@@ -115,7 +115,11 @@ test('withConfigLock is reentrant, so nested mutators cannot deadlock', () => {
 });
 
 test('withConfigLock releases the lock when the body throws', () => {
-  expect(() => withConfigLock(() => { throw new Error('boom'); })).toThrow(/boom/);
+  expect(() =>
+    withConfigLock(() => {
+      throw new Error('boom');
+    }),
+  ).toThrow(/boom/);
   expect(existsSync(join(tmpHome, 'config.lock'))).toBe(false);
   // Still usable afterwards.
   expect(withConfigLock(() => 'ok')).toBe('ok');
@@ -140,17 +144,26 @@ test('withConfigLock takes over a stale lock left by a dead process', () => {
 test('concurrent processes each keep their record', async () => {
   const script = join(tmpHome, 'writer.mjs');
   const configUrl = new URL('../config.ts', import.meta.url).href;
-  writeFileSync(script, [
-    `const { upsertProject } = await import(${JSON.stringify(configUrl)});`,
-    'const key = process.argv[2];',
-    'upsertProject(key, { bundleId: key, androidPackage: key, isExpo: false });',
-  ].join('\n'));
+  writeFileSync(
+    script,
+    [
+      `const { upsertProject } = await import(${JSON.stringify(configUrl)});`,
+      'const key = process.argv[2];',
+      'upsertProject(key, { bundleId: key, androidPackage: key, isExpo: false });',
+    ].join('\n'),
+  );
 
   const keys = ['/p1', '/p2', '/p3', '/p4', '/p5', '/p6'];
-  await Promise.all(keys.map(key => new Promise((resolve, reject) => {
-    execFile(process.execPath, [script, key], { env: { ...process.env, RN_ISO_HOME: tmpHome } },
-      (err) => (err ? reject(err) : resolve()));
-  })));
+  await Promise.all(
+    keys.map(
+      (key) =>
+        new Promise((resolve, reject) => {
+          execFile(process.execPath, [script, key], { env: { ...process.env, RN_ISO_HOME: tmpHome } }, (err) =>
+            err ? reject(err) : resolve(),
+          );
+        }),
+    ),
+  );
 
   const cfg = loadConfig();
   for (const key of keys) {
@@ -176,7 +189,7 @@ test('claimMetroPort refuses a port another project claimed first', () => {
   expect(getProject('/b').metroPort).toBe(null);
 });
 
-test('claimMetroPort re-claiming a project\'s own port is not a conflict', () => {
+test("claimMetroPort re-claiming a project's own port is not a conflict", () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   claimMetroPort('/a', 8082);
   expect(claimMetroPort('/a', 8082)).toBe(8082);
@@ -387,9 +400,15 @@ test('getConcurrencyLimits reads config.json concurrency', () => {
 
 test('env overrides config, and 0/absent means no enforcement', () => {
   saveConfig({ version: 2, projects: {}, repos: {}, concurrency: { maxBuilds: 2, maxDevices: 3 } });
-  expect(getConcurrencyLimits({ env: { RN_ISO_MAX_BUILDS: '5', RN_ISO_MAX_DEVICES: '0' } })).toEqual({ maxBuilds: 5, maxDevices: 0 });
+  expect(getConcurrencyLimits({ env: { RN_ISO_MAX_BUILDS: '5', RN_ISO_MAX_DEVICES: '0' } })).toEqual({
+    maxBuilds: 5,
+    maxDevices: 0,
+  });
 });
 
 test('a negative or garbage value reads as unlimited', () => {
-  expect(getConcurrencyLimits({ env: { RN_ISO_MAX_BUILDS: '-1', RN_ISO_MAX_DEVICES: 'lots' } })).toEqual({ maxBuilds: 0, maxDevices: 0 });
+  expect(getConcurrencyLimits({ env: { RN_ISO_MAX_BUILDS: '-1', RN_ISO_MAX_DEVICES: 'lots' } })).toEqual({
+    maxBuilds: 0,
+    maxDevices: 0,
+  });
 });

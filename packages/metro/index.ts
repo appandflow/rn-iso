@@ -90,7 +90,11 @@ function configDir(): string {
 // Anything that is not a plain path segment is replaced, and leading dots go, so
 // a scoped package name cannot climb out of the cache root.
 function cacheNameSegment(name: string): string {
-  return String(name).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^\.+/, '') || 'app';
+  return (
+    String(name)
+      .replace(/[^A-Za-z0-9._-]+/g, '-')
+      .replace(/^\.+/, '') || 'app'
+  );
 }
 
 export function cacheRoot(name?: string | null): string {
@@ -123,7 +127,7 @@ function registerCache({ dir, name, prune, note, entriesDepth }: RegisterOptions
     }
     // Keyed on the directory so repeated calls update rather than accumulate --
     // these run on every build.
-    const others = manifest.caches.filter(c => c.dir !== dir);
+    const others = manifest.caches.filter((c) => c.dir !== dir);
     const record: Record<string, unknown> = { dir, name, prune, note, registeredBy: process.cwd() };
     // Only written when the caller sets it: an absent depth means the entries
     // are the directory's immediate children, which is the common case.

@@ -1,11 +1,7 @@
 import { mkdtempSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  volumeRootFor,
-  isRealMount,
-  isOnMountedVolume,
-} from '../fs-util.ts';
+import { volumeRootFor, isRealMount, isOnMountedVolume } from '../fs-util.ts';
 
 test('volumeRootFor identifies external and boot volumes', () => {
   expect(volumeRootFor('/Volumes/ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');

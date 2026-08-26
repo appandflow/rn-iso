@@ -2,10 +2,10 @@
   "name": "rn-iso-monorepo",
   "private": true,
   "description": "Workspace root. The published packages live in packages/.",
-  "type": "module",
   "workspaces": [
     "packages/*"
   ],
+  "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit -p packages/rn-iso/tsconfig.json && tsc --noEmit -p packages/metro/tsconfig.json && tsc --noEmit -p packages/expo-build-cache/tsconfig.json",
     "lint": "oxlint .",

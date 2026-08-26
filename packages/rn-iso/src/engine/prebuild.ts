@@ -57,7 +57,15 @@ export function needsPrebuild(root: string, platform: string, isExpo: unknown) {
 // worse, if `expo` happens to be installed -- generate a native project from
 // defaults that have nothing to do with this app. Refusing with a remedy is
 // the honest answer.
-export function prebuildRefusal({ isExpo, platform, nativeDirExists }: { isExpo?: unknown; platform: string; nativeDirExists?: unknown }) {
+export function prebuildRefusal({
+  isExpo,
+  platform,
+  nativeDirExists,
+}: {
+  isExpo?: unknown;
+  platform: string;
+  nativeDirExists?: unknown;
+}) {
   if (nativeDirExists || isExpo) return null;
   const dir = nativeDirName(platform);
   return {
@@ -85,7 +93,11 @@ export async function runPrebuild(
   root: string,
   platform: string,
   logWriter: NdjsonWriter | null | undefined,
-  { spawnFn = null, now = Date.now, isExpo = null }: { spawnFn?: SpawnFn | null; now?: () => number; isExpo?: boolean | null } = {}
+  {
+    spawnFn = null,
+    now = Date.now,
+    isExpo = null,
+  }: { spawnFn?: SpawnFn | null; now?: () => number; isExpo?: boolean | null } = {},
 ) {
   const dirExists = existsSync(nativeDir(root, platform));
   const refusal = prebuildRefusal({
@@ -94,7 +106,14 @@ export async function runPrebuild(
     nativeDirExists: dirExists,
   });
   if (refusal) {
-    return { failed: true, code: refusal.code, reason: refusal.message, remedy: refusal.remedy, error: refusal, lastLines: [] };
+    return {
+      failed: true,
+      code: refusal.code,
+      reason: refusal.message,
+      remedy: refusal.remedy,
+      error: refusal,
+      lastLines: [],
+    };
   }
 
   const bin = expoBinPath(root);

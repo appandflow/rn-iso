@@ -27,14 +27,40 @@ import { spawnEntry } from '../spawn-entry.ts';
 import type { Command } from 'commander';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.ts';
 import { getConcurrencyLimits, getProject, upsertProject, type ProjectRecord } from '../config.ts';
-import { DEFAULT_METRO_PORT, LAUNCH_UNVERIFIED, devClientUrl, installIosApp, launchIosApp, unverifiedLaunchLines, verifyLaunch } from '../engine/app-install.ts';
-import { acquireBuildLock, releaseBuildLock, waitForBuild, type BuildLockHandle, type WaitForBuildResult } from '../engine/build-lock.ts';
+import {
+  DEFAULT_METRO_PORT,
+  LAUNCH_UNVERIFIED,
+  devClientUrl,
+  installIosApp,
+  launchIosApp,
+  unverifiedLaunchLines,
+  verifyLaunch,
+} from '../engine/app-install.ts';
+import {
+  acquireBuildLock,
+  releaseBuildLock,
+  waitForBuild,
+  type BuildLockHandle,
+  type WaitForBuildResult,
+} from '../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import { type Diagnostic, describeDiagnostic } from '../engine/errors-xcode.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
-import { RESOLVE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, cacheLevel, checkEasAuth, easAuthNote, exitAfterFlush, isEasAuthFailureText, loadProjectProvider, resolveRemote, uploadRemote, type LoadProjectProviderResult } from '../engine/remote-cache.ts';
+import {
+  RESOLVE_TIMEOUT_MS,
+  UPLOAD_TIMEOUT_MS,
+  cacheLevel,
+  checkEasAuth,
+  easAuthNote,
+  exitAfterFlush,
+  isEasAuthFailureText,
+  loadProjectProvider,
+  resolveRemote,
+  uploadRemote,
+  type LoadProjectProviderResult,
+} from '../engine/remote-cache.ts';
 import { buildIos, readBundleId } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
 import type { CacheHitLevel, IosFacts } from '../types.ts';
@@ -279,7 +305,10 @@ export function appNameFromPath(appPath: unknown): string | null {
 // fresh checkout whose pods have simply never been installed (install -- the
 // build cannot link without them). `hasPodfile` is what separates the two,
 // and it is exactly why readPodState returns it.
-export function podAction(podState: PodStateLike | null | undefined, verdict: PodVerdictLike | null | undefined): { install: boolean; reason?: string } {
+export function podAction(
+  podState: PodStateLike | null | undefined,
+  verdict: PodVerdictLike | null | undefined,
+): { install: boolean; reason?: string } {
   if (verdict?.stale) return { install: true, reason: verdict.reason };
   if (verdict?.noPods && podState?.hasPodfile) {
     return { install: true, reason: 'ios/Podfile exists but no pods are installed' };
@@ -309,7 +338,11 @@ export function podAction(podState: PodStateLike | null | undefined, verdict: Po
 // expo-dev-launcher, so an app without it would get an openurl no process
 // answers. `resolvable` as well as `in dependencies`, because a monorepo
 // hoists it out of the app's own node_modules.
-export function devClientScheme(root: string, appPath: string | null = null, { exec = null }: { exec?: import('../exec.ts').Executor | null } = {}): string | undefined {
+export function devClientScheme(
+  root: string,
+  appPath: string | null = null,
+  { exec = null }: { exec?: import('../exec.ts').Executor | null } = {},
+): string | undefined {
   if (!hasDevClient(root)) return undefined;
   const fromBundle = pickDevClientScheme(readBundleSchemes(appPath, { exec }));
   if (fromBundle) return fromBundle;
@@ -337,7 +370,10 @@ export function schemesFromInfoPlist(plist: unknown): string[] {
 // BINARY, so it cannot simply be read as text). Empty on any failure: the
 // app.json fallback is behind this, and a missing scheme is survivable where a
 // wrong one is not.
-export function readBundleSchemes(appPath: unknown, { exec = null }: { exec?: import('../exec.ts').Executor | null } = {}): string[] {
+export function readBundleSchemes(
+  appPath: unknown,
+  { exec = null }: { exec?: import('../exec.ts').Executor | null } = {},
+): string[] {
   if (typeof appPath !== 'string' || appPath.trim() === '') return [];
   const e = exec || getExecutor();
   let out;
@@ -363,7 +399,8 @@ export function readBundleSchemes(appPath: unknown, { exec = null }: { exec?: im
 // resolveExpoOrLongestScheme). On a real repo the longest is
 // `com.googleusercontent.apps.869857856617-...` and the app's own scheme is
 // `th3rdwave` -- the shortest of the three.
-const THIRD_PARTY_SCHEME = /^(?:fb\d+|com\.googleusercontent\.apps\.|msauth\.|msauthv2|twitterkit-|db-[a-z0-9]+$|spotify|snapchat|com\.facebook)/i;
+const THIRD_PARTY_SCHEME =
+  /^(?:fb\d+|com\.googleusercontent\.apps\.|msauth\.|msauthv2|twitterkit-|db-[a-z0-9]+$|spotify|snapchat|com\.facebook)/i;
 
 // PURE. Which of an app's schemes to deep-link with.
 //
@@ -384,7 +421,7 @@ export function pickDevClientScheme(schemes: unknown): string | null {
 
 function hasDevClient(root: string): boolean {
   const pkg = readJson(join(root, 'package.json'));
-  const deps = { ...(pkg?.dependencies || {}), ...(pkg?.devDependencies || {}) };
+  const deps = { ...pkg?.dependencies, ...pkg?.devDependencies };
   if ('expo-dev-client' in deps) return true;
   // Hoisted: a monorepo installs it at the workspace root, where the app's
   // own package.json is still the one that declares it -- but not always, and
@@ -437,7 +474,7 @@ export async function resolveMetroWithRetry(
     delays?: number[];
     sleep?: (ms: number) => Promise<void>;
     onRetry?: (info: { attempt: number; delayMs: number; resolution: MetroResolutionLike }) => void;
-  } = {}
+  } = {},
 ): Promise<MetroResolutionLike> {
   let resolution = await resolve(port, root);
   for (let i = 0; i < delays.length && gateShouldRetry(resolution); i++) {
@@ -452,7 +489,12 @@ export async function resolveMetroWithRetry(
 // differently: a supervisor record for THIS port (retry, or raise --wait --
 // the dev server exists and is probably still indexing) from a genuinely
 // foreign or absent listener (start one).
-export function noMetroMessage({ port, resolution, supervisor, supervisorAlive }: {
+export function noMetroMessage({
+  port,
+  resolution,
+  supervisor,
+  supervisorAlive,
+}: {
   port: number;
   resolution?: MetroResolutionLike | null;
   supervisor?: SupervisorLike | null;
@@ -461,16 +503,22 @@ export function noMetroMessage({ port, resolution, supervisor, supervisorAlive }
   const foreign = resolution?.notOurs;
   if (supervisor && supervisor.port === port && supervisorAlive) {
     const mode = supervisor.mode ? `${supervisor.mode} ` : '';
-    return `A supervisor record exists for port ${port} (pid ${supervisor.pid}, ${mode}dev server) but it did not verify as this workspace's Metro`
-      + `${foreign ? `: ${foreign}` : ' -- nothing answered /status'}.`
-      + ' Metro may still be indexing this project (a monorepo file-map crawl blocks its event loop for ~20s after the port opens).';
+    return (
+      `A supervisor record exists for port ${port} (pid ${supervisor.pid}, ${mode}dev server) but it did not verify as this workspace's Metro` +
+      `${foreign ? `: ${foreign}` : ' -- nothing answered /status'}.` +
+      ' Metro may still be indexing this project (a monorepo file-map crawl blocks its event loop for ~20s after the port opens).'
+    );
   }
   if (foreign) return `Port ${port} is in use but is NOT this workspace's dev server: ${foreign}.`;
   return `Nothing is serving this workspace's dev server on port ${port}.`;
 }
 
 // PURE. The remedy that goes with it.
-export function noMetroRemedy({ port, supervisor, supervisorAlive }: {
+export function noMetroRemedy({
+  port,
+  supervisor,
+  supervisorAlive,
+}: {
   port: number;
   supervisor?: SupervisorLike | null;
   supervisorAlive?: boolean;
@@ -485,12 +533,19 @@ export function noMetroRemedy({ port, supervisor, supervisorAlive }: {
 // a state file or a derived-data tree into it. Imported dynamically and
 // tolerantly: it is one repo-hygiene write, and a build must not fail because
 // of it.
-export async function ensureWorkspaceIgnoredSafely(root: string, { note = (_line: string) => {} }: { note?: (line: string) => void } = {}): Promise<unknown> {
+export async function ensureWorkspaceIgnoredSafely(
+  root: string,
+  { note = (_line: string) => {} }: { note?: (line: string) => void } = {},
+): Promise<unknown> {
   try {
     const mod = await import('../engine/workspace.ts');
     return mod.ensureWorkspaceIgnored?.(root) ?? null;
   } catch (err) {
-    note(chalk.dim(`Could not ensure ${root}/.gitignore lists the rn-iso workspace directory: ${(err as Error)?.message || err}`));
+    note(
+      chalk.dim(
+        `Could not ensure ${root}/.gitignore lists the rn-iso workspace directory: ${(err as Error)?.message || err}`,
+      ),
+    );
     return null;
   }
 }
@@ -542,7 +597,21 @@ export function lastBuildRecord({
 // 'unverified' when it was not. It was an unconditional `true` while the app
 // was demonstrably sitting on the dev-launcher's server picker having loaded
 // nothing -- a fact an agent branches on must not be a constant.
-export function iosFacts({ udid, deviceName, fingerprint, cacheKey, cacheHit, cacheSkipped = false, waitedForBuild = null, appPath, bundleId, metroPort, logsDir, durationMs, launched = true }: {
+export function iosFacts({
+  udid,
+  deviceName,
+  fingerprint,
+  cacheKey,
+  cacheHit,
+  cacheSkipped = false,
+  waitedForBuild = null,
+  appPath,
+  bundleId,
+  metroPort,
+  logsDir,
+  durationMs,
+  launched = true,
+}: {
   udid: string;
   deviceName?: string | null;
   fingerprint?: string | null;
@@ -593,7 +662,11 @@ export function iosFacts({ udid, deviceName, fingerprint, cacheKey, cacheHit, ca
 // can halt and a `log stream` nothing will ever reap. writeWorkspaceState
 // read-modify-writes for exactly this reason; this function exists so there
 // is one call site to point the test at.
-export function writeLastBuild(root: string, record: Record<string, unknown>, { write = writeWorkspaceState }: { write?: typeof writeWorkspaceState } = {}): Record<string, unknown> {
+export function writeLastBuild(
+  root: string,
+  record: Record<string, unknown>,
+  { write = writeWorkspaceState }: { write?: typeof writeWorkspaceState } = {},
+): Record<string, unknown> {
   try {
     write(root, { lastBuild: record });
   } catch {
@@ -650,7 +723,11 @@ export async function replaceCollector({
       // line, because it means a process we could not stop is still holding
       // the device's log stream.
       if ((err as NodeJS.ErrnoException)?.code !== 'ESRCH') {
-        note(chalk.yellow(`Could not stop the previous ${PLATFORM} log collector (pid ${previousPid}): ${(err as Error)?.message || err}`));
+        note(
+          chalk.yellow(
+            `Could not stop the previous ${PLATFORM} log collector (pid ${previousPid}): ${(err as Error)?.message || err}`,
+          ),
+        );
       }
     }
     const deadline = Date.now() + waitMs;
@@ -659,13 +736,7 @@ export async function replaceCollector({
     }
   }
 
-  const args = [
-    collectorEntry(),
-    '--platform', PLATFORM,
-    '--root', root,
-    '--udid', udid,
-    '--bundle', bundleId,
-  ];
+  const args = [collectorEntry(), '--platform', PLATFORM, '--root', root, '--udid', udid, '--bundle', bundleId];
   // The real product name, from the .app path. The collector's own fallback
   // (the bundle id's last segment) matches nothing whenever the two differ,
   // and the symptom is an empty device.ndjson rather than an error.
@@ -762,18 +833,24 @@ export function registerIos(program: Command, deps: Partial<typeof DEFAULT_DEPS>
   program
     .command('ios')
     .description(
-      'Build (or restore from the fingerprint cache), install and launch this workspace\'s app on its owned '
-      + 'simulator, wired to the reserved Metro port. Requires a running dev server (`rn-iso start`).'
+      "Build (or restore from the fingerprint cache), install and launch this workspace's app on its owned " +
+        'simulator, wired to the reserved Metro port. Requires a running dev server (`rn-iso start`).',
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option('--no-metro-check', 'Skip the "is this workspace\'s dev server running?" gate and build anyway')
-    .option('--no-build-cache', 'Build fresh, ignoring cached artifacts (local and the project\'s build-cache provider); the fresh build still replaces the cache entry')
+    .option(
+      '--no-build-cache',
+      "Build fresh, ignoring cached artifacts (local and the project's build-cache provider); the fresh build still replaces the cache entry",
+    )
     .action(async (opts: IosCommandOptions) => {
       await runIos(opts, deps);
     });
 }
 
-export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<typeof DEFAULT_DEPS> = {}): Promise<IosFacts | null> {
+export async function runIos(
+  opts: IosCommandOptions = {},
+  overrides: Partial<typeof DEFAULT_DEPS> = {},
+): Promise<IosFacts | null> {
   // Annotated explicitly: spreading a Partial<> over the full DEFAULT_DEPS
   // would otherwise let TS infer some properties as possibly-undefined, even
   // though every key is always present (DEFAULT_DEPS supplies every one).
@@ -871,7 +948,12 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
     // `logPath` rather than a note() at each call site, so the log line lands
     // in the same place relative to the remedy that `android` puts it.
     if (logPath) note(chalk.dim(phaseLine('log', logPath)));
-    if (build) writeLastBuild(root, lastBuildRecord({ ...build, startedAt, status: 'failed', errorCode: code, durationMs: elapsed() }), { write: d.writeWorkspaceState });
+    if (build)
+      writeLastBuild(
+        root,
+        lastBuildRecord({ ...build, startedAt, status: 'failed', errorCode: code, durationMs: elapsed() }),
+        { write: d.writeWorkspaceState },
+      );
     note(chalk.red(phaseLine('failed', code)));
     // --json is a promise about stdout in BOTH directions: exactly one
     // parseable line whatever happened. Without this, a failed `ios --json`
@@ -913,8 +995,16 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
   // parameter (with a `= {}` default) infers a type that drops every property with
   // no default of its own -- so TS sees zero overlap with the real call shape. The
   // local signature below is what this file actually calls it with.
-  type CheckDeviceCapacityFn = (args: { platform: string; project: ProjectRecord | null; max: number }) => DeviceCapacityRefusalLike | null;
-  const capacity = (d.checkDeviceCapacity as unknown as CheckDeviceCapacityFn)({ platform: PLATFORM, project: proj, max: limits.maxDevices });
+  type CheckDeviceCapacityFn = (args: {
+    platform: string;
+    project: ProjectRecord | null;
+    max: number;
+  }) => DeviceCapacityRefusalLike | null;
+  const capacity = (d.checkDeviceCapacity as unknown as CheckDeviceCapacityFn)({
+    platform: PLATFORM,
+    project: proj,
+    max: limits.maxDevices,
+  });
   if (capacity) return fail(capacity);
 
   // device.ts's note/out params default to a 0-arg no-op, so TS infers their
@@ -971,7 +1061,15 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
     // resolveMetroWithRetry). ~10s of backoff, only when waiting could change
     // the answer.
     const resolution = await d.resolveMetroWithRetry(d.resolveProjectMetro, metroPort, root, {
-      onRetry: ({ delayMs }) => note(chalk.dim(phaseLine('metro', `port ${metroPort} did not verify yet; retrying in ${Math.round(delayMs / 1000)}s (Metro may still be indexing)`))),
+      onRetry: ({ delayMs }) =>
+        note(
+          chalk.dim(
+            phaseLine(
+              'metro',
+              `port ${metroPort} did not verify yet; retrying in ${Math.round(delayMs / 1000)}s (Metro may still be indexing)`,
+            ),
+          ),
+        ),
     });
     if (!resolution?.metro) {
       const supervisor = (d.readWorkspaceState(root)?.supervisor ?? null) as SupervisorLike | null;
@@ -991,7 +1089,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
 
   // ensureBooted is still untyped in engine/device.ts; its `= {}` default drops
   // `platform`/`device` (no default of their own) from the inferred type.
-  type EnsureBootedFn = (args: { platform: string; device: unknown; out?: (...args: unknown[]) => void }) => Promise<BootedLike>;
+  type EnsureBootedFn = (args: {
+    platform: string;
+    device: unknown;
+    out?: (...args: unknown[]) => void;
+  }) => Promise<BootedLike>;
   const booted = await (d.ensureBooted as unknown as EnsureBootedFn)({ platform: PLATFORM, device, out: noteAny });
   if (!booted?.ok) {
     return fail({
@@ -1019,7 +1121,8 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
     return fail({
       code: 'RN_ISO_NO_FINGERPRINT',
       message: `Could not fingerprint ${root}: @expo/fingerprint is not resolvable from the project or from rn-iso.`,
-      remedy: 'Install it in the project (`npm i -D @expo/fingerprint`) so builds can be cached and shared between worktrees.',
+      remedy:
+        'Install it in the project (`npm i -D @expo/fingerprint`) so builds can be cached and shared between worktrees.',
     });
   }
   // Debug / simulator defaults: the same key `build-cache` and the Expo
@@ -1031,7 +1134,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
   // asked first, and the only thing asked at all on a bare RN project.
   const cached = useBuildCache ? d.resolveBuild(PLATFORM, cacheKey) : null;
   let cacheHit: CacheHitLevel = cached ? 'local' : false;
-  phase('fingerprint', `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'}`);
+  phase(
+    'fingerprint',
+    `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'}`,
+  );
 
   let appPath: string | null = cached;
   let bundleId: string | null = null;
@@ -1089,7 +1195,12 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
     // property this call sends has no default there, so TS infers a parameter
     // type with NO overlap at all against the object below. The local
     // signature is what this file actually calls it with.
-    type ResolveRemoteFn = (args: { provider: unknown; platform: string; projectRoot: string; fingerprintHash: string }) => Promise<RemoteHitLike | null>;
+    type ResolveRemoteFn = (args: {
+      provider: unknown;
+      platform: string;
+      projectRoot: string;
+      fingerprintHash: string;
+    }) => Promise<RemoteHitLike | null>;
     const hit = await (d.resolveRemote as unknown as ResolveRemoteFn)({
       provider: remote.provider,
       platform: PLATFORM,
@@ -1111,14 +1222,26 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
       phase('cache', `remote hit (${remote.name})${stored ? ' -> stored locally' : ''}`);
     } else if (hit?.timedOut) {
       abandonedRemote = true;
-      note(chalk.yellow(phaseLine('cache', `${remote.name} did not answer within ${formatDuration(RESOLVE_TIMEOUT_MS)}; building instead`)));
+      note(
+        chalk.yellow(
+          phaseLine(
+            'cache',
+            `${remote.name} did not answer within ${formatDuration(RESOLVE_TIMEOUT_MS)}; building instead`,
+          ),
+        ),
+      );
     } else if (hit?.failed) {
       // An auth failure the provider DID surface gets the same specific note
       // the pre-flight would have printed, rather than the generic one.
-      const authNote = remote.name === 'eas' && isEasAuthFailureText(hit.failed)
-        ? easAuthNote({ code: 'logged-out', reason: hit.failed })
-        : null;
-      note(chalk.yellow(phaseLine('cache', authNote || `${remote.name} could not be used: ${hit.failed}; building instead`)));
+      const authNote =
+        remote.name === 'eas' && isEasAuthFailureText(hit.failed)
+          ? easAuthNote({ code: 'logged-out', reason: hit.failed })
+          : null;
+      note(
+        chalk.yellow(
+          phaseLine('cache', authNote || `${remote.name} could not be used: ${hit.failed}; building instead`),
+        ),
+      );
     } else {
       phase('cache', `remote miss (${remote.name})`);
     }
@@ -1152,7 +1275,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
     } catch (e) {
       // Same containment as the cache store and the provider: this is an
       // optimisation, and one that cannot run must never stop a build.
-      note(chalk.yellow(phaseLine('build', `could not take the build lock: ${(e as Error)?.message || e}; building anyway`)));
+      note(
+        chalk.yellow(
+          phaseLine('build', `could not take the build lock: ${(e as Error)?.message || e}; building anyway`),
+        ),
+      );
     }
 
     if (attempt?.acquired) {
@@ -1160,8 +1287,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
     } else if (attempt?.held) {
       const held = attempt.held;
       const who = held.projectRoot || 'another workspace';
-      phase('build', `${who} is already building ${shortHash(fingerprint)} (pid ${held.pid})`
-        + `${held.logFile ? ` -- tail ${held.logFile}` : ''}`);
+      phase(
+        'build',
+        `${who} is already building ${shortHash(fingerprint)} (pid ${held.pid})` +
+          `${held.logFile ? ` -- tail ${held.logFile}` : ''}`,
+      );
 
       let waited: WaitForBuildResult | null = null;
       try {
@@ -1191,11 +1321,17 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
         // than starting a third compile. If someone else took it first, build
         // without it -- one wait is a good bet, but queueing again after a
         // failure could repeat, and a redundant build is the cheaper failure.
-        note(chalk.yellow(phaseLine('build', `${who}'s build ended without an artifact (${waited?.builderFailed}); building here`)));
+        note(
+          chalk.yellow(
+            phaseLine('build', `${who}'s build ended without an artifact (${waited?.builderFailed}); building here`),
+          ),
+        );
         try {
           const takeover = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
           if (takeover?.acquired) buildLock = takeover;
-        } catch { /* contained the same way as the first attempt */ }
+        } catch {
+          /* contained the same way as the first attempt */
+        }
       }
     }
   }
@@ -1238,7 +1374,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
         } catch (e) {
           // Same containment as the build lock: a slot system that cannot run
           // must never stop a build, only stop limiting it.
-          note(chalk.yellow(phaseLine('build', `could not take a build slot: ${(e as Error)?.message || e}; building anyway`)));
+          note(
+            chalk.yellow(
+              phaseLine('build', `could not take a build slot: ${(e as Error)?.message || e}; building anyway`),
+            ),
+          );
         }
       }
 
@@ -1321,7 +1461,13 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
       // depends on it.
       if (remote) {
         // uploadRemote has the same untyped-default shape as resolveRemote above.
-        type UploadRemoteFn = (args: { provider: unknown; platform: string; projectRoot: string; fingerprintHash: string; buildPath: string }) => Promise<RemoteUploadLike>;
+        type UploadRemoteFn = (args: {
+          provider: unknown;
+          platform: string;
+          projectRoot: string;
+          fingerprintHash: string;
+          buildPath: string;
+        }) => Promise<RemoteUploadLike>;
         uploadPending = (d.uploadRemote as unknown as UploadRemoteFn)({
           provider: remote.provider,
           platform: PLATFORM,
@@ -1381,8 +1527,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
     level: 'info',
     marker: true,
     event: 'launch',
-    msg: `launched ${bundleId} on ${udid} against Metro port ${metroPort}`
-      + (launched?.mode === 'openurl' ? ' (expo-dev-client)' : ''),
+    msg:
+      `launched ${bundleId} on ${udid} against Metro port ${metroPort}` +
+      (launched?.mode === 'openurl' ? ' (expo-dev-client)' : ''),
   });
 
   // ---- collector (Contract 5) ----
@@ -1431,7 +1578,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
       devClientUrl: scheme ? devClientUrl(scheme, metroPort) : null,
       mode: isExpo ? MODE_EXPO : MODE_BARE,
     });
-    phase('verify', chalk.yellow('UNVERIFIED: no bundle request reached this workspace\'s Metro'));
+    phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
     for (const line of lines) note(chalk.yellow(phaseLine('', line)));
   }
 
@@ -1442,9 +1589,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
     src: 'build',
     level: launchState === LAUNCH_UNVERIFIED ? 'warn' : 'info',
     event: launchState === LAUNCH_UNVERIFIED ? 'launch_unverified' : 'launch_verified',
-    msg: launchState === LAUNCH_UNVERIFIED
-      ? `no bundle request from ${bundleId} reached this workspace's Metro on port ${metroPort}`
-      : `${bundleId} fetched a bundle from this workspace's Metro on port ${metroPort}`,
+    msg:
+      launchState === LAUNCH_UNVERIFIED
+        ? `no bundle request from ${bundleId} reached this workspace's Metro on port ${metroPort}`
+        : `${bundleId} fetched a bundle from this workspace's Metro on port ${metroPort}`,
   });
 
   // ---- the upload, collected (it has been running since the build) ----
@@ -1457,28 +1605,40 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
       phase('cache', `uploaded (${remote?.name})`);
     } else if (upload?.timedOut) {
       abandonedRemote = true;
-      note(chalk.yellow(phaseLine('cache', `${remote?.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`)));
+      note(
+        chalk.yellow(
+          phaseLine(
+            'cache',
+            `${remote?.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`,
+          ),
+        ),
+      );
     } else if (upload?.failed) {
-      const authNote = remote?.name === 'eas' && isEasAuthFailureText(upload.failed)
-        ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
-        : null;
+      const authNote =
+        remote?.name === 'eas' && isEasAuthFailureText(upload.failed)
+          ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
+          : null;
       note(chalk.yellow(phaseLine('cache', authNote || `${remote?.name} upload failed: ${upload.failed}`)));
     }
   }
 
   // ---- the record (Contract 4) ----
   const durationMs = elapsed();
-  writeLastBuild(root, lastBuildRecord({
-    fingerprint,
-    cacheKey,
-    cacheHit,
-    cacheSkipped: !useBuildCache,
-    durationMs,
-    appPath,
-    bundleId,
-    startedAt,
-    status: 'ok',
-  }), { write: d.writeWorkspaceState });
+  writeLastBuild(
+    root,
+    lastBuildRecord({
+      fingerprint,
+      cacheKey,
+      cacheHit,
+      cacheSkipped: !useBuildCache,
+      durationMs,
+      appPath,
+      bundleId,
+      startedAt,
+      status: 'ok',
+    }),
+    { write: d.writeWorkspaceState },
+  );
 
   // `writer` is assigned only inside the `logWriter` closure (via `||=`), which
   // TS's control-flow analysis cannot see, so it narrows the outer binding to
@@ -1505,13 +1665,14 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<ty
   if (json) {
     console.log(JSON.stringify(facts));
   } else {
-    const summary = `OK: ${bundleId} on ${deviceLabel(device, udid)}, Metro port ${metroPort}`
-      + ` (${cacheDescription(cacheHit, remote?.name)}, ${formatDuration(durationMs)})`;
+    const summary =
+      `OK: ${bundleId} on ${deviceLabel(device, udid)}, Metro port ${metroPort}` +
+      ` (${cacheDescription(cacheHit, remote?.name)}, ${formatDuration(durationMs)})`;
     // The outcome line says which kind of OK this is. "OK" alone, over an app
     // that loaded nothing, is the claim this whole check exists to stop.
-    console.log(launchState === LAUNCH_UNVERIFIED
-      ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
-      : chalk.green(summary));
+    console.log(
+      launchState === LAUNCH_UNVERIFIED ? chalk.yellow(`${summary} -- launch UNVERIFIED`) : chalk.green(summary),
+    );
   }
 
   // Everything this command does is done. If a provider call was abandoned,
@@ -1528,7 +1689,6 @@ export function cacheDescription(cacheHit: CacheHitLevel, providerName: string |
   if (cacheHit === 'local') return 'from cache';
   return 'built';
 }
-
 
 // PURE. The {message, remedy} an `ios` build failure reports.
 //
@@ -1550,8 +1710,7 @@ export function xcodeFailureReport(result: BuildIosResultLike, logPath: string) 
   const message = diagnostics.length
     ? `\`xcodebuild\` failed${how} with ${diagnostics.length} diagnostic${diagnostics.length === 1 ? '' : 's'}.`
     : `\`xcodebuild\` failed${how} with no recognizable diagnostic.`;
-  const remedy = diagnostics.find(d => d?.remedy)?.remedy
-    || `See ${logPath} for the transcript.`;
+  const remedy = diagnostics.find((d) => d?.remedy)?.remedy || `See ${logPath} for the transcript.`;
   return { message, remedy };
 }
 
@@ -1563,7 +1722,7 @@ function printDiagnostics(note: (line: string) => void, result: BuildIosResultLi
   for (const diagnostic of shown) {
     note(chalk.red(phaseLine('error', describeDiagnostic(diagnostic))));
   }
-  const hidden = (diagnostics.length - shown.length) + (result?.truncated || 0);
+  const hidden = diagnostics.length - shown.length + (result?.truncated || 0);
   if (hidden > 0) {
     note(chalk.dim(phaseLine('error', `... and ${hidden} more diagnostic${hidden === 1 ? '' : 's'} in the log`)));
   }

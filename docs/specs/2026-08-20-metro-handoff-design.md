@@ -3,7 +3,7 @@
 Date: 2026-08-20
 Status: draft
 Amends: `2026-08-16-spawn-and-reap-broker-design.md`. That spec made rn-iso a
-pure environment broker for *devices* while leaving Metro managed. This
+pure environment broker for _devices_ while leaving Metro managed. This
 finishes the job by applying the same rule to Metro.
 
 ## Purpose
@@ -12,8 +12,8 @@ The broker principle from the spawn-and-reap spec has one carve-out: rn-iso
 still spawns Metro, picks its command line, captures its logs, and tracks its
 PID. That carve-out is hard to justify on its own terms.
 
-The reason build dispatch was deleted was that *how to invoke a project's
-tooling* is project-specific judgment an agent already has from repo context,
+The reason build dispatch was deleted was that _how to invoke a project's
+tooling_ is project-specific judgment an agent already has from repo context,
 and encoding it centrally means perpetually chasing idiosyncrasies. Choosing a
 Metro command is the same problem one layer down, and it fails the same way.
 Observed on `member-app` during the 0.7.0 live smoke: the project's own start
@@ -30,7 +30,7 @@ while rn-iso's managed Metro sits idle. The failure mode managed Metro
 appears to prevent already exists; managing Metro only adds a wasted process
 to it.
 
-What does *not* collapse is port allocation. A port is a contended,
+What does _not_ collapse is port allocation. A port is a contended,
 cross-project resource: an agent in worktree A cannot know worktree B holds
 8082, and two agents probing "is 8082 free?" concurrently both get yes. That
 needs an arbiter, for exactly the reason device ownership does.
@@ -68,13 +68,13 @@ needs an arbiter, for exactly the reason device ownership does.
 
 Teardown must not trust a port as identity. This is not hypothetical: the
 final 0.7.0 review's one Critical finding was that Android teardown trusted
-the emulator console *port* as identity, so a foreign emulator occupying our
+the emulator console _port_ as identity, so a foreign emulator occupying our
 recorded port would have been killed by `shutdown`/`release`/`remove`. The
 fix was `resolveOwnedAvdSerial`, verifying identity before any destructive
 command. Port-based Metro teardown reintroduces that exact anti-pattern
 unless guarded the same way.
 
-Today the recorded PID *is* proof of provenance, because rn-iso spawned the
+Today the recorded PID _is_ proof of provenance, because rn-iso spawned the
 process. Removing the spawn removes the proof, so the proof must be
 reconstructed at teardown time.
 
@@ -91,7 +91,7 @@ Identity requires **both** signals:
 1. `/status` on the port answers `packager-status:running` — it is Metro and
    not some unrelated server that took the port.
 2. The listening process's tree resolves to a working directory inside
-   `projectPath` — it is *this project's* Metro and not another worktree's.
+   `projectPath` — it is _this project's_ Metro and not another worktree's.
 
 Either signal alone is insufficient. Failing to get a definite answer routes
 to `notOurs`, never to a kill: the same fail-closed direction as the
@@ -127,7 +127,7 @@ try/catch containment so one bad record cannot abort a batch:
 - `worktree remove` (via `reclaim.js`)
 - `gc`
 
-This is a net *improvement* in coverage: port-based teardown also reaps
+This is a net _improvement_ in coverage: port-based teardown also reaps
 Metros that rn-iso never started, which today leak entirely.
 
 ### `stop`

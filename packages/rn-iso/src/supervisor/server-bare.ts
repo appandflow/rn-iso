@@ -37,7 +37,7 @@ export const BARE_PACKAGES: string[] = [
 ];
 
 const REQUIRED_EXPORTS: Record<string, string[]> = {
-  'metro': ['loadConfig', 'runServer'],
+  metro: ['loadConfig', 'runServer'],
   '@react-native/dev-middleware': ['createDevMiddleware'],
   '@react-native-community/cli-server-api': ['createDevServerMiddleware'],
 };
@@ -91,7 +91,10 @@ export interface BareDeps {
   serverApi: BareModule;
 }
 
-export function resolveBareDeps(root: string, { requireFrom = projectRequire }: { requireFrom?: (root: string) => NodeJS.Require } = {}): BareDeps {
+export function resolveBareDeps(
+  root: string,
+  { requireFrom = projectRequire }: { requireFrom?: (root: string) => NodeJS.Require } = {},
+): BareDeps {
   const require_ = requireFrom(root);
   const modules: Record<string, BareModule> = {};
   const missing: string[] = [];
@@ -109,7 +112,7 @@ export function resolveBareDeps(root: string, { requireFrom = projectRequire }: 
       throw supervisorError(
         'RN_ISO_BARE_LOAD',
         `${name} is installed in ${root} but failed to load: ${(err as Error)?.message || err}`,
-        `Check that ${name} matches this project's React Native version, then reinstall node_modules.`
+        `Check that ${name} matches this project's React Native version, then reinstall node_modules.`,
       );
     }
   }
@@ -117,7 +120,7 @@ export function resolveBareDeps(root: string, { requireFrom = projectRequire }: 
     throw supervisorError(
       'RN_ISO_BARE_DEPS',
       `Cannot host a bare React Native dev server for ${root}: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not resolvable from the project.`,
-      'Run `npm install` in the project. If this is an Expo project that was detected as bare, check that `expo` is in its dependencies and that it has an Expo config.'
+      'Run `npm install` in the project. If this is an Expo project that was detected as bare, check that `expo` is in its dependencies and that it has an Expo config.',
     );
   }
   const problems = checkBareApi(modules);
@@ -125,7 +128,7 @@ export function resolveBareDeps(root: string, { requireFrom = projectRequire }: 
     throw supervisorError(
       'RN_ISO_BARE_API',
       `The dev server packages in ${root} are not the API rn-iso expects: ${problems.join('; ')}.`,
-      'Upgrade or reinstall the project\'s React Native toolchain so metro, @react-native/dev-middleware and @react-native-community/cli-server-api match.'
+      "Upgrade or reinstall the project's React Native toolchain so metro, @react-native/dev-middleware and @react-native-community/cli-server-api match.",
     );
   }
   return {
@@ -144,7 +147,10 @@ export function resolveBareDeps(root: string, { requireFrom = projectRequire }: 
 // is not installed must not cost the caller a dev server -- but it must not be
 // silent either, or a workspace with no logs looks like a workspace with no
 // errors. The caller reports the miss and serves on.
-export function loadNdjsonReporter(root: string, { requireFrom = createRequire }: { requireFrom?: (id: string) => NodeJS.Require } = {}): ((opts: { dir: string }) => BareModule) | null {
+export function loadNdjsonReporter(
+  root: string,
+  { requireFrom = createRequire }: { requireFrom?: (id: string) => NodeJS.Require } = {},
+): ((opts: { dir: string }) => BareModule) | null {
   for (const from of [join(root, 'package.json'), import.meta.url]) {
     try {
       const factory = requireFrom(from)('@rn-iso/metro').ndjsonReporter;
@@ -173,12 +179,20 @@ export function ensureNativePlatform(config: BareModule): boolean {
 // @react-native/dev-middleware logs through a {info, warn, error} object. RN
 // routes those into the reporter as unstable_server_log events, which is how
 // they reach the same NDJSON timeline as everything else.
-export function reporterLogger(reporter: BareModule): { info: (...data: unknown[]) => void; warn: (...data: unknown[]) => void; error: (...data: unknown[]) => void } {
-  const at = (level: string) => (...data: unknown[]) => {
-    try {
-      reporter.update({ type: 'unstable_server_log', level, data });
-    } catch { /* a logging failure must never reach the dev server */ }
-  };
+export function reporterLogger(reporter: BareModule): {
+  info: (...data: unknown[]) => void;
+  warn: (...data: unknown[]) => void;
+  error: (...data: unknown[]) => void;
+} {
+  const at =
+    (level: string) =>
+    (...data: unknown[]) => {
+      try {
+        reporter.update({ type: 'unstable_server_log', level, data });
+      } catch {
+        /* a logging failure must never reach the dev server */
+      }
+    };
   return { info: at('info'), warn: at('warn'), error: at('error') };
 }
 
@@ -189,12 +203,20 @@ export function reporterLogger(reporter: BareModule): { info: (...data: unknown[
 function closeHttpServer(httpServer: BareModule, timeoutMs: number): Promise<void> {
   return new Promise<void>((resolve) => {
     let done = false;
-    const finish = () => { if (!done) { done = true; resolve(); } };
+    const finish = () => {
+      if (!done) {
+        done = true;
+        resolve();
+      }
+    };
     const timer = setTimeout(finish, timeoutMs);
     if (typeof timer.unref === 'function') timer.unref();
     try {
       httpServer.closeAllConnections?.();
-      httpServer.close(() => { clearTimeout(timer); finish(); });
+      httpServer.close(() => {
+        clearTimeout(timer);
+        finish();
+      });
     } catch {
       clearTimeout(timer);
       finish();
@@ -224,7 +246,12 @@ export async function startBareServer({
 
   const config = await metro.loadConfig({ cwd: root, port });
   if (ensureNativePlatform(config)) {
-    writer?.write({ src: 'metro', level: 'debug', event: 'config_adjusted', msg: "added 'native' to resolver.platforms, as the React Native CLI does" });
+    writer?.write({
+      src: 'metro',
+      level: 'debug',
+      event: 'config_adjusted',
+      msg: "added 'native' to resolver.platforms, as the React Native CLI does",
+    });
   }
 
   let reporter;
@@ -246,14 +273,12 @@ export async function startBareServer({
   const hostname = 'localhost';
   const devServerUrl = `http://${hostname}:${port}`;
 
-  const {
-    middleware: communityMiddleware,
-    websocketEndpoints: communityWebsocketEndpoints,
-  } = serverApi.createDevServerMiddleware({
-    host: hostname,
-    port,
-    watchFolders: config.watchFolders,
-  });
+  const { middleware: communityMiddleware, websocketEndpoints: communityWebsocketEndpoints } =
+    serverApi.createDevServerMiddleware({
+      host: hostname,
+      port,
+      watchFolders: config.watchFolders,
+    });
 
   const { middleware, websocketEndpoints } = devMiddleware.createDevMiddleware({
     serverBaseUrl: devServerUrl,
@@ -281,7 +306,9 @@ export async function startBareServer({
     // record. Contract 2's serverPid is for the expo child.
     serverPid: null,
     httpServer,
-    onExit(cb: (info: { code: number; reason?: string }) => void) { listeners.push(cb); },
+    onExit(cb: (info: { code: number; reason?: string }) => void) {
+      listeners.push(cb);
+    },
     async close() {
       exited = true;
       await closeHttpServer(httpServer, closeTimeoutMs);

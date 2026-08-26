@@ -83,7 +83,11 @@ function reclaimOwnedDevices(project: ProjectRecord | null): {
     else if (r.status === 'skipped') {
       skippedDevices.push({ platform: 'android', name: android.avdName, reason: `${r.reason} -- not touched` });
     } else if (r.status === 'failed') {
-      const entry: SkippedDevice = { platform: 'android', name: android.avdName, reason: `teardown failed: ${r.reason}` };
+      const entry: SkippedDevice = {
+        platform: 'android',
+        name: android.avdName,
+        reason: `teardown failed: ${r.reason}`,
+      };
       skippedDevices.push(entry);
       failedDevices.push(entry);
     }
@@ -111,19 +115,22 @@ export interface ReclaimResult {
   keptEntry: boolean;
 }
 
-export async function reclaimProject(path: string, {
-  deleteOwnedDevices = false,
-}: { deleteOwnedDevices?: boolean } = {}): Promise<ReclaimResult> {
+export async function reclaimProject(
+  path: string,
+  { deleteOwnedDevices = false }: { deleteOwnedDevices?: boolean } = {},
+): Promise<ReclaimResult> {
   const project = getProject(path);
   const dereferenced = describeDereferenced(project);
 
-  const { deletedDevices, skippedDevices, failedDevices }: {
+  const {
+    deletedDevices,
+    skippedDevices,
+    failedDevices,
+  }: {
     deletedDevices: string[];
     skippedDevices: SkippedDevice[];
     failedDevices: SkippedDevice[];
-  } = deleteOwnedDevices
-    ? reclaimOwnedDevices(project)
-    : { deletedDevices: [], skippedDevices: [], failedDevices: [] };
+  } = deleteOwnedDevices ? reclaimOwnedDevices(project) : { deletedDevices: [], skippedDevices: [], failedDevices: [] };
 
   // A Metro started from a deleted directory can outlive it and squat on the
   // port, so the port is not genuinely free until the process is gone. Killing

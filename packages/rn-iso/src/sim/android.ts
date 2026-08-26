@@ -78,7 +78,11 @@ export function listInstalledSystemImages(): SystemImage[] {
 }
 
 function safeList(dir: string): string[] {
-  try { return readdirSync(dir); } catch { return []; }
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
 }
 
 // The 16KB-page-size variants of the system images (`..._ps16k`). They are a
@@ -101,20 +105,27 @@ function pageSizeRank(image: SystemImage): number {
 
 // Plain pages first; then highest API; then google_apis over other tags.
 // Apple Silicon needs arm64.
-export function pickDefaultSystemImage(images: SystemImage[], { systemImage }: { systemImage?: string } = {}): SystemImage | null {
-  if (systemImage) return images.find(i => i.pkg === systemImage) || null;
-  const arm = images.filter(i => i.arch === 'arm64-v8a');
+export function pickDefaultSystemImage(
+  images: SystemImage[],
+  { systemImage }: { systemImage?: string } = {},
+): SystemImage | null {
+  if (systemImage) return images.find((i) => i.pkg === systemImage) || null;
+  const arm = images.filter((i) => i.arch === 'arm64-v8a');
   if (arm.length === 0) return null;
-  return [...arm].sort((a, b) =>
-    pageSizeRank(a) - pageSizeRank(b)
-    || b.api - a.api
-    || (b.tag === 'google_apis' ? 1 : 0) - (a.tag === 'google_apis' ? 1 : 0))[0];
+  return [...arm].sort(
+    (a, b) =>
+      pageSizeRank(a) - pageSizeRank(b) ||
+      b.api - a.api ||
+      (b.tag === 'google_apis' ? 1 : 0) - (a.tag === 'google_apis' ? 1 : 0),
+  )[0];
 }
 
 export function createOwnedAvd(label: string, { systemImage }: { systemImage?: string } = {}): { avdName: string } {
   const pick = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage });
   if (!pick) {
-    throw new Error('No arm64 Android system image is installed. Install one, e.g.: sdkmanager "system-images;android-36;google_apis;arm64-v8a"');
+    throw new Error(
+      'No arm64 Android system image is installed. Install one, e.g.: sdkmanager "system-images;android-36;google_apis;arm64-v8a"',
+    );
   }
   const avdName = ownedAvdName(label);
   // avdmanager prompts "Do you wish to create a custom hardware profile?";
@@ -124,7 +135,9 @@ export function createOwnedAvd(label: string, { systemImage }: { systemImage?: s
 }
 
 export function sanitizeAvdLabel(label: string): string {
-  return String(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return String(label)
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 // See ownedSimName in sim/ios.js: the `rn-iso-` prefix is the ownership marker,
@@ -151,8 +164,8 @@ export function deleteAvd(avdName: string): void {
 export function parseAvdList(text: string): string[] {
   return text
     .split('\n')
-    .map(l => l.trim())
-    .filter(l => l && !l.startsWith('INFO') && !l.startsWith('WARNING'));
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('INFO') && !l.startsWith('WARNING'));
 }
 
 // v3 removed physical-device support, so NOTHING assigns, boots or installs
@@ -204,10 +217,12 @@ export function nextConsolePort(claimedPorts: number[]): number {
 
 export function bootAndroidEmulator(avdName: string, consolePort: number): void {
   const exec = getExecutor();
-  exec.spawn('emulator', ['-avd', avdName, '-port', String(consolePort)], {
-    detached: true,
-    stdio: 'ignore',
-  }).unref();
+  exec
+    .spawn('emulator', ['-avd', avdName, '-port', String(consolePort)], {
+      detached: true,
+      stdio: 'ignore',
+    })
+    .unref();
 }
 
 // runQuiet returns null whenever the command fails, which is the normal state
@@ -227,7 +242,7 @@ export async function waitForBoot(serial: string, timeoutMs = 60000): Promise<Bo
     // older AVD images set dev.bootcomplete sooner. Either is fine.
     if (getprop(exec, serial, 'sys.boot_completed') === '1') return { ok: true };
     if (getprop(exec, serial, 'dev.bootcomplete') === '1') return { ok: true };
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 1000));
   }
   // Diagnostic snapshot for the timeout error: shows the user exactly
   // what adb sees and why the polling never resolved.
@@ -285,7 +300,7 @@ export function resolveOwnedAvdSerial(avdName: string): ResolvedAvdSerial {
   if (!listAvds().includes(avdName)) return { missing: true };
   if (!avdName?.startsWith('rn-iso-')) return { notOwned: true };
   const adb = listAdbDevices();
-  const match = adb.emulators.find(e => getAvdNameForSerial(e.serial) === avdName);
+  const match = adb.emulators.find((e) => getAvdNameForSerial(e.serial) === avdName);
   if (match) return { serial: match.serial };
   return { notRunning: true };
 }

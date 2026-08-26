@@ -2,7 +2,16 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { parseSimctlList, listAllIosSims, listBootedIosSims, parseOccupyingApps, pickDefaultIosCreation, sanitizeDeviceLabel, ownedSimName, deleteIosSim } from '../sim/ios.ts';
+import {
+  parseSimctlList,
+  listAllIosSims,
+  listBootedIosSims,
+  parseOccupyingApps,
+  pickDefaultIosCreation,
+  sanitizeDeviceLabel,
+  ownedSimName,
+  deleteIosSim,
+} from '../sim/ios.ts';
 
 let tmpHome;
 
@@ -33,12 +42,12 @@ const SIMCTL_OUTPUT = JSON.stringify({
 test('parseSimctlList flattens devices and filters unavailable', () => {
   const sims = parseSimctlList(SIMCTL_OUTPUT);
   expect(sims.length).toBe(3);
-  expect(sims.map(s => s.udid).sort()).toEqual(['UDID-A', 'UDID-B', 'UDID-C']);
+  expect(sims.map((s) => s.udid).sort()).toEqual(['UDID-A', 'UDID-B', 'UDID-C']);
 });
 
 test('parseSimctlList includes runtime in each entry', () => {
   const sims = parseSimctlList(SIMCTL_OUTPUT);
-  const a = sims.find(s => s.udid === 'UDID-A');
+  const a = sims.find((s) => s.udid === 'UDID-A');
   expect(a.runtime).toBe('com.apple.CoreSimulator.SimRuntime.iOS-17-2');
 });
 
@@ -62,7 +71,7 @@ test('listBootedIosSims filters by state', () => {
     spawn: () => null,
   });
   const booted = listBootedIosSims();
-  expect(booted.map(s => s.udid).sort()).toEqual(['UDID-A', 'UDID-C']);
+  expect(booted.map((s) => s.udid).sort()).toEqual(['UDID-A', 'UDID-C']);
 });
 
 test('parseRuntimeVersion extracts major.minor from runtime id', async () => {
@@ -90,7 +99,7 @@ test('parseSimctlList drops non-iOS runtimes (watchOS, tvOS, visionOS)', () => {
     },
   });
   const sims = parseSimctlList(out);
-  expect(sims.map(s => s.udid)).toEqual(['IOS-1']);
+  expect(sims.map((s) => s.udid)).toEqual(['IOS-1']);
 });
 
 test('parseOccupyingApps finds xctrunner bundles', () => {
@@ -118,10 +127,18 @@ test('pickDefaultIosCreation picks the newest iPhone on the newest runtime', () 
     { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', name: 'iPhone 17 Pro' },
   ];
   const runtimes = [
-    { identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2', name: 'iOS 26.2', version: '26.2',
-      supportedDeviceTypes: deviceTypes },
-    { identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5', name: 'iOS 26.5', version: '26.5',
-      supportedDeviceTypes: deviceTypes },
+    {
+      identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
+      name: 'iOS 26.2',
+      version: '26.2',
+      supportedDeviceTypes: deviceTypes,
+    },
+    {
+      identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+      name: 'iOS 26.5',
+      version: '26.5',
+      supportedDeviceTypes: deviceTypes,
+    },
   ];
   const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
   expect(pick.runtimeId).toBe('com.apple.CoreSimulator.SimRuntime.iOS-26-5');
@@ -157,9 +174,7 @@ test('pickDefaultIosCreation prefers a numbered iPhone over lettered models (SE,
     { identifier: 'dt.17pm', name: 'iPhone 17 Pro Max' },
     { identifier: 'dt.16', name: 'iPhone 16' },
   ];
-  const runtimes = [
-    { identifier: 'rt.26-5', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
-  ];
+  const runtimes = [{ identifier: 'rt.26-5', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
   const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
   expect(pick.deviceTypeId).toBe('dt.17pm');
 });
@@ -169,9 +184,7 @@ test('pickDefaultIosCreation compares iPhone generations numerically, not lexica
     { identifier: 'dt.9', name: 'iPhone 9' },
     { identifier: 'dt.17', name: 'iPhone 17' },
   ];
-  const runtimes = [
-    { identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
-  ];
+  const runtimes = [{ identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
   expect(pickDefaultIosCreation(deviceTypes, runtimes, {}).deviceTypeId).toBe('dt.17');
 });
 
@@ -181,17 +194,13 @@ test('pickDefaultIosCreation picks the base model over Pro/Pro Max of the same g
     { identifier: 'dt.17pro', name: 'iPhone 17 Pro' },
     { identifier: 'dt.17', name: 'iPhone 17' },
   ];
-  const runtimes = [
-    { identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
-  ];
+  const runtimes = [{ identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
   expect(pickDefaultIosCreation(deviceTypes, runtimes, {}).deviceTypeId).toBe('dt.17');
 });
 
 test('pickDefaultIosCreation still picks a lettered model when it is the only iPhone', () => {
   const deviceTypes = [{ identifier: 'dt.se3', name: 'iPhone SE (3rd generation)' }];
-  const runtimes = [
-    { identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
-  ];
+  const runtimes = [{ identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
   expect(pickDefaultIosCreation(deviceTypes, runtimes, {}).deviceTypeId).toBe('dt.se3');
 });
 
@@ -202,14 +211,17 @@ test('sanitizeDeviceLabel strips characters simctl names should not carry', () =
 
 test('deleteIosSim refuses to delete a sim not owned by rn-iso', () => {
   setExecutor({
-    run: () => JSON.stringify({
-      devices: {
-        'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
-          { udid: 'UDID-A', name: 'iPhone 15', state: 'Shutdown', isAvailable: true },
-        ],
-      },
-    }),
-    runQuiet: () => { throw new Error('should not be called'); },
+    run: () =>
+      JSON.stringify({
+        devices: {
+          'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
+            { udid: 'UDID-A', name: 'iPhone 15', state: 'Shutdown', isAvailable: true },
+          ],
+        },
+      }),
+    runQuiet: () => {
+      throw new Error('should not be called');
+    },
     spawn: () => null,
   });
   expect(() => deleteIosSim('UDID-A')).toThrow(/rn-iso/);
@@ -234,7 +246,7 @@ test('deleteIosSim deletes an rn-iso-owned sim', () => {
     spawn: () => null,
   });
   deleteIosSim('UDID-B');
-  expect(ran.some(c => /xcrun simctl delete UDID-B/.test(c))).toBeTruthy();
+  expect(ran.some((c) => /xcrun simctl delete UDID-B/.test(c))).toBeTruthy();
 });
 
 // A failed simctl delete leaves the sim on disk. It must reach the caller as a
@@ -256,7 +268,10 @@ test('deleteIosSim no-ops quietly when the udid is already gone', () => {
   let ranQuiet = false;
   setExecutor({
     run: () => JSON.stringify({ devices: {} }),
-    runQuiet: () => { ranQuiet = true; return null; },
+    runQuiet: () => {
+      ranQuiet = true;
+      return null;
+    },
     spawn: () => null,
   });
   expect(() => deleteIosSim('UDID-GONE')).not.toThrow();
