@@ -193,14 +193,23 @@ export function inferLevel(line: unknown): string {
   return 'info';
 }
 
-// The marker resets the window `logs --errors` reports over. The bare path
-// gets it from the reporter's bundle_build_done event; the only equivalent
-// here is the line Expo prints when a bundle finishes ("iOS Bundled 812ms
-// index.js (1150 modules)"). Without it an Expo workspace's error window would
-// never reset, and an error fixed three builds ago would keep being reported
-// as current.
+// The marker resets the window `logs --errors` reports over, and BOTH ends of
+// a bundle attempt carry one. The bare path gets them from the reporter's
+// bundle_build_done / bundle_build_failed events; the equivalents here are the
+// lines Expo prints when a bundle finishes: "iOS Bundled 812ms index.js (1150
+// modules)" on success, "iOS Bundling failed 893ms" on failure. Without the
+// success marker an Expo workspace's error window would never reset and an
+// error fixed three builds ago would keep being reported as current; without
+// the FAILURE marker, back-to-back failed bundles would pile up and the
+// oldest -- least relevant -- failure would be listed first
+// (appandflow/rn-iso#13). Marking the failed line cannot hide the failure it
+// summarizes: Expo prints it BEFORE the detail lines that explain it, and
+// logs-query's bundle cutoff is strict (<), so the line itself (error-level,
+// stamped at the marker's own ts) and everything after it stay reported while
+// the previous attempt's errors go.
 export function isBundleMarker(line: unknown): boolean {
-  return /\bBundled\b/.test(String(line));
+  const text = String(line);
+  return /\bBundled\b/.test(text) || /\bBundling failed\b/.test(text);
 }
 
 // PURE. Proof that SOMETHING asked this dev server for a bundle: Expo prints
