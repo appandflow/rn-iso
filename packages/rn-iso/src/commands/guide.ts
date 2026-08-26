@@ -172,8 +172,11 @@ WHAT THE SUPERVISOR IS
 
   The supervisor's own stdio goes to .rn-iso/logs/supervisor.log, which is NOT
   part of the NDJSON timeline. It is what a supervisor that died before it
-  could write a structured record leaves behind, so it is the file to read when
-  \`start\` fails -- and \`start\` already prints its last lines for you.
+  could write a structured record leaves behind. In expo-child mode the child's
+  output is parsed into the TIMELINE instead, so a dev server that dies on a
+  config error leaves supervisor.log empty and its death cry in metro.ndjson.
+  A failed \`start\` quotes both for you: the supervisor.log tail when it has
+  one, and this attempt's error records from the timeline.
 
 STARTING YOUR OWN BUNDLER STILL WORKS
   A dev server YOU started is detected and left alone: \`start\` reports it
@@ -229,7 +232,11 @@ FLAGS
   --errors         errors and fatals since the last marker, from metro, client
                    and build -- the agent query. Capped at 20 printed records.
   --follow         keep streaming until interrupted (Ctrl+C is exit 0)
-  --json           the raw records, one per line, so stdout is valid NDJSON
+  --json           the raw records, one per line, so stdout is valid NDJSON.
+                   ZERO matches is ZERO bytes on stdout (an empty NDJSON
+                   stream), exit 0 -- parse stdout line by line, never as one
+                   JSON document. The "No matching log records" note is human
+                   mode only, on stderr.
 
 --ERRORS, PRECISELY
   Level error or fatal, from metro, client and build, timestamped after the
@@ -423,8 +430,11 @@ RN_ISO_METRO_TIMEOUT
 
 RN_ISO_SUPERVISOR_EXITED
   "The supervisor exited (<code|signal>) before the dev server came up"
-  The dev server failed outright, and the quoted supervisor.log tail is the
-  real error. Fix that and run \`start\` again; nothing is left running.
+  The dev server failed outright, and the quoted evidence is the real error:
+  the supervisor.log tail if it wrote one, plus this attempt's error records
+  from the timeline (an expo child's config error -- a PluginError, a bad app
+  config -- lands THERE, not in supervisor.log). \`rn-iso logs --errors\` has
+  the full records. Fix that and run \`start\` again; nothing is left running.
 
 RN_ISO_BAD_ARG / RN_ISO_NO_PROJECT
   \`start\` refused before doing anything: an unusable --wait value, or a

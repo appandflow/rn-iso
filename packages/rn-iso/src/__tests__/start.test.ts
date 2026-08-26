@@ -23,6 +23,7 @@ import {
   liveSupervisor,
   parseWait,
   readLogTail,
+  failureEvidence,
   registerStart,
   startFacts,
   supervisorEntry,
@@ -293,6 +294,46 @@ describe('the supervisor log tail', () => {
 
   test('a log that does not exist yet is an empty tail, not a throw', () => {
     expect(readLogTail(join(root, 'nope.log'))).toEqual([]);
+  });
+});
+
+describe('failureEvidence (issue #24)', () => {
+  const record = (ts: number, msg: string, src = 'metro') => JSON.stringify({ ts, level: 'error', src, msg });
+
+  test('an empty supervisor.log is not pointed at; the timeline errors are quoted instead', () => {
+    const logsDir = join(root, '.rn-iso', 'logs');
+    mkdirSync(logsDir, { recursive: true });
+    const logFile = join(logsDir, 'supervisor.log');
+    writeFileSync(logFile, '');
+    writeFileSync(
+      join(logsDir, 'metro.ndjson'),
+      [
+        record(1000, 'stale error from a previous run'),
+        record(5000, 'PluginError: Failed to resolve plugin for module "expo-share-intent"\n  at resolve'),
+        record(5001, 'from expo config'),
+      ].join('\n') + '\n',
+    );
+    const lines = failureEvidence({ logFile, logsDir, sinceTs: 2000 });
+    expect(lines.some((l) => l.includes('Supervisor log:'))).toBe(false);
+    expect(lines.some((l) => l.includes('stale error'))).toBe(false);
+    expect(lines).toContain('metro: PluginError: Failed to resolve plugin for module "expo-share-intent"');
+    expect(lines).toContain('metro: from expo config');
+    expect(lines.at(-1)).toMatch(/logs --errors/);
+  });
+
+  test('a supervisor.log with content is still quoted, ahead of the timeline records', () => {
+    const logsDir = join(root, '.rn-iso', 'logs');
+    mkdirSync(logsDir, { recursive: true });
+    const logFile = join(logsDir, 'supervisor.log');
+    writeFileSync(logFile, 'Error: Cannot find module expo\n');
+    const lines = failureEvidence({ logFile, logsDir, sinceTs: 0 });
+    expect(lines[0]).toBe('Error: Cannot find module expo');
+    expect(lines[1]).toBe(`Supervisor log: ${logFile}`);
+  });
+
+  test('nothing anywhere is an empty evidence list, not a throw', () => {
+    const logsDir = join(root, 'no-such-logs');
+    expect(failureEvidence({ logFile: join(logsDir, 'supervisor.log'), logsDir, sinceTs: 0 })).toEqual([]);
   });
 });
 

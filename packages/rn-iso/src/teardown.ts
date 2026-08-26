@@ -28,7 +28,7 @@
 //                                    prose (shutdown reports the two cases
 //                                    differently).
 //   { status: 'failed', reason }     threw; nothing further attempted
-import { isSimOccupied, resolveOwnedIosSim, shutdownIosSim, deleteIosSim } from './sim/ios.ts';
+import { occupyingApps, resolveOwnedIosSim, shutdownIosSim, deleteIosSim } from './sim/ios.ts';
 import { resolveOwnedAvdSerial, shutdownAndroidEmulator, deleteAvd } from './sim/android.ts';
 
 // A flat interface with every field optional, matching the defensive shape
@@ -40,6 +40,10 @@ export interface TeardownOutcome {
   kind?: string;
   reason?: string;
   serial?: string | null;
+  // On an 'occupied' skip: the foreign .xctrunner bundles the probe counted.
+  // Absent when the probe could not answer (fail-closed doubt, not evidence
+  // that any holder exists).
+  holders?: string[];
 }
 
 export function teardownOwnedIosSim(
@@ -63,8 +67,16 @@ export function teardownOwnedIosSim(
     // meant to die whole, so a delete proceeds regardless of occupancy.
     // `stop` keeps the check, because the device it spares is still there
     // to come back to.
-    if (!del && isSimOccupied(udid)) {
-      return { status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' };
+    if (!del) {
+      const apps = occupyingApps(udid);
+      if (apps === null || apps.length > 0) {
+        return {
+          status: 'skipped',
+          kind: 'occupied',
+          reason: 'in use by another process (occupied)',
+          ...(apps ? { holders: apps } : {}),
+        };
+      }
     }
     shutdownIosSim(udid);
     if (del) deleteIosSim(udid);

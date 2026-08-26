@@ -163,7 +163,7 @@ export default function logsCommand(program: Command) {
       "Only errors and fatals since the last marker, from metro, client and build (the agent-loop query). Device errors are the OS talking, not the app -- the app's own crashes reach the client and metro streams -- so add --source device or --source all to include them.",
     )
     .option('--follow', 'Keep streaming new records until interrupted')
-    .option('--json', 'Emit the raw records, one per line (valid NDJSON)')
+    .option('--json', 'Emit the raw records, one per line (valid NDJSON; zero matches is zero bytes, exit 0)')
     .action((opts: LogsOptions) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {

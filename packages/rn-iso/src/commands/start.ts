@@ -22,6 +22,7 @@ import { getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
+import { queryLogs } from '../logs-query.ts';
 import { supervisorLogFile, workspaceLogsDir } from '../paths.ts';
 import { reserveMetroPort } from '../ports.ts';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
@@ -32,6 +33,7 @@ import { spawnEntry } from '../spawn-entry.ts';
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
 const LOG_TAIL_LINES = 5;
+const ERROR_EVIDENCE_RECORDS = 8;
 
 export function supervisorEntry() {
   return spawnEntry('supervisor-run');
@@ -306,6 +308,7 @@ export function registerStart(program: Command) {
       // record of a supervisor that died before it could write a structured
       // one, which is why the failure path below quotes it.
       const fd = openSync(logFile, 'a');
+      const spawnedTs = Date.now();
       const child = getExecutor().spawn(process.execPath, [supervisorEntry(), '--root', root, '--port', String(port)], {
         cwd: root,
         // detached: the supervisor leads its own process group, so it
@@ -357,13 +360,14 @@ export function registerStart(program: Command) {
             ? {
                 code: 'RN_ISO_SUPERVISOR_EXITED',
                 message: `The supervisor exited (${how}) before the dev server came up on port ${port}.`,
-                lines: logTailLines(logFile),
-                remedy: 'Fix the error above and run `rn-iso start` again.',
+                lines: failureEvidence({ logFile, logsDir, sinceTs: spawnedTs }),
+                remedy:
+                  'Fix the error above and run `rn-iso start` again; `rn-iso logs --errors` has the full records.',
               }
             : {
                 code: 'RN_ISO_METRO_TIMEOUT',
                 message: `The dev server did not answer on port ${port} within ${waitSeconds}s.`,
-                lines: logTailLines(logFile),
+                lines: failureEvidence({ logFile, logsDir, sinceTs: spawnedTs }),
                 remedy: 'It may still be starting. Run `rn-iso stop` to halt it, or `rn-iso logs` to follow along.',
               },
         );
@@ -425,6 +429,38 @@ async function waitForMetro({
 // every failure quotes it.
 function logTailLines(logFile: string): string[] {
   return [...readLogTail(logFile), `Supervisor log: ${logFile}`];
+}
+
+// The evidence for a spawn-path failure. The supervisor's own log is quoted
+// when it has anything to say -- but the death cry is usually NOT there: an
+// expo child's output is parsed into the workspace timeline as records, so a
+// child that dies before serving (a config PluginError, a bad app config)
+// leaves supervisor.log EMPTY while the actual error sits in metro.ndjson.
+// Pointing at the empty file was issue #24; the timeline's error records from
+// THIS attempt are the part of the answer that was always on disk.
+export function failureEvidence({
+  logFile,
+  logsDir,
+  sinceTs,
+}: {
+  logFile: string;
+  logsDir: string;
+  sinceTs: number;
+}): string[] {
+  const supTail = readLogTail(logFile);
+  const lines = supTail.length > 0 ? [...supTail, `Supervisor log: ${logFile}`] : [];
+  let records: ReturnType<typeof queryLogs> = [];
+  try {
+    records = queryLogs({ dir: logsDir, minLevel: 'error' });
+  } catch {
+    // An unreadable timeline must not mask the failure being reported.
+  }
+  const recent = records.filter((r) => typeof r.ts === 'number' && r.ts >= sinceTs).slice(-ERROR_EVIDENCE_RECORDS);
+  for (const r of recent) {
+    lines.push(`${String(r.src ?? '?')}: ${String(r.msg ?? '').split('\n')[0] ?? ''}`);
+  }
+  if (recent.length > 0) lines.push('Full records: `rn-iso logs --errors`');
+  return lines;
 }
 
 function report({

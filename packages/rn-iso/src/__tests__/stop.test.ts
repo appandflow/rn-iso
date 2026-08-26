@@ -17,7 +17,6 @@ import {
   clearSupervisorState,
   readCollectorState,
   readSupervisorState,
-  parseSimHolders,
   resolveCollectorTargets,
   resolveSupervisorTarget,
   runStop,
@@ -608,52 +607,35 @@ test('clearCollectorState drops only the collectors key', () => {
 // --- the occupied-sim skip names its holder --------------------------------
 //
 // "in use by another process (occupied)" told a reader that something is
-// holding the sim and nothing about what, which is a dead end when the answer
-// is almost always one process they can see. `ps` can usually name it, because
-// whatever attached to a simulator names its udid on the command line.
+// holding the sim and nothing about what. The occupancy decider counts only
+// foreign .xctrunner bundles, and the teardown outcome carries exactly that
+// list -- so the skip names what counted, never the sim's own runtime or the
+// app rn-iso itself launched (which a ps-over-the-udid scan used to drag in).
 
-test('parseSimHolders names the processes whose command line carries the udid', () => {
-  const ps = [
-    '  501 /usr/bin/xcodebuild test-without-building -destination id=UDID-1',
-    '  777 /usr/bin/some-device-tool --udid UDID-2',
-    ' 9001 /bin/zsh',
-  ].join('\n');
-  expect(parseSimHolders(ps, 'UDID-1')).toEqual(['xcodebuild (pid 501)']);
-  expect(parseSimHolders(ps, 'UDID-2')).toEqual(['some-device-tool (pid 777)']);
-  expect(parseSimHolders(ps, 'UDID-3')).toEqual([]);
-  expect(parseSimHolders(null, 'UDID-1')).toEqual([]);
-});
-
-test('parseSimHolders never names rn-iso own processes', () => {
-  const ps = [
-    `${process.pid} /usr/local/bin/node rn-iso stop UDID-1`,
-    '  502 /usr/local/bin/node /pkg/src/collector/run.js --udid UDID-1',
-    '  503 /usr/bin/xcodebuild -destination id=UDID-1',
-  ].join('\n');
-  expect(parseSimHolders(ps, 'UDID-1')).toEqual(['xcodebuild (pid 503)']);
-});
-
-test('an occupied sim names the process holding it', async () => {
+test('an occupied sim names the UI-test runner that decided the skip', async () => {
   const reports: string[] = [];
   const { opts } = seams({
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
-    teardownIos: () => ({ status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' }),
-    simHolders: (udid: string) => (udid === 'U1' ? ['xcodebuild (pid 4242)'] : []),
+    teardownIos: () => ({
+      status: 'skipped',
+      kind: 'occupied',
+      reason: 'in use by another process (occupied)',
+      holders: ['com.example.app.xctrunner'],
+    }),
     report: (l: string) => reports.push(String(l)),
   });
   const r = await runStop(opts);
   const ios = r.outcomes.device.ios;
   assert(ios);
   expect(ios.status).toBe('skipped');
-  expect(ios.reason).toMatch(/xcodebuild \(pid 4242\)/);
-  expect(reports.join('\n')).toMatch(/xcodebuild \(pid 4242\)/);
+  expect(ios.reason).toMatch(/held by UI-test runner com\.example\.app\.xctrunner/);
+  expect(reports.join('\n')).toMatch(/com\.example\.app\.xctrunner/);
 });
 
-test('an occupied sim nothing can identify still gets a hint about who it usually is', async () => {
+test('an occupied skip with no holder list (fail-closed probe) still gets the generic hint', async () => {
   const { opts } = seams({
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
     teardownIos: () => ({ status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' }),
-    simHolders: () => [],
   });
   const r = await runStop(opts);
   const ios = r.outcomes.device.ios;
@@ -665,7 +647,6 @@ test('a not-owned skip is not given an occupancy hint', async () => {
   const { opts } = seams({
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
     teardownIos: () => ({ status: 'skipped', kind: 'not-owned', reason: 'sim is now named "other"' }),
-    simHolders: () => ['xcodebuild (pid 1)'],
   });
   const r = await runStop(opts);
   const ios = r.outcomes.device.ios;

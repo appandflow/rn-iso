@@ -267,8 +267,11 @@ export function nextConsolePort(claimedPorts: number[]): number {
 // process launched, `adb devices` never listed it). Headlessness is a fact of
 // the environment, so it is detected, not configured; a desktop session keeps
 // its window.
-export function headlessEmulatorArgs(env: NodeJS.ProcessEnv = process.env): string[] {
-  if (process.platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
+export function headlessEmulatorArgs(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  if (platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
     return ['-no-window', '-noaudio', '-no-boot-anim', '-gpu', 'swiftshader_indirect'];
   }
   return [];
