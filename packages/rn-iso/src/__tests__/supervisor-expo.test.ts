@@ -222,6 +222,28 @@ describe('startExpoServer', () => {
     expect(seen.opts.detached).toBe(false);
   });
 
+  test('the child inherits the supervisor process environment (#33)', async () => {
+    fakeBin();
+    process.env.RN_ISO_TEST_SENTINEL = 'through';
+    const calls: { opts: SpawnOptions }[] = [];
+    try {
+      await startExpoServer({
+        root,
+        port: 8113,
+        logsDir: join(root, 'logs'),
+        spawnFn: (cmd, args, opts) => {
+          calls.push({ opts });
+          return fakeChild();
+        },
+      });
+    } finally {
+      delete process.env.RN_ISO_TEST_SENTINEL;
+    }
+    const env = calls[0]?.opts.env as Record<string, string>;
+    expect(env.RN_ISO_TEST_SENTINEL).toBe('through');
+    expect(env.FORCE_COLOR).toBe('0');
+  });
+
   test('stdout and stderr lines land in metro.ndjson as Contract-1 records', async () => {
     fakeBin();
     const child = fakeChild();

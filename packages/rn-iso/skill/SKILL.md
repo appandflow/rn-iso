@@ -73,6 +73,8 @@ On APFS, `worktree create --carry-ignored` clones every gitignored path (`node_m
 
 One more consequence of "the clone matches the source, not the branch": a carried path that the BASE's `.gitignore` does not ignore (an `ios/` dir carried into a branch that gitignores it differently, a generated file the branch stopped ignoring) shows up as untracked churn in `git status` -- and `worktree remove` will later, correctly, refuse over it. Restore it first (`git checkout -- .` for modified tracked files, `git clean -fd <path>` for untracked ones -- the refusal names the right command per class) rather than reaching for `--force`.
 
+**Env vars reach the dev server only through the `start` that spawns it.** The supervisor (and a `metro.config.js` evaluated inside the expo child) inherits the environment of the `start` call that created it. A second `start` against a healthy supervisor is a no-op -- it cannot inject new env into the running one. To apply an env var (a cache flag, an API host): `stop`, then `start` with it set.
+
 **A foreign process on your reserved port is reported, not silently tolerated.** `rn-iso status` warns about it (`port 8082: pid 900 runs from /elsewhere`), `ios` / `android` refuse with `RN_ISO_NO_METRO`, and `stop` refuses to kill it without `--force`. `start` re-reserves a fresh port instead, so the project is never stranded. `npx rn-iso guide errors` lists the causes -- most often a bundler started from a monorepo's root instead of the app directory.
 
 ## Destructive commands -- ask the user first
