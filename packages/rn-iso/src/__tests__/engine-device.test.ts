@@ -23,6 +23,7 @@ type SimEntry = { udid: string; name: string; state: string; isAvailable: boolea
 let tmpHome: string;
 let savedAndroidHome: string | undefined;
 let savedSdkRoot: string | undefined;
+let savedDisplay: string | undefined;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -34,6 +35,11 @@ beforeEach(() => {
   savedSdkRoot = process.env.ANDROID_SDK_ROOT;
   process.env.ANDROID_HOME = join(tmpHome, 'no-sdk-here');
   delete process.env.ANDROID_SDK_ROOT;
+  // Pin a display so the exact-argv emulator-boot assertions hold on a
+  // headless CI runner too (displayless linux appends the headless flags;
+  // that behaviour has its own pure test in sim-android.test.ts).
+  savedDisplay = process.env.DISPLAY;
+  process.env.DISPLAY = ':0';
 });
 
 afterEach(() => {
@@ -43,6 +49,8 @@ afterEach(() => {
   else process.env.ANDROID_HOME = savedAndroidHome;
   if (savedSdkRoot === undefined) delete process.env.ANDROID_SDK_ROOT;
   else process.env.ANDROID_SDK_ROOT = savedSdkRoot;
+  if (savedDisplay === undefined) delete process.env.DISPLAY;
+  else process.env.DISPLAY = savedDisplay;
   resetExecutor();
 });
 
@@ -441,7 +449,10 @@ describe('ensureOwnedDevice: android', () => {
 
   beforeEach(() => {
     androidHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-sdk-'));
+    // Both architectures, so image resolution succeeds whatever the host
+    // running this suite is (the pick matches the host arch).
     mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'arm64-v8a'), { recursive: true });
+    mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'x86_64'), { recursive: true });
     prevAndroidHome = process.env.ANDROID_HOME;
     process.env.ANDROID_HOME = androidHome;
   });
