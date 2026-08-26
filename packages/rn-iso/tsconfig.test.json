@@ -5,8 +5,9 @@
     "moduleResolution": "nodenext",
     "allowJs": true,
     "checkJs": false,
-    "types": ["node", "vitest/globals"]
+    "types": ["node", "vitest/globals"],
+    "noImplicitAny": false,
+    "strictNullChecks": false
   },
-  "include": ["src/**/*.ts", "src/**/*.js", "bin/**/*.ts", "bin/**/*.js"],
-  "exclude": ["src/**/__tests__/**"]
+  "include": ["src/**/__tests__/**/*.ts"]
 }
