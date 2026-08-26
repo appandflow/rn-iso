@@ -32,8 +32,8 @@ test('the facts topic documents the fields each --json payload actually carries'
   };
   const fields = {
     start: ['port', 'supervisorPid', 'mode', 'logsDir', 'alreadyRunning'],
-    ios: ['udid', 'deviceName', 'fingerprint', 'cacheKey', 'cacheHit', 'cacheSkipped', 'appPath', 'bundleId', 'launched', 'metroPort'],
-    android: ['serial', 'fingerprint', 'cacheHit', 'cacheSkipped', 'appPath', 'bundleId', 'launched'],
+    ios: ['udid', 'deviceName', 'fingerprint', 'cacheKey', 'cacheHit', 'cacheSkipped', 'waitedForBuild', 'appPath', 'bundleId', 'launched', 'metroPort'],
+    android: ['serial', 'fingerprint', 'cacheHit', 'cacheSkipped', 'waitedForBuild', 'appPath', 'bundleId', 'launched'],
   };
   for (const [command, names] of Object.entries(fields)) {
     for (const f of names) {

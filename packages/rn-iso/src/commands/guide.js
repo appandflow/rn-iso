@@ -47,6 +47,14 @@ other line goes to stderr, so it is always safe to pipe.
                     false     nothing answered, so it was compiled
   cacheSkipped    true only when --no-build-cache was passed: "nothing was
                   looked up", which is a different fact from "nothing was found"
+  waitedForBuild  { pid, ms } when ANOTHER workspace was already compiling this
+                  exact fingerprint and this run waited for its artifact instead
+                  of compiling a second copy (see \`guide lifecycle\`, "one
+                  compile per fingerprint"); null when nothing was waited for.
+                  cacheHit is "local" either way -- the artifact did come from
+                  the local cache -- so this is what separates "it was already
+                  there" (free) from "it was there twelve minutes later" (still
+                  cheaper than a second build). Both commands carry it
   appPath         the .app that was installed
   bundleId        the iOS bundle id that was launched
   launched        true, or "unverified" when no bundle request from this app
@@ -74,7 +82,8 @@ other line goes to stderr, so it is always safe to pipe.
                   first -- so this is what addresses the emulator in
                   \`emulator -avd\`, avdmanager, or a device tool
   deviceName      the same name, matching the iOS payload's field
-  fingerprint / cacheHit / cacheSkipped / appPath / launched   as above
+  fingerprint / cacheHit / cacheSkipped / waitedForBuild / appPath / launched
+                  as above
   bundleId        the ANDROID PACKAGE NAME, not the iOS bundle id
   debugHttpHost   "10.0.2.2:<port>" when the app's SharedPreferences were
                   pointed at this workspace's Metro, null when they were not
@@ -339,6 +348,15 @@ RN_ISO_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),
   not the transcript. Read the log path on the next line for the rest.
 
+RN_ISO_BUILD_WAIT_TIMEOUT
+  This run was waiting for ANOTHER workspace's build of the same fingerprint
+  (see \`guide lifecycle\`), and after ~90 minutes that process was still alive
+  and had still produced nothing. A wait is normally bounded by the builder
+  being alive at all -- a crash or a kill frees it within a second -- so this
+  means a genuinely wedged xcodebuild/gradle, not a slow one. The message names
+  the pid and the lock directory: check the pid, and if it is not really
+  building, remove that directory and run the command again.
+
 RN_ISO_INSTALL_FAILED
   The artifact built or came from cache, but \`simctl install\` / \`adb install\`
   refused it. A signature or architecture mismatch, or a full device.
@@ -561,11 +579,33 @@ THE BUILD CACHE HAS TWO LEVELS
   rn-iso never configures a provider and never suggests changing one: a
   project without one is a perfectly ordinary local-only project.
 
+ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
+  The cache makes the SECOND workspace on a commit free -- but only once the
+  first has finished. Three agents starting within the same minute all miss it,
+  and without this all three compile the same app at once, fighting for the
+  same cores. So when both cache levels miss, the run takes a LOCK on
+  <fingerprint, platform> (a directory under ~/.rn-iso/build-locks). Exactly
+  one workspace compiles; the others print
+
+    build       /w/app-412 is already building a3f9b1.. (pid 41233) -- tail ...
+    build       waiting on /w/app-412 (pid 41233, 4m elapsed) -- tail ...
+    build       waited 12m41s for /w/app-412's build -> installed from cache
+
+  and install the artifact the builder stored. They report cacheHit: "local"
+  plus waitedForBuild: { pid, ms }.
+
+  Nothing can deadlock on it. The lock is held by a PID, so a builder that
+  crashes, is killed, or whose build simply fails frees it: the waiters see a
+  released lock with no artifact, and one of them takes over and builds. A
+  builder that is alive but wedged is the only case a wait can outlive, and
+  that ends after ~90 minutes with RN_ISO_BUILD_WAIT_TIMEOUT naming the lock.
+
   --no-build-cache looks nothing up -- not level one, not level two -- and
-  builds fresh. It still STORES the result, over the entry it was told not to
-  trust, and still uploads it. Use it when a cached artifact is suspect; the
-  --json payload reports cacheSkipped: true so a caller can tell that run
-  apart from a plain miss.
+  takes no lock and never waits, because it asked for a compile of its own.
+  It still STORES the result, over the entry it was told not to trust, and
+  still uploads it. Use it when a cached artifact is suspect; the --json
+  payload reports cacheSkipped: true so a caller can tell that run apart from
+  a plain miss.
 
 THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds>
@@ -632,6 +672,13 @@ WHAT ELSE STOP REAPS
   so \`stop\` is what stands between a teardown and a log stream that outlives
   the device it was reading. A fresh \`ios\` / \`android\` run also kills the
   previous collector for that platform before starting its own.
+
+BUILD LOCKS
+  \`gc\` also reports the single-flight build locks (above): the ones whose
+  builder is no longer running are debris a reboot or a kill left behind, and
+  \`gc --delete\` clears them. A lock whose builder IS running is a build in
+  progress -- it is named in the report and touched by nothing, because
+  removing it would put a second workspace on the same compile.
 
 A device leaks when a project is abandoned WITHOUT either delete path -- the
 sim survives with nothing pointing at it. \`rn-iso gc\` (no flag, writes

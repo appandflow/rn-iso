@@ -170,6 +170,10 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
       gradle.js           # buildAndroid: ./gradlew assembleDebug, apk located by output listing
       errors-xcode.js     # PURE: transcript -> {file, line, message} diagnostics, deduped, capped
       errors-gradle.js    # the same for gradle/kotlin/aapt failures
+      build-lock.js       # SINGLE-FLIGHT builds: when both cache levels miss, one workspace
+                          # takes an atomic mkdir lock on <platform, cacheKey> and compiles
+                          # while the others waitForBuild and install its artifact. Staleness
+                          # is PID-LIVENESS, never mtime -- a 20-minute hold is normal here
       app-install.js      # artifact -> device: simctl install/launch, adb install -r + am start,
                           # and Contract 6's port wiring (RCT_jsLocation / dev-client deep link /
                           # `adb reverse tcp:8081 tcp:<port>`). The port is NEVER baked into a build.

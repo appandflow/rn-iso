@@ -1022,3 +1022,89 @@ test('describeUnverifiableDevices carries the reason it was given', () => {
   });
   assert.match(notices.join('\n'), /RN_ISO_HOME/);
 });
+
+// --- build locks -----------------------------------------------------------
+//
+// A build lock (engine/build-lock.js) is a directory saying "this pid is
+// compiling this fingerprint". A machine that was rebooted, or a process that
+// was SIGKILLed, leaves one behind. It is harmless -- the next builder takes
+// it over on the pid-liveness check -- but it is debris, and `gc` is where
+// debris is reported.
+//
+// The direction of doubt is the one every other sweep here takes: a lock whose
+// holder is ALIVE is a build in progress, and nothing may touch it. Deleting
+// one would put two workspaces on the same 19-minute compile, which is the
+// exact failure single-flight exists to prevent.
+
+function writeLock({ platform = 'ios', key = 'abc-debug-sim', pid, projectRoot = '/w/app-412' }) {
+  const path = join(tmpHome, 'build-locks', `${platform}-${key}.lock`);
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, 'lock.json'), JSON.stringify({
+    pid, projectRoot, startedAt: new Date().toISOString(), logFile: `${projectRoot}/.rn-iso/logs/build-${platform}.ndjson`,
+  }));
+  return path;
+}
+
+test('the report separates locks whose builder is gone from builds in progress', async () => {
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+  writeLock({ pid: process.pid, projectRoot: '/w/alive' });
+  writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
+
+  const report = await collectGcReport();
+  assert.equal(report.buildLocks.stale.length, 1);
+  assert.equal(report.buildLocks.stale[0].pid, 999999);
+  assert.equal(report.buildLocks.live.length, 1);
+  assert.equal(report.buildLocks.live[0].projectRoot, '/w/alive');
+});
+
+test('formatGcReport names both, and says a live one is a build it will not touch', () => {
+  const lines = formatGcReport({
+    buildLocks: {
+      stale: [{ platform: 'ios', key: 'abc-debug-sim', pid: 999999, projectRoot: '/w/dead', path: '/h/build-locks/ios-abc.lock' }],
+      live: [{ platform: 'android', key: 'def-debug-sim', pid: 41233, projectRoot: '/w/alive', path: '/h/build-locks/android-def.lock' }],
+    },
+  }).join('\n');
+  assert.match(lines, /Stale build locks \(1\)/);
+  assert.match(lines, /999999/);
+  assert.match(lines, /\/w\/dead/);
+  assert.match(lines, /Builds in progress \(1\)/);
+  assert.match(lines, /41233/);
+  assert.match(lines, /\/w\/alive/);
+  assert.match(lines, /not touched|left alone/i);
+});
+
+test('a stale lock counts as something to reclaim', () => {
+  const lines = formatGcReport({
+    buildLocks: { stale: [{ platform: 'ios', key: 'k', pid: 9, projectRoot: '/w', path: '/h/l.lock' }], live: [] },
+  }).join('\n');
+  assert.doesNotMatch(lines.split('\n')[0], /^Nothing to reclaim\.$/);
+});
+
+test('a live lock alone is not something to reclaim', () => {
+  const lines = formatGcReport({
+    buildLocks: { stale: [], live: [{ platform: 'ios', key: 'k', pid: process.pid, projectRoot: '/w', path: '/h/l.lock' }] },
+  }).join('\n');
+  assert.match(lines, /Nothing to reclaim/);
+  assert.match(lines, /Builds in progress/);
+});
+
+test('--delete removes the stale lock and leaves the live one alone', async () => {
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+  const live = writeLock({ pid: process.pid, projectRoot: '/w/alive' });
+  const stale = writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
+
+  const output = await captureLog(() => sweepingGc({ delete: true }));
+  assert.equal(existsSync(stale), false, 'the debris goes');
+  assert.equal(existsSync(live), true, 'a build in progress is never interrupted');
+  assert.match(output, /build lock/i);
+});
+
+test('a bare gc removes no lock at all', async () => {
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+  const stale = writeLock({ pid: 999999 });
+  await captureLog(() => sweepingGc({}));
+  assert.equal(existsSync(stale), true, 'a bare gc reports and writes nothing');
+});

@@ -190,7 +190,7 @@ export default function logsCommand(program) {
       for (const record of capped) emit(record);
       const hidden = records.length - capped.length;
       if (hidden > 0) {
-        console.log(chalk.dim(`… and ${hidden} more (rerun with --tail ${hidden} or --json)`));
+        console.log(chalk.dim(`... and ${hidden} more (rerun with --tail ${hidden} or --json)`));
       }
 
       if (!opts.follow) {

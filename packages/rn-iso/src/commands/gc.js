@@ -1,7 +1,7 @@
 // `gc` is the machine-hygiene command: it reports what rn-iso has left behind
 // and, with --delete, reclaims it.
 //
-// Four things still orphan, and none of them is a build artifact any more --
+// Five things still orphan, and none of them is a build artifact any more --
 // build output lives inside the workspace (`<root>/.rn-iso/`) and dies with the
 // directory that holds it, so the DerivedData sweep and its reverse-mapping
 // ambiguity are gone:
@@ -12,7 +12,10 @@
 //                             whose project has gone untouched for weeks
 //   3. stale device records   the mirror image of 2: the DEVICE is gone and the
 //                             live project's record still points at it
-//   4. shared caches          alive by design, never dead, only bigger
+//   4. stale build locks      a single-flight lock (engine/build-lock.js) whose
+//                             builder is no longer running: a reboot or a
+//                             SIGKILL in the middle of a compile
+//   5. shared caches          alive by design, never dead, only bigger
 //
 // v2's `cache register` / `cache forget` / `cache list` verbs folded into the
 // report here: v3 prescribes the cache paths, so there is nothing left to
@@ -30,6 +33,7 @@ import {
   listMountedVolumes,
   volumeRootFor,
 } from '../fs-util.js';
+import { listBuildLocks } from '../engine/build-lock.js';
 import { reclaimProject } from '../reclaim.js';
 import { listAllIosSims } from '../sim/ios.js';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
@@ -251,20 +255,32 @@ export function describeUnverifiableDevices(simNames = [], avdNames = [], { reas
   ];
 }
 
+// A cache key is a 64-char fingerprint plus its variant and target. The whole
+// thing in a report line is noise; enough of it to match against a build's own
+// `fingerprint <hash>` line is not. Same rule, and the same shape, as
+// shortHash in commands/ios.js.
+export function shortKey(key) {
+  const text = String(key ?? '');
+  return text.length > 6 ? `${text.slice(0, 6)}..` : text;
+}
+
 export function formatGcReport({
   skipped = [],
   deadProjects = [],
   orphanedDevices = [],
   staleDevices = [],
   staleDeviceRecords = [],
+  buildLocks = { stale: [], live: [] },
   deviceSweepNotices = [],
   caches = [],
   olderThan = null,
 }) {
   const lines = [];
+  const staleLocks = buildLocks?.stale ?? [];
+  const liveLocks = buildLocks?.live ?? [];
 
   if (deadProjects.length === 0 && orphanedDevices.length === 0 && staleDevices.length === 0
-    && staleDeviceRecords.length === 0) {
+    && staleDeviceRecords.length === 0 && staleLocks.length === 0) {
     const reasons = [];
     if (skipped.length > 0) {
       reasons.push(`${skipped.length} entr${skipped.length === 1 ? 'y' : 'ies'} could not be checked`);
@@ -308,6 +324,31 @@ export function formatGcReport({
       lines.push(`              recorded by ${r.project}`);
     }
     lines.push('              --delete clears the RECORD only; there is no device left to touch.');
+  }
+
+  // A lock whose builder is gone. Harmless -- the next build takes it over on
+  // the pid-liveness check rather than waiting on it -- so this is tidiness,
+  // and the only thing --delete removes here.
+  if (staleLocks.length) {
+    lines.push(`Stale build locks (${staleLocks.length}) - the process that was building is gone:`);
+    for (const lock of staleLocks) {
+      lines.push(`  ${lock.platform} ${shortKey(lock.key)} (pid ${lock.pid ?? '?'} is not running)`);
+      lines.push(`              started by ${lock.projectRoot || 'an unrecorded workspace'}`);
+    }
+  }
+
+  // Reported and NEVER acted on, which is why it is a separate list rather
+  // than a row in the one above. Deleting a live lock would put a second
+  // workspace on a 19-minute compile the first one is already running -- the
+  // exact duplication single-flight exists to prevent. It is named so a reader
+  // wondering why their `rn-iso ios` says "waiting on ..." can see what it is
+  // waiting for.
+  if (liveLocks.length) {
+    lines.push(`Builds in progress (${liveLocks.length}) - NOT touched, by anything:`);
+    for (const lock of liveLocks) {
+      lines.push(`  ${lock.platform} ${shortKey(lock.key)} (pid ${lock.pid})`);
+      lines.push(`              building in ${lock.projectRoot || 'an unrecorded workspace'}`);
+    }
   }
 
   if (deviceSweepNotices.length) {
@@ -665,12 +706,22 @@ export async function collectGcReport({
     }
   }
 
+  // Build locks live under the config dir, so RN_ISO_HOME scopes them the way
+  // it scopes the registry -- unlike simulators and AVDs, which are
+  // machine-global and need the guard above. A throwaway home simply has no
+  // locks in it.
+  const locks = listBuildLocks();
+
   return {
     skipped,
     deadProjects,
     orphanedDevices,
     staleDevices,
     staleDeviceRecords,
+    buildLocks: {
+      stale: locks.filter(l => !l.alive),
+      live: locks.filter(l => l.alive),
+    },
     deviceSweepNotices,
     caches,
     olderThan,
@@ -694,7 +745,7 @@ export async function runGc(opts = {}) {
   });
   for (const line of formatGcReport(report)) console.log(line);
 
-  const { deadProjects, orphanedDevices, staleDevices, staleDeviceRecords, caches } = report;
+  const { deadProjects, orphanedDevices, staleDevices, staleDeviceRecords, buildLocks, caches } = report;
   // Caches only count as actionable with --older-than: emptying one whole is a
   // performance decision aimed at a specific cache, not something a sweep
   // should do on the way past.
@@ -702,6 +753,7 @@ export async function runGc(opts = {}) {
     || orphanedDevices.length > 0
     || staleDevices.length > 0
     || staleDeviceRecords.length > 0
+    || buildLocks.stale.length > 0
     || ((olderThan !== null || all) && caches.length > 0);
 
   if (!opts.delete) {
@@ -788,6 +840,19 @@ export async function runGc(opts = {}) {
     console.log(chalk.green(`Cleared the ${r.kind} record for ${r.project} (${r.id} is not on this machine)`));
   }
 
+  // Stale locks only, and only ever the directory: there is no process to
+  // signal (that is what makes it stale) and no artifact to remove. A LIVE
+  // lock is never reached from here -- it was never in this list.
+  for (const lock of buildLocks.stale) {
+    try {
+      rmSync(lock.path, { recursive: true, force: true });
+      console.log(chalk.green(`Cleared the ${lock.platform} build lock left by pid ${lock.pid ?? '?'} (${lock.projectRoot || 'unrecorded workspace'})`));
+    } catch (err) {
+      deleteFailures++;
+      console.log(chalk.red(`Failed to clear the build lock at ${lock.path}: ${err?.message || err}`));
+    }
+  }
+
   if (deleteFailures) {
     console.log(chalk.red(`\n${deleteFailures} entr${deleteFailures === 1 ? 'y' : 'ies'} could not be deleted; see above.`));
   }
@@ -872,7 +937,7 @@ function emptyCaches(caches) {
 export default function gcCommand(program) {
   program
     .command('gc')
-    .description('Report what rn-iso has left behind: dead project entries, orphaned owned devices, records of devices that no longer exist, and the shared build caches. Reports by default; pass --delete to act.')
+    .description('Report what rn-iso has left behind: dead project entries, orphaned owned devices, records of devices that no longer exist, build locks whose builder is gone, and the shared build caches. Reports by default; pass --delete to act.')
     .option('--delete', 'actually prune the reported entries and reap the reported devices')
     .option('--older-than <days>', 'also reap owned devices whose project has been untouched this long, and trim shared cache entries nothing has used in that time', v => {
       const n = parseInt(v, 10);
