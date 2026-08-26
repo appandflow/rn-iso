@@ -184,6 +184,18 @@ function createFixture() {
       timeout: 10 * 60 * 1000,
     });
     if (r2.status !== 0) die('installing @expo/fingerprint into the bare fixture failed');
+  } else {
+    // create-expo-app ran with --no-install (its own install is flaky in CI),
+    // so the fixture has no node_modules yet. Install now: `start`'s expo-child
+    // needs `expo` resolvable (RN_ISO_EXPO_BIN otherwise), and worktree create
+    // --carry-ignored only clones a node_modules that exists.
+    const r2 = spawnSync('npm', ['install', '--no-audit', '--no-fund'], {
+      cwd: appDir,
+      env: ENV,
+      stdio: 'inherit',
+      timeout: 15 * 60 * 1000,
+    });
+    if (r2.status !== 0) die('installing the expo fixture dependencies failed');
   }
 
   gitInitWithRemote(appDir);
