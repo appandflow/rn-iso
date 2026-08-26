@@ -15,6 +15,10 @@ This repository is a workspace. Everything published lives under `packages/`.
 | [`@rn-iso/metro`](./packages/metro)                       | One Metro transform cache shared by every worktree, instead of Metro's per-project default that makes each new workspace re-transform the whole module graph. Plus the NDJSON reporter that turns the dev server's events into structured logs.                                                                                                               |
 | [`@rn-iso/expo-build-cache`](./packages/expo-build-cache) | A local Expo build cache provider. When no native input changed, the Expo CLI installs a cached `.app` / `.apk` instead of compiling.                                                                                                                                                                                                                         |
 
+**New here? [Getting started](./docs/getting-started.md)** is the quickest
+path to integrating rn-iso in a project: first run, agent setup, cache wiring,
+worktrees.
+
 **[Read the rn-iso documentation](./packages/rn-iso/README.md)** -- the commands,
 the ownership model, worktrees, settings, and cache housekeeping all live there.
 Each cache package documents its own wiring in its own README.
