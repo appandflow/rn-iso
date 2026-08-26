@@ -115,7 +115,11 @@ interface RunGcOptions {
 // Bounds each device listing so a wedged simctl/emulator daemon can't hang
 // `gc` forever -- see the comment above the listAllIosSims/listAvds calls
 // in collectGcReport below.
-const DEVICE_LIST_TIMEOUT_MS = 10000;
+// 30s, not 10s: on a loaded machine (several booted emulators, a busy
+// CoreSimulator) `emulator -list-avds` / `simctl list` genuinely take longer
+// than 10s to answer, and a premature skip means an orphaned emulator holding
+// gigabytes never surfaces. A real hang still bounds out and prints the notice.
+const DEVICE_LIST_TIMEOUT_MS = 30000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

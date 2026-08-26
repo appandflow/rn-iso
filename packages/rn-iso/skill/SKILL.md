@@ -10,7 +10,9 @@ You are an AI agent working on a React Native / Expo project, possibly alongside
 
 Invoke the CLI via `npx`: `npx rn-iso <command>`. Don't `npm install -g`.
 
-`npx` usually resolves the latest published version, but not always: a stale entry in the npm cache (or a different node version's cache) can serve an old one, and an old CLI silently lacks commands this file documents. **Check once per session** -- `npx rn-iso --version` -- and use `npx rn-iso@latest` if it disagrees with the version stamped at the bottom of this file. `start` warns when the two are out of step.
+`npx` usually resolves the latest published version, but not always: a stale entry in the npm cache (or a different node version's cache) can serve an old one, and an old CLI silently lacks commands this file documents. **Check once per session** -- `npx rn-iso --version` -- and use `npx rn-iso@latest` if it disagrees with the version stamped at the bottom of this file.
+
+**In a repo whose `.npmrc` pins a private registry** (`registry=https://<host>/...`, common in company monorepos), `npx` tries to fetch `rn-iso` from THAT registry and fails -- typically `npm error code E401` (expired token) -- because rn-iso is published on the public npm registry. Point npx at the public registry for this one package: `npx --registry=https://registry.npmjs.org rn-iso <command>` (and the same on `rn-iso@latest`). An `E401`/`E404` on `npx rn-iso` is almost always this, not a broken install.
 
 ## Read the CLI's own docs for anything specific
 
