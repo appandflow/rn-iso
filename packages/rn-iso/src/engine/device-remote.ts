@@ -259,6 +259,12 @@ export function remoteIosDeps(ctx: RemoteContext) {
         return { failed: true, reason: `agent-device connect failed: ${describe(err)}` };
       }
 
+      // Surfaced the moment the session is reachable, not at the end: it is
+      // how a HUMAN watches a device they cannot see, and it is most useful
+      // while the build is still running. On its own line so terminals
+      // linkify it.
+      if (daemon.webPreviewUrl) out(`Watch this device: ${daemon.webPreviewUrl}`);
+
       session = { id, daemon, profilePath };
       // `udid` is the field ios.ts reads and prints, and shortUdid truncates
       // it for the phase line. A session id shortens to something meaningful;
@@ -335,6 +341,10 @@ export function remoteIosDeps(ctx: RemoteContext) {
     // Not a dep override. The command layer calls this to record the session
     // id in state.json, which is the only durable handle `stop` and `gc` get.
     createdSessionId: (): string | null => session?.id ?? null,
+
+    // Not a dep override either. The browser preview for this device, so the
+    // --json payload can carry it and a caller can hand it to a person.
+    webPreviewUrl: (): string | null => session?.daemon.webPreviewUrl ?? null,
   };
 }
 

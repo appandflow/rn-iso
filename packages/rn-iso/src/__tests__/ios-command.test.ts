@@ -2206,6 +2206,7 @@ describe('--remote', () => {
             return { ok: true, mode: 'launch' };
           },
           createdSessionId: () => 'drs_42',
+          webPreviewUrl: () => null,
         }),
       },
     };
@@ -2496,5 +2497,48 @@ describe('the release cache key and the JS swap', () => {
     expect(calls.args.installIosApp.appPath).toBe(appPath);
     // The payload reports what actually happened: not a cache hit.
     expect(parseFirst(logs).cacheHit).toBe(false);
+describe('the remote browser preview', () => {
+  function previewStub(url: string | null) {
+    return {
+      resolveRemoteContext: () => ({
+        ctx: { root, label: 'fixture', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+      }),
+      remoteIosDeps: () => ({
+        checkDeviceCapacity: () => null,
+        ensureOwnedDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
+        ensureBooted: async () => ({ ok: true, udid: 'drs_42' }),
+        installIosApp: () => ({ ok: true }),
+        launchIosApp: () => ({ ok: true, mode: 'launch' }),
+        createdSessionId: () => 'drs_42',
+        webPreviewUrl: () => url,
+      }),
+    };
+  }
+
+  test('the --json payload carries the preview url', async () => {
+    // A person cannot see a device in a datacenter. This is the handle a
+    // caller gives them.
+    reserve();
+    const { logs } = await run({ remote: true, json: true }, previewStub('https://preview.example/abc'));
+    expect(parseFirst(logs).webPreviewUrl).toBe('https://preview.example/abc');
+  });
+
+  test('the human summary prints it too', async () => {
+    reserve();
+    const { stderr } = await run({ remote: true }, previewStub('https://preview.example/abc'));
+    expect(stderr).toContain('Watch this device: https://preview.example/abc');
+  });
+
+  test('a device with no preview omits the key rather than carrying null', async () => {
+    // An always-present key invites a caller to print an empty link.
+    reserve();
+    const { logs } = await run({ remote: true, json: true }, previewStub(null));
+    expect('webPreviewUrl' in parseFirst(logs)).toBe(false);
+  });
+
+  test('a local run has no preview url at all', async () => {
+    reserve();
+    const { logs } = await run({ json: true });
+    expect('webPreviewUrl' in parseFirst(logs)).toBe(false);
   });
 });

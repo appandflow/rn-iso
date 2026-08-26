@@ -58,6 +58,11 @@ other line goes to stderr, so it is always safe to pipe.
                               download; it is copied into the local cache on
                               the way past, so the next workspace is "local")
                     false     nothing answered, so it was compiled
+  webPreviewUrl   only on a remote device that has one (an EAS Simulator
+                  session): a browser URL showing that device's screen. Absent
+                  on a local device. Hand it to the human -- it is the only way
+                  to see a device that is not on this machine. Never open it ON
+                  the device; it is a page, not a deep link.
   cacheSkipped    true only when --no-build-cache was passed: "nothing was
                   looked up", which is a different fact from "nothing was found"
   waitedForBuild  { pid, ms } when ANOTHER workspace was already compiling this

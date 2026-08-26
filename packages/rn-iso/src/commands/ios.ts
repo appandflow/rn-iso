@@ -629,6 +629,7 @@ export function iosFacts({
   logsDir,
   durationMs,
   launched = true,
+  webPreviewUrl = null,
 }: {
   udid: string;
   deviceName?: string | null;
@@ -644,6 +645,7 @@ export function iosFacts({
   logsDir?: string;
   durationMs?: number;
   launched?: boolean | string;
+  webPreviewUrl?: string | null;
 }): IosFacts {
   return {
     platform: PLATFORM,
@@ -673,6 +675,9 @@ export function iosFacts({
     metroPort,
     logs: { dir: logsDir },
     durationMs,
+    // Omitted entirely on a local device rather than carried as null: a key
+    // that is always present invites a caller to print an empty link.
+    ...(webPreviewUrl ? { webPreviewUrl } : {}),
   };
 }
 
@@ -1949,6 +1954,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     logsDir,
     durationMs,
     launched: launchState,
+    webPreviewUrl: remoteDevice?.webPreviewUrl() ?? null,
   });
 
   if (json) {
@@ -1963,6 +1969,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     console.log(
       launchState === LAUNCH_UNVERIFIED ? chalk.yellow(`${summary} -- launch UNVERIFIED`) : chalk.green(summary),
     );
+    // Repeated after the outcome, not only when the session was created: by
+    // now a build may have scrolled the earlier line away, and this is the
+    // only way a person can look at a device in a datacenter.
+    if (facts.webPreviewUrl) console.error(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));
   }
 
   // Everything this command does is done. If a provider call was abandoned,

@@ -145,6 +145,8 @@ It needs `agent-device` on PATH, plus one of:
 
 `ios.remote: true` in settings does the same thing as the flag, per project or per repo.
 
+**Give the user the watch link.** When rn-iso creates an EAS Simulator session it prints `Watch this device: <url>` and puts the same value in the `--json` payload as `webPreviewUrl`. That browser preview is the ONLY way a person can see a device in a datacenter, so **put the URL in your reply to them, on its own line, whenever you run `--remote`** -- especially before a long build, and again if the launch comes back `unverified` so they can look at what the screen is actually showing. Never pass it to `agent-device open`: it is a browser page, not a deep link, and sending it to the device renders a browser inside the simulator. A local device and a bring-your-own daemon have no preview, and the key is then absent rather than null.
+
 **`stop`, `worktree remove` and `gc` DESTROY a remote session**, unlike a local device which they only shut down (or delete, for `worktree remove`). A session bills until its max duration, so leaving one running is the worse failure. If the stop fails, the command exits non-zero and keeps the record so you can retry -- do not ignore that. The one case nothing can recover is a worktree you `rm -rf` by hand: that takes the session id with it, and the two-hour cap is all that stops the billing.
 
 **There are no device logs on a remote device yet.** `logs --source device` is empty because the collector is local-only. The Metro half -- JS errors, redboxes, bundling failures -- is unaffected and is where nearly everything useful comes from anyway. `--errors` still works and still means what it says.
