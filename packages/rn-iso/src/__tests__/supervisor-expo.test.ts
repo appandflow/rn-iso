@@ -4,7 +4,6 @@
 // The parsing rules are pure functions because they carry the whole risk: a
 // line classified as an error that is not one makes `logs --errors` -- the
 // query an agent loop branches on -- report a healthy build as broken.
-import { EventEmitter } from 'node:events';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +18,7 @@ import {
   startExpoServer,
   stripAnsi,
 } from '../supervisor/server-expo.ts';
+import { makeChildProcess } from './_factories.ts';
 
 const ESC = '\u001B';
 
@@ -43,11 +43,7 @@ function fakeBin(dir = root) {
 }
 
 function fakeChild(pid = 999999) {
-  const child = new EventEmitter();
-  child.pid = pid;
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  return child;
+  return makeChildProcess({ pid });
 }
 
 describe('line parsing', () => {
@@ -203,8 +199,8 @@ describe('startExpoServer', () => {
       logsDir,
       spawnFn: () => child,
     });
-    child.stdout.emit('data', 'Starting project at /app\niOS Bundled 812ms index.js (1150 modules)\n');
-    child.stderr.emit('data', 'ERROR  Unable to resolve module ./nope\n');
+    child.stdout!.emit('data', 'Starting project at /app\niOS Bundled 812ms index.js (1150 modules)\n');
+    child.stderr!.emit('data', 'ERROR  Unable to resolve module ./nope\n');
 
     const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
     expect(records.length).toBe(3);
@@ -225,7 +221,7 @@ describe('startExpoServer', () => {
     const exits = [];
     handle.onExit((info) => exits.push(info));
 
-    child.stdout.emit('data', 'Error: port already in use');
+    child.stdout!.emit('data', 'Error: port already in use');
     child.emit('exit', 1, null);
 
     expect(exits).toEqual([{ code: 1, signal: null }]);
@@ -267,10 +263,11 @@ describe('startExpoServer', () => {
     });
     const signals = [];
     const realKill = process.kill;
-    process.kill = (pid, sig) => {
+    process.kill = ((pid: number, sig: string | number) => {
       signals.push([pid, sig]);
       if (sig === 'SIGTERM') child.emit('exit', 0, 'SIGTERM');
-    };
+      return true;
+    }) as typeof process.kill;
     try {
       await handle.close();
     } finally {
@@ -293,10 +290,11 @@ describe('startExpoServer', () => {
     });
     const signals = [];
     const realKill = process.kill;
-    process.kill = (pid, sig) => {
+    process.kill = ((pid: number, sig: string | number) => {
       signals.push([pid, sig]);
       if (sig === 'SIGKILL') child.emit('exit', null, 'SIGKILL');
-    };
+      return true;
+    }) as typeof process.kill;
     try {
       await handle.close();
     } finally {
@@ -315,9 +313,10 @@ describe('startExpoServer', () => {
     child.emit('exit', 0, null);
     const realKill = process.kill;
     let called = 0;
-    process.kill = () => {
+    process.kill = (() => {
       called += 1;
-    };
+      return true;
+    }) as typeof process.kill;
     try {
       await handle.close();
     } finally {

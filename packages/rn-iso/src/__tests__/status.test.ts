@@ -12,6 +12,8 @@ import { createServer } from 'http';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { saveConfig } from '../config.ts';
+import type { AddressInfo } from 'node:net';
+import { makeConfig } from './_factories.ts';
 import statusCommand, { readVolumes } from '../commands/status.ts';
 
 let tmpHome;
@@ -63,7 +65,7 @@ async function runStatus() {
 }
 
 test('status tags owned devices and leaves unowned devices untagged', async () => {
-  saveConfig({
+  saveConfig(makeConfig({
     version: 2,
     projects: {
       '/proj/a': {
@@ -77,7 +79,7 @@ test('status tags owned devices and leaves unowned devices untagged', async () =
         platforms: { android: { avdName: 'Pixel_6_API_34', consolePort: 5556 } },
       },
     },
-  });
+  }));
 
   const logs = await runStatus();
 
@@ -91,7 +93,7 @@ test('status tags owned devices and leaves unowned devices untagged', async () =
 });
 
 test('status says nothing extra for a project that has only a Metro port', async () => {
-  saveConfig({
+  saveConfig(makeConfig({
     version: 2,
     projects: {
       '/proj/a': {
@@ -100,7 +102,7 @@ test('status says nothing extra for a project that has only a Metro port', async
         platforms: {},
       },
     },
-  });
+  }));
 
   const logs = await runStatus();
 
@@ -123,13 +125,13 @@ test('status reports simctl as unreadable instead of warning that every sim is g
       throw new Error('spawn should not be called from status');
     },
   });
-  saveConfig({
+  saveConfig(makeConfig({
     version: 2,
     projects: {
       '/proj/a': { label: 'agent-1', platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } },
       '/proj/b': { label: 'agent-2', platforms: { ios: { deviceUdid: 'UDID-DEF', owned: true } } },
     },
-  });
+  }));
 
   const logs = await runStatus();
 
@@ -143,12 +145,12 @@ test('status reports simctl as unreadable instead of warning that every sim is g
 // A simctl that DOES answer, with a listing that lacks the recorded sim, is
 // proof: the record outlived the device, and that still warns.
 test('status still warns about a recorded sim missing from a readable listing', async () => {
-  saveConfig({
+  saveConfig(makeConfig({
     version: 2,
     projects: {
       '/proj/a': { label: 'agent-1', platforms: { ios: { deviceUdid: 'UDID-GONE', owned: true } } },
     },
-  });
+  }));
 
   const logs = await runStatus();
 
@@ -187,8 +189,8 @@ function writeState(root, supervisor) {
 test('status reports a supervisor whose port answers as this project as healthy', async () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
   const server = createServer((req, res) => res.end('packager-status:running'));
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const port = server.address().port;
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const port = (server.address() as AddressInfo).port;
   try {
     setExecutor({
       run: () => '',
@@ -208,17 +210,17 @@ test('status reports a supervisor whose port answers as this project as healthy'
       { ts: 2, src: 'metro', level: 'info', msg: 'bundle built', marker: true },
       { ts: 3, src: 'metro', level: 'error', msg: 'after the marker' },
     ]);
-    saveConfig({
+    saveConfig(makeConfig({
       version: 2,
       projects: {
         [root]: {
           label: 'agent-1',
           metroPort: port,
-          supervisor: { pid: process.pid, port, startedAt: 1700000000000 },
+          supervisor: { pid: process.pid, port, startedAt: '1700000000000' },
           platforms: {},
         },
       },
-    });
+    }));
 
     const payload = await runStatusJson();
     const env = payload.environments[0];
@@ -260,10 +262,10 @@ test('status counts a device-only noise storm as zero errors', async () => {
       join(root, '.rn-iso', 'logs', 'device.ndjson'),
       storm.map((r) => JSON.stringify(r)).join('\n') + '\n',
     );
-    saveConfig({
+    saveConfig(makeConfig({
       version: 2,
       projects: { [root]: { label: 'agent-1', metroPort: 8099, platforms: {} } },
-    });
+    }));
 
     const payload = await runStatusJson();
     expect(payload.environments[0].logs.errorsSinceMarker).toBe(0);
@@ -276,12 +278,12 @@ test('status warns about a supervisor record whose process is gone', async () =>
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
   try {
     writeState(root, { pid: 999999, port: 8083, mode: 'expo-child', startedAt: 5 });
-    saveConfig({
+    saveConfig(makeConfig({
       version: 2,
       projects: {
         [root]: { label: 'agent-1', metroPort: 8083, supervisor: { pid: 999999, port: 8083 }, platforms: {} },
       },
-    });
+    }));
 
     const logs = await runStatus();
     expect(logs.some((l) => /stale supervisor record/.test(l))).toBeTruthy();
@@ -296,7 +298,7 @@ test('status warns about a supervisor record whose process is gone', async () =>
 test('a workspace with no supervisor and no logs reports both as null', async () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
   try {
-    saveConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } });
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } }));
     const payload = await runStatusJson();
     expect(payload.environments[0].supervisor).toBe(null);
     expect(payload.environments[0].logs).toBe(null);
@@ -311,7 +313,7 @@ test('the printed lines name the supervisor and the error count', async () => {
   try {
     writeState(root, { pid: 999999, port: 8083, mode: 'expo-child', startedAt: 5 });
     writeLogs(root, [{ ts: 3, src: 'metro', level: 'error', msg: 'boom' }]);
-    saveConfig({ version: 2, projects: { [root]: { label: 'agent-1', metroPort: 8083, platforms: {} } } });
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
 
     const logs = await runStatus();
     expect(logs.some((l) => /supervisor: pid 999999/.test(l))).toBeTruthy();

@@ -443,7 +443,7 @@ describe('a real race between real processes', () => {
   }
 
   function runNode(path, args = [], env = {}) {
-    return new Promise((resolve, reject) => {
+    return new Promise<{ code: number | string; stdout: string; stderr: string }>((resolve, reject) => {
       execFile(
         process.execPath,
         [path, ...args],

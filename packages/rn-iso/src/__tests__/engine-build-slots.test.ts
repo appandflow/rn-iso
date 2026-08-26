@@ -128,7 +128,7 @@ describe('live: 2 slots, 3 processes', () => {
 
     const dir = tmpHome;
     const spawn = (id) =>
-      new Promise((resolve, reject) => {
+      new Promise<void>((resolve, reject) => {
         execFile(process.execPath, [script, id, dir], { env: { ...process.env, RN_ISO_HOME: tmpHome } }, (err) =>
           err ? reject(err) : resolve(),
         );

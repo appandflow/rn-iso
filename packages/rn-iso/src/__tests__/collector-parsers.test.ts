@@ -468,9 +468,11 @@ describe('watchAppPid', () => {
   function driver() {
     const queue = [];
     return {
-      setTimer: (fn) => {
+      // A fake timer handle: watchAppPid only ever hands it back to clearTimer,
+      // so a number stands in for Node's Timeout, cast once here.
+      setTimer: (fn: () => void): ReturnType<typeof setTimeout> => {
         queue.push(fn);
-        return queue.length;
+        return queue.length as unknown as ReturnType<typeof setTimeout>;
       },
       clearTimer: () => {
         queue.length = 0;
@@ -495,7 +497,9 @@ describe('watchAppPid', () => {
       pid: 3132,
       intervalMs: 1,
       resolve: () => answer,
-      onChange: (pid) => seen.push(pid),
+      onChange: (pid) => {
+        seen.push(pid);
+      },
       setTimer: d.setTimer,
       clearTimer: d.clearTimer,
     });
@@ -519,7 +523,9 @@ describe('watchAppPid', () => {
       pid: 3132,
       intervalMs: 1,
       resolve: () => answer,
-      onChange: (pid) => seen.push(pid),
+      onChange: (pid) => {
+        seen.push(pid);
+      },
       setTimer: d.setTimer,
       clearTimer: d.clearTimer,
     });
@@ -544,7 +550,9 @@ describe('watchAppPid', () => {
         if (throwing) throw new Error('device offline');
         return 4200;
       },
-      onChange: (pid) => seen.push(pid),
+      onChange: (pid) => {
+        seen.push(pid);
+      },
       setTimer: d.setTimer,
       clearTimer: d.clearTimer,
     });

@@ -40,7 +40,7 @@ test('reclaimProject removes the config entry', async () => {
   upsertProject('/proj', { metroPort: 8082 });
   setDevice('/proj', 'ios', { deviceUdid: 'U1' });
 
-  const result = await reclaimProject('/proj', { deleteArtifacts: false });
+  const result = await reclaimProject('/proj', { deleteOwnedDevices: false });
   expect(result.path).toBe('/proj');
   expect(result.dereferenced).toEqual(['ios sim U1']);
   expect(getProject('/proj')).toBe(null);
@@ -134,7 +134,7 @@ test('reclaimProject refuses to kill an unidentified process on the port', async
   const { reclaimProject } = await import('../reclaim.ts');
   upsertProject('/nonexistent/project', { metroPort: 8082 });
 
-  const result = await reclaimProject('/nonexistent/project', { deleteArtifacts: false });
+  const result = await reclaimProject('/nonexistent/project', { deleteOwnedDevices: false });
   expect(result.killedPid).toBe(null);
   expect(result.skippedMetro).toBeTruthy();
   resetExecutor();

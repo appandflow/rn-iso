@@ -21,6 +21,7 @@ import {
   resolveSupervisorTarget,
   runStop,
 } from '../commands/stop.ts';
+import { makeConfig, makeError, makeMetroResolution } from './_factories.ts';
 
 // --- resolveSupervisorTarget: who may be signalled --------------------------
 
@@ -31,7 +32,7 @@ test('no supervisor recorded anywhere is "none", not an error', () => {
 
 test('an alive pid whose recorded port matches the reservation is ours to signal', () => {
   const r = resolveSupervisorTarget({
-    state: { pid: 4242, port: 8083, mode: 'bare-inproc', startedAt: 111 },
+    state: { pid: 4242, port: 8083, mode: 'bare-inproc', startedAt: '111' },
     record: { pid: 4242, port: 8083 },
     reservedPort: 8083,
     isAlive: (pid) => pid === 4242,
@@ -86,7 +87,7 @@ test('state.json and the global registry disagreeing on the pid is refused', () 
 test('a registry record with no state.json is still actionable when the port matches', () => {
   const r = resolveSupervisorTarget({
     state: null,
-    record: { pid: 4242, port: 8083, startedAt: 5 },
+    record: { pid: 4242, port: 8083, startedAt: '5' },
     reservedPort: 8083,
     isAlive: () => true,
   });
@@ -137,7 +138,7 @@ function seams(over = {}) {
       return true;
     },
     waitForDeath: async () => true,
-    resolveMetro: async () => ({ missing: true }),
+    resolveMetro: async () => makeMetroResolution.missing(),
     killMetro: (leader) => {
       calls.killedMetro.push(leader);
       return true;
@@ -242,7 +243,7 @@ test('an unverified supervisor record is refused without signalling anything', a
 // With no supervisor, v2's path is unchanged: identity first, kill the group.
 test('no supervisor but our own Metro on the port kills the group', async () => {
   const { calls, opts } = seams({
-    resolveMetro: async () => ({ metro: { pid: 90, leader: 88, cwd: '/proj/a' } }),
+    resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 90, leader: 88, cwd: '/proj/a' } }),
   });
   const r = await runStop(opts);
   expect(r.ok).toBe(true);
@@ -252,7 +253,7 @@ test('no supervisor but our own Metro on the port kills the group', async () => 
 });
 
 test('an unproven listener is refused and named, and --force overrides it', async () => {
-  const { opts } = seams({ resolveMetro: async () => ({ notOurs: 'pid 99 runs from /elsewhere' }) });
+  const { opts } = seams({ resolveMetro: async () => makeMetroResolution.notOurs({ notOurs: 'pid 99 runs from /elsewhere' }) });
   const refused = await runStop(opts);
   expect(refused.ok).toBe(false);
   expect(refused.outcomes.metro.status).toBe('refused');
@@ -260,7 +261,7 @@ test('an unproven listener is refused and named, and --force overrides it', asyn
   expect(refused.outcomes.port.status).toBe('kept');
 
   const forced = seams({
-    resolveMetro: async () => ({ notOurs: 'pid 99 runs from /elsewhere' }),
+    resolveMetro: async () => makeMetroResolution.notOurs({ notOurs: 'pid 99 runs from /elsewhere' }),
     findListener: () => 99,
     force: true,
   });
@@ -390,16 +391,17 @@ test('clearSupervisorState removes a state file that held only the supervisor', 
 });
 
 test('stopping frees the reserved port in the registry and keeps the device record', async () => {
-  saveConfig({
-    version: 2,
-    projects: {
-      [tmpRoot]: {
-        label: 'agent-1',
-        metroPort: 8083,
-        platforms: { ios: { deviceUdid: 'U1', owned: true } },
+  saveConfig(
+    makeConfig({
+      projects: {
+        [tmpRoot]: {
+          label: 'agent-1',
+          metroPort: 8083,
+          platforms: { ios: { deviceUdid: 'U1', owned: true } },
+        },
       },
-    },
-  });
+    }),
+  );
   mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(supervisorPidFile(tmpRoot), '4242');
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 4242, port: 8083 } }));
@@ -425,17 +427,18 @@ test('stopping frees the reserved port in the registry and keeps the device reco
 // find a supervisor whose workspace is gone, so a stop that leaves one behind
 // leaves a permanent ghost.
 test('stopping clears the global supervisor registration', async () => {
-  saveConfig({
-    version: 2,
-    projects: {
-      [tmpRoot]: {
-        label: 'agent-1',
-        metroPort: 8083,
-        supervisor: { pid: 4242, port: 8083, startedAt: 5 },
-        platforms: {},
+  saveConfig(
+    makeConfig({
+      projects: {
+        [tmpRoot]: {
+          label: 'agent-1',
+          metroPort: 8083,
+          supervisor: { pid: 4242, port: 8083, startedAt: '5' },
+          platforms: {},
+        },
       },
-    },
-  });
+    }),
+  );
 
   const r = await runStop({
     root: tmpRoot,
@@ -510,9 +513,7 @@ test('a collector that exits between the liveness check and the signal is not an
     collectors: { ios: { pid: 111 } },
     isAlive: () => true,
     signalCollector: () => {
-      const e = new Error('ESRCH');
-      e.code = 'ESRCH';
-      throw e;
+      throw makeError('ESRCH', { code: 'ESRCH' });
     },
   });
   const r = await runStop(opts);

@@ -9,7 +9,7 @@
 //     reserved port moves the reservation instead of counting as success;
 //   - a failure prints the supervisor log's tail and its path, not a stack.
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, upsertProject } from '../config.ts';
@@ -25,6 +25,7 @@ import {
   supervisorEntry,
   tailLines,
 } from '../commands/start.ts';
+import { asProcessExit } from './_factories.ts';
 
 let tmpHome;
 let root;
@@ -76,6 +77,7 @@ function metroExecutor({ listeners = {}, cwd = root, spawnResult = null } = {}) 
   const calls = { run: [], spawn: [] };
   return {
     calls,
+    listening: false,
     run() {
       return '';
     },
@@ -101,13 +103,13 @@ function metroExecutor({ listeners = {}, cwd = root, spawnResult = null } = {}) 
 // assertion failed first would keep the test runner's process alive.
 const openServers = [];
 
-function metroListener(port) {
+function metroListener(port): Promise<Server> {
   const server = createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('packager-status:running');
   });
   openServers.push(server);
-  return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve(server)));
+  return new Promise<Server>((resolve) => server.listen(port, '127.0.0.1', () => resolve(server)));
 }
 
 async function runAction(opts) {
@@ -121,9 +123,9 @@ async function runAction(opts) {
   let exitCode = null;
   console.log = (l) => logs.push(String(l));
   console.error = (l) => errs.push(String(l));
-  process.exit = (c) => {
+  process.exit = asProcessExit((c) => {
     exitCode = c;
-  };
+  });
   process.chdir(root);
   try {
     await run(opts);
@@ -410,7 +412,7 @@ describe('action: spawning the supervisor', () => {
   test('a supervisor that exits during startup ends the wait immediately', async () => {
     const port = 8156;
     const exec = metroExecutor({ listeners: {} });
-    const handlers = {};
+    const handlers: Record<string, (...args: any[]) => void> = {};
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
       const child = {

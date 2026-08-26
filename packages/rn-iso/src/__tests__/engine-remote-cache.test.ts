@@ -41,6 +41,7 @@ import {
   uploadDestination,
   uploadRemote,
 } from '../engine/remote-cache.ts';
+import { makeError, makeWriter } from './_factories.ts';
 
 let root;
 
@@ -563,18 +564,18 @@ function tapStreams(fn) {
   const originalOut = process.stdout.write;
   const originalErr = process.stderr.write;
   const originalLog = console.log;
-  process.stdout.write = (chunk, enc, cb) => {
+  process.stdout.write = ((chunk: unknown, enc?: unknown, cb?: unknown) => {
     out.push(String(chunk));
     if (typeof enc === 'function') enc();
     else if (typeof cb === 'function') cb();
     return true;
-  };
-  process.stderr.write = (chunk, enc, cb) => {
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: unknown, enc?: unknown, cb?: unknown) => {
     err.push(String(chunk));
     if (typeof enc === 'function') enc();
     else if (typeof cb === 'function') cb();
     return true;
-  };
+  }) as typeof process.stderr.write;
   const restore = () => {
     process.stdout.write = originalOut;
     process.stderr.write = originalErr;
@@ -598,12 +599,12 @@ function records() {
   const written = [];
   return {
     written,
-    writer: {
+    writer: makeWriter({
       write: (record) => {
         written.push(record);
         return true;
       },
-    },
+    }),
   };
 }
 
@@ -918,11 +919,7 @@ describe('checkEasAuth', () => {
     (stdout, exitCode = 0, stderr = '') =>
     () => {
       if (exitCode === 0) return stdout;
-      const err = new Error('Command failed');
-      err.status = exitCode;
-      err.stdout = stdout;
-      err.stderr = stderr;
-      throw err;
+      throw makeError('Command failed', { status: exitCode, stdout, stderr });
     };
 
   test('a logged-in session whose accounts include the owner is ok', () => {
@@ -983,10 +980,7 @@ describe('checkEasAuth', () => {
       projectRoot: root,
       resolveBin: () => ({ file: 'eas', source: 'path' }),
       run: () => {
-        const err = new Error('Command failed');
-        err.code = 'ETIMEDOUT';
-        err.killed = true;
-        throw err;
+        throw makeError('Command failed', { code: 'ETIMEDOUT', killed: true });
       },
     });
     expect(status.failed).toBe(undefined);
@@ -998,7 +992,7 @@ describe('checkEasAuth', () => {
     const args = {
       projectRoot: root,
       owner: 'janic',
-      resolveBin: () => ({ file: 'eas', source: 'path' }),
+      resolveBin: () => ({ file: 'eas', source: 'path' as const }),
       run: () => {
         runs += 1;
         return 'janic\n';

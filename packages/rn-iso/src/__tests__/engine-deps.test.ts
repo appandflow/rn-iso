@@ -4,11 +4,11 @@
 // The three-outcome shape is the point of the pure half: "no CocoaPods in
 // this project at all" must not read as "stale", or every Expo build would
 // run a pod install with no Podfile to install from.
-import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEPS_ERROR, podsAreStale, readPodState, runPodInstall } from '../engine/deps.ts';
+import { makeChildProcess, makeError, makeWriter } from './_factories.ts';
 
 let root;
 
@@ -80,12 +80,7 @@ describe('readPodState', () => {
 
 // A child that streams the given lines and then exits with the given code.
 function fakePodChild({ lines = [], code = 0, signal = null, error = null } = {}) {
-  const child = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  child.stdout.setEncoding = () => {};
-  child.stderr.setEncoding = () => {};
-  child.pid = 4242;
+  const child = makeChildProcess({ pid: 4242 });
   setImmediate(() => {
     for (const line of lines) child.stdout.emit('data', `${line}\n`);
     if (error) child.emit('error', error);
@@ -96,13 +91,13 @@ function fakePodChild({ lines = [], code = 0, signal = null, error = null } = {}
 
 function collectingWriter() {
   const records = [];
-  return {
-    records,
+  const writer = makeWriter({
     write: (r) => {
       records.push(r);
       return true;
     },
-  };
+  });
+  return Object.assign(writer, { records });
 }
 
 describe('runPodInstall', () => {
@@ -150,8 +145,7 @@ describe('runPodInstall', () => {
   // "install CocoaPods" stops.
   test('a missing `pod` binary is reported as a structured remedy, not an ENOENT', async () => {
     mkdirSync(join(root, 'ios'), { recursive: true });
-    const err = new Error('spawn pod ENOENT');
-    err.code = 'ENOENT';
+    const err = makeError('spawn pod ENOENT', { code: 'ENOENT' });
     const result = await runPodInstall(root, collectingWriter(), {
       spawnFn: () => {
         throw err;
@@ -165,8 +159,7 @@ describe('runPodInstall', () => {
 
   test('an ENOENT delivered as a spawn `error` event is recognized the same way', async () => {
     mkdirSync(join(root, 'ios'), { recursive: true });
-    const err = new Error('spawn pod ENOENT');
-    err.code = 'ENOENT';
+    const err = makeError('spawn pod ENOENT', { code: 'ENOENT' });
     const result = await runPodInstall(root, collectingWriter(), {
       spawnFn: () => fakePodChild({ error: err }),
     });

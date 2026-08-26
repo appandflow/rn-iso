@@ -21,6 +21,7 @@ import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { parseArgs, readCollectors, registerCollector, runCollector, unregisterCollector } from '../collector/run.ts';
 import { writeWorkspaceState } from '../supervisor/run.ts';
+import { makeChildProcess } from './_factories.ts';
 
 const ENTRY = fileURLToPath(new URL('../collector/run.ts', import.meta.url));
 
@@ -95,7 +96,9 @@ async function until(predicate, { timeoutMs = 15000, label = 'condition' } = {})
 }
 
 function exited(child) {
-  return new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+  return new Promise<{ code: number | null; signal: string | null }>((resolve) =>
+    child.on('exit', (code, signal) => resolve({ code, signal })),
+  );
 }
 
 describe('parseArgs', () => {
@@ -484,7 +487,7 @@ describe('the android collector follows the app across a restart', () => {
 
     // Still one collector, still registered under this pid, still alive: a
     // restart is not an exit.
-    expect(readCollectors(root).android.pid).toBe(child.pid);
+    expect((readCollectors(root).android as { pid?: number }).pid).toBe(child.pid);
     expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBe(false);
 
     process.kill(child.pid, 'SIGTERM');
@@ -521,23 +524,7 @@ describe('the android collector follows the app across a restart', () => {
 // that ends on its own while the app is back under a new pid, and a watcher
 // that must not outlive the collector.
 describe('runCollector reattach seams', () => {
-  const fakeChild = (pid) => {
-    const handlers = {};
-    return {
-      pid,
-      stdout: { setEncoding() {}, on() {} },
-      stderr: { setEncoding() {}, on() {} },
-      on(event, fn) {
-        handlers[event] = fn;
-      },
-      emit(event, ...args) {
-        handlers[event]?.(...args);
-      },
-      kill() {
-        this.killed = true;
-      },
-    };
-  };
+  const fakeChild = (pid) => makeChildProcess({ pid });
 
   test('a stream that ends while the app is back under a new pid reattaches instead of exiting', async () => {
     const started = [];

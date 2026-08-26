@@ -8,6 +8,7 @@ import {
   tightVolumes,
   unprovisionedWorktrees,
 } from '../status.ts';
+import { makeEnvironmentState } from './_factories.ts';
 
 const BOOTED = { udid: 'U1', name: 'rn-iso-app', state: 'Booted' };
 const SHUTDOWN = { udid: 'U1', name: 'rn-iso-app', state: 'Shutdown' };
@@ -33,7 +34,7 @@ test('a registered project with nothing booted is not live and costs no memory',
 test('a booted sim with Metro running is live, and counts both', () => {
   const s = environmentState(project(), {
     simsByUdid: { U1: BOOTED },
-    metro: { metro: { pid: 42, leader: 42, cwd: '/proj/a' } },
+    metro: { metro: { pid: 42 } },
   });
   expect(s.live).toBe(true);
   expect(s.memoryMb >= 2000).toBeTruthy();
@@ -76,13 +77,13 @@ test('an unreadable sim listing leaves the state unknown instead of warning per 
 // makes everything slower -- and that is the one failure a parallel agent cannot
 // observe for itself.
 test('capacity warns once committed memory passes a comfortable share of the machine', () => {
-  const live = { live: true, memoryMb: 2200 };
+  const live = makeEnvironmentState({ memoryMb: 2200 });
   expect(capacity([live, live], 16384).overCapacity).toBe(false);
   expect(capacity([live, live, live, live, live], 16384).overCapacity).toBe(true);
 });
 
 test('capacity says nothing when the machine size is unknown', () => {
-  expect(capacity([{ live: true, memoryMb: 9999 }], null).overCapacity).toBe(false);
+  expect(capacity([makeEnvironmentState({ memoryMb: 9999 })], null).overCapacity).toBe(false);
 });
 
 test('unprovisioned worktrees are the ones with no registered environment', () => {
@@ -135,10 +136,10 @@ test('a nearly full disk is flagged before a build discovers it', () => {
 test('a healthy supervisor is reported with its pid, mode and start time', () => {
   const s = environmentState(project(), {
     simsByUdid: { U1: BOOTED },
-    metro: { metro: { pid: 42, leader: 42, cwd: '/proj/a' } },
-    supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: 1700000000000, alive: true, healthy: true },
+    metro: { metro: { pid: 42 } },
+    supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: '1700000000000', alive: true, healthy: true },
   });
-  expect(s.supervisor).toEqual({ pid: 4242, mode: 'bare-inproc', startedAt: 1700000000000, healthy: true });
+  expect(s.supervisor).toEqual({ pid: 4242, mode: 'bare-inproc', startedAt: '1700000000000', healthy: true });
   expect(s.warnings.join(' ').includes('stale supervisor')).toBe(false);
 });
 
@@ -149,7 +150,7 @@ test('a supervisor record whose pid is dead is warned about as stale', () => {
   const s = environmentState(project(), {
     simsByUdid: { U1: SHUTDOWN },
     metro: { missing: true },
-    supervisor: { pid: 4242, mode: 'expo-child', startedAt: 5, alive: false, healthy: false },
+    supervisor: { pid: 4242, mode: 'expo-child', startedAt: '5', alive: false, healthy: false },
   });
   expect(s.supervisor.healthy).toBe(false);
   expect(s.warnings.join(' ')).toMatch(/stale supervisor record for \/proj\/a/);
@@ -161,7 +162,7 @@ test('a supervisor record whose pid is dead is warned about as stale', () => {
 test('a live supervisor that is not answering is unhealthy but not stale', () => {
   const s = environmentState(project(), {
     metro: { missing: true },
-    supervisor: { pid: 4242, mode: 'expo-child', startedAt: 5, alive: true, healthy: false },
+    supervisor: { pid: 4242, mode: 'expo-child', startedAt: '5', alive: true, healthy: false },
   });
   expect(s.supervisor.healthy).toBe(false);
   expect(s.warnings.join(' ').includes('stale supervisor')).toBe(false);
@@ -191,8 +192,8 @@ test('a workspace with no log directory reports logs as null', () => {
 test('every pre-v3 field survives the extension', () => {
   const s = environmentState(project(), {
     simsByUdid: { U1: BOOTED },
-    metro: { metro: { pid: 42, leader: 42, cwd: '/proj/a' } },
-    supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: 5, alive: true, healthy: true },
+    metro: { metro: { pid: 42 } },
+    supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: '5', alive: true, healthy: true },
     logs: { dir: '/proj/a/.rn-iso/logs', errorsSinceMarker: 0 },
   });
   for (const key of ['path', 'live', 'memoryMb', 'warnings', 'ios', 'android', 'metro', 'worktree']) {

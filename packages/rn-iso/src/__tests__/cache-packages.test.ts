@@ -71,7 +71,7 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
       }
     }
     const stores = sharedCacheStores('demo', { FileStore: FakeStore });
-    expect(stores[0].root).toBe(cacheRoot);
+    expect((stores[0] as { root: string }).root).toBe(cacheRoot);
 
     const record = await waitForRegistration(cacheRoot);
     expect(record).toBeTruthy();

@@ -26,6 +26,7 @@ import {
   unsetRepoSetting,
   getConcurrencyLimits,
 } from '../config.ts';
+import { makeConfig } from './_factories.ts';
 
 let tmpHome;
 
@@ -62,7 +63,7 @@ test('ensureConfig creates and returns empty config', () => {
 });
 
 test('saveConfig + loadConfig roundtrip', () => {
-  saveConfig({ version: 1, projects: { '/foo': { metroPort: 8082, platforms: {} } } });
+  saveConfig(makeConfig({ version: 1, projects: { '/foo': { metroPort: 8082, platforms: {} } } }));
   const cfg = loadConfig();
   expect(cfg.projects['/foo'].metroPort).toBe(8082);
 });
@@ -157,7 +158,7 @@ test('concurrent processes each keep their record', async () => {
   await Promise.all(
     keys.map(
       (key) =>
-        new Promise((resolve, reject) => {
+        new Promise<void>((resolve, reject) => {
           execFile(process.execPath, [script, key], { env: { ...process.env, RN_ISO_HOME: tmpHome } }, (err) =>
             err ? reject(err) : resolve(),
           );
@@ -358,10 +359,12 @@ test('ensureConfig creates a v2 config with a repos section', () => {
 });
 
 test('migrates a v1 config without touching projects', () => {
-  saveConfig({
-    version: 1,
-    projects: { '/a': { metroPort: 8082, platforms: { ios: { deviceUdid: 'U1' } } } },
-  });
+  saveConfig(
+    makeConfig({
+      version: 1,
+      projects: { '/a': { metroPort: 8082, platforms: { ios: { deviceUdid: 'U1' } } } },
+    }),
+  );
   const cfg = ensureConfig();
   expect(cfg.version).toBe(2);
   expect(cfg.repos).toEqual({});

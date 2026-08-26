@@ -216,7 +216,7 @@ describe('logs command', () => {
     try {
       captureAction(logsCommand)(opts);
     } catch (err) {
-      if (err.message !== 'exit') throw err;
+      if ((err as Error).message !== 'exit') throw err;
     }
   }
 

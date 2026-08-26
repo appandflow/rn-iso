@@ -2,7 +2,6 @@
 //
 // No real prebuild is executed here: `expo prebuild` writes a native project
 // into the repo it is pointed at, so every case below uses a fake spawn.
-import { EventEmitter } from 'node:events';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +13,7 @@ import {
   runPrebuild,
   shouldPrebuild,
 } from '../engine/prebuild.ts';
+import { makeChildProcess, makeWriter } from './_factories.ts';
 
 let root;
 
@@ -71,11 +71,7 @@ describe('the decision', () => {
 });
 
 function fakeExpoChild({ lines = [], code = 0, signal = null, error = null, onExitSideEffect = null } = {}) {
-  const child = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  child.stdout.setEncoding = () => {};
-  child.stderr.setEncoding = () => {};
+  const child = makeChildProcess();
   setImmediate(() => {
     for (const line of lines) child.stdout.emit('data', `${line}\n`);
     if (error) {
@@ -90,13 +86,13 @@ function fakeExpoChild({ lines = [], code = 0, signal = null, error = null, onEx
 
 function collectingWriter() {
   const records = [];
-  return {
-    records,
+  const writer = makeWriter({
     write: (r) => {
       records.push(r);
       return true;
     },
-  };
+  });
+  return Object.assign(writer, { records });
 }
 
 describe('runPrebuild', () => {

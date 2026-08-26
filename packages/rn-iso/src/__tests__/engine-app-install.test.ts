@@ -40,6 +40,23 @@ import {
   writeDebugHttpHost,
 } from '../engine/app-install.ts';
 
+// launchAndroidApp / launchIosApp return a union of success and failure shapes;
+// a permissive structural view lets a test read the branch it exercised.
+type LaunchResult = {
+  ok?: boolean;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+  mode?: string;
+  component?: string;
+  devClientUrl?: string;
+  devClientNote?: string | null;
+  reversed?: string[];
+  debugHttpHost?: string | null;
+  debugHttpHostNote?: string | null;
+  [key: string]: unknown;
+};
+
 // Records every runFile call as a flat argv array, and lets a test make a
 // particular one fail.
 function recordingExec({ fail = null, outputs = {} }: any = {}): any {
@@ -614,8 +631,8 @@ describe('the debug_http_host script, run for real under sh', () => {
   // "the file parses" is an assertion and not a grep. Returns the <map>'s
   // string entries.
   const parsePrefs = (text) => {
-    const entries = {};
-    const stack = [];
+    const entries: Record<string, string> = {};
+    const stack: Array<{ name: string; attrs: Record<string, string> }> = [];
     const tag = /<(\/?)([\w:.-]+)((?:\s+[\w:.-]+\s*=\s*"[^"]*")*)\s*(\/?)>/g;
     const body = text.replace(/<\?xml[^>]*\?>/g, '');
     let last = 0;
@@ -630,7 +647,7 @@ describe('the debug_http_host script, run for real under sh', () => {
         if (name === 'string') entries[open.attrs.name] = between;
         continue;
       }
-      const attrMap = {};
+      const attrMap: Record<string, string> = {};
       for (const a of attrs.matchAll(/([\w:.-]+)\s*=\s*"([^"]*)"/g)) attrMap[a[1]] = a[2];
       if (selfClosing) {
         if (name === 'string') entries[attrMap.name] = '';
@@ -717,7 +734,7 @@ describe('the Android dev-client deep link', () => {
 
   test('launchAndroidApp sends it, quoted for the device shell, and skips resolve-activity', () => {
     const exec = recordingExec();
-    const result = launchAndroidApp(
+    const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' },
       { exec },
     );
@@ -769,7 +786,7 @@ describe('the Android dev-client deep link', () => {
         'resolve-activity': 'priority=0 isDefault=true\ncom.example.app/.MainActivity\n',
       },
     });
-    const result = launchAndroidApp(
+    const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' },
       { exec },
     );

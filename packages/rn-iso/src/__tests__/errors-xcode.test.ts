@@ -23,6 +23,7 @@ import {
   describeDiagnostic,
   extractXcodeDiagnostics,
 } from '../engine/errors-xcode.ts';
+import type { Diagnostic } from '../engine/errors-xcode.ts';
 
 const REAL_COMPILE_FAILURE = [
   "CompileC /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/rn-iso-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
@@ -295,7 +296,7 @@ describe('what is and is not a diagnostic', () => {
     expect(extractXcodeDiagnostics('')).toEqual([]);
     expect(extractXcodeDiagnostics(null)).toEqual([]);
     expect(extractXcodeDiagnostics(undefined)).toEqual([]);
-    expect(extractXcodeDiagnostics(42)).toEqual([]);
+    expect(extractXcodeDiagnostics(42 as unknown as string)).toEqual([]);
   });
 
   test('CRLF transcripts parse the same as LF ones', () => {
@@ -388,6 +389,6 @@ describe('describeDiagnostic', () => {
   test('garbage renders as the empty string rather than throwing', () => {
     expect(describeDiagnostic(null)).toBe('');
     expect(describeDiagnostic(undefined)).toBe('');
-    expect(describeDiagnostic('not an object')).toBe('');
+    expect(describeDiagnostic('not an object' as unknown as Diagnostic)).toBe('');
   });
 });

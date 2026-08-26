@@ -436,7 +436,7 @@ test('addWorktree runs git via runFile (no shell) with a `--` terminator, path a
       spawn: () => {},
     });
 
-    const result = addWorktree({ path, branch: 'feat-x', baseRef: 'origin/main' });
+    const result = addWorktree({ path, branch: 'feat-x', baseRef: 'origin/main', cwd: tmp });
 
     expect(result).toBe(path);
     // No shell string anywhere; the space-bearing path is a single literal argv

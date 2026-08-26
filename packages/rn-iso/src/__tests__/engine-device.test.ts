@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { deviceCapacityRefusal, deviceTypeMismatch, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import { getProject, setDevice, upsertProject } from '../config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import { makeAdbDevices, makeConfig, makeIosSim } from './_factories.ts';
 
 let tmpHome;
 
@@ -258,10 +259,10 @@ describe('ensureBooted: android', () => {
         throw new Error('rn-iso must never try to boot hardware');
       },
     });
-    const result = await ensureBooted({
-      platform: 'android',
-      device: { serial: 'R5CT10', kind: 'physical', owned: false },
-    });
+    // A legacy physical record still carries `kind` (CLAUDE.md item 2); bind it
+    // to a local so the extra field is structurally accepted without a cast.
+    const physical = { serial: 'R5CT10', kind: 'physical', owned: false };
+    const result = await ensureBooted({ platform: 'android', device: physical });
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/No owned Android emulator is recorded/);
   });
@@ -524,8 +525,8 @@ describe('ensureOwnedDevice: android', () => {
 // maxDevices refuses a NEW device once the machine is at the cap, but never
 // refuses a workspace that already has a live device of its own (idempotent).
 describe('deviceCapacityRefusal', () => {
-  const booted = (udid, name) => ({ udid, name, state: 'Booted' });
-  const shutdown = (udid, name) => ({ udid, name, state: 'Shutdown' });
+  const booted = (udid, name) => makeIosSim({ udid, name, state: 'Booted' });
+  const shutdown = (udid, name) => makeIosSim({ udid, name, state: 'Shutdown' });
 
   test('unlimited (max 0) never refuses', () => {
     const sims = [booted('u1', 'rn-iso-a'), booted('u2', 'rn-iso-b')];
@@ -535,8 +536,8 @@ describe('deviceCapacityRefusal', () => {
         project: {},
         max: 0,
         sims,
-        adb: { emulators: [] },
-        config: { projects: {} },
+        adb: makeAdbDevices({ emulators: [] }),
+        config: makeConfig(),
       }),
     ).toBe(null);
   });
@@ -548,8 +549,8 @@ describe('deviceCapacityRefusal', () => {
       project: { platforms: {} },
       max: 2,
       sims,
-      adb: { emulators: [] },
-      config: { projects: {} },
+      adb: makeAdbDevices({ emulators: [] }),
+      config: makeConfig(),
     });
     expect(refusal.code).toBe('RN_ISO_AT_CAPACITY');
     expect(refusal.remedy).toMatch(/rn-iso stop|maxDevices/);
@@ -564,8 +565,8 @@ describe('deviceCapacityRefusal', () => {
         project,
         max: 2,
         sims,
-        adb: { emulators: [] },
-        config: { projects: {} },
+        adb: makeAdbDevices({ emulators: [] }),
+        config: makeConfig(),
       }),
     ).toBe(null);
   });
@@ -579,17 +580,17 @@ describe('deviceCapacityRefusal', () => {
         project: { platforms: {} },
         max: 2,
         sims,
-        adb: { emulators: [] },
-        config: { projects: {} },
+        adb: makeAdbDevices({ emulators: [] }),
+        config: makeConfig(),
       }),
     ).toBe(null);
   });
 
   test('a running owned Android emulator counts via the registry', () => {
-    const config = {
+    const config = makeConfig({
       projects: { '/w/x': { platforms: { android: { avdName: 'rn-iso-x', consolePort: 5556, owned: true } } } },
-    };
-    const adb = { emulators: [{ consolePort: 5556 }] };
+    });
+    const adb = makeAdbDevices({ emulators: [{ serial: 'emulator-5556', consolePort: 5556 }] });
     const refusal = deviceCapacityRefusal({
       platform: 'android',
       project: { platforms: {} },
