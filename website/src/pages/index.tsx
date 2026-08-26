@@ -5,11 +5,12 @@ import Layout from '@theme/Layout';
 import CodeBlock from '@theme/CodeBlock';
 import Heading from '@theme/Heading';
 
-const quickStart = `cd your-app
-npx rn-iso start             # dev server on a reserved port, under a supervisor
-npx rn-iso ios               # owned sim booted, app built (or cache-installed), launched
-npx rn-iso logs --errors     # no output + exit 0 = nothing is broken
-npx rn-iso stop              # supervisor down, sim shut down, port freed`;
+const quickStart = `# the only command a human runs:
+npx skills add appandflow/rn-iso
+
+# then tell your agent:
+#   /rn-iso-init
+#   "Build and run the app on the iOS simulator and fix anything that breaks."`;
 
 const features: Array<{ title: string; body: ReactNode }> = [
   {
@@ -64,8 +65,8 @@ export default function Home(): ReactNode {
           </Heading>
           <p className="hero__subtitle">{siteConfig.tagline}</p>
           <p style={{ maxWidth: 720, margin: '0 auto 2rem' }}>
-            Isolated dev environments, so several worktrees or coding agents can build the same app on one machine at
-            the same time — and a build loop optimised for an agent rather than for a human at a terminal.
+            Humans never run it — your agent does. Isolated dev environments, so several coding agents can build the
+            same app on one machine at the same time, with a build loop optimised for an agent, not a terminal.
           </p>
           <div style={{ maxWidth: 720, margin: '0 auto', textAlign: 'left' }}>
             <CodeBlock language="bash">{quickStart}</CodeBlock>

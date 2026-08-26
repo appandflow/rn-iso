@@ -1,6 +1,7 @@
 ---
 name: rn-iso-init
 description: Use when setting up a React Native or Expo repo so that multiple agents or worktrees can build it in parallel without each one paying for a full build - covers the caches that make a second workspace fast and the settings that silently prevent them from working.
+user_invocable: true
 ---
 
 # Making a repo fast for parallel agents

@@ -124,7 +124,7 @@ For AI coding agents, install the bundled skills so the agent knows how to drive
 npx skills add appandflow/rn-iso
 ```
 
-[Getting started](https://github.com/appandflow/rn-iso/blob/main/docs/getting-started.md) walks the whole integration -- first run, agent setup, cache wiring, worktrees -- in four short steps.
+[Getting started](https://appandflow.github.io/rn-iso/docs/getting-started) is the whole human-side setup: install the skill, have the agent run `/rn-iso-init`, then describe what you want built.
 
 ## Owned devices
 
