@@ -4,7 +4,7 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { setExecutor, resetExecutor } from '../src/exec.js';
+import { setExecutor, resetExecutor } from '../src/exec.ts';
 import {
   defaultWorktreeDir,
   worktreePath,
@@ -25,7 +25,7 @@ import {
   removeWorktree,
   resolveBaseRef,
   resolveRef,
-} from '../src/worktree.js';
+} from '../src/worktree.ts';
 
 afterEach(() => resetExecutor());
 

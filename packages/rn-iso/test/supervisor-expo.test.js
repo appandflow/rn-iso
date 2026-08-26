@@ -20,7 +20,7 @@ import {
   recordFromLine,
   startExpoServer,
   stripAnsi,
-} from '../src/supervisor/server-expo.js';
+} from '../src/supervisor/server-expo.ts';
 
 const ESC = '\u001B';
 

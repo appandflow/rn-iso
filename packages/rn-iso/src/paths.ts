@@ -10,7 +10,7 @@
 //
 // Pure: nothing here creates a directory. Callers mkdir when they write.
 import { join } from 'path';
-import { getConfigDir } from './config.js';
+import { getConfigDir } from './config.ts';
 
 export const WORKSPACE_DIR_NAME = '.rn-iso';
 

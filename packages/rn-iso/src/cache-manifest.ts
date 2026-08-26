@@ -16,7 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { basename, dirname, join, resolve } from 'path';
-import { getConfigDir } from './config.js';
+import { getConfigDir } from './config.ts';
 
 // The shape a caller registers. `dir` is the only required field; gc reads
 // `prune` / `entriesDepth` to decide how to trim, and the rest is provenance.

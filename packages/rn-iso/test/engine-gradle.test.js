@@ -23,7 +23,7 @@ import {
   parseApkFromTranscript,
   parseOutputMetadata,
   pickDebugApk,
-} from '../src/engine/gradle.js';
+} from '../src/engine/gradle.ts';
 
 let root;
 let sdk;

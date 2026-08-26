@@ -24,7 +24,7 @@ import {
   capDiagnostics,
   describeDiagnostic,
   extractXcodeDiagnostics,
-} from '../src/engine/errors-xcode.js';
+} from '../src/engine/errors-xcode.ts';
 
 const REAL_COMPILE_FAILURE = [
   'CompileC /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/rn-iso-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target \'Scratch\' from project \'Scratch\')',

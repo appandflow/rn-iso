@@ -1,5 +1,5 @@
-import { setExecutor, resetExecutor } from '../exec.js';
-import { isMetroRunning } from '../ports.js';
+import { setExecutor, resetExecutor } from '../exec.ts';
+import { isMetroRunning } from '../ports.ts';
 import {
   parseLsofPids,
   parseLsofCwd,

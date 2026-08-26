@@ -13,10 +13,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getProject, upsertProject } from '../src/config.js';
+import { getProject, upsertProject } from '../src/config.ts';
 import { parseNdjsonText } from '../src/ndjson.ts';
 import { supervisorPidFile, workspaceLogsDir, workspaceStateFile } from '../src/paths.ts';
-import { describeError, supervisorError } from '../src/supervisor/errors.js';
+import { describeError, supervisorError } from '../src/supervisor/errors.ts';
 import {
   MODE_BARE,
   MODE_EXPO,
@@ -27,7 +27,7 @@ import {
   runSupervisor,
   writePidFile,
   writeWorkspaceState,
-} from '../src/supervisor/run.js';
+} from '../src/supervisor/run.ts';
 
 let tmpHome;
 let root;
@@ -154,7 +154,7 @@ describe('Contract 2: the workspace state file', () => {
 describe('state.json concurrent writers (Contract 2 lock)', () => {
   test('4+ processes writing different keys never lose an update', async () => {
     const script = join(tmpHome, 'state-writer.mjs');
-    const runUrl = new URL('../src/supervisor/run.js', import.meta.url).href;
+    const runUrl = new URL('../src/supervisor/run.ts', import.meta.url).href;
     writeFileSync(script, [
       `const { writeWorkspaceState } = await import(${JSON.stringify(runUrl)});`,
       'const root = process.argv[2];',

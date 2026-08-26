@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
-import doctorCommand from '../src/commands/doctor.js';
-import worktreeCommand from '../src/commands/worktree.js';
-import startCommand from '../src/commands/start.js';
-import stopCommand from '../src/commands/stop.js';
-import iosCommand from '../src/commands/ios.js';
-import androidCommand from '../src/commands/android.js';
-import logsCommand from '../src/commands/logs.js';
-import statusCommand from '../src/commands/status.js';
-import gcCommand from '../src/commands/gc.js';
-import guideCommand from '../src/commands/guide.js';
-import skillCommand from '../src/commands/skill.js';
+import doctorCommand from '../src/commands/doctor.ts';
+import worktreeCommand from '../src/commands/worktree.ts';
+import startCommand from '../src/commands/start.ts';
+import stopCommand from '../src/commands/stop.ts';
+import iosCommand from '../src/commands/ios.ts';
+import androidCommand from '../src/commands/android.ts';
+import logsCommand from '../src/commands/logs.ts';
+import statusCommand from '../src/commands/status.ts';
+import gcCommand from '../src/commands/gc.ts';
+import guideCommand from '../src/commands/guide.ts';
+import skillCommand from '../src/commands/skill.ts';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 

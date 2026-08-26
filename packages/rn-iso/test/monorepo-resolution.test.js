@@ -17,10 +17,10 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { runDoctor } from '../src/doctor.js';
-import { detectIsExpo, isPackageResolvable, resolvePackageJson } from '../src/project.js';
-import { MODE_BARE, MODE_EXPO, runSupervisor } from '../src/supervisor/run.js';
-import { expoBinFromPackage, expoBinPath, findBinUpward } from '../src/supervisor/server-expo.js';
+import { runDoctor } from '../src/doctor.ts';
+import { detectIsExpo, isPackageResolvable, resolvePackageJson } from '../src/project.ts';
+import { MODE_BARE, MODE_EXPO, runSupervisor } from '../src/supervisor/run.ts';
+import { expoBinFromPackage, expoBinPath, findBinUpward } from '../src/supervisor/server-expo.ts';
 
 let home;
 let ws;

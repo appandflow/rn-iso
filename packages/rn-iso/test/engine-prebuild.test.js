@@ -15,7 +15,7 @@ import {
   prebuildRefusal,
   runPrebuild,
   shouldPrebuild,
-} from '../src/engine/prebuild.js';
+} from '../src/engine/prebuild.ts';
 
 let root;
 

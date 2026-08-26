@@ -12,11 +12,11 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { upsertProject } from '../src/config.js';
+import { upsertProject } from '../src/config.ts';
 import { parseNdjsonText } from '../src/ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../src/paths.ts';
-import { writeWorkspaceState } from '../src/supervisor/run.js';
-import { resolveMetroWithRetry } from '../src/commands/ios.js';
+import { writeWorkspaceState } from '../src/supervisor/run.ts';
+import { resolveMetroWithRetry } from '../src/commands/ios.ts';
 import {
   NO_DEVICE,
   NO_FINGERPRINT,
@@ -35,9 +35,9 @@ import {
   phaseLine,
   runAndroid,
   shortHash,
-} from '../src/commands/android.js';
-import { BUILD_ERROR } from '../src/engine/gradle.js';
-import { PREBUILD_ERROR } from '../src/engine/prebuild.js';
+} from '../src/commands/android.ts';
+import { BUILD_ERROR } from '../src/engine/gradle.ts';
+import { PREBUILD_ERROR } from '../src/engine/prebuild.ts';
 
 const FINGERPRINT = 'a3f9b1c2d3e4f5a6b7c8d9e0f1a2b3c4';
 const CACHE_KEY = `${FINGERPRINT}-debug-sim`;
@@ -890,7 +890,7 @@ describe('Contract 5: the device-log collector', () => {
     await h.run();
     assert.equal(h.calls.spawn.length, 1);
     const { args, opts, unrefed } = h.calls.spawn[0];
-    assert.match(args[0], /collector\/run\.js$/);
+    assert.match(args[0], /collector\/run\.ts$/);
     assert.deepEqual(args.slice(1), ['--platform', 'android', '--root', root, '--serial', 'emulator-5584', '--package', 'com.example.app']);
     assert.equal(opts.detached, true);
     assert.equal(opts.stdio, 'ignore');

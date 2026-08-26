@@ -19,7 +19,7 @@ import {
   reporterLogger,
   resolveBareDeps,
   startBareServer,
-} from '../src/supervisor/server-bare.js';
+} from '../src/supervisor/server-bare.ts';
 
 // assert.throws does not hand back the error, and every assertion below is
 // about the error's contents.

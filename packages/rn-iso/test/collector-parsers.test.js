@@ -28,7 +28,7 @@ import {
   parseLogStreamLine,
   procFromImagePath,
   NOISE_RULES,
-} from '../src/collector/ios.js';
+} from '../src/collector/ios.ts';
 import {
   levelForLogcat,
   levelFromLogcatLetter,
@@ -39,7 +39,7 @@ import {
   pidWatchInterval,
   watchAppPid,
   NOISE_TAGS,
-} from '../src/collector/android.js';
+} from '../src/collector/android.ts';
 import { LEVELS, SOURCES } from '../src/ndjson.ts';
 
 function fixture(name) {

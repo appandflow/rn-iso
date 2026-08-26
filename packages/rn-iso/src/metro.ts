@@ -1,5 +1,5 @@
-import { getExecutor } from './exec.js';
-import { isMetroRunning } from './ports.js';
+import { getExecutor } from './exec.ts';
+import { isMetroRunning } from './ports.ts';
 import { realpathSync } from 'fs';
 import { sep } from 'path';
 

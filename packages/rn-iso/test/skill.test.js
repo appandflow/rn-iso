@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { skillTargets, bundledSkillPath, planSkillInstall, stampSkillVersion, parseSkillVersion, staleSkillCopies, staleSkillWarning } from '../src/commands/skill.js';
+import { skillTargets, bundledSkillPath, planSkillInstall, stampSkillVersion, parseSkillVersion, staleSkillCopies, staleSkillWarning } from '../src/commands/skill.ts';
 
 test('the bundled skill actually ships in the package', () => {
   assert.ok(existsSync(bundledSkillPath()), 'skill/SKILL.md must exist for `skill install` to work');

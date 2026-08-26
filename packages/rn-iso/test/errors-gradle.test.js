@@ -17,7 +17,7 @@ import {
   extractGradleDiagnostics,
   formatDiagnostic,
   remedyFor,
-} from '../src/engine/errors-gradle.js';
+} from '../src/engine/errors-gradle.ts';
 
 const fixture = (name) => readFileSync(join(import.meta.dirname, 'fixtures', name), 'utf-8');
 

@@ -21,7 +21,7 @@ import {
   fileSizes,
   tailRead,
   advanceTail,
-} from '../src/logs-query.js';
+} from '../src/logs-query.ts';
 
 let dir;
 beforeEach(() => {

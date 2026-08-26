@@ -14,10 +14,10 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync,
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getProject, upsertProject } from '../src/config.js';
-import { resetExecutor, setExecutor } from '../src/exec.js';
+import { getProject, upsertProject } from '../src/config.ts';
+import { resetExecutor, setExecutor } from '../src/exec.ts';
 import { supervisorLogFile, workspaceLogsDir } from '../src/paths.ts';
-import { writeWorkspaceState } from '../src/supervisor/run.js';
+import { writeWorkspaceState } from '../src/supervisor/run.ts';
 import {
   liveSupervisor,
   parseWait,
@@ -26,7 +26,7 @@ import {
   startFacts,
   supervisorEntry,
   tailLines,
-} from '../src/commands/start.js';
+} from '../src/commands/start.ts';
 
 let tmpHome;
 let root;
@@ -142,7 +142,7 @@ describe('option parsing', () => {
 describe('the supervisor entry point', () => {
   test('resolves to the run.js that is actually shipped', () => {
     assert.ok(existsSync(supervisorEntry()));
-    assert.match(supervisorEntry(), /src\/supervisor\/run\.js$/);
+    assert.match(supervisorEntry(), /src\/supervisor\/run\.ts$/);
   });
 });
 

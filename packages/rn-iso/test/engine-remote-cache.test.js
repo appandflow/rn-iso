@@ -42,7 +42,7 @@ import {
   runOptionsFor,
   uploadDestination,
   uploadRemote,
-} from '../src/engine/remote-cache.js';
+} from '../src/engine/remote-cache.ts';
 
 let root;
 

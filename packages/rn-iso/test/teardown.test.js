@@ -1,7 +1,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { setExecutor, resetExecutor } from '../src/exec.js';
-import { teardownOwnedIosSim, teardownOwnedAvd } from '../src/teardown.js';
+import { setExecutor, resetExecutor } from '../src/exec.ts';
+import { teardownOwnedIosSim, teardownOwnedAvd } from '../src/teardown.ts';
 
 afterEach(() => resetExecutor());
 

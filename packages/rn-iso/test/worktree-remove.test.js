@@ -16,10 +16,10 @@ import {
   isOnlyWorkspaceIgnoreBlock,
   removalRemedy,
   workspaceArtifactPaths,
-} from '../src/commands/worktree.js';
-import { ensureWorkspaceIgnored, renderWorkspaceIgnoreBlock } from '../src/engine/workspace.js';
-import { setExecutor, resetExecutor } from '../src/exec.js';
-import { upsertProject, getProject } from '../src/config.js';
+} from '../src/commands/worktree.ts';
+import { ensureWorkspaceIgnored, renderWorkspaceIgnoreBlock } from '../src/engine/workspace.ts';
+import { setExecutor, resetExecutor } from '../src/exec.ts';
+import { upsertProject, getProject } from '../src/config.ts';
 
 test('no blockers for a clean worktree', async () => {
   assert.deepEqual(removalBlockers({ dirty: false, unpushed: [] }), []);

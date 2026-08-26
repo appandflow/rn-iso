@@ -27,10 +27,10 @@ import {
   registerCollector,
   runCollector,
   unregisterCollector,
-} from '../src/collector/run.js';
-import { writeWorkspaceState } from '../src/supervisor/run.js';
+} from '../src/collector/run.ts';
+import { writeWorkspaceState } from '../src/supervisor/run.ts';
 
-const ENTRY = fileURLToPath(new URL('../src/collector/run.js', import.meta.url));
+const ENTRY = fileURLToPath(new URL('../src/collector/run.ts', import.meta.url));
 
 let tmpHome;
 let root;

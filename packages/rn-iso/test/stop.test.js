@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { saveConfig, getProject } from '../src/config.js';
+import { saveConfig, getProject } from '../src/config.ts';
 import { supervisorPidFile, workspaceStateFile } from '../src/paths.ts';
 import {
   clearCollectorState,
@@ -22,7 +22,7 @@ import {
   resolveCollectorTargets,
   resolveSupervisorTarget,
   runStop,
-} from '../src/commands/stop.js';
+} from '../src/commands/stop.ts';
 
 // --- resolveSupervisorTarget: who may be signalled --------------------------
 

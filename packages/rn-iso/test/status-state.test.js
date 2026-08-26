@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { capacity, diskIsTight, diskLine, environmentState, formatSpace, parseDfFree, tightVolumes, unprovisionedWorktrees } from '../src/status.js';
+import { capacity, diskIsTight, diskLine, environmentState, formatSpace, parseDfFree, tightVolumes, unprovisionedWorktrees } from '../src/status.ts';
 
 const BOOTED = { udid: 'U1', name: 'rn-iso-app', state: 'Booted' };
 const SHUTDOWN = { udid: 'U1', name: 'rn-iso-app', state: 'Shutdown' };

@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isBundleActivityLine } from '../src/supervisor/server-expo.js';
+import { isBundleActivityLine } from '../src/supervisor/server-expo.ts';
 import {
   DEFAULT_METRO_PORT,
   INSTALL_ERROR,
@@ -40,7 +40,7 @@ import {
   parseResolvedActivity,
   reverseMetroPorts,
   writeDebugHttpHost,
-} from '../src/engine/app-install.js';
+} from '../src/engine/app-install.ts';
 
 // Records every runFile call as a flat argv array, and lets a test make a
 // particular one fail.

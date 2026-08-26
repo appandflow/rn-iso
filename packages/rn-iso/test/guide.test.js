@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'fs';
-import { topicNames, renderTopic, renderIndex } from '../src/commands/guide.js';
+import { topicNames, renderTopic, renderIndex } from '../src/commands/guide.ts';
 
 test('every advertised topic renders non-empty content', () => {
   for (const name of topicNames()) {
@@ -26,9 +26,9 @@ test('the index lists every topic and the running version', () => {
 test('the facts topic documents the fields each --json payload actually carries', () => {
   const body = renderTopic('facts');
   const sources = {
-    start: readFileSync(new URL('../src/commands/start.js', import.meta.url), 'utf-8'),
-    ios: readFileSync(new URL('../src/commands/ios.js', import.meta.url), 'utf-8'),
-    android: readFileSync(new URL('../src/commands/android.js', import.meta.url), 'utf-8'),
+    start: readFileSync(new URL('../src/commands/start.ts', import.meta.url), 'utf-8'),
+    ios: readFileSync(new URL('../src/commands/ios.ts', import.meta.url), 'utf-8'),
+    android: readFileSync(new URL('../src/commands/android.ts', import.meta.url), 'utf-8'),
   };
   const fields = {
     start: ['port', 'supervisorPid', 'mode', 'logsDir', 'alreadyRunning'],
@@ -49,12 +49,12 @@ test('the facts topic documents the fields each --json payload actually carries'
 test('the flags the guide advertises are the flags the commands define', () => {
   const lifecycle = renderTopic('lifecycle');
   const advertised = {
-    'start.js': ['--json', '--wait'],
-    'ios.js': ['--json', '--no-metro-check', '--no-build-cache'],
-    'android.js': ['--json', '--no-metro-check', '--no-build-cache'],
-    'stop.js': ['--json', '--force'],
-    'logs.js': ['--errors', '--follow', '--since', '--grep', '--tail'],
-    'gc.js': ['--delete', '--older-than', '--all'],
+    'start.ts': ['--json', '--wait'],
+    'ios.ts': ['--json', '--no-metro-check', '--no-build-cache'],
+    'android.ts': ['--json', '--no-metro-check', '--no-build-cache'],
+    'stop.ts': ['--json', '--force'],
+    'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],
+    'gc.ts': ['--delete', '--older-than', '--all'],
   };
   for (const [file, flags] of Object.entries(advertised)) {
     const src = readFileSync(new URL(`../src/commands/${file}`, import.meta.url), 'utf-8');
@@ -65,7 +65,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
   }
   // The other direction, for the flag most likely to be documented into
   // existence: `status` is machine-wide already and has no --all.
-  const statusSrc = readFileSync(new URL('../src/commands/status.js', import.meta.url), 'utf-8');
+  const statusSrc = readFileSync(new URL('../src/commands/status.ts', import.meta.url), 'utf-8');
   assert.ok(!statusSrc.includes("'--all'"), 'if status grows --all, the docs saying it has none must change');
   for (const name of topicNames()) {
     assert.ok(!renderTopic(name).includes('status --all'), `the ${name} topic must not advertise a status --all that does not exist`);
@@ -94,7 +94,7 @@ test('no topic teaches a command this binary does not have', () => {
 // branching on `code` meets one it has no guidance for.
 test('the errors topic documents every code the build commands can emit', () => {
   const body = renderTopic('errors');
-  const sources = ['ios.js', 'android.js', 'start.js']
+  const sources = ['ios.ts', 'android.ts', 'start.ts']
     .map((f) => readFileSync(new URL(`../src/commands/${f}`, import.meta.url), 'utf-8'))
     .join('\n');
   const codes = new Set([...sources.matchAll(/RN_ISO_[A-Z_]+/g)].map((m) => m[0]));
@@ -107,7 +107,7 @@ test('the errors topic documents every code the build commands can emit', () => 
 
 test('the settings topic lists exactly the keys settings.js honours', () => {
   const body = renderTopic('settings');
-  const src = readFileSync(new URL('../src/settings.js', import.meta.url), 'utf-8');
+  const src = readFileSync(new URL('../src/settings.ts', import.meta.url), 'utf-8');
   const known = [...src.matchAll(/^\s*'([a-zA-Z.]+)',$/gm)].map(m => m[1]);
   assert.ok(known.length > 0, 'sanity: should have parsed the KNOWN_SETTINGS list');
   for (const key of known) {
@@ -137,8 +137,8 @@ test('the skill still carries the rules an agent must not have to look up', () =
 // listed there that the binary does not register is a guaranteed dead end.
 test('the skill advertises exactly the commands bin/cli.js registers', () => {
   const skill = readFileSync(new URL('../skill/SKILL.md', import.meta.url), 'utf-8');
-  const cli = readFileSync(new URL('../bin/cli.js', import.meta.url), 'utf-8');
-  const registered = [...cli.matchAll(/^import (\w+)Command from '\.\.\/src\/commands\/([\w-]+)\.js';$/gm)].map((m) => m[2]);
+  const cli = readFileSync(new URL('../bin/cli.ts', import.meta.url), 'utf-8');
+  const registered = [...cli.matchAll(/^import (\w+)Command from '\.\.\/src\/commands\/([\w-]+)\.ts';$/gm)].map((m) => m[2]);
   assert.deepEqual(
     registered.sort(),
     ['android', 'doctor', 'gc', 'guide', 'ios', 'logs', 'skill', 'start', 'status', 'stop', 'worktree'],

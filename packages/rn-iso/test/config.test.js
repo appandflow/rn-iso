@@ -27,7 +27,7 @@ import {
   setRepoSetting,
   unsetRepoSetting,
   getConcurrencyLimits,
-} from '../src/config.js';
+} from '../src/config.ts';
 
 let tmpHome;
 
@@ -137,7 +137,7 @@ test('withConfigLock takes over a stale lock left by a dead process', () => {
 // other processes' records are simply gone.
 test('concurrent processes each keep their record', async () => {
   const script = join(tmpHome, 'writer.mjs');
-  const configUrl = new URL('../src/config.js', import.meta.url).href;
+  const configUrl = new URL('../src/config.ts', import.meta.url).href;
   writeFileSync(script, [
     `const { upsertProject } = await import(${JSON.stringify(configUrl)});`,
     'const key = process.argv[2];',

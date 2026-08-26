@@ -4,8 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { setExecutor, resetExecutor } from '../src/exec.js';
-import { saveConfig, loadConfig } from '../src/config.js';
+import { setExecutor, resetExecutor } from '../src/exec.ts';
+import { saveConfig, loadConfig } from '../src/config.ts';
 import { register } from '../src/cache-manifest.ts';
 import gcCommand, {
   collectGcReport,
@@ -15,7 +15,7 @@ import gcCommand, {
   findStaleProjectDevices,
   formatGcReport,
   runGc,
-} from '../src/commands/gc.js';
+} from '../src/commands/gc.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

@@ -26,7 +26,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getExecutor, resetExecutor, setExecutor } from '../src/exec.js';
+import { getExecutor, resetExecutor, setExecutor } from '../src/exec.ts';
 import { createNdjsonWriter, parseNdjsonText } from '../src/ndjson.ts';
 import {
   buildIos,
@@ -43,7 +43,7 @@ import {
   resolveScheme,
   tailLines,
   xcodebuildArgs,
-} from '../src/engine/xcode.js';
+} from '../src/engine/xcode.ts';
 
 // --- captured from the real tool --------------------------------------
 //

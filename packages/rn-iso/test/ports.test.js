@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { resetExecutor } from '../src/exec.js';
-import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort } from '../src/config.js';
-import { computeNextPort, findReclaimablePort, allocatePort, reserveMetroPort, isPortFree } from '../src/ports.js';
+import { resetExecutor } from '../src/exec.ts';
+import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort } from '../src/config.ts';
+import { computeNextPort, findReclaimablePort, allocatePort, reserveMetroPort, isPortFree } from '../src/ports.ts';
 
 // Every allocation test injects a deterministic freeness oracle: the real one
 // binds sockets, so leaving it in would make results depend on whatever else
@@ -68,7 +68,7 @@ test('allocatePort reclaims dead ports and removes the dead project', async () =
   const port = await allocatePort('/new', probe, allFree);
   assert.equal(port, 8082);
   // Caller should have removed /a -- verify via behavior
-  const { getProject } = await import('../src/config.js');
+  const { getProject } = await import('../src/config.ts');
   assert.equal(getProject('/a'), null);
 });
 
@@ -132,7 +132,7 @@ test('computeNextPort throws rather than returning an occupied port when the ran
 // same-process test that preceded this one.
 test('isPortFree detects a listener held by ANOTHER process', async () => {
   const { spawn } = await import('node:child_process');
-  const { isPortFree } = await import('../src/ports.js');
+  const { isPortFree } = await import('../src/ports.ts');
   const port = 8131;
   const child = spawn(process.execPath, ['-e',
     `require('http').createServer((q,r)=>r.end('x')).listen(${port},'127.0.0.1')`,

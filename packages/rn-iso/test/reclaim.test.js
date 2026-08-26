@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { setExecutor, resetExecutor } from '../src/exec.js';
-import { upsertProject, setDevice, getProject } from '../src/config.js';
-import { describeDereferenced } from '../src/reclaim.js';
+import { setExecutor, resetExecutor } from '../src/exec.ts';
+import { upsertProject, setDevice, getProject } from '../src/config.ts';
+import { describeDereferenced } from '../src/reclaim.ts';
 
 let tmpHome;
 
@@ -40,7 +40,7 @@ test('describeDereferenced returns an empty list when nothing is claimed', () =>
 
 test('reclaimProject removes the config entry', async () => {
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
-  const { reclaimProject } = await import('../src/reclaim.js');
+  const { reclaimProject } = await import('../src/reclaim.ts');
   upsertProject('/proj', { metroPort: 8082 });
   setDevice('/proj', 'ios', { deviceUdid: 'U1' });
 
@@ -60,7 +60,7 @@ test('reclaimProject scans and sizes no build output at all', async () => {
     runQuiet: (cmd) => { calls.push(cmd); return null; },
     spawn: () => {},
   });
-  const { reclaimProject } = await import('../src/reclaim.js');
+  const { reclaimProject } = await import('../src/reclaim.ts');
   upsertProject('/proj', { metroPort: 8082 });
 
   await reclaimProject('/proj');
@@ -87,7 +87,7 @@ test('reclaimProject keeps the config entry when an owned device delete fails', 
     runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
     spawn: () => {},
   });
-  const { reclaimProject } = await import('../src/reclaim.js');
+  const { reclaimProject } = await import('../src/reclaim.ts');
   upsertProject('/proj', { metroPort: 8082 });
   setDevice('/proj', 'ios', { deviceUdid: 'U1', owned: true });
 
@@ -111,7 +111,7 @@ test('reclaimProject removes the entry when the owned device really is deleted',
     runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
     spawn: () => {},
   });
-  const { reclaimProject } = await import('../src/reclaim.js');
+  const { reclaimProject } = await import('../src/reclaim.ts');
   upsertProject('/proj', { metroPort: 8082 });
   setDevice('/proj', 'ios', { deviceUdid: 'U1', owned: true });
 
@@ -129,7 +129,7 @@ test('reclaimProject refuses to kill an unidentified process on the port', async
     runQuiet: (cmd) => (cmd.includes('-sTCP:LISTEN') ? '4242' : ''),
     spawn: () => {},
   });
-  const { reclaimProject } = await import('../src/reclaim.js');
+  const { reclaimProject } = await import('../src/reclaim.ts');
   upsertProject('/nonexistent/project', { metroPort: 8082 });
 
   const result = await reclaimProject('/nonexistent/project', { deleteArtifacts: false });

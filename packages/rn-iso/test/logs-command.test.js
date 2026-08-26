@@ -19,7 +19,7 @@ import logsCommand, {
   parseTail,
   validateLevel,
   validateSources,
-} from '../src/commands/logs.js';
+} from '../src/commands/logs.ts';
 
 // Same commander stub the other command tests use: capturing the action is the
 // only way to run it without commander's own argument parsing.

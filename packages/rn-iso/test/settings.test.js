@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { mergeSettingsLayers, readCommittedSettings, resolveSettings, unknownSettingKeys } from '../src/settings.js';
-import { setProjectSetting, setRepoSetting, upsertProject } from '../src/config.js';
+import { mergeSettingsLayers, readCommittedSettings, resolveSettings, unknownSettingKeys } from '../src/settings.ts';
+import { setProjectSetting, setRepoSetting, upsertProject } from '../src/config.ts';
 
 let tmpHome;
 

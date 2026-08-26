@@ -15,7 +15,7 @@ import {
   ensureWorkspaceIgnored,
   listsWorkspaceDir,
   renderWorkspaceIgnoreBlock,
-} from '../src/engine/workspace.js';
+} from '../src/engine/workspace.ts';
 
 function scratch(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'rn-iso-ws-ignore-'));

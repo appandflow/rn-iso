@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setExecutor, resetExecutor } from '../src/exec.js';
-import { artifactIn, buildCacheKey, entryDir, fingerprintProject, resolveBuild, storeBuild } from '../src/build-cache.js';
+import { setExecutor, resetExecutor } from '../src/exec.ts';
+import { artifactIn, buildCacheKey, entryDir, fingerprintProject, resolveBuild, storeBuild } from '../src/build-cache.ts';
 import { buildCacheKey as providerKey } from '../../expo-build-cache/index.js';
 
 let root;
@@ -256,7 +256,7 @@ test('storing a build registers the cache root at the depth its entries actually
 
   storeBuild('ios', 'fp6', build, root);
 
-  const { registeredCaches } = await import('../src/cache-manifest.js');
+  const { registeredCaches } = await import('../src/cache-manifest.ts');
   const record = registeredCaches().find(c => c.dir === root);
   assert.ok(record, 'storing has to register the root');
   assert.equal(record.entriesDepth, 2);

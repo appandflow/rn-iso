@@ -14,9 +14,9 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deviceCapacityRefusal, deviceTypeMismatch, ensureBooted, ensureOwnedDevice } from '../src/engine/device.js';
-import { getProject, setDevice, upsertProject } from '../src/config.js';
-import { resetExecutor, setExecutor } from '../src/exec.js';
+import { deviceCapacityRefusal, deviceTypeMismatch, ensureBooted, ensureOwnedDevice } from '../src/engine/device.ts';
+import { getProject, setDevice, upsertProject } from '../src/config.ts';
+import { resetExecutor, setExecutor } from '../src/exec.ts';
 
 let tmpHome;
 

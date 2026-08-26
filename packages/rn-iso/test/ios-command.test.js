@@ -17,10 +17,10 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { upsertProject } from '../src/config.js';
+import { upsertProject } from '../src/config.ts';
 import { parseNdjsonText } from '../src/ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../src/paths.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../src/supervisor/run.js';
+import { readWorkspaceState, writeWorkspaceState } from '../src/supervisor/run.ts';
 import {
   appNameFromPath,
   buildLogFile,
@@ -44,7 +44,7 @@ import {
   shortHash,
   shortUdid,
   writeLastBuild,
-} from '../src/commands/ios.js';
+} from '../src/commands/ios.ts';
 
 const UDID = 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9';
 const FINGERPRINT = 'a3f9b1c2d3e4f5';

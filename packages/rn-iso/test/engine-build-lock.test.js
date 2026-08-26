@@ -33,7 +33,7 @@ import {
   releaseBuildLock,
   waitForBuild,
   waitingLine,
-} from '../src/engine/build-lock.js';
+} from '../src/engine/build-lock.ts';
 
 const PLATFORM = 'ios';
 const KEY = 'a3f9b1c2d3e4f5-debug-sim';
@@ -386,8 +386,8 @@ describe('waitingLine', () => {
 // directory, because "exactly one wins" is a claim about the kernel.
 
 describe('a real race between real processes', () => {
-  const LOCK_URL = new URL('../src/engine/build-lock.js', import.meta.url).href;
-  const CACHE_URL = new URL('../src/build-cache.js', import.meta.url).href;
+  const LOCK_URL = new URL('../src/engine/build-lock.ts', import.meta.url).href;
+  const CACHE_URL = new URL('../src/build-cache.ts', import.meta.url).href;
 
   function script(name, body) {
     const path = join(root, name);

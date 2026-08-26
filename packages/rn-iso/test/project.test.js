@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve, join } from 'path';
-import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage, resolveRegisteredProject, projectShortcut } from '../src/project.js';
-import { upsertProject, getProject } from '../src/config.js';
+import { findProjectRoot, detectIsExpo, detectBundleId, detectAndroidPackage, resolveRegisteredProject, projectShortcut } from '../src/project.ts';
+import { upsertProject, getProject } from '../src/config.ts';
 
 const FIXTURES = resolve(import.meta.dirname, 'fixtures');
 const EXPO_PROJ = join(FIXTURES, 'sample-expo-project');

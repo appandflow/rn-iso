@@ -7,7 +7,7 @@ import {
   volumeRootFor,
   isRealMount,
   isOnMountedVolume,
-} from '../src/fs-util.js';
+} from '../src/fs-util.ts';
 
 test('volumeRootFor identifies external and boot volumes', () => {
   assert.equal(volumeRootFor('/Volumes/ExternalSSD/Developer/app'), '/Volumes/ExternalSSD');

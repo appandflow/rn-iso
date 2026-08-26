@@ -16,7 +16,7 @@ import {
   listBuildSlots,
   releaseBuildSlot,
   tryAcquireBuildSlot,
-} from '../src/engine/build-slots.js';
+} from '../src/engine/build-slots.ts';
 
 let tmpHome;
 
@@ -109,7 +109,7 @@ describe('listBuildSlots', () => {
 describe('live: 2 slots, 3 processes', () => {
   test('the third process waits for a slot and gets one on release', async () => {
     const script = join(tmpHome, 'holder.mjs');
-    const slotsUrl = new URL('../src/engine/build-slots.js', import.meta.url).href;
+    const slotsUrl = new URL('../src/engine/build-slots.ts', import.meta.url).href;
     writeFileSync(script, [
       `const { acquireBuildSlot, releaseBuildSlot } = await import(${JSON.stringify(slotsUrl)});`,
       'const [id, dir] = process.argv.slice(2);',

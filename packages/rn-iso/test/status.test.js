@@ -12,9 +12,9 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { createServer } from 'http';
 import { Command } from 'commander';
-import { setExecutor, resetExecutor } from '../src/exec.js';
-import {saveConfig} from '../src/config.js';
-import statusCommand, { readVolumes } from '../src/commands/status.js';
+import { setExecutor, resetExecutor } from '../src/exec.ts';
+import {saveConfig} from '../src/config.ts';
+import statusCommand, { readVolumes } from '../src/commands/status.ts';
 
 let tmpHome;
 

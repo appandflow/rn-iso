@@ -16,8 +16,8 @@ import {
   detectXcodeMajor,
   parseXcodeMajor,
   checkConcurrency,
-} from '../src/doctor.js';
-import { resetExecutor, setExecutor } from '../src/exec.js';
+} from '../src/doctor.ts';
+import { resetExecutor, setExecutor } from '../src/exec.ts';
 
 // Where the key lives moved when the setting was promoted out of experiments,
 // and the combination that silently does nothing is the NEW key on an OLD SDK.

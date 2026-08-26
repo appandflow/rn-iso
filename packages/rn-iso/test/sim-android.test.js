@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { setExecutor, resetExecutor } from '../src/exec.js';
+import { setExecutor, resetExecutor } from '../src/exec.ts';
 import {
   parseAvdList,
   parseAdbDevices,
@@ -12,7 +12,7 @@ import {
   deleteAvd,
   resolveOwnedAvdSerial,
   waitForBoot,
-} from '../src/sim/android.js';
+} from '../src/sim/android.ts';
 
 let tmpHome;
 

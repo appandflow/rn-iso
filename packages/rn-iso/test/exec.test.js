@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { setExecutor, getExecutor, resetExecutor } from '../src/exec.js';
+import { setExecutor, getExecutor, resetExecutor } from '../src/exec.ts';
 
 test('default executor runs commands and returns stdout trimmed', () => {
   resetExecutor();

@@ -4,10 +4,10 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, realpathSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { registerCreate } from '../src/commands/worktree.js';
-import { resetExecutor } from '../src/exec.js';
-import { defaultWorktreeDir } from '../src/worktree.js';
-import {upsertProject, findEnclosingWorktreeRoot} from '../src/config.js';
+import { registerCreate } from '../src/commands/worktree.ts';
+import { resetExecutor } from '../src/exec.ts';
+import { defaultWorktreeDir } from '../src/worktree.ts';
+import {upsertProject, findEnclosingWorktreeRoot} from '../src/config.ts';
 
 let tmpHome;
 
