@@ -759,9 +759,10 @@ describe('failure output', () => {
         code: 'RN_ISO_BUILD_FAILED',
         durationMs: 161000,
         truncated: 3,
+        exitCode: 65,
         diagnostics: [
           { file: '/w/ios/AppDelegate.mm', line: 12, column: 4, message: "use of undeclared identifier 'foo'" },
-          { message: 'The sandbox is not in sync with the Podfile.lock' },
+          { message: 'The sandbox is not in sync with the Podfile.lock', remedy: 'Run `pod install` in ios/ and build again.' },
         ],
         tail: ['** BUILD FAILED **'],
       }),
@@ -772,11 +773,15 @@ describe('failure output', () => {
     // it with `$(...)` and parsing the result got an empty string here, which
     // is the one answer a JSON parser cannot act on.
     assert.equal(logs.length, 1, 'exactly one line on stdout, even on failure');
-    assert.deepEqual(JSON.parse(logs[0]), {
-      code: 'RN_ISO_BUILD_FAILED',
-      message: null,
-      remedy: null,
-    });
+    // The shape is `android`'s, and BOTH fields are populated: a payload
+    // carrying only a code made `ios --json` the one command whose failure a
+    // caller could not report without also parsing stderr prose.
+    const payload = JSON.parse(logs[0]);
+    assert.equal(payload.code, 'RN_ISO_BUILD_FAILED');
+    assert.match(payload.message, /xcodebuild` failed/);
+    assert.match(payload.message, /exit code 65/);
+    assert.ok(payload.remedy, 'a build failure carries a remedy');
+    assert.match(payload.remedy, /pod install/, 'the remedy of a diagnostic beats the generic one');
     const text = errs.join('\n');
     assert.match(text, /^build {7}FAILED after 2m41s/m);
     assert.match(text, /AppDelegate\.mm:12:4: use of undeclared identifier 'foo'/);
@@ -1219,4 +1224,33 @@ describe('cacheDescription', () => {
     assert.equal(cacheDescription('remote', 'eas'), 'from eas');
     assert.equal(cacheDescription('remote', null), 'from the remote cache');
   });
+});
+
+// The fingerprint is scoped to iOS, so a change under android/ cannot move the
+// iOS cache key. See the field note above fingerprintProject in
+// src/build-cache.js for why this is not cosmetic.
+test('ios fingerprints with platforms scoped to ios', async () => {
+  reserve();
+  const seen = [];
+  await run({}, { fingerprintProject: async (path, options) => { seen.push({ path, options }); return FINGERPRINT; } });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].path, root);
+  assert.equal(seen[0].options?.platform, 'ios');
+});
+
+// The generic half of the same contract: nothing recognizable in the
+// transcript still has to produce a sentence and a next step, because the
+// `--json` payload is all an unattended caller sees.
+test('--json says so when a build failed with no recognizable diagnostic', async () => {
+  reserve();
+  const { logs, exitCode } = await run({ json: true }, {
+    buildIos: async () => ({
+      failed: true, code: 'RN_ISO_BUILD_FAILED', durationMs: 1000, truncated: 0,
+      exitCode: 70, diagnostics: [], tail: ['xcodebuild: error: something inscrutable'],
+    }),
+  });
+  assert.equal(exitCode, 1);
+  const payload = JSON.parse(logs[0]);
+  assert.match(payload.message, /no recognizable diagnostic/);
+  assert.match(payload.remedy, /build-ios\.ndjson/, 'with no diagnostic remedy, the log path is the next step');
 });

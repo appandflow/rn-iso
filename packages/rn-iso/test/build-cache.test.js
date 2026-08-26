@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
-import { artifactIn, buildCacheKey, entryDir, resolveBuild, storeBuild } from '../src/build-cache.js';
+import { artifactIn, buildCacheKey, entryDir, fingerprintProject, resolveBuild, storeBuild } from '../src/build-cache.js';
 import { buildCacheKey as providerKey } from '../../expo-build-cache/index.js';
 
 let root;
@@ -260,4 +260,45 @@ test('storing a build registers the cache root at the depth its entries actually
   const record = registeredCaches().find(c => c.dir === root);
   assert.ok(record, 'storing has to register the root');
   assert.equal(record.entriesDepth, 2);
+});
+
+// --- the fingerprint is platform-scoped -------------------------------------
+//
+// Gate provenance (2026-08-24): `rn-iso android` NEVER hit the shared cache
+// across two worktrees of th3rdwave/tlon-apps, while `ios` did. The cause was
+// not Android at all -- th3rdwave's hermes-engine podspec bakes the absolute
+// worktree path into ios/Podfile.lock, so the iOS tree differs between
+// worktrees by construction, and an UNSCOPED fingerprint hashes ios/ into the
+// android key. With platforms scoped to the platform being built, both
+// worktrees fingerprinted identically (b5a268e6...).
+test('fingerprintProject scopes the hash to the platform being built', async () => {
+  const seen = [];
+  const load = () => ({
+    createFingerprintAsync: async (dir, options) => {
+      seen.push({ dir, options });
+      return { hash: `hash-${options?.platforms?.join('+')}` };
+    },
+  });
+  assert.equal(await fingerprintProject(root, { platform: 'ios', load }), 'hash-ios');
+  assert.equal(await fingerprintProject(root, { platform: 'android', load }), 'hash-android');
+  assert.deepEqual(seen.map((s) => s.options.platforms), [['ios'], ['android']]);
+});
+
+// No platform means no scoping: the option is omitted entirely rather than
+// passed as an empty array, which @expo/fingerprint would read as "hash
+// nothing native".
+test('fingerprintProject without a platform passes no platforms option', async () => {
+  let options = 'unset';
+  const load = () => ({ createFingerprintAsync: async (_dir, opts) => { options = opts; return { hash: 'h' }; } });
+  assert.equal(await fingerprintProject(root, { load }), 'h');
+  assert.equal(options?.platforms, undefined);
+});
+
+// An unknown platform is not silently turned into a scope: `platforms: ['web']`
+// would hash nothing and produce one key for every project on the machine.
+test('fingerprintProject ignores a platform it does not know', async () => {
+  let options = 'unset';
+  const load = () => ({ createFingerprintAsync: async (_dir, opts) => { options = opts; return { hash: 'h' }; } });
+  await fingerprintProject(root, { platform: 'web', load });
+  assert.equal(options?.platforms, undefined);
 });

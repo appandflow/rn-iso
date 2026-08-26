@@ -117,10 +117,33 @@ export function loadFingerprinter(projectRoot) {
   return null;
 }
 
-export async function fingerprintProject(projectRoot) {
-  const fp = loadFingerprinter(projectRoot);
+// The platforms @expo/fingerprint accepts as a scope (options.platforms:
+// Platform[]). Anything else is not passed at all -- an unrecognized value
+// would scope the hash to nothing native and give every project on the machine
+// the same key.
+const FINGERPRINT_PLATFORMS = new Set(['ios', 'android']);
+
+/**
+ * The @expo/fingerprint hash of the project's native inputs, SCOPED to the
+ * platform being built.
+ *
+ * THE SCOPE IS THE POINT, and it was measured: without it,
+ * `createFingerprintAsync(root)` hashes ios/ AND android/ into one hash, so the
+ * ANDROID cache key changes whenever anything under ios/ does. On th3rdwave's
+ * tlon-apps that is not a rare event -- the hermes-engine podspec bakes the
+ * absolute worktree path into ios/Podfile.lock, so two worktrees of the same
+ * commit differ under ios/ by construction and `rn-iso android` missed the
+ * shared cache 100% of the time across worktrees. Scoping to ['android'] made
+ * both worktrees hash identically.
+ *
+ * `load` is injected only so the option threading is testable without a real
+ * @expo/fingerprint on disk.
+ */
+export async function fingerprintProject(projectRoot, { platform, load = loadFingerprinter } = {}) {
+  const fp = load(projectRoot);
   if (!fp) return null;
-  const result = await fp.createFingerprintAsync(projectRoot);
+  const options = FINGERPRINT_PLATFORMS.has(platform) ? { platforms: [platform] } : undefined;
+  const result = await fp.createFingerprintAsync(projectRoot, options);
   return result?.hash ?? null;
 }
 

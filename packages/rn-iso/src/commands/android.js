@@ -569,7 +569,10 @@ export async function runAndroid({
   // ---- fingerprint ----------------------------------------------------
   let hash;
   try {
-    hash = await fingerprint(root);
+    // Scoped to Android. Unscoped, ios/ hashes into this key: a podspec that
+    // bakes an absolute path into ios/Podfile.lock then makes every
+    // cross-worktree build a miss. See src/build-cache.js.
+    hash = await fingerprint(root, { platform: PLATFORM });
   } catch (err) {
     return fail(NO_FINGERPRINT, `@expo/fingerprint could not fingerprint ${root}: ${err?.message || err}`, 'Fix the error above, or install a working copy with `npm i -D @expo/fingerprint`.');
   }

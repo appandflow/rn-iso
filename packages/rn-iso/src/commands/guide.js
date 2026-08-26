@@ -224,6 +224,13 @@ FLAGS
   process Apple's frameworks log thousands of Error-typed lines (nw_socket,
   SecTrust, WebKit, CoreUI) that have nothing to do with your app. The proven
   ones are demoted to info by the collector; the scope rule covers the rest.
+  The metro stream carries exactly one demotion of its own, and it is rn-iso's
+  doing: the dev-client deep link \`ios\`/\`android\` open to wire the app to
+  your port arrives inside the app as a link, and React Navigation logs at
+  error that no navigator handled a NAVIGATE to \`expo-development-client\`.
+  There is no such screen and there is not meant to be, so that one record is
+  recorded at info -- it made every healthy cold launch report 1 error. A real
+  unhandled NAVIGATE names a route your app has, and is still an error.
   The app's own crashes reach client and metro either way. Opt back in with
   \`--source device\` or \`--source all\`; a plain \`logs\` with no --errors
   has always shown everything.
@@ -413,10 +420,16 @@ captured"  (in metro.ndjson, bare RN)
 
 "Refusing to remove <path>: uncommitted changes / untracked files / commits
 not on any remote"  (worktree remove)
-  A native build rewrites tracked files -- \`pod install\` always touches
-  Podfile.lock and project.pbxproj -- so this fires after almost every iOS
-  build. The refusal PRINTS THE DIRTY PATHS, and the restore command under it
-  carries those same paths: run it as printed rather than reaching for --force.
+  A native build rewrites tracked files, and rn-iso now RESTORES the one class
+  it can prove is not work: when the only dirt left is \`pod install\` churn
+  (\`<app>/ios/Podfile.lock\`, \`<app>/ios/*.xcodeproj/project.pbxproj\`,
+  tracked and unstaged), \`worktree remove\` runs the checkout itself and says
+  so per file -- those files die with the worktree either way, and a lockfile
+  change anyone meant would have been committed. ONE other dirty path and the
+  whole set is refused, churn included, so this never eats real work.
+  When it does refuse, the refusal PRINTS THE DIRTY PATHS, and the restore
+  command under it carries those same paths: run it as printed rather than
+  reaching for --force.
   It is built from what git reported, so in a monorepo it names
   \`apps/<app>/ios/Podfile.lock\` rather than an \`ios/...\` example that would
   fail with "did not match any file(s) known to git".

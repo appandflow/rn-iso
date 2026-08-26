@@ -126,9 +126,42 @@ const CROSS = '\u2716';        // heavy multiplication x, Expo's error bullet
 const CROSS_MARK = '\u274C';   // cross mark emoji
 const WARNING_SIGN = '\u26A0'; // warning sign
 
+// --- the one demotion this stream carries ---------------------------------
+//
+// FIELD PROVENANCE (release gate, 2026-08-24): every cold Android launch --
+// a healthy one -- ended with `logs --errors` returning one record and
+// `status` reporting "1 error since the last marker". rn-iso itself produces
+// it. Contract 6 launches the app with the expo-dev-client deep link
+// `<scheme>://expo-development-client/?url=http://10.0.2.2:<port>`
+// (devClientUrl, engine/app-install.js); expo-dev-launcher hands the app the
+// URL it was opened with, and React Navigation logs at console.error that
+// nothing handled a NAVIGATE to a route named `expo-development-client`.
+// There is no such screen and there is not supposed to be: the launcher's
+// host is not a route. The app is loaded, bundled and working.
+//
+// The rule is deliberately two-sided -- the unhandled-NAVIGATE shape AND the
+// `expo-development-client` route name, in the SAME record -- because the only
+// thing this demotion could break is a real unhandled navigation, and those
+// name a route the app actually has. Either half on its own stays an error.
+//
+// Demotion, not suppression: the record is still written, still shows in a
+// plain `logs`, and only stops counting as an error. Same treatment, and the
+// same reason, as the device-noise lists in collector/ios.js and
+// collector/android.js.
+const UNHANDLED_NAVIGATE = /The action '(?:NAVIGATE|NAVIGATE_DEPRECATED)' with payload .*was not handled by any navigator/;
+const DEV_CLIENT_ROUTE = 'expo-development-client';
+
+// PURE. Whether this line is rn-iso's own dev-client deep link arriving in a
+// navigator that has no route for it.
+export function isDevClientNavigationNotice(line) {
+  const text = String(line);
+  return text.includes(DEV_CLIENT_ROUTE) && UNHANDLED_NAVIGATE.test(text);
+}
+
 export function inferLevel(line) {
   const text = String(line).trimStart();
   if (!text) return 'info';
+  if (isDevClientNavigationNotice(text)) return 'info';
   const first = text[0];
   if (first === CROSS || first === CROSS_MARK) return 'error';
   if (first === WARNING_SIGN) return 'warn';

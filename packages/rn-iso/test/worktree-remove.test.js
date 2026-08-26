@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   addsOnlyWorkspaceIgnoreBlock,
+  excludePodChurn,
   excludeSelfHealedIgnores,
   excludeWorkspaceArtifacts,
   matchWorktreeEntry,
@@ -1027,6 +1028,190 @@ test('against a real repo: removal from a monorepo app dir, dirty only with rn-i
     assert.notEqual(process.exitCode, 1, `refused: ${errs.join('\n')}`);
     assert.equal(existsSync(wt), false, 'real git actually removed the worktree');
     assert.match(errs.join('\n'), /restoring apps\/x\/\.gitignore/);
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+    process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// --- pod-install churn is restored, not refused over ------------------------
+//
+// GATE PROVENANCE (2026-08-24): every `worktree remove` in the release gate
+// needed a hand-run `git checkout -- apps/app/ios/Podfile.lock` first. The
+// repo's own postinstall runs `pod install`, and th3rdwave's hermes-engine
+// podspec bakes the absolute worktree path into Podfile.lock, so the file is
+// modified in every worktree the moment dependencies are installed -- before
+// any rn-iso command runs. The refusal already NAMED this class (removalRemedy
+// prints the checkout command for it); it just made a human paste it.
+//
+// The refusal exists to protect uncommitted WORK. These files are not work:
+// they are about to be destroyed with the worktree either way, and lockfile
+// changes anyone intended would have been committed. So the same reasoning
+// that restores rn-iso's own .gitignore append applies one file over.
+
+test('excludePodChurn takes the whole set when every dirty path is pod churn', () => {
+  const { lines, restore } = excludePodChurn([
+    ' M apps/app/ios/Podfile.lock',
+    ' M apps/app/ios/Tlon.xcodeproj/project.pbxproj',
+  ]);
+  assert.deepEqual(lines, []);
+  assert.deepEqual(restore, ['apps/app/ios/Podfile.lock', 'apps/app/ios/Tlon.xcodeproj/project.pbxproj']);
+});
+
+test('excludePodChurn handles a bare project whose ios/ is at the repo root', () => {
+  const { restore } = excludePodChurn([' M ios/Podfile.lock']);
+  assert.deepEqual(restore, ['ios/Podfile.lock']);
+});
+
+// FAIL CLOSED. One file that is not churn and the whole set stays dirty: this
+// is the guard against discarding real uncommitted work, and it only holds if
+// "mostly churn" is refused exactly like "not churn at all".
+test('excludePodChurn restores nothing when anything else is dirty alongside', () => {
+  const dirty = [' M apps/app/ios/Podfile.lock', ' M apps/app/src/App.tsx'];
+  const { lines, restore } = excludePodChurn(dirty);
+  assert.deepEqual(lines, dirty, 'the listing is untouched, so the refusal names every file');
+  assert.deepEqual(restore, []);
+});
+
+test('excludePodChurn refuses an untracked Podfile.lock: checkout cannot restore one', () => {
+  const dirty = ['?? apps/app/ios/Podfile.lock'];
+  assert.deepEqual(excludePodChurn(dirty), { lines: dirty, restore: [] });
+});
+
+// `git checkout -- <file>` restores from the INDEX, so a staged change would
+// survive it and the tree would still be dirty. Same rule excludeSelfHealedIgnores
+// applies to a modified .gitignore.
+test('excludePodChurn refuses a staged change, which checkout would not undo', () => {
+  for (const line of ['M  apps/app/ios/Podfile.lock', 'MM apps/app/ios/Podfile.lock', 'A  apps/app/ios/Podfile.lock']) {
+    assert.deepEqual(excludePodChurn([line]), { lines: [line], restore: [] }, line);
+  }
+});
+
+// The class is named by the two files `pod install` rewrites, under an `ios/`
+// directory. A Podfile.lock somewhere else, or any other lockfile, is not this
+// class and is not restored.
+test('excludePodChurn does not reach beyond the two files pod install rewrites', () => {
+  for (const line of [
+    ' M apps/app/android/Podfile.lock',
+    ' M apps/app/package-lock.json',
+    ' M apps/app/ios.lock/Podfile.lock',
+    ' M apps/app/ios/Podfile',
+    ' M Podfile.lock',
+  ]) {
+    assert.deepEqual(excludePodChurn([line]).restore, [], line);
+  }
+});
+
+test('excludePodChurn leaves a path it could not safely name to the refusal', () => {
+  const line = ' M apps/my app/ios/Podfile.lock';
+  assert.deepEqual(excludePodChurn([line]), { lines: [line], restore: [] });
+});
+
+test('excludePodChurn on a clean listing restores nothing', () => {
+  assert.deepEqual(excludePodChurn([]), { lines: [], restore: [] });
+});
+
+// --- pod churn against real git (CLAUDE.md item 9) --------------------------
+//
+// The mocked cases above prove the CLASSIFICATION. Only real git settles the
+// two things that actually decide whether the gate's hand-run checkout goes
+// away: that `git checkout -- <path>` restores the file rn-iso named, and that
+// `git worktree remove` -- which runs its OWN cleanliness check and refuses
+// over "modified or untracked files" -- is satisfied afterwards.
+function podChurnRepo(base, { extraDirt = false } = {}) {
+  const repo = join(base, 'repo');
+  const bareRemote = join(base, 'remote.git');
+  mkdirSync(bareRemote, { recursive: true });
+  execSync(`git init -q --bare "${bareRemote}"`);
+  mkdirSync(join(repo, 'apps', 'app', 'ios', 'Tlon.xcodeproj'), { recursive: true });
+  const git = (cmd) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+  git('git init -q');
+  git('git config user.email test@example.com');
+  git('git config user.name test');
+  git(`git remote add origin "${bareRemote}"`);
+  writeFileSync(join(repo, '.gitignore'), '.rn-iso/\n');
+  writeFileSync(join(repo, 'apps', 'app', 'ios', 'Podfile.lock'), 'PODS:\n  - hermes-engine\n');
+  writeFileSync(join(repo, 'apps', 'app', 'ios', 'Tlon.xcodeproj', 'project.pbxproj'), '// !$*UTF8*$!\n');
+  writeFileSync(join(repo, 'apps', 'app', 'App.tsx'), 'export default 1;\n');
+  git('git add -A');
+  git('git commit -q -m init');
+  git('git push -q -u origin HEAD');
+  const wt = join(base, 'wt');
+  git(`git worktree add -q "${wt}" -b feat-pods`);
+
+  // What the repo's own postinstall `pod install` does to a fresh worktree:
+  // the hermes-engine podspec bakes the absolute path in, so the lockfile is
+  // modified before any rn-iso command has run.
+  writeFileSync(join(wt, 'apps', 'app', 'ios', 'Podfile.lock'), `PODS:\n  - hermes-engine (from \`${wt}/node_modules\`)\n`);
+  writeFileSync(join(wt, 'apps', 'app', 'ios', 'Tlon.xcodeproj', 'project.pbxproj'), '// !$*UTF8*$!\n// regenerated\n');
+  if (extraDirt) writeFileSync(join(wt, 'apps', 'app', 'App.tsx'), 'export default 2;\n');
+  return wt;
+}
+
+test('against a real repo: a worktree dirty only with pod-install churn is restored and removed', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-pods-')));
+  const originalCwd = process.cwd();
+  const errs = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  try {
+    const wt = podChurnRepo(base);
+    assert.equal(
+      execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim(),
+      'M apps/app/ios/Podfile.lock\n M apps/app/ios/Tlon.xcodeproj/project.pbxproj',
+      'sanity: real git reports exactly the two files pod install rewrites'
+    );
+
+    console.error = (m) => errs.push(String(m));
+    console.log = () => {};
+    const run = captureAction(registerRemove);
+    await run(wt, {});
+    console.error = originalError;
+    console.log = originalLog;
+
+    const text = errs.join('\n');
+    assert.notEqual(process.exitCode, 1, `refused: ${text}`);
+    assert.equal(existsSync(wt), false, 'real git actually removed the worktree');
+    assert.match(text, /restored apps\/app\/ios\/Podfile\.lock \(pod install churn; the worktree is being removed\)/);
+    assert.match(text, /restored apps\/app\/ios\/Tlon\.xcodeproj\/project\.pbxproj \(pod install churn/);
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+    process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('against a real repo: pod churn PLUS a modified source file is refused exactly as before', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-pods-dirty-')));
+  const originalCwd = process.cwd();
+  const errs = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  try {
+    const wt = podChurnRepo(base, { extraDirt: true });
+    console.error = (m) => errs.push(String(m));
+    console.log = () => {};
+    const run = captureAction(registerRemove);
+    await run(wt, {});
+    console.error = originalError;
+    console.log = originalLog;
+
+    const text = errs.join('\n');
+    assert.equal(process.exitCode, 1, 'one file of real work refuses the whole removal');
+    assert.equal(existsSync(wt), true, 'the worktree is still there');
+    assert.match(text, /Refusing to remove/);
+    assert.match(text, /App\.tsx/);
+    assert.doesNotMatch(text, /restored/, 'nothing was restored on the refusal path');
+    // ...and the churn is still on disk, unrestored: the refusal is the same
+    // fail-closed one it has always been.
+    assert.match(readFileSync(join(wt, 'apps', 'app', 'ios', 'Podfile.lock'), 'utf-8'), /node_modules/);
   } finally {
     console.error = originalError;
     console.log = originalLog;

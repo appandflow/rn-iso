@@ -83,6 +83,47 @@ describe('line parsing', () => {
     assert.equal(inferLevel('Logs for your project will appear below, including errors'), 'info');
   });
 
+  // --- the dev-client NAVIGATE demotion ------------------------------------
+  //
+  // FIELD PROVENANCE (release gate, 2026-08-24). On EVERY cold Android launch
+  // -- a perfect one -- `rn-iso logs --errors` returned one record and
+  // `status` reported "1 error since the last marker". It is rn-iso's own
+  // launch doing it: Contract 6 opens the expo-dev-client deep link
+  // (`<scheme>://expo-development-client/?url=...`, engine/app-install.js),
+  // expo-dev-launcher forwards it into the app as a link, and React Navigation
+  // logs at console.error that no navigator handled a NAVIGATE to a route
+  // named `expo-development-client` -- because there is no such screen, and
+  // there is not meant to be. The app is loaded and working.
+  //
+  // The record below is the verbatim line as it arrived in the metro stream.
+  const NAVIGATE_ERROR = `ERROR  The action 'NAVIGATE' with payload {"name":"expo-development-client","params":{"url":"http://10.0.2.2:8082"}} was not handled by any navigator.`;
+
+  test('the dev-client NAVIGATE record is demoted: rn-iso own deep link is not an app error', () => {
+    assert.equal(inferLevel(NAVIGATE_ERROR), 'info');
+    const record = recordFromLine(NAVIGATE_ERROR);
+    assert.equal(record.level, 'info', 'stored at info, where `logs` still shows it and --errors does not');
+    assert.equal(record.msg, NAVIGATE_ERROR, 'the text is kept verbatim; only the level changes');
+  });
+
+  // BOTH halves must match in the SAME record, or the demotion starts hiding
+  // real navigation bugs -- which is the only thing this rule could break.
+  test('the demotion needs both halves, so real navigation bugs still surface', () => {
+    assert.equal(
+      inferLevel(`ERROR  The action 'NAVIGATE' with payload {"name":"Settings"} was not handled by any navigator.`),
+      'error',
+      'a genuine unhandled NAVIGATE is still an error'
+    );
+    assert.equal(
+      inferLevel('ERROR  expo-development-client failed to load the bundle'),
+      'error',
+      'an expo-development-client error that is not the unhandled-action shape is still an error'
+    );
+    assert.equal(
+      inferLevel(`ERROR  The action 'GO_BACK' was not handled by any navigator.`),
+      'error'
+    );
+  });
+
   test("the bundle line is a marker, so an Expo workspace's --errors window resets", () => {
     assert.equal(isBundleMarker('iOS Bundled 812ms index.js (1150 modules)'), true);
     assert.equal(isBundleMarker('Android Bundled 5401ms node_modules/expo-router/entry.js (1743 modules)'), true);

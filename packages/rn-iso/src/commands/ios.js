@@ -599,10 +599,13 @@ export async function runIos(opts = {}, overrides = {}) {
   // Every failure exits the same way: the diagnostic, the remedy if there is
   // one, the machine-readable code, and -- once there is a build attempt to
   // describe -- a Contract-4 record saying the last build failed.
-  const fail = ({ code, message, remedy = null, lines = [], build = null }) => {
+  const fail = ({ code, message, remedy = null, lines = [], logPath = null, build = null }) => {
     if (message) note(chalk.red(phaseLine('error', message)));
     for (const line of lines) note(chalk.dim(phaseLine('', line)));
     if (remedy) note(chalk.dim(phaseLine('remedy', remedy)));
+    // `logPath` rather than a note() at each call site, so the log line lands
+    // in the same place relative to the remedy that `android` puts it.
+    if (logPath) note(chalk.dim(phaseLine('log', logPath)));
     if (build) writeLastBuild(root, lastBuildRecord({ ...build, startedAt, status: 'failed', errorCode: code, durationMs: elapsed() }), { write: d.writeWorkspaceState });
     note(chalk.red(phaseLine('failed', code)));
     // --json is a promise about stdout in BOTH directions: exactly one
@@ -610,9 +613,10 @@ export async function runIos(opts = {}, overrides = {}) {
     // put NOTHING on stdout, so a caller that captured it with `$(...)` had an
     // empty string to parse and no machine-readable way to tell a refusal from
     // a crash. The shape is `android`'s, deliberately: one contract, two
-    // commands. `message` is null on the build-failure path, where the
-    // diagnosis is the extracted diagnostics on stderr and in the build log --
-    // the code is what a consumer branches on, and `guide errors` maps it.
+    // commands -- and so is the rule that BOTH fields are populated. The
+    // build-failure path used to hardcode `message: null`, which made this the
+    // one failure an unattended caller could report only as a bare code; see
+    // xcodeFailureReport for what fills it now.
     if (json) console.log(JSON.stringify({ code, message: message ?? null, remedy: remedy ?? null }));
     writer?.close?.();
     process.exit(1);
@@ -713,7 +717,10 @@ export async function runIos(opts = {}, overrides = {}) {
   // ---- fingerprint and cache ----
   let fingerprint;
   try {
-    fingerprint = await d.fingerprintProject(root);
+    // Scoped to iOS: an unscoped hash folds android/ into the iOS key (and
+    // vice versa), which is what kept `android` from ever hitting the shared
+    // cache across worktrees. See src/build-cache.js.
+    fingerprint = await d.fingerprintProject(root, { platform: PLATFORM });
   } catch (e) {
     fingerprint = null;
     note(chalk.dim(`Fingerprinting failed: ${e?.message || e}`));
@@ -855,8 +862,14 @@ export async function runIos(opts = {}, overrides = {}) {
     if (result?.failed) {
       phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
       printDiagnostics(note, result);
-      note(chalk.dim(phaseLine('log', logFile)));
-      return fail({ code: result.code || 'RN_ISO_BUILD_FAILED', message: null, build: buildFailure });
+      const report = xcodeFailureReport(result, logFile);
+      return fail({
+        code: result.code || 'RN_ISO_BUILD_FAILED',
+        message: report.message,
+        remedy: report.remedy,
+        logPath: logFile,
+        build: buildFailure,
+      });
     }
     phase('build', `ok (${formatDuration(result.durationMs)})`);
     appPath = result.appPath;
@@ -1066,6 +1079,31 @@ export function cacheDescription(cacheHit, providerName = null) {
   return 'built';
 }
 
+
+// PURE. The {message, remedy} an `ios` build failure reports.
+//
+// This is `android`'s shape, ported. `buildIos` returns no `reason` the way
+// `buildAndroid` does -- its diagnosis is the extracted diagnostic list -- so
+// the summary sentence is composed here, and the remedy follows android's rule
+// exactly: the remedy of a diagnostic beats the generic one, because "run `pod
+// install`" is the whole answer where it applies and "read the log" is not.
+//
+// The message is a SUMMARY, not a copy of the first diagnostic: the
+// diagnostics are already on stderr in full, and repeating one of them there
+// would be noise. What a --json consumer gets is a sentence it can report
+// verbatim plus a next step, which is what it had for every other failure code
+// and did not have for this one.
+export function xcodeFailureReport(result, logPath) {
+  const diagnostics = Array.isArray(result?.diagnostics) ? result.diagnostics : [];
+  const code = result?.exitCode;
+  const how = code === null || code === undefined ? '' : ` (exit code ${code})`;
+  const message = diagnostics.length
+    ? `\`xcodebuild\` failed${how} with ${diagnostics.length} diagnostic${diagnostics.length === 1 ? '' : 's'}.`
+    : `\`xcodebuild\` failed${how} with no recognizable diagnostic.`;
+  const remedy = diagnostics.find(d => d?.remedy)?.remedy
+    || `See ${logPath} for the transcript.`;
+  return { message, remedy };
+}
 
 // The extract, never the transcript. `truncated` and the log path are what
 // make the omission honest rather than silent.

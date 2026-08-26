@@ -377,6 +377,66 @@ export function excludeSelfHealedIgnores(lines, { diff, read }) {
   return { lines: kept, healed, created };
 }
 
+// The two files a `pod install` rewrites, under an `ios/` directory:
+//   <anything>/ios/Podfile.lock
+//   <anything>/ios/<Name>.xcodeproj/project.pbxproj
+// Narrower than isPodInstallChurn (src/worktree.js), which decides what ADVICE
+// to print and may match a Podfile.lock anywhere. This one decides what to
+// DELETE, so it names the exact shape rather than the family.
+const POD_CHURN_PATH = /(?:^|\/)ios\/(?:Podfile\.lock|[^/]+\.xcodeproj\/project\.pbxproj)$/;
+
+// PURE. Splits a dirty listing into what still refuses the removal and the
+// pod-install churn to restore first -- ALL OR NOTHING: one path outside the
+// class and nothing is restored.
+//
+// GATE PROVENANCE (2026-08-24): every `worktree remove` in the release gate
+// needed a hand-run `git checkout -- apps/app/ios/Podfile.lock` before it would
+// proceed. The repo's own postinstall runs `pod install`, and a hermes-engine
+// podspec that bakes the absolute worktree path into Podfile.lock makes that
+// file modified in every worktree from the moment dependencies are installed.
+// The refusal already recognised this class -- removalRemedy prints the exact
+// checkout command for it -- so all it did was make a human paste back a
+// command rn-iso had already composed.
+//
+// WHY THIS IS SAFE, AND WHY IT DOES NOT WEAKEN THE GUARD. The refusal protects
+// uncommitted WORK. These two files are not work in a worktree being removed:
+// they are inside a directory that is about to be deleted wholesale, so
+// restoring them destroys nothing that surviving the command would have saved,
+// and lockfile changes anyone MEANT would have been committed. It is the same
+// reasoning that already restores rn-iso's own .gitignore append
+// (excludeSelfHealedIgnores), one file over -- with the difference that these
+// were written by the project's tooling rather than by rn-iso, which is why
+// every line says so.
+//
+// It fails CLOSED in three directions, and each of them matters more than the
+// convenience:
+//   - ALL OR NOTHING. Any other dirty path and the whole listing is refused,
+//     churn included, exactly as today. "Mostly churn" is not a category.
+//   - TRACKED AND UNSTAGED ONLY (` M `). `git checkout -- <file>` restores from
+//     the INDEX, so a staged change would survive it and leave the tree dirty;
+//     an untracked file has nothing to restore to at all.
+//   - NAMEABLE ONLY. A path outside SAFE_DIFF_PATH is not examined, because it
+//     is about to be interpolated into a shell command.
+export function excludePodChurn(lines) {
+  const kept = [];
+  const restore = [];
+  for (const line of lines || []) {
+    const path = porcelainPath(line);
+    if (path
+      && String(line).startsWith(' M ')
+      && SAFE_DIFF_PATH.test(path)
+      && POD_CHURN_PATH.test(path)) {
+      restore.push(path);
+      continue;
+    }
+    kept.push(line);
+  }
+  // One thing that is not churn and the churn stays dirty too, so the refusal
+  // lists every file and the reader sees the whole picture.
+  if (kept.length) return { lines: lines ? [...lines] : [], restore: [] };
+  return { lines: kept, restore };
+}
+
 // PURE. The worktree entry a path belongs to: an exact match, or the enclosing
 // one when the path is somewhere inside it.
 //
@@ -672,13 +732,20 @@ export function registerRemove(worktree) {
       const gitAnswered = hasUncommittedWork(path);
       const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
       const {
-        lines: dirtyLines,
+        lines: afterIgnores,
         healed: selfHealedIgnores,
         created: selfCreatedIgnores,
       } = excludeSelfHealedIgnores(
         excludeWorkspaceArtifacts(allDirty),
         { diff: (file) => unstagedDiff(path, file), read: (file) => readInside(path, file) }
       );
+      // ... and last, the churn a `pod install` leaves behind, but ONLY when it
+      // is all that is left once rn-iso's own writes are out. See
+      // excludePodChurn: the refusal protects uncommitted work, and these two
+      // files are about to be deleted with the worktree either way. Ordered
+      // after the two exclusions above so "the only dirt" really means the only
+      // dirt, and not "the only dirt that is not ours".
+      const { lines: dirtyLines, restore: podChurn } = excludePodChurn(afterIgnores);
       const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
       const unpushed = unpushedCommits(path);
       const blockers = removalBlockers({ dirty, unpushed });
@@ -756,6 +823,20 @@ export function registerRemove(worktree) {
       for (const file of selfHealedIgnores) {
         if (restoreFile(path, file)) {
           console.error(chalk.dim(`  restoring ${file} (only rn-iso's own entry was added)`));
+        } else {
+          console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
+        }
+      }
+      // ... and the same step for `pod install`'s churn, for the same reason:
+      // git's own cleanliness check counts these tracked modifications and
+      // refuses the removal over them, so leaving them to die with the
+      // directory is not an option. The note names the file and says why,
+      // because unlike the .gitignore above these were written by the
+      // project's own tooling and a reader has to be able to see that rn-iso
+      // decided to undo something it did not write.
+      for (const file of podChurn) {
+        if (restoreFile(path, file)) {
+          console.error(chalk.dim(`  restored ${file} (pod install churn; the worktree is being removed)`));
         } else {
           console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
         }

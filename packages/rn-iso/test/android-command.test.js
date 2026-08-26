@@ -1016,3 +1016,16 @@ describe('the APK dev-client scheme', () => {
     assert.equal(dumpApkManifest(null, { exec: throwing }), null);
   });
 });
+
+// The fingerprint is scoped to Android. Unscoped, the iOS tree hashes into the
+// ANDROID key -- and a podspec that bakes an absolute path into
+// ios/Podfile.lock then makes every cross-worktree android build a cache miss.
+// See the field note above fingerprintProject in src/build-cache.js.
+test('android fingerprints with platforms scoped to android', async () => {
+  const seen = [];
+  const h = harness({ fingerprint: async (path, options) => { seen.push({ path, options }); return FINGERPRINT; } });
+  await h.run();
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].path, root);
+  assert.equal(seen[0].options?.platform, 'android');
+});

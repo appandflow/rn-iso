@@ -201,7 +201,13 @@ rewrites `Podfile.lock` -- observed on `hermes-engine`, whose checksum changed
 on a plain re-install with no dependency change -- and `Podfile.lock` is a
 fingerprint input, so a build that ran `pod install` fingerprints differently
 from the commit it was built at, and the next worktree on that same commit
-misses. A repo that wants cross-worktree hits should commit a *settled*
+misses. `rn-iso ios` / `rn-iso android` scope the fingerprint to the platform
+they are building (`platforms: ['ios']` / `['android']`), so this file can no
+longer cost you an ANDROID hit -- but it still costs you the iOS one, and a
+provider you write yourself gets whatever hash Expo hands it, which is
+UNSCOPED (`createFingerprintAsync(projectRoot)` with no options, in
+`@expo/cli`'s `build-cache-providers`). Scope it in `calculateFingerprintHash`
+if you want the same behaviour there. A repo that wants cross-worktree hits should commit a *settled*
 `Podfile.lock`: run `pod install` once, commit whatever it produced, and check
 that a second run leaves it alone. The diagnostic when two workspaces that
 should agree do not is to fingerprint both and diff the sources rather than the
