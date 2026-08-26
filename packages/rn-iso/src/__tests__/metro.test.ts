@@ -6,6 +6,7 @@ import {
   parsePsPgid,
   isInsideProject,
   processGroupLeader,
+  processCwd,
   resolveProjectMetro,
   killMetroTree,
   NOT_OURS_FOREIGN_CWD,
@@ -14,6 +15,13 @@ import {
 import { spawn as realSpawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+
+// resolveProjectMetro proves a listener is ours by reading the process's cwd via
+// `lsof -d cwd`. That works on macOS (and any host where lsof reports fcwd) but
+// not on the ubuntu CI runner, where lsof does not return the cwd fd -- so the
+// real-listener identity test below can only run where that capability exists.
+// Probe it against our own pid; skip rather than fail where it is unavailable.
+const CAN_READ_CWD = processCwd(process.pid) !== null;
 import { join } from 'node:path';
 
 afterEach(() => resetExecutor());
@@ -194,63 +202,66 @@ test('killMetroTree reports false when nothing could be signalled', () => {
 //
 // The listener binds port 0 and reports back the port the kernel gave it, so
 // the test never competes with a real dev server for a fixed number.
-test('resolveProjectMetro identifies and kills a REAL listening process from the project dir', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rn-iso-metro-'));
-  const script = join(dir, 'fake-metro.js');
-  writeFileSync(
-    script,
-    `
+test.skipIf(!CAN_READ_CWD)(
+  'resolveProjectMetro identifies and kills a REAL listening process from the project dir',
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rn-iso-metro-'));
+    const script = join(dir, 'fake-metro.js');
+    writeFileSync(
+      script,
+      `
     const http = require('http');
     const server = http.createServer((req, res) => res.end('packager-status:running'));
     server.listen(0, '127.0.0.1', () => {
       process.stdout.write(String(server.address().port) + '\\n');
     });
   `,
-  );
-  const child = realSpawn(process.execPath, [script], {
-    cwd: dir,
-    detached: true,
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
-  child.unref();
-  const port = await new Promise<number>((resolve, reject) => {
-    let buffered = '';
-    const timer = setTimeout(() => reject(new Error('the fake Metro never reported a port')), 10000);
-    child.stdout!.on('data', (chunk: Buffer) => {
-      buffered += chunk;
-      const line = buffered.split('\n')[0];
-      if (buffered.includes('\n')) {
-        clearTimeout(timer);
-        resolve(parseInt(line, 10));
-      }
+    );
+    const child = realSpawn(process.execPath, [script], {
+      cwd: dir,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
-  });
-  try {
-    expect(Number.isFinite(port), 'the fake Metro must report the port it bound').toBeTruthy();
-    for (let i = 0; i < 40; i++) {
-      if (await isMetroRunning(port)) break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    const ours = await resolveProjectMetro(port, dir);
-    expect(ours.metro, `expected identification, got ${JSON.stringify(ours)}`).toBeTruthy();
-    expect(typeof ours.metro!.pid).toBe('number');
-
-    const foreign = await resolveProjectMetro(port, join(tmpdir(), 'some-other-project'));
-    expect(foreign.notOurs, 'a process outside the project must not be claimed').toBeTruthy();
-
-    expect(killMetroTree(ours.metro!.leader)).toBe(true);
-    for (let i = 0; i < 40; i++) {
-      if (!(await isMetroRunning(port))) break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    expect(await isMetroRunning(port)).toBe(false);
-  } finally {
+    child.unref();
+    const port = await new Promise<number>((resolve, reject) => {
+      let buffered = '';
+      const timer = setTimeout(() => reject(new Error('the fake Metro never reported a port')), 10000);
+      child.stdout!.on('data', (chunk: Buffer) => {
+        buffered += chunk;
+        const line = buffered.split('\n')[0];
+        if (buffered.includes('\n')) {
+          clearTimeout(timer);
+          resolve(parseInt(line, 10));
+        }
+      });
+    });
     try {
-      process.kill(-child.pid!, 'SIGKILL');
-    } catch {}
-    try {
-      process.kill(child.pid!, 'SIGKILL');
-    } catch {}
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+      expect(Number.isFinite(port), 'the fake Metro must report the port it bound').toBeTruthy();
+      for (let i = 0; i < 40; i++) {
+        if (await isMetroRunning(port)) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      const ours = await resolveProjectMetro(port, dir);
+      expect(ours.metro, `expected identification, got ${JSON.stringify(ours)}`).toBeTruthy();
+      expect(typeof ours.metro!.pid).toBe('number');
+
+      const foreign = await resolveProjectMetro(port, join(tmpdir(), 'some-other-project'));
+      expect(foreign.notOurs, 'a process outside the project must not be claimed').toBeTruthy();
+
+      expect(killMetroTree(ours.metro!.leader)).toBe(true);
+      for (let i = 0; i < 40; i++) {
+        if (!(await isMetroRunning(port))) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(await isMetroRunning(port)).toBe(false);
+    } finally {
+      try {
+        process.kill(-child.pid!, 'SIGKILL');
+      } catch {}
+      try {
+        process.kill(child.pid!, 'SIGKILL');
+      } catch {}
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
