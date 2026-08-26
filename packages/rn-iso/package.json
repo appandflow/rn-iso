@@ -1,6 +1,6 @@
 {
   "name": "rn-iso",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Isolated React Native dev environments per project/worktree",
   "type": "module",
   "bin": {
@@ -19,7 +19,7 @@
   "dependencies": {
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
-    "@rn-iso/metro": "^1.0.0"
+    "@rn-iso/metro": "^1.1.0"
   },
   "engines": {
     "node": ">=20"

@@ -312,6 +312,13 @@ post_install do |installer|
 end
 ```
 
+Note `installer.pods_project.targets` is the **Pods** project only -- it does
+NOT reach your app's own target (e.g. `MyApp.xcodeproj`). For most RN/Expo apps
+the app target is a thin shell over the pods and this is fine; if your app
+target compiles significant native code you want cached, add the same two
+settings to it as well (via a second loop over the app project's targets, or in
+the app target's build settings directly).
+
 Paste the whole block **inside** the existing `post_install do |installer|`,
 adding a `post_install` if the Podfile has none. It brings its own loop on
 purpose (see below). Write the path relative to `$HOME` and expand it at
@@ -339,6 +346,9 @@ the Podfile. `CLANG_OTHER_PREFIX_MAPPINGS` maps them, and the root must be
 nothing:
 
 ```ruby
+# Count YOUR OWN depth: PODS_ROOT is <app>/ios/Pods, so '../..' reaches the app
+# dir. In a monorepo the repo root is deeper -- e.g. apps/<app>/ios/Pods needs
+# '../../../..'. Set REPO_ROOT to wherever your source actually starts.
 config.build_settings['REPO_ROOT'] = '$(PODS_ROOT)/../..'
 config.build_settings['CLANG_ENABLE_PREFIX_MAPPING'] = 'YES'
 config.build_settings['CLANG_OTHER_PREFIX_MAPPINGS'] =
@@ -369,9 +379,13 @@ paths *inside* generated files like header maps and VFS overlays, which no
 downgrades to a note when every mention of it sits behind a conditional. It does
 not check where they point, and it never evaluates the file.*
 
-Metro's default cache lives under the project, so every worktree re-transforms
-the whole module graph from cold — thousands of modules, every time. One
-`FileStore` outside any project fixes it:
+Metro's default transform cache is NOT under the project -- Expo/RN put it at
+`$TMPDIR/metro-cache`, which is already machine-global but is a location the OS
+periodically wipes and that nothing versions or reclaims. A shared `FileStore`
+gives you a stable, gc-registered, SDK-version-partitioned cache instead of a
+volatile temp dir, so it is not the OS's to clear and `rn-iso gc` can see and
+trim it. (Do not benchmark "cold" by deleting the project's `node_modules` --
+`$TMPDIR` stays warm; the real cold number only shows after the store moves.)
 
 ```bash
 npm i -D @rn-iso/metro
