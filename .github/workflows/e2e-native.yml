@@ -118,6 +118,7 @@ jobs:
         with:
           name: build-logs-ios-${{ matrix.framework }}
           path: ${{ env.TMPDIR }}/**/.rn-iso/logs/*
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
 
@@ -205,5 +206,6 @@ jobs:
         with:
           name: build-logs-android-${{ matrix.framework }}
           path: ${{ env.TMPDIR }}/**/.rn-iso/logs/*
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
