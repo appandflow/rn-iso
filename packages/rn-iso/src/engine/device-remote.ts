@@ -92,11 +92,17 @@ export function resolveMetroOrigin({
   };
 }
 
-// A cloud session is billable and a build can be long. Ten minutes is too
-// short for a cold pod install; a day is a forgotten session nobody notices.
-// Two hours covers a full clean build plus a long agent loop, and `stop`,
-// `gc` and `worktree remove` all end it sooner in the ordinary case.
-export const DEFAULT_MAX_DURATION_MINUTES = 120;
+// NO DEFAULT DURATION, deliberately.
+//
+// The cap is per-account and rn-iso cannot know it. A hardcoded 120 was
+// rejected live with "Device run session max duration must not exceed 115
+// minutes for this account; received 120 minutes", which failed the whole
+// command before a session existed. EAS derives its own default from the job
+// run priority, so omitting the flag is both correct and account-portable.
+//
+// What actually bounds the cost is teardown -- `stop`, `worktree remove` and
+// `gc` all end the session -- not a number invented here. A caller who wants
+// a tighter bound passes one, and the flag is only sent when they do.
 
 // The device record the rest of ios.ts reads. Only `deviceName` is consumed
 // (by deviceLabel), so it says what this device IS rather than pretending to
@@ -129,6 +135,8 @@ export interface RemoteContext {
   // A URL that reaches THIS workspace's Metro from the device's network.
   // Only consulted when the daemon is not on this machine.
   publicMetroUrl?: string | null;
+  // The readiness poll's wait, injectable so a test does not sleep for real.
+  sleep?: (ms: number) => Promise<void>;
   // Set when the operator already has a daemon (an `agent-device proxy`, or
   // an exported EAS session). rn-iso then creates NO session and destroys
   // none: it is a guest on someone else's device.
@@ -203,7 +211,7 @@ export function remoteIosDeps(ctx: RemoteContext) {
             createSessionArgs({
               label: ctx.label,
               platform: 'ios',
-              maxDurationMinutes: ctx.maxDurationMinutes ?? DEFAULT_MAX_DURATION_MINUTES,
+              maxDurationMinutes: ctx.maxDurationMinutes ?? null,
             }),
             easEnv,
           );
@@ -215,14 +223,18 @@ export function remoteIosDeps(ctx: RemoteContext) {
           return { failed: true, reason: 'eas sim returned no session; run it by hand to see what it reported.' };
         }
         id = created.id;
-        // A session can exist before its daemon is routable, so the config is
-        // re-read rather than assumed present on the create payload.
-        daemon = created.daemon ?? readDaemon(ctx, created.id);
+        // The session EXISTS from this line on, and it bills. Every failure
+        // below therefore has to end it rather than return and forget it:
+        // nothing else can, because the id is not recorded until this
+        // function succeeds. Observed live -- a session with no endpoint yet
+        // left an IN_PROGRESS session nothing could find.
+        daemon = created.daemon ?? (await waitForDaemon(ctx, created.id, out, { sleep: ctx.sleep ?? defaultSleep }));
         if (!daemon) {
-          return {
-            failed: true,
-            reason: `Session ${created.id} has no agent-device endpoint. It may be an appium or argent session, or it may still be starting.`,
-          };
+          return abandonSession(
+            ctx,
+            created.id,
+            `Session ${created.id} never published an agent-device endpoint. It may be an appium or argent session rather than an agent-device one.`,
+          );
         }
       }
 
@@ -243,6 +255,7 @@ export function remoteIosDeps(ctx: RemoteContext) {
           env: daemonEnv(daemon),
         });
       } catch (err) {
+        if (id) return abandonSession(ctx, id, `agent-device connect failed: ${describe(err)}`);
         return { failed: true, reason: `agent-device connect failed: ${describe(err)}` };
       }
 
@@ -383,6 +396,22 @@ export function resolveRemoteContext({
     };
   }
 
+  // Metro reachability is decided HERE, before anything is created or built.
+  //
+  // It used to be checked at launch, which is the worst possible place: a run
+  // with no reachable Metro would create a billable session, compile for
+  // minutes, install, and only then refuse. Everything needed to answer the
+  // question is already known at this point -- an EAS session is cloud-hosted
+  // and therefore never loopback, and an operator daemon carries its URL.
+  const publicMetroUrl = env[PUBLIC_METRO_ENV]?.trim() || null;
+  if (!publicMetroUrl && !(existingDaemon && isLoopbackDaemon(existingDaemon.baseUrl))) {
+    const where = existingDaemon ? `The daemon at ${existingDaemon.baseUrl} is` : 'An EAS Simulator session is';
+    return {
+      failed: `${where} not on this machine, so the app it launches cannot reach Metro on localhost.`,
+      remedy: `Expose this workspace's Metro port through a tunnel (for example \`cloudflared tunnel --url http://127.0.0.1:<port>\`), export ${PUBLIC_METRO_ENV}=<that url>, and run again. \`rn-iso start\` prints the port.`,
+    };
+  }
+
   return {
     ctx: {
       root,
@@ -390,7 +419,7 @@ export function resolveRemoteContext({
       easBin: easBin ?? '',
       agentDeviceBin,
       maxDurationMinutes,
-      publicMetroUrl: env[PUBLIC_METRO_ENV]?.trim() || null,
+      publicMetroUrl,
       existingDaemon,
     },
   };
@@ -400,6 +429,66 @@ function defaultLookupAgentDevice(): string | null {
   const found = getExecutor().runQuiet('command -v agent-device', { timeoutMs: 5000 });
   const file = (String(found ?? '').split('\n')[0] ?? '').trim();
   return file || null;
+}
+
+// How long to wait for a freshly created session to publish its endpoint,
+// and how often to ask. A cloud VM boot is tens of seconds; `eas sim` polls
+// internally too but has been seen returning before the endpoint exists.
+const DAEMON_WAIT_MS = 180_000;
+const DAEMON_POLL_MS = 5_000;
+
+/**
+ * Poll `simulator:get` until the session publishes an agent-device endpoint.
+ *
+ * Bounded, because the alternative is a command that hangs on a session that
+ * will never be ready -- while billing.
+ */
+async function waitForDaemon(
+  ctx: RemoteContext,
+  sessionId: string,
+  out: (msg: string) => void,
+  { sleep = defaultSleep }: { sleep?: (ms: number) => Promise<void> } = {},
+): Promise<RemoteDaemon | null> {
+  // Bounded by ATTEMPTS, not by a wall-clock deadline. A deadline read from
+  // the real clock spins without limit the moment `sleep` does not actually
+  // sleep, which is exactly what a test injects -- it burned a worker to an
+  // out-of-memory before this was counted instead.
+  const attempts = Math.ceil(DAEMON_WAIT_MS / DAEMON_POLL_MS);
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const daemon = readDaemon(ctx, sessionId);
+    if (daemon) return daemon;
+    if (attempt === 0) out(`Waiting for session ${sessionId} to become reachable.`);
+    await sleep(DAEMON_POLL_MS);
+  }
+  return null;
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * End a session rn-iso created but cannot use, and fold the outcome into the
+ * refusal.
+ *
+ * A session that fails between create and record is invisible to `stop`,
+ * `gc` and `worktree remove`, so this is the ONLY place it can be ended. If
+ * the stop also fails, the id goes in the message: a human can still run
+ * `eas simulator:stop --id <id>`, and a leak nobody is told about is the
+ * worst outcome here.
+ */
+function abandonSession(ctx: RemoteContext, sessionId: string, reason: string): { failed: true; reason: string } {
+  try {
+    getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), { cwd: ctx.root });
+    return { failed: true, reason: `${reason} The session was stopped.` };
+  } catch (err) {
+    return {
+      failed: true,
+      reason:
+        `${reason} rn-iso could not stop it (${describe(err)}), and it bills until its cap -- ` +
+        `run \`eas simulator:stop --id ${sessionId}\`.`,
+    };
+  }
 }
 
 // PURE. The host:port of a daemon, for a phase line that has room for one

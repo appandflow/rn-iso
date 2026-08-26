@@ -139,16 +139,34 @@ export function listOwnedSessionsArgs(): string[] {
 
 // PURE. The daemon coordinates, or null.
 //
-// Takes `unknown` because eas-cli's remoteConfig is a GraphQL union
-// discriminated by __typename, of which only the AgentDevice member is
-// usable here -- so the argument is genuinely dynamic third-party output,
-// narrowed field by field below rather than trusted wholesale.
+// Takes `unknown` because eas-cli's remoteConfig is genuinely dynamic
+// third-party output, narrowed field by field below rather than trusted
+// wholesale.
+//
+// IDENTIFIED BY ITS FIELDS, NOT BY __typename. eas-cli's own source switches
+// on `remoteConfig.__typename` to tell the union members apart, and an
+// earlier version of this function copied that -- but __typename exists only
+// on the in-memory GraphQL object. The JSON that `--json` prints does not
+// carry it, verified against a live session:
+//
+//   "remoteConfig": {
+//     "agentDeviceRemoteSessionUrl": "https://...ngrok.dev",
+//     "agentDeviceRemoteSessionToken": "...",
+//     "webPreviewUrl": "https://..."
+//   }
+//
+// so requiring it rejected every real agent-device session. The two fields
+// below ARE the discriminator: no other member of the union has them.
 //
 // Returns null rather than a partial record for a session of another type
 // (appium, argent, serve-sim). Those are real sessions this backend cannot
 // speak to, and a half-filled RemoteDaemon would fail later and further away.
 export function remoteDaemonFrom(config: unknown): RemoteDaemon | null {
-  if (!isRecord(config) || config.__typename !== 'AgentDeviceRunSessionRemoteConfig') return null;
+  if (!isRecord(config)) return null;
+  // Honoured when present -- a caller reading the GraphQL object directly
+  // still gets the strict answer -- but never required.
+  const typename = str(config.__typename);
+  if (typename && typename !== 'AgentDeviceRunSessionRemoteConfig') return null;
   const baseUrl = str(config.agentDeviceRemoteSessionUrl);
   const token = str(config.agentDeviceRemoteSessionToken);
   if (!baseUrl || !token) return null;

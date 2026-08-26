@@ -14,10 +14,10 @@ import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  DEFAULT_MAX_DURATION_MINUTES,
   PUBLIC_METRO_ENV,
   remoteIosDeps,
   resolveMetroOrigin,
+  resolveRemoteContext,
   teardownRemote,
 } from '../engine/device-remote.ts';
 import { stopSessionArgs } from '../engine/eas-simulator.ts';
@@ -45,7 +45,10 @@ interface Call {
   cwd?: string;
 }
 
-function mockExec({ fail = null, outputs = {} }: { fail?: string | null; outputs?: Record<string, string> } = {}) {
+function mockExec({
+  fail = null,
+  outputs = {},
+}: { fail?: string | null; outputs?: Record<string, string>; existingDaemonMode?: boolean } = {}) {
   const calls: Call[] = [];
   const exec: Executor & { calls: Call[] } = {
     calls,
@@ -75,7 +78,16 @@ function mockExec({ fail = null, outputs = {} }: { fail?: string | null; outputs
 
 let root: string;
 function ctx(overrides: Partial<Parameters<typeof remoteIosDeps>[0]> = {}) {
-  return { root, label: 'wt', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device', ...overrides };
+  return {
+    root,
+    label: 'wt',
+    easBin: '/bin/eas',
+    agentDeviceBin: '/bin/agent-device',
+    // The readiness poll is bounded at three minutes of real time; a test
+    // asserting the give-up path must not pay it.
+    sleep: async () => {},
+    ...overrides,
+  };
 }
 
 beforeEach(() => {
@@ -117,11 +129,20 @@ describe('session creation', () => {
     expect(exec.calls[0]?.cwd).toBe(root);
   });
 
-  test('bounds the session, so a forgotten one stops billing', async () => {
+  test('sends no duration of its own, because the cap is per-account', async () => {
+    // Live: a hardcoded 120 was rejected with "must not exceed 115 minutes
+    // for this account", failing the command before a session existed. EAS
+    // has its own default; teardown is what bounds the cost.
     const exec = mockExec({ outputs: { sim: CREATED } });
     await remoteIosDeps(ctx()).ensureBooted({});
+    expect(exec.calls[0]?.args ?? []).not.toContain('--max-duration-minutes');
+  });
+
+  test('a caller-chosen duration is still sent', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(ctx({ maxDurationMinutes: 30 })).ensureBooted({});
     const args = exec.calls[0]?.args ?? [];
-    expect(args[args.indexOf('--max-duration-minutes') + 1]).toBe(String(DEFAULT_MAX_DURATION_MINUTES));
+    expect(args[args.indexOf('--max-duration-minutes') + 1]).toBe('30');
   });
 
   test('a session of a type rn-iso cannot drive is refused, not half-used', async () => {
@@ -334,5 +355,84 @@ describe('Metro reachability', () => {
     deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
     const open = exec.calls.find((c) => c.args[0] === 'open');
     expect(open?.args[2]).toBe('myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com');
+  });
+});
+
+describe('the Metro refusal comes before anything billable', () => {
+  const base = { root: '/w', label: 'wt', easBin: '/bin/eas', lookupAgentDevice: () => '/bin/agent-device' };
+
+  test('an EAS session is refused up front when Metro is not reachable', () => {
+    // The failure this prevents: create a billable session, compile for
+    // minutes, install, THEN refuse. Everything needed to answer is known
+    // here -- an EAS session is cloud-hosted and never loopback.
+    const r = resolveRemoteContext({ ...base, env: {} });
+    expect('failed' in r).toBe(true);
+    if ('failed' in r) expect(r.failed).toContain('An EAS Simulator session is not on this machine');
+  });
+
+  test('a loopback daemon needs no public url', () => {
+    const r = resolveRemoteContext({
+      ...base,
+      env: { AGENT_DEVICE_DAEMON_BASE_URL: 'http://127.0.0.1:4310', AGENT_DEVICE_DAEMON_AUTH_TOKEN: 't' },
+    });
+    expect('ctx' in r).toBe(true);
+  });
+
+  test('a routable daemon without a public url is refused up front', () => {
+    const r = resolveRemoteContext({
+      ...base,
+      env: { AGENT_DEVICE_DAEMON_BASE_URL: 'https://x.ngrok.app/agent-device', AGENT_DEVICE_DAEMON_AUTH_TOKEN: 't' },
+    });
+    expect('failed' in r).toBe(true);
+    if ('failed' in r) expect(r.remedy).toContain(PUBLIC_METRO_ENV);
+  });
+
+  test('naming a public url is what unblocks an EAS session', () => {
+    const r = resolveRemoteContext({ ...base, env: { [PUBLIC_METRO_ENV]: 'https://abc.ngrok.app' } });
+    expect('ctx' in r).toBe(true);
+    if ('ctx' in r) expect(r.ctx.publicMetroUrl).toBe('https://abc.ngrok.app');
+  });
+});
+
+describe('a session rn-iso created is never abandoned', () => {
+  // The window this closes: between `eas sim` succeeding and ensureBooted
+  // returning, the session exists and bills but its id is recorded nowhere,
+  // so stop/gc/worktree-remove cannot find it. Observed live -- a session
+  // with no endpoint yet left an IN_PROGRESS session nothing could reach.
+  const NO_ENDPOINT = JSON.stringify({ id: 'drs_9', remoteConfig: null });
+
+  test('a session that never becomes reachable is stopped, not left running', async () => {
+    const exec = mockExec({ outputs: { sim: NO_ENDPOINT, 'simulator:get': NO_ENDPOINT } });
+    const deps = remoteIosDeps(ctx({ existingDaemon: null }));
+    const booted = await deps.ensureBooted({});
+    expect(booted.failed).toBe(true);
+    expect(booted.reason).toContain('The session was stopped.');
+    const stop = exec.calls.find((c) => c.args[0] === 'simulator:stop');
+    expect(stop?.args).toContain('drs_9');
+  });
+
+  test('when the stop also fails, the id and the manual command are reported', async () => {
+    // A leak nobody is told about is the worst outcome, so the message has to
+    // carry enough to fix it by hand.
+    mockExec({ outputs: { sim: NO_ENDPOINT, 'simulator:get': NO_ENDPOINT }, fail: 'simulator:stop' });
+    const booted = await remoteIosDeps(ctx({ existingDaemon: null })).ensureBooted({});
+    expect(booted.reason).toContain('eas simulator:stop --id drs_9');
+    expect(booted.reason).toContain('bills until its cap');
+  });
+
+  test('a connect failure after a create also ends the session', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED }, fail: 'connect' });
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+    expect(booted.failed).toBe(true);
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(true);
+  });
+
+  test('a connect failure against an operator daemon stops nothing', async () => {
+    // rn-iso created no session here, so it has none to end -- and ending
+    // someone else's would be destroying a device it does not own.
+    const exec = mockExec({ existingDaemonMode: true, fail: 'connect' });
+    const booted = await remoteIosDeps(ctx({ existingDaemon: LOOPBACK })).ensureBooted({});
+    expect(booted.failed).toBe(true);
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
   });
 });

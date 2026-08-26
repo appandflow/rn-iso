@@ -1858,6 +1858,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         udid,
         devClientUrl: scheme ? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null,
         mode: isExpo ? MODE_EXPO : MODE_BARE,
+        remote: Boolean(remoteDevice),
+        // What the app was ACTUALLY pointed at. On a remote device that is not
+        // localhost, and printing localhost sends the reader looking in the
+        // wrong place.
+        metroOrigin: typeof launched?.jsLocation === 'string' ? launched.jsLocation : null,
       });
       phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
       for (const line of lines) note(chalk.yellow(phaseLine('', line)));

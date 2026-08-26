@@ -958,6 +958,8 @@ export function unverifiedLaunchLines({
   serial = null,
   devClientUrl: url = null,
   mode = null,
+  remote = false,
+  metroOrigin = null,
 }: {
   platform: string;
   metroPort: number | string;
@@ -967,15 +969,37 @@ export function unverifiedLaunchLines({
   serial?: string | null;
   devClientUrl?: string | null;
   mode?: string | null;
+  // A remote device has no simctl on this machine, and the app was pointed at
+  // metroOrigin rather than at localhost, so the local steps below are all
+  // wrong for it -- `xcrun simctl openurl <session-id>` names nothing.
+  remote?: boolean;
+  metroOrigin?: string | null;
+  // Explicit return type: isolatedDeclarations requires one at every module
+  // boundary.
 }): string[] {
   const seconds = Math.round(Number(waitedMs || 0) / 1000);
   const lines = [
     `The app was started, but nothing fetched a bundle from this workspace's Metro (port ${metroPort}) within ${seconds}s.`,
     'The app is launched; what is unproven is that it is talking to THIS dev server. Do this, in order:',
   ];
-  const picker = `If expo-dev-launcher's DEVELOPMENT SERVERS picker is showing, tap the entry for http://localhost:${metroPort} -- NOT another workspace's, which would load a different project's bundle onto this device.`;
+  const origin = metroOrigin || `http://localhost:${metroPort}`;
+  const picker = `If expo-dev-launcher's DEVELOPMENT SERVERS picker is showing, tap the entry for ${origin} -- NOT another workspace's, which would load a different project's bundle onto this device.`;
   let step = 0;
   const push = (text: string) => lines.push(`  ${++step}. ${text}`);
+  if (remote) {
+    // The device is not on this machine, so every simctl/adb step is
+    // unusable. What CAN be wrong is reachability: the app fetches from
+    // metroOrigin, and unlike a local run that address has to work from the
+    // device's network, not from here.
+    push(
+      `Check that ${origin} is reachable FROM THE DEVICE's network, not just from this machine. That is the usual cause: a tunnel that stopped, or one this machine can reach and the device cannot.`,
+    );
+    push(
+      'If an "Open in <app>?" alert or the expo-dev-launcher picker is showing on the remote device, confirm it with your device tool (`agent-device snapshot -i`, then `agent-device press`).',
+    );
+    lines.push(`Then check \`rn-iso logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);
+    return lines;
+  }
   if (platform === 'ios') {
     push(
       'If an "Open in <app>?" alert is showing, confirm it with your device tool (iOS 26 raises it on every first launch on a fresh simulator, in front of the deep link); the bundle loads immediately after.',

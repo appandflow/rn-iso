@@ -227,3 +227,52 @@ describe('the executor seam', () => {
     expect(exec.calls[0]?.[1]).toBe('sim');
   });
 });
+
+describe('the shape eas sim actually prints', () => {
+  // VERBATIM from a live `eas sim --platform ios --json` against appandflow.
+  // The point of this fixture is what it does NOT have: __typename. That
+  // field exists on eas-cli's in-memory GraphQL object, which is what its own
+  // source switches on, but printJsonOnlyOutput does not serialize it.
+  // Requiring it rejected every real session -- the bug this pins.
+  const LIVE = JSON.stringify({
+    id: '01a03fb5-c9f7-7403-8810-712f74e6cafc',
+    name: 'rn-iso endpoint probe',
+    type: 'agent-device',
+    deviceRunSessionUrl: 'https://expo.dev/accounts/appandflow/projects/rniso-eas-test/simulator-sessions/01a03fb5',
+    remoteConfig: {
+      agentDeviceRemoteSessionUrl: 'https://agent-device-a8bf16d9.eas-simulator.ngrok.dev',
+      agentDeviceRemoteSessionToken: '9ec138b696c76c29e4d5987770d1febf78445771e3295063',
+      webPreviewUrl: 'https://web-preview-a883570a.eas-simulator.ngrok.dev',
+    },
+  });
+
+  test('a real payload yields a usable daemon', () => {
+    const created = parseCreatedSession(LIVE);
+    expect(created?.id).toBe('01a03fb5-c9f7-7403-8810-712f74e6cafc');
+    expect(created?.daemon).toEqual({
+      baseUrl: 'https://agent-device-a8bf16d9.eas-simulator.ngrok.dev',
+      token: '9ec138b696c76c29e4d5987770d1febf78445771e3295063',
+      webPreviewUrl: 'https://web-preview-a883570a.eas-simulator.ngrok.dev',
+    });
+  });
+
+  test('__typename is honoured when present but never required', () => {
+    // A caller reading the GraphQL object directly still gets the strict
+    // answer; a caller reading the CLI's JSON is not punished for its absence.
+    expect(
+      remoteDaemonFrom({
+        __typename: 'AppiumRunSessionRemoteConfig',
+        agentDeviceRemoteSessionUrl: 'https://x',
+        agentDeviceRemoteSessionToken: 't',
+      }),
+    ).toBeNull();
+    expect(remoteDaemonFrom({ agentDeviceRemoteSessionUrl: 'https://x', agentDeviceRemoteSessionToken: 't' })).toEqual({
+      baseUrl: 'https://x',
+      token: 't',
+    });
+  });
+
+  test('another session type has neither field, so it is still refused', () => {
+    expect(remoteDaemonFrom({ appiumUrl: 'https://x', capabilities: {} })).toBeNull();
+  });
+});
