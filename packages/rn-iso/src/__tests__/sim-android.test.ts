@@ -387,6 +387,11 @@ test('listAvds runs the resolved emulator binary, quoted', () => {
 test('bootAndroidEmulator spawns the resolved emulator binary', () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;
+  // Pin a display so the exact-args assertion holds on a headless CI runner
+  // too: on displayless linux bootAndroidEmulator appends the headless flags
+  // (covered by the headlessEmulatorArgs test above).
+  const savedDisplay = process.env.DISPLAY;
+  process.env.DISPLAY = ':0';
   const spawned: Array<[string, string[]]> = [];
   setExecutor({
     run: () => '',
@@ -396,7 +401,12 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
       return { unref: () => {} };
     },
   });
-  bootAndroidEmulator('rn-iso-app', 5556);
+  try {
+    bootAndroidEmulator('rn-iso-app', 5556);
+  } finally {
+    if (savedDisplay === undefined) delete process.env.DISPLAY;
+    else process.env.DISPLAY = savedDisplay;
+  }
   expect(spawned).toEqual([[join(sdk, 'emulator', 'emulator'), ['-avd', 'rn-iso-app', '-port', '5556']]]);
 });
 
