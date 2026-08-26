@@ -447,21 +447,3 @@ export function allConsolePortsAndSerials({
   }
   return result;
 }
-
-// Remove project entries whose path no longer exists on disk (deleted
-// worktrees). Returns the removed entries so callers can report what was
-// freed and clean up any process still bound to their Metro ports.
-export function pruneDeadProjects(): { path: string; project: ProjectRecord }[] {
-  return withConfigLock(() => {
-    const cfg = loadConfig();
-    if (!cfg?.projects) return [];
-    const removed: { path: string; project: ProjectRecord }[] = [];
-    for (const [path, proj] of Object.entries(cfg.projects)) {
-      if (existsSync(path)) continue;
-      removed.push({ path, project: proj });
-      delete cfg.projects[path];
-    }
-    if (removed.length) saveConfig(cfg);
-    return removed;
-  });
-}

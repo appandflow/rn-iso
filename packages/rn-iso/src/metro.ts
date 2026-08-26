@@ -159,11 +159,17 @@ function ownProcessGroup(): number | null {
 // node child 59914 actually holding the port). Killing only the listener
 // orphans the wrapper. The one exception is a group rn-iso is itself a member
 // of: there the bare pid is signalled instead.
-export function killMetroTree(leader: number | null | undefined): boolean {
+export function killMetroTree(leader: number | null | undefined, listenerPid?: number | null): boolean {
   if (!leader) return false;
   if (leader === ownProcessGroup()) {
+    // The process-group leader IS rn-iso's own group -- this is a Metro that a
+    // non-interactive script backgrounded into rn-iso's group. Signalling the
+    // group (`-leader`) would take rn-iso and the shell down too, and the
+    // leader itself is that shell, not Metro. Signal the listener directly:
+    // it is the process actually holding the port.
+    const target = listenerPid ?? leader;
     try {
-      process.kill(leader, 'SIGTERM');
+      process.kill(target, 'SIGTERM');
       return true;
     } catch {
       return false;
@@ -174,7 +180,7 @@ export function killMetroTree(leader: number | null | undefined): boolean {
     return true;
   } catch {
     try {
-      process.kill(leader, 'SIGTERM');
+      process.kill(listenerPid ?? leader, 'SIGTERM');
       return true;
     } catch {
       return false;

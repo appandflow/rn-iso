@@ -613,7 +613,7 @@ async function stopMetro(
   }: {
     force: boolean;
     resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
-    killMetro: (leader: number | null | undefined) => boolean;
+    killMetro: (leader: number | null | undefined, listenerPid?: number | null) => boolean;
     findListener: (port: number) => number | null;
     report: (line: string) => void;
   },
@@ -635,7 +635,7 @@ async function stopMetro(
     report(chalk.dim(`metro: nothing listening on port ${port}`));
     return { status: 'missing', port };
   }
-  if (!killMetro(leader)) {
+  if (!killMetro(leader, pid)) {
     const reason = `could not kill the process on port ${port}`;
     report(chalk.red(`metro: ${reason}`));
     return { status: 'failed', port, pid, reason };

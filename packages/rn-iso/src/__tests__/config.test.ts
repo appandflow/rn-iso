@@ -20,7 +20,6 @@ import {
   getProjectSetting,
   setProjectSetting,
   unsetProjectSetting,
-  pruneDeadProjects,
   getRepoSettings,
   setRepoSetting,
   unsetRepoSetting,
@@ -298,27 +297,6 @@ test('allConsolePortsAndSerials frees the claim of a dead project on a mounted v
   setDevice('/definitely/gone', 'android', { avdName: 'rn-iso-x', consolePort: 5554 });
   const result = allConsolePortsAndSerials({ isMounted: () => true });
   expect(result.androidConsolePorts).toEqual([]);
-});
-
-test('pruneDeadProjects removes dead-path entries and keeps live ones', () => {
-  const live = liveProjectDir('live');
-  upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
-  upsertProject('/definitely/gone/worktree', { bundleId: 'com.dead', androidPackage: 'com.dead', isExpo: false });
-  claimMetroPort('/definitely/gone/worktree', 8099);
-  const removed = pruneDeadProjects();
-  expect(removed.length).toBe(1);
-  assert(removed[0]);
-  expect(removed[0].path).toBe('/definitely/gone/worktree');
-  expect(removed[0].project.metroPort).toBe(8099);
-  expect(getProject('/definitely/gone/worktree')).toBe(null);
-  expect(getProject(live)).not.toBe(null);
-});
-
-test('pruneDeadProjects returns empty list when nothing is dead', () => {
-  const live = liveProjectDir('live');
-  upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
-  expect(pruneDeadProjects()).toEqual([]);
-  expect(getProject(live)).not.toBe(null);
 });
 
 // --- Per-project settings ---
