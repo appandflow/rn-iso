@@ -36,6 +36,7 @@ TypeScript + oxlint + oxfmt + tsdown + vitest(-on-rolldown), tests colocated in
    6b. **Validate CI for real**: push branch, watch Actions until ci.yml is green on the runner, trigger e2e-native.yml once (bare+expo x ios+android) to prove the native path, not just YAML parse.
 
 ## STATUS: COMPLETE (2026-08-26)
+
 All 7 phases done. CI green on the runner (node 22 + 24), PR #17. Shipping 1.2.0.
 
 ## Definition of done (the goal)
