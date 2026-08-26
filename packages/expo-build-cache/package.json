@@ -1,6 +1,6 @@
 {
   "name": "@rn-iso/expo-build-cache",
-  "version": "0.14.1",
+  "version": "1.0.0",
   "description": "Local Expo build cache provider: installs a cached .app/.apk instead of compiling when no native input changed.",
   "main": "index.js",
   "files": [
