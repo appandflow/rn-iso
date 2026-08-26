@@ -231,7 +231,7 @@ describe('startExpoServer', () => {
         root,
         port: 8113,
         logsDir: join(root, 'logs'),
-        spawnFn: (cmd, args, opts) => {
+        spawnFn: (_cmd, _args, opts) => {
           calls.push({ opts });
           return fakeChild();
         },

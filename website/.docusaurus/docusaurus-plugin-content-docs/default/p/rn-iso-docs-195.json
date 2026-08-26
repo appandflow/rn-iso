@@ -1,1 +1,179 @@
-{"version":{"pluginId":"default","version":"current","label":"Next","banner":null,"badge":false,"noIndex":false,"className":"docs-version-current","isLast":true,"docsSidebars":{"docs":[{"type":"link","href":"/rn-iso/docs/why","label":"Why rn-iso exists","docId":"why","unlisted":false},{"type":"link","href":"/rn-iso/docs/getting-started","label":"Getting started","docId":"getting-started","unlisted":false},{"type":"link","href":"/rn-iso/docs/commands","label":"Commands","docId":"commands","unlisted":false},{"type":"category","label":"Concepts","collapsed":false,"items":[{"type":"link","href":"/rn-iso/docs/owned-devices","label":"Owned devices","docId":"owned-devices","unlisted":false},{"type":"link","href":"/rn-iso/docs/dev-server-and-logs","label":"The dev server and logs","docId":"dev-server-and-logs","unlisted":false},{"type":"link","href":"/rn-iso/docs/build-caches","label":"Build caches","docId":"build-caches","unlisted":false},{"type":"link","href":"/rn-iso/docs/worktrees","label":"Worktrees","docId":"worktrees","unlisted":false}],"collapsible":true},{"type":"category","label":"Reference","collapsed":false,"items":[{"type":"link","href":"/rn-iso/docs/settings","label":"Settings","docId":"settings","unlisted":false},{"type":"link","href":"/rn-iso/docs/cache-packages","label":"The cache packages","docId":"cache-packages","unlisted":false},{"type":"link","href":"/rn-iso/docs/agent-skills","label":"Agent skills","docId":"agent-skills","unlisted":false},{"type":"link","href":"/rn-iso/docs/requirements","label":"Requirements","docId":"requirements","unlisted":false}],"collapsible":true},{"type":"link","href":"/rn-iso/docs/changelog","label":"Changelog","docId":"changelog","unlisted":false}]},"docs":{"agent-skills":{"id":"agent-skills","title":"Agent skills","description":"Installing and refreshing the bundled skills with npx skills","sidebar":"docs"},"build-caches":{"id":"build-caches","title":"Build caches","description":"Fingerprint-keyed native builds shared across worktrees, and single-flight compiles","sidebar":"docs"},"cache-packages":{"id":"cache-packages","title":"The cache packages","description":"@rn-iso/metro and @rn-iso/expo-build-cache: the shared transform cache and the local Expo build cache","sidebar":"docs"},"changelog":{"id":"changelog","title":"Changelog","description":"Release notes","sidebar":"docs"},"commands":{"id":"commands","title":"Commands","description":"The closed, ten-command surface, and what each one does","sidebar":"docs"},"dev-server-and-logs":{"id":"dev-server-and-logs","title":"The dev server and logs","description":"A detached per-workspace supervisor, and a queryable NDJSON timeline instead of a scraped terminal","sidebar":"docs"},"getting-started":{"id":"getting-started","title":"Getting started","description":"Install the skill, have the agent run /rn-iso-init, then describe what you want built","sidebar":"docs"},"owned-devices":{"id":"owned-devices","title":"Owned devices","description":"Every device rn-iso touches is one it created, and exactly two commands destroy anything","sidebar":"docs"},"requirements":{"id":"requirements","title":"Requirements","description":"What rn-iso needs from the machine","sidebar":"docs"},"settings":{"id":"settings","title":"Settings","description":"The layered settings files and every key rn-iso reads","sidebar":"docs"},"why":{"id":"why","title":"Why rn-iso exists","description":"What breaks when coding agents share one machine, and what rn-iso does about it","sidebar":"docs"},"worktrees":{"id":"worktrees","title":"Worktrees","description":"Isolated git worktrees with carried gitignored files, and teardown that reclaims everything","sidebar":"docs"}}}}
+{
+  "version": {
+    "pluginId": "default",
+    "version": "current",
+    "label": "Next",
+    "banner": null,
+    "badge": false,
+    "noIndex": false,
+    "className": "docs-version-current",
+    "isLast": true,
+    "docsSidebars": {
+      "docs": [
+        { "type": "link", "href": "/rn-iso/docs/why", "label": "Why rn-iso exists", "docId": "why", "unlisted": false },
+        {
+          "type": "link",
+          "href": "/rn-iso/docs/getting-started",
+          "label": "Getting started",
+          "docId": "getting-started",
+          "unlisted": false
+        },
+        {
+          "type": "link",
+          "href": "/rn-iso/docs/commands",
+          "label": "Commands",
+          "docId": "commands",
+          "unlisted": false
+        },
+        {
+          "type": "category",
+          "label": "Concepts",
+          "collapsed": false,
+          "items": [
+            {
+              "type": "link",
+              "href": "/rn-iso/docs/owned-devices",
+              "label": "Owned devices",
+              "docId": "owned-devices",
+              "unlisted": false
+            },
+            {
+              "type": "link",
+              "href": "/rn-iso/docs/dev-server-and-logs",
+              "label": "The dev server and logs",
+              "docId": "dev-server-and-logs",
+              "unlisted": false
+            },
+            {
+              "type": "link",
+              "href": "/rn-iso/docs/build-caches",
+              "label": "Build caches",
+              "docId": "build-caches",
+              "unlisted": false
+            },
+            {
+              "type": "link",
+              "href": "/rn-iso/docs/worktrees",
+              "label": "Worktrees",
+              "docId": "worktrees",
+              "unlisted": false
+            }
+          ],
+          "collapsible": true
+        },
+        {
+          "type": "category",
+          "label": "Reference",
+          "collapsed": false,
+          "items": [
+            {
+              "type": "link",
+              "href": "/rn-iso/docs/settings",
+              "label": "Settings",
+              "docId": "settings",
+              "unlisted": false
+            },
+            {
+              "type": "link",
+              "href": "/rn-iso/docs/cache-packages",
+              "label": "The cache packages",
+              "docId": "cache-packages",
+              "unlisted": false
+            },
+            {
+              "type": "link",
+              "href": "/rn-iso/docs/agent-skills",
+              "label": "Agent skills",
+              "docId": "agent-skills",
+              "unlisted": false
+            },
+            {
+              "type": "link",
+              "href": "/rn-iso/docs/requirements",
+              "label": "Requirements",
+              "docId": "requirements",
+              "unlisted": false
+            }
+          ],
+          "collapsible": true
+        },
+        {
+          "type": "link",
+          "href": "/rn-iso/docs/changelog",
+          "label": "Changelog",
+          "docId": "changelog",
+          "unlisted": false
+        }
+      ]
+    },
+    "docs": {
+      "agent-skills": {
+        "id": "agent-skills",
+        "title": "Agent skills",
+        "description": "Installing and refreshing the bundled skills with npx skills",
+        "sidebar": "docs"
+      },
+      "build-caches": {
+        "id": "build-caches",
+        "title": "Build caches",
+        "description": "Fingerprint-keyed native builds shared across worktrees, and single-flight compiles",
+        "sidebar": "docs"
+      },
+      "cache-packages": {
+        "id": "cache-packages",
+        "title": "The cache packages",
+        "description": "@rn-iso/metro and @rn-iso/expo-build-cache: the shared transform cache and the local Expo build cache",
+        "sidebar": "docs"
+      },
+      "changelog": { "id": "changelog", "title": "Changelog", "description": "Release notes", "sidebar": "docs" },
+      "commands": {
+        "id": "commands",
+        "title": "Commands",
+        "description": "The closed, ten-command surface, and what each one does",
+        "sidebar": "docs"
+      },
+      "dev-server-and-logs": {
+        "id": "dev-server-and-logs",
+        "title": "The dev server and logs",
+        "description": "A detached per-workspace supervisor, and a queryable NDJSON timeline instead of a scraped terminal",
+        "sidebar": "docs"
+      },
+      "getting-started": {
+        "id": "getting-started",
+        "title": "Getting started",
+        "description": "Install the skill, have the agent run /rn-iso-init, then describe what you want built",
+        "sidebar": "docs"
+      },
+      "owned-devices": {
+        "id": "owned-devices",
+        "title": "Owned devices",
+        "description": "Every device rn-iso touches is one it created, and exactly two commands destroy anything",
+        "sidebar": "docs"
+      },
+      "requirements": {
+        "id": "requirements",
+        "title": "Requirements",
+        "description": "What rn-iso needs from the machine",
+        "sidebar": "docs"
+      },
+      "settings": {
+        "id": "settings",
+        "title": "Settings",
+        "description": "The layered settings files and every key rn-iso reads",
+        "sidebar": "docs"
+      },
+      "why": {
+        "id": "why",
+        "title": "Why rn-iso exists",
+        "description": "What breaks when coding agents share one machine, and what rn-iso does about it",
+        "sidebar": "docs"
+      },
+      "worktrees": {
+        "id": "worktrees",
+        "title": "Worktrees",
+        "description": "Isolated git worktrees with carried gitignored files, and teardown that reclaims everything",
+        "sidebar": "docs"
+      }
+    }
+  }
+}

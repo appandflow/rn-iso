@@ -43,7 +43,7 @@ git log "v$last..HEAD" --oneline
 
 If `git describe --tags --abbrev=0` is _higher_ than `v$last`, a previous
 release got tagged but never landed on npm. **Retry that publish before
-bumping again** (re-run step 6 with the existing version) rather than
+bumping again** (re-run step 7 with the existing version) rather than
 incrementing past it.
 
 Look at every commit in the list and decide:
@@ -98,7 +98,11 @@ If `git status` isn't clean, commit / discard before tagging.
    it (`>=X.Y.Z`) when a release adds something the caches depend on, such as a
    new field in the cache manifest.
 
-2. **Verify each npm tarball** ships only what should ship, and that each one
+2. **Refresh the skill's version stamp.** The last line of
+   `packages/rn-iso/skill/SKILL.md` names the version it was synced with;
+   update it to X.Y.Z (agents compare it against `npx rn-iso --version` to
+   detect a stale skill copy).
+3. **Verify each npm tarball** ships only what should ship, and that each one
    carries its own README (a package with no `README.md` in its own directory
    publishes with "No README data found" on npm):
    ```bash
@@ -109,8 +113,8 @@ If `git status` isn't clean, commit / discard before tagging.
    The `files` whitelist in each `package.json` controls this — keep it tight
    (`bin`, `src`, `skill`, `LICENSE`, `README.md` for the CLI; `index.js` and
    `README.md` for the caches).
-3. **Commit** with a `chore: X.Y.Z — <one-line summary>` title. The body can be terse; the GitHub release notes carry the real changelog.
-4. **Tag and push:**
+4. **Commit** with a `chore: X.Y.Z — <one-line summary>` title. The body can be terse; the GitHub release notes carry the real changelog.
+5. **Tag and push:**
    ```bash
    git tag -a vX.Y.Z -m "vX.Y.Z"
    git push
@@ -118,12 +122,12 @@ If `git status` isn't clean, commit / discard before tagging.
    ```
    One tag for the repo, not one per package: the packages share a version, so
    a per-package tag would only say the same thing three times.
-5. **Write the GitHub release notes.** Drop them into a temp file (so multi-line markdown survives the shell), then:
+6. **Write the GitHub release notes.** Drop them into a temp file (so multi-line markdown survives the shell), then:
    ```bash
    gh release create vX.Y.Z --title "vX.Y.Z" --notes-file /tmp/rn-iso-X.Y.Z-notes.md
    ```
    Sections: `New`, `Removed (breaking)`, `Fixes`, `Docs`, `Migration notes` (if any). Skip empty sections. Link prior commits with `[<short-sha>](https://github.com/janicduplessis/rn-iso/commit/<sha>)`. Say which package a line is about when it is not the CLI.
-6. **Publish to npm, `rn-iso` first.** The two cache packages name it as a peer
+7. **Publish to npm, `rn-iso` first.** The two cache packages name it as a peer
    and their READMEs link to it, so a registry that has a cache package but not
    the CLI version it points at is the wrong order to be interrupted in:
 
@@ -142,7 +146,7 @@ If `git status` isn't clean, commit / discard before tagging.
    If one publish fails after another succeeded, do NOT bump the version to
    retry — re-run only the failed publish at the same version.
 
-7. **Smoke-test the published versions** from a scratch directory:
+8. **Smoke-test the published versions** from a scratch directory:
    ```bash
    cd /tmp && npx rn-iso@latest --version
    npm view rn-iso readme | head -c 200        # NOT "No README data found!"

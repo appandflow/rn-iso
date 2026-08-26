@@ -1,8 +1,6 @@
 {
   "defaultLocale": "en",
-  "locales": [
-    "en"
-  ],
+  "locales": ["en"],
   "path": "i18n",
   "currentLocale": "en",
   "localeConfigs": {
