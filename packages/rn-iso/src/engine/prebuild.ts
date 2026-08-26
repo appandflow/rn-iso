@@ -37,7 +37,7 @@ export function nativeDirName(platform: string) {
   return platform === 'android' ? 'android' : 'ios';
 }
 
-export function nativeDir(root: string, platform: string) {
+function nativeDir(root: string, platform: string) {
   return join(root, nativeDirName(platform));
 }
 

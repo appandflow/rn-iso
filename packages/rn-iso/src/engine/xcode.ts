@@ -32,7 +32,7 @@ import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagno
 // cost when they drift.
 import { cleanLine, createLineReader } from '../supervisor/server-expo.ts';
 
-export const IOS_DIR = 'ios';
+const IOS_DIR = 'ios';
 
 // The remedy every "there is no iOS project here" failure carries. rn-iso's
 // own flow prebuilds before it gets here, so reaching this means either the

@@ -851,7 +851,7 @@ let patched: {
 const PROVIDER_CONTEXT = new AsyncLocalStorage<CaptureFrame>();
 
 // PURE. ANSI colour codes stripped, so a record and a parse both see the text.
-export function stripAnsi(text?: string | null): string {
+function stripAnsi(text?: string | null): string {
   // oxlint-disable-next-line no-control-regex -- intentional ANSI escape match
   return String(text ?? '').replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
 }

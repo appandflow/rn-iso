@@ -75,18 +75,6 @@ export function listBootedIosSims(): IosSimRecord[] {
   return listAllIosSims().filter((s) => s.state === 'Booted');
 }
 
-// "iPhone 16 Pro (ABC-123-...)" if simctl knows about the UDID; the bare
-// UDID otherwise (deleted sim, or simctl unavailable).
-export function formatIosLabel(udid: string): string {
-  try {
-    const sim = listAllIosSims().find((s) => s.udid === udid);
-    if (sim) return `${sim.name} (${udid})`;
-  } catch {
-    /* simctl not available */
-  }
-  return udid;
-}
-
 // launchctl lines look like:
 //   082a\t0\tUIKitApplication:com.example.app[082a][rb-legacy]
 // A foreign UI-test runner holding the sim is the case we care about. Apple's
@@ -283,7 +271,7 @@ export function deleteIosSim(udid: string): void {
   getExecutor().run(`xcrun simctl delete ${udid}`);
 }
 
-export function listIosRuntimes(): IosRuntime[] {
+function listIosRuntimes(): IosRuntime[] {
   const out = getExecutor().run('xcrun simctl list runtimes --json');
   // simctl's own JSON: genuinely dynamic third-party output.
   const data = JSON.parse(out) as {

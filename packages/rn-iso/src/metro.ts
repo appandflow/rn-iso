@@ -99,7 +99,7 @@ export function isInsideProject(cwd: string | null | undefined, projectPath: str
 //   'foreign-cwd'    answered from OUTSIDE this project. Terminal: another
 //                    workspace's bundler will not become ours by waiting.
 export const NOT_OURS_UNRESPONSIVE = 'unresponsive';
-export const NOT_OURS_UNREADABLE_CWD = 'unreadable-cwd';
+const NOT_OURS_UNREADABLE_CWD = 'unreadable-cwd';
 export const NOT_OURS_FOREIGN_CWD = 'foreign-cwd';
 
 // A flat interface rather than a discriminated union: every consumer today

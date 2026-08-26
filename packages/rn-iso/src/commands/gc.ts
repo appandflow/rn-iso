@@ -367,7 +367,7 @@ export function describeUnverifiableDevices(
 // thing in a report line is noise; enough of it to match against a build's own
 // `fingerprint <hash>` line is not. Same rule, and the same shape, as
 // shortHash in commands/ios.js.
-export function shortKey(key: unknown) {
+function shortKey(key: unknown) {
   const text = String(key ?? '');
   return text.length > 6 ? `${text.slice(0, 6)}..` : text;
 }

@@ -10,16 +10,16 @@ export interface SystemImage {
   pkg: string;
 }
 
-export interface AdbEmulatorEntry {
+interface AdbEmulatorEntry {
   serial: string;
   consolePort: number;
 }
 
-export interface AdbPhysicalEntry {
+interface AdbPhysicalEntry {
   serial: string;
 }
 
-export interface AdbUnhealthyEntry {
+interface AdbUnhealthyEntry {
   serial: string;
   kind: 'emulator' | 'physical';
   consolePort?: number;
@@ -60,7 +60,7 @@ function avdmanagerPath(): string {
 }
 
 // system-images/<android-XX>/<tag>/<arch>/ on disk.
-export function listInstalledSystemImages(): SystemImage[] {
+function listInstalledSystemImages(): SystemImage[] {
   const root = join(androidHome(), 'system-images');
   const images: SystemImage[] = [];
   if (!existsSync(root)) return images;
@@ -137,7 +137,7 @@ export function createOwnedAvd(label: string, { systemImage }: { systemImage?: s
   return { avdName };
 }
 
-export function sanitizeAvdLabel(label: string): string {
+function sanitizeAvdLabel(label: string): string {
   return String(label)
     .replace(/[^A-Za-z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '');
@@ -276,7 +276,7 @@ export function shutdownAndroidEmulator(serial: string): void {
 // tooling asks for. A second, simpler copy in this file is exactly the drift
 // CLAUDE.md item 4 warns about: it would map only one of the two, silently.
 
-export function getAvdNameForSerial(serial: string): string | null {
+function getAvdNameForSerial(serial: string): string | null {
   const out = getExecutor().runQuiet(`adb -s ${serial} emu avd name`);
   if (!out) return null;
   // `adb emu avd name` returns the AVD name on the first line, "OK" on the second.

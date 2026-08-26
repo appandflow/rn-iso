@@ -214,7 +214,7 @@ export function detectIsExpo(projectRoot: string): boolean {
 // app.json is `{ "name": ..., "displayName": ... }` and has none of these.
 // Every key below is one only Expo reads, so a match is the config saying
 // what it is for.
-export function looksLikeExpoConfig(appJson: AnyJson | null): boolean {
+function looksLikeExpoConfig(appJson: AnyJson | null): boolean {
   if (!appJson || typeof appJson !== 'object' || Array.isArray(appJson)) return false;
   if (appJson.expo) return true;
   const keys = [
@@ -307,7 +307,7 @@ export function detectAndroidPackage(projectRoot: string): string | null {
   return detectAndroidPackageFromGradle(projectRoot);
 }
 
-export function detectBundleIdFromPbxproj(projectRoot: string): string | null {
+function detectBundleIdFromPbxproj(projectRoot: string): string | null {
   const iosDir = join(projectRoot, 'ios');
   if (!existsSync(iosDir)) return null;
   let entries: import('fs').Dirent[];
@@ -346,7 +346,7 @@ export function detectBundleIdFromPbxproj(projectRoot: string): string | null {
   return null;
 }
 
-export function detectAndroidPackageFromGradle(projectRoot: string): string | null {
+function detectAndroidPackageFromGradle(projectRoot: string): string | null {
   const gradle = join(projectRoot, 'android', 'app', 'build.gradle');
   if (!existsSync(gradle)) return null;
   let text: string;

@@ -1,6 +1,6 @@
 import { type ChildProcess, type SpawnOptions, execFileSync, execSync, spawn } from 'child_process';
 
-export interface ExecOptions {
+interface ExecOptions {
   timeoutMs?: number;
 }
 

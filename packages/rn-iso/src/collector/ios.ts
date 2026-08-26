@@ -169,7 +169,7 @@ export function procFromImagePath(path: unknown): string | null {
 
 // PURE. Apple's timestamp is "2026-08-25 13:18:05.196749-0400" -- a space
 // separator and six fractional digits, which V8's Date accepts as-is.
-export function tsFromEvent(event: LogStreamEvent, now: () => number = Date.now): number {
+function tsFromEvent(event: LogStreamEvent, now: () => number = Date.now): number {
   const parsed = Date.parse(event?.timestamp);
   return Number.isFinite(parsed) ? parsed : now();
 }
@@ -181,7 +181,7 @@ export function tsFromEvent(event: LogStreamEvent, now: () => number = Date.now)
 // with no messageType: they carry an eventMessage ("Incoming Connection") but
 // no level, and in a real capture they are a third of the volume. Dropping
 // them keeps device.ndjson to what the app actually logged.
-export function recordFromLogEvent(
+function recordFromLogEvent(
   event: LogStreamEvent,
   { now = Date.now }: { now?: () => number } = {},
 ): NdjsonRecord | null {

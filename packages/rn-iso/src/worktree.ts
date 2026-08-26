@@ -206,7 +206,7 @@ interface TrackedGuard {
   covers(rel: string): boolean;
 }
 
-export function trackedGuard(dir: string): TrackedGuard {
+function trackedGuard(dir: string): TrackedGuard {
   const paths = listTrackedPaths(dir);
   if (paths === null) return { known: false, covers: () => false };
   const set = new Set<string>();

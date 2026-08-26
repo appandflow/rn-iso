@@ -15,17 +15,8 @@
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
-import type {
-  AndroidDeviceRecord,
-  AndroidFacts,
-  IosDeviceRecord,
-  IosFacts,
-  ProjectRecord,
-  RnIsoConfig,
-  SupervisorRecord,
-} from '../types.ts';
+import type { RnIsoConfig } from '../types.ts';
 import type { CacheDescriptor } from '../caches.ts';
-import type { CacheEntry } from '../cache-manifest.ts';
 import type { EnvironmentState } from '../status.ts';
 import type { IosSimRecord } from '../sim/ios.ts';
 import type { AdbDevices } from '../sim/android.ts';
@@ -45,47 +36,6 @@ export function makeConfig(overrides: Partial<RnIsoConfig> = {}): RnIsoConfig {
   return { version: 2, projects: {}, repos: {}, ...overrides };
 }
 
-// ProjectRecord -- one project entry keyed by absolute path. Producer:
-// upsertProject / setDevice / setSupervisor in src/config.ts.
-export function makeProjectRecord(overrides: Partial<ProjectRecord> = {}): ProjectRecord {
-  return { metroPort: 8081, platforms: {}, ...overrides };
-}
-
-// IosDeviceRecord -- an owned iOS simulator assignment. Producer:
-// engine/device.ts setDevice(.., 'ios', ..).
-export function makeIosDeviceRecord(overrides: Partial<IosDeviceRecord> = {}): IosDeviceRecord {
-  return {
-    deviceUdid: 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9',
-    deviceName: 'rn-iso-fixture',
-    owned: true,
-    ...overrides,
-  };
-}
-
-// AndroidDeviceRecord -- an owned Android emulator assignment. Producer:
-// engine/device.ts setDevice(.., 'android', ..).
-export function makeAndroidDeviceRecord(overrides: Partial<AndroidDeviceRecord> = {}): AndroidDeviceRecord {
-  return {
-    avdName: 'rn-iso-fixture',
-    consolePort: 5554,
-    owned: true,
-    deviceName: 'rn-iso-fixture',
-    ...overrides,
-  };
-}
-
-// SupervisorRecord -- the dev server's global registration. Producer:
-// setSupervisor in src/config.ts.
-export function makeSupervisorRecord(overrides: Partial<SupervisorRecord> = {}): SupervisorRecord {
-  return {
-    pid: 4242,
-    port: 8081,
-    startedAt: '2026-01-01T00:00:00.000Z',
-    mode: 'bare',
-    ...overrides,
-  };
-}
-
 // CacheDescriptor -- the shared shape every cache in src/caches.ts carries.
 // Producers: discoverCaches / sizeCaches / registeredCaches. `name`, `dir`,
 // `prune` and `note` are all required; the rest are filled in later.
@@ -97,13 +47,6 @@ export function makeCacheDescriptor(overrides: Partial<CacheDescriptor> = {}): C
     note: 'a test cache',
     ...overrides,
   };
-}
-
-// CacheEntry -- the registry entry a cache writes to describe itself. Producer:
-// src/cache-manifest.ts (the public `rn-iso/cache-manifest` export). `dir` is
-// the only required field.
-export function makeCacheEntry(overrides: Partial<CacheEntry> = {}): CacheEntry {
-  return { dir: '/tmp/rn-iso-test-cache', name: 'test cache', prune: 'entries', ...overrides };
 }
 
 // EnvironmentState -- the per-project report `status` builds. Producer:
@@ -129,51 +72,6 @@ export function makeIosSim(overrides: Partial<IosSimRecord> = {}): IosSimRecord 
 // src/sim/android.ts.
 export function makeAdbDevices(overrides: Partial<AdbDevices> = {}): AdbDevices {
   return { emulators: [], physical: [], unhealthy: [], ...overrides };
-}
-
-// IosFacts -- the `rn-iso ios` --json payload. Producer: iosFacts in
-// src/commands/ios.ts.
-export function makeIosFacts(overrides: Partial<IosFacts> = {}): IosFacts {
-  return {
-    platform: 'ios',
-    udid: 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9',
-    deviceName: 'rn-iso-fixture',
-    fingerprint: 'a3f9b1c2d3e4f5',
-    cacheKey: 'ios-a3f9b1c2d3e4f5-debug-sim',
-    cacheHit: false,
-    cacheSkipped: false,
-    waitedForBuild: null,
-    appPath: '/w/build/Fixture.app',
-    bundleId: 'com.example.app',
-    launched: true,
-    metroPort: 8081,
-    logs: { dir: '/w/.rn-iso/logs' },
-    durationMs: 1000,
-    ...overrides,
-  };
-}
-
-// AndroidFacts -- the `rn-iso android` --json payload. Producer: androidFacts
-// in src/commands/android.ts.
-export function makeAndroidFacts(overrides: Partial<AndroidFacts> = {}): AndroidFacts {
-  return {
-    platform: 'android',
-    serial: 'emulator-5554',
-    avdName: 'rn-iso-fixture',
-    deviceName: 'rn-iso-fixture',
-    fingerprint: 'a3f9b1c2d3e4f5',
-    cacheHit: false,
-    cacheSkipped: false,
-    waitedForBuild: null,
-    appPath: '/w/build/app-debug.apk',
-    bundleId: 'com.example.app',
-    launched: true,
-    debugHttpHost: null,
-    debugHttpHostNote: null,
-    devClientUrl: null,
-    logs: '/w/.rn-iso/logs',
-    ...overrides,
-  };
 }
 
 // BuildLockInfo -- a single-flight build lock gc reports on. Producer:

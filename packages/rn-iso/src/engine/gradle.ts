@@ -66,11 +66,11 @@ const LAST_LINES = 20;
 // writer as it arrives.
 const TRANSCRIPT_LINES = 2000;
 
-export function androidDir(root: string) {
+function androidDir(root: string) {
   return join(root, 'android');
 }
 
-export function gradlewPath(root: string) {
+function gradlewPath(root: string) {
   return join(androidDir(root), 'gradlew');
 }
 

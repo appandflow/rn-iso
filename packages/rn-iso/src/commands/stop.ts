@@ -278,7 +278,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 // Polls rather than waiting on the process, because it is not our child: a
 // detached supervisor is reparented to init, so there is no exit event to
 // listen for.
-export async function waitForExit(
+async function waitForExit(
   pid: number,
   {
     timeoutMs = DEFAULT_WAIT_MS,
@@ -704,7 +704,7 @@ function defaultSimHolders(udid: string): string[] {
 }
 
 // PURE. The occupied skip, with whoever can be named appended to it.
-export function occupiedSkipReason(reason: string, holders: string[] | null | undefined): string {
+function occupiedSkipReason(reason: string, holders: string[] | null | undefined): string {
   const named = (holders || []).filter(Boolean);
   return named.length ? `${reason} -- held by ${named.join(', ')}` : `${reason} -- ${OCCUPANCY_HINT}`;
 }

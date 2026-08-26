@@ -78,7 +78,7 @@ function normalize(text: unknown) {
   return text.replace(/\r\n/g, '\n').trimEnd();
 }
 
-export function podfilePath(root: string) {
+function podfilePath(root: string) {
   return join(root, 'ios', 'Podfile');
 }
 
@@ -193,7 +193,7 @@ export async function runPodInstall(
 // this failing, and it looks like a bare ENOENT unless it is named. The
 // remedy is the whole point: an agent that reads "spawn pod ENOENT" retries,
 // while one that reads "install CocoaPods" stops.
-export function missingPod(err: unknown) {
+function missingPod(err: unknown) {
   const nodeErr = err as NodeJS.ErrnoException;
   const message = String(nodeErr?.message || err || '');
   if (nodeErr?.code !== 'ENOENT' && !/ENOENT|not found/i.test(message)) return null;

@@ -428,7 +428,7 @@ export function liveOwnedDeviceCount({
 }
 
 // Does THIS workspace already have a live device of its own for `platform`?
-export function workspaceHasLiveDevice({
+function workspaceHasLiveDevice({
   platform,
   project,
   sims = [],

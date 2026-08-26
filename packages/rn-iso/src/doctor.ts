@@ -67,7 +67,7 @@ export function detectXcodeMajor(): number | null {
 
 // 'cost'  -- measurably slower, silently
 // 'note'  -- worth knowing, not necessarily wrong
-export function finding(level: 'cost' | 'note', title: string, detail: string, fix: string | null): Finding {
+function finding(level: 'cost' | 'note', title: string, detail: string, fix: string | null): Finding {
   return { level, title, detail, fix };
 }
 
