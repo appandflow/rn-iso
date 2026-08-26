@@ -100,7 +100,7 @@ export function checkDevClient(pkg: AnyJson | null, isExpo: boolean = true): Fin
   return finding(
     'cost',
     'expo-dev-client is not installed',
-    'A Metro port reserved by rn-iso cannot reach the app without it: --port travels in the deep link `expo run:ios` opens, and nothing handles that URL. The app falls back to port 8081 and shows "No script URL provided".',
+    'A Metro port reserved by rn-iso cannot reach the app without it: the port travels in the dev-client deep link `rn-iso ios` opens, and without the dev client nothing handles that URL. The app falls back to port 8081 and shows "No script URL provided".',
     'npx expo install expo-dev-client',
   );
 }

@@ -1293,6 +1293,10 @@ export async function runAndroid(
   // so a managed app can have no android/ dir and no android.package in its
   // config -- but the installed artifact always knows its own package.
   androidPackage = androidPackage || detectAndroidPackage(root) || apkPackage(dumpApkManifest(apkPath));
+  // Persist the resolved package like ios persists bundleId: the config
+  // detect at command start is empty on a managed app with no android/ dir,
+  // which left `status` showing `app: ?` after a successful build.
+  if (androidPackage) upsertProject(root, { androidPackage });
   record.bundleId = androidPackage;
   if (!androidPackage) {
     return fail(

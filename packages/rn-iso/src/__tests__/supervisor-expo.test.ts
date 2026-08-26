@@ -222,6 +222,18 @@ describe('startExpoServer', () => {
     expect(seen.opts.detached).toBe(false);
   });
 
+  test('an identical line arriving on both streams within a second is written once', async () => {
+    fakeBin();
+    const child = fakeChild();
+    const logsDir = join(root, '.rn-iso', 'logs');
+    await startExpoServer({ root, port: 8114, logsDir, spawnFn: () => child });
+    child.stdout!.emit('data', 'PluginError: Failed to resolve plugin\n');
+    child.stderr!.emit('data', 'PluginError: Failed to resolve plugin\n');
+    child.stdout!.emit('data', 'a different line\n');
+    const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
+    expect(records.map((r) => r.msg)).toEqual(['PluginError: Failed to resolve plugin', 'a different line']);
+  });
+
   test('the child inherits the supervisor process environment (#33)', async () => {
     fakeBin();
     process.env.RN_ISO_TEST_SENTINEL = 'through';
