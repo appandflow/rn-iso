@@ -53,6 +53,11 @@ jobs:
       - name: Typecheck (production)
         run: npm run typecheck
 
+      # Dead-code gate: unused exports, files, and dependencies. Keeps the
+      # surface honest as the codebase changes.
+      - name: Dead code (knip)
+        run: npm run knip
+
       # Build every package with tsdown (rn-iso -> dist ESM, the two cache
       # packages -> dist CJS). Proves the published artifacts compile.
       - name: Build (tsdown, all packages)
