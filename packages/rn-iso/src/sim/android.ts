@@ -133,16 +133,25 @@ function pageSizeRank(image: SystemImage): number {
 
 // Plain pages first; then highest API; then google_apis over other tags.
 // Apple Silicon needs arm64.
+// The emulator only accelerates images matching the HOST architecture --
+// arm64-v8a on Apple Silicon, x86_64 on Intel/AMD (a Linux CI runner). A
+// hardcoded arm64 filter returned null on every x86_64 host even with a
+// perfectly good x86_64 image installed.
+export function hostSystemImageArch(arch: string = process.arch): string {
+  return arch === 'arm64' ? 'arm64-v8a' : 'x86_64';
+}
+
 export function pickDefaultSystemImage(
   images: SystemImage[],
-  { systemImage }: { systemImage?: string } = {},
+  { systemImage, hostArch }: { systemImage?: string; hostArch?: string } = {},
 ): SystemImage | null {
   if (systemImage) return images.find((i) => i.pkg === systemImage) || null;
-  const arm = images.filter((i) => i.arch === 'arm64-v8a');
-  if (arm.length === 0) return null;
-  // arm.length > 0 was just checked, so [0] is present after the sort.
+  const wanted = hostArch ?? hostSystemImageArch();
+  const matching = images.filter((i) => i.arch === wanted);
+  if (matching.length === 0) return null;
+  // matching.length > 0 was just checked, so [0] is present after the sort.
   return (
-    [...arm].sort(
+    [...matching].sort(
       (a, b) =>
         pageSizeRank(a) - pageSizeRank(b) ||
         b.api - a.api ||
@@ -154,8 +163,9 @@ export function pickDefaultSystemImage(
 export function createOwnedAvd(label: string, { systemImage }: { systemImage?: string } = {}): { avdName: string } {
   const pick = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage });
   if (!pick) {
+    const arch = hostSystemImageArch();
     throw new Error(
-      'No arm64 Android system image is installed. Install one, e.g.: sdkmanager "system-images;android-36;google_apis;arm64-v8a"',
+      `No ${arch} Android system image is installed. Install one, e.g.: sdkmanager "system-images;android-36;google_apis;${arch}"`,
     );
   }
   const avdName = ownedAvdName(label);
