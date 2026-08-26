@@ -71,6 +71,8 @@ On APFS, `worktree create --carry-ignored` clones every gitignored path (`node_m
 - _No node_modules among them_ -- the source worktree has none, so the clone carried nothing you can build against. Install before doing anything else.
 - _Carried Pods do not match Podfile.lock_ -- `ios/Pods` is gitignored and cloned, `ios/Podfile.lock` is tracked and comes from the branch, so the two can disagree. `rn-iso ios` detects this and runs `pod install` itself; the warning matters if you build by hand, because xcodebuild reports `The sandbox is not in sync with the Podfile.lock` only after every pod has compiled.
 
+One more consequence of "the clone matches the source, not the branch": a carried path that the BASE's `.gitignore` does not ignore (an `ios/` dir carried into a branch that gitignores it differently, a generated file the branch stopped ignoring) shows up as untracked churn in `git status` -- and `worktree remove` will later, correctly, refuse over it. Restore it first (`git checkout -- .` for modified tracked files, `git clean -fd <path>` for untracked ones -- the refusal names the right command per class) rather than reaching for `--force`.
+
 **A foreign process on your reserved port is reported, not silently tolerated.** `rn-iso status` warns about it (`port 8082: pid 900 runs from /elsewhere`), `ios` / `android` refuse with `RN_ISO_NO_METRO`, and `stop` refuses to kill it without `--force`. `start` re-reserves a fresh port instead, so the project is never stranded. `npx rn-iso guide errors` lists the causes -- most often a bundler started from a monorepo's root instead of the app directory.
 
 ## Destructive commands -- ask the user first

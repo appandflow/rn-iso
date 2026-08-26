@@ -663,9 +663,7 @@ const OCCUPANCY_HINT = 'often a UI-test runner or device tool still attached';
 // PURE. The occupied skip, with whoever can be named appended to it.
 function occupiedSkipReason(reason: string, holders: string[] | null | undefined): string {
   const named = (holders || []).filter(Boolean);
-  return named.length
-    ? `${reason} -- held by UI-test runner ${named.join(', ')}`
-    : `${reason} -- ${OCCUPANCY_HINT}`;
+  return named.length ? `${reason} -- held by UI-test runner ${named.join(', ')}` : `${reason} -- ${OCCUPANCY_HINT}`;
 }
 
 // Owned devices only, and always with del:false. `stop` shutting a device down

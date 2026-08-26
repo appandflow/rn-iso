@@ -361,7 +361,8 @@ export function registerStart(program: Command) {
                 code: 'RN_ISO_SUPERVISOR_EXITED',
                 message: `The supervisor exited (${how}) before the dev server came up on port ${port}.`,
                 lines: failureEvidence({ logFile, logsDir, sinceTs: spawnedTs }),
-                remedy: 'Fix the error above and run `rn-iso start` again; `rn-iso logs --errors` has the full records.',
+                remedy:
+                  'Fix the error above and run `rn-iso start` again; `rn-iso logs --errors` has the full records.',
               }
             : {
                 code: 'RN_ISO_METRO_TIMEOUT',
@@ -454,9 +455,7 @@ export function failureEvidence({
   } catch {
     // An unreadable timeline must not mask the failure being reported.
   }
-  const recent = records
-    .filter((r) => typeof r.ts === 'number' && r.ts >= sinceTs)
-    .slice(-ERROR_EVIDENCE_RECORDS);
+  const recent = records.filter((r) => typeof r.ts === 'number' && r.ts >= sinceTs).slice(-ERROR_EVIDENCE_RECORDS);
   for (const r of recent) {
     lines.push(`${String(r.src ?? '?')}: ${String(r.msg ?? '').split('\n')[0] ?? ''}`);
   }

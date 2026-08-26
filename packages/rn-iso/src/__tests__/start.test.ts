@@ -298,8 +298,7 @@ describe('the supervisor log tail', () => {
 });
 
 describe('failureEvidence (issue #24)', () => {
-  const record = (ts: number, msg: string, src = 'metro') =>
-    JSON.stringify({ ts, level: 'error', src, msg });
+  const record = (ts: number, msg: string, src = 'metro') => JSON.stringify({ ts, level: 'error', src, msg });
 
   test('an empty supervisor.log is not pointed at; the timeline errors are quoted instead', () => {
     const logsDir = join(root, '.rn-iso', 'logs');
