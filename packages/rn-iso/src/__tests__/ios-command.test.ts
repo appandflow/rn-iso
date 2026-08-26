@@ -2305,6 +2305,42 @@ describe('--remote', () => {
     );
     expect(asked).toBe(false);
   });
+
+  test('a remote build targets the simulator platform, not a udid', async () => {
+    // Live-verified failure this pins: `id=<session-id>` makes xcodebuild exit
+    // 70 with "Unable to find a device matching the provided destination
+    // specifier", because a remote device is not on this machine.
+    const remote = remoteStub();
+    reserve();
+    let seen = null as Record<string, unknown> | null;
+    await run(
+      { remote: true },
+      {
+        ...remote.deps,
+        buildIos: async (args: Record<string, unknown>) => {
+          seen = args;
+          return { ok: true, appPath: join(root, 'build', 'Fixture.app'), bundleId: 'com.example.app', durationMs: 1 };
+        },
+      },
+    );
+    expect(seen?.destination).toBe('generic/platform=iOS Simulator');
+  });
+
+  test('a local build still targets its own device', async () => {
+    reserve();
+    let seen = null as Record<string, unknown> | null;
+    await run(
+      {},
+      {
+        buildIos: async (args: Record<string, unknown>) => {
+          seen = args;
+          return { ok: true, appPath: join(root, 'build', 'Fixture.app'), bundleId: 'com.example.app', durationMs: 1 };
+        },
+      },
+    );
+    expect(seen?.destination).toBeFalsy();
+    expect(seen?.udid).toBe(UDID);
+  });
 });
 
 // --- release builds (--configuration, issue #57 phase 1) --------------------

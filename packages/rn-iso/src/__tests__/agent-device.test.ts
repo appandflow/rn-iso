@@ -8,11 +8,13 @@
 //   2. The profile is written under <root>/.rn-iso/, never into the project.
 import {
   DAEMON_TOKEN_ENV,
+  closeArgs,
   connectArgs,
   daemonEnv,
   disconnectArgs,
   installArgs,
   isLoopbackDaemon,
+  metroHintFrom,
   openArgs,
   remoteProfile,
   remoteProfilePath,
@@ -165,5 +167,46 @@ describe('isLoopbackDaemon', () => {
     // reach and report the launch as fine.
     expect(isLoopbackDaemon('not a url')).toBe(false);
     expect(isLoopbackDaemon('')).toBe(false);
+  });
+});
+
+describe('the bare-RN Metro hint', () => {
+  const profilePath = '/w/.rn-iso/agent-device.remote.json';
+
+  // Live-verified: without these flags a remote bare-RN app asks for its
+  // compiled-in 8081, never reaches the reserved port, and the run reports
+  // UNVERIFIED. With them the same run reports "bundle requested from Metro
+  // port 8085".
+  test('open carries the host and port a bare RN app reads', () => {
+    const args = openArgs(profilePath, 'com.example.app', null, { host: 'localhost', port: '8085' });
+    expect(args[args.indexOf('--metro-host') + 1]).toBe('localhost');
+    expect(args[args.indexOf('--metro-port') + 1]).toBe('8085');
+  });
+
+  test('no hint is sent when there is none to send', () => {
+    expect(openArgs(profilePath, 'com.example.app', null, null)).not.toContain('--metro-host');
+  });
+
+  test('metroHintFrom splits an origin with an explicit port', () => {
+    expect(metroHintFrom('http://localhost:8085')).toEqual({ host: 'localhost', port: '8085' });
+  });
+
+  test('an origin with no explicit port yields no hint', () => {
+    // An https tunnel on 443 cannot be expressed as host+port for these
+    // flags, so the dev-client deep link is the only wiring left there.
+    expect(metroHintFrom('https://abc.trycloudflare.com')).toBeNull();
+    expect(metroHintFrom('not a url')).toBeNull();
+  });
+});
+
+describe('closeArgs', () => {
+  test('closes through the profile, so it targets this workspace session', () => {
+    // agent-device keeps a device claim per session that outlives the lease
+    // AND the daemon. rn-iso leaves the app running, so it never reaches a
+    // natural close; without this a re-run hits DEVICE_IN_USE or
+    // "Lease does not match session owner". Both observed live.
+    const args = closeArgs('/w/.rn-iso/agent-device.remote.json');
+    expect(args[0]).toBe('close');
+    expect(args[args.indexOf('--remote-config') + 1]).toBe('/w/.rn-iso/agent-device.remote.json');
   });
 });

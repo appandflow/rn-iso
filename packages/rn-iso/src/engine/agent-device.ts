@@ -169,14 +169,58 @@ export function installArgs(profilePath: string, artifactPath: string): string[]
 // `--relaunch` because rn-iso's contract is that `ios` produces a freshly
 // launched app on this workspace's Metro. Attaching to a process left over
 // from a previous run would report success while running an older bundle.
-export function openArgs(profilePath: string, bundleId: string, url: string | null): string[] {
+export function openArgs(
+  profilePath: string,
+  bundleId: string,
+  url: string | null,
+  metro: { host: string; port: string } | null = null,
+): string[] {
   const positional = url ? [bundleId, url] : [bundleId];
-  return withProfile(profilePath, ['open', ...positional, '--relaunch']);
+  // The bare-RN half of Contract 6. A dev-client app is pointed by the deep
+  // link above; a bare RN app reads RCT_jsLocation, which locally rn-iso
+  // writes itself with `simctl spawn defaults write`. It cannot do that on a
+  // device it has no simctl for, so agent-device's own hint carries it --
+  // these two flags are exactly that write, and they are correct here because
+  // the thing they do not reach is expo-dev-client (#1245), which rn-iso is
+  // already handling with its own URL.
+  //
+  // Without this a remote bare-RN app asks for the compiled-in default 8081,
+  // never reaches this workspace's reserved port, and the run reports
+  // UNVERIFIED. Observed live before the flags were added.
+  const hint = metro ? ['--metro-host', metro.host, '--metro-port', metro.port] : [];
+  return withProfile(profilePath, ['open', ...positional, '--relaunch', ...hint]);
+}
+
+// PURE. Split a Metro origin into the host and port agent-device's hint flags
+// take, or null when it has no explicit port (an https tunnel on 443, say),
+// which those flags cannot express.
+export function metroHintFrom(origin: string): { host: string; port: string } | null {
+  try {
+    const url = new URL(origin);
+    return url.port ? { host: url.hostname, port: url.port } : null;
+  } catch {
+    return null;
+  }
 }
 
 // PURE. Release the lease and stop the Metro companion this workspace owns.
 export function disconnectArgs(profilePath: string): string[] {
   return withProfile(profilePath, ['disconnect']);
+}
+
+// PURE. End the device session, releasing its claim on the device.
+//
+// Run BEFORE connect, best-effort. agent-device holds a device claim per
+// session that outlives both the lease and the daemon (it is a file under
+// ~/.agent-device/device-claims). rn-iso deliberately leaves the app running
+// when `ios` finishes, so it never reaches a natural close, and the next run
+// then fails one of two ways depending on timing:
+//   DEVICE_IN_USE: Device is already in use by session "<name>"
+//   UNAUTHORIZED:  Lease does not match session owner (leaseId)
+// Both observed live. Closing first makes a re-run idempotent, which is the
+// contract `rn-iso ios` already promises.
+export function closeArgs(profilePath: string): string[] {
+  return withProfile(profilePath, ['close']);
 }
 
 // PURE. Is this daemon on the machine rn-iso is running on?

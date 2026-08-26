@@ -87,6 +87,11 @@ import { gitCommonDir, repoRoot } from '../worktree.ts';
 
 export const PLATFORM = 'ios';
 
+// Build for the simulator platform rather than one device. Used only when the
+// device is remote: see the buildIos call for why `id=<udid>` cannot work
+// there.
+const GENERIC_SIM_DESTINATION = 'generic/platform=iOS Simulator';
+
 // --- local, flat shapes for engine results ---------------------------------
 //
 // These interfaces describe only the shape THIS file reads off the engine and
@@ -1626,9 +1631,16 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       // engine/xcode.ts); read through the flat, all-optional local interface
       // rather than the discriminated union so `result?.failed` narrows the way
       // the rest of this file's defensive checks expect.
+      // A LOCAL build targets the exact simulator that will run it, which is
+      // what makes the product architecture and the runtime match. A remote
+      // device is not on this machine, so `id=<udid>` names nothing xcodebuild
+      // can resolve and it fails with "Unable to find a device matching the
+      // provided destination specifier". The generic simulator destination is
+      // the build-only form the same function already supports.
       const result: BuildIosResultLike = await d.buildIos({
         root,
         udid,
+        destination: remoteDevice ? GENERIC_SIM_DESTINATION : null,
         logWriter: logWriter(),
         // engine/xcode's own default is Debug; a fresh Release build embeds
         // its JS via the normal xcodebuild phase, so the miss path needs no

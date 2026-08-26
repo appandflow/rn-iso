@@ -23,16 +23,18 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import {
+  closeArgs,
   connectArgs,
   daemonEnv,
   disconnectArgs,
   installArgs,
   isLoopbackDaemon,
+  metroHintFrom,
   openArgs,
   remoteProfile,
   remoteProfilePath,
 } from './agent-device.ts';
-import { jsLocationValue, INSTALL_ERROR, LAUNCH_ERROR } from './app-install.ts';
+import { INSTALL_ERROR, LAUNCH_ERROR } from './app-install.ts';
 import {
   createSessionArgs,
   getSessionArgs,
@@ -225,6 +227,16 @@ export function remoteIosDeps(ctx: RemoteContext) {
       }
 
       const profilePath = writeProfile(ctx, daemon);
+      // Best-effort, and its failure is expected on a first run: there is no
+      // session to close. See closeArgs for why it has to happen anyway.
+      try {
+        exec().runFile(ctx.agentDeviceBin, closeArgs(profilePath), {
+          cwd: ctx.root,
+          env: daemonEnv(daemon),
+        });
+      } catch {
+        /* nothing to close, or a lease already expired: connect proceeds */
+      }
       try {
         exec().runFile(ctx.agentDeviceBin, connectArgs(profilePath), {
           cwd: ctx.root,
@@ -291,16 +303,13 @@ export function remoteIosDeps(ctx: RemoteContext) {
         ? `${devClientScheme}://expo-development-client/?url=${encodeURIComponent(origin.origin)}`
         : null;
       try {
-        exec().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, bundleId, url), {
+        exec().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, bundleId, url, metroHintFrom(origin.origin)), {
           cwd: ctx.root,
           env: daemonEnv(session.daemon),
         });
-        return {
-          ok: true,
-          mode: url ? 'openurl' : 'launch',
-          url: url ?? undefined,
-          jsLocation: jsLocationValue(metroPort),
-        };
+        // Reports the origin the app was actually pointed at, not a
+        // jsLocation this path never wrote.
+        return { ok: true, mode: url ? 'openurl' : 'launch', url: url ?? undefined, jsLocation: origin.origin };
       } catch (err) {
         return {
           failed: true,

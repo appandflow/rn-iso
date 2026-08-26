@@ -151,7 +151,9 @@ describe('session creation', () => {
     const booted = await deps.ensureBooted({});
     expect(booted.ok).toBe(true);
     expect(deps.createdSessionId()).toBeNull();
-    expect(exec.calls.map((c) => c.args[0])).toEqual(['connect']);
+    // close runs first, best-effort, to release any claim a previous run
+    // left on the device. See closeArgs.
+    expect(exec.calls.map((c) => c.args[0])).toEqual(['close', 'connect']);
   });
 });
 
@@ -173,7 +175,7 @@ describe('the token never reaches disk', () => {
     deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/My App.app' });
     deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
     const agentCalls = exec.calls.filter((c) => c.file === '/bin/agent-device');
-    expect(agentCalls.length).toBe(3);
+    expect(agentCalls.length).toBe(4);
     for (const call of agentCalls) {
       expect(call.env?.AGENT_DEVICE_DAEMON_AUTH_TOKEN).toBe('tok_proxy');
     }
