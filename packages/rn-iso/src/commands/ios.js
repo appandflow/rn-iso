@@ -26,11 +26,12 @@ import { fileURLToPath } from 'node:url';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.js';
 import { getProject, upsertProject } from '../config.js';
 import { DEFAULT_METRO_PORT, LAUNCH_UNVERIFIED, devClientUrl, installIosApp, launchIosApp, unverifiedLaunchLines, verifyLaunch } from '../engine/app-install.js';
+import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../engine/build-lock.js';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.js';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.js';
 import { describeDiagnostic } from '../engine/errors-xcode.js';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.js';
-import { RESOLVE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, cacheLevel, exitAfterFlush, loadProjectProvider, resolveRemote, uploadRemote } from '../engine/remote-cache.js';
+import { RESOLVE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, cacheLevel, checkEasAuth, easAuthNote, exitAfterFlush, isEasAuthFailureText, loadProjectProvider, resolveRemote, uploadRemote } from '../engine/remote-cache.js';
 import { buildIos, readBundleId } from '../engine/xcode.js';
 import { getExecutor } from '../exec.js';
 import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.js';
@@ -368,7 +369,7 @@ export function lastBuildRecord({
 // 'unverified' when it was not. It was an unconditional `true` while the app
 // was demonstrably sitting on the dev-launcher's server picker having loaded
 // nothing -- a fact an agent branches on must not be a constant.
-export function iosFacts({ udid, deviceName, fingerprint, cacheKey, cacheHit, cacheSkipped = false, appPath, bundleId, metroPort, logsDir, durationMs, launched = true }) {
+export function iosFacts({ udid, deviceName, fingerprint, cacheKey, cacheHit, cacheSkipped = false, waitedForBuild = null, appPath, bundleId, metroPort, logsDir, durationMs, launched = true }) {
   return {
     platform: PLATFORM,
     udid,
@@ -380,6 +381,14 @@ export function iosFacts({ udid, deviceName, fingerprint, cacheKey, cacheHit, ca
     // true only when --no-build-cache was passed: "nothing was looked up",
     // which is a different fact from "nothing was found".
     cacheSkipped: Boolean(cacheSkipped),
+    // { pid, ms } when this run did not compile because ANOTHER workspace was
+    // already compiling the same fingerprint and it waited for that artifact;
+    // null when nothing was waited for. cacheHit is 'local' either way -- the
+    // artifact did come out of the local cache -- so this is the only thing
+    // that distinguishes "the cache already had it" (free) from "the cache
+    // had it 12 minutes later" (a wait that was still cheaper than a second
+    // compile). See engine/build-lock.js.
+    waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath,
     bundleId,
     launched: launched === LAUNCH_UNVERIFIED ? LAUNCH_UNVERIFIED : Boolean(launched),
@@ -514,7 +523,11 @@ const DEFAULT_DEPS = {
   fingerprintProject,
   resolveBuild,
   storeBuild,
+  acquireBuildLock,
+  releaseBuildLock,
+  waitForBuild,
   loadProjectProvider,
+  checkEasAuth,
   resolveRemote,
   uploadRemote,
   needsPrebuild,
@@ -599,7 +612,30 @@ export async function runIos(opts = {}, overrides = {}) {
   // Every failure exits the same way: the diagnostic, the remedy if there is
   // one, the machine-readable code, and -- once there is a build attempt to
   // describe -- a Contract-4 record saying the last build failed.
+  // The build lock, when this run is the one compiling (engine/build-lock.js).
+  //
+  // Declared up here, above `fail`, because releasing it is not something a
+  // `finally` around the build can be trusted with on its own: `fail` ends in
+  // process.exit, and process.exit does not unwind the stack, so a finally
+  // block below it never runs. Every exit from the build therefore goes
+  // through this function -- the finally for a success or a throw, `fail`
+  // itself for a refusal. A failed build that kept its lock would leave every
+  // other workspace on the fingerprint waiting for an artifact nobody is
+  // making.
+  let buildLock = null;
+  const releaseLock = () => {
+    if (!buildLock) return;
+    const held = buildLock;
+    buildLock = null;
+    try {
+      d.releaseBuildLock(held);
+    } catch (e) {
+      note(chalk.dim(`Could not release the build lock at ${held.path}: ${e?.message || e}`));
+    }
+  };
+
   const fail = ({ code, message, remedy = null, lines = [], logPath = null, build = null }) => {
+    releaseLock();
     if (message) note(chalk.red(phaseLine('error', message)));
     for (const line of lines) note(chalk.dim(phaseLine('', line)));
     if (remedy) note(chalk.dim(phaseLine('remedy', remedy)));
@@ -770,6 +806,25 @@ export async function runIos(opts = {}, overrides = {}) {
     } else if (loaded?.provider) {
       remote = loaded;
     }
+    // The EAS provider is the one that cannot report its own failure: both of
+    // eas-build-cache-provider's entry points catch everything `npx eas-cli`
+    // throws and return null, so an expired session is served to this command
+    // as a clean MISS, on every build, forever. One bounded `eas whoami`
+    // (cached for the run) is what turns that silence into a line.
+    //
+    // A definitively logged-out machine skips the tier outright -- asking it
+    // costs 30 seconds of npx and answers nothing -- and the run continues on
+    // the local cache. Anything less than definitive (offline, no eas-cli, an
+    // output this does not recognise) changes NOTHING: an unreachable API is
+    // not a logged-out user, and a build must not brick on a plane.
+    if (remote?.name === 'eas') {
+      const auth = d.checkEasAuth({ projectRoot: root, owner: loaded?.owner || null });
+      const authNote = easAuthNote(auth);
+      if (authNote) note(chalk.yellow(phaseLine('cache', authNote)));
+      // Wrong-account still consults the provider: whoami does not always
+      // enumerate accounts, and access is the server's decision.
+      if (auth?.code === 'logged-out') remote = null;
+    }
   }
 
   if (remote && useBuildCache) {
@@ -796,9 +851,89 @@ export async function runIos(opts = {}, overrides = {}) {
       abandonedRemote = true;
       note(chalk.yellow(phaseLine('cache', `${remote.name} did not answer within ${formatDuration(RESOLVE_TIMEOUT_MS)}; building instead`)));
     } else if (hit?.failed) {
-      note(chalk.yellow(phaseLine('cache', `${remote.name} could not be used: ${hit.failed}; building instead`)));
+      // An auth failure the provider DID surface gets the same specific note
+      // the pre-flight would have printed, rather than the generic one.
+      const authNote = remote.name === 'eas' && isEasAuthFailureText(hit.failed)
+        ? easAuthNote({ code: 'logged-out', reason: hit.failed })
+        : null;
+      note(chalk.yellow(phaseLine('cache', authNote || `${remote.name} could not be used: ${hit.failed}; building instead`)));
     } else {
       phase('cache', `remote miss (${remote.name})`);
+    }
+  }
+
+  // ---- level three: another workspace that is ALREADY building this ----
+  //
+  // Both caches missed, so this run is about to spend ~19 minutes in
+  // xcodebuild. The premise of this whole tool is that two more agents are
+  // standing on the same commit -- and without this they each spend the same
+  // 19 minutes producing the same .app, with three toolchains fighting for the
+  // same cores. Exactly one of them compiles; the others wait for its artifact
+  // and install it, which is the same install a second worktree gets for free
+  // ten minutes later, only sooner.
+  //
+  // It is a THIRD cache level and not a mutex: the lock's only job is to
+  // decide who compiles. Nothing waits on it, nothing is queued behind it, and
+  // a builder that dies frees it by dying (engine/build-lock.js: staleness is
+  // pid-liveness, because a 20-minute hold is normal here).
+  //
+  // --no-build-cache is outside all of it, in both directions: it asked for a
+  // fresh compile, so it must not install someone else's artifact, and it must
+  // not make anyone else wait on a build they did not ask for. Its
+  // overwrite-store at the end is already safe beside a concurrent builder --
+  // storeBuild renames a staging directory into place.
+  let waitedForBuild = null;
+  if (!appPath && useBuildCache) {
+    let attempt = null;
+    try {
+      attempt = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
+    } catch (e) {
+      // Same containment as the cache store and the provider: this is an
+      // optimisation, and one that cannot run must never stop a build.
+      note(chalk.yellow(phaseLine('build', `could not take the build lock: ${e?.message || e}; building anyway`)));
+    }
+
+    if (attempt?.acquired) {
+      buildLock = attempt;
+    } else if (attempt?.held) {
+      const held = attempt.held;
+      const who = held.projectRoot || 'another workspace';
+      phase('build', `${who} is already building ${shortHash(fingerprint)} (pid ${held.pid})`
+        + `${held.logFile ? ` -- tail ${held.logFile}` : ''}`);
+
+      let waited = null;
+      try {
+        waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note });
+      } catch (e) {
+        if (e?.code !== 'RN_ISO_BUILD_WAIT_TIMEOUT') throw e;
+        return fail({
+          code: 'RN_ISO_BUILD_WAIT_TIMEOUT',
+          message: e.message,
+          remedy: `Check pid ${held.pid}; if it is not really building, remove ${e.lockPath} and run \`rn-iso ios\` again.`,
+          build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
+        });
+      }
+
+      if (waited?.hit) {
+        // The artifact the other workspace stored. It IS a local cache hit --
+        // the same entry any later run would resolve -- so cacheHit says
+        // 'local'; waitedForBuild is what tells the caller it was not free.
+        appPath = waited.hit;
+        cacheHit = 'local';
+        waitedForBuild = { pid: held.pid, ms: waited.waitedMs };
+        phase('build', `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache`);
+      } else {
+        // The builder is gone and stored nothing: it failed, or it was killed.
+        // Take the lock OVER, so a third workspace waits on this run rather
+        // than starting a third compile. If someone else took it first, build
+        // without it -- one wait is a good bet, but queueing again after a
+        // failure could repeat, and a redundant build is the cheaper failure.
+        note(chalk.yellow(phaseLine('build', `${who}'s build ended without an artifact (${waited?.builderFailed}); building here`)));
+        try {
+          const takeover = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
+          if (takeover?.acquired) buildLock = takeover;
+        } catch { /* contained the same way as the first attempt */ }
+      }
     }
   }
 
@@ -820,85 +955,94 @@ export async function runIos(opts = {}, overrides = {}) {
       });
     }
   } else {
-    // ---- prebuild (Expo, and only when ios/ is absent) ----
-    if (d.needsPrebuild(root, PLATFORM, isExpo)) {
-      const result = await d.runPrebuild(root, PLATFORM, logWriter());
-      if (result?.failed) {
-        phase('prebuild', 'FAILED');
-        return fail({
-          code: result.code || 'RN_ISO_PREBUILD_FAILED',
-          message: result.reason || 'expo prebuild failed.',
-          remedy: result.remedy || `See ${logFile} for the transcript.`,
-          lines: (result.lastLines || []).slice(-5),
-          build: buildFailure,
-        });
-      }
-      phase('prebuild', `ios/ absent -> generated (${formatDuration(result?.durationMs ?? 0)})`);
-    }
-
-    // ---- pods ----
-    const podState = d.readPodState(root);
-    const verdict = d.podsAreStale(podState.lockText, podState.manifestText);
-    const action = podAction(podState, verdict);
-    if (action.install) {
-      const result = await d.runPodInstall(root, logWriter());
-      if (result?.failed) {
-        phase('pods', 'FAILED');
-        return fail({
-          code: result.code || 'RN_ISO_DEPS_FAILED',
-          message: result.reason || '`pod install` failed.',
-          remedy: result.remedy || `See ${logFile} for the transcript.`,
-          lines: (result.lastLines || []).slice(-5),
-          build: buildFailure,
-        });
-      }
-      phase('pods', `${action.reason} -> installed (${formatDuration(result?.durationMs ?? 0)})`);
-    }
-    // A project with no CocoaPods at all prints nothing: there is no decision
-    // to report, and a "pods  none" line every run is noise.
-
-    // ---- build ----
-    const result = await d.buildIos({ root, udid, logWriter: logWriter() });
-    if (result?.failed) {
-      phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
-      printDiagnostics(note, result);
-      const report = xcodeFailureReport(result, logFile);
-      return fail({
-        code: result.code || 'RN_ISO_BUILD_FAILED',
-        message: report.message,
-        remedy: report.remedy,
-        logPath: logFile,
-        build: buildFailure,
-      });
-    }
-    phase('build', `ok (${formatDuration(result.durationMs)})`);
-    appPath = result.appPath;
-    bundleId = result.bundleId;
-
-    // Storing is best-effort on purpose: the app is built and installable
-    // either way, and a full disk must not turn a successful build into a
-    // failed command.
-    //
-    // `overwrite` only when --no-build-cache asked for a fresh build: the
-    // entry that is there is the one the run was told not to trust, and
-    // leaving it would mean the next run trusts it again.
+    // Everything from here to the store is what the lock covers, and the
+    // `finally` is the whole reason it is a try: a build that fails, or one
+    // that throws, must free its waiters immediately. It releases BEFORE the
+    // install below, so a waiting workspace starts installing the moment the
+    // artifact is in the cache rather than when this run finishes launching.
     try {
-      d.storeBuild(PLATFORM, cacheKey, appPath, { overwrite: !useBuildCache });
-    } catch (e) {
-      note(chalk.yellow(`Could not store the build in the shared cache: ${e?.message || e}`));
-    }
+      // ---- prebuild (Expo, and only when ios/ is absent) ----
+      if (d.needsPrebuild(root, PLATFORM, isExpo)) {
+        const result = await d.runPrebuild(root, PLATFORM, logWriter());
+        if (result?.failed) {
+          phase('prebuild', 'FAILED');
+          return fail({
+            code: result.code || 'RN_ISO_PREBUILD_FAILED',
+            message: result.reason || 'expo prebuild failed.',
+            remedy: result.remedy || `See ${logFile} for the transcript.`,
+            lines: (result.lastLines || []).slice(-5),
+            build: buildFailure,
+          });
+        }
+        phase('prebuild', `ios/ absent -> generated (${formatDuration(result?.durationMs ?? 0)})`);
+      }
 
-    // The upload is STARTED here and collected after the launch, so it runs
-    // beside the install rather than being added to it. Nothing about this run
-    // depends on it.
-    if (remote) {
-      uploadPending = d.uploadRemote({
-        provider: remote.provider,
-        platform: PLATFORM,
-        projectRoot: root,
-        fingerprintHash: fingerprint,
-        buildPath: appPath,
-      });
+      // ---- pods ----
+      const podState = d.readPodState(root);
+      const verdict = d.podsAreStale(podState.lockText, podState.manifestText);
+      const action = podAction(podState, verdict);
+      if (action.install) {
+        const result = await d.runPodInstall(root, logWriter());
+        if (result?.failed) {
+          phase('pods', 'FAILED');
+          return fail({
+            code: result.code || 'RN_ISO_DEPS_FAILED',
+            message: result.reason || '`pod install` failed.',
+            remedy: result.remedy || `See ${logFile} for the transcript.`,
+            lines: (result.lastLines || []).slice(-5),
+            build: buildFailure,
+          });
+        }
+        phase('pods', `${action.reason} -> installed (${formatDuration(result?.durationMs ?? 0)})`);
+      }
+      // A project with no CocoaPods at all prints nothing: there is no decision
+      // to report, and a "pods  none" line every run is noise.
+
+      // ---- build ----
+      const result = await d.buildIos({ root, udid, logWriter: logWriter() });
+      if (result?.failed) {
+        phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
+        printDiagnostics(note, result);
+        const report = xcodeFailureReport(result, logFile);
+        return fail({
+          code: result.code || 'RN_ISO_BUILD_FAILED',
+          message: report.message,
+          remedy: report.remedy,
+          logPath: logFile,
+          build: buildFailure,
+        });
+      }
+      phase('build', `ok (${formatDuration(result.durationMs)})`);
+      appPath = result.appPath;
+      bundleId = result.bundleId;
+
+      // Storing is best-effort on purpose: the app is built and installable
+      // either way, and a full disk must not turn a successful build into a
+      // failed command.
+      //
+      // `overwrite` only when --no-build-cache asked for a fresh build: the
+      // entry that is there is the one the run was told not to trust, and
+      // leaving it would mean the next run trusts it again.
+      try {
+        d.storeBuild(PLATFORM, cacheKey, appPath, { overwrite: !useBuildCache });
+      } catch (e) {
+        note(chalk.yellow(`Could not store the build in the shared cache: ${e?.message || e}`));
+      }
+
+      // The upload is STARTED here and collected after the launch, so it runs
+      // beside the install rather than being added to it. Nothing about this run
+      // depends on it.
+      if (remote) {
+        uploadPending = d.uploadRemote({
+          provider: remote.provider,
+          platform: PLATFORM,
+          projectRoot: root,
+          fingerprintHash: fingerprint,
+          buildPath: appPath,
+        });
+      }
+    } finally {
+      releaseLock();
     }
   }
 
@@ -1017,7 +1161,10 @@ export async function runIos(opts = {}, overrides = {}) {
       abandonedRemote = true;
       note(chalk.yellow(phaseLine('cache', `${remote.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`)));
     } else if (upload?.failed) {
-      note(chalk.yellow(phaseLine('cache', `${remote.name} upload failed: ${upload.failed}`)));
+      const authNote = remote.name === 'eas' && isEasAuthFailureText(upload.failed)
+        ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
+        : null;
+      note(chalk.yellow(phaseLine('cache', authNote || `${remote.name} upload failed: ${upload.failed}`)));
     }
   }
 
@@ -1044,6 +1191,7 @@ export async function runIos(opts = {}, overrides = {}) {
     cacheKey,
     cacheHit,
     cacheSkipped: !useBuildCache,
+    waitedForBuild,
     appPath,
     bundleId,
     metroPort,

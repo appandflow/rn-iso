@@ -54,6 +54,12 @@ import { format } from 'node:util';
 import { getExecutor } from '../exec.js';
 import { createNdjsonWriter } from '../ndjson.js';
 import { workspaceLogsDir } from '../paths.js';
+import { resolvePackageJson } from '../project.js';
+// The SAME two helpers engine/prebuild.js uses to find a project's own expo
+// binary. Imported rather than re-derived: a fourth copy of "where is this
+// package's executable" is how the config path below came to look only at
+// <root>/node_modules/.bin, which no hoisted monorepo has.
+import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.js';
 
 // The package the Expo CLI maps 'eas' to (build-cache-providers/index.ts:29-44).
 // Resolved FROM THE PROJECT, so the version that answers is the one the
@@ -106,6 +112,23 @@ export function providerFromConfig(config) {
   if (!config || typeof config !== 'object') return null;
   const exp = config.expo && typeof config.expo === 'object' ? config.expo : config;
   return exp?.buildCacheProvider ?? exp?.experiments?.buildCacheProvider ?? null;
+}
+
+// PURE. The Expo account that owns this project, out of either config shape.
+//
+// `expo.owner` is the only place a project states it (@expo/config-types:
+// "The name of the Expo account that owns the project ... If not provided, the
+// owner defaults to the username of the current user"). eas.json does NOT
+// carry one -- @expo/eas-json's schema has no owner field at all, which was
+// checked rather than assumed -- so there is no second place to look. The
+// authoritative owner for a project that has an EAS projectId lives on the
+// server and costs a network round trip; this is the local, free half, and it
+// is only ever used to WARN.
+export function ownerFromConfig(config) {
+  if (!config || typeof config !== 'object') return null;
+  const exp = config.expo && typeof config.expo === 'object' ? config.expo : config;
+  const owner = exp?.owner;
+  return typeof owner === 'string' && owner.trim() !== '' ? owner.trim() : null;
 }
 
 // PURE. The configured value -> what to load and what to call it.
@@ -198,11 +221,19 @@ export function readProjectConfig(root, { run = null, timeoutMs = CONFIG_TIMEOUT
     }
   }
 
-  const bin = join(root, 'node_modules', '.bin', 'expo');
-  if (!existsSync(bin)) {
+  // THE PROJECT'S OWN expo, found by NODE RESOLUTION rather than by joining
+  // <root>/node_modules/.bin/expo -- which is the path a hoisted monorepo does
+  // not have. Observed on a real pnpm workspace: every app.config.ts project
+  // reported "node_modules/.bin/expo does not exist" and the whole remote tier
+  // was dead there, silently, behind a note that read like a missing install.
+  // expoBinPath tries `expo/package.json`'s own bin field first and only then
+  // walks node_modules/.bin UPWARD, so the hoisted copy is found either way.
+  const bin = expoBinPath(root);
+  if (!bin) {
     return {
       unavailable: `${dynamic} is code, so it has to be evaluated to read its buildCacheProvider, `
-        + `and ${relative(root, bin) || bin} does not exist`,
+        + 'and the `expo` package is not resolvable from this project '
+        + '(no expo/package.json to read a bin from, and no node_modules/.bin/expo here or in any parent)',
     };
   }
   const exec = run || ((file, args, opts) => getExecutor().runFile(file, args, opts));
@@ -299,7 +330,276 @@ export async function loadProjectProvider(projectRoot, {
         : `${normalized.name} could not be loaded: ${firstLine(err)}`,
     };
   }
-  return { provider: { plugin, options: normalized.options }, name: normalized.name };
+  // The owner rides along because the caller has no other cheap way to get it:
+  // reading it means reading the config, and on a dynamic config that is a
+  // whole `expo config --json` this function has already paid for.
+  return {
+    provider: { plugin, options: normalized.options },
+    name: normalized.name,
+    owner: ownerFromConfig(read.config),
+  };
+}
+
+// --- EAS authentication ------------------------------------------------------
+//
+// WHY THIS EXISTS AT ALL: eas-build-cache-provider SWALLOWS every failure.
+// Both entry points are `try { spawn('npx', ['eas-cli', ...]) } catch { return
+// null }` (eas-build-cache-provider@21.0.0, build/index.js), so a project whose
+// EAS session has expired gets a CLEAN MISS on every lookup and a null from
+// every upload -- from rn-iso's side, indistinguishable from a cache that
+// happened to hold nothing. There is no error text to classify and nothing to
+// report, which is how a team's shared cache can be off for weeks with nobody
+// seeing a line about it. `eas whoami` is the only cheap way to know.
+// (That same file also returns null before doing anything when the project has
+// no eas.json, which is worth knowing when a cache "never hits".)
+//
+// WHAT `eas whoami` DOES. Verified two ways: read in the eas-cli installed on
+// this machine (18.0.3, build/commands/account/view.js -- `whoami` is an ALIAS
+// of `account:view`), and observed live, both states, on 2026-08-25.
+//   logged in    exit 0. stdout is the actor's DISPLAY NAME, then -- only when
+//                the actor belongs to an account that is not its own personal
+//                one -- a blank line, "Accounts:", and one
+//                "<bullet> <name> (Role: <role>)" line per account.
+//   EXPO_TOKEN   the same, with " (authenticated using EXPO_TOKEN)" appended to
+//                the display name. SessionManager.getAccessToken() reads
+//                process.env.EXPO_TOKEN and nothing else.
+//   logged out   exit 1, stdout "Not logged in" (Log.warn -> console.log, so it
+//                is on stdout, not stderr). Nothing is fetched on this path:
+//                getUserAsync() only queries when a session secret or a token
+//                exists, so it answers instantly.
+//   --json       DOES NOT EXIST. `eas whoami --json` is accepted and ignored,
+//                printing the same human text, so parsing that text is the only
+//                option there is.
+// The session lives in ~/.expo/state.json under `auth` (getStateJsonPath()),
+// shared with the Expo CLI; EXPO_TOKEN overrides it.
+//
+// COST: 0.30s user, 0.8s wall on this machine while logged in -- one GraphQL
+// query for the actor. It IS a network call whenever a session exists, and that
+// is exactly why anything other than the literal "Not logged in" is UNKNOWN
+// rather than an auth failure: a plane, a VPN or a DNS hiccup must never read
+// as "you are logged out", and must never produce advice to log in again.
+//
+// WHAT THIS IS NOT ALLOWED TO DO: fail a build. A broken EAS session costs the
+// team tier; the local cache underneath it still answers, and the build below
+// that still runs. Every outcome here is a NOTE (or a doctor finding), never an
+// error code.
+export const WHOAMI_TIMEOUT_MS = 15_000;
+
+// The package that carries the `eas` executable, and the name of that
+// executable in its bin map.
+const EAS_CLI_PACKAGE = 'eas-cli';
+const EAS_CLI_BIN = 'eas';
+
+// PURE. `eas whoami`'s output -> what is actually known.
+//
+//   { loggedIn, account, accounts, viaToken }  a session
+//   { loggedOut: true }                        definitively no session
+//   { unknown: reason }                        anything else, including offline
+//
+// `accounts` is null when the output did not enumerate them and the display
+// name cannot stand in for one. That happens for a ROBOT actor
+// (getActorDisplayName returns "robot" / "<first> (robot)" and getActorUsername
+// returns null for it), and it is the reason wrong-account is a warning
+// everywhere rather than a rule: an account list that could not be read must
+// never contradict a configured owner.
+export function parseWhoami({ stdout = '', stderr = '', exitCode = 0 } = {}) {
+  const out = stripAnsi(stdout);
+  const combined = `${out}\n${stripAnsi(stderr)}`;
+  if (/^\s*Not logged in\s*$/m.test(combined)) return { loggedOut: true };
+  if (exitCode !== 0) {
+    return { unknown: firstLine(combined.trim() || `eas whoami exited ${exitCode}`) };
+  }
+  const lines = out.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+  if (lines.length === 0) return { unknown: 'eas whoami printed nothing' };
+
+  const raw = lines[0];
+  const viaToken = /\(authenticated using EXPO_TOKEN\)\s*$/.test(raw);
+  const display = raw.replace(/\s*\(authenticated using EXPO_TOKEN\)\s*$/, '').trim();
+
+  // "<bullet> <name> (Role: <role>)". The bullet is written as an escape
+  // because this file is ASCII (CLAUDE.md), and the role is not read: a Viewer
+  // on an account is still ON the account, and what the cache needs is access,
+  // which the server decides.
+  const accounts = [];
+  for (const line of lines) {
+    const m = /^\u2022\s*(\S+)\s*\(Role:/.exec(line);
+    if (m) accounts.push(m[1]);
+  }
+  if (accounts.length === 0 && !/\(robot\)$/.test(display) && display !== 'robot') {
+    // No Accounts block is printed when the personal account is the only one,
+    // so the display name IS the account list (account/view.js filters the
+    // list by `account.name !== actor.username` and prints nothing when that
+    // leaves nothing).
+    accounts.push(display);
+  }
+  return {
+    loggedIn: true,
+    account: display,
+    accounts: accounts.length ? accounts : null,
+    viaToken,
+  };
+}
+
+// PURE. Does this text -- a provider's error, a transcript line -- say the
+// failure was authentication? Deliberately narrow: the point of the check is to
+// replace a generic note with a specific one, and a false positive would send
+// somebody to `eas login` over a network blip.
+export function isEasAuthFailureText(text) {
+  const t = stripAnsi(text || '');
+  if (t.trim() === '') return false;
+  return /not logged in/i.test(t)
+    || /\beas login\b/i.test(t)
+    || /EXPO_TOKEN/.test(t)
+    || /unauthorized/i.test(t)
+    || /not authorized/i.test(t)
+    || /authentication (failed|required)/i.test(t);
+}
+
+// PURE. The ONE line a build prints about this, or null.
+//
+// Both call sites share it so the wording cannot drift: the pre-flight below,
+// and the provider-failed branches in ios/android, which classify their reason
+// text with isEasAuthFailureText. A logged-out run says what it is going to do
+// instead (the local cache); a wrong-account run says it is proceeding anyway,
+// because the account list may be incomplete and access is the server's to
+// decide.
+export function easAuthNote(status) {
+  const { code, account, owner, reason, phase = 'resolve' } = status || {};
+  const because = reason ? ` (${reason})` : '';
+  if (code === 'logged-out') {
+    return `eas is not authenticated${because} -- run \`eas login\` (or set EXPO_TOKEN); `
+      + (phase === 'upload' ? 'this build stayed in the local cache' : 'building with the local cache only');
+  }
+  if (code === 'wrong-account') {
+    return `eas is authenticated as ${account}, and this project's owner is ${owner} -- `
+      + `run \`eas login\` as a member of ${owner} (or set EXPO_TOKEN); consulting the EAS cache anyway`;
+  }
+  return null;
+}
+
+// The project's own eas-cli, then the machine's. PROJECT-FIRST like everything
+// else here, and by node resolution rather than by path joining, so a hoisted
+// monorepo (where <root>/node_modules/.bin is empty) resolves the copy the
+// project actually installed. Never `npx eas-cli`: npx would DOWNLOAD a CLI
+// nobody chose, which is a network install inside a diagnostic.
+//
+// The PATH fallback is deliberate and is not a fourth guess -- `eas` installed
+// globally (npm i -g eas-cli, or Homebrew, which is what this machine has) is
+// the ordinary way to hold a session, and the session it reads is the same
+// ~/.expo/state.json either way.
+export function resolveEasCliBin(projectRoot, { lookupPath = null, timeoutMs = 5000 } = {}) {
+  const fromPackage = expoBinFromPackage(
+    resolvePackageJson(projectRoot, EAS_CLI_PACKAGE),
+    EAS_CLI_BIN
+  );
+  if (fromPackage) return { file: fromPackage, source: 'project' };
+  const shim = findBinUpward(projectRoot, EAS_CLI_BIN);
+  if (shim) return { file: shim, source: 'project' };
+  const onPath = lookupPath
+    ? lookupPath()
+    : getExecutor().runQuiet(`command -v ${EAS_CLI_BIN}`, { timeoutMs });
+  const file = String(onPath || '').split('\n')[0].trim();
+  return file ? { file, source: 'path' } : null;
+}
+
+// One answer per command run. `ios` asks before the resolve and again before
+// the upload, and `doctor` asks once; three whoami calls to learn the same
+// fact would be three network round trips.
+const easAuthCache = new Map();
+
+export function resetEasAuthCache() {
+  easAuthCache.clear();
+}
+
+/**
+ * Is this machine's eas-cli usable for THIS project's cache?
+ *
+ *   { ok: true, account, accounts, viaToken, source }
+ *   { failed: true, code: 'no-cli' | 'logged-out' | 'wrong-account', reason, remedy, ... }
+ *   { unknown: reason }   could not be established -- offline, timed out, or an
+ *                         output shape this does not recognise
+ *
+ * Never throws, and `unknown` is never treated as a failure by any caller: an
+ * offline machine still builds.
+ */
+export function checkEasAuth({
+  projectRoot,
+  owner = null,
+  run = null,
+  resolveBin = null,
+  timeoutMs = WHOAMI_TIMEOUT_MS,
+  cache = easAuthCache,
+} = {}) {
+  const key = `${projectRoot}::${owner || ''}`;
+  if (cache?.has(key)) return cache.get(key);
+  const answer = probeEasAuth({ projectRoot, owner, run, resolveBin, timeoutMs });
+  cache?.set(key, answer);
+  return answer;
+}
+
+function probeEasAuth({ projectRoot, owner, run, resolveBin, timeoutMs }) {
+  const bin = (resolveBin || resolveEasCliBin)(projectRoot);
+  if (!bin) {
+    return {
+      failed: true,
+      code: 'no-cli',
+      reason: 'no `eas` executable is resolvable from this project or on PATH',
+      remedy: 'Install eas-cli (`npm i -g eas-cli`, or as a project devDependency), then run `eas login`.',
+    };
+  }
+
+  const exec = run || ((file, args, opts) => getExecutor().runFile(file, args, opts));
+  let result;
+  try {
+    result = { stdout: String(exec(bin.file, ['whoami'], { timeoutMs }) ?? ''), exitCode: 0 };
+  } catch (err) {
+    // execFileSync throws on a non-zero exit AND on a timeout, and the two mean
+    // opposite things here, so the timeout is separated before the output is
+    // read: a SIGTERMed child has no verdict in its stdout.
+    if (err?.code === 'ETIMEDOUT' || err?.signal === 'SIGTERM' || err?.killed) {
+      return { unknown: `eas whoami timed out after ${timeoutMs}ms` };
+    }
+    result = {
+      stdout: String(err?.stdout ?? ''),
+      stderr: String(err?.stderr ?? err?.message ?? ''),
+      exitCode: typeof err?.status === 'number' ? err.status : 1,
+    };
+  }
+
+  const parsed = parseWhoami(result);
+  if (parsed.loggedOut) {
+    return {
+      failed: true,
+      code: 'logged-out',
+      reason: 'eas whoami says "Not logged in"',
+      remedy: 'Run `eas login` (or set EXPO_TOKEN).',
+    };
+  }
+  if (parsed.unknown) return { unknown: parsed.unknown };
+
+  // Wrong-account is only ever claimed when the accounts were actually
+  // enumerated. See parseWhoami: a robot actor prints a display name that is
+  // not an account name at all, and an unknown list must not contradict a
+  // configured owner.
+  if (owner && Array.isArray(parsed.accounts) && !parsed.accounts.includes(owner)) {
+    return {
+      failed: true,
+      code: 'wrong-account',
+      account: parsed.account,
+      accounts: parsed.accounts,
+      owner,
+      reason: `eas is authenticated as ${parsed.account} (accounts: ${parsed.accounts.join(', ')}), `
+        + `which does not include this project's owner ${owner}`,
+      remedy: `Run \`eas login\` as a member of ${owner}, or set EXPO_TOKEN to a token for it.`,
+    };
+  }
+  return {
+    ok: true,
+    account: parsed.account,
+    accounts: parsed.accounts,
+    viaToken: parsed.viaToken,
+    source: bin.source,
+  };
 }
 
 // --- the provider's stdout ---------------------------------------------------

@@ -77,8 +77,12 @@ function harness(overrides = {}) {
   const calls = {
     ensureDevice: [], booted: [], metro: [], fingerprint: [], resolveCached: [], storeCached: [],
     prebuild: [], build: [], install: [], launch: [], scheme: [], spawn: [], kill: [],
-    loadProvider: [], resolveRemoteBuild: [], uploadRemoteBuild: [],
+    loadProvider: [], resolveRemoteBuild: [], uploadRemoteBuild: [], easAuth: [],
+    acquireLock: [], releaseLock: [], waitForBuild: [],
     verify: [], ensureIgnored: [],
+    // The sequence of the steps that decide who compiles, which is what the
+    // single-flight tests below are actually about.
+    order: [],
   };
   const stderr = [];
   const stdout = [];
@@ -88,15 +92,23 @@ function harness(overrides = {}) {
     ensureDeviceBooted: async (args) => { calls.booted.push(args); return { ok: true, serial: 'emulator-5584' }; },
     resolveMetro: async (port, path) => { calls.metro.push([port, path]); return { metro: { pid: 41233, leader: 41233, cwd: root } }; },
     fingerprint: async (path) => { calls.fingerprint.push(path); return FINGERPRINT; },
-    resolveCached: (platform, key) => { calls.resolveCached.push([platform, key]); return null; },
-    storeCached: (platform, key, path, opts) => { calls.storeCached.push([platform, key, path, opts]); return path; },
+    resolveCached: (platform, key) => { calls.order.push('resolveCached'); calls.resolveCached.push([platform, key]); return null; },
+    storeCached: (platform, key, path, opts) => { calls.order.push('storeCached'); calls.storeCached.push([platform, key, path, opts]); return path; },
     // Level two. The default is the ordinary case: no provider configured, so
     // nothing is asked and nothing is called.
     loadProvider: async (projectRoot, opts) => { calls.loadProvider.push([projectRoot, opts]); return { none: true }; },
-    resolveRemoteBuild: async (args) => { calls.resolveRemoteBuild.push(args); return null; },
+    // Never the real one: it shells out to `eas whoami`, which is a network
+    // call. The EAS-session tests override it with the state they are about.
+    easAuth: (args) => { calls.easAuth.push(args); return { ok: true, account: 'janic' }; },
+    resolveRemoteBuild: async (args) => { calls.order.push('resolveRemoteBuild'); calls.resolveRemoteBuild.push(args); return null; },
+    // Single flight. The default is the ordinary case: nothing else on this
+    // machine is building this fingerprint, so this run is the one builder.
+    acquireLock: (args) => { calls.order.push('acquireLock'); calls.acquireLock.push(args); return { acquired: true, path: join(home, 'build-locks', 'android-k.lock'), lock: { pid: process.pid } }; },
+    releaseLock: (handle) => { calls.order.push('releaseLock'); calls.releaseLock.push(handle); return true; },
+    waitForBuild: async (args) => { calls.waitForBuild.push(args); throw new Error('nothing should be waited for unless the lock was held'); },
     uploadRemoteBuild: async (args) => { calls.uploadRemoteBuild.push(args); return { uploaded: true }; },
     prebuild: async (...args) => { calls.prebuild.push(args); return { ok: true, durationMs: 12000 }; },
-    build: async (args) => { calls.build.push(args); return { ok: true, apkPath: fakeApk(), durationMs: 161000 }; },
+    build: async (args) => { calls.order.push('build'); calls.build.push(args); return { ok: true, apkPath: fakeApk(), durationMs: 161000 }; },
     install: (args) => { calls.install.push(args); return { ok: true }; },
     // The default is what launchAndroidApp returns for a project with no
     // dev-client scheme: the launcher activity, both port mechanisms in
@@ -173,6 +185,7 @@ describe('a cache hit', () => {
       fingerprint: FINGERPRINT,
       cacheHit: 'local',
       cacheSkipped: false,
+      waitedForBuild: null,
       appPath: '/cache/app-debug.apk',
       bundleId: 'com.example.app',
       launched: true,
@@ -559,6 +572,76 @@ describe('the remote cache', () => {
     assert.match(lines[0], /eas-build-cache-provider/);
   });
 
+  // eas-build-cache-provider catches every error from `npx eas-cli` and returns
+  // null, so a logged-out machine gets a clean MISS on every build and nothing
+  // says why. The pre-flight is what turns that silence into one line.
+  test('a logged-out EAS session skips the remote tier and says so, once', async () => {
+    const h = harness({
+      loadProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
+      easAuth: () => ({ failed: true, code: 'logged-out', reason: 'Not logged in' }),
+      resolveRemoteBuild: never('the provider'),
+      uploadRemoteBuild: never('the provider'),
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true, 'a broken session never fails a build');
+    assert.equal(h.calls.build.length, 1);
+    const lines = h.stderr.filter((l) => /eas is not authenticated/.test(l));
+    assert.equal(lines.length, 1, 'ONE line');
+    assert.match(lines[0], /eas login/);
+    assert.match(lines[0], /EXPO_TOKEN/);
+    assert.match(lines[0], /local cache only/);
+  });
+
+  test('the session is checked with the owner the config named, and only once', async () => {
+    const h = harness({
+      loadProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
+    });
+    await h.run();
+    assert.equal(h.calls.easAuth.length, 1, 'one whoami per run, not one per call site');
+    assert.equal(h.calls.easAuth[0].owner, 'th3rd-wave');
+    assert.equal(h.calls.easAuth[0].projectRoot, root);
+  });
+
+  test('a custom provider is never asked about EAS at all', async () => {
+    const h = harness({ loadProvider: async () => provider('./p.cjs') });
+    await h.run();
+    assert.equal(h.calls.easAuth.length, 0);
+    assert.equal(h.calls.resolveRemoteBuild.length, 1);
+  });
+
+  test('a session that could not be established changes nothing', async () => {
+    const h = harness({
+      loadProvider: async () => provider(),
+      easAuth: () => ({ unknown: 'eas whoami timed out after 15000ms' }),
+    });
+    await h.run();
+    assert.equal(h.calls.resolveRemoteBuild.length, 1, 'the provider is still asked');
+    assert.ok(!h.stderr.some((l) => /not authenticated/.test(l)));
+  });
+
+  test('a session on the wrong account warns, naming both, and still consults the cache', async () => {
+    const h = harness({
+      loadProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
+      easAuth: () => ({ failed: true, code: 'wrong-account', account: 'janic', owner: 'th3rd-wave' }),
+    });
+    await h.run();
+    assert.equal(h.calls.resolveRemoteBuild.length, 1);
+    const line = h.stderr.find((l) => /janic/.test(l));
+    assert.match(line, /th3rd-wave/);
+    assert.match(line, /anyway/);
+  });
+
+  test('a provider failure that reads as auth gets the auth note, not the generic one', async () => {
+    const h = harness({
+      loadProvider: async () => provider(),
+      easAuth: () => ({ unknown: 'offline' }),
+      resolveRemoteBuild: async () => ({ failed: 'Error: Not logged in' }),
+    });
+    await h.run();
+    assert.match(labelled(h.stderr, 'cache')[0], /eas is not authenticated \(Error: Not logged in\)/);
+    assert.ok(!h.stderr.some((l) => /could not be used/.test(l)));
+  });
+
   test('a failed upload is a note, never a failed run', async () => {
     const h = harness({
       loadProvider: async () => provider(),
@@ -603,6 +686,163 @@ describe('--no-build-cache', () => {
     const h = harness();
     await h.run();
     assert.deepEqual(h.calls.storeCached[0][3], { overwrite: false });
+  });
+});
+
+// --- single-flight builds ---------------------------------------------------
+//
+// The iOS command's wiring, on the Android half: both caches missed, so this
+// run is about to spend minutes in gradle -- and if another workspace on this
+// machine is already spending them on the same fingerprint, waiting for its
+// APK beats compiling the same one beside it. engine/build-lock.js is tested
+// on its own; what is pinned here is WHEN the lock is attempted, that a waiter
+// never builds, and that a builder always releases.
+describe('single-flight builds', () => {
+  const heldBy = (pid = 41233, projectRoot = '/w/app-999') => ({
+    held: { pid, projectRoot, startedAt: '2026-08-25T10:00:00.000Z', logFile: `${projectRoot}/.rn-iso/logs/build-android.ndjson` },
+    path: '/home/build-locks/android-key.lock',
+  });
+
+  test('the lock is attempted only after BOTH cache levels have missed, and released after the store', async () => {
+    const h = harness({ loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }) });
+    await h.run();
+    assert.deepEqual(h.calls.order.filter(o => ['resolveCached', 'resolveRemoteBuild', 'acquireLock', 'build', 'storeCached', 'releaseLock'].includes(o)),
+      ['resolveCached', 'resolveRemoteBuild', 'acquireLock', 'build', 'storeCached', 'releaseLock']);
+    assert.equal(h.calls.acquireLock[0].platform, 'android');
+    assert.equal(h.calls.acquireLock[0].key, CACHE_KEY);
+    assert.equal(h.calls.acquireLock[0].root, root);
+    assert.match(h.calls.acquireLock[0].logFile, /build-android\.ndjson$/, 'the holder names the log a waiter should tail');
+  });
+
+  test('a cache hit at either level never takes the lock', async () => {
+    const local = harness({ resolveCached: () => '/cache/app-debug.apk', build: never('the build') });
+    await local.run();
+    assert.equal(local.calls.acquireLock.length, 0);
+
+    const remote = harness({
+      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      resolveRemoteBuild: async () => ({ appPath: '/downloads/app-debug.apk' }),
+      build: never('the build'),
+    });
+    await remote.run();
+    assert.equal(remote.calls.acquireLock.length, 0);
+  });
+
+  test('--no-build-cache neither waits nor acquires', async () => {
+    const h = harness({
+      useBuildCache: false,
+      acquireLock: never('the lock'),
+      waitForBuild: never('the wait'),
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true);
+    assert.equal(h.calls.build.length, 1, 'it still compiles fresh');
+  });
+
+  test('the loser waits, installs the artifact, and compiles nothing', async () => {
+    const waited = join(home, 'build-cache', 'android', CACHE_KEY, 'app-debug.apk');
+    const h = harness({
+      acquireLock: () => heldBy(41233, '/w/app-999'),
+      waitForBuild: async () => ({ hit: waited, waitedMs: 761000 }),
+      build: never('the build'),
+      prebuild: never('prebuild'),
+      storeCached: never('the store'),
+      needsPrebuildFor: () => true,
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true);
+    assert.equal(h.calls.releaseLock.length, 0, 'a waiter never held the lock');
+    assert.equal(h.calls.install[0].apkPath, waited);
+    assert.equal(result.facts.cacheHit, 'local', 'it came out of the local cache, like any other hit');
+    assert.deepEqual(result.facts.waitedForBuild, { pid: 41233, ms: 761000 });
+    assert.match(h.stderr.join('\n'), /waited 12m41s for \/w\/app-999's build -> installed from cache/);
+  });
+
+  test('a run that did not wait reports waitedForBuild: null', async () => {
+    const h = harness();
+    assert.equal((await h.run()).facts.waitedForBuild, null);
+  });
+
+  test('the wait is announced, and its progress reaches stderr as it happens', async () => {
+    const h = harness({
+      acquireLock: () => heldBy(),
+      waitForBuild: async ({ out }) => {
+        out('build       waiting on /w/app-999 (pid 41233, 4m elapsed) -- tail /w/app-999/x.ndjson');
+        return { hit: '/cache/app-debug.apk', waitedMs: 240000 };
+      },
+    });
+    await h.run();
+    const err = h.stderr.join('\n');
+    assert.match(err, /\/w\/app-999 is already building/);
+    assert.match(err, /waiting on \/w\/app-999 \(pid 41233, 4m elapsed\)/);
+    assert.equal(h.stdout.length, 1, 'stdout still carries exactly one line');
+  });
+
+  test('a builder that failed makes the waiter take over and build', async () => {
+    let acquires = 0;
+    const h = harness({
+      acquireLock: () => (++acquires === 1 ? heldBy() : { acquired: true, path: '/lock', lock: { pid: process.pid } }),
+      waitForBuild: async () => ({ builderFailed: 'the build lock was released without an artifact', waitedMs: 4000 }),
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true);
+    assert.equal(acquires, 2, 'it takes the lock over rather than building beside a queue');
+    assert.equal(h.calls.build.length, 1);
+    assert.equal(h.calls.releaseLock.length, 1);
+    assert.match(h.stderr.join('\n'), /without an artifact/);
+  });
+
+  test('losing the takeover race builds anyway rather than queueing again', async () => {
+    let waits = 0;
+    const h = harness({
+      acquireLock: () => heldBy(),
+      waitForBuild: async () => { waits++; return { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 }; },
+    });
+    assert.equal((await h.run()).ok, true);
+    assert.equal(waits, 1, 'it does not wait a second time');
+    assert.equal(h.calls.releaseLock.length, 0, 'it never held the lock, so it must not release one');
+  });
+
+  // A failed build that kept its lock would leave every other workspace on the
+  // fingerprint waiting for an APK nobody is making.
+  test('a FAILED build releases the lock', async () => {
+    const h = harness({
+      build: async () => ({ failed: true, code: BUILD_ERROR, reason: 'gradle said no', diagnostics: [], lastLines: [] }),
+    });
+    const result = await h.run();
+    assert.equal(result.ok, false);
+    assert.equal(h.calls.releaseLock.length, 1, 'a failed build must free its waiters');
+  });
+
+  test('a build that THROWS releases the lock on the way out', async () => {
+    const h = harness({ build: async () => { throw new Error('gradle exploded'); } });
+    await assert.rejects(() => h.run(), /gradle exploded/);
+    assert.equal(h.calls.releaseLock.length, 1);
+  });
+
+  test('a wait that hits its ceiling is a refusal with a code, not a crash', async () => {
+    const h = harness({
+      acquireLock: () => heldBy(),
+      waitForBuild: async () => {
+        const err = new Error('Waited 90m ... The lock is /home/build-locks/android-key.lock');
+        err.code = 'RN_ISO_BUILD_WAIT_TIMEOUT';
+        err.lockPath = '/home/build-locks/android-key.lock';
+        throw err;
+      },
+    });
+    const result = await h.run();
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'RN_ISO_BUILD_WAIT_TIMEOUT');
+    assert.equal(h.calls.build.length, 0);
+  });
+
+  // The lock is an optimisation, and one that cannot run must never stop a
+  // build -- the same containment the cache store and the provider get.
+  test('a lock that cannot be created is a note, and the build proceeds', async () => {
+    const h = harness({ acquireLock: () => { throw new Error('EROFS: read-only file system'); } });
+    assert.equal((await h.run()).ok, true);
+    assert.equal(h.calls.build.length, 1);
+    assert.match(h.stderr.join('\n'), /read-only file system/);
   });
 });
 
@@ -723,7 +963,7 @@ describe('the pure parts', () => {
   test('androidFacts and lastBuildRecord fill every field of their contracts', () => {
     assert.deepEqual(androidFacts({}), {
       platform: 'android', serial: null, avdName: null, deviceName: null, fingerprint: null,
-      cacheHit: false, cacheSkipped: false, appPath: null, bundleId: null, launched: false,
+      cacheHit: false, cacheSkipped: false, waitedForBuild: null, appPath: null, bundleId: null, launched: false,
       debugHttpHost: null, debugHttpHostNote: null, devClientUrl: null, logs: null,
     });
     // A device tool is addressed by AVD name, not by console-port slot, and
@@ -735,6 +975,10 @@ describe('the pure parts', () => {
     // cacheHit is a LEVEL, not a boolean: 'local' | 'remote' | false.
     assert.equal(androidFacts({ cacheHit: 'remote' }).cacheHit, 'remote');
     assert.equal(androidFacts({ cacheHit: true }).cacheHit, false);
+    // A wait is reported ALONGSIDE cacheHit: 'local', never instead of it: the
+    // APK did come from the local cache, it just was not there yet when the
+    // run started.
+    assert.deepEqual(androidFacts({ cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } }).waitedForBuild, { pid: 41233, ms: 761000 });
     const record = lastBuildRecord({ startedAt: 'now', status: 'ok' });
     assert.deepEqual(Object.keys(record), ['platform', 'avdName', 'deviceName', 'fingerprint', 'cacheKey', 'cacheHit', 'cacheSkipped', 'durationMs', 'appPath', 'bundleId', 'startedAt', 'status']);
     assert.equal(lastBuildRecord({ startedAt: 'now', status: 'failed', errorCode: BUILD_ERROR }).errorCode, BUILD_ERROR);

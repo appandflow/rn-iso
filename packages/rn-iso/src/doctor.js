@@ -14,6 +14,10 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { getExecutor } from './exec.js';
 import { detectIsExpo } from './project.js';
+// The engine owns the eas-cli half (resolution, whoami, the parse); this file
+// owns what to SAY about it. Imported under a second name because the pure
+// check below is the doctor-side function of the same idea.
+import { checkEasAuth as probeEasAuth, ownerFromConfig, providerFromConfig } from './engine/remote-cache.js';
 import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.js';
 
 // `xcodebuild -version` prints "Xcode 26.1" on its first line. Anything else --
@@ -348,9 +352,69 @@ export function checkBuildCacheProvider(appConfig, sdkMajor, isExpo = true, dyna
   return null;
 }
 
+// The EAS session behind a `"buildCacheProvider": "eas"`.
+//
+// This is the one provider whose failure mode is SILENCE by construction:
+// eas-build-cache-provider wraps each `npx eas-cli` call in a try/catch that
+// returns null (its own build/index.js), so an expired session, a missing CLI
+// and an empty cache all look identical from the outside -- a miss, on every
+// build, forever. Nothing in a build log says "log in". doctor is where it can
+// be said.
+//
+// PURE: `auth` is the answer the caller already obtained (engine's
+// checkEasAuth). The only IO decision made here is not to ask at all when the
+// project does not use EAS -- whoami is a network call, and a project on a
+// local provider should not pay for one.
+export function checkEasAuth({ provider, owner = null, auth = null } = {}) {
+  if (provider !== 'eas') return null;
+  const status = typeof auth === 'function' ? auth({ owner }) : auth;
+  if (!status || status.ok) return null;
+
+  // Offline, timed out, or an output shape this eas-cli does not produce.
+  // Never an accusation: whoami reaches the network whenever a session exists,
+  // so "could not check" is a fact about the check, not about the user.
+  if (status.unknown) {
+    return finding(
+      'note',
+      'Could not check the EAS session',
+      `\`eas whoami\` did not give a definite answer (${status.unknown}), so whether this project's EAS build cache can be reached is unknown. Offline is the ordinary reason, and it is not a problem: the cache simply does not answer until the machine is back on the network.`,
+      null
+    );
+  }
+
+  if (status.code === 'no-cli') {
+    return finding(
+      'cost',
+      'The build cache provider is "eas", but no eas-cli is installed',
+      'The provider shells out to `npx eas-cli` on every lookup and every upload. With no eas-cli resolvable, npx downloads one on the fly (slow, and a version nobody chose) or the call fails -- and the provider swallows that failure and returns null, so every build looks like a cache miss and nothing says why.',
+      status.remedy
+    );
+  }
+
+  if (status.code === 'logged-out') {
+    return finding(
+      'cost',
+      'Not logged in to EAS, so the shared build cache never answers',
+      'eas-build-cache-provider catches its own errors and returns null, so an unauthenticated lookup reads as a plain cache miss: every build compiles, nothing is uploaded for anybody else, and no line in any log mentions authentication.',
+      status.remedy
+    );
+  }
+
+  if (status.code === 'wrong-account') {
+    return finding(
+      'note',
+      `EAS is authenticated as ${status.account}, but this project's owner is ${status.owner}`,
+      `A session on an account that does not cover ${status.owner} cannot read or write that account's builds, so the shared cache silently does nothing here. This is a NOTE and not a hard failure on purpose: \`eas whoami\` only enumerates accounts for some actors (a robot prints a display name that is not an account name at all), the list may be incomplete, and access is the server's decision rather than this list's. Confirm before acting on it.`,
+      status.remedy
+    );
+  }
+
+  return null;
+}
+
 // Runs every check against one project directory. Pure enough to test: all file
 // reads happen here, and each check is a function of the text it was given.
-export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = null } = {}) {
+export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = null, easAuth = probeEasAuth } = {}) {
   const read = (rel) => {
     const p = join(projectRoot, rel);
     if (!existsSync(p)) return null;
@@ -379,6 +443,17 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
   const expoRange = pkg?.dependencies?.expo || '';
   const sdkMajor = parseInt(String(expoRange).replace(/[^\d.]/g, '').split('.')[0], 10) || null;
 
+  // The EAS session is only asked about when the config STATICALLY says the
+  // provider is EAS. A dynamic config is not evaluated here for the same reason
+  // checkBuildCacheProvider does not evaluate one -- running project code
+  // inside a diagnostic -- and its existing note already says the provider
+  // could not be read.
+  const provider = appConfig ? providerFromConfig(appConfig) : null;
+  const owner = appConfig ? ownerFromConfig(appConfig) : null;
+  const easFinding = provider === 'eas'
+    ? checkEasAuth({ provider, owner, auth: easAuth({ projectRoot, owner }) })
+    : null;
+
   return [
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
@@ -386,5 +461,6 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
     checkArtifactLayout({ gitignoreSource: gitignore }),
     checkCcacheConflict(podfile, podfileProperties),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
+    easFinding,
   ].filter(Boolean);
 }

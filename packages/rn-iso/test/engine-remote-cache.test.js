@@ -23,12 +23,20 @@ import {
   LOCAL_PROVIDER_PACKAGE,
   RESOLVE_TIMEOUT_MS,
   UPLOAD_TIMEOUT_MS,
+  WHOAMI_TIMEOUT_MS,
+  checkEasAuth,
   dynamicConfigFile,
+  easAuthNote,
+  isEasAuthFailureText,
   isProviderPlugin,
   loadPlugin,
   loadProjectProvider,
   normalizeProvider,
+  ownerFromConfig,
+  parseWhoami,
   providerFromConfig,
+  resolveEasCliBin,
+  resetEasAuthCache,
   readProjectConfig,
   resolveRemote,
   runOptionsFor,
@@ -181,7 +189,33 @@ describe('readProjectConfig', () => {
     writeProviderModule('app.config.ts', 'export default {};');
     const read = readProjectConfig(root, { run: () => { throw new Error('should not run'); } });
     assert.match(read.unavailable, /app\.config\.ts is code/);
-    assert.match(read.unavailable, /node_modules\/\.bin\/expo does not exist/);
+    assert.match(read.unavailable, /`expo` package is not resolvable/);
+  });
+
+  // The bug this pins was live on a real pnpm workspace: the app directory's
+  // own node_modules holds no .bin/expo, so the ONLY check that existed here
+  // ("does <root>/node_modules/.bin/expo exist?") said no on every hoisted
+  // monorepo -- and the entire remote cache tier was dead there, behind a note
+  // that read like a missing install. The binary is found by walking UP.
+  test('a HOISTED monorepo evaluates the config with the workspace-root expo', () => {
+    const app = join(root, 'apps', 'mobile');
+    mkdirSync(join(app, 'node_modules'), { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'mobile' }));
+    writeFileSync(join(app, 'app.config.ts'), 'export default {};');
+    mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
+    writeFileSync(join(root, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n');
+
+    const calls = [];
+    const read = readProjectConfig(app, {
+      run: (file, args) => {
+        calls.push({ file, args });
+        return JSON.stringify({ name: 'app', buildCacheProvider: 'eas' });
+      },
+    });
+    assert.equal(read.unavailable, undefined, 'a hoisted install is an installed install');
+    assert.equal(calls[0].file, join(root, 'node_modules', '.bin', 'expo'));
+    assert.deepEqual(calls[0].args, ['config', '--json', app]);
+    assert.equal(providerFromConfig(read.config), 'eas');
   });
 
   test('an expo config that fails (or times out) is unavailable with the reason', () => {
@@ -628,5 +662,270 @@ describe('uploadDestination', () => {
       uploadDestination(['\u001b[2mUploading build to\u001b[22m https://expo.dev/x/y']),
       'https://expo.dev/x/y'
     );
+  });
+});
+
+// --- EAS authentication ------------------------------------------------------
+//
+// The outputs below are VERBATIM from `eas whoami` on this machine
+// (eas-cli 18.0.3, 2026-08-25), captured both ways: logged in, and logged out
+// by pointing HOME at an empty directory rather than by logging anybody out.
+//
+//   logged in   exit 0, stdout:  "janic\n\nAccounts:\n<bullet> janic (Role: Owner)\n
+//                                 <bullet> fin-tech (Role: Viewer)\n<bullet> th3rd-wave (Role: Owner)\n"
+//                (the bullet is U+2022; it is written as an escape below,
+//                 because these files are ASCII)
+//               stderr held only the "eas-cli@22.4.0 is now available" upgrade notice.
+//   logged out  exit 1, stdout:  "Not logged in\n", stderr empty.
+describe('parseWhoami', () => {
+  const LOGGED_IN = 'janic\n\nAccounts:\n\u2022 janic (Role: Owner)\n'
+    + '\u2022 fin-tech (Role: Viewer)\n\u2022 th3rd-wave (Role: Owner)\n';
+
+  test('reads the actor and every account out of a logged-in whoami', () => {
+    const parsed = parseWhoami({ stdout: LOGGED_IN, exitCode: 0 });
+    assert.equal(parsed.loggedIn, true);
+    assert.equal(parsed.account, 'janic');
+    assert.deepEqual(parsed.accounts, ['janic', 'fin-tech', 'th3rd-wave']);
+    assert.equal(parsed.viaToken, false);
+  });
+
+  // account/view.js only prints the Accounts block when the actor belongs to an
+  // account that is NOT its personal one, so a single-account user's whole
+  // output is the username -- which IS the one account they have.
+  test('a user with only a personal account still yields that account', () => {
+    const parsed = parseWhoami({ stdout: 'janic\n', exitCode: 0 });
+    assert.deepEqual(parsed.accounts, ['janic']);
+  });
+
+  test('the EXPO_TOKEN suffix is stripped off the actor and recorded', () => {
+    const parsed = parseWhoami({ stdout: 'janic (authenticated using EXPO_TOKEN)\n', exitCode: 0 });
+    assert.equal(parsed.account, 'janic');
+    assert.equal(parsed.viaToken, true);
+  });
+
+  // getActorDisplayName prints "robot" / "Name (robot)" for a robot actor, and
+  // a robot has no username at all -- so the display name is not an account
+  // name, and enumeration is UNKNOWN rather than "one account called robot".
+  test('a robot actor with no Accounts block leaves the accounts unknown', () => {
+    const parsed = parseWhoami({ stdout: 'CI (robot) (authenticated using EXPO_TOKEN)\n', exitCode: 0 });
+    assert.equal(parsed.loggedIn, true);
+    assert.equal(parsed.accounts, null, 'a display name is not an account name');
+  });
+
+  test('"Not logged in" plus a non-zero exit is the definitive logged-out answer', () => {
+    const parsed = parseWhoami({ stdout: 'Not logged in\n', exitCode: 1 });
+    assert.equal(parsed.loggedOut, true);
+  });
+
+  // The whole point of the distinction: whoami hits the network when a session
+  // exists, so a failure that is not "Not logged in" may be a plane, a VPN or a
+  // DNS hiccup, and none of those mean the user has to log in.
+  test('any other failure is unknown, never logged out', () => {
+    const parsed = parseWhoami({
+      stdout: '',
+      stderr: 'request to https://api.expo.dev/graphql failed, reason: getaddrinfo ENOTFOUND api.expo.dev',
+      exitCode: 1,
+    });
+    assert.equal(parsed.loggedOut, undefined);
+    assert.match(parsed.unknown, /ENOTFOUND/);
+  });
+
+  test('a clean exit that printed nothing is unknown too', () => {
+    assert.ok(parseWhoami({ stdout: '   \n', exitCode: 0 }).unknown);
+  });
+});
+
+describe('ownerFromConfig', () => {
+  test('reads expo.owner out of either config shape', () => {
+    assert.equal(ownerFromConfig({ expo: { owner: 'th3rd-wave' } }), 'th3rd-wave');
+    assert.equal(ownerFromConfig({ owner: 'th3rd-wave' }), 'th3rd-wave');
+    assert.equal(ownerFromConfig({ expo: {} }), null);
+    assert.equal(ownerFromConfig(null), null);
+  });
+});
+
+describe('isEasAuthFailureText', () => {
+  test('recognises what eas-cli says when a session is missing or rejected', () => {
+    assert.equal(isEasAuthFailureText('Not logged in'), true);
+    assert.equal(isEasAuthFailureText('Either log in with eas login or set the EXPO_TOKEN environment variable'), true);
+    assert.equal(isEasAuthFailureText('GraphQL request failed: Unauthorized'), true);
+    assert.equal(isEasAuthFailureText('Entity not authorized: Account'), true);
+    assert.equal(isEasAuthFailureText('ETIMEDOUT'), false);
+    assert.equal(isEasAuthFailureText(''), false);
+    assert.equal(isEasAuthFailureText(null), false);
+  });
+});
+
+describe('checkEasAuth', () => {
+  beforeEach(() => resetEasAuthCache());
+  afterEach(() => resetEasAuthCache());
+
+  const whoami = (stdout, exitCode = 0, stderr = '') => () => {
+    if (exitCode === 0) return stdout;
+    const err = new Error('Command failed');
+    err.status = exitCode;
+    err.stdout = stdout;
+    err.stderr = stderr;
+    throw err;
+  };
+
+  test('a logged-in session whose accounts include the owner is ok', () => {
+    const status = checkEasAuth({
+      projectRoot: root,
+      owner: 'th3rd-wave',
+      resolveBin: () => ({ file: '/bin/eas', source: 'project' }),
+      run: whoami('janic\n\nAccounts:\n\u2022 janic (Role: Owner)\n\u2022 th3rd-wave (Role: Owner)\n'),
+    });
+    assert.equal(status.ok, true);
+    assert.equal(status.account, 'janic');
+  });
+
+  test('no eas binary anywhere is its own code, with an install remedy', () => {
+    const status = checkEasAuth({ projectRoot: root, resolveBin: () => null, run: whoami('') });
+    assert.equal(status.code, 'no-cli');
+    assert.match(status.remedy, /eas-cli/);
+  });
+
+  test('a logged-out session is a definitive failure naming both ways back in', () => {
+    const status = checkEasAuth({
+      projectRoot: root,
+      resolveBin: () => ({ file: 'eas', source: 'path' }),
+      run: whoami('Not logged in\n', 1),
+    });
+    assert.equal(status.code, 'logged-out');
+    assert.match(status.remedy, /eas login/);
+    assert.match(status.remedy, /EXPO_TOKEN/);
+  });
+
+  test('an owner no account covers is a wrong-account failure naming both', () => {
+    const status = checkEasAuth({
+      projectRoot: root,
+      owner: 'th3rd-wave',
+      resolveBin: () => ({ file: 'eas', source: 'path' }),
+      run: whoami('janic\n'),
+    });
+    assert.equal(status.code, 'wrong-account');
+    assert.equal(status.account, 'janic');
+    assert.equal(status.owner, 'th3rd-wave');
+  });
+
+  // Enumeration is only as good as what whoami prints, and for a robot it
+  // prints a display name that is not an account. Guessing there would fail a
+  // build that was configured perfectly well.
+  test('an owner is never contradicted by an account list that could not be read', () => {
+    const status = checkEasAuth({
+      projectRoot: root,
+      owner: 'th3rd-wave',
+      resolveBin: () => ({ file: 'eas', source: 'path' }),
+      run: whoami('CI (robot) (authenticated using EXPO_TOKEN)\n'),
+    });
+    assert.equal(status.ok, true);
+  });
+
+  test('a timeout is unknown, not an auth failure -- offline must not read as logged out', () => {
+    const status = checkEasAuth({
+      projectRoot: root,
+      resolveBin: () => ({ file: 'eas', source: 'path' }),
+      run: () => {
+        const err = new Error('Command failed');
+        err.code = 'ETIMEDOUT';
+        err.killed = true;
+        throw err;
+      },
+    });
+    assert.equal(status.failed, undefined);
+    assert.match(status.unknown, /timed out|ETIMEDOUT/);
+  });
+
+  test('whoami runs ONCE per command run, however many times it is asked', () => {
+    let runs = 0;
+    const args = {
+      projectRoot: root,
+      owner: 'janic',
+      resolveBin: () => ({ file: 'eas', source: 'path' }),
+      run: () => { runs += 1; return 'janic\n'; },
+    };
+    checkEasAuth(args);
+    checkEasAuth(args);
+    checkEasAuth(args);
+    assert.equal(runs, 1);
+  });
+
+  test('it is bounded, and it asks the binary it resolved', () => {
+    const seen = [];
+    checkEasAuth({
+      projectRoot: root,
+      resolveBin: () => ({ file: '/p/node_modules/.bin/eas', source: 'project' }),
+      run: (file, args, opts) => { seen.push({ file, args, opts }); return 'janic\n'; },
+    });
+    assert.equal(seen[0].file, '/p/node_modules/.bin/eas');
+    assert.deepEqual(seen[0].args, ['whoami']);
+    assert.equal(seen[0].opts.timeoutMs, WHOAMI_TIMEOUT_MS);
+  });
+});
+
+describe('resolveEasCliBin', () => {
+  // Same hoisting bug as the expo binary, and the same fix: an app directory in
+  // a pnpm/yarn workspace has an EMPTY node_modules of its own, and the eas
+  // shim is at the workspace root. Joining <root>/node_modules/.bin would find
+  // nothing and report a CLI that is installed as missing.
+  test('finds a hoisted eas shim by walking up, never by joining', () => {
+    const app = join(root, 'apps', 'mobile');
+    mkdirSync(join(app, 'node_modules'), { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'mobile' }));
+    mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
+    writeFileSync(join(root, 'node_modules', '.bin', 'eas'), '#!/bin/sh\n');
+
+    const found = resolveEasCliBin(app, { lookupPath: () => { throw new Error('PATH must not be consulted'); } });
+    assert.equal(found.file, join(root, 'node_modules', '.bin', 'eas'));
+    assert.equal(found.source, 'project');
+  });
+
+  test('falls back to `eas` on PATH, which is where a session usually lives', () => {
+    const found = resolveEasCliBin(root, { lookupPath: () => '/opt/homebrew/bin/eas\n' });
+    assert.deepEqual(found, { file: '/opt/homebrew/bin/eas', source: 'path' });
+  });
+
+  test('nothing anywhere is null, which is a finding rather than an npx', () => {
+    assert.equal(resolveEasCliBin(root, { lookupPath: () => null }), null);
+  });
+});
+
+describe('easAuthNote', () => {
+  test('the logged-out note names the two remedies and what the build will do', () => {
+    const note = easAuthNote({ code: 'logged-out' });
+    assert.match(note, /eas is not authenticated/);
+    assert.match(note, /eas login/);
+    assert.match(note, /EXPO_TOKEN/);
+    assert.match(note, /local cache only/);
+  });
+
+  test('the wrong-account note names both accounts and says the run continues', () => {
+    const note = easAuthNote({ code: 'wrong-account', account: 'janic', owner: 'th3rd-wave' });
+    assert.match(note, /janic/);
+    assert.match(note, /th3rd-wave/);
+    assert.match(note, /anyway/);
+  });
+
+  // The upload is collected AFTER the build and the launch, so "building with
+  // the local cache only" would be describing something that already happened.
+  test('the same failure at upload time says what it cost instead', () => {
+    const note = easAuthNote({ code: 'logged-out', reason: '403', phase: 'upload' });
+    assert.match(note, /stayed in the local cache/);
+    assert.ok(!/building with/.test(note));
+  });
+
+  test('anything else has no note of its own', () => {
+    assert.equal(easAuthNote({ code: 'unknown' }), null);
+    assert.equal(easAuthNote(null), null);
+  });
+});
+
+describe('loadProjectProvider owner', () => {
+  test('carries the project owner alongside the provider, for the auth check', async () => {
+    writeProviderModule('owned-provider.cjs', RECORDING_PROVIDER(join(root, 'calls.log'), null));
+    writeAppJson({ expo: { owner: 'th3rd-wave', buildCacheProvider: { plugin: './owned-provider.cjs' } } });
+    const loaded = await loadProjectProvider(root);
+    assert.equal(loaded.owner, 'th3rd-wave');
   });
 });

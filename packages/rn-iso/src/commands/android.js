@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 import { getProject, upsertProject } from '../config.js';
 import { getExecutor } from '../exec.js';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.js';
+import { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild } from '../engine/build-lock.js';
 import { createNdjsonWriter } from '../ndjson.js';
 import { isPidAlive, resolveProjectMetro } from '../metro.js';
 import { workspaceLogsDir } from '../paths.js';
@@ -61,6 +62,9 @@ import {
   UPLOAD_TIMEOUT_MS,
   cacheLevel,
   exitAfterFlush,
+  checkEasAuth,
+  easAuthNote,
+  isEasAuthFailureText,
   loadProjectProvider,
   resolveRemote,
   uploadRemote,
@@ -304,7 +308,7 @@ export function formatDuration(ms) {
 }
 
 // PURE. The --json payload.
-export function androidFacts({ serial, avdName = null, deviceName = null, fingerprint, cacheHit, cacheSkipped = false, appPath, bundleId, launched, logs, debugHttpHost = null, debugHttpHostNote = null, devClientUrl = null }) {
+export function androidFacts({ serial, avdName = null, deviceName = null, fingerprint, cacheHit, cacheSkipped = false, waitedForBuild = null, appPath, bundleId, launched, logs, debugHttpHost = null, debugHttpHostNote = null, devClientUrl = null }) {
   return {
     platform: PLATFORM,
     serial: serial ?? null,
@@ -323,6 +327,13 @@ export function androidFacts({ serial, avdName = null, deviceName = null, finger
     // true only when --no-build-cache was passed: "nothing was looked up" is a
     // different fact from "nothing was found".
     cacheSkipped: Boolean(cacheSkipped),
+    // { pid, ms } when this run did not compile because ANOTHER workspace was
+    // already compiling the same fingerprint and it waited for that artifact;
+    // null when nothing was waited for. cacheHit is 'local' either way -- the
+    // APK really did come out of the local cache -- so this is the only thing
+    // that separates "the cache already had it" from "the cache had it twelve
+    // minutes later, which still beat compiling it twice".
+    waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath: appPath ?? null,
     bundleId: bundleId ?? null,
     // Three-valued, like the iOS payload: 'unverified' is what a launch that
@@ -439,7 +450,11 @@ export async function runAndroid({
   fingerprint = fingerprintProject,
   resolveCached = resolveBuild,
   storeCached = storeBuild,
+  acquireLock = acquireBuildLock,
+  releaseLock = releaseBuildLock,
+  waitForBuild = waitForOtherBuild,
   loadProvider = loadProjectProvider,
+  easAuth = checkEasAuth,
   resolveRemoteBuild = resolveRemote,
   uploadRemoteBuild = uploadRemote,
   needsPrebuildFor = needsPrebuild,
@@ -468,6 +483,23 @@ export async function runAndroid({
   // Failure state that lands in Contract 4 is accumulated as the run goes, so
   // a failure at any step after the fingerprint records what it knew.
   const record = { fingerprint: null, cacheKey: null, cacheHit: false, appPath: null, bundleId: null, avdName: null, deviceName: null };
+
+  // The build lock, when this run is the one compiling (engine/build-lock.js).
+  // Released from the `finally` around the build below, on success, on a
+  // formatted failure and on a throw alike: a failed build that kept its lock
+  // would leave every other workspace on this fingerprint waiting for an
+  // artifact nobody is making.
+  let buildLock = null;
+  const releaseHeldLock = () => {
+    if (!buildLock) return;
+    const held = buildLock;
+    buildLock = null;
+    try {
+      releaseLock(held);
+    } catch (err) {
+      out(phaseLine('build', chalk.dim(`could not release the build lock at ${held.path}: ${err?.message || err}`)));
+    }
+  };
 
   const phase = (label, text) => out(phaseLine(label, text));
   // One formatter for every refusal, so a failed run reads the same whatever
@@ -615,6 +647,24 @@ export async function runAndroid({
     } else if (loaded?.provider) {
       remote = loaded;
     }
+    // The EAS provider is the one that cannot report its own failure: both of
+    // eas-build-cache-provider's entry points catch everything `npx eas-cli`
+    // throws and return null, so an expired session reaches this command as a
+    // clean MISS, on every build, forever. One bounded `eas whoami` (cached for
+    // the run) is what turns that silence into a line.
+    //
+    // A definitively logged-out machine skips the tier outright and the run
+    // continues on the local cache. Anything less than definitive (offline, no
+    // eas-cli, an unrecognised output) changes NOTHING: an unreachable API is
+    // not a logged-out user, and a build must not brick on a plane.
+    if (remote?.name === 'eas') {
+      const auth = easAuth({ projectRoot: root, owner: loaded?.owner || null });
+      const authNote = easAuthNote(auth);
+      if (authNote) phase('cache', chalk.yellow(authNote));
+      // Wrong-account still consults the provider: whoami does not always
+      // enumerate accounts, and access is the server's decision.
+      if (auth?.code === 'logged-out') remote = null;
+    }
   }
 
   if (remote && useBuildCache) {
@@ -640,74 +690,153 @@ export async function runAndroid({
       abandonedRemote = true;
       phase('cache', chalk.yellow(`${remote.name} did not answer within ${formatDuration(RESOLVE_TIMEOUT_MS)}; building instead`));
     } else if (hit?.failed) {
-      phase('cache', chalk.yellow(`${remote.name} could not be used: ${hit.failed}; building instead`));
+      // An auth failure the provider DID surface gets the same specific note
+      // the pre-flight would have printed, rather than the generic one.
+      const authNote = remote.name === 'eas' && isEasAuthFailureText(hit.failed)
+        ? easAuthNote({ code: 'logged-out', reason: hit.failed })
+        : null;
+      phase('cache', chalk.yellow(authNote || `${remote.name} could not be used: ${hit.failed}; building instead`));
     } else {
       phase('cache', `remote miss (${remote.name})`);
     }
   }
 
+  // ---- level three: another workspace that is ALREADY building this ----
+  //
+  // Both caches missed, so this run is about to spend minutes in gradle -- and
+  // the premise of this whole tool is that another agent is standing on the
+  // same commit, about to spend the same minutes producing the same APK. The
+  // lock decides which of them compiles; the rest wait for its artifact and
+  // install that. This is commands/ios.js's block on the Android half, and the
+  // reasoning is recorded there in full (engine/build-lock.js holds the rules).
+  //
+  // --no-build-cache stays outside it in both directions: it asked for a fresh
+  // compile, so it neither installs someone else's artifact nor makes anyone
+  // else wait on a build they did not ask for.
+  let waitedForBuild = null;
+  if (!apkPath && useBuildCache) {
+    let attempt = null;
+    try {
+      attempt = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
+    } catch (err) {
+      // Contained like the cache store: an optimisation that cannot run must
+      // never stop a build.
+      phase('build', chalk.yellow(`could not take the build lock: ${err?.message || err}; building anyway`));
+    }
+
+    if (attempt?.acquired) {
+      buildLock = attempt;
+    } else if (attempt?.held) {
+      const holder = attempt.held;
+      const who = holder.projectRoot || 'another workspace';
+      phase('build', `${who} is already building ${shortHash(hash)} (pid ${holder.pid})`
+        + `${holder.logFile ? ` -- tail ${holder.logFile}` : ''}`);
+
+      let waited = null;
+      try {
+        waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out });
+      } catch (err) {
+        if (err?.code !== 'RN_ISO_BUILD_WAIT_TIMEOUT') throw err;
+        return fail(
+          'RN_ISO_BUILD_WAIT_TIMEOUT',
+          err.message,
+          `Check pid ${holder.pid}; if it is not really building, remove ${err.lockPath} and run \`rn-iso android\` again.`,
+          { lastBuildStatus: true }
+        );
+      }
+
+      if (waited?.hit) {
+        // The artifact the other workspace stored. It IS a local cache hit --
+        // the same entry any later run resolves -- so cacheHit says 'local';
+        // waitedForBuild is what says it was not free.
+        apkPath = waited.hit;
+        record.cacheHit = 'local';
+        waitedForBuild = { pid: holder.pid, ms: waited.waitedMs };
+        phase('build', `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache`);
+      } else {
+        // The builder is gone and stored nothing. Take the lock OVER so a
+        // third workspace waits on this run instead of starting a third
+        // compile; if someone else took it first, build without it rather than
+        // queueing again -- a redundant build is the cheaper failure.
+        phase('build', chalk.yellow(`${who}'s build ended without an artifact (${waited?.builderFailed}); building here`));
+        try {
+          const takeover = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
+          if (takeover?.acquired) buildLock = takeover;
+        } catch { /* contained the same way as the first attempt */ }
+      }
+    }
+  }
+
   // ---- build (only when neither level answered) ------------------------
   if (!apkPath) {
-    if (needsPrebuildFor(root, PLATFORM, isExpo)) {
-      const pre = await prebuild(root, PLATFORM, writer, { isExpo });
-      if (pre.failed) {
-        return fail(pre.code, pre.reason, pre.remedy, { lastBuildStatus: true, lines: tail(pre.lastLines), logPath: displayPath(root, buildLog) });
-      }
-      phase('prebuild', `android/ generated (${formatDuration(pre.durationMs)})`);
-      // The package name may only exist once the manifest has been written.
-      androidPackage = androidPackage || detectAndroidPackage(root);
-      record.bundleId = androidPackage;
-    }
-
-    const built = await build({ root, logWriter: writer });
-    if (built.failed) {
-      const diagnostics = built.diagnostics || [];
-      // Contract 1: the raw transcript went to the log as debug; the
-      // extracted diagnostics go there as errors, which is what makes
-      // `logs --errors` show a build failure at all.
-      for (const diag of diagnostics) {
-        writer.write({ src: 'build', level: 'error', event: 'gradle_diagnostic', msg: formatDiagnostic(diag) });
-      }
-      phase('build', chalk.red(`FAILED after ${formatDuration(built.durationMs)}`));
-      const extracted = diagnostics.map(formatDiagnostic);
-      if (built.truncated > 0) extracted.push(`... and ${built.truncated} more diagnostic(s) in the log`);
-      return fail(built.code, built.reason,
-        // The remedy of a diagnostic beats the generic one: "set ANDROID_HOME"
-        // is the whole answer where it applies, and "read the log" is not.
-        diagnostics.find((d) => d.remedy)?.remedy || built.remedy || null,
-        {
-          lastBuildStatus: true,
-          diagnostics: extracted,
-          // Only when nothing could be extracted: the tail of a transcript is
-          // the worst of both worlds otherwise -- tokens, and no diagnosis.
-          lines: extracted.length ? [] : tail(built.lastLines),
-          logPath: displayPath(root, buildLog),
-        });
-    }
-    apkPath = built.apkPath;
-    phase('build', `${basename(apkPath)} (${formatDuration(built.durationMs)})`);
-
-    // `overwrite` only when --no-build-cache asked for a fresh build: the entry
-    // that is there is the one this run was told not to trust, and leaving it
-    // would mean the next run trusts it again.
+    // The `finally` is the point of the try: a build that fails, or one that
+    // throws, must free its waiters at once. It releases BEFORE the install
+    // below, so a waiting workspace starts installing the moment the artifact
+    // is in the cache rather than when this run finishes launching.
     try {
-      storeCached(PLATFORM, cacheKey, apkPath, { overwrite: !useBuildCache });
-    } catch (err) {
-      // A cache that cannot be written still builds; it just costs the next
-      // workspace a rebuild. Never a reason to fail a run that succeeded.
-      phase('cache', chalk.yellow(`could not store the build: ${err?.message || err}`));
-    }
+      if (needsPrebuildFor(root, PLATFORM, isExpo)) {
+        const pre = await prebuild(root, PLATFORM, writer, { isExpo });
+        if (pre.failed) {
+          return fail(pre.code, pre.reason, pre.remedy, { lastBuildStatus: true, lines: tail(pre.lastLines), logPath: displayPath(root, buildLog) });
+        }
+        phase('prebuild', `android/ generated (${formatDuration(pre.durationMs)})`);
+        // The package name may only exist once the manifest has been written.
+        androidPackage = androidPackage || detectAndroidPackage(root);
+        record.bundleId = androidPackage;
+      }
 
-    // STARTED here, collected after the launch, so the upload overlaps the
-    // install instead of being added to it. Nothing in this run depends on it.
-    if (remote) {
-      uploadPending = uploadRemoteBuild({
-        provider: remote.provider,
-        platform: PLATFORM,
-        projectRoot: root,
-        fingerprintHash: hash,
-        buildPath: apkPath,
-      });
+      const built = await build({ root, logWriter: writer });
+      if (built.failed) {
+        const diagnostics = built.diagnostics || [];
+        // Contract 1: the raw transcript went to the log as debug; the
+        // extracted diagnostics go there as errors, which is what makes
+        // `logs --errors` show a build failure at all.
+        for (const diag of diagnostics) {
+          writer.write({ src: 'build', level: 'error', event: 'gradle_diagnostic', msg: formatDiagnostic(diag) });
+        }
+        phase('build', chalk.red(`FAILED after ${formatDuration(built.durationMs)}`));
+        const extracted = diagnostics.map(formatDiagnostic);
+        if (built.truncated > 0) extracted.push(`... and ${built.truncated} more diagnostic(s) in the log`);
+        return fail(built.code, built.reason,
+          // The remedy of a diagnostic beats the generic one: "set ANDROID_HOME"
+          // is the whole answer where it applies, and "read the log" is not.
+          diagnostics.find((d) => d.remedy)?.remedy || built.remedy || null,
+          {
+            lastBuildStatus: true,
+            diagnostics: extracted,
+            // Only when nothing could be extracted: the tail of a transcript is
+            // the worst of both worlds otherwise -- tokens, and no diagnosis.
+            lines: extracted.length ? [] : tail(built.lastLines),
+            logPath: displayPath(root, buildLog),
+          });
+      }
+      apkPath = built.apkPath;
+      phase('build', `${basename(apkPath)} (${formatDuration(built.durationMs)})`);
+
+      // `overwrite` only when --no-build-cache asked for a fresh build: the entry
+      // that is there is the one this run was told not to trust, and leaving it
+      // would mean the next run trusts it again.
+      try {
+        storeCached(PLATFORM, cacheKey, apkPath, { overwrite: !useBuildCache });
+      } catch (err) {
+        // A cache that cannot be written still builds; it just costs the next
+        // workspace a rebuild. Never a reason to fail a run that succeeded.
+        phase('cache', chalk.yellow(`could not store the build: ${err?.message || err}`));
+      }
+
+      // STARTED here, collected after the launch, so the upload overlaps the
+      // install instead of being added to it. Nothing in this run depends on it.
+      if (remote) {
+        uploadPending = uploadRemoteBuild({
+          provider: remote.provider,
+          platform: PLATFORM,
+          projectRoot: root,
+          fingerprintHash: hash,
+          buildPath: apkPath,
+        });
+      }
+    } finally {
+      releaseHeldLock();
     }
   }
   record.appPath = apkPath;
@@ -786,7 +915,10 @@ export async function runAndroid({
       abandonedRemote = true;
       phase('cache', chalk.yellow(`${remote.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`));
     } else if (upload?.failed) {
-      phase('cache', chalk.yellow(`${remote.name} upload failed: ${upload.failed}`));
+      const authNote = remote.name === 'eas' && isEasAuthFailureText(upload.failed)
+        ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
+        : null;
+      phase('cache', chalk.yellow(authNote || `${remote.name} upload failed: ${upload.failed}`));
     }
   }
 
@@ -858,6 +990,7 @@ export async function runAndroid({
     fingerprint: hash,
     cacheHit: record.cacheHit,
     cacheSkipped: !useBuildCache,
+    waitedForBuild,
     appPath: apkPath,
     bundleId: androidPackage,
     launched: launchState,

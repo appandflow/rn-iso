@@ -146,6 +146,43 @@ the EAS cache keeps serving `expo run` / CI builds while rn-iso's cache serves
 the agent loop. The two coexist; replacing one with the other only removes a
 cache someone was using.
 
+### `"buildCacheProvider": "eas"` needs a session, and says nothing when it has none
+
+*doctor checks this: eas-cli resolvable, logged in, and on an account that
+covers the project's `expo.owner`.*
+
+The EAS provider is the one whose failure mode is **silence by construction**.
+Both of its entry points wrap `npx eas-cli` in a `try { ... } catch { return
+null }` (read `eas-build-cache-provider/build/index.js` if you want to see it),
+so an expired session, a missing CLI and a genuinely empty cache all produce the
+same thing: a miss, on every build, with nothing in any log about
+authentication. A team can lose its shared cache for weeks this way.
+
+So a repo that opts into `"eas"` is opting every workspace into a login:
+
+- **Interactive machines**: `eas login`, once. The session lives in
+  `~/.expo/state.json` and is shared with the Expo CLI, so it survives across
+  worktrees and projects -- it is per machine, not per checkout.
+- **CI and headless agents**: `EXPO_TOKEN`. It overrides the stored session
+  entirely, and `eas whoami` then prints
+  `<name> (authenticated using EXPO_TOKEN)`.
+- **The account has to be the right one.** `expo.owner` in the app config is
+  what names it (`eas.json` has no owner field -- it is not there to check). A
+  session on an account that does not cover that owner reads and writes
+  nothing, and looks exactly like an empty cache.
+- **`eas.json` must exist in the project directory.** The provider returns
+  `null` before doing anything at all when it does not, which is the one
+  "configured but never hits" case that has nothing to do with auth.
+
+`rn-iso doctor` reports three findings here -- no eas-cli (cost), not logged in
+(cost), and a session whose accounts do not include `expo.owner` (a note: the
+account list `eas whoami` prints is not always complete, and access is the
+server's decision). `rn-iso ios` / `rn-iso android` run the same check before
+they consult the provider and print one yellow line when the session is
+definitively broken, then **build with the local cache only** -- a missing
+session costs the team tier, never the build. Offline is not an auth failure and
+is never reported as one.
+
 **When the config is code, find out before you conclude anything.** doctor will
 not execute an `app.config.ts` to read it, so its finding there says only that
 it could not check. One command answers it without running a build:

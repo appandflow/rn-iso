@@ -1,12 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   checkArtifactLayout,
   checkBuildCacheProvider,
   checkCompilationCache,
   checkCcacheConflict,
   checkDevClient,
+  checkEasAuth,
   checkMetroCache,
+  runDoctor,
   metroConfigDelegate,
   detectXcodeMajor,
   parseXcodeMajor,
@@ -310,4 +315,99 @@ test('the dynamic-config note says an existing provider is kept, as the static o
     assert.match(f.fix, /"eas"/, `SDK ${sdk}`);
     assert.match(f.fix, /never replaces it/, `SDK ${sdk}`);
   }
+});
+
+// --- the EAS session ---------------------------------------------------------
+//
+// The check exists because eas-build-cache-provider returns null on EVERY
+// failure (its own source: try/catch around `npx eas-cli`, catch -> return
+// null), so a team whose shared cache is off because nobody is logged in sees
+// exactly what a cold cache looks like. doctor is the place that can say so.
+test('a project with no EAS provider is not asked about EAS at all', () => {
+  let asked = false;
+  const f = checkEasAuth({ provider: { plugin: './local.js' }, auth: () => { asked = true; } });
+  assert.equal(f, null);
+  assert.equal(asked, false, 'whoami is a network call; it is not run for projects that do not use EAS');
+});
+
+test('the EAS provider with no eas-cli anywhere is a cost, with an install remedy', () => {
+  const f = checkEasAuth({ provider: 'eas', auth: { failed: true, code: 'no-cli', reason: 'no `eas` executable', remedy: 'Install eas-cli.' } });
+  assert.equal(f.level, 'cost');
+  assert.match(f.title, /eas-cli/);
+  assert.match(f.fix, /Install eas-cli/);
+});
+
+test('the EAS provider with no session is a cost naming both ways back in', () => {
+  const f = checkEasAuth({ provider: 'eas', auth: { failed: true, code: 'logged-out', reason: 'Not logged in', remedy: 'Run `eas login` (or set EXPO_TOKEN).' } });
+  assert.equal(f.level, 'cost');
+  assert.match(f.detail, /miss/i, 'the point is that it looks exactly like an empty cache');
+  assert.match(f.fix, /eas login/);
+  assert.match(f.fix, /EXPO_TOKEN/);
+});
+
+// A note rather than a cost, and the detail has to say why: whoami does not
+// always enumerate accounts (a robot actor prints a display name that is not an
+// account name), and access is the server's decision, not this list's.
+test('a session on an account that does not cover the owner is a NOTE naming both', () => {
+  const f = checkEasAuth({
+    provider: 'eas',
+    owner: 'th3rd-wave',
+    auth: { failed: true, code: 'wrong-account', account: 'janic', accounts: ['janic'], owner: 'th3rd-wave', remedy: 'Run `eas login` as a member of th3rd-wave.' },
+  });
+  assert.equal(f.level, 'note');
+  assert.match(f.title, /janic/);
+  assert.match(f.title, /th3rd-wave/);
+  assert.match(f.detail, /not a hard failure|may be incomplete|cannot be read/i);
+});
+
+// Offline is the case that must not produce a false alarm: whoami hits the
+// network whenever a session exists, and a plane is not a logged-out user.
+test('an unestablished session is a note about the check, not an accusation', () => {
+  const f = checkEasAuth({ provider: 'eas', auth: { unknown: 'eas whoami timed out after 15000ms' } });
+  assert.equal(f.level, 'note');
+  assert.match(f.detail, /timed out/);
+  assert.ok(!/not logged in/i.test(f.title), 'an unreachable API is not a logged-out session');
+});
+
+test('a good session is reported as nothing at all', () => {
+  assert.equal(checkEasAuth({ provider: 'eas', owner: 'janic', auth: { ok: true, account: 'janic', accounts: ['janic'] } }), null);
+});
+
+// The experiments key is where SDK 53 keeps it, and "eas" there is still EAS.
+test('the provider is recognised on either key', () => {
+  const auth = { failed: true, code: 'logged-out', remedy: 'Run `eas login`.' };
+  assert.ok(checkEasAuth({ provider: 'eas', auth }));
+});
+
+test('runDoctor probes the session only for an EAS project, and passes it the owner', () => {
+  const probes = [];
+  const auth = (args) => { probes.push(args); return { ok: true, account: 'janic', accounts: ['janic'] }; };
+
+  const easProject = mkdtempSync(join(tmpdir(), 'rn-iso-doctor-'));
+  writeFileSync(join(easProject, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
+  writeFileSync(join(easProject, 'app.json'), JSON.stringify({ expo: { owner: 'th3rd-wave', buildCacheProvider: 'eas' } }));
+  runDoctor(easProject, { easAuth: auth });
+  assert.equal(probes.length, 1);
+  assert.equal(probes[0].projectRoot, easProject);
+  assert.equal(probes[0].owner, 'th3rd-wave');
+
+  const otherProject = mkdtempSync(join(tmpdir(), 'rn-iso-doctor-'));
+  writeFileSync(join(otherProject, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
+  writeFileSync(join(otherProject, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: { plugin: '@rn-iso/expo-build-cache' } } }));
+  runDoctor(otherProject, { easAuth: auth });
+  assert.equal(probes.length, 1, 'a non-EAS project never pays for a whoami');
+
+  rmSync(easProject, { recursive: true, force: true });
+  rmSync(otherProject, { recursive: true, force: true });
+});
+
+test('the EAS finding reaches the report runDoctor returns', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rn-iso-doctor-'));
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
+  writeFileSync(join(dir, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: 'eas' } }));
+  const findings = runDoctor(dir, {
+    easAuth: () => ({ failed: true, code: 'logged-out', remedy: 'Run `eas login` (or set EXPO_TOKEN).' }),
+  });
+  assert.ok(findings.some(f => /EAS/.test(f.title) && f.level === 'cost'));
+  rmSync(dir, { recursive: true, force: true });
 });

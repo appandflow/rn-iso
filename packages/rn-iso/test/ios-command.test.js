@@ -125,9 +125,30 @@ function harness(overrides = {}) {
       record('loadProjectProvider', { projectRoot, ...opts });
       return { none: true };
     },
+    // Never the real one: it shells out to `eas whoami`, which is a network
+    // call. The EAS-session tests below override it with the state they are about.
+    checkEasAuth: (args) => {
+      record('checkEasAuth', args);
+      return { ok: true, account: 'janic' };
+    },
     resolveRemote: async (args) => {
       record('resolveRemote', args);
       return null;
+    },
+    // Single flight. The default is the ordinary case: nothing else on this
+    // machine is building this fingerprint, so the lock is free and this run
+    // is the one builder.
+    acquireBuildLock: (args) => {
+      record('acquireBuildLock', args);
+      return { acquired: true, path: join(tmpHome, 'build-locks', 'ios-k.lock'), lock: { pid: process.pid } };
+    },
+    releaseBuildLock: (handle) => {
+      record('releaseBuildLock', handle);
+      return true;
+    },
+    waitForBuild: async (args) => {
+      record('waitForBuild', args);
+      throw new Error('nothing should be waited for unless the lock was held');
     },
     uploadRemote: async (args) => {
       record('uploadRemote', args);
@@ -691,6 +712,93 @@ describe('the remote cache', () => {
     assert.match(errs.join('\n'), /could not be stored locally/);
   });
 
+  // The EAS provider is the one that cannot report its own failures:
+  // eas-build-cache-provider catches every error from `npx eas-cli` and returns
+  // null, so a logged-out machine gets a clean MISS on every build and no line
+  // anywhere says why. The pre-flight is what turns that into one line.
+  test('a logged-out EAS session skips the remote tier and says so, once', async () => {
+    reserve();
+    const { exitCode, calls, errs } = await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
+      checkEasAuth: () => ({ failed: true, code: 'logged-out', reason: 'Not logged in' }),
+    });
+    assert.equal(exitCode, null, 'a broken session never fails a build: the local cache still works');
+    assert.ok(calls.order.includes('buildIos'));
+    assert.ok(!calls.order.includes('resolveRemote'), 'there is nothing to ask a session that cannot answer');
+    assert.ok(!calls.order.includes('uploadRemote'), 'and nothing to upload with it either');
+    const lines = errs.join('\n').split('\n').filter((l) => /eas is not authenticated/.test(l));
+    assert.equal(lines.length, 1, 'ONE line');
+    assert.match(lines[0], /eas login/);
+    assert.match(lines[0], /EXPO_TOKEN/);
+    assert.match(lines[0], /local cache only/);
+  });
+
+  test('the session is checked with the owner the config named, and only once', async () => {
+    reserve();
+    const asked = [];
+    await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
+      checkEasAuth: (args) => { asked.push(args); return { ok: true, account: 'janic' }; },
+    });
+    assert.equal(asked.length, 1, 'one whoami per run, not one per call site');
+    assert.equal(asked[0].owner, 'th3rd-wave');
+    assert.equal(asked[0].projectRoot, root);
+  });
+
+  test('a custom provider is never asked about EAS at all', async () => {
+    reserve();
+    let asked = false;
+    const { calls } = await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => provider('./p.cjs'),
+      checkEasAuth: () => { asked = true; return { failed: true, code: 'logged-out' }; },
+    });
+    assert.equal(asked, false, 'somebody else\'s provider does not authenticate against EAS');
+    assert.ok(calls.order.includes('resolveRemote'));
+  });
+
+  // Offline is not logged out. whoami reaches the network whenever a session
+  // exists, so an unknown answer has to leave the run exactly as it was.
+  test('a session that could not be established changes nothing', async () => {
+    reserve();
+    const { calls, errs } = await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => provider(),
+      checkEasAuth: () => ({ unknown: 'eas whoami timed out after 15000ms' }),
+    });
+    assert.ok(calls.order.includes('resolveRemote'), 'the provider is still asked');
+    assert.ok(!/not authenticated/.test(errs.join('\n')));
+  });
+
+  test('a session on the wrong account warns, naming both, and still consults the cache', async () => {
+    reserve();
+    const { calls, errs } = await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
+      checkEasAuth: () => ({ failed: true, code: 'wrong-account', account: 'janic', owner: 'th3rd-wave' }),
+    });
+    assert.ok(calls.order.includes('resolveRemote'), 'access is the server\'s decision, not a local list\'s');
+    const line = errs.join('\n').split('\n').find((l) => /janic/.test(l));
+    assert.match(line, /th3rd-wave/);
+    assert.match(line, /anyway/);
+  });
+
+  // The other half: when a provider DOES surface an error, an auth one gets the
+  // same specific note rather than the generic "could not be used".
+  test('a provider failure that reads as auth gets the auth note, not the generic one', async () => {
+    reserve();
+    const { errs } = await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => provider(),
+      checkEasAuth: () => ({ unknown: 'offline' }),
+      resolveRemote: async () => ({ failed: 'Error: Not logged in' }),
+    });
+    assert.match(errs.join('\n'), /eas is not authenticated \(Error: Not logged in\)/);
+    assert.ok(!/could not be used/.test(errs.join('\n')));
+  });
+
   test('a failed upload is a note, never a failed run', async () => {
     reserve();
     const { exitCode, errs, logs } = await run({}, {
@@ -701,6 +809,221 @@ describe('the remote cache', () => {
     assert.equal(exitCode, null);
     assert.equal(logs.length, 1, 'stdout still carries exactly one line');
     assert.match(errs.join('\n'), /upload failed: 403 forbidden/);
+  });
+});
+
+// --- single-flight builds -------------------------------------------------
+//
+// Level one misses, level two missed or is not there, and the run is about to
+// spend nineteen minutes in xcodebuild. If another workspace on this machine
+// is ALREADY spending them on the same fingerprint, the answer is to wait for
+// its artifact, not to compile the same thing beside it. What is pinned here
+// is the wiring: WHEN the lock is attempted, that a loser never builds, that a
+// winner always releases, and that --no-build-cache is outside all of it.
+describe('single-flight builds', () => {
+  const heldBy = (pid = 41233, projectRoot = '/w/app-999') => ({
+    held: { pid, projectRoot, startedAt: '2026-08-25T10:00:00.000Z', logFile: `${projectRoot}/.rn-iso/logs/build-ios.ndjson` },
+    path: '/home/build-locks/ios-key.lock',
+  });
+
+  test('the lock is attempted only after BOTH cache levels have missed', async () => {
+    reserve();
+    const { calls } = await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+    });
+    const order = calls.order.filter((c) => ['resolveBuild', 'resolveRemote', 'acquireBuildLock', 'buildIos', 'storeBuild', 'releaseBuildLock'].includes(c));
+    assert.deepEqual(order, ['resolveBuild', 'resolveRemote', 'acquireBuildLock', 'buildIos', 'storeBuild', 'releaseBuildLock']);
+    assert.equal(calls.args.acquireBuildLock.platform, 'ios');
+    assert.equal(calls.args.acquireBuildLock.key, calls.args.resolveBuild.key);
+    assert.equal(calls.args.acquireBuildLock.root, root);
+    assert.equal(calls.args.acquireBuildLock.logFile, buildLogFile(root), 'the holder names the log a waiter should tail');
+  });
+
+  test('a local hit never takes the lock: there is nothing to build', async () => {
+    reserve();
+    const { calls } = await run({}, { resolveBuild: () => '/cache/Fixture.app' });
+    assert.ok(!calls.order.includes('acquireBuildLock'));
+    assert.ok(!calls.order.includes('waitForBuild'));
+  });
+
+  // A remote hit is an artifact in hand. Queueing behind someone else's
+  // compile of the same fingerprint would be slower than what we already have.
+  test('a remote hit never takes the lock either', async () => {
+    reserve();
+    const { calls } = await run({}, {
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      resolveRemote: async () => ({ appPath: '/downloads/Fixture.app' }),
+    });
+    assert.ok(!calls.order.includes('acquireBuildLock'));
+  });
+
+  // --no-build-cache means "compile this yourself, now". Waiting for another
+  // workspace's artifact is exactly what it was passed to avoid -- and taking
+  // the lock would make every other workspace wait on a build whose result
+  // they were not asking for.
+  test('--no-build-cache neither waits nor acquires', async () => {
+    reserve();
+    const { calls } = await run({ buildCache: false }, {
+      acquireBuildLock: () => { throw new Error('the lock must not be attempted'); },
+      waitForBuild: () => { throw new Error('nothing may be waited for'); },
+    });
+    assert.ok(calls.order.includes('buildIos'), 'it still compiles fresh');
+  });
+
+  test('the loser waits, installs the artifact, and compiles nothing', async () => {
+    reserve();
+    const waited = '/cache/ios/key/Fixture.app';
+    const { exitCode, calls, logs, stderr } = await run({ json: true }, {
+      acquireBuildLock: () => heldBy(41233, '/w/app-999'),
+      waitForBuild: async () => ({ hit: waited, waitedMs: 761000 }),
+      needsPrebuild: () => true,
+      readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+    });
+    assert.equal(exitCode, null);
+    assert.ok(!calls.order.includes('buildIos'), 'the whole point: one compile, not two');
+    assert.ok(!calls.order.includes('runPrebuild'));
+    assert.ok(!calls.order.includes('runPodInstall'));
+    assert.ok(!calls.order.includes('storeBuild'), 'the builder stored it already');
+    assert.ok(!calls.order.includes('releaseBuildLock'), 'a waiter never held the lock');
+    assert.equal(calls.args.installIosApp.appPath, waited);
+
+    const facts = JSON.parse(logs[0]);
+    assert.equal(facts.cacheHit, 'local', 'it came out of the local cache, like any other hit');
+    assert.deepEqual(facts.waitedForBuild, { pid: 41233, ms: 761000 });
+    assert.match(stderr, /waited 12m41s for \/w\/app-999's build -> installed from cache/);
+  });
+
+  test('a run that did not wait reports waitedForBuild: null', async () => {
+    reserve();
+    const { logs } = await run({ json: true });
+    assert.equal(JSON.parse(logs[0]).waitedForBuild, null);
+  });
+
+  test('the wait is announced when it starts, naming who is building and what to tail', async () => {
+    reserve();
+    const { stderr } = await run({}, {
+      acquireBuildLock: () => heldBy(41233, '/w/app-999'),
+      waitForBuild: async () => ({ hit: '/cache/Fixture.app', waitedMs: 1000 }),
+    });
+    assert.match(stderr, /\/w\/app-999/);
+    assert.match(stderr, /41233/);
+    assert.match(stderr, /build-ios\.ndjson/, 'the waiter is told which log to tail');
+  });
+
+  test('the wait gets the progress line onto stderr as it happens', async () => {
+    reserve();
+    const { stderr, logs } = await run({ json: true }, {
+      acquireBuildLock: () => heldBy(),
+      waitForBuild: async ({ out }) => {
+        out('build       waiting on /w/app-999 (pid 41233, 4m elapsed) -- tail /w/app-999/x.ndjson');
+        return { hit: '/cache/Fixture.app', waitedMs: 240000 };
+      },
+    });
+    assert.match(stderr, /waiting on \/w\/app-999 \(pid 41233, 4m elapsed\)/);
+    assert.equal(logs.length, 1, 'stdout still carries exactly one line');
+  });
+
+  // The builder died, or its build failed and it released without storing.
+  // Waiting longer would be waiting for nothing, so this run becomes the
+  // builder -- and takes the lock, so a third workspace waits on IT.
+  test('a builder that failed makes the waiter take over and build', async () => {
+    reserve();
+    let acquires = 0;
+    const { exitCode, calls, stderr } = await run({}, {
+      acquireBuildLock: () => (++acquires === 1 ? heldBy() : { acquired: true, path: '/lock', lock: { pid: process.pid } }),
+      waitForBuild: async () => ({ builderFailed: 'the build lock was released without an artifact', waitedMs: 4000 }),
+    });
+    assert.equal(exitCode, null);
+    assert.equal(acquires, 2, 'it takes the lock over rather than building beside a queue');
+    assert.ok(calls.order.includes('buildIos'));
+    assert.ok(calls.order.includes('releaseBuildLock'));
+    assert.match(stderr, /without an artifact/);
+  });
+
+  // Losing the takeover race too means a third workspace is now building. One
+  // wait is a good bet; queueing again after a failure could repeat forever,
+  // so this run just builds. A redundant build is the cheap failure here.
+  test('losing the takeover race builds anyway rather than queueing again', async () => {
+    reserve();
+    let waits = 0;
+    const { exitCode, calls } = await run({}, {
+      acquireBuildLock: () => heldBy(),
+      waitForBuild: async () => { waits++; return { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 }; },
+    });
+    assert.equal(exitCode, null);
+    assert.equal(waits, 1, 'it does not wait a second time');
+    assert.ok(calls.order.includes('buildIos'));
+    assert.ok(!calls.order.includes('releaseBuildLock'), 'it never held the lock, so it must not release one');
+  });
+
+  // The rule that keeps a machine from deadlocking: whatever happens to the
+  // build, the lock goes. A failed build that kept it would leave every other
+  // workspace on the fingerprint waiting for an artifact nobody is making.
+  test('a FAILED build releases the lock', async () => {
+    reserve();
+    const { exitCode, calls } = await run({}, {
+      buildIos: async () => ({ failed: true, code: 'RN_ISO_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
+    });
+    assert.equal(exitCode, 1);
+    assert.ok(calls.order.includes('releaseBuildLock'), 'a failed build must free its waiters');
+  });
+
+  // An exception is not a failure the command formats -- it propagates -- so
+  // `fail` never sees it and only the `finally` can free the waiters.
+  test('a build that THROWS releases the lock on the way out', async () => {
+    reserve();
+    let released = null;
+    await assert.rejects(() => run({}, {
+      buildIos: async () => { throw new Error('xcodebuild exploded'); },
+      releaseBuildLock: (handle) => { released = handle; return true; },
+    }), /xcodebuild exploded/);
+    assert.ok(released, 'the finally ran');
+    assert.equal(released.lock.pid, process.pid);
+  });
+
+  test('a prebuild or pod failure releases the lock too', async () => {
+    reserve();
+    const { exitCode, calls } = await run({}, {
+      detectIsExpo: () => true,
+      needsPrebuild: () => true,
+      runPrebuild: async () => ({ failed: true, code: 'RN_ISO_PREBUILD_FAILED', reason: 'no' }),
+    });
+    assert.equal(exitCode, 1);
+    assert.ok(!calls.order.includes('buildIos'));
+    assert.ok(calls.order.includes('releaseBuildLock'));
+  });
+
+  // A wedged builder is the one thing pid-liveness cannot see, so the wait has
+  // a ceiling. It surfaces as an ordinary refusal with a code, not a stack.
+  test('a wait that hits its ceiling is a refusal with a code, not a crash', async () => {
+    reserve();
+    const { exitCode, errs, logs, calls } = await run({ json: true }, {
+      acquireBuildLock: () => heldBy(),
+      waitForBuild: async () => {
+        const err = new Error('Waited 90m ... The lock is /home/build-locks/ios-key.lock');
+        err.code = 'RN_ISO_BUILD_WAIT_TIMEOUT';
+        err.lockPath = '/home/build-locks/ios-key.lock';
+        throw err;
+      },
+    });
+    assert.equal(exitCode, 1);
+    assert.ok(!calls.order.includes('buildIos'));
+    assert.match(errs.join('\n'), /RN_ISO_BUILD_WAIT_TIMEOUT/);
+    assert.equal(JSON.parse(logs[0]).code, 'RN_ISO_BUILD_WAIT_TIMEOUT');
+  });
+
+  // Same containment rule the cache store and the provider follow: this is an
+  // optimisation, and an optimisation that cannot run must not stop a build.
+  test('a lock that cannot be created is a note, and the build proceeds', async () => {
+    reserve();
+    const { exitCode, calls, errs } = await run({}, {
+      acquireBuildLock: () => { throw new Error('EROFS: read-only file system'); },
+    });
+    assert.equal(exitCode, null);
+    assert.ok(calls.order.includes('buildIos'));
+    assert.match(errs.join('\n'), /read-only file system/);
   });
 });
 
@@ -1195,11 +1518,21 @@ describe('iosFacts', () => {
       }),
       {
         platform: 'ios', udid: UDID, deviceName: 'rn-iso-x', fingerprint: 'abc',
-        cacheKey: 'abc-debug-sim', cacheHit: 'local', cacheSkipped: false, appPath: '/a/b.app',
+        cacheKey: 'abc-debug-sim', cacheHit: 'local', cacheSkipped: false, waitedForBuild: null,
+        appPath: '/a/b.app',
         bundleId: 'com.x', launched: true, metroPort: 8082, logs: { dir: '/w/.rn-iso/logs' },
         durationMs: 1234,
       }
     );
+  });
+
+  // A wait is reported ALONGSIDE cacheHit: 'local', never instead of it. The
+  // artifact really did come from the local cache; what this adds is that it
+  // was not there when the run started, and what it cost to get it.
+  test('waitedForBuild names the builder waited on and what the wait cost', () => {
+    const facts = iosFacts({ cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } });
+    assert.equal(facts.cacheHit, 'local');
+    assert.deepEqual(facts.waitedForBuild, { pid: 41233, ms: 761000 });
   });
 
   // The enum is the point: an agent that reads `true` cannot tell a free
