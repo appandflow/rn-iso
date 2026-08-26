@@ -60,8 +60,9 @@ interface CollectorStateRecord {
 
 type CollectorStateMap = Record<string, CollectorStateRecord | undefined>;
 
-// Local, flat shape for what teardown.ts's outcomes look like -- teardown.ts
-// is typed by another agent concurrently, so this is not imported from there.
+// Local, flat view of teardown.ts's outcomes -- deliberately looser (status as
+// a bare string) than the exported TeardownOutcome, reading only the fields
+// stop branches on.
 interface TeardownResult {
   status: string;
   kind?: string;

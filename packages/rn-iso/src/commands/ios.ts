@@ -76,10 +76,9 @@ export const PLATFORM = 'ios';
 
 // --- local, flat shapes for engine results ---------------------------------
 //
-// The engine modules (engine/*, sim/*) are being typed by other agents
-// concurrently and their exports may still be implicitly-typed. These
-// interfaces describe only the shape THIS file reads off their results, all
-// fields optional to match the defensive JS underneath.
+// These interfaces describe only the shape THIS file reads off the engine and
+// sim results -- a deliberately local, all-optional view, looser than the
+// producers' own exported types, matching the defensive reads underneath.
 
 interface DeviceLike {
   deviceName?: string | null;
@@ -955,12 +954,6 @@ export async function runIos(
   });
   if (capacity) return fail(capacity);
 
-  // device.ts's note/out params default to a 0-arg no-op, so TS infers their
-  // parameter type as `() => void` even though the real implementation calls
-  // them with a line of text. This adapter satisfies that (too-narrow)
-  // inferred type while still forwarding the text through.
-  const noteAny = (...args: unknown[]) => note(String(args[0] ?? ''));
-
   // ---- device: owned, and actually booted ----
   let device;
   try {
@@ -971,8 +964,8 @@ export async function runIos(
       label,
       settings,
       flags: {},
-      note: noteAny,
-      out: noteAny,
+      note,
+      out: note,
     });
   } catch (e) {
     return fail({
@@ -1035,7 +1028,7 @@ export async function runIos(
     note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${metroPort}.`));
   }
 
-  const booted = await d.ensureBooted({ platform: PLATFORM, device, out: noteAny });
+  const booted = await d.ensureBooted({ platform: PLATFORM, device, out: note });
   if (!booted?.ok) {
     return fail({
       code: 'RN_ISO_NO_DEVICE',
@@ -1479,8 +1472,9 @@ export async function runIos(
   // to fetch from was waived, so there is nothing to poll for and no reason to
   // spend 20 seconds proving it. The fact still is not `true` -- nothing was
   // verified -- it is simply reported in one line instead of a warning block.
-  // verifyLaunch is still untyped in engine/app-install.ts; read through the
-  // flat, all-optional local interface rather than its inferred return union.
+  // Read through a flat, all-optional local interface rather than
+  // verifyLaunch's return union -- this file branches only on
+  // `verified` / `skipped` / `waitedMs`.
   const verification: VerifyLaunchResultLike = metroCheck
     ? await d.verifyLaunch({ logsDir, since: launchedAt, mode: isExpo ? MODE_EXPO : MODE_BARE })
     : { verified: false, skipped: true };
@@ -1563,11 +1557,9 @@ export async function runIos(
     { write: d.writeWorkspaceState },
   );
 
-  // `writer` is assigned only inside the `logWriter` closure (via `||=`), which
-  // TS's control-flow analysis cannot see, so it narrows the outer binding to
-  // `never` here. The cast restates the real runtime type (a writer was created
-  // iff anything was logged); it is not `any`.
-  (writer as NdjsonWriter | null)?.close?.();
+  // `writer` is created lazily inside the logWriter closure (one exists iff
+  // anything was logged); close it if so.
+  writer?.close?.();
 
   const facts = iosFacts({
     udid,

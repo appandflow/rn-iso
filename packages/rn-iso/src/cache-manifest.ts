@@ -41,7 +41,13 @@ export function readManifest(path: string = manifestPath()): { version: number; 
   if (!existsSync(path)) return { version: 1, caches: [] };
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8'));
-    return { version: 1, caches: Array.isArray(parsed?.caches) ? parsed.caches : [] };
+    // Validate at the disk boundary rather than trusting the file: an entry
+    // without a string `dir` is unusable (register/expand/gc all key on it), so
+    // dropping it here is what makes the CacheEntry[] type honest.
+    const caches = Array.isArray(parsed?.caches)
+      ? (parsed.caches as unknown[]).filter((c): c is CacheEntry => typeof (c as { dir?: unknown })?.dir === 'string')
+      : [];
+    return { version: 1, caches };
   } catch {
     // A corrupt manifest must not take `gc` down with it: the caches it
     // described are still on disk, and the worst case is that they go back to

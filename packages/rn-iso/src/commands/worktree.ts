@@ -656,11 +656,9 @@ export function removalBlockers({ dirty, unpushed }: { dirty: boolean | null; un
 // they differ so the two lines are visibly the same device; android skips have
 // no separate udid (their `name` already is the AVD name), so this is a no-op
 // for them.
-// reclaim.ts is owned by another agent and, like the rest of this codebase's
-// in-flight migration, does not (yet) declare the shape of what it returns.
-// This is the shape reclaimAll/registerRemove actually read off a skipped
-// device entry -- named locally rather than imported so this file does not
-// depend on reclaim.ts's types settling first.
+// The shape reclaimAll/registerRemove read off a skipped device entry. Kept
+// local (and looser -- `platform` optional) rather than importing reclaim.ts's
+// own SkippedDevice, whose `platform` is a required 'ios' | 'android'.
 interface SkippedDevice {
   platform?: string;
   name: string;
@@ -674,7 +672,7 @@ function describeKeptDevice(s: SkippedDevice): string {
 
 // The aggregate reclaimAll produces across every registered key under a
 // worktree root -- see the comment above this function for why there can be
-// more than one. Named locally for the same reason as SkippedDevice above.
+// more than one. Distinct from reclaim.ts's per-project ReclaimResult.
 interface ReclaimAllResult {
   dereferenced: string[];
   killedPids: number[];

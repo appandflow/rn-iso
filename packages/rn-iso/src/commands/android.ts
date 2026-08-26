@@ -95,10 +95,9 @@ export const PLATFORM = 'android';
 
 // --- local, flat shapes for engine results ---------------------------------
 //
-// The engine modules (engine/*, sim/*) are being typed by other agents
-// concurrently and their exports may still be implicitly-typed. These
-// interfaces describe only the shape THIS file reads off their results, all
-// fields optional to match the defensive JS underneath.
+// These interfaces describe only the shape THIS file reads off the engine and
+// sim results -- a deliberately local, all-optional view, looser than the
+// producers' own exported types, matching the defensive reads underneath.
 
 interface SupervisorLike {
   pid?: number;
@@ -1400,8 +1399,9 @@ export async function runAndroid(
   // Skipped under --no-metro-check, for the reason given in commands/ios.js:
   // the gate was waived, so there is nothing to poll for. The fact still is
   // not `true`.
-  // verifyLaunch is still untyped in engine/app-install.ts; read through the
-  // flat, all-optional local interface rather than its inferred return union.
+  // Read through a flat, all-optional local interface rather than
+  // verifyLaunch's return union -- this file branches only on
+  // `verified` / `skipped` / `waitedMs`.
   const verification: VerifyLaunchResultLike = metroCheck
     ? await verifyLaunched({ logsDir, since: launchedAt, mode: isExpo ? MODE_EXPO : MODE_BARE })
     : { verified: false, skipped: true };
