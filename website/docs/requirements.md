@@ -1,0 +1,10 @@
+---
+title: 'Requirements'
+sidebar_position: 4
+description: 'What rn-iso needs from the machine'
+---
+
+- macOS (iOS); macOS or Linux (Android)
+- Node 20+
+- Xcode (iOS), Android SDK + at least one installed arm64 system image (Android)
+- `expo` or `react-native` in the project's `package.json`
