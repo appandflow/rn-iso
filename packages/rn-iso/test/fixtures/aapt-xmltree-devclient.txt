@@ -1,0 +1,89 @@
+# Captured verbatim from `aapt dump xmltree <apk> AndroidManifest.xml` on a
+# real expo-dev-client debug APK (com.th3rdwave 7.0.7, built by rn-iso's own
+# gradle path and pulled out of the shared build cache), then TRIMMED to the
+# activities that matter: the launchable one, a third-party SDK's deep-link
+# interceptor, and expo-dev-launcher's own AuthActivity. Nothing else is
+# edited -- the indentation, the `@0x...` unresolved resource reference on
+# MainActivity's first VIEW filter, and the attribute spelling are as aapt
+# printed them.
+#
+# The trap this fixture exists for: `expo-dev-launcher` IS a scheme in this
+# manifest, and it is the LONGEST one, so picking by length (which is what
+# Expo's own CLI does) deep-links into the launcher's OAuth callback
+# activity rather than into the app.
+
+N: android=http://schemas.android.com/apk/res/android
+  E: manifest (line=2)
+    E: application (line=210)
+      E: activity (line=262)
+        A: android:theme(0x01010000)=@0x7f140137
+        A: android:label(0x01010001)=@0x7f130021
+        A: android:name(0x01010003)="com.th3rdwave.MainActivity" (Raw: "com.th3rdwave.MainActivity")
+        A: android:exported(0x01010010)=(type 0x12)0xffffffff
+        A: android:launchMode(0x0101001d)=(type 0x10)0x2
+        A: android:screenOrientation(0x0101001e)=(type 0x10)0x1
+        A: android:configChanges(0x0101001f)=(type 0x11)0x6b0
+        A: android:windowSoftInputMode(0x0101022b)=(type 0x11)0x10
+        A: android:supportsPictureInPicture(0x010104f7)=(type 0x12)0xffffffff
+        E: intent-filter (line=272)
+          E: action (line=273)
+            A: android:name(0x01010003)="android.intent.action.MAIN" (Raw: "android.intent.action.MAIN")
+          E: category (line=275)
+            A: android:name(0x01010003)="android.intent.category.LAUNCHER" (Raw: "android.intent.category.LAUNCHER")
+        E: intent-filter (line=277)
+          E: action (line=278)
+            A: android:name(0x01010003)="com.th3rdwave.ACTION.NOTIFICATION" (Raw: "com.th3rdwave.ACTION.NOTIFICATION")
+          E: category (line=280)
+            A: android:name(0x01010003)="android.intent.category.DEFAULT" (Raw: "android.intent.category.DEFAULT")
+        E: intent-filter (line=285)
+          E: action (line=286)
+            A: android:name(0x01010003)="android.intent.action.VIEW" (Raw: "android.intent.action.VIEW")
+          E: category (line=288)
+            A: android:name(0x01010003)="android.intent.category.DEFAULT" (Raw: "android.intent.category.DEFAULT")
+          E: category (line=289)
+            A: android:name(0x01010003)="android.intent.category.BROWSABLE" (Raw: "android.intent.category.BROWSABLE")
+          E: data (line=291)
+            A: android:scheme(0x01010027)=@0x7f1300c6
+        E: intent-filter (line=296)
+          E: data (line=297)
+            A: android:scheme(0x01010027)="th3rdwave" (Raw: "th3rdwave")
+          E: action (line=299)
+            A: android:name(0x01010003)="android.intent.action.VIEW" (Raw: "android.intent.action.VIEW")
+          E: category (line=301)
+            A: android:name(0x01010003)="android.intent.category.DEFAULT" (Raw: "android.intent.category.DEFAULT")
+          E: category (line=302)
+            A: android:name(0x01010003)="android.intent.category.BROWSABLE" (Raw: "android.intent.category.BROWSABLE")
+        E: intent-filter (line=307)
+      E: activity (line=497)
+        A: android:theme(0x01010000)=@0x01030010
+        A: android:name(0x01010003)="com.reactnativestripesdk.StripeConnectDeepLinkInterceptorActivity" (Raw: "com.reactnativestripesdk.StripeConnectDeepLinkInterceptorActivity")
+        A: android:exported(0x01010010)=(type 0x12)0xffffffff
+        A: android:excludeFromRecents(0x01010017)=(type 0x12)0xffffffff
+        A: android:launchMode(0x0101001d)=(type 0x10)0x2
+        A: android:noHistory(0x0101022d)=(type 0x12)0xffffffff
+        E: intent-filter (line=504)
+          E: action (line=505)
+            A: android:name(0x01010003)="android.intent.action.VIEW" (Raw: "android.intent.action.VIEW")
+          E: category (line=507)
+            A: android:name(0x01010003)="android.intent.category.DEFAULT" (Raw: "android.intent.category.DEFAULT")
+          E: category (line=508)
+            A: android:name(0x01010003)="android.intent.category.BROWSABLE" (Raw: "android.intent.category.BROWSABLE")
+          E: data (line=510)
+            A: android:scheme(0x01010027)="stripe-connect" (Raw: "stripe-connect")
+      E: activity (line=539)
+        A: android:theme(0x01010000)=@0x7f1402e9
+        A: android:name(0x01010003)="expo.modules.devlauncher.compose.AuthActivity" (Raw: "expo.modules.devlauncher.compose.AuthActivity")
+        A: android:exported(0x01010010)=(type 0x12)0xffffffff
+        A: android:launchMode(0x0101001d)=(type 0x10)0x2
+        E: intent-filter (line=544)
+          E: action (line=545)
+            A: android:name(0x01010003)="android.intent.action.VIEW" (Raw: "android.intent.action.VIEW")
+          E: category (line=547)
+            A: android:name(0x01010003)="android.intent.category.DEFAULT" (Raw: "android.intent.category.DEFAULT")
+          E: category (line=548)
+            A: android:name(0x01010003)="android.intent.category.BROWSABLE" (Raw: "android.intent.category.BROWSABLE")
+          E: data (line=550)
+            A: android:scheme(0x01010027)="expo-dev-launcher" (Raw: "expo-dev-launcher")
+      E: activity (line=553)
+        A: android:theme(0x01010000)=@0x7f140308
+        A: android:name(0x01010003)="expo.modules.devlauncher.launcher.errors.DevLauncherErrorActivity" (Raw: "expo.modules.devlauncher.launcher.errors.DevLauncherErrorActivity")

@@ -1,6 +1,21 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { getExecutor } from './exec.js';
+import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.js';
+
+// `.rn-iso/` is never carried into a new worktree, at any depth and whatever
+// any pattern file says. It holds THIS workspace's derived data, its logs and
+// the supervisor pidfile: build output keyed to a path the new worktree does
+// not have, and a pidfile naming a process that is not running. Carrying that
+// is strictly worse than starting cold, so it is code rather than
+// configuration -- `.worktreeexclude` extends this list and cannot shorten it.
+//
+// Matched segment-wise rather than by prefix because a monorepo has one of
+// these per app directory (`apps/mobile/.rn-iso`), and because the entry `git
+// ls-files --directory` collapses to is the directory itself.
+export function isWorkspaceArtifact(rel) {
+  return String(rel).split('/').includes(WORKSPACE_DIR);
+}
 
 export function gitCommonDir(cwd) {
   const out = getExecutor().runQuiet(`git -C "${cwd}" rev-parse --path-format=absolute --git-common-dir`);
@@ -99,6 +114,7 @@ export function carryOverFiles({ root, target, patterns }) {
   const copied = [];
   const failed = [];
   for (const rel of listGitignoredFiles(root)) {
+    if (isWorkspaceArtifact(rel)) continue;
     if (!matchesInclude(rel, patterns)) continue;
     const from = join(root, rel);
     const to = join(target, rel);
@@ -132,6 +148,10 @@ export function listGitignoredEntries(root) {
 // surfaces as a confusing build error, whereas the failure mode of naming what
 // to skip is a directory copied needlessly.
 //
+// `patterns` are the caller's additions on top of the built-in exclusion of
+// `.rn-iso/` (see isWorkspaceArtifact): they extend it, and cannot un-exclude
+// it.
+//
 // `cloned` is false when `cp -c` was refused and the entry had to be copied for
 // real -- APFS clonefiles only work same-volume, and that is the difference
 // between ~40 MB and several GB per worktree, so the caller warns about it.
@@ -140,6 +160,7 @@ export function cloneIgnoredEntries({ root, target, patterns }) {
   const failed = [];
   let cloned = true;
   for (const rel of listGitignoredEntries(root)) {
+    if (isWorkspaceArtifact(rel)) continue;
     if (matchesInclude(rel, patterns)) continue;
     const from = join(root, rel);
     const to = join(target, rel);
@@ -223,8 +244,43 @@ export function hasUncommittedWork(dir) {
 export function dirtyPaths(dir, { limit = 10 } = {}) {
   const out = getExecutor().runQuiet(`git -C "${dir}" status --porcelain`);
   if (out === null) return [];
-  const lines = out.split('\n').map(l => l.trimEnd()).filter(Boolean);
+  const lines = out.split('\n').map(l => normalizePorcelainLine(l.trimEnd())).filter(Boolean);
   return lines.slice(0, limit);
+}
+
+// The executor trims the WHOLE command output (src/exec.js), which eats the
+// leading space of a first line whose status is unstaged-only: git's ` M
+// ios/Podfile.lock` arrives as `M ios/Podfile.lock`, one column short. Every
+// consumer of these lines slices a fixed two-character status field
+// (porcelainPath, isPodInstallChurn, the `??` test in removalRemedy), so the
+// damaged line silently mis-parsed -- `porcelainPath` returned `s/Podfile.lock`
+// for it, and the workspace-artifact and self-healed-gitignore filters could
+// never match the first line of a listing. Re-shape it here, once, rather than
+// teach every consumer about it.
+//
+// A well-formed porcelain line always has a space in column three; a damaged
+// one has the first character of the path there, and cannot itself start with a
+// space (it was trimmed). So the test is exact, not a guess.
+function normalizePorcelainLine(line) {
+  if (line === '' || line[2] === ' ') return line;
+  return ` ${line}`;
+}
+
+// The UNSTAGED diff of one path -- worktree against index, which is exactly the
+// change `git checkout -- <file>` would undo. Null when git could not answer,
+// which callers must read as "no idea", never as "no change".
+//
+// The path is interpolated into a shell command, so it is only ever passed one
+// the caller has already constrained (see SAFE_DIFF_PATH in commands/worktree.js);
+// `--` keeps a leading dash from being read as an option either way.
+export function unstagedDiff(dir, file) {
+  return getExecutor().runQuiet(`git -C "${dir}" diff -- "${file}"`);
+}
+
+// Restores one path from the index. False when git refused or could not run,
+// so a caller can say so rather than assume the file is back.
+export function restoreFile(dir, file) {
+  return getExecutor().runQuiet(`git -C "${dir}" checkout -- "${file}"`) !== null;
 }
 
 // Whether the dirty set is only the files a `pod install` rewrites. That is the
@@ -275,6 +331,22 @@ export function branchExists(cwd, branch) {
   return Boolean(out);
 }
 
+// The short sha `ref` names, or null when this repo cannot resolve it to a
+// commit at all. One call does both jobs `worktree create --base` needs: it
+// VALIDATES the ref (an unresolvable one must not reach `git worktree add`,
+// which would leave a half-made worktree behind) and produces the sha the
+// command prints, so a tester can tell what the branch was actually cut from.
+//
+// `^{commit}` rather than the bare ref: a tag object resolves to itself under a
+// plain rev-parse, and `git worktree add` wants the commit. --quiet keeps a
+// miss at exit 1 with no stderr, which runQuiet turns into null.
+export function resolveRef(cwd, ref) {
+  const out = getExecutor().runQuiet(
+    `git -C "${cwd}" rev-parse --verify --quiet --short "${ref}^{commit}"`
+  );
+  return out && out.trim() ? out.trim() : null;
+}
+
 export function addWorktree({ path, branch, baseRef, cwd }) {
   mkdirSync(dirname(path), { recursive: true });
   // Name reuse is likely from phone/agent-spawned sessions ("fix-login",
@@ -318,10 +390,12 @@ export function listWorktrees(cwd) {
   return entries;
 }
 
-// `baseRef` here is one of the sentinel strings callers pass ('fresh' or
-// 'head'), not a git ref itself. 'head' means "branch from the current
-// HEAD"; anything else (in practice always 'fresh') means "branch from the
-// repository's default branch on the remote", resolved via origin/HEAD.
+// `baseRef` here is one of the two SENTINEL strings callers pass, not a git ref
+// itself. 'head' means "branch from the current HEAD"; 'fresh' means "branch
+// from the repository's default branch on the remote", resolved via origin/HEAD.
+// A caller passing a real ref does not come through here at all -- see
+// registerCreate, which only translates the sentinels and hands anything else
+// to git as written.
 export function resolveBaseRef(cwd, baseRef) {
   if (baseRef === 'head') return 'HEAD';
   const head = getExecutor().runQuiet(`git -C "${cwd}" rev-parse --abbrev-ref origin/HEAD`);

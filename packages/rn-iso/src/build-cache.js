@@ -17,14 +17,18 @@
 // same rules (see buildCacheKey below); changing one without the other splits
 // the two entry points onto separate sets of entries.
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, utimesSync } from 'fs';
-import { homedir } from 'os';
 import { basename, dirname, join } from 'path';
 import { createRequire } from 'module';
 import { getExecutor } from './exec.js';
 import { register } from './cache-manifest.js';
+import { sharedBuildCache } from './paths.js';
 
+// One line, but the one that decides whether the CLI and the provider address
+// the same entries at all: src/paths.js owns the resolution, and
+// packages/expo-build-cache/index.js repeats it because it must run with no
+// rn-iso installed. See the note above sharedBuildCache.
 export function cacheRoot() {
-  return process.env.RN_ISO_BUILD_CACHE || join(homedir(), '.rn-iso-build-cache');
+  return sharedBuildCache();
 }
 
 export function entryDir(platform, key, root = cacheRoot()) {
@@ -113,14 +117,37 @@ export function loadFingerprinter(projectRoot) {
   return null;
 }
 
-export async function fingerprintProject(projectRoot) {
-  const fp = loadFingerprinter(projectRoot);
+// The platforms @expo/fingerprint accepts as a scope (options.platforms:
+// Platform[]). Anything else is not passed at all -- an unrecognized value
+// would scope the hash to nothing native and give every project on the machine
+// the same key.
+const FINGERPRINT_PLATFORMS = new Set(['ios', 'android']);
+
+/**
+ * The @expo/fingerprint hash of the project's native inputs, SCOPED to the
+ * platform being built.
+ *
+ * THE SCOPE IS THE POINT, and it was measured: without it,
+ * `createFingerprintAsync(root)` hashes ios/ AND android/ into one hash, so the
+ * ANDROID cache key changes whenever anything under ios/ does. On th3rdwave's
+ * tlon-apps that is not a rare event -- the hermes-engine podspec bakes the
+ * absolute worktree path into ios/Podfile.lock, so two worktrees of the same
+ * commit differ under ios/ by construction and `rn-iso android` missed the
+ * shared cache 100% of the time across worktrees. Scoping to ['android'] made
+ * both worktrees hash identically.
+ *
+ * `load` is injected only so the option threading is testable without a real
+ * @expo/fingerprint on disk.
+ */
+export async function fingerprintProject(projectRoot, { platform, load = loadFingerprinter } = {}) {
+  const fp = load(projectRoot);
   if (!fp) return null;
-  const result = await fp.createFingerprintAsync(projectRoot);
+  const options = FINGERPRINT_PLATFORMS.has(platform) ? { platforms: [platform] } : undefined;
+  const result = await fp.createFingerprintAsync(projectRoot, options);
   return result?.hash ?? null;
 }
 
-// Registration is what makes an entry visible to `gc --caches`, and every entry
+// Registration is what makes an entry visible to `gc`'s report, and every entry
 // is an independent directory, so old ones can be trimmed individually. The
 // entries sit two levels down -- <root>/<platform>/<key> -- so gc must be told
 // that, or it treats ios/ and android/ as the entries and one removal takes a
@@ -153,7 +180,26 @@ export function resolveBuild(platform, key, root = cacheRoot()) {
   return hit;
 }
 
-export function storeBuild(platform, key, buildPath, root = cacheRoot()) {
+// The fourth argument is the cache ROOT (a string, which is what every caller
+// passed before options existed) or an options object `{ root, overwrite }`.
+// Both forms are supported rather than one being migrated, because the string
+// form is how the tests address a temp cache and there is nothing wrong with
+// it.
+//
+// `overwrite` exists for `--no-build-cache`. Keeping an existing entry is right
+// by default -- two worktrees building the same fingerprint produce the same
+// app, and the first one there wins without a redundant copy. But it also
+// meant an entry could never be REPLACED, so a poisoned one (a build that
+// links a stale pod, a copy interrupted by something other than the staging
+// rename) survived every attempt to get rid of it short of `gc`. That is
+// exactly the situation "build it again without the cache" exists to fix, so
+// the flag that says so replaces the entry. The write is atomic either way:
+// the staging directory is renamed over the destination.
+export function storeBuild(platform, key, buildPath, rootOrOptions = {}) {
+  const options = typeof rootOrOptions === 'string' ? { root: rootOrOptions } : (rootOrOptions || {});
+  const root = options.root || cacheRoot();
+  const overwrite = Boolean(options.overwrite);
+
   if (!buildPath || !existsSync(buildPath)) {
     throw new Error(`No build to store at ${buildPath}`);
   }
@@ -161,7 +207,7 @@ export function storeBuild(platform, key, buildPath, root = cacheRoot()) {
 
   const dest = entryDir(platform, key, root);
   const existing = artifactIn(dest);
-  if (existing) return existing;
+  if (existing && !overwrite) return existing;
 
   // Stage in a sibling and rename into place: a copy interrupted halfway must
   // never be readable as a complete entry by a worktree building in parallel,

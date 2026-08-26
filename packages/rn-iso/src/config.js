@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { isOnMountedVolume } from './artifacts.js';
+import { isOnMountedVolume } from './fs-util.js';
 
 export function getConfigDir() {
   return process.env.RN_ISO_HOME || join(homedir(), '.rn-iso');
@@ -20,7 +20,7 @@ function ensureDir() {
 //
 // Every mutator below is a read-modify-write of one JSON file, and several
 // rn-iso commands can run at once (a `worktree create` per agent, each
-// followed by its own `up`). Two of them interleaving lose one side's
+// followed by its own `start` and `ios`). Two of them interleaving lose one side's
 // device record entirely, so the read, the modify and the write happen
 // while this lock is held.
 //
@@ -210,7 +210,7 @@ export function removeProject(projectPath) {
 
 // Records `port` for this project only if the config, read under the lock,
 // still shows it unclaimed by another project. Returns the recorded port, or
-// null when another project claimed it in the meantime -- two `up` runs can
+// null when another project claimed it in the meantime -- two `start` runs can
 // probe the same free port at the same time, and the probe result is stale by
 // the time either writes. The caller allocates again on null, which sees the
 // winner's claim and moves on to the next port.
@@ -246,6 +246,44 @@ export function clearDevice(projectPath, platform) {
     const cfg = loadConfig();
     if (!cfg?.projects?.[projectPath]?.platforms) return;
     delete cfg.projects[projectPath].platforms[platform];
+    saveConfig(cfg);
+  });
+}
+
+// --- The supervisor registration --------------------------------------
+//
+// The workspace already records its supervisor in <root>/.rn-iso/state.json,
+// which is where `stop` and `status` read it from. This second copy is the
+// GLOBAL one, and it exists for the case the workspace copy cannot cover: a
+// worktree deleted out from under a running supervisor takes state.json with
+// it, and without an entry here the process is unfindable -- it keeps holding
+// a port and a watchman subscription with nothing left that names it. Same
+// reasoning as the device records: the registry outlives the workspace.
+//
+// Unlike setDevice, an unregistered project is CREATED rather than rejected.
+// The registration is written before the server starts, so refusing it because
+// nobody ran a broker command first would trade the one record that makes a
+// crashed supervisor findable for a consistency rule with nothing behind it.
+// metroPort is deliberately left alone: the port belongs to the reservation
+// logic (claimMetroPort), and inventing a claim here could take a port another
+// project already reserved.
+export function setSupervisor(projectPath, { pid, port, startedAt }) {
+  return withConfigLock(() => {
+    const cfg = ensureConfig();
+    if (!cfg.projects[projectPath]) {
+      cfg.projects[projectPath] = { metroPort: null, platforms: {} };
+    }
+    cfg.projects[projectPath].supervisor = { pid, port, startedAt };
+    saveConfig(cfg);
+    return cfg.projects[projectPath].supervisor;
+  });
+}
+
+export function clearSupervisor(projectPath) {
+  withConfigLock(() => {
+    const cfg = loadConfig();
+    if (!cfg?.projects?.[projectPath]?.supervisor) return;
+    delete cfg.projects[projectPath].supervisor;
     saveConfig(cfg);
   });
 }
@@ -401,7 +439,7 @@ export function findProjectByMetroPort(port) {
   return null;
 }
 
-// Ownership (not claims/reservations) is the model now: `up` records a
+// Ownership (not claims/reservations) is the model now: `ios` / `android` record a
 // device directly on the owning project. The only thing that still needs a
 // cross-project view is avoiding console-port / physical-serial collisions
 // when creating a new owned Android device.
@@ -415,11 +453,11 @@ export function allConsolePortsAndSerials({ isMounted = isOnMountedVolume } = {}
   for (const [path, proj] of Object.entries(cfg.projects || {})) {
     // Entries from project paths that no longer exist on disk are orphaned --
     // nothing can ever run from a deleted worktree again -- so their ports
-    // and serials are free to reuse. `prune` removes the dead entries.
+    // and serials are free to reuse. `gc --delete` removes the dead entries.
     // A path on a volume that is not mounted right now only looks gone (this
     // machine's repos live on an external SSD), and its emulator may well be
     // running: handing its console port to a second emulator would collide,
-    // so it keeps its claim, the same direction gc and prune fail in.
+    // so it keeps its claim, the same direction gc fails in.
     if (!existsSync(path) && isMounted(path)) continue;
     const android = proj.platforms?.android;
     if (typeof android?.consolePort === 'number') {

@@ -37,8 +37,8 @@ The cache registers itself with [`rn-iso`](https://www.npmjs.com/package/rn-iso)
 if it is installed, so it can be reported and trimmed:
 
 ```bash
-npx rn-iso gc --caches                            # what it has grown to
-npx rn-iso gc --caches --delete --older-than 30   # drop entries unused for 30 days
+npx rn-iso gc                            # what it has grown to (reported on every run)
+npx rn-iso gc --delete --older-than 30   # drop entries unused for 30 days
 ```
 
 rn-iso is an optional peer. Without it the cache works exactly the same; it is

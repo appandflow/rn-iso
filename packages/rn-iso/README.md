@@ -1,6 +1,8 @@
 # rn-iso
 
-An environment broker for React Native / Expo: `rn-iso up <platform>` creates (or reuses) a dedicated, **owned** simulator/emulator and reserves a Metro port for the current project, then hands you the facts -- UDID/serial, port, bundle id -- so you (or your coding agent) can start Metro and run the project's own build. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
+The React Native / Expo CLI for AI agents. One isolated dev environment per project or worktree: `rn-iso start` runs the dev server on a reserved, collision-free Metro port under a detached supervisor; `rn-iso ios` / `rn-iso android` boot a dedicated, **owned** simulator/emulator, install a build from a shared fingerprint cache when nothing native changed, and launch the app wired to that port; `rn-iso logs --errors` answers "did that work" from a captured timeline instead of a scraped terminal. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
+
+It never prompts, prints on the order of ten lines, takes `--json` everywhere, and reports a failing build as the *extracted* compiler diagnostic plus a log path rather than four thousand lines of transcript.
 
 > **Experimental.** APIs, flags, and on-disk state may change. File issues if anything breaks.
 
@@ -24,11 +26,14 @@ else's Metro. When an agent is killed mid-run it leaves a simulator booted, a
 Metro squatting on a port, and an `xcodebuild` test runner pinning a device
 nothing can now delete.
 
-That is the whole job of this tool: arbitrate the contended resources, and
-reclaim them when the agent that owned them dies badly. Everything else --
-which build command, which bundler flags, when to install -- is judgment a
-coding agent already has from reading the repo, and rn-iso deliberately does
-not take it back.
+That is the first job of this tool: arbitrate the contended resources, and
+reclaim them when the agent that owned them dies badly. The second is the dev
+server, which every agent otherwise backgrounds by hand and then scrapes a log
+file for: `start` runs it on the reserved port and captures its output as
+structured records, so `logs --errors` replaces the scraping. What stays out is
+the build -- which command, which flags, when to install -- because that is
+judgment a coding agent already has from reading the repo, and rn-iso
+deliberately does not take it back.
 
 ### Where local honestly loses
 
@@ -39,9 +44,8 @@ not take it back.
   just work. Locally every worktree sits somewhere different, and those caches
   quietly miss everything -- measured on one project as 0 ccache hits out of
   1094 across two workspaces. It is fixable, but it is a tax cloud does not pay.
-- **Disk grows without bound.** Simulators, DerivedData and the shared caches
-  that make any of this fast all accumulate. `gc` and `gc --caches` exist for
-  that reason.
+- **Disk grows without bound.** Simulators and the shared caches that make any
+  of this fast all accumulate. `gc` exists for that reason.
 
 State lives in `~/.rn-iso/config.json`, keyed by absolute project path. Worktrees count as separate projects. There is no shared mutex -- each project gets its own port and its own device.
 
@@ -50,34 +54,53 @@ State lives in `~/.rn-iso/config.json`, keyed by absolute project path. Worktree
 Run via `npx` from any RN/Expo project directory -- no install needed:
 
 ```bash
-npx rn-iso up ios --json     # ensure an owned sim + Metro port; print the facts
+npx rn-iso start             # dev server on a reserved port, under a supervisor
+npx rn-iso ios               # owned sim booted, app installed and launched on it
+npx rn-iso logs --errors     # no output + exit 0 = nothing is broken
+npx rn-iso stop              # supervisor down, sim shut down, port freed
 ```
+
+```
+$ npx rn-iso start
+OK: dev server on port 8082, supervisor pid 41233 (expo-child)
+
+$ npx rn-iso ios
+device      rn-iso-myproject (BF2A..) booted
+fingerprint a3f9b1.. hit
+install     from cache (3.1s)
+launch      com.example.app
+OK: com.example.app launched on BF2A..
+```
+
+The order is not optional: `ios` / `android` never start the bundler, so with nothing holding the reserved port they refuse in about a second with `RN_ISO_NO_METRO` instead of spending four minutes building an app that cannot load a bundle.
+
+Each command takes `--json` and then prints exactly one line of JSON on stdout, with every other line on stderr:
 
 ```json
-{"platform":"ios","owned":true,"metroPort":8082,"metroHealthy":false,"metroConflict":null,"bundleId":"io.tlon.groups","udid":"ABC-...","deviceName":"rn-iso-myproject"}
+{"platform":"ios","udid":"BF2A-...","deviceName":"rn-iso-myproject","fingerprint":"a3f9b1...","cacheKey":"...","cacheHit":"local","cacheSkipped":false,"appPath":"/...","bundleId":"com.example.app","launched":true,"metroPort":8082,"logs":{"dir":"/path/.rn-iso/logs"},"durationMs":9412}
 ```
 
-`up` never builds or installs anything -- run the project's own build against the printed facts:
+`cacheHit` is a LEVEL, not a boolean: `"local"` (this machine's shared cache), `"remote"` (the project's own Expo `buildCacheProvider`, whose artifact is copied into the local cache on the way past) or `false` (it was compiled). `cacheSkipped` is true only when `--no-build-cache` was passed, which is "nothing was looked up" rather than "nothing was found".
+
+In a different worktree of the same app, the same two commands get a *different* owned sim and Metro port, so both run side by side.
+
+To set a repo up for that in the first place, run `rn-iso doctor` and work
+through what it reports:
 
 ```bash
-npx expo run:ios --device ABC-... --port 8082
-# or: npx react-native run-ios --udid ABC-... --port 8082
-```
-
-In a different worktree of the same app, `up` creates a *different* owned sim and Metro port, so both run side by side:
-
-```bash
-npx rn-iso up ios --json     # a second, independent sim + port
-```
-
-To set a repo up for that in the first place, `rn-iso init` writes the loop
-documentation and a `scripts/dev` runner, then reports what is still slow, and
-`rn-iso doctor` reports the same findings on their own:
-
-```bash
-npx rn-iso init
 npx rn-iso doctor
 ```
+
+There is no `rn-iso init`. Every edit that setup needs lands in a file the
+project already owns -- a `metro.config.js` with its own transformer, a
+`Podfile` with existing `post_install` logic, an app config that may be
+TypeScript -- and a generator that rewrites those eventually corrupts one. So
+`doctor` reports, read-only and always exit 0, and the bundled `rn-iso-init`
+skill is the playbook for applying each finding by hand. The one edit that
+needed no judgement, `.rn-iso/` in `.gitignore`, is self-ensured: `start`,
+`ios` and `android` each add it if it is missing and say so once on stderr --
+commit that line with the change you were already making, and it stops being
+rewritten in every fresh worktree.
 
 For AI coding agents, install the bundled skills so the agent knows how to drive the CLI (the lifecycle, the facts contract, and the destructive-command rules):
 
@@ -93,23 +116,25 @@ npx skills add janicduplessis/rn-iso
 
 ## Owned devices
 
-Every simulator or emulator rn-iso uses is one **rn-iso created**, named `rn-iso-<label>`, and recorded with `owned: true`. rn-iso never boots, allocates, or destroys a device it did not create -- it cannot stomp a foreign tool's simulator, because it never touches devices it didn't make. Teardown of the owning project (`release`, `worktree remove`, or `gc` on an orphan) destroys the device, not just a claim on it.
+Every simulator or emulator rn-iso uses is one **rn-iso created**, named `rn-iso-<label>`, and recorded with `owned: true`. rn-iso never boots, allocates, or destroys a device it did not create -- it cannot stomp a foreign tool's simulator, because it never touches devices it didn't make. Teardown of the owning project (`worktree remove`, or `gc` on an orphan) destroys the device, not just a claim on it.
 
-This is a change from earlier versions, where rn-iso picked an existing, unclaimed simulator from the pool instead of creating one (see "Breaking change" below). That model existed to avoid accumulating junk simulators -- but the accumulation was really a symptom of creation *without* a reaper. The reaper now exists (`release`, `worktree remove`, `gc`), so creating a device and guaranteeing its eventual destruction is no longer the same hazard.
+That rule has **no exception**. v3 removed physical-device support, so there is no code path that boots, installs onto, or even probes hardware. A legacy record naming a serial is reported once and replaced by an owned emulator; the serial itself is never touched.
 
-**The one exception: physical devices.** Hardware cannot be spawned. A physical Android device assigned with `up android --serial <serial>` is never booted, shut down, or deleted by rn-iso -- only assigned or cleared. There is no physical-iOS support; iOS is simulators only.
+This is a change from earlier versions, where rn-iso picked an existing, unclaimed simulator from the pool instead of creating one. That model existed to avoid accumulating junk simulators -- but the accumulation was really a symptom of creation *without* a reaper. The reaper now exists, so creating a device and guaranteeing its eventual destruction is no longer the same hazard.
 
-A pre-pivot assignment without `owned: true` ("legacy") is reused only while it is actually running -- rn-iso will not boot, shut down, or delete it. It converges to an owned device naturally (once shut down and re-created) or immediately via `release`.
+A pre-pivot assignment without `owned: true` ("legacy") is reused only while it is actually running -- rn-iso will not boot, shut down, or delete it. It converges to an owned device naturally, once it is shut down and re-created.
 
-## Breaking change: `release` now deletes the device
+## Destruction lives in exactly two commands
 
-`release` used to just clear a claim, leaving the simulator running for reuse. Now, releasing an **owned** device shuts it down AND deletes it (`simctl delete` / `avdmanager delete avd`) -- releasing an owned resource means destroying it, since app state on a disposable, single-purpose sim has no reason to persist. A legacy or physical-device assignment is still only ever cleared, never deleted -- the old behavior, preserved exactly where the device isn't rn-iso's to destroy. `worktree remove` follows the same rule for every owned device registered under the worktree, since the environment is meant to die whole.
+`worktree remove` destroys the workspace you name; `gc --delete` sweeps the machine. **Nothing else deletes anything.**
+
+In particular `stop` does not, by design: it shuts the owned device down and leaves it assigned, so returning to a branch costs a boot rather than a create, a provision and a reinstall. There is no `--delete` on it, because an agent reaching for `stop` to reclaim memory must not have one within reach of a typo. (v2's `release` / `shutdown` pair collapsed into this, with the destructive half moving to the two commands above.)
 
 **A delete is not occupancy-guarded.** An owned sim goes away even if another tool is still attached to it. It is a device rn-iso created, for a project that is going away, and the process holding it is almost always the caller's own UI-test runner, which has nothing to return to. Skipping occupied sims there leaked booted sims and live `xcodebuild test-without-building` runners out of `worktree remove`, and "left for a later gc" only asked the same question again forever.
 
-`shutdown` is the occupancy-guarded path, because the device it spares survives the call and is still there to come back to: an iOS sim actively driven by a foreign UI-test runner is left running and reported instead of shut down. (Android has no occupancy probe, so an owned, identity-verified AVD is always eligible.)
+`stop` *is* occupancy-guarded, because the device it spares survives the call and is still there to come back to: an iOS sim actively driven by a foreign UI-test runner is left running and reported instead of shut down. (Android has no occupancy probe, so an owned, identity-verified AVD is always eligible.)
 
-If a delete fails, the failure is reported, the config record is **kept** so the device stays tracked, and `release` exits 1. Dropping the record on a failed teardown is exactly what turns it into a simulator nothing references.
+If a delete fails, the failure is reported, the config record is **kept** so the device stays tracked, and the command exits 1. Dropping the record on a failed teardown is exactly what turns it into a simulator nothing references.
 
 ## Commands
 
@@ -117,76 +142,93 @@ All commands below take the same `npx rn-iso` prefix.
 
 | Command | Purpose |
 |---|---|
-| `up <ios\|android> [--json] [--wait-metro [seconds]] [--device-type <name>] [--runtime <ver>] [--system-image <pkg>] [--serial <serial>]` | Ensure an owned device and reserve a Metro port for the current project; print the facts. `--wait-metro` blocks until *this project's* Metro answers on the reserved port (default 60s). `--serial` assigns a connected physical Android device instead of creating an emulator. Never builds, never starts Metro. |
-| `device [--platform ios\|android] [--json]` | Print the current device assignment (no ensure/create side effects). |
-| `stop [<port>\|<shortcut>\|<path>] [--force]` | Kill this project's Metro, after proving the process on the reserved port is ours. `--force` kills an unidentified listener. Pass a port to target it directly; a port no project owns prompts first. No arg = current project. |
-| `status [--json]` | Show all projects' device assignments (owned/legacy) and Metro state. |
-| `release [<port>\|<shortcut>\|<path>] [--platform <p>]` | Free a project's device assignment. Deletes the device if owned, without checking occupancy (see above); clears it if legacy/physical. On a failed delete it keeps the record and exits 1. |
-| `shutdown [<shortcut>\|<path>] [-y] [--keep-sims]` | Kill Metro, shut down (never delete) owned sims/emulators, skipping any that are occupied. Owned device records stay recorded so `up` can reuse them; legacy/physical assignments are cleared. No arg = every registered project. |
-| `prune` | Remove entries for projects whose directory no longer exists, freeing their Metro ports and dropping their device records. Deletes no sim, emulator, or build artifact -- `gc` reaps the devices those entries no longer reference. |
-| `gc [--delete] [--older-than <days>] [--caches]` | Report (or, with `--delete`, reclaim) orphaned Xcode DerivedData, dead project entries, and orphaned `rn-iso-*` devices. Reports only by default. `--caches` additionally reports the shared build caches -- see below. |
-| `config [<key> [<value>]] [--unset] [--project <target>] [--repo]` | Get / set a per-project (or, with `--repo`, repo-shared) setting. |
+| `start [--json] [--wait <seconds>]` | Start this workspace's dev server on the reserved port under a detached supervisor, and block until it answers *and* verifies as this project's (default 60s). Idempotent: a healthy dev server on the port is a no-op. Bare RN is hosted in-process with rn-iso's NDJSON reporter; Expo runs the project's own `expo start --port <n>` as a child. Structured logs land in `<root>/.rn-iso/logs`, and `.rn-iso/` is added to the project's `.gitignore` if it is not already there. A failure under `--json` still puts one line on stdout: the `{code, message, remedy}` contract (`RN_ISO_METRO_TIMEOUT`, `RN_ISO_SUPERVISOR_EXITED`, ...). |
+| `logs [--source <s...>] [--level <l>] [--since <d>] [--grep <re>] [--tail <n>] [--errors] [--follow] [--json]` | Query the merged NDJSON timeline in `<root>/.rn-iso/logs`. Prints and exits; nothing matching is a successful, empty result (exit 0). `--errors` is the agent-loop query: errors and fatals since the last marker. `--follow` streams. |
+| `ios [--json] [--no-metro-check] [--no-build-cache]` | Boot this workspace's owned simulator, verify the reserved port holds *this project's* dev server, fingerprint the native inputs, install the cached `.app` if that fingerprint has one (otherwise prebuild / `pod install` / `xcodebuild` and store the result), install, launch wired to the reserved port, and attach a device-log collector. Refuses with `RN_ISO_NO_METRO` in about a second when nothing holds the port; `--no-metro-check` overrides. On an Expo project a local miss also asks the provider the project already configured (`expo.buildCacheProvider`), time-bounded, and a hit is stored locally on the way past. `--no-build-cache` looks nothing up and builds fresh -- it still stores (replacing the entry) and still uploads. Debug / simulator only. |
+| `android [--json] [--no-metro-check] [--no-build-cache]` | The same over `gradlew assembleDebug` and `adb`, on this workspace's owned emulator, with `adb reverse tcp:8081 tcp:<port>` doing the port wiring. |
+| `stop [--force] [--json]` | The inverse of `start`: halt this workspace's supervisor, reap its device-log collectors, shut the owned device **down** (never deleted, so it stays assigned), and free the reserved port. Non-destructive and takes no target -- it acts on the current workspace. With no supervisor recorded it falls back to killing an identity-verified Metro on the reserved port; `--force` is only for an unproven listener there. Already-stopped is a success at every step. |
+| `status [--json]` | Show every registered project (machine-wide by default; there is no `--all`): device assignments (owned/legacy), Metro state, supervisor pid / mode / health, last build (fingerprint, cache hit, duration), log directory and error count since the last marker, plus machine capacity and free disk -- on the boot volume, and on the current project's volume too when that is a different one. |
+| `gc [--delete] [--older-than <days>] [--all]` | Report what rn-iso has left behind: entries for projects whose directory no longer exists, orphaned `rn-iso-*` devices, records naming a device that is no longer on the machine, and every shared build cache with its size. Reports and writes nothing by default; `--delete` reclaims the dead entries (freeing their Metro ports), reaps the orphaned devices, and clears the stale device records (the record only -- there is no device left to touch, so it issues no simctl/avdmanager command). `--older-than <days>` additionally reaps owned devices whose *project* has gone untouched that long, and trims cache entries nothing has used in that time. `--all` (with `--delete`) empties the caches whole -- see below. |
 | `doctor [--json]` | Report the configuration that makes a second workspace slower than it needs to be: a missing dev client, a per-project Metro cache, a compilation cache left at its default path, a ccache conflict, a build-cache provider on the key this SDK ignores. Read-only, and always exits 0. |
-| `init [--force]` | Write `WORKFLOW.md`, an executable `scripts/dev`, and `.worktreeexclude` for this repo, then run `doctor`. Never overwrites an existing file without `--force`. |
-| `cache register <dir> [--name <n>] [--atomic] [--entries-depth <n>] [--note <s>]` | Record a shared cache so `gc --caches` can report and trim it. Idempotent, keyed on the directory. |
-| `cache forget <dir>` / `cache list` | Drop a registration (deleting nothing on disk) / show every cache gc knows about, registered *and* detected, with sizes. |
-| `build-cache resolve --platform <p> [--configuration <c>] [--variant <v>] [--device <id>]` | Print the path of a cached build matching the current native fingerprint. Prints nothing and exits 1 on a miss. |
-| `build-cache store --platform <p> --path <app> [--configuration <c>] [--variant <v>] [--device <id>]` | Store a build you just made under the current native fingerprint. |
-| `build-cache path` | Print the cache root, so a script can inspect or clear it directly. |
-| `worktree create <name> [--base fresh\|head] [--label <name>] [--carry-ignored]` | Create an isolated git worktree: carries over gitignored files, prints the worktree path. Does not install dependencies unless `--carry-ignored` clones them. |
-| `worktree remove <path> [--force]` | Remove a worktree, reclaiming its build artifacts, Metro port, and owned devices (deleted, not just freed). Refuses if it has uncommitted or unpushed work unless `--force`. |
-| `worktree list` | List this repo's worktrees and their branches. |
-| `guide [topic]` | Print reference docs for the installed version (topics: facts, metro, errors, lifecycle, cleanup, settings). Generated by the binary, so it cannot drift. |
+| `worktree create <name> [--base <ref>] [--label <name>] [--carry-ignored]` | Create an isolated git worktree: carries over gitignored files, prints the worktree path (and, on stderr, what it branched from -- ref and short sha). `--base` takes `fresh` (origin/HEAD, the default), `head`, or any ref `git rev-parse` resolves; an unresolvable one is refused before anything is created. Does not install dependencies unless `--carry-ignored` clones them. |
+| `worktree remove [<path>] [--force]` | Remove a worktree, reclaiming its build artifacts, Metro port, and owned devices (deleted, not just freed). Defaults to the current workspace. Refuses if it has uncommitted or unpushed work unless `--force`, naming the right restore command per class (`git checkout --` for modified tracked files, `git clean -fd` for untracked ones). The workspace's own `.rn-iso/` never counts as dirt -- it dies with the worktree by design. |
+| `guide [topic]` | Print reference docs for the installed version (topics: facts, metro, logs, errors, lifecycle, cleanup, settings). Generated by the binary, so it cannot drift. |
 | `skill install [--print]` | Copy this version's agent skills into `~/.claude/skills` and `~/.agents/skills`. Run after upgrading. |
 
 ## How it works
 
-- **Config** at `~/.rn-iso/config.json`, keyed by absolute project path. Symlinked worktrees collapse via `realpath`. Every write goes through a lockfile and lands by atomic rename, so several agents running `up` at once cannot lose each other's device records. A config that will not parse is reported by name and never reset automatically -- it holds the records of every device rn-iso owns, and resetting it would orphan all of them.
-- **Port allocation:** `up` scans upward from 8082 for a port that is both unclaimed in the registry and actually free on the machine, reclaiming ports from dead projects on the way. Claiming is race-safe: the write only lands if the config still shows the port unclaimed, so two parallel `up` runs that probe the same free port cannot both take it. A project whose directory only *looks* gone because its volume is unmounted keeps its port.
-- **Owned device creation:** on iOS, `up` creates the newest iPhone device type -- highest generation number, base model rather than Pro/Pro Max -- on the newest installed runtime by default (or reuses the project's already-recorded owned sim, booting it if shut down). On Android, it creates an AVD via `avdmanager create avd` against the newest installed arm64 system image (rn-iso never installs system images itself -- it errors with install instructions if none is found). Override the defaults with `--device-type`/`--runtime`/`--system-image`, or persist them via `rn-iso config ios.deviceType|ios.runtime|android.systemImage`.
-- **rn-iso never runs a build.** `up` only provisions the device, Metro port, and (on Android) `adb reverse`; you run the project's own `expo run:*` / `react-native run-*` (or its wrapping script) against the printed facts.
-- **rn-iso reserves the Metro port; you start Metro.** Which bundler command a project needs is project-specific judgment -- the same reason rn-iso stopped wrapping builds -- so `up` allocates and records a collision-free port and leaves the invocation to you. Both Expo and the RN CLI probe the target port and skip spawning a second bundler when Metro already answers `/status`, which is what makes it safe to start Metro yourself and then build against it. Teardown (`stop`, `release`, `worktree remove`, `gc`) finds Metro by port via `lsof`, but only kills it after confirming it answers `/status` **and** runs from inside the project -- a port is not identity, so an unidentified listener is reported instead of killed.
+- **Config** at `~/.rn-iso/config.json`, keyed by absolute project path. Symlinked worktrees collapse via `realpath`. Every write goes through a lockfile and lands by atomic rename, so several agents provisioning at once cannot lose each other's device records. A config that will not parse is reported by name and never reset automatically -- it holds the records of every device rn-iso owns, and resetting it would orphan all of them.
+- **Port allocation:** `start` scans upward from 8082 for a port that is both unclaimed in the registry and actually free on the machine, reclaiming ports from dead projects on the way. Claiming is race-safe: the write only lands if the config still shows the port unclaimed, so two parallel runs that probe the same free port cannot both take it. A project whose directory only *looks* gone because its volume is unmounted keeps its port.
+- **Owned device creation:** on iOS, `ios` creates the newest iPhone device type -- highest generation number, base model rather than Pro/Pro Max -- on the newest installed runtime by default (or reuses the project's already-recorded owned sim, booting it if shut down). On Android, it creates an AVD via `avdmanager create avd` against the newest installed arm64 system image (rn-iso never installs system images itself -- it errors with install instructions if none is found). Override the defaults with `ios.deviceType` / `ios.runtime` / `android.systemImage` in a settings file -- see "Settings" below.
+- **Build output is workspace-local.** `-derivedDataPath` points at `<worktree>/.rn-iso/derived-data` and gradle builds under `<worktree>/.rn-iso/gradle-build`, so `worktree remove` reclaims them definitionally and there is no global DerivedData directory to reverse-map to a workspace.
+- **The port is never baked into a build.** The fingerprint cache shares binaries across workspaces, so a port compiled in would let a binary built for 8082 be served to a workspace holding 8083. iOS gets `RCT_jsLocation` written into the app's simulator defaults (or an `expo-development-client` deep link); Android gets `adb reverse tcp:8081 tcp:<port>`. `RCT_METRO_PORT` is deliberately not passed to builds.
+- **Starting the bundler yourself still works.** Both Expo and the RN CLI probe the port and skip spawning a second bundler when one already answers `/status`, and `ios`'s Metro gate accepts a server you started as long as it runs from inside the project -- but nothing is captured that way, so `rn-iso logs` stays empty. Teardown (`stop`, `worktree remove`, `gc`) finds Metro by port via `lsof` and only kills it after confirming it answers `/status` **and** runs from inside the project: a port is not identity, so an unidentified listener is reported instead of killed.
 
 If you need a single shared sim with a mutex instead of one owned device per project, see [`react-native-worktree`](https://github.com/aleqsio/react-native-worktree).
 
-## Per-project settings (`rn-iso config`)
+## The dev server and logs
 
-A few options can be persisted per project so you don't have to repeat the same flags every run. Resolution order for `up`:
-
-1. CLI flag (`--device-type`, `--runtime`, `--system-image`)
-2. Stored project setting (this section)
-3. rn-iso's own default (newest iPhone, base model, on newest installed runtime; newest installed arm64 system image)
+`rn-iso start` runs the dev server for you, on the port it reserves for this workspace, under a **detached per-workspace supervisor**. It blocks until the server both answers and verifies as this project's (the same identity check teardown uses, never a bare port probe), then exits leaving it running:
 
 ```bash
-npx rn-iso config ios.deviceType "iPhone 17 Pro"
-npx rn-iso config ios.runtime 26.2
-npx rn-iso config android.systemImage "system-images;android-36;google_apis;arm64-v8a"
-npx rn-iso config                    # list current project's settings
-npx rn-iso config ios.deviceType     # print one
-npx rn-iso config ios.deviceType --unset
+npx rn-iso start --json
+# {"port":8082,"supervisorPid":41233,"mode":"bare-inproc","logsDir":"/path/.rn-iso/logs","alreadyRunning":false}
 ```
 
-Allowed project-layer keys today: `ios.deviceType`, `ios.runtime`, `android.systemImage`. Pass `--repo` to operate on the repo-shared layer instead (keyed by the repo's git common dir), which additionally accepts `worktreeDir` and any `worktree.*` key -- see "Settings" below. Settings live in `~/.rn-iso/config.json`.
+It has two flags and will not grow more: `--json` and `--wait <seconds>` (default 60). Anything a project needs beyond that belongs in its own bundler command. Running `start` twice leaves one supervisor -- a healthy dev server on the port is a no-op, including one you started yourself, which is reported with `supervisorPid: null` and left alone rather than fought over.
 
-## Shared build caches (`gc --caches`)
+There is no machine-wide daemon: one supervisor process per workspace, recorded in `<root>/.rn-iso/state.json` and in the registry before it starts serving, and gone (with its records) on any exit path. Two modes:
 
-Everything `gc` reclaims by default is *dead*: a DerivedData directory whose
-workspace no longer exists belongs to nobody. Shared build caches are the
-opposite -- alive by design, shared by every project on the machine, and
-pruned by nothing:
+- **`bare-inproc`** -- bare React Native: Metro is hosted *inside* the supervisor, loaded from the project's own `node_modules`, with `@rn-iso/metro`'s NDJSON reporter attached. Bundler events, in-app `console.log` and redboxes all arrive structured. Hosting is the only way to get them: both CLIs overwrite `config.reporter` after loading `metro.config.js`, so a reporter wired in there is discarded.
+- **`expo-child`** -- Expo: the project's own `expo start --port <n>` runs as a child and its stdout is parsed into the same records. Expo's dev server is protocol-bearing (manifest, dev-client and expo-router middleware), so reimplementing it would be forking Expo; the cost is that levels are *inferred* from each line, which those records mark with `raw: true`.
+
+Everything lands as one JSON object per line under `<root>/.rn-iso/logs`, and `rn-iso logs` queries the files merged into one timeline:
+
+```bash
+npx rn-iso logs --errors            # errors since the last marker; empty + exit 0 = healthy
+npx rn-iso logs --source client --since 5m --grep 'Profile'
+npx rn-iso logs --follow --level warn
+npx rn-iso logs --errors --json     # raw records, so stdout is valid NDJSON
+```
+
+**Nothing matching is exit 0.** `logs --errors` returning nothing is the pass condition of a build loop, so an empty result must never read as a failure; the only exit-1 paths are a malformed query and no project. `--errors` means level `error` or `fatal` strictly after the most recent record carrying `marker: true`, and the marker is searched across every source, so a marker in one file closes the window for all of them. Markers are written when a bundle build finishes -- which is what stops an error you already fixed from being reported forever. `rn-iso status` reports the same count per workspace.
+
+The record is `{ ts, src, level, msg }` plus optional `event`, `stack`, `marker` and `raw`. `src` is one of `metro`, `client`, `device`, `build`: the supervisor writes `metro` (both modes) and `client` (bare only -- in `expo-child` mode Expo's client output arrives on the bundler stream), and `ios` / `android` write `build` (the transcript at level debug, the extracted diagnostics at level error) and `device` (via the `simctl log stream` / `logcat` collector they attach after launch). `.rn-iso/logs/supervisor.log` is deliberately *not* part of the timeline: it is the supervisor's raw stdio, and it is what `start` quotes when a supervisor dies before it can write a structured record.
+
+`rn-iso stop` is the inverse: it halts the supervisor (identity-verified: a pid is only signalled when it is alive, recorded for this workspace, and holding the port this project reserved), SIGTERMs the device-log collectors recorded in the same `state.json`, shuts the owned device down without deleting it, and frees the port. It never escalates to `SIGKILL` -- a supervisor mid-write on the log files is exactly what `SIGTERM` handling exists to finish -- so a supervisor that will not exit is reported with its pid instead.
+
+## Device settings
+
+The device model, runtime and system image can be pinned per project so rn-iso's defaults are not what you get. There is no `rn-iso config` command -- v3's commands take no device flags, so settings are **files**. See "Settings" below for the layers; the one that travels with the repo is `.rn-iso.json` at its root:
+
+```json
+{
+  "ios": { "deviceType": "iPhone 17 Pro", "runtime": "26.2" },
+  "android": { "systemImage": "system-images;android-36;google_apis;arm64-v8a" }
+}
+```
+
+Resolution order: the project layer, then the repo layer, then that committed file, then rn-iso's own default (newest iPhone, base model, on the newest installed runtime; newest installed arm64 system image). A pinned model is honoured on **reuse** as well as on creation: an existing owned sim of a different model is refused rather than silently booted.
+
+## Shared build caches
+
+Everything `gc` reclaims is *dead*: a project entry whose directory no longer
+exists belongs to nobody, and a `rn-iso-*` simulator nothing references is
+never coming back. Shared build caches are the opposite -- alive by design,
+shared by every project on the machine, and pruned by nothing:
 
 - **Metro's `FileStore`** has no eviction logic whatsoever.
 - **Xcode's compilation cache** has no size cap.
 - **Metro file maps** accumulate one file per project root ever served.
 
-So they are reported in their own bucket and are *never* touched by a plain
-`gc --delete`:
+So every `gc` run reports them -- in their own bucket, tagged *registered* or
+*detected*, and never counted in the reclaim total -- and a plain `gc --delete`
+*never* touches them:
 
 ```bash
-npx rn-iso gc --caches                            # report sizes only
-npx rn-iso gc --caches --delete --older-than 30   # trim entries unused for 30 days
-npx rn-iso gc --caches --delete                   # empty them completely
-npx rn-iso cache list                             # the same set, sizes only
+npx rn-iso gc                            # report everything, caches included
+npx rn-iso gc --delete --older-than 30   # trim entries unused for 30 days
+npx rn-iso gc --delete --all             # empty them completely
 ```
 
 Prefer trimming. Most of these caches are a flat collection of independent
@@ -199,7 +241,7 @@ alone would evict exactly the entries that are earning their keep.
 Xcode's compilation cache is the exception. It is an LLVM CAS whose `v4.actions`
 index references its `v9.*.leaf` data files, so removing leaves individually
 would leave the index pointing at data that is gone. `--older-than` reports it
-as left alone; it can only be emptied whole.
+as left alone; it can only be emptied whole, which is what `--all` does.
 
 Emptying is a performance decision, not cleanup: the next build in every
 project pays to refill what you removed. The summary says so.
@@ -208,30 +250,37 @@ project pays to refill what you removed. The summary says so.
 
 A Metro `FileStore` root, a build-cache provider's artifact directory, a
 relocated `COMPILATION_CACHE_CAS_PATH` -- all come from a project's own config,
-so rn-iso cannot guess them. The cache names itself instead, once:
+so rn-iso cannot guess them. The cache names itself instead, once, from code:
 
-```bash
-npx rn-iso cache register ~/.myapp-metro-cache --name "Metro transforms" --entries-depth 2
-npx rn-iso cache register ~/.myapp-cas --atomic   # index-backed: emptied whole or not at all
+```js
+// A setup script, a build-cache provider -- anywhere that creates the cache.
+// `rn-iso/cache-manifest` is ESM, so a CJS caller needs `await import(...)`.
+import { register } from 'rn-iso/cache-manifest';
+
+register({
+  dir: '~/.myapp-metro-cache',
+  name: 'Metro transforms',
+  entriesDepth: 2,
+});
+register({ dir: '~/.myapp-cas', prune: 'atomic' }); // index-backed: emptied whole or not at all
 ```
 
-`--entries-depth` says how far below the directory one entry sits, and it is
+`entriesDepth` says how far below the directory one entry sits, and it is
 what keeps trimming safe. The default, 1, is a flat store: every child of the
 root is an entry. A root with a layer of grouping *above* the entries registers
 2 -- Metro's `FileStore` shards its keys across 256 directories, and a build
-cache is keyed `<platform>/<key>` -- so `gc --caches --delete --older-than 30`
+cache is keyed `<platform>/<key>` -- so `gc --delete --older-than 30`
 trims one transform or one build instead of a 256th of every transform on the
 machine, or an entire platform's builds.
 
 Registration is idempotent and keyed on the directory, so a cache can call it on
-every build; `@rn-iso/metro-cache` and `@rn-iso/expo-build-cache` both do. Use
-`rn-iso cache forget <dir>` to drop a registration without deleting anything.
+every build; `@rn-iso/metro` and `@rn-iso/expo-build-cache` both do (by writing
+the manifest directly, so they need no rn-iso installed at all).
 
-The older `caches` setting still works and is still read: a list of paths under
-`caches` in a committed `.rn-iso.json` is reported alongside the registered
-ones. It has no `rn-iso config` key of its own, and every path in it is treated
-as a flat store, so prefer `cache register` for anything that needs a depth or
-`--atomic`.
+The `caches` setting is the no-code alternative and is still read: a list of
+paths under `caches` in a committed `.rn-iso.json` is reported alongside the
+registered ones. Every path in it is treated as a flat store, so register from
+code for anything that needs a depth or `atomic`.
 
 ```json
 { "caches": ["~/.myapp-metro-cache", "~/.myapp-build-cache"] }
@@ -240,71 +289,65 @@ as a flat store, so prefer `cache register` for anything that needs a depth or
 ## The cache packages
 
 Two optional packages ship alongside the CLI. Both register themselves with
-rn-iso the first time they run, so `gc --caches` reports and trims them, and
+rn-iso the first time they run, so `gc` reports and trims them, and
 both work fine without rn-iso installed -- it is an optional peer.
 
-- **[`@rn-iso/metro-cache`](https://www.npmjs.com/package/@rn-iso/metro-cache)**
+- **[`@rn-iso/metro`](https://www.npmjs.com/package/@rn-iso/metro)**
   -- one Metro transform cache shared by every worktree, instead of Metro's
   per-project default that makes each new workspace re-transform the whole
-  module graph.
+  module graph. It also carries the NDJSON reporter rn-iso uses to capture a
+  dev server's logs, which is not a cache and is not wired up by `init`.
 - **[`@rn-iso/expo-build-cache`](https://www.npmjs.com/package/@rn-iso/expo-build-cache)**
   -- a local Expo build cache provider. When no native input changed, the Expo
   CLI installs a cached `.app` / `.apk` instead of compiling. Wire it to
   `expo.buildCacheProvider` on SDK 54+, or `expo.experiments.buildCacheProvider`
   on SDK 53, which reads only that key and ignores the top-level one in silence.
 
-Each package's README has the wiring.
+Each package's README has the wiring. Neither is needed for `rn-iso ios` /
+`rn-iso android`, which address the build cache directly: the Expo provider is
+for builds run *outside* rn-iso (`expo run:ios` by hand, or EAS), so that the two
+share artifacts instead of filling two caches with the same builds. Bare React
+Native has no provider hook at all and needs none.
 
-For a bare React Native project, which has no provider hook, `rn-iso build-cache
-resolve|store` addresses the same cache from the CLI:
+What every entry point does need is `@expo/fingerprint`, resolved from the
+project, to compute the key. It works on a project with no Expo in it at all.
+Without it `rn-iso ios` refuses with `RN_ISO_NO_FINGERPRINT` rather than
+compiling from scratch forever.
 
-```bash
-APP=$(npx rn-iso build-cache resolve --platform ios) || {
-  npx react-native run-ios --udid "$UDID" --port "$PORT"
-  npx rn-iso build-cache store --platform ios --path "$BUILT_APP"
-}
-```
-
-It needs `@expo/fingerprint` to compute the key, which works on a project with
-no Expo in it at all.
-
-Entries are keyed `<fingerprintHash>-<variant>-<target>`, identically by both
-entry points. The fingerprint covers what the project *is*, never how it was
+Entries are keyed `<fingerprintHash>-<variant>-<target>`, identically by every
+entry point. The fingerprint covers what the project *is*, never how it was
 built, so the variant (the Xcode configuration on iOS, the gradle variant on
 Android; `debug` when unset) and the target class (`sim` unless the device
 selector says otherwise) are part of the key. Without them a Release build would
 answer a Debug lookup and a device build would answer a simulator one -- both
-silently, both producing a binary that cannot run. Pass `--configuration` /
-`--variant` / `--device` to `build-cache resolve` and `store` so a build you
-store is the one a matching lookup finds.
+silently, both producing a binary that cannot run. v3 builds Debug for a
+simulator and nothing else, so those fields are constant here; they exist
+because the Expo provider and any future release path share the same keyspace.
 
-## Project shortcuts (--label)
+## Project labels (--label)
 
-Every project has a "shortcut" you can pass to `stop` / `release` / `config --project` instead of the full path: its `label` if one was set (e.g. via `worktree create --label`), else inherited from the enclosing worktree's label, else the directory basename.
+Every project has a "shortcut": its `label` if one was set (e.g. via `worktree create --label`), else inherited from the enclosing worktree's label, else the directory basename. It is what names the owned device -- `rn-iso-<label>` -- and what `status` reports a workspace as.
 
 ```bash
-npx rn-iso worktree create feature-x --label agent-1
-npx rn-iso stop agent-1
-npx rn-iso release agent-1
+npx rn-iso worktree create feature-x --label agent-1   # its sim will be rn-iso-agent-1
 ```
 
-Shortcut collisions (two projects sharing the same basename with no distinguishing label) error out and list the candidates so you can disambiguate with the absolute path.
+Two projects sharing the same basename with no distinguishing label collide, which is why `worktree create` registers a label for the worktree root: every worktree of a monorepo otherwise shares the same app-dir basename.
 
 ## Worktrees
 
 ```bash
 npx rn-iso worktree create feature-x        # creates ../<repo>-worktrees/feature-x
-npx rn-iso worktree list                    # shows every worktree and its branch
-npx rn-iso worktree remove <path>           # removes it, deleting its owned device(s) and freeing its Metro port
+npx rn-iso worktree remove                  # removes it, deleting its owned device(s) and freeing its Metro port
 ```
 
 `worktree create <name>` does three things in one step: creates the git worktree itself (branched `worktree-<name>` off `origin/HEAD` by default -- pass `--base head` to branch off the current `HEAD` instead), carries over gitignored files (see "Carry-over" below), and registers a label for the worktree root so `rn-iso` shortcuts don't collide across a monorepo's worktrees (every worktree of a monorepo shares the same app-dir basename). Prefer it over a raw `git worktree add` for that reason. It prints only the resulting worktree path to stdout; everything else goes to stderr (see "Wiring into Claude Code" below).
 
-It deliberately does **not** install dependencies. Which commands a repo actually needs -- a plain install, a workspace filter, a codegen step after it -- is project-specific judgment, the same reason rn-iso stopped wrapping builds in 0.7 and stopped starting Metro in 0.8. Install them yourself (or from your agent) before building.
+It deliberately does **not** install dependencies. Which commands a repo actually needs -- a plain install, a workspace filter, a codegen step after it -- is project-specific judgment. Install them yourself (or from your agent) before building, or use `--carry-ignored` to clone the source worktree's `node_modules`.
 
-`worktree remove <path>` reclaims the worktree's build artifacts, Metro port, and every owned device registered under it (deleting them, not just clearing the claim -- the environment dies whole) before removing the git worktree itself. It refuses if the worktree has uncommitted changes, untracked files, or commits that exist on no remote -- pass `--force` to override, but note `--force` only discards uncommitted/untracked state; committed work stays safe on the branch either way.
+`worktree remove [<path>]` defaults to the current workspace. It reclaims the worktree's build artifacts, Metro port, and every owned device registered under it (deleting them, not just clearing the claim -- the environment dies whole) before removing the git worktree itself. It refuses if the worktree has uncommitted changes, untracked files, or commits that exist on no remote -- pass `--force` to override, but note `--force` only discards uncommitted/untracked state; committed work stays safe on the branch either way.
 
-`worktree list` shows every worktree and its branch.
+There is no `worktree list`: `rn-iso status` shows the same worktrees *with* their devices, ports and supervisors, including ones that have no environment yet.
 
 ### Carry-over
 
@@ -322,9 +365,10 @@ Only files that are both gitignored and pattern-matched are copied -- tracked fi
 
 #### `--carry-ignored`
 
-That carry-over is file-by-file, which suits a handful of small config files but not the multi-gigabyte trees a worktree needs in order to build without reinstalling. `worktree create --carry-ignored` instead clones **every** gitignored path -- `node_modules`, `ios/Pods`, `ios/build` (React Native codegen output, without which `xcodebuild` fails on a missing `States.cpp` until `pod install` regenerates it) -- minus anything matching:
+That carry-over is file-by-file, which suits a handful of small config files but not the multi-gigabyte trees a worktree needs in order to build without reinstalling. `worktree create --carry-ignored` instead clones **every** gitignored path -- `node_modules`, `ios/Pods`, `ios/build` (React Native codegen output, without which `xcodebuild` fails on a missing `States.cpp` until `pod install` regenerates it) -- minus:
 
-- `.worktreeexclude` at the repo root, same gitignore-style syntax as `.worktreeinclude`, e.g.:
+- `.rn-iso/`, at any depth, **always**. It holds the workspace's own derived data, logs and supervisor pidfile: build output keyed to a path the new worktree does not have, and a pidfile for a process that is not running. That exclusion is in code, and no pattern file can turn it off.
+- anything matching `.worktreeexclude` at the repo root, same gitignore-style syntax as `.worktreeinclude`, e.g.:
   ```
   bench/results/logs
   ```
@@ -377,13 +421,13 @@ generated by the installed binary and so cannot drift.
 
 ## Settings
 
-`worktree create` and `up` resolve settings from three layers, merged with the first match winning (nested objects merge key by key; arrays -- like `worktree.include` -- are replaced wholesale, never concatenated):
+`worktree create`, `start`, `ios` and `android` resolve settings from three layers, merged with the first match winning (nested objects merge key by key; arrays -- like `worktree.include` -- are replaced wholesale, never concatenated):
 
-1. **Project settings** -- per absolute project path, stored in `~/.rn-iso/config.json`. Set with `npx rn-iso config <key> <value>` (see above). Highest precedence.
-2. **Repo settings** -- shared by every worktree of the same repository (keyed by the repo's git common dir), also stored in `~/.rn-iso/config.json`, set with `npx rn-iso config <key> <value> --repo`. Local to this machine.
-3. **Committed settings** -- `.rn-iso.json` at the repo root, checked into git and shared with everyone who clones the repo. Lowest precedence, but the only layer that travels with the repo.
+1. **Project settings** -- per absolute project path, stored in `~/.rn-iso/config.json`. Highest precedence.
+2. **Repo settings** -- shared by every worktree of the same repository (keyed by the repo's git common dir), also stored in `~/.rn-iso/config.json`. Local to this machine.
+3. **Committed settings** -- `.rn-iso.json` at the repo root, checked into git and shared with everyone who clones the repo. Lowest precedence, but the only layer that travels with the repo -- and, with the `config` command gone, normally the one you want.
 
-The keys rn-iso reads are `ios.deviceType`, `ios.runtime`, `android.systemImage`, `worktreeDir`, `caches`, and, under `worktree`: `baseRef` (`"fresh"` or `"head"`), `include` (carry-over patterns, same role as `.worktreeinclude`) and `exclude` (the `--carry-ignored` skip list, same role as `.worktreeexclude`). **Anything else is ignored, and `up` warns about it by name** -- a `worktree.install` pipeline, for instance, stopped being honoured in 0.9.0. Example `.rn-iso.json`:
+The keys rn-iso reads are `ios.deviceType`, `ios.runtime`, `android.systemImage`, `worktreeDir`, `caches`, and, under `worktree`: `baseRef` (`"fresh"` or `"head"`), `include` (carry-over patterns, same role as `.worktreeinclude`) and `exclude` (the `--carry-ignored` skip list, same role as `.worktreeexclude`). **Anything else is ignored, and rn-iso warns about it by name on every run that resolves settings** -- a `worktree.install` pipeline, for instance, stopped being honoured in 0.9.0. Example `.rn-iso.json`:
 
 ```json
 {

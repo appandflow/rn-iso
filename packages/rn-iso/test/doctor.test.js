@@ -1,11 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  checkArtifactLayout,
   checkBuildCacheProvider,
   checkCompilationCache,
   checkCcacheConflict,
   checkDevClient,
   checkMetroCache,
+  metroConfigDelegate,
   detectXcodeMajor,
   parseXcodeMajor,
 } from '../src/doctor.js';
@@ -169,4 +171,143 @@ test('an expo-dependency project that builds with react-native run-ios is not fl
 test('the dev client finding still fires for a project that builds with expo run:ios', () => {
   const pkg = { dependencies: { expo: '~57.0.0' } };
   assert.equal(checkDevClient(pkg, true).level, 'cost');
+});
+
+// `.rn-iso/` holds this workspace's build output, logs and supervisor pidfile,
+// and the only thing that can still be wrong about it is the .gitignore entry:
+// carrying it into a fresh worktree is prevented in code now, not by a second
+// file that has to say so (isWorkspaceArtifact in src/worktree.js).
+test('silent when .rn-iso is gitignored', () => {
+  assert.equal(checkArtifactLayout({ gitignoreSource: '.rn-iso/\n' }), null);
+});
+
+test('a project that does not ignore .rn-iso is told what ends up in git status', () => {
+  const f = checkArtifactLayout({ gitignoreSource: 'node_modules\n' });
+  assert.ok(f, 'expected a finding');
+  assert.match(f.title, /not gitignored/);
+  assert.match(f.detail, /commit/i);
+  assert.match(f.fix, /add it themselves/i);
+});
+
+test('a missing .gitignore is the same diagnosis as one that does not mention it', () => {
+  assert.match(checkArtifactLayout({ gitignoreSource: null }).title, /not gitignored/);
+  assert.equal(checkArtifactLayout().title, checkArtifactLayout({ gitignoreSource: '' }).title);
+});
+
+// The entry is a path, not a substring: leading and trailing slashes and
+// comments are all the forms a real .gitignore is written in.
+test('the entry is recognised however it is written, and comments do not count', () => {
+  assert.equal(checkArtifactLayout({ gitignoreSource: '/.rn-iso\n' }), null);
+  assert.equal(checkArtifactLayout({ gitignoreSource: '.rn-iso\n' }), null);
+  assert.match(
+    checkArtifactLayout({ gitignoreSource: '# ignore .rn-iso/ one day\nnode_modules\n' }).title,
+    /not gitignored/,
+    'a commented-out entry ignores nothing'
+  );
+});
+
+// --- cacheStores that is only wired some of the time ------------------------
+//
+// The real shape from a field run: the store is built behind an env var that is
+// off by default, and spread into the config. A substring match on
+// `cacheStores` read that as a pass, so doctor confirmed a cache that was never
+// installed. doctor still does not evaluate the file -- it says it cannot tell.
+test('a cacheStores behind an env-var conditional is downgraded to a note, not a pass', () => {
+  const source = [
+    'const sharedCacheStores =',
+    "  process.env.TLON_METRO_SHARED_CACHE_ENABLED === '1'",
+    '    ? [new FileStore({ root: sharedCacheRoot })]',
+    '    : undefined;',
+    'const config = {',
+    '  ...(sharedCacheStores ? { cacheStores: sharedCacheStores } : {}),',
+    '};',
+  ].join('\n');
+  const f = checkMetroCache(source);
+  assert.ok(f, 'expected a finding');
+  assert.equal(f.level, 'note', 'doctor cannot evaluate the file, so it cannot call this a cost either');
+  assert.match(f.title, /cacheStores/);
+  assert.match(f.fix, /env var/i);
+});
+
+test('a cacheStores set inside an if is a note for the same reason', () => {
+  const source = 'if (process.env.SHARED) {\n  config.cacheStores = [new FileStore({})];\n}\n';
+  assert.equal(checkMetroCache(source).level, 'note');
+});
+
+// The plain shape is the one this check exists to reward: unconditional wiring
+// stays silent, exactly as before.
+test('an unconditional cacheStores stays silent', () => {
+  assert.equal(checkMetroCache("config.cacheStores = [new FileStore({ root: '/x' })];"), null);
+  assert.equal(checkMetroCache("const { sharedCacheStores } = require('@rn-iso/metro');\nconfig.cacheStores = sharedCacheStores('app');"), null);
+});
+
+// A metro.config.js that is one line of delegation decides NOTHING here, and
+// the per-project cost finding it used to produce was a confident measurement
+// of a file that does not hold the answer. Taken verbatim from a real
+// yarn-workspaces repo, commented-out require and all.
+test('a metro config that delegates to a workspace package is reported as uninspectable', () => {
+  const source = [
+    '// RN CLI checks for this to make sure the config is valid :/',
+    "// const { getDefaultConfig } = require('@react-native/metro-config');",
+    '',
+    "module.exports = require('@th3rdwave/react-native-app-scripts/metro-config')(",
+    '  __dirname,',
+    ');',
+  ].join('\n');
+  assert.equal(metroConfigDelegate(source), '@th3rdwave/react-native-app-scripts/metro-config');
+  const f = checkMetroCache(source);
+  assert.equal(f.level, 'note', 'a cost nobody can act on is worse than a note');
+  assert.match(f.title, /delegates to @th3rdwave\/react-native-app-scripts\/metro-config; rn-iso cannot inspect it/);
+  assert.doesNotMatch(f.title, /per-project/);
+});
+
+test('the ESM and plain forms of the same delegation are recognized too', () => {
+  assert.equal(metroConfigDelegate("module.exports = require('@acme/metro');"), '@acme/metro');
+  assert.equal(metroConfigDelegate("export { default } from '@acme/metro';"), '@acme/metro');
+  assert.equal(metroConfigDelegate("export default require('./tools/metro-config');"), './tools/metro-config');
+});
+
+test('an ordinary config that BUILDS on a metro package is not a delegation', () => {
+  // The distinction that matters: requiring expo/metro-config and then
+  // configuring it is a config doctor can read, and it must still get the
+  // real finding.
+  assert.equal(metroConfigDelegate("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);"), null);
+  assert.equal(metroConfigDelegate("const { getDefaultConfig } = require('@react-native/metro-config');\nconst config = getDefaultConfig(__dirname);\nmodule.exports = config;"), null);
+  assert.equal(checkMetroCache("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);").level, 'cost');
+});
+
+test('a delegating config that DOES mention cacheStores is read normally', () => {
+  // Delegation is only interesting because the file says nothing about the
+  // cache. One that does is inspectable after all.
+  const source = "const base = require('@acme/metro');\nbase.cacheStores = [new FileStore({ root: '/x' })];\nmodule.exports = base;";
+  assert.equal(metroConfigDelegate(source), null);
+  assert.equal(checkMetroCache(source), null);
+});
+
+// The two settings only do anything inside a loop that defines `config`. A real
+// Podfile's post_install had no such loop (only one over resource bundles), so
+// the advice as written produced a Podfile that compiled and cached nothing.
+test('the compilation cache advice names the loop the settings have to live in', () => {
+  const f = checkCompilationCache('post_install do |installer|\nend\n', 26);
+  assert.match(f.fix, /post_install/);
+  assert.match(f.fix, /targets\.each/);
+  assert.match(f.fix, /build_configurations/);
+  assert.match(f.fix, /adding one if/i);
+});
+
+// A dynamic config is the one case where doctor cannot answer its own question,
+// so it has to hand over the command that can -- and say that an existing
+// provider, "eas" included, already satisfies the check.
+test('the dynamic-config note carries the command that answers it', () => {
+  const f = checkBuildCacheProvider(null, 57, true, 'app.config.ts');
+  assert.match(f.fix, /npx expo config --json/);
+  assert.match(f.fix, /buildCacheProvider/);
+});
+
+test('the dynamic-config note says an existing provider is kept, as the static one does', () => {
+  for (const sdk of [53, 57]) {
+    const f = checkBuildCacheProvider(null, sdk, true, 'app.config.ts');
+    assert.match(f.fix, /"eas"/, `SDK ${sdk}`);
+    assert.match(f.fix, /never replaces it/, `SDK ${sdk}`);
+  }
 });

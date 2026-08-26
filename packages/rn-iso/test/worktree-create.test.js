@@ -129,8 +129,12 @@ test('create action: success path writes exactly one stdout line, the worktree p
 
 
 // --- action-level tests: --base validation -----------------------------
+//
+// Real git throughout (CLAUDE.md item 9): the whole point of this validator is
+// what `git rev-parse` accepts, and a mocked executor can only prove we called
+// something rev-parse-shaped.
 
-test('create action: rejects an unrecognized --base before creating anything, on stderr, exit 1', async () => {
+test('create action: rejects a --base this repo cannot resolve, before creating anything, on stderr, exit 1', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-badbase-')));
   const repo = join(base, 'repo');
@@ -143,6 +147,70 @@ test('create action: rejects an unrecognized --base before creating anything, on
     assert.ok(errs.some(e => /Invalid --base/.test(e)));
     assert.equal(process.exitCode, 1);
     assert.equal(existsSync(join(defaultWorktreeDir(repo), 'feat-z')), false);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// The validator used to be a two-name enum, so branching from a release branch,
+// a tag or a sha was refused for no reason -- the plumbing has always handed the
+// resolved ref straight to `git worktree add`. Anything git resolves is allowed;
+// the sentinels still mean what they meant.
+test('create action: --base takes any ref this repo resolves, and branches from it', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-ref-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    git('git checkout -q -b release');
+    writeFileSync(join(repo, 'RELEASE'), 'v1');
+    git('git add RELEASE');
+    git('git commit -q -m release');
+    const releaseSha = git('git rev-parse release').trim();
+    git('git checkout -q -');
+    git('git tag v1 release');
+
+    for (const [name, ref] of [['feat-branch', 'release'], ['feat-tag', 'v1'], ['feat-sha', releaseSha]]) {
+      const { logs, errs } = await runCreateInRepo(repo, name, { base: ref, install: false });
+      const target = join(defaultWorktreeDir(repo), name);
+      assert.deepEqual(logs, [target], `${ref} should produce a worktree`);
+      assert.notEqual(process.exitCode, 1);
+      assert.equal(
+        execSync('git rev-parse HEAD', { cwd: target, encoding: 'utf-8' }).trim(),
+        releaseSha,
+        `${ref} should have been branched from the release commit`
+      );
+      // Testers could not tell what a worktree had been cut from. Say it, on
+      // stderr, with the sha -- a ref name alone moves.
+      const branchedFrom = errs.filter(e => /^Branched /.test(String(e)));
+      assert.equal(branchedFrom.length, 1);
+      assert.match(String(branchedFrom[0]), new RegExp(`from ${ref.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')} \\(`));
+      assert.match(String(branchedFrom[0]), new RegExp(releaseSha.slice(0, 7)));
+    }
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// `git worktree remove` deletes the directory and leaves the branch, so a
+// create/remove/create cycle attaches rather than cutting a new branch -- and
+// --base means nothing on that path. Reporting "branched from <ref>" there
+// would be a lie about the one fact this line exists to carry.
+test('create action: an existing branch is reported as attached, not as branched from --base', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-reuse-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    git('git branch worktree-feat-again');
+
+    const { logs, errs } = await runCreateInRepo(repo, 'feat-again', { install: false });
+
+    assert.deepEqual(logs, [join(defaultWorktreeDir(repo), 'feat-again')]);
+    assert.ok(errs.some(e => /Attached to the existing branch worktree-feat-again/.test(String(e))));
+    assert.ok(!errs.some(e => /^Branched /.test(String(e))));
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
@@ -162,6 +230,83 @@ test('create action: accepts --base head and --base fresh', async () => {
 
     const fresh = await runCreateInRepo(repo, 'feat-fresh', { base: 'fresh', install: false });
     assert.deepEqual(fresh.logs, [join(defaultWorktreeDir(repo), 'feat-fresh')]);
+    assert.notEqual(process.exitCode, 1);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// --- action-level tests: a leftover branch must not silently void --base ----
+//
+// `git worktree add` attaches to an existing `worktree-<name>` branch and the
+// base ref means nothing on that path. A create/remove/create cycle leaves that
+// branch behind, so `--base <sha>` printed one dim line and handed back a
+// worktree at the STALE tip -- the flag reading as accepted and doing nothing.
+// Two facts cannot both be honoured here, so rn-iso refuses rather than picking.
+test('create action: refuses when a leftover branch would void an explicit --base', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-stale-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    git('git branch worktree-feat-stale');            // the leftover, at the old tip
+    writeFileSync(join(repo, 'NEW'), 'new');
+    git('git add NEW');
+    git('git commit -q -m second');
+    const newSha = git('git rev-parse HEAD').trim();
+
+    const { logs, errs } = await runCreateInRepo(repo, 'feat-stale', { base: newSha });
+
+    assert.deepEqual(logs, [], 'nothing on stdout: no worktree was produced');
+    assert.equal(process.exitCode, 1);
+    assert.equal(existsSync(join(defaultWorktreeDir(repo), 'feat-stale')), false);
+    const text = errs.join('\n');
+    assert.match(text, /worktree-feat-stale/);
+    assert.match(text, /branch -D worktree-feat-stale/, 'remedy: delete the leftover branch');
+    assert.match(text, /create <other-name>|different name/i, 'remedy: a new name');
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: a leftover branch already AT the base is attached to, not refused', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-samesha-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    git('git branch worktree-feat-same');
+    const headSha = git('git rev-parse HEAD').trim();
+
+    const { logs, errs } = await runCreateInRepo(repo, 'feat-same', { base: headSha });
+
+    assert.deepEqual(logs, [join(defaultWorktreeDir(repo), 'feat-same')]);
+    assert.notEqual(process.exitCode, 1);
+    assert.ok(errs.some(e => /Attached to the existing branch worktree-feat-same/.test(String(e))));
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// No --base means nothing was promised about the base, so attaching to whatever
+// the branch already is stays exactly as it was.
+test('create action: with no --base a leftover branch is still attached to', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-nobase-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    git('git branch worktree-feat-quiet');
+    writeFileSync(join(repo, 'NEW'), 'new');
+    git('git add NEW');
+    git('git commit -q -m second');
+
+    const { logs } = await runCreateInRepo(repo, 'feat-quiet', {});
+
+    assert.deepEqual(logs, [join(defaultWorktreeDir(repo), 'feat-quiet')]);
     assert.notEqual(process.exitCode, 1);
   } finally {
     process.exitCode = 0;

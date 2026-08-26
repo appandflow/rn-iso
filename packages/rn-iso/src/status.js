@@ -22,7 +22,15 @@ const METRO_MB = 700;
 // (simctl missing, or a failing simctl). An empty map then says nothing about
 // any recorded sim, so this reports the state as unknown instead of claiming
 // every recorded device is gone.
-export function environmentState(project, { simsByUdid = {}, metro = null, worktrees = [], simsAvailable = true } = {}) {
+//
+// `supervisor` and `logs` arrive the same way as `metro`: already resolved.
+// `supervisor` is `{ pid, mode, startedAt, alive, healthy }` -- `alive` is
+// "the pid exists", `healthy` is "and resolveProjectMetro proves the thing on
+// its port is ours". The two differ for a supervisor that is still coming up
+// or has wedged, and only the first distinguishes a record whose process is
+// gone. `logs` is `{ dir, errorsSinceMarker }` or null when the workspace has
+// no log directory yet.
+export function environmentState(project, { simsByUdid = {}, metro = null, worktrees = [], simsAvailable = true, supervisor = null, logs = null } = {}) {
   const ios = project.platforms?.ios;
   const android = project.platforms?.android;
   const sim = ios ? simsByUdid[ios.deviceUdid] : null;
@@ -50,6 +58,13 @@ export function environmentState(project, { simsByUdid = {}, metro = null, workt
   if (simBooted && project.metroPort && !metroRunning) {
     warnings.push('simulator is booted with no Metro serving it');
   }
+  // A registration whose process is gone is what `start` would read as "already
+  // running" and what `worktree remove` would go looking for. Nothing else on
+  // the machine reports it. An unhealthy but LIVE supervisor is not this: the
+  // pid is real, so stopping it is still `stop`'s job, not a cleanup.
+  if (supervisor && supervisor.alive === false) {
+    warnings.push(`stale supervisor record for ${project.__path}`);
+  }
 
   return {
     path: project.__path,
@@ -70,6 +85,15 @@ export function environmentState(project, { simsByUdid = {}, metro = null, workt
     metro: project.metroPort
       ? { port: project.metroPort, running: metroRunning, pid: metro?.metro?.pid ?? null }
       : null,
+    supervisor: supervisor
+      ? {
+        pid: supervisor.pid ?? null,
+        mode: supervisor.mode ?? null,
+        startedAt: supervisor.startedAt ?? null,
+        healthy: Boolean(supervisor.healthy),
+      }
+      : null,
+    logs: logs ? { dir: logs.dir, errorsSinceMarker: logs.errorsSinceMarker ?? 0 } : null,
     // A worktree whose environment is registered is the normal case; one without
     // is a workspace nobody has provisioned yet, which is worth seeing.
     worktree: worktrees.find(w => w.path === project.__path) ?? null,
@@ -117,6 +141,45 @@ export function parseDfFree(output) {
 // nothing about disk. Worth saying before it happens, not after.
 export function diskIsTight(disk) {
   return Boolean(disk && disk.availableMb < 25 * 1024);
+}
+
+// Pure. Free space at the scale it is being read at: whole GB up to a terabyte,
+// one decimal past it. The memory summary keeps its own one-decimal GB, because
+// there the interesting range is 8-64 and a rounded "16 GB of 16 GB" hides the
+// margin this report exists to show.
+export function formatSpace(mb) {
+  if (!Number.isFinite(mb)) return '?';
+  if (mb >= 1024 * 1024) return `${(mb / (1024 * 1024)).toFixed(1)} TB`;
+  if (mb >= 1024) return `${Math.round(mb / 1024)} GB`;
+  return `${Math.round(mb)} MB`;
+}
+
+// Pure. The disk summary, over however many volumes are actually in play.
+//
+// It reported the boot volume and only the boot volume, which on this machine
+// is the wrong number twice over: the repos live on an external SSD, so the
+// figure printed described a volume nothing was building on, and the volume
+// that could actually fill up went unmentioned. Build output is workspace-local
+// (`<root>/.rn-iso/derived-data`), so the project's volume is where a build
+// runs out of room; the boot volume still matters because the shared caches and
+// the simulator device set live under $HOME.
+//
+// One volume keeps the free-of-total form -- there is room for it, and the
+// total is what makes "38 GB" mean something. Two get free space each, named by
+// volume, because that is the comparison being made.
+export function diskLine(volumes) {
+  const usable = (volumes || []).filter(v => v && v.disk);
+  if (usable.length === 0) return null;
+  if (usable.length === 1) {
+    const { disk } = usable[0];
+    return `${formatSpace(disk.availableMb)} free of ${formatSpace(disk.totalMb)} on disk.`;
+  }
+  return `${usable.map(v => `${formatSpace(v.disk.availableMb)} free on ${v.volume}`).join(', ')}.`;
+}
+
+// Pure. Which of the reported volumes are tight enough to fail a build partway.
+export function tightVolumes(volumes) {
+  return (volumes || []).filter(v => v && diskIsTight(v.disk));
 }
 
 // Worktrees rn-iso knows nothing about: a workspace someone created by hand, or

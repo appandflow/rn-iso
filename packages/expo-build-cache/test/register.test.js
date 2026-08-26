@@ -25,7 +25,7 @@ afterEach(() => {
 // The documented way to use the CLI is `npx rn-iso`, so it is usually NOT a
 // dependency of the project. Registering through it meant registration silently
 // never happened for most users -- a real build populated 45 MB of cache and
-// `gc --caches` still reported nothing.
+// `gc` still reported no cache.
 test('registers itself with no rn-iso installed', async () => {
   delete require_.cache[require_.resolve('../index.js')];
   const bc = require_('../index.js');

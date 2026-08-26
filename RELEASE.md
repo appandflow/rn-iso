@@ -9,7 +9,7 @@ real workflow at the same time.
 ```
 packages/rn-iso              rn-iso                      the CLI
 packages/expo-build-cache    @rn-iso/expo-build-cache    Expo build cache provider
-packages/metro-cache         @rn-iso/metro-cache         shared Metro transform cache
+packages/metro               @rn-iso/metro               shared Metro transform cache + log reporter
 ```
 
 **Every package in this repo carries the same version and is published
@@ -87,7 +87,7 @@ If `git status` isn't clean, commit / discard before tagging.
    packages still name a version of `rn-iso` that exists:
    ```bash
    grep -H '"version"' packages/*/package.json
-   grep -H '"rn-iso"' packages/expo-build-cache/package.json packages/metro-cache/package.json
+   grep -H '"rn-iso"' packages/expo-build-cache/package.json packages/metro/package.json
    ```
    The cache packages declare `rn-iso` as an OPTIONAL peer, so a range naming
    an unpublished version does not break an install -- it only misleads. Widen
@@ -97,7 +97,7 @@ If `git status` isn't clean, commit / discard before tagging.
    carries its own README (a package with no `README.md` in its own directory
    publishes with "No README data found" on npm):
    ```bash
-   for p in rn-iso expo-build-cache metro-cache; do
+   for p in rn-iso expo-build-cache metro; do
      echo "== $p"; (cd "packages/$p" && npm pack --dry-run 2>&1 | grep -E 'README|Tarball|total files')
    done
    ```
@@ -125,7 +125,7 @@ If `git status` isn't clean, commit / discard before tagging.
    npm whoami                                          # confirm login; if 401, `npm login` first
    npm publish --workspace rn-iso                      # add --otp <code> if 2FA prompts
    npm publish --workspace @rn-iso/expo-build-cache
-   npm publish --workspace @rn-iso/metro-cache
+   npm publish --workspace @rn-iso/metro
    ```
    2FA is on for this account, so each `npm publish` will prompt for an OTP.
    Both scoped packages are already published as public, so they need no
@@ -139,7 +139,7 @@ If `git status` isn't clean, commit / discard before tagging.
    cd /tmp && npx rn-iso@latest --version
    npm view rn-iso readme | head -c 200        # NOT "No README data found!"
    npm view @rn-iso/expo-build-cache version   # same number as rn-iso
-   npm view @rn-iso/metro-cache version        # same number as rn-iso
+   npm view @rn-iso/metro version              # same number as rn-iso
    ```
    `npm view rn-iso` reported "No README data found" for every release up to
    0.14.0, because the only README lived at the repo root while the package

@@ -1,10 +1,10 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, statSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../src/exec.js';
-import { artifactIn, buildCacheKey, entryDir, resolveBuild, storeBuild } from '../src/build-cache.js';
+import { artifactIn, buildCacheKey, entryDir, fingerprintProject, resolveBuild, storeBuild } from '../src/build-cache.js';
 import { buildCacheKey as providerKey } from '../../expo-build-cache/index.js';
 
 let root;
@@ -101,6 +101,41 @@ test('storeBuild is idempotent: an entry that already exists is returned, not re
     spawn: () => {},
   });
   assert.equal(storeBuild('android', 'fp2', existing, root), existing);
+});
+
+// `--no-build-cache` exists for an entry you no longer trust, and keeping the
+// old one would mean the very next run trusts it again. The replacement is
+// atomic for the same reason the first write is: staging directory, then
+// rename over the destination.
+test('storeBuild with { overwrite } REPLACES an existing entry, so a poisoned one can be got rid of', () => {
+  const existing = seedEntry('ios', 'fp-overwrite', 'MyApp.app');
+  assert.equal(readFileSync(existing, 'utf-8'), 'binary');
+
+  const fresh = join(root, 'fresh', 'MyApp.app');
+  mkdirSync(join(root, 'fresh'), { recursive: true });
+  writeFileSync(fresh, 'rebuilt');
+  setExecutor({
+    run: () => { throw new Error('the copy must not go through a shell'); },
+    runFile: (file, args) => {
+      // Stand in for `cp -R`, which copies a file here.
+      writeFileSync(args[2], readFileSync(args[1], 'utf-8'));
+      return '';
+    },
+    runQuiet: () => '',
+    spawn: () => {},
+  });
+
+  const stored = storeBuild('ios', 'fp-overwrite', fresh, { root, overwrite: true });
+  assert.equal(readFileSync(stored, 'utf-8'), 'rebuilt', 'the entry now holds the fresh build');
+  assert.equal(existsSync(`${entryDir('ios', 'fp-overwrite', root)}.staging-${process.pid}`), false, 'staging must not survive');
+});
+
+// The fourth argument stayed a plain root string for every caller that already
+// passed one; options are the new form. Both must address the same directory.
+test('storeBuild accepts the cache root as a string or as { root }', () => {
+  const existing = seedEntry('android', 'fp-root-form', 'App.apk');
+  assert.equal(storeBuild('android', 'fp-root-form', existing, root), existing);
+  assert.equal(storeBuild('android', 'fp-root-form', existing, { root }), existing);
 });
 
 test('storeBuild refuses a path that is not there rather than creating an empty entry', () => {
@@ -225,4 +260,45 @@ test('storing a build registers the cache root at the depth its entries actually
   const record = registeredCaches().find(c => c.dir === root);
   assert.ok(record, 'storing has to register the root');
   assert.equal(record.entriesDepth, 2);
+});
+
+// --- the fingerprint is platform-scoped -------------------------------------
+//
+// Gate provenance (2026-08-24): `rn-iso android` NEVER hit the shared cache
+// across two worktrees of th3rdwave/tlon-apps, while `ios` did. The cause was
+// not Android at all -- th3rdwave's hermes-engine podspec bakes the absolute
+// worktree path into ios/Podfile.lock, so the iOS tree differs between
+// worktrees by construction, and an UNSCOPED fingerprint hashes ios/ into the
+// android key. With platforms scoped to the platform being built, both
+// worktrees fingerprinted identically (b5a268e6...).
+test('fingerprintProject scopes the hash to the platform being built', async () => {
+  const seen = [];
+  const load = () => ({
+    createFingerprintAsync: async (dir, options) => {
+      seen.push({ dir, options });
+      return { hash: `hash-${options?.platforms?.join('+')}` };
+    },
+  });
+  assert.equal(await fingerprintProject(root, { platform: 'ios', load }), 'hash-ios');
+  assert.equal(await fingerprintProject(root, { platform: 'android', load }), 'hash-android');
+  assert.deepEqual(seen.map((s) => s.options.platforms), [['ios'], ['android']]);
+});
+
+// No platform means no scoping: the option is omitted entirely rather than
+// passed as an empty array, which @expo/fingerprint would read as "hash
+// nothing native".
+test('fingerprintProject without a platform passes no platforms option', async () => {
+  let options = 'unset';
+  const load = () => ({ createFingerprintAsync: async (_dir, opts) => { options = opts; return { hash: 'h' }; } });
+  assert.equal(await fingerprintProject(root, { load }), 'h');
+  assert.equal(options?.platforms, undefined);
+});
+
+// An unknown platform is not silently turned into a scope: `platforms: ['web']`
+// would hash nothing and produce one key for every project on the machine.
+test('fingerprintProject ignores a platform it does not know', async () => {
+  let options = 'unset';
+  const load = () => ({ createFingerprintAsync: async (_dir, opts) => { options = opts; return { hash: 'h' }; } });
+  await fingerprintProject(root, { platform: 'web', load });
+  assert.equal(options?.platforms, undefined);
 });

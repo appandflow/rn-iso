@@ -152,7 +152,8 @@ test('isPortFree detects a listener held by ANOTHER process', async () => {
 // An unplugged external volume makes a live project's path look gone.
 // Reclaiming its port removes the whole entry -- label, port, owned-device
 // record -- after which gc's orphan sweep would delete the sims it owned. The
-// mounted-volume guard is what stops that, the same way gc and prune use it.
+// mounted-volume guard is what stops that, the same way gc's dead-entry
+// sweep uses it.
 test('findReclaimablePort skips a project whose volume is not mounted', async () => {
   const unmounted = '/Volumes/NotPluggedIn/worktree';
   upsertProject(unmounted, { bundleId: 'a', androidPackage: 'a', isExpo: false });

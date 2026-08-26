@@ -89,6 +89,22 @@ test('pickDefaultSystemImage prefers highest api, then google_apis, arm64 only',
   assert.equal(pickDefaultSystemImage(images, {}).pkg, 'system-images;android-36;google_apis;arm64-v8a');
 });
 
+// The 16KB-page images break exactly what an RN app is: a native module
+// built against an older NDK will not dlopen on one. When both are installed
+// the plain image wins even at a LOWER api, because a p_align crash at
+// startup is a worse thing to hand an agent than an api level.
+test('pickDefaultSystemImage ranks a 16KB-page image below a plain one, api or no api', () => {
+  const ps16k = { api: 36, tag: 'google_apis_playstore_ps16k', arch: 'arm64-v8a', pkg: 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a' };
+  const plain = { api: 35, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-35;google_apis;arm64-v8a' };
+  assert.equal(pickDefaultSystemImage([ps16k, plain], {}).pkg, plain.pkg);
+  assert.equal(pickDefaultSystemImage([plain, ps16k], {}).pkg, plain.pkg);
+  // ...and with nothing else installed it is still a working emulator, which
+  // is what rn-iso creates rather than refusing.
+  assert.equal(pickDefaultSystemImage([ps16k], {}).pkg, ps16k.pkg);
+  // An explicit choice is still honoured, 16KB or not.
+  assert.equal(pickDefaultSystemImage([ps16k, plain], { systemImage: ps16k.pkg }).pkg, ps16k.pkg);
+});
+
 test('pickDefaultSystemImage honors an explicit package and returns null on no match', () => {
   const images = [{ api: 36, tag: 'default', arch: 'arm64-v8a', pkg: 'system-images;android-36;default;arm64-v8a' }];
   assert.equal(pickDefaultSystemImage(images, { systemImage: images[0].pkg }).pkg, images[0].pkg);
@@ -191,7 +207,7 @@ test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by
 
 // runQuiet returns null whenever the command fails, and `adb shell getprop`
 // fails ("device offline", "device not found") until the emulator registers.
-// Calling .trim() on that null threw a TypeError out of `up android`, reported
+// Calling .trim() on that null threw a TypeError out of the v2 `up` command, reported
 // as a bogus "Failed to ensure android device".
 test('waitForBoot keeps polling while adb still fails', async () => {
   let calls = 0;

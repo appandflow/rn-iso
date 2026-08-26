@@ -7,9 +7,12 @@
 //
 // So let the cache say so instead. Anything that creates a shared cache -- a
 // metro.config.js, a build-cache provider, a setup script -- calls `register`
-// once, and `gc --caches` and `doctor` both see it from then on. Registration
-// is idempotent and keyed on the directory: re-registering an existing cache
-// updates its metadata rather than duplicating it.
+// once, and `gc`'s report and `doctor` both see it from then on. This is the
+// ONLY registration path: the `cache register` / `forget` / `list` verbs are
+// gone, and this module stays as the public `rn-iso/cache-manifest` export
+// because it is how @rn-iso/metro and src/build-cache.js self-register.
+// Registration is idempotent and keyed on the directory: re-registering an
+// existing cache updates its metadata rather than duplicating it.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { basename, dirname, join, resolve } from 'path';

@@ -14,6 +14,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { getExecutor } from './exec.js';
 import { detectIsExpo } from './project.js';
+import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.js';
 
 // `xcodebuild -version` prints "Xcode 26.1" on its first line. Anything else --
 // no Xcode, command line tools only, a localized or future format -- is null,
@@ -72,6 +73,14 @@ export function checkDevClient(pkg, isExpo = true) {
 
 // Metro's default cache is per-project, so every worktree re-transforms the
 // whole module graph. One FileStore outside any project fixes it.
+//
+// This reads the file and never evaluates it -- a metro.config.js runs project
+// code, and a diagnostic may not. That is why a mention of `cacheStores` is not
+// the same as a cacheStore: on a real repo the store was built behind
+// `process.env.X === '1' ? [...] : undefined` and spread in, so it was off for
+// everyone who had not opted in, and a substring match called that a pass.
+// Unreadable stays unreadable; the finding says so instead of guessing either
+// way.
 export function checkMetroCache(metroConfigSource) {
   if (metroConfigSource == null) {
     return finding(
@@ -81,13 +90,98 @@ export function checkMetroCache(metroConfigSource) {
       'Add a metro.config.js with a FileStore cacheStore pointing outside the project.'
     );
   }
-  if (/cacheStores/.test(metroConfigSource)) return null;
+  // A config that is nothing but a re-export cannot be read here at all: the
+  // store, if there is one, lives in the package it delegates to. Saying so is
+  // the honest answer; the confident per-project finding below would be a
+  // measurement of a file that decides nothing.
+  const delegate = metroConfigDelegate(metroConfigSource);
+  if (delegate) {
+    return finding(
+      'note',
+      `metro config delegates to ${delegate}; rn-iso cannot inspect it`,
+      `metro.config.js is a re-export of ${delegate} and doctor reads this file rather than executing it, so whether a shared cacheStore is configured is decided somewhere rn-iso cannot see. This is a note, not a cost: the store may well be there.`,
+      `Check ${delegate} for a cacheStores/FileStore rooted outside every project (rn-iso's own is @rn-iso/metro's sharedCacheStores()).`
+    );
+  }
+  const lines = String(metroConfigSource).split('\n');
+  const mentions = lines.filter(line => /cacheStores/.test(line));
+  if (mentions.length) {
+    // One unconditional mention is enough: the store is wired for everybody.
+    if (!lines.every((line, i) => !/cacheStores/.test(line) || isConditional(lines, i))) return null;
+    return finding(
+      'note',
+      'metro.config.js mentions cacheStores, but not unconditionally',
+      `Every line naming it is inside a conditional, and doctor reads this file rather than executing it, so it cannot tell whether the store is installed on a plain \`rn-iso start\`. A cacheStores that is off by default costs exactly what having none costs: ${mentions.map(l => l.trim()).join(' / ')}`,
+      'Confirm it applies without env vars -- a store behind an opt-in flag is not shared until every workspace sets the flag.'
+    );
+  }
   return finding(
     'cost',
     'Metro cache is per-project',
     'Without a shared cacheStore each worktree transforms the whole module graph from cold -- thousands of modules, every time.',
     "config.cacheStores = [new FileStore({ root: path.join(os.homedir(), '.<app>-metro-cache') })]"
   );
+}
+
+// PURE. The package a metro.config.js hands its whole job to, or null.
+//
+// A real monorepo's app had this as its entire config:
+//
+//   module.exports = require('@acme/app-scripts/metro-config')(__dirname);
+//
+// Every text check below it -- and the "Metro cache is per-project" finding it
+// would otherwise emit -- is blind on a file like that, and reporting a cost
+// nobody can act on is worse than reporting nothing. The rule: no mention of
+// cacheStores anywhere, and the file's only statement is a re-export of a
+// module that is not one of Metro's own config packages (a config that
+// requires `expo/metro-config` and then builds on it is an ordinary config,
+// not a delegation).
+const METRO_CORE_MODULES = /^(?:metro|metro-config|metro-cache|@react-native\/metro-config|@expo\/metro-config|expo\/metro-config|expo\/metro-config\/.*|@react-native\/metro-babel-transformer|path|node:path|fs|node:fs|os|node:os)$/;
+
+export function metroConfigDelegate(source) {
+  const text = String(source || '');
+  if (/cacheStores/.test(text)) return null;
+  const code = text
+    // Comments first: the delegating config in the wild carried a commented-out
+    // `getDefaultConfig` require, and counting that as a statement would hide
+    // every real delegation behind it.
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map(line => line.replace(/\/\/.*$/, '').trim())
+    .filter(line => line !== '' && line !== "'use strict';" && line !== '"use strict";')
+    .join(' ');
+  const m = /^module\.exports\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)[^;]*;?$/.exec(code)
+    || /^export\s+(?:\*|\{\s*default[^}]*\})\s+from\s+['"]([^'"]+)['"];?$/.exec(code)
+    || /^export\s+default\s+require\(\s*['"]([^'"]+)['"]\s*\)[^;]*;?$/.exec(code);
+  if (!m) return null;
+  const pkg = m[1];
+  const base = pkg.startsWith('@') ? pkg.split('/').slice(0, 2).join('/') : pkg.split('/')[0];
+  if (METRO_CORE_MODULES.test(pkg) || METRO_CORE_MODULES.test(base)) return null;
+  // A relative path is still this repo's own code, and naming it is still the
+  // honest answer -- doctor cannot follow it either.
+  return pkg;
+}
+
+// Deliberately crude, because the alternative is evaluating the file: an env
+// var, a ternary or an `if` on the line means the wiring depends on something
+// this cannot see. The window is the line itself plus -- only when the line is
+// indented, i.e. it is somebody's block body -- the line that opens the block,
+// which is what catches `if (process.env.X) { config.cacheStores = ... }`
+// written across two lines. It stops there on purpose: chasing an arbitrary
+// nesting is parsing, and the wrong answer here costs a note, not a cost.
+function isConditional(lines, index) {
+  const line = lines[index];
+  if (isConditionalLine(line)) return true;
+  if (!/^\s+\S/.test(line)) return false;
+  for (let i = index - 1; i >= 0; i--) {
+    if (lines[i].trim() === '') continue;
+    return isConditionalLine(lines[i]);
+  }
+  return false;
+}
+
+function isConditionalLine(line) {
+  return /process\.env/.test(line) || line.includes('?') || /(^|[^\w])if([^\w]|$)/.test(line);
 }
 
 // Xcode's compilation cache defaults to the DerivedData root. DerivedData is
@@ -113,7 +207,7 @@ export function checkCompilationCache(podfileSource, xcodeMajor) {
       'note',
       'Xcode compilation caching is not enabled',
       `${version} a content-addressed cache can carry compiled output between workspaces, which is the difference between a full build and a partial one in a fresh worktree.`,
-      "Set COMPILATION_CACHE_ENABLE_CACHING = YES in the Podfile's post_install, with COMPILATION_CACHE_CAS_PATH outside DerivedData."
+      "In the Podfile's post_install, inside an `installer.pods_project.targets.each { |t| t.build_configurations.each { |config| ... } }` loop -- adding one if post_install has none, or has only a loop over resource bundles -- set config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES' and COMPILATION_CACHE_CAS_PATH to a path outside DerivedData."
     );
   }
   if (!path) {
@@ -125,6 +219,41 @@ export function checkCompilationCache(podfileSource, xcodeMajor) {
     );
   }
   return null;
+}
+
+// `.rn-iso/` holds this workspace's build output, its logs and the supervisor
+// pidfile: everything that is meaningful only to the checkout that produced it.
+//
+// This used to check two files. The other half -- whether `.rn-iso/` was listed
+// in a `.worktreeexclude` -- is gone because it cannot be wrong any more:
+// `worktree create --carry-ignored` skips the directory unconditionally, in
+// code (isWorkspaceArtifact in src/worktree.js), at any depth and whatever any
+// pattern file says. Checking a guarantee is how doctor ends up confirming a
+// file nothing reads, which is exactly what it did in a monorepo, where the
+// `.worktreeexclude` it read sat next to package.json and `worktree create`
+// read the repo root's.
+
+
+// gitignore is a line-oriented path list, so the entry is matched as a path and
+// not as a substring: a commented-out line ignores nothing, and `/.rn-iso`,
+// `.rn-iso` and `.rn-iso/` are the same entry.
+function listsWorkspaceDir(source) {
+  if (source == null) return false;
+  return String(source)
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'))
+    .some(line => line.replace(/^\/+/, '').replace(/\/+$/, '') === WORKSPACE_DIR);
+}
+
+export function checkArtifactLayout({ gitignoreSource } = {}) {
+  if (listsWorkspaceDir(gitignoreSource)) return null;
+  return finding(
+    'note',
+    '.rn-iso/ is not gitignored',
+    'It holds this workspace\'s build output, logs and supervisor pidfile -- location-addressed, meaningful only to the checkout that produced it. Unignored, every build offers its own DerivedData up for commit and git status stops being readable.',
+    `Add ${WORKSPACE_DIR}/ to .gitignore. (start/ios/android add it themselves on first use; this only appears when that write failed or was reverted.)`
+  );
 }
 
 // ccache and compilation caching are mutually exclusive in practice: the ccache
@@ -172,9 +301,10 @@ export function checkBuildCacheProvider(appConfig, sdkMajor, isExpo = true, dyna
       'note',
       `Cannot check the build cache provider in ${dynamicConfig}`,
       'This config is code, so it is not readable without executing it. Confirm by hand that a buildCacheProvider is set, and that it is on the key this SDK reads.',
-      sdkMajor && sdkMajor <= 53
+      `${sdkMajor && sdkMajor <= 53
         ? `SDK ${sdkMajor} reads expo.experiments.buildCacheProvider and ignores the top-level key in silence.`
         : 'Use the top-level expo.buildCacheProvider; the experiments key still works as a fallback.'
+      } Run \`npx expo config --json\` and look for buildCacheProvider. If one is already set -- including "eas" -- that satisfies this; rn-iso never replaces it.`
     );
   }
   if (!appConfig) return null;
@@ -186,10 +316,16 @@ export function checkBuildCacheProvider(appConfig, sdkMajor, isExpo = true, dyna
     return finding(
       'note',
       'No Expo build cache provider configured',
-      'Without one, every workspace builds the app even when no native input changed. With one, a JS-only ticket installs a cached .app instead of compiling.',
-      'Add a buildCacheProvider to app.json pointing at a local provider module.'
+      'Without one, every `expo run` builds the app even when no native input changed. rn-iso ios/android have their own local cache regardless; a provider extends the same benefit to builds run outside rn-iso.',
+      'Add a buildCacheProvider to app.json -- "eas" for the remote EAS cache, or @rn-iso/expo-build-cache for the local one. An existing provider is kept as-is.'
     );
   }
+  // A provider is configured. Which one is the project's own business: "eas"
+  // (the remote cache), @rn-iso/expo-build-cache, or a custom module all
+  // satisfy this check, and init never replaces one. rn-iso ios/android do
+  // not consult the provider -- they build with xcodebuild/gradle directly
+  // and use rn-iso's local cache -- so a remote EAS cache and rn-iso's cache
+  // coexist, each serving the builds that go through its own path.
 
   if (sdkMajor && sdkMajor <= 53 && topLevel && !experimental) {
     return finding(
@@ -233,6 +369,7 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
   const podfileProperties = readJson(join(projectRoot, 'ios', 'Podfile.properties.json'));
   const podfile = read(join('ios', 'Podfile'));
   const metroConfig = read('metro.config.js');
+  const gitignore = read('.gitignore');
 
   // Same detector `status` uses, so one project never reads as expo in one
   // command and bare in another. It weighs the `ios` script above the presence
@@ -246,6 +383,7 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
     checkCompilationCache(podfile, xcodeMajor),
+    checkArtifactLayout({ gitignoreSource: gitignore }),
     checkCcacheConflict(podfile, podfileProperties),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
   ].filter(Boolean);

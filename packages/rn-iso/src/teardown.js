@@ -43,7 +43,7 @@ export function teardownOwnedIosSim(udid, { del = false, label } = {}) {
     // is going away, and the process holding it is almost always the caller's
     // own UI-test runner, which has nothing to return to. The environment is
     // meant to die whole, so a delete proceeds regardless of occupancy.
-    // `shutdown` keeps the check, because the device it spares is still there
+    // `stop` keeps the check, because the device it spares is still there
     // to come back to.
     if (!del && isSimOccupied(udid)) {
       return { status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' };

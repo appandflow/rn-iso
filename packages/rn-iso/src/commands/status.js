@@ -1,14 +1,19 @@
 // src/commands/status.js
 import chalk from 'chalk';
+import { existsSync } from 'fs';
 import { totalmem } from 'os';
 import { loadConfig } from '../config.js';
 import { getExecutor } from '../exec.js';
 import { isMetroRunning } from '../ports.js';
-import { resolveProjectMetro } from '../metro.js';
+import { isPidAlive, resolveProjectMetro } from '../metro.js';
+import { queryLogs } from '../logs-query.js';
+import { workspaceLogsDir } from '../paths.js';
+import { readSupervisorState } from './stop.js';
 import { findProjectRoot, projectShortcut } from '../project.js';
 import { listAllIosSims } from '../sim/ios.js';
 import { listWorktrees } from '../worktree.js';
-import { capacity, diskIsTight, environmentState, parseDfFree, unprovisionedWorktrees } from '../status.js';
+import { volumeRootFor } from '../fs-util.js';
+import { capacity, diskLine, environmentState, parseDfFree, tightVolumes, unprovisionedWorktrees } from '../status.js';
 
 export default function statusCommand(program) {
   program
@@ -43,11 +48,17 @@ export default function statusCommand(program) {
         // is only done for ports that answer at all.
         let metro = null;
         if (proj.metroPort) {
-          metro = (await isMetroRunning(proj.metroPort))
-            ? await resolveProjectMetro(proj.metroPort, path)
-            : { missing: true };
+          metro = await resolveOnPort(proj.metroPort, path);
         }
-        states.push(environmentState({ ...proj, __path: path }, { simsByUdid, metro, worktrees, simsAvailable }));
+        const supervisor = await supervisorFacts(path, proj, metro);
+        states.push(environmentState({ ...proj, __path: path }, {
+          simsByUdid,
+          metro,
+          worktrees,
+          simsAvailable,
+          supervisor,
+          logs: logFacts(path),
+        }));
       }
 
       const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
@@ -99,6 +110,21 @@ export default function statusCommand(program) {
             : chalk.dim('not running');
           console.log(`  metro: port ${state.metro.port} ${label}`);
         }
+        // The supervisor is what `stop` acts on and what `start` reuses, so it
+        // is reported even when it is not answering: an agent seeing a pid here
+        // and no health is looking at the thing to stop.
+        if (state.supervisor) {
+          const health = state.supervisor.healthy ? chalk.green('healthy') : chalk.yellow('not answering');
+          const mode = state.supervisor.mode ? chalk.dim(` (${state.supervisor.mode})`) : '';
+          console.log(`  supervisor: pid ${state.supervisor.pid}${mode} ${health}`);
+        }
+        if (state.logs) {
+          const n = state.logs.errorsSinceMarker;
+          const errs = n > 0
+            ? chalk.yellow(` (${n} error${n === 1 ? '' : 's'} since the last marker)`)
+            : '';
+          console.log(chalk.dim(`  logs: ${state.logs.dir}`) + errs);
+        }
         if (state.ios) {
           const booted = state.ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(state.ios.state.toLowerCase());
           const owned = state.ios.owned ? chalk.dim(' (owned)') : '';
@@ -126,10 +152,23 @@ export default function statusCommand(program) {
       );
       // RAM was the only resource reported, and disk is the one that actually
       // ran out. Bounded and failure-tolerant: an unreadable df prints nothing.
-      const disk = parseDfFree(getExecutor().runQuiet('df -k /', { timeoutMs: 5000 }));
-      if (disk) {
-        const line = `${gb(disk.availableMb)} free of ${gb(disk.totalMb)} on disk.`;
-        console.log(diskIsTight(disk) ? chalk.yellow(`${line} A single iOS build can exhaust that -- run \`rn-iso gc\` before starting another environment.`) : chalk.dim(line));
+      //
+      // Both volumes when the project is not on the boot one. Reporting only
+      // `/` described a volume nothing was building on: this machine's repos
+      // live on an external SSD, and build output is workspace-local, so the
+      // volume that fills up is the project's. The boot volume stays in the
+      // report because the shared caches and the simulator device set are on it
+      // whatever the project's path.
+      const volumes = readVolumes(cwdRoot || process.cwd());
+      const line = diskLine(volumes);
+      if (line) {
+        const tight = tightVolumes(volumes);
+        if (tight.length) {
+          const which = tight.map(v => v.volume).join(' and ');
+          console.log(chalk.yellow(`${line} A single iOS build can exhaust ${which} -- run \`rn-iso gc\` before starting another environment.`));
+        } else {
+          console.log(chalk.dim(line));
+        }
       }
       if (cap.overCapacity) {
         console.log(
@@ -137,4 +176,76 @@ export default function statusCommand(program) {
         );
       }
     });
+}
+
+// The volumes worth reporting: the boot volume, plus the project's own when it
+// is a different one. `volumeRootFor` is the same mapping `gc` uses to name an
+// unmounted volume, so the two commands label a volume identically.
+//
+// Single-quoted rather than run through runFile: the whole suite's mock
+// executors implement `runQuiet` and nothing else, and a status line is not
+// worth making every one of them grow a method. Single quotes make a space, a
+// `$` and a `"` in a volume name all literal.
+export function readVolumes(projectPath) {
+  const roots = ['/'];
+  const projectVolume = volumeRootFor(projectPath);
+  if (projectVolume !== '/') roots.push(projectVolume);
+  const volumes = [];
+  for (const volume of roots) {
+    const quoted = `'${volume.replace(/'/g, "'\\''")}'`;
+    const disk = parseDfFree(getExecutor().runQuiet(`df -k ${quoted}`, { timeoutMs: 5000 }));
+    if (disk) volumes.push({ volume, disk });
+  }
+  return volumes;
+}
+
+// Resolving Metro's identity costs an lsof, which is why it only runs for a
+// port that answers at all. Contract 3: health is the identity check, never a
+// bare /status probe.
+async function resolveOnPort(port, path) {
+  return (await isMetroRunning(port)) ? resolveProjectMetro(port, path) : { missing: true };
+}
+
+// The two records that describe a supervisor: the workspace's state.json and
+// the global registration. Either alone is enough to REPORT one -- a workspace
+// whose state file was deleted still has a registration, and that is precisely
+// what makes a supervisor whose worktree vanished findable.
+async function supervisorFacts(path, proj, metroResolution) {
+  const state = readSupervisorState(path);
+  const record = proj?.supervisor ?? null;
+  const pid = state?.pid ?? record?.pid ?? null;
+  if (!pid) return null;
+  const port = state?.port ?? record?.port ?? null;
+  const alive = isPidAlive(pid);
+  let healthy = false;
+  if (alive && port) {
+    // Reuse the resolution already paid for when the supervisor sits on the
+    // reserved port, which is the normal case.
+    const resolution = port === proj?.metroPort && metroResolution
+      ? metroResolution
+      : await resolveOnPort(port, path);
+    healthy = Boolean(resolution?.metro);
+  }
+  return {
+    pid,
+    mode: state?.mode ?? record?.mode ?? null,
+    startedAt: state?.startedAt ?? record?.startedAt ?? null,
+    alive,
+    healthy,
+  };
+}
+
+// The error count is the query an agent loop actually issues, so it is cheap
+// enough to answer here: errors since the most recent marker (a bundle build or
+// an app launch), which is the window that describes the CURRENT state.
+function logFacts(path) {
+  const dir = workspaceLogsDir(path);
+  if (!existsSync(dir)) return null;
+  try {
+    return { dir, errorsSinceMarker: queryLogs({ dir, errorsOnly: true }).length };
+  } catch {
+    // A log directory that cannot be read is not a reason for `status` to fail:
+    // the point of this command is reporting what it can see.
+    return { dir, errorsSinceMarker: 0 };
+  }
 }

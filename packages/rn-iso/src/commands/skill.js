@@ -76,6 +76,23 @@ export function staleSkillCopies(installed, cliVersion) {
   return (installed || []).filter(s => s.version !== cliVersion);
 }
 
+// Pure: the ONE line to print about stale copies, or null when there are none.
+//
+// `skill install` writes the same file into BOTH targets (~/.claude/skills and
+// ~/.agents/skills), so an upgrade leaves two stale copies and a caller looping
+// over `staleSkillCopies` printed the identical warning twice on every `start`
+// -- the message names no file, so the second line carried no information at
+// all. Two copies stamped with DIFFERENT versions is real information, so those
+// are named together rather than collapsed away.
+export function staleSkillWarning(installed, cliVersion) {
+  if (!cliVersion) return null;
+  const stale = staleSkillCopies(installed, cliVersion);
+  if (stale.length === 0) return null;
+  const versions = [...new Set(stale.map(s => s.version ?? 'an unstamped older version'))];
+  return `Installed rn-iso skill is ${versions.join(' / ')} but this CLI is ${cliVersion}. `
+    + 'Run `npx rn-iso skill install` so the docs your agent reads match the binary.';
+}
+
 export function bundledSkillPath() {
   return join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'skill', 'SKILL.md');
 }

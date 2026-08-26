@@ -2,7 +2,7 @@ import { request } from 'http';
 import { connect } from 'net';
 import { existsSync } from 'fs';
 import { loadConfig, allMetroPorts, removeProject, claimMetroPort } from './config.js';
-import { isOnMountedVolume, listMountedVolumes } from './artifacts.js';
+import { isOnMountedVolume, listMountedVolumes } from './fs-util.js';
 
 export function isMetroRunning(port) {
   return new Promise((resolve) => {
@@ -55,7 +55,7 @@ const PORT_SCAN_LIMIT = 200;
 // free on the machine. The old implementation was max(registry)+1 with no
 // liveness check, which deterministically handed the same occupied port to
 // several projects in a row -- releasing a project lowered the max again, so
-// `release` then `up` returned the same bad number. Scanning also reuses gaps
+// two runs in a row returned the same bad number. Scanning also reuses gaps
 // left by released projects instead of climbing forever.
 export async function computeNextPort(isFree = isPortFree) {
   const taken = new Set(allMetroPorts());
@@ -84,7 +84,7 @@ export async function findReclaimablePort(excludeProjectPath, probe = isMetroRun
     // unplugged: the project still owns its label, port and device record.
     // allocatePort removes the entry of whatever this returns, so failing
     // open here would silently delete a live project's record -- the same
-    // direction gc and prune already fail in (CLAUDE.md item 8).
+    // direction gc's dead-entry sweep already fails in (CLAUDE.md item 8).
     if (!isMounted(path, mounted)) continue;
     if (typeof proj.metroPort === 'number') {
       candidates.push({ port: proj.metroPort, ownerPath: path });
@@ -112,7 +112,7 @@ export async function allocatePort(projectPath, probe = isMetroRunning, isFree =
 const RESERVE_ATTEMPTS = 5;
 
 // Allocation and recording are two steps with a gap between them: the probes
-// take hundreds of milliseconds, and a second `up` running in parallel can
+// take hundreds of milliseconds, and a second `start` running in parallel can
 // pick the same port in that window. claimMetroPort writes only if the config
 // still shows the port unclaimed, so a loser here simply allocates again --
 // and that second pass now sees the winner's record and skips its port.
