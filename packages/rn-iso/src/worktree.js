@@ -104,20 +104,89 @@ export function listGitignoredFiles(root) {
   return out.split('\n').filter(Boolean).filter(f => !f.endsWith('/'));
 }
 
+// Paths the worktree at `dir` TRACKS. NUL-delimited because `ls-files`
+// C-quotes any path that is non-ASCII or holds a newline, and a quoted path
+// can never compare equal to the entry the carry-over is about to copy -- the
+// guard below would wave it through.
+//
+// Null (not []) when git could not answer at all -- a target that is not a
+// worktree, an index.lock held by a concurrent process, a permission error --
+// which callers must read as "no idea", never as "tracks nothing". Same
+// distinction hasUncommittedWork makes, for the same reason.
+export function listTrackedPaths(dir) {
+  const out = getExecutor().runQuiet(`git -C "${dir}" ls-files -z`);
+  if (out === null) return null;
+  return out.split('\0').filter(Boolean);
+}
+
+// The fail-closed half of carry-over, and the reason it exists:
+//
+// What is "gitignored" is a PER-WORKTREE fact. git computes it from the
+// `.gitignore` files that worktree has checked out, and those are themselves
+// tracked, branch-varying files -- so "ignored and untracked in the source"
+// says nothing about the destination, which `--base` explicitly allows to sit
+// on a different branch. Enumerating with git (see listGitignoredEntries)
+// gets negations, nested pattern files and directory collapsing right, but it
+// answers about the SOURCE only.
+//
+// Observed on tlon-apps, whose app .gitignore ignores `*.keystore` and then
+// re-includes `!android/app/debug.keystore` so the whole team shares one debug
+// signing identity. From a source worktree whose branch predates that
+// re-include, the keystore enumerates as ignored+untracked, and the carry-over
+// wrote that machine's copy over the tracked one the new worktree had just
+// checked out: a tracked file silently replaced by a sibling workspace's, and
+// by tlon's own comment the exact file whose drift breaks cross-machine APK
+// installs and poisons their EAS build cache.
+//
+// So: a tracked path comes from the branch, never from another workspace,
+// whatever the ignore enumeration says. `covers` answers for directories too,
+// because the carry copies collapsed directory entries (`node_modules`,
+// `ios/Pods`) wholesale and a directory holding even one tracked file cannot
+// be copied over without destroying it.
+export function trackedGuard(dir) {
+  const paths = listTrackedPaths(dir);
+  if (paths === null) return { known: false, covers: () => false };
+  const set = new Set();
+  for (const p of paths) {
+    set.add(p);
+    for (let i = p.indexOf('/'); i !== -1; i = p.indexOf('/', i + 1)) set.add(p.slice(0, i));
+  }
+  return { known: true, covers: rel => set.has(rel) };
+}
+
+// One decision, shared by both carry paths, so they cannot drift apart:
+// 'tracked' when the destination tracks it, 'unverified' when git could not
+// be asked and something is already sitting at that path (the destination of a
+// real `worktree create` is always a worktree, so an unanswerable `ls-files`
+// means something is wrong enough that guessing is not allowed), null when
+// copying is safe.
+function refuseReason(guard, rel, destPath) {
+  if (guard.covers(rel)) return 'tracked';
+  if (!guard.known && existsSync(destPath)) return 'unverified';
+  return null;
+}
+
 // Only files that are BOTH matched by a pattern AND gitignored are copied, so
 // tracked files are never duplicated into the worktree. Per-file failures are
 // collected rather than thrown -- a single unreadable file must not abort
 // worktree creation -- but they are returned (not swallowed) so the caller
 // can warn about them.
 export function carryOverFiles({ root, target, patterns }) {
-  if (!patterns || patterns.length === 0) return { copied: [], failed: [] };
+  if (!patterns || patterns.length === 0) return { copied: [], skipped: [], failed: [] };
   const copied = [];
+  const skipped = [];
   const failed = [];
+  const guard = trackedGuard(target);
   for (const rel of listGitignoredFiles(root)) {
     if (isWorkspaceArtifact(rel)) continue;
     if (!matchesInclude(rel, patterns)) continue;
     const from = join(root, rel);
     const to = join(target, rel);
+    const reason = refuseReason(guard, rel, to);
+    if (reason) {
+      skipped.push({ file: rel, reason });
+      continue;
+    }
     try {
       mkdirSync(dirname(to), { recursive: true });
       copyFileSync(from, to);
@@ -126,7 +195,7 @@ export function carryOverFiles({ root, target, patterns }) {
       failed.push({ file: rel, error: String(e?.message || e) });
     }
   }
-  return { copied, failed };
+  return { copied, skipped, failed };
 }
 
 // carryOverFiles is file-by-file, which is right for a handful of small config
@@ -157,17 +226,35 @@ export function listGitignoredEntries(root) {
 // between ~40 MB and several GB per worktree, so the caller warns about it.
 export function cloneIgnoredEntries({ root, target, patterns }) {
   const copied = [];
+  const skipped = [];
   const failed = [];
   let cloned = true;
+  const guard = trackedGuard(target);
   for (const rel of listGitignoredEntries(root)) {
     if (isWorkspaceArtifact(rel)) continue;
     if (matchesInclude(rel, patterns)) continue;
     const from = join(root, rel);
     const to = join(target, rel);
+    const reason = refuseReason(guard, rel, to);
+    if (reason) {
+      skipped.push({ file: rel, reason });
+      continue;
+    }
     try {
       mkdirSync(dirname(to), { recursive: true });
-      if (getExecutor().runQuiet(`cp -Rc "${from}" "${to}"`) === null) {
-        getExecutor().run(`cp -R "${from}" "${to}"`);
+      // No shell: `from` = join(root, rel), and `rel` comes straight from
+      // `git ls-files --others --ignored --directory`, which does NOT quote
+      // `$`, backticks or spaces. A top-level ignored path named
+      // `a$(touch INJECTED).log` used to execute inside `cp -Rc "${from}" ...`;
+      // as an argv element it is one literal path. The -Rc APFS-clone-then-fall-
+      // back-to-plain-copy logic is unchanged: runFile throws on the clonefile
+      // refusal (different volume / not APFS) exactly where runQuiet returned
+      // null, and the plain `cp -R` runs in the catch. A genuine copy failure
+      // rethrows from `cp -R` into the outer catch, landing in `failed` as before.
+      try {
+        getExecutor().runFile('cp', ['-Rc', from, to]);
+      } catch {
+        getExecutor().runFile('cp', ['-R', from, to]);
         cloned = false;
       }
       copied.push(rel);
@@ -175,7 +262,7 @@ export function cloneIgnoredEntries({ root, target, patterns }) {
       failed.push({ file: rel, error: String(e?.message || e) });
     }
   }
-  return { copied, failed, cloned };
+  return { copied, skipped, failed, cloned };
 }
 
 // `ios/Pods/` is gitignored, so --carry-ignored clones it wholesale, including
@@ -340,14 +427,67 @@ export function branchExists(cwd, branch) {
 // `^{commit}` rather than the bare ref: a tag object resolves to itself under a
 // plain rev-parse, and `git worktree add` wants the commit. --quiet keeps a
 // miss at exit 1 with no stderr, which runQuiet turns into null.
+// No shell: `git` runs via runFile with an argv array, so `ref` -- which comes
+// from committed settings (worktree.baseRef) and `--base`, both repo-controlled
+// -- reaches git as one literal argument. `${ref}^{commit}` is a single argv
+// element, so a value like `$(touch PWNED)` is looked up as a (nonexistent) ref
+// named exactly that, never evaluated by a shell.
+//
+// `--end-of-options` guards the argument-injection case runFile alone does not:
+// a ref beginning with `-` would otherwise be parsed as a git flag. After it,
+// every remaining token is a ref, so `-badref^{commit}` is a lookup miss (git
+// exits 1), not an option. (`--` is wrong here -- rev-parse reads it as the
+// rev/path separator and would treat the ref as a pathspec.)
+//
+// runFile THROWS on a nonzero exit where the old runQuiet returned null, so the
+// try/catch restores the "sha or null" contract: --quiet keeps a miss at exit 1
+// with no stderr, which becomes null here just as before.
 export function resolveRef(cwd, ref) {
-  const out = getExecutor().runQuiet(
-    `git -C "${cwd}" rev-parse --verify --quiet --short "${ref}^{commit}"`
-  );
-  return out && out.trim() ? out.trim() : null;
+  try {
+    const out = getExecutor().runFile('git', [
+      '-C', cwd,
+      'rev-parse', '--verify', '--quiet', '--short',
+      '--end-of-options', `${ref}^{commit}`,
+    ]);
+    return out && out.trim() ? out.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+// A worktree path beginning with `-` would be parsed as a git flag even via
+// runFile (no shell strips it), so `git worktree add <path>` could be turned
+// into option injection by a repo-controlled worktreeDir. The metachar set is
+// the same defense-in-depth guard fs-util.js uses (`` ` ``, `$`, `"`, `\`):
+// none of these belong in a real worktree path, and rejecting them here also
+// closes the downstream shell interpolations of this path (trackedGuard /
+// listGitignoredEntries run `git -C "<target>"`), which addWorktree always
+// precedes. `--` in the git command below is the robust terminator; this is
+// belt-and-suspenders on top of it.
+function assertSafeWorktreePath(path) {
+  if (typeof path !== 'string' || path.startsWith('-')) {
+    throw new Error(`Refusing worktree path ${JSON.stringify(path)}: a path beginning with "-" would be parsed as a git option.`);
+  }
+  if (/[`$"\\]/.test(path)) {
+    throw new Error(`Refusing worktree path ${JSON.stringify(path)}: it contains shell metacharacters that have no place in a path.`);
+  }
+}
+
+// A base ref beginning with `-` would be read as a git flag (e.g. a crafted
+// `--upload-pack=...`) rather than a commit-ish. Only a LEADING `-` is the
+// risk: real branch names, tags and shas hold `/`, `.` and `-` mid-string, so
+// nothing else is rejected. resolveRef's --end-of-options already turns such a
+// value into a lookup miss upstream, so this throw is normally unreachable in
+// `worktree create`; it stands as an explicit, testable guard on the fresh
+// path, where the ref is actually handed to git.
+function assertSafeBaseRef(baseRef) {
+  if (typeof baseRef !== 'string' || baseRef.startsWith('-')) {
+    throw new Error(`Refusing base ref ${JSON.stringify(baseRef)}: a ref beginning with "-" would be parsed as a git option.`);
+  }
 }
 
 export function addWorktree({ path, branch, baseRef, cwd }) {
+  assertSafeWorktreePath(path);
   mkdirSync(dirname(path), { recursive: true });
   // Name reuse is likely from phone/agent-spawned sessions ("fix-login",
   // "bugfix"): if the branch this worktree would use already exists (left
@@ -355,10 +495,16 @@ export function addWorktree({ path, branch, baseRef, cwd }) {
   // `-b` for a branch that is already taken. `baseRef` is meaningless once
   // attaching to an existing branch, so it is only used on the fresh-branch
   // path.
+  //
+  // runFile (no shell) + `--` (git's options terminator, which `git worktree
+  // add` honours before the positional <path> [<commit-ish>]) means neither the
+  // repo-controlled path nor the repo-controlled baseRef can be parsed as an
+  // option or evaluated by a shell. Both are single literal argv elements.
   if (branchExists(cwd || dirname(path), branch)) {
-    getExecutor().run(`git worktree add "${path}" "${branch}"`);
+    getExecutor().runFile('git', ['worktree', 'add', '--', path, branch]);
   } else {
-    getExecutor().run(`git worktree add "${path}" -b "${branch}" "${baseRef}"`);
+    assertSafeBaseRef(baseRef);
+    getExecutor().runFile('git', ['worktree', 'add', '-b', branch, '--', path, baseRef]);
   }
   return path;
 }
