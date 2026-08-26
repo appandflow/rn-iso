@@ -107,7 +107,7 @@ jobs:
           # When the cache restored, the first build may be a legitimate cross-run
           # HIT rather than a cold miss -- tell the driver to tolerate that. The
           # wt2 within-run cache proof is unconditional regardless.
-          RN_ISO_E2E_WARM_CACHE: ${{ steps.cache.outputs.cache-hit == 'true' && '1' || '0' }}
+          RN_ISO_E2E_WARM_CACHE: ${{ steps.cache.outputs.cache-matched-key != '' && '1' || '0' }}
         # --keep leaves the temp worktrees in place on this ephemeral runner so
         # the artifact step below can collect their build logs.
         run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep
@@ -191,7 +191,7 @@ jobs:
         # environment; rn-iso does the device work itself.
         uses: reactivecircus/android-emulator-runner@v2
         env:
-          RN_ISO_E2E_WARM_CACHE: ${{ steps.cache.outputs.cache-hit == 'true' && '1' || '0' }}
+          RN_ISO_E2E_WARM_CACHE: ${{ steps.cache.outputs.cache-matched-key != '' && '1' || '0' }}
         with:
           api-level: 34
           target: google_apis
