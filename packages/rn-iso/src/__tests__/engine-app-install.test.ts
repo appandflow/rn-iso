@@ -11,10 +11,12 @@
 // (kRCTJsLocationKey line 30, jsLocation line 554, serverRootWithHostPort
 // line 70), and the dev-client URL in expo's UrlCreator.ts line 88 plus
 // EXDevLauncherURLHelperTests.swift line 15.
+import assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { NdjsonRecord } from '../ndjson.ts';
 import { isBundleActivityLine } from '../supervisor/server-expo.ts';
 import {
   DEFAULT_METRO_PORT,
@@ -299,9 +301,9 @@ describe('android: install and launch', () => {
 
 // --- debug_http_host (the react-native-worktree trick) ----------------------
 test('writeDebugHttpHost writes host:port via run-as and reports it', () => {
-  const calls = [];
+  const calls: string[][] = [];
   const exec: any = {
-    runFile: (cmd, args) => {
+    runFile: (cmd: string, args: string[]) => {
       calls.push([cmd, ...args]);
       return '';
     },
@@ -318,7 +320,7 @@ test('writeDebugHttpHost writes host:port via run-as and reports it', () => {
 
 test('a failed prefs write does not fail the launch', () => {
   const exec: any = {
-    runFile: (cmd, args) => {
+    runFile: (cmd: string, args: string[]) => {
       if (args.includes('run-as')) {
         const e = new Error('run-as: package not debuggable');
         throw e;
@@ -350,10 +352,10 @@ function fakeClock(start = 1000) {
   let t = start;
   return {
     now: () => t,
-    sleep: async (ms) => {
+    sleep: async (ms: number) => {
       t += ms;
     },
-    advance: (ms) => {
+    advance: (ms: number) => {
       t += ms;
     },
     at: () => t,
@@ -408,7 +410,7 @@ describe('isBundleProof', () => {
 describe('verifyLaunch', () => {
   test('verified: the poll returns as soon as a bundle request lands', async () => {
     const clock = fakeClock();
-    const records = [];
+    const records: NdjsonRecord[] = [];
     let reads = 0;
     const result = await verifyLaunch({
       since: clock.at(),
@@ -422,6 +424,7 @@ describe('verifyLaunch', () => {
       },
     });
     expect(result.verified).toBe(true);
+    assert(result.record);
     expect(result.record.event).toBe('bundle_build_started');
     expect(result.waitedMs > 0 && result.waitedMs < VERIFY_TIMEOUT_MS).toBeTruthy();
   });
@@ -486,6 +489,7 @@ describe('verifyLaunch', () => {
       );
       const result = await verifyLaunch({ logsDir: dir, since: clock.at(), now: clock.now, sleep: clock.sleep });
       expect(result.verified).toBe(true);
+      assert(result.record);
       expect(result.record.ts).toBe(clock.at() + 10);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -604,7 +608,7 @@ describe('unverifiedLaunchLines: the action comes first', () => {
 // debuggable app -- see the change's report. This is the part of it that can
 // run in CI.
 describe('the debug_http_host script, run for real under sh', () => {
-  let dir;
+  let dir: string;
   const PKG = 'com.example.app';
   const prefsPath = () => join(dir, 'shared_prefs', `${PKG}_preferences.xml`);
 
@@ -617,7 +621,7 @@ describe('the debug_http_host script, run for real under sh', () => {
 
   // The device shell, then the script's shell. Throws (non-zero exit) exactly
   // where adb would report a failure.
-  const runScript = (port) =>
+  const runScript = (port: number) =>
     execFileSync(
       '/bin/sh',
       [
@@ -630,7 +634,7 @@ describe('the debug_http_host script, run for real under sh', () => {
   // A strict-enough XML reader: it fails on unbalanced or unclosed tags, so
   // "the file parses" is an assertion and not a grep. Returns the <map>'s
   // string entries.
-  const parsePrefs = (text) => {
+  const parsePrefs = (text: string) => {
     const entries: Record<string, string> = {};
     const stack: Array<{ name: string; attrs: Record<string, string> }> = [];
     const tag = /<(\/?)([\w:.-]+)((?:\s+[\w:.-]+\s*=\s*"[^"]*")*)\s*(\/?)>/g;
@@ -643,7 +647,8 @@ describe('the debug_http_host script, run for real under sh', () => {
       last = m.index + full.length;
       if (closing) {
         const open = stack.pop();
-        expect(open?.name).toBe(name);
+        assert(open);
+        expect(open.name).toBe(name);
         if (name === 'string') entries[open.attrs.name] = between;
         continue;
       }
@@ -671,7 +676,9 @@ describe('the debug_http_host script, run for real under sh', () => {
     runScript(8099);
     const text = readFileSync(prefsPath(), 'utf-8');
     expect(parsePrefs(text)).toEqual({ debug_http_host: '10.0.2.2:8099' });
-    expect(text.match(/debug_http_host/g).length).toBe(1);
+    const hostMatches = text.match(/debug_http_host/g);
+    assert(hostMatches);
+    expect(hostMatches.length).toBe(1);
   });
 
   test('case 3: a prefs file WITHOUT the key keeps every other entry', () => {
@@ -754,7 +761,7 @@ describe('the Android dev-client deep link', () => {
       '-d',
       `'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082'`,
     ]);
-    expect(!exec.calls.some((c) => c.includes('resolve-activity'))).toBeTruthy();
+    expect(!exec.calls.some((c: string[]) => c.includes('resolve-activity'))).toBeTruthy();
     // The port wiring still ran first, both halves of it.
     expect(result.debugHttpHost).toBe('10.0.2.2:8082');
     expect(result.reversed).toEqual(['tcp:8081->tcp:8082', 'tcp:8082->tcp:8082']);

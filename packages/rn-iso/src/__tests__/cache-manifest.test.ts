@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { register, readManifest, registeredCaches, unregister, manifestPath } from '../cache-manifest.ts';
 import type { CacheEntry } from '../cache-manifest.ts';
 
-let tmpHome;
-let cacheDir;
+let tmpHome: string;
+let cacheDir: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-manifest-'));
   process.env.RN_ISO_HOME = tmpHome;

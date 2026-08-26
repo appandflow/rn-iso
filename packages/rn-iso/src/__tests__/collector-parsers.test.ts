@@ -15,6 +15,7 @@
 // real buffer banner plus one line each of V/D/I/W/E. There was no F(atal)
 // line in that buffer, so the fatal case below is SYNTHESIZED in the same
 // format (documented in `man logcat`) and marked as such.
+import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
@@ -40,7 +41,13 @@ import {
 } from '../collector/android.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 
-function fixture(name) {
+// Narrows out the nulls the parsers return for non-record lines, so a filtered
+// list is a list of records rather than `(record | null)[]`.
+function isNotNull<T>(value: T | null): value is T {
+  return value !== null;
+}
+
+function fixture(name: string) {
   return readFileSync(fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)), 'utf-8');
 }
 
@@ -48,11 +55,13 @@ describe('ios: log stream ndjson', () => {
   const lines = fixture('ios-log-stream.ndjson').split('\n').filter(Boolean);
 
   test('the real capture yields Contract-1 records for the log events only', () => {
-    const records = lines.map((l) => parseLogStreamLine(l)).filter(Boolean);
+    const records = lines.map((l) => parseLogStreamLine(l)).filter(isNotNull);
     // 5 captured lines: the banner and the activityCreateEvent are dropped.
     expect(lines.length).toBe(5);
     expect(records.length).toBe(3);
     for (const record of records) {
+      assert(record.src);
+      assert(record.level);
       expect(record.src).toBe('device');
       expect(SOURCES.includes(record.src)).toBeTruthy();
       expect(LEVELS.includes(record.level)).toBeTruthy();
@@ -73,6 +82,7 @@ describe('ios: log stream ndjson', () => {
   test('activity events are dropped: they carry a message but no level', () => {
     const activity = lines.find((l) => l.includes('"activityCreateEvent"'));
     expect(activity).toBeTruthy();
+    assert(activity);
     expect(parseLogStreamLine(activity)).toBe(null);
   });
 
@@ -80,7 +90,7 @@ describe('ios: log stream ndjson', () => {
     const byLevel = Object.fromEntries(
       lines
         .map((l) => parseLogStreamLine(l))
-        .filter(Boolean)
+        .filter(isNotNull)
         .map((r) => [r.level, r]),
     );
     expect(byLevel.info).toBeTruthy();
@@ -90,7 +100,7 @@ describe('ios: log stream ndjson', () => {
   });
 
   test('the record carries the executable name from processImagePath', () => {
-    const records = lines.map((l) => parseLogStreamLine(l)).filter(Boolean);
+    const records = lines.map((l) => parseLogStreamLine(l)).filter(isNotNull);
     expect(records.map((r) => r.proc).sort()).toEqual(['gamecontrollerd', 'locationd', 'pairedsyncd']);
   });
 
@@ -99,9 +109,12 @@ describe('ios: log stream ndjson', () => {
   // obvious rather than plausible.
   test("Apple's timestamp is parsed rather than replaced by the read time", () => {
     const logEvent = lines.find((l) => l.includes('"logEvent"'));
+    assert(logEvent);
     const captured = JSON.parse(logEvent).timestamp;
     expect(captured).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}[-+]\d{4}$/);
-    expect(parseLogStreamLine(logEvent, { now: () => 0 }).ts).toBe(Date.parse(captured));
+    const parsed = parseLogStreamLine(logEvent, { now: () => 0 });
+    assert(parsed);
+    expect(parsed.ts).toBe(Date.parse(captured));
   });
 
   test('levelFromMessageType covers the documented set and defaults to info', () => {
@@ -163,7 +176,7 @@ describe('ios: log stream ndjson', () => {
 describe('ios: demoting device noise', () => {
   const app =
     '/Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/ABC/MyApp.app/MyApp';
-  const event = (over) => ({
+  const event = (over: Record<string, unknown>): Record<string, unknown> => ({
     eventType: 'logEvent',
     messageType: 'Error',
     subsystem: '',
@@ -198,6 +211,7 @@ describe('ios: demoting device noise', () => {
     ];
     for (const e of flood) {
       const record = parseLogStreamLine(JSON.stringify(e));
+      assert(record);
       expect(record.level).toBe('info');
       // Captured, not dropped: `logs` still shows it, `--errors` does not.
       expect(record.msg).toBe(e.eventMessage);
@@ -219,6 +233,7 @@ describe('ios: demoting device noise', () => {
         }),
       ),
     );
+    assert(record);
     expect(record.level).toBe('info');
     expect(
       noiseRuleId(
@@ -282,7 +297,9 @@ describe('ios: demoting device noise', () => {
   test("the app's own error is untouched, and so is an unlisted system one", () => {
     const own = event({ eventMessage: '[Error: Exception in HostFunction]' });
     expect(noiseRuleId(own)).toBe(null);
-    expect(parseLogStreamLine(JSON.stringify(own)).level).toBe('error');
+    const ownRecord = parseLogStreamLine(JSON.stringify(own));
+    assert(ownRecord);
+    expect(ownRecord.level).toBe('error');
 
     // From the real fixture: pairedsync and locationd are not on the list.
     const unlisted = event({
@@ -326,10 +343,11 @@ describe('android: logcat -v time', () => {
   const lines = fixture('android-logcat-time.txt').split('\n').filter(Boolean);
 
   test('every real level line parses into a Contract-1 record', () => {
-    const records = lines.map((l) => parseLogcatLine(l)).filter(Boolean);
+    const records = lines.map((l) => parseLogcatLine(l)).filter(isNotNull);
     expect(lines.length).toBe(6);
     expect(records.length).toBe(5);
     for (const record of records) {
+      assert(record.level);
       expect(record.src).toBe('device');
       expect(LEVELS.includes(record.level)).toBeTruthy();
       expect(Number.isFinite(record.ts)).toBeTruthy();
@@ -344,7 +362,7 @@ describe('android: logcat -v time', () => {
   test('the real V/D/I/W/E lines map onto Contract 1 levels', () => {
     const levels = lines
       .map((l) => parseLogcatLine(l))
-      .filter(Boolean)
+      .filter(isNotNull)
       .map((r) => r.level);
     expect([...levels].sort()).toEqual(['debug', 'debug', 'error', 'info', 'warn']);
   });
@@ -353,6 +371,7 @@ describe('android: logcat -v time', () => {
     const record = parseLogcatLine(
       '08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183 - system/security/keystore2/src/security_level.rs:680',
     );
+    assert(record);
     expect(record.proc).toBe('keystore2(245)');
     expect(record.level).toBe('error');
     expect(record.msg).toBe(
@@ -366,6 +385,7 @@ describe('android: logcat -v time', () => {
     const record = parseLogcatLine(
       '08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182 (com.example.app)',
     );
+    assert(record);
     expect(record.level).toBe('fatal');
     expect(record.msg).toMatch(/SIGSEGV/);
   });
@@ -427,28 +447,30 @@ describe('android: logcat -v time', () => {
       ];
       for (const line of noisy) {
         const record = parseLogcatLine(line);
+        assert(record);
+        assert(record.msg);
         expect(record.level).toBe('info');
         expect(record.msg.length > 0).toBeTruthy();
       }
     });
 
     test("an unlisted tag keeps its E, including the app's own", () => {
-      expect(
-        parseLogcatLine('08-21 17:51:19.669 E/ReactNativeJS( 9182): [Error: Exception in HostFunction]').level,
-      ).toBe('error');
+      const rnjs = parseLogcatLine('08-21 17:51:19.669 E/ReactNativeJS( 9182): [Error: Exception in HostFunction]');
+      assert(rnjs);
+      expect(rnjs.level).toBe('error');
       // From the real fixture.
-      expect(
-        parseLogcatLine('08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183').level,
-      ).toBe('error');
+      const keystore = parseLogcatLine('08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183');
+      assert(keystore);
+      expect(keystore.level).toBe('error');
     });
 
     // There is no benign F inside an app process: it is libc reporting a
     // signal or ART aborting. A noisy tag does not buy an exemption from that.
     test('F is never demoted, even from a listed tag', () => {
       expect(levelForLogcat('F', 'libEGL')).toBe('fatal');
-      expect(
-        parseLogcatLine('08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182').level,
-      ).toBe('fatal');
+      const libc = parseLogcatLine('08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182');
+      assert(libc);
+      expect(libc.level).toBe('fatal');
       expect(!NOISE_TAGS.has('libc')).toBeTruthy();
     });
 
@@ -466,13 +488,16 @@ describe('watchAppPid', () => {
   // A hand-driven timer, so a 3-second poll costs nothing and every tick is
   // deliberate.
   function driver() {
-    const queue = [];
+    const queue: Array<() => void> = [];
     return {
-      // A fake timer handle: watchAppPid only ever hands it back to clearTimer,
-      // so a number stands in for Node's Timeout, cast once here.
+      // watchAppPid only ever hands the handle back to clearTimer, which here
+      // ignores it. Return a real, immediately-cleared Timeout so the type is
+      // honest without a cast; it never fires, the hand-driven `tick` does.
       setTimer: (fn: () => void): ReturnType<typeof setTimeout> => {
         queue.push(fn);
-        return queue.length as unknown as ReturnType<typeof setTimeout>;
+        const handle = setTimeout(() => {}, 0);
+        clearTimeout(handle);
+        return handle;
       },
       clearTimer: () => {
         queue.length = 0;
@@ -489,7 +514,7 @@ describe('watchAppPid', () => {
 
   test('a new pid is a restart; the same pid is not', async () => {
     const d = driver();
-    const seen = [];
+    const seen: number[] = [];
     let answer = 3132;
     const w = watchAppPid({
       serial: 'emulator-5554',
@@ -515,8 +540,8 @@ describe('watchAppPid', () => {
 
   test('the app being GONE is not a restart -- the pid that comes back is', async () => {
     const d = driver();
-    const seen = [];
-    let answer = null;
+    const seen: number[] = [];
+    let answer: number | null = null;
     const w = watchAppPid({
       serial: 'emulator-5554',
       packageName: 'com.x',
@@ -539,7 +564,7 @@ describe('watchAppPid', () => {
 
   test('an adb that throws is a missed poll, not a dead watcher', async () => {
     const d = driver();
-    const seen = [];
+    const seen: number[] = [];
     let throwing = true;
     const w = watchAppPid({
       serial: 'emulator-5554',

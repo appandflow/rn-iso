@@ -2,12 +2,27 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, realpathSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import type { Command } from 'commander';
 import { registerCreate } from '../commands/worktree.ts';
 import { resetExecutor } from '../exec.ts';
 import { defaultWorktreeDir } from '../worktree.ts';
 import { upsertProject, findEnclosingWorktreeRoot } from '../config.ts';
 
-let tmpHome;
+// The action callback commander invokes: `(name, opts)`. `name` is undefined
+// when the command is run without its positional argument (from the repo cwd).
+type ActionFn = (name: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
+
+// The subset of commander's Command that registerCreate chains off of. A real
+// Command is assignable to this, so `stub as Command` is a plain widening cast
+// (no `as unknown` needed) that lets the stub stand in for the real object.
+interface CommandStub {
+  command(nameAndArgs?: string): CommandStub;
+  description(str?: string): CommandStub;
+  option(flags?: string, description?: string): CommandStub;
+  action(fn: ActionFn): CommandStub;
+}
+
+let tmpHome: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -55,7 +70,7 @@ test('findEnclosingWorktreeRoot returns null when nothing is registered as a wor
 // rev-parse --show-toplevel` (behind repoRoot) resolves through it, so an
 // expected path built from the raw mkdtempSync() result would never match
 // the actual argv0 -- same fix as `canon` in test/worktree-remove.test.js.
-function canon(p) {
+function canon(p: string) {
   try {
     return realpathSync(p);
   } catch {
@@ -63,9 +78,9 @@ function canon(p) {
   }
 }
 
-function captureAction(register) {
-  let captured;
-  const stub = {
+function captureAction(register: (cmd: Command) => void) {
+  let captured: ActionFn | undefined;
+  const stub: CommandStub = {
     command() {
       return stub;
     },
@@ -75,18 +90,21 @@ function captureAction(register) {
     option() {
       return stub;
     },
-    action(fn) {
+    action(fn: ActionFn) {
       captured = fn;
       return stub;
     },
   };
-  register(stub);
-  return (name, opts = {}) => captured(name, opts);
+  register(stub as Command);
+  return (name: string | undefined, opts: Record<string, unknown> = {}) => {
+    if (!captured) throw new Error('register did not register an action');
+    return captured(name, opts);
+  };
 }
 
-function initScratchRepo(root) {
+function initScratchRepo(root: string) {
   mkdirSync(root, { recursive: true });
-  const git = (cmd) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+  const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
   git('git init -q');
   git('git config user.email test@example.com');
   git('git config user.name test');
@@ -96,9 +114,9 @@ function initScratchRepo(root) {
   return git;
 }
 
-async function runCreateInRepo(repo, name, opts) {
-  const logs = [];
-  const errs = [];
+async function runCreateInRepo(repo: string, name: string, opts: Record<string, unknown>) {
+  const logs: string[] = [];
+  const errs: string[] = [];
   const originalLog = console.log;
   const originalError = console.error;
   const originalCwd = process.cwd();

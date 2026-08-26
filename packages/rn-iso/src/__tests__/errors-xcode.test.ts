@@ -294,8 +294,10 @@ describe('what is and is not a diagnostic', () => {
   test('nothing recognizable returns [], so a caller knows to fall back to the log tail', () => {
     expect(extractXcodeDiagnostics('note: Building targets in dependency order\nSome prose.')).toEqual([]);
     expect(extractXcodeDiagnostics('')).toEqual([]);
-    expect(extractXcodeDiagnostics(null)).toEqual([]);
-    expect(extractXcodeDiagnostics(undefined)).toEqual([]);
+    // Invalid-input validation: the signature is `string`, but the guard must
+    // tolerate these, so the calls use the same documented cast as `42` below.
+    expect(extractXcodeDiagnostics(null as unknown as string)).toEqual([]);
+    expect(extractXcodeDiagnostics(undefined as unknown as string)).toEqual([]);
     expect(extractXcodeDiagnostics(42 as unknown as string)).toEqual([]);
   });
 
@@ -335,7 +337,7 @@ describe('dedupe and order', () => {
 });
 
 describe('capDiagnostics', () => {
-  const many = (n) => Array.from({ length: n }, (_, i) => ({ message: `e${i}` }));
+  const many = (n: number) => Array.from({ length: n }, (_, i) => ({ message: `e${i}` }));
 
   test('the cap is ten', () => {
     expect(MAX_DIAGNOSTICS).toBe(10);
@@ -368,8 +370,10 @@ describe('capDiagnostics', () => {
   });
 
   test('a non-array is the empty result, not a throw', () => {
-    expect(capDiagnostics(null)).toEqual({ diagnostics: [], truncated: 0 });
-    expect(capDiagnostics(undefined)).toEqual({ diagnostics: [], truncated: 0 });
+    // Invalid-input validation: the signature is `Diagnostic[]`, but the guard
+    // must tolerate a non-array, so the calls cast the same way as above.
+    expect(capDiagnostics(null as unknown as Diagnostic[])).toEqual({ diagnostics: [], truncated: 0 });
+    expect(capDiagnostics(undefined as unknown as Diagnostic[])).toEqual({ diagnostics: [], truncated: 0 });
   });
 });
 

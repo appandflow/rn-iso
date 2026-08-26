@@ -40,10 +40,12 @@ import {
   runOptionsFor,
   uploadDestination,
   uploadRemote,
+  type ProviderPlugin,
 } from '../engine/remote-cache.ts';
 import { makeError, makeWriter } from './_factories.ts';
+import assert from 'node:assert';
 
-let root;
+let root: string;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'rn-iso-remote-'));
@@ -54,19 +56,19 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function writeAppJson(config) {
+function writeAppJson(config: unknown) {
   writeFileSync(join(root, 'app.json'), JSON.stringify(config, null, 2));
 }
 
 // A provider module the way a project would ship one: CommonJS, exported on
 // `default` (which is what a compiled TypeScript provider produces, and what
 // the Expo CLI unwraps).
-function writeProviderModule(file, body) {
+function writeProviderModule(file: string, body: string) {
   writeFileSync(join(root, file), body);
   return file;
 }
 
-const RECORDING_PROVIDER = (log, appPath) => `
+const RECORDING_PROVIDER = (log: string, appPath: string | null) => `
 const fs = require('fs');
 const log = ${JSON.stringify(log)};
 function record(entry) { fs.appendFileSync(log, JSON.stringify(entry) + '\\n'); }
@@ -124,8 +126,12 @@ describe('normalizeProvider', () => {
 
   test('nothing configured is null; a shape the CLI would throw on is invalid', () => {
     expect(normalizeProvider(undefined)).toBe(null);
-    expect(normalizeProvider({ pluginn: 'typo' }).invalid).toBeTruthy();
-    expect(normalizeProvider('s3').invalid).toBeTruthy();
+    const typo = normalizeProvider({ pluginn: 'typo' });
+    assert(typo);
+    expect(typo.invalid).toBeTruthy();
+    const bareString = normalizeProvider('s3');
+    assert(bareString);
+    expect(bareString.invalid).toBeTruthy();
   });
 });
 
@@ -177,7 +183,7 @@ describe('readProjectConfig', () => {
     mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n');
 
-    const calls = [];
+    const calls: { file: string; args: string[]; opts?: { timeoutMs?: number } }[] = [];
     const read = readProjectConfig(root, {
       run: (file, args, opts) => {
         calls.push({ file, args, opts });
@@ -187,7 +193,7 @@ describe('readProjectConfig', () => {
     expect(calls.length).toBe(1);
     expect(calls[0].file).toBe(join(root, 'node_modules', '.bin', 'expo'));
     expect(calls[0].args).toEqual(['config', '--json', root]);
-    expect(calls[0].opts.timeoutMs).toBe(CONFIG_TIMEOUT_MS);
+    expect(calls[0].opts?.timeoutMs).toBe(CONFIG_TIMEOUT_MS);
     expect(read.source).toBe('app.config.js');
     expect(providerFromConfig(read.config)).toEqual({ plugin: './p.cjs' });
   });
@@ -217,7 +223,7 @@ describe('readProjectConfig', () => {
     mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n');
 
-    const calls = [];
+    const calls: { file: string; args: string[] }[] = [];
     const read = readProjectConfig(app, {
       run: (file, args) => {
         calls.push({ file, args });
@@ -240,6 +246,7 @@ describe('readProjectConfig', () => {
         throw e;
       },
     });
+    assert(read.unavailable);
     expect(read.unavailable).toMatch(/expo config --json` failed: ETIMEDOUT/);
     expect(!read.unavailable.includes('stack line')).toBeTruthy();
   });
@@ -296,6 +303,7 @@ describe('loadProjectProvider', () => {
     writeAppJson({ expo: { buildCacheProvider: { plugin: './fake-provider.cjs', options: { a: 1 } } } });
     const result = await loadProjectProvider(root);
     expect(result.name).toBe('./fake-provider.cjs');
+    assert(result.provider);
     expect(result.provider.options).toEqual({ a: 1 });
     expect(typeof result.provider.plugin.resolveBuildCache).toBe('function');
   });
@@ -329,7 +337,7 @@ describe('loadProjectProvider', () => {
 
 // --- calling it ------------------------------------------------------------
 
-function plugin(overrides = {}) {
+function plugin(overrides: Partial<ProviderPlugin> = {}) {
   return {
     provider: {
       plugin: { resolveBuildCache: async () => null, uploadBuildCache: async () => null, ...overrides },
@@ -342,7 +350,7 @@ describe('resolveRemote', () => {
   test("hands the provider the Expo CLI's exact props, and returns the path it answers with", async () => {
     const appPath = join(root, 'Fixture.app');
     mkdirSync(appPath);
-    let seen = null;
+    let seen: { props: any; options: any } | undefined;
     const { provider } = plugin({
       resolveBuildCache: async (props, options) => {
         seen = { props, options };
@@ -351,6 +359,7 @@ describe('resolveRemote', () => {
     });
     const result = await resolveRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'abc' });
     expect(result).toEqual({ appPath });
+    assert(seen);
     expect(seen.props).toEqual({
       fingerprintHash: 'abc',
       platform: 'ios',
@@ -422,6 +431,7 @@ describe('resolveRemote', () => {
   test('a path the provider returned that does not exist is refused', async () => {
     const { provider } = plugin({ resolveBuildCache: async () => join(root, 'gone.app') });
     const result = await resolveRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a' });
+    assert(result);
     expect(result.failed).toMatch(/does not exist/);
   });
 
@@ -449,7 +459,7 @@ describe('resolveRemote', () => {
 
 describe('uploadRemote', () => {
   test("hands the provider the built path with the CLI's props", async () => {
-    let seen = null;
+    let seen: { props: any; options: any } | undefined;
     const { provider } = plugin({
       uploadBuildCache: async (props, options) => {
         seen = { props, options };
@@ -463,6 +473,7 @@ describe('uploadRemote', () => {
       buildPath: '/b/app.apk',
     });
     expect(result).toEqual({ uploaded: true });
+    assert(seen);
     expect(seen.props).toEqual({
       projectRoot: root,
       platform: 'android',
@@ -558,9 +569,9 @@ describe('dynamicConfigFile', () => {
 // Replaces process.stdout.write and process.stderr.write with recorders BEFORE
 // the call, so what is asserted is what would have reached the terminal: the
 // capture installs itself over these, and a leak shows up as a line in `out`.
-function tapStreams(fn) {
-  const out = [];
-  const err = [];
+function tapStreams(fn: (streams: { out: string[]; err: string[] }) => unknown) {
+  const out: string[] = [];
+  const err: string[] = [];
   const originalOut = process.stdout.write;
   const originalErr = process.stderr.write;
   const originalLog = console.log;
@@ -596,7 +607,10 @@ function tapStreams(fn) {
 }
 
 function records() {
-  const written = [];
+  // makeWriter's write receives `record: unknown` (the NdjsonWriter contract),
+  // and the captured frames are read structurally below (r.src / written[1].msg);
+  // `any[]` keeps those reads working without a per-read cast.
+  const written: any[] = [];
   return {
     written,
     writer: makeWriter({
@@ -684,8 +698,8 @@ describe('provider output containment', () => {
   });
 
   test('an abandoned provider that prints after its budget still cannot reach stdout', async () => {
-    let release;
-    const done = new Promise((resolve) => {
+    let release: () => void = () => {};
+    const done = new Promise<void>((resolve) => {
       release = resolve;
     });
     const { provider } = plugin({
@@ -752,7 +766,7 @@ describe('provider output containment', () => {
   });
 
   test('an upload names where it is going when the provider printed it', async () => {
-    const notes = [];
+    const notes: string[] = [];
     const { provider } = plugin({
       uploadBuildCache: async () => {
         console.log('Uploading build to https://expo.dev/accounts/acme/projects/app/builds/abc');
@@ -778,7 +792,7 @@ describe('provider output containment', () => {
   });
 
   test('an upload that names no destination says nothing extra', async () => {
-    const notes = [];
+    const notes: string[] = [];
     const { provider } = plugin({
       uploadBuildCache: async () => {
         console.log('Uploading build to EAS');
@@ -916,7 +930,7 @@ describe('checkEasAuth', () => {
   afterEach(() => resetEasAuthCache());
 
   const whoami =
-    (stdout, exitCode = 0, stderr = '') =>
+    (stdout: string, exitCode = 0, stderr = '') =>
     () => {
       if (exitCode === 0) return stdout;
       throw makeError('Command failed', { status: exitCode, stdout, stderr });
@@ -1005,7 +1019,7 @@ describe('checkEasAuth', () => {
   });
 
   test('it is bounded, and it asks the binary it resolved', () => {
-    const seen = [];
+    const seen: { file: string; args: string[]; opts?: { timeoutMs?: number } }[] = [];
     checkEasAuth({
       projectRoot: root,
       resolveBin: () => ({ file: '/p/node_modules/.bin/eas', source: 'project' }),
@@ -1016,7 +1030,7 @@ describe('checkEasAuth', () => {
     });
     expect(seen[0].file).toBe('/p/node_modules/.bin/eas');
     expect(seen[0].args).toEqual(['whoami']);
-    expect(seen[0].opts.timeoutMs).toBe(WHOAMI_TIMEOUT_MS);
+    expect(seen[0].opts?.timeoutMs).toBe(WHOAMI_TIMEOUT_MS);
   });
 });
 
@@ -1037,6 +1051,7 @@ describe('resolveEasCliBin', () => {
         throw new Error('PATH must not be consulted');
       },
     });
+    assert(found);
     expect(found.file).toBe(join(root, 'node_modules', '.bin', 'eas'));
     expect(found.source).toBe('project');
   });
@@ -1071,6 +1086,7 @@ describe('easAuthNote', () => {
   // the local cache only" would be describing something that already happened.
   test('the same failure at upload time says what it cost instead', () => {
     const note = easAuthNote({ code: 'logged-out', reason: '403', phase: 'upload' });
+    assert(note);
     expect(note).toMatch(/stayed in the local cache/);
     expect(!/building with/.test(note)).toBeTruthy();
   });

@@ -15,9 +15,24 @@ import {
   removalRemedy,
   workspaceArtifactPaths,
 } from '../commands/worktree.ts';
+import type { Command } from 'commander';
 import { ensureWorkspaceIgnored, renderWorkspaceIgnoreBlock } from '../engine/workspace.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, getProject } from '../config.ts';
+
+// The action callback commander invokes: `(target, opts)`. `target` is
+// undefined when `worktree remove` is run without its positional argument.
+type ActionFn = (target: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
+
+// The subset of commander's Command that registerRemove chains off of. A real
+// Command is assignable to this, so `stub as Command` is a plain widening cast
+// (no `as unknown` needed) that lets the stub stand in for the real object.
+interface CommandStub {
+  command(nameAndArgs?: string): CommandStub;
+  description(str?: string): CommandStub;
+  option(flags?: string, description?: string): CommandStub;
+  action(fn: ActionFn): CommandStub;
+}
 
 test('no blockers for a clean worktree', async () => {
   expect(removalBlockers({ dirty: false, unpushed: [] })).toEqual([]);
@@ -154,7 +169,7 @@ test('the remedy carries the paths themselves, capped, quoting what needs it', (
 // registerRemove is driven directly with a stub commander object rather
 // than going through bin/cli.js.
 
-function canon(p) {
+function canon(p: string) {
   try {
     return realpathSync(resolve(p));
   } catch {
@@ -167,9 +182,9 @@ function canon(p) {
 // handed, exactly like the real `worktree` subcommand does in
 // bin/cli.js. Capturing `fn` is the only way to invoke the action in
 // isolation from commander's own arg-parsing.
-function captureAction(register) {
-  let captured;
-  const stub = {
+function captureAction(register: (cmd: Command) => void) {
+  let captured: ActionFn | undefined;
+  const stub: CommandStub = {
     command() {
       return stub;
     },
@@ -179,16 +194,24 @@ function captureAction(register) {
     option() {
       return stub;
     },
-    action(fn) {
+    action(fn: ActionFn) {
       captured = fn;
       return stub;
     },
   };
-  register(stub);
-  return (target, opts = {}) => captured(target, opts);
+  register(stub as Command);
+  return (target: string | undefined, opts: Record<string, unknown> = {}) => {
+    if (!captured) throw new Error('register did not register an action');
+    return captured(target, opts);
+  };
 }
 
-function porcelain(entries) {
+interface PorcelainEntry {
+  path: string;
+  branch?: string;
+}
+
+function porcelain(entries: PorcelainEntry[]) {
   return entries
     .map(
       (e) =>
@@ -206,6 +229,18 @@ function porcelain(entries) {
 // `occupied` maps udid -> true to simulate a foreign .xctrunner UI-test
 // runner still attached (isSimOccupied's `xcrun simctl spawn <udid>
 // launchctl list` probe -- see parseOccupyingApps in src/sim/ios.js).
+interface MakeExecutorOptions {
+  // dirty/unpushed/worktrees are raw runQuiet returns: a string, or null when
+  // the underlying git call itself failed outright.
+  dirty?: string | null;
+  unpushed?: string | null;
+  remote?: string;
+  worktrees?: string | null;
+  simctlList?: string;
+  occupied?: Record<string, boolean>;
+  diffs?: Record<string, string>;
+}
+
 function makeExecutor({
   dirty = '',
   unpushed = '',
@@ -214,12 +249,12 @@ function makeExecutor({
   simctlList = '{"devices":{}}',
   occupied = {},
   diffs = {},
-} = {}) {
-  const runCalls = [];
-  const runQuietCalls = [];
+}: MakeExecutorOptions = {}) {
+  const runCalls: string[] = [];
+  const runQuietCalls: string[] = [];
   const exec = {
     calls: { run: runCalls, runQuiet: runQuietCalls },
-    run(cmd) {
+    run(cmd: string) {
       runCalls.push(cmd);
       if (/worktree remove/.test(cmd)) return '';
       if (/simctl list devices --json/.test(cmd)) return simctlList;
@@ -228,7 +263,7 @@ function makeExecutor({
       if (/simctl delete|delete avd/.test(cmd)) return '';
       throw new Error(`unexpected run: ${cmd}`);
     },
-    runQuiet(cmd) {
+    runQuiet(cmd: string) {
       runQuietCalls.push(cmd);
       if (/status --porcelain/.test(cmd)) return dirty;
       const diffMatch = cmd.match(/ diff -- "(.+)"$/);
@@ -251,11 +286,11 @@ function makeExecutor({
 
 // One iOS runtime bucket with the given sims, matching parseSimctlList's
 // expected shape (src/sim/ios.js).
-function simctlJson(sims) {
+function simctlJson(sims: unknown[]) {
   return JSON.stringify({ devices: { 'com.apple.CoreSimulator.SimRuntime.iOS-17-0': sims } });
 }
 
-let tmpHome, mainDir, wtDir;
+let tmpHome: string, mainDir: string, wtDir: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-home-'));
@@ -494,7 +529,7 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
   });
   setExecutor(exec);
 
-  const logs = [];
+  const logs: string[] = [];
   const originalLog = console.log;
   console.log = (msg) => logs.push(msg);
   const run = captureAction(registerRemove);
@@ -561,7 +596,7 @@ test('action: real work beside .rn-iso/ still refuses, and names both remedies',
   });
   setExecutor(exec);
 
-  const errs = [];
+  const errs: string[] = [];
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
@@ -644,7 +679,19 @@ test('action: a dirty path escaping the worktree is never removed', async () => 
 // when the diff is EXACTLY that block and nothing else, so the fixtures below
 // are built from renderWorkspaceIgnoreBlock rather than retyped.
 
-function ignoreDiff({ file = 'apps/x/.gitignore', added = [], removed = [], context = ['node_modules/'] } = {}) {
+interface IgnoreDiffOptions {
+  file?: string;
+  added?: string[];
+  removed?: string[];
+  context?: string[];
+}
+
+function ignoreDiff({
+  file = 'apps/x/.gitignore',
+  added = [],
+  removed = [],
+  context = ['node_modules/'],
+}: IgnoreDiffOptions = {}) {
   return [
     `diff --git a/${file} b/${file}`,
     'index c2658d7..2986a0a 100644',
@@ -731,8 +778,8 @@ test('excludeSelfHealedIgnores drops an untracked .gitignore rn-iso wrote whole'
 
 test('excludeSelfHealedIgnores drops only an unstaged .gitignore whose diff is ours', () => {
   const ours = ignoreDiff({ added: ourBlockLines() });
-  const seen = [];
-  const diff = (file) => {
+  const seen: string[] = [];
+  const diff = (file: string) => {
     seen.push(file);
     return ours;
   };
@@ -768,7 +815,7 @@ test('action: a worktree dirty only with a .gitignore rn-iso created removes, de
     }),
   );
 
-  const errs = [];
+  const errs: string[] = [];
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
@@ -795,7 +842,7 @@ test('action: a .gitignore with the repo own lines in it still refuses', async (
     }),
   );
 
-  const errs = [];
+  const errs: string[] = [];
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
@@ -822,7 +869,7 @@ test('action: a worktree dirty only with rn-iso own gitignore append removes, re
   });
   setExecutor(exec);
 
-  const errs = [];
+  const errs: string[] = [];
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
@@ -854,7 +901,7 @@ test('action: our block plus a user line still refuses', async () => {
   });
   setExecutor(exec);
 
-  const errs = [];
+  const errs: string[] = [];
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
@@ -931,7 +978,7 @@ test('action: a path inside no worktree at all is still refused, pointing at git
   const exec = makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) });
   setExecutor(exec);
 
-  const errs = [];
+  const errs: string[] = [];
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
@@ -960,7 +1007,7 @@ test('action: the dirty-tree remedy names the real worktree, not a placeholder',
     }),
   );
 
-  const errs = [];
+  const errs: string[] = [];
   const original = console.error;
   console.error = (m) => errs.push(String(m));
   try {
@@ -997,7 +1044,7 @@ test('against a real repo: a worktree whose only dirt is the .gitignore rn-iso c
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-created-')));
   const repo = join(base, 'repo');
   const originalCwd = process.cwd();
-  const errs = [];
+  const errs: string[] = [];
   const originalError = console.error;
   const originalLog = console.log;
   try {
@@ -1005,7 +1052,7 @@ test('against a real repo: a worktree whose only dirt is the .gitignore rn-iso c
     mkdirSync(bareRemote, { recursive: true });
     execSync(`git init -q --bare "${bareRemote}"`);
     mkdirSync(repo, { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
     git('git init -q');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -1048,7 +1095,7 @@ test('against a real repo: removal from a monorepo app dir, dirty only with rn-i
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-live-')));
   const repo = join(base, 'repo');
   const originalCwd = process.cwd();
-  const errs = [];
+  const errs: string[] = [];
   const originalError = console.error;
   const originalLog = console.log;
   try {
@@ -1056,7 +1103,7 @@ test('against a real repo: removal from a monorepo app dir, dirty only with rn-i
     mkdirSync(bareRemote, { recursive: true });
     execSync(`git init -q --bare "${bareRemote}"`);
     mkdirSync(join(repo, 'apps', 'x'), { recursive: true });
-    const git = (cmd) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
     git('git init -q');
     git('git config user.email test@example.com');
     git('git config user.name test');
@@ -1184,13 +1231,13 @@ test('excludePodChurn on a clean listing restores nothing', () => {
 // away: that `git checkout -- <path>` restores the file rn-iso named, and that
 // `git worktree remove` -- which runs its OWN cleanliness check and refuses
 // over "modified or untracked files" -- is satisfied afterwards.
-function podChurnRepo(base, { extraDirt = false } = {}) {
+function podChurnRepo(base: string, { extraDirt = false }: { extraDirt?: boolean } = {}) {
   const repo = join(base, 'repo');
   const bareRemote = join(base, 'remote.git');
   mkdirSync(bareRemote, { recursive: true });
   execSync(`git init -q --bare "${bareRemote}"`);
   mkdirSync(join(repo, 'apps', 'app', 'ios', 'Tlon.xcodeproj'), { recursive: true });
-  const git = (cmd) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+  const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
   git('git init -q');
   git('git config user.email test@example.com');
   git('git config user.name test');
@@ -1221,7 +1268,7 @@ test('against a real repo: a worktree dirty only with pod-install churn is resto
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-pods-')));
   const originalCwd = process.cwd();
-  const errs = [];
+  const errs: string[] = [];
   const originalError = console.error;
   const originalLog = console.log;
   try {
@@ -1255,7 +1302,7 @@ test('against a real repo: pod churn PLUS a modified source file is refused exac
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-pods-dirty-')));
   const originalCwd = process.cwd();
-  const errs = [];
+  const errs: string[] = [];
   const originalError = console.error;
   const originalLog = console.log;
   try {

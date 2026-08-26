@@ -89,7 +89,7 @@ test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', 
 });
 
 // resolveRegisteredProject -- needs an isolated config home.
-let tmpHome;
+let tmpHome: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-resolve-'));
   process.env.RN_ISO_HOME = tmpHome;

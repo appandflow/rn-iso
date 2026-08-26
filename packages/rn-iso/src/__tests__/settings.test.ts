@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -14,7 +15,7 @@ type SettingsView = {
   [k: string]: unknown;
 };
 
-let tmpHome;
+let tmpHome: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -45,6 +46,7 @@ test('ignores null and undefined layers', () => {
 
 test('an array value is replaced wholesale, not concatenated', () => {
   const merged = mergeSettingsLayers([{ worktree: { install: ['a'] } }, { worktree: { install: ['b', 'c'] } }]) as SettingsView;
+  assert(merged.worktree);
   expect(merged.worktree.install).toEqual(['a']);
 });
 
@@ -74,6 +76,7 @@ test('resolveSettings orders project over repo over committed', () => {
     repoRoot: tmpHome,
   }) as SettingsView;
   expect(merged.packageManager).toBe('bun');
+  assert(merged.worktree);
   expect(merged.worktree.baseRef).toBe('fresh');
 });
 
@@ -122,6 +125,7 @@ test('committed caches and device settings resolve with their JSON types intact'
     );
     const resolved = resolveSettings({ repoRoot: repo }) as SettingsView;
     expect(resolved.caches).toEqual(['~/.myapp-metro-cache', '/tmp/build-cache']);
+    assert(resolved.ios);
     expect(resolved.ios.deviceType).toBe('iPhone 17 Pro');
     expect(resolved.ios.runtime).toBe('26.2');
     expect(unknownSettingKeys(resolved)).toEqual([]);

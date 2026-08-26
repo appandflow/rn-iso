@@ -16,6 +16,7 @@ import {
   checkConcurrency,
 } from '../doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import assert from 'node:assert';
 
 // Where the key lives moved when the setting was promoted out of experiments,
 // and the combination that silently does nothing is the NEW key on an OLD SDK.
@@ -23,6 +24,7 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 // and nothing else; SDK 57 resolves exp.buildCacheProvider ?? the experiments one.
 test('buildCacheProvider at the top level on SDK 53 is reported as a silent no-op', () => {
   const f = checkBuildCacheProvider({ expo: { buildCacheProvider: './p.js' } }, 53);
+  assert(f);
   expect(f.level).toBe('cost');
   expect(f.detail).toMatch(/ignored in silence/);
 });
@@ -33,6 +35,7 @@ test('buildCacheProvider under experiments on SDK 53 is correct, and reported as
 
 test('buildCacheProvider under experiments on a newer SDK still works, so it is a note not a cost', () => {
   const f = checkBuildCacheProvider({ expo: { experiments: { buildCacheProvider: './p.js' } } }, 57);
+  assert(f);
   expect(f.level).toBe('note');
   expect(f.detail).toMatch(/falls back/);
 });
@@ -45,6 +48,7 @@ test('buildCacheProvider at the top level on a newer SDK is what it should be', 
 // where to put the key would be nonsense.
 test('a non-Expo project is told there is no hook, not told to configure one', () => {
   const f = checkBuildCacheProvider(null, null, false);
+  assert(f);
   expect(f.level).toBe('note');
   expect(f.title).toMatch(/outside Expo/);
   expect(f.detail).toMatch(/fingerprint/);
@@ -58,6 +62,7 @@ test('compilation cache is not flagged at all on an Xcode that does not have it'
 
 test('compilation cache enabled without a CAS path is a cost, because the default is per-workspace', () => {
   const f = checkCompilationCache("config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES'", 26);
+  assert(f);
   expect(f.level).toBe('cost');
   expect(f.detail).toMatch(/per-workspace/);
 });
@@ -69,6 +74,7 @@ test('compilation cache with an explicit CAS path is reported as nothing', () =>
 
 test('ccache alongside compilation caching is flagged as mutually defeating', () => {
   const f = checkCcacheConflict("COMPILATION_CACHE_ENABLE_CACHING = 'YES'", { 'apple.ccacheEnabled': 'true' });
+  assert(f);
   expect(f.level).toBe('cost');
   expect(f.detail).toMatch(/explicitly built modules/);
 });
@@ -85,14 +91,19 @@ test('a bare React Native project is not told to install expo-dev-client', () =>
 
 test('an Expo project without the dev client is flagged, because a reserved port cannot reach it', () => {
   const f = checkDevClient({ dependencies: { expo: '~57.0.0' } });
+  assert(f);
   expect(f.level).toBe('cost');
   expect(f.detail).toMatch(/8081/);
 });
 
 test('metro config with a cacheStore is reported as nothing; without one it is a cost', () => {
   expect(checkMetroCache('config.cacheStores = [new FileStore({})]')).toBe(null);
-  expect(checkMetroCache('module.exports = config;').level).toBe('cost');
-  expect(checkMetroCache(null).level).toBe('note');
+  const cost = checkMetroCache('module.exports = config;');
+  assert(cost);
+  expect(cost.level).toBe('cost');
+  const note = checkMetroCache(null);
+  assert(note);
+  expect(note.level).toBe('note');
 });
 
 // A config that is code cannot be read without executing it, and executing
@@ -101,6 +112,7 @@ test('metro config with a cacheStore is reported as nothing; without one it is a
 // failure mode is silence in the first place.
 test('a project whose config is app.config.ts is told the check could not run', () => {
   const f = checkBuildCacheProvider(null, 53, true, 'app.config.ts');
+  assert(f);
   expect(f.level).toBe('note');
   expect(f.title).toMatch(/Cannot check/);
   expect(f.fix).toMatch(/experiments/);
@@ -108,6 +120,7 @@ test('a project whose config is app.config.ts is told the check could not run', 
 
 test('a newer SDK with a dynamic config is pointed at the top-level key', () => {
   const f = checkBuildCacheProvider(null, 57, true, 'app.config.js');
+  assert(f);
   expect(f.fix).toMatch(/top-level/);
 });
 
@@ -120,12 +133,15 @@ test('no config at all and no dynamic config stays silent', () => {
 // the ones whose actual version this line was quietly guessing at.
 test('the compilation cache advice names the Xcode it was told about', () => {
   const podfile = 'post_install do |installer|\nend\n';
-  expect(checkCompilationCache(podfile, 27).detail).toMatch(/On Xcode 27 /);
+  const f = checkCompilationCache(podfile, 27);
+  assert(f);
+  expect(f.detail).toMatch(/On Xcode 27 /);
 });
 
 test('an unreadable Xcode version is hedged rather than guessed at', () => {
   const podfile = 'post_install do |installer|\nend\n';
   const f = checkCompilationCache(podfile, null);
+  assert(f);
   expect(f.level).toBe('note');
   expect(f.detail).toMatch(/could not be read/);
   expect(f.detail).not.toMatch(/^On Xcode 26 a /);
@@ -180,7 +196,9 @@ test('an expo-dependency project that builds with react-native run-ios is not fl
 
 test('the dev client finding still fires for a project that builds with expo run:ios', () => {
   const pkg = { dependencies: { expo: '~57.0.0' } };
-  expect(checkDevClient(pkg, true).level).toBe('cost');
+  const f = checkDevClient(pkg, true);
+  assert(f);
+  expect(f.level).toBe('cost');
 });
 
 // `.rn-iso/` holds this workspace's build output, logs and supervisor pidfile,
@@ -193,15 +211,21 @@ test('silent when .rn-iso is gitignored', () => {
 
 test('a project that does not ignore .rn-iso is told what ends up in git status', () => {
   const f = checkArtifactLayout({ gitignoreSource: 'node_modules\n' });
-  expect(f).toBeTruthy();
+  assert(f);
   expect(f.title).toMatch(/not gitignored/);
   expect(f.detail).toMatch(/commit/i);
   expect(f.fix).toMatch(/add it themselves/i);
 });
 
 test('a missing .gitignore is the same diagnosis as one that does not mention it', () => {
-  expect(checkArtifactLayout({ gitignoreSource: null }).title).toMatch(/not gitignored/);
-  expect(checkArtifactLayout().title).toBe(checkArtifactLayout({ gitignoreSource: '' }).title);
+  const missing = checkArtifactLayout({ gitignoreSource: null });
+  assert(missing);
+  expect(missing.title).toMatch(/not gitignored/);
+  const noArg = checkArtifactLayout();
+  const empty = checkArtifactLayout({ gitignoreSource: '' });
+  assert(noArg);
+  assert(empty);
+  expect(noArg.title).toBe(empty.title);
 });
 
 // The entry is a path, not a substring: leading and trailing slashes and
@@ -209,9 +233,9 @@ test('a missing .gitignore is the same diagnosis as one that does not mention it
 test('the entry is recognised however it is written, and comments do not count', () => {
   expect(checkArtifactLayout({ gitignoreSource: '/.rn-iso\n' })).toBe(null);
   expect(checkArtifactLayout({ gitignoreSource: '.rn-iso\n' })).toBe(null);
-  expect(checkArtifactLayout({ gitignoreSource: '# ignore .rn-iso/ one day\nnode_modules\n' }).title).toMatch(
-    /not gitignored/,
-  );
+  const commented = checkArtifactLayout({ gitignoreSource: '# ignore .rn-iso/ one day\nnode_modules\n' });
+  assert(commented);
+  expect(commented.title).toMatch(/not gitignored/);
 });
 
 // --- cacheStores that is only wired some of the time ------------------------
@@ -231,7 +255,7 @@ test('a cacheStores behind an env-var conditional is downgraded to a note, not a
     '};',
   ].join('\n');
   const f = checkMetroCache(source);
-  expect(f).toBeTruthy();
+  assert(f);
   expect(f.level).toBe('note');
   expect(f.title).toMatch(/cacheStores/);
   expect(f.fix).toMatch(/env var/i);
@@ -239,7 +263,9 @@ test('a cacheStores behind an env-var conditional is downgraded to a note, not a
 
 test('a cacheStores set inside an if is a note for the same reason', () => {
   const source = 'if (process.env.SHARED) {\n  config.cacheStores = [new FileStore({})];\n}\n';
-  expect(checkMetroCache(source).level).toBe('note');
+  const f = checkMetroCache(source);
+  assert(f);
+  expect(f.level).toBe('note');
 });
 
 // The plain shape is the one this check exists to reward: unconditional wiring
@@ -268,6 +294,7 @@ test('a metro config that delegates to a workspace package is reported as uninsp
   ].join('\n');
   expect(metroConfigDelegate(source)).toBe('@th3rdwave/react-native-app-scripts/metro-config');
   const f = checkMetroCache(source);
+  assert(f);
   expect(f.level).toBe('note');
   expect(f.title).toMatch(/delegates to @th3rdwave\/react-native-app-scripts\/metro-config; rn-iso cannot inspect it/);
   expect(f.title).not.toMatch(/per-project/);
@@ -289,9 +316,9 @@ test('an ordinary config that BUILDS on a metro package is not a delegation', ()
       "const { getDefaultConfig } = require('@react-native/metro-config');\nconst config = getDefaultConfig(__dirname);\nmodule.exports = config;",
     ),
   ).toBe(null);
-  expect(checkMetroCache("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);").level).toBe(
-    'cost',
-  );
+  const f = checkMetroCache("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);");
+  assert(f);
+  expect(f.level).toBe('cost');
 });
 
 test('a delegating config that DOES mention cacheStores is read normally', () => {
@@ -308,6 +335,7 @@ test('a delegating config that DOES mention cacheStores is read normally', () =>
 // the advice as written produced a Podfile that compiled and cached nothing.
 test('the compilation cache advice names the loop the settings have to live in', () => {
   const f = checkCompilationCache('post_install do |installer|\nend\n', 26);
+  assert(f);
   expect(f.fix).toMatch(/post_install/);
   expect(f.fix).toMatch(/targets\.each/);
   expect(f.fix).toMatch(/build_configurations/);
@@ -319,6 +347,7 @@ test('the compilation cache advice names the loop the settings have to live in',
 // provider, "eas" included, already satisfies the check.
 test('the dynamic-config note carries the command that answers it', () => {
   const f = checkBuildCacheProvider(null, 57, true, 'app.config.ts');
+  assert(f);
   expect(f.fix).toMatch(/npx expo config --json/);
   expect(f.fix).toMatch(/buildCacheProvider/);
 });
@@ -326,6 +355,7 @@ test('the dynamic-config note carries the command that answers it', () => {
 test('the dynamic-config note says an existing provider is kept, as the static one does', () => {
   for (const sdk of [53, 57]) {
     const f = checkBuildCacheProvider(null, sdk, true, 'app.config.ts');
+    assert(f);
     expect(f.fix).toMatch(/"eas"/);
     expect(f.fix).toMatch(/never replaces it/);
   }
@@ -354,6 +384,7 @@ test('the EAS provider with no eas-cli anywhere is a cost, with an install remed
     provider: 'eas',
     auth: { failed: true, code: 'no-cli', reason: 'no `eas` executable', remedy: 'Install eas-cli.' },
   });
+  assert(f);
   expect(f.level).toBe('cost');
   expect(f.title).toMatch(/eas-cli/);
   expect(f.fix).toMatch(/Install eas-cli/);
@@ -364,6 +395,7 @@ test('the EAS provider with no session is a cost naming both ways back in', () =
     provider: 'eas',
     auth: { failed: true, code: 'logged-out', reason: 'Not logged in', remedy: 'Run `eas login` (or set EXPO_TOKEN).' },
   });
+  assert(f);
   expect(f.level).toBe('cost');
   expect(f.detail).toMatch(/miss/i);
   expect(f.fix).toMatch(/eas login/);
@@ -386,6 +418,7 @@ test('a session on an account that does not cover the owner is a NOTE naming bot
       remedy: 'Run `eas login` as a member of th3rd-wave.',
     },
   });
+  assert(f);
   expect(f.level).toBe('note');
   expect(f.title).toMatch(/janic/);
   expect(f.title).toMatch(/th3rd-wave/);
@@ -396,6 +429,7 @@ test('a session on an account that does not cover the owner is a NOTE naming bot
 // network whenever a session exists, and a plane is not a logged-out user.
 test('an unestablished session is a note about the check, not an accusation', () => {
   const f = checkEasAuth({ provider: 'eas', auth: { unknown: 'eas whoami timed out after 15000ms' } });
+  assert(f);
   expect(f.level).toBe('note');
   expect(f.detail).toMatch(/timed out/);
   expect(!/not logged in/i.test(f.title)).toBeTruthy();
@@ -414,8 +448,8 @@ test('the provider is recognised on either key', () => {
 });
 
 test('runDoctor probes the session only for an EAS project, and passes it the owner', () => {
-  const probes = [];
-  const auth = (args) => {
+  const probes: { projectRoot: string; owner?: string | null }[] = [];
+  const auth = (args: { projectRoot: string; owner?: string | null }) => {
     probes.push(args);
     return { ok: true, account: 'janic', accounts: ['janic'] };
   };
@@ -462,6 +496,7 @@ test('checkConcurrency is silent when no limit is set', () => {
 
 test('checkConcurrency echoes the caps and the current live count when set', () => {
   const f = checkConcurrency({ maxBuilds: 2, maxDevices: 3, liveDevices: 1, activeBuilds: 0 });
+  assert(f);
   expect(f.level).toBe('note');
   expect(f.detail).toMatch(/maxBuilds 2/);
   expect(f.detail).toMatch(/maxDevices 3/);

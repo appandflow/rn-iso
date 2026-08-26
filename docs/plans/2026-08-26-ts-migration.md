@@ -26,7 +26,7 @@ TypeScript + oxlint + oxfmt + tsdown + vitest(-on-rolldown), tests colocated in
    tsdown.config per package, oxlint/oxfmt config, root scripts. Prove the whole
    chain on a small converted slice. Produce the exact per-file conversion recipe.
 1. **rn-iso/src -> .ts** (70 files), `tsc --noEmit` clean.
-2. **rn-iso tests -> vitest .ts, colocated `src/__tests__/`** (50 files). DONE: vitest 1398 green. Production `typecheck` is strict-0; test files run type-stripped by vitest. Strict test-typechecking (`typecheck:tests` -> tsconfig.test.json, ~332 friction errors from tests that intentionally pass partial/invalid inputs) is an OPT-IN RATCHET, not in blocking CI -- tighten later by casting deliberate-malformed inputs.
+2. **rn-iso tests -> vitest .ts, colocated `src/__tests__/`**. DONE: vitest green. Tests now typecheck in the ONE strict `typecheck` pass alongside production (the `src/__tests__` exclude and the separate `tsconfig.test.json`/`typecheck:tests` ratchet are gone). Fixtures build through the `_factories.ts` library rather than casts; the only remaining casts are deliberate invalid-input robustness tests.
 3. **Cache packages -> .ts**, tsdown builds CJS; their tests.
 4. **tsdown build all**; verify built `bin` + `./cache-manifest` resolve and run.
 5. **oxlint + oxfmt** config + fix.

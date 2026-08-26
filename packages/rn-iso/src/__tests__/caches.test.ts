@@ -6,17 +6,18 @@ import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches } from '../c
 import { register } from '../cache-manifest.ts';
 import { makeCacheDescriptor } from './_factories.ts';
 import { setProjectSetting, upsertProject } from '../config.ts';
+import assert from 'node:assert';
 
 const LONG_AGO = new Date(Date.now() - 90 * 24 * 3600 * 1000);
 
-function age(path, when = LONG_AGO) {
+function age(path: string, when = LONG_AGO) {
   utimesSync(path, when, when);
 }
 
 // discoverCaches reads the cache manifest, which lives under the config dir --
 // so these tests must redirect it like every other config-touching test, or
 // they see whatever this machine has actually registered.
-let tmpHome;
+let tmpHome: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-home-'));
   process.env.RN_ISO_HOME = tmpHome;
@@ -52,6 +53,8 @@ test('metro file maps are reported as an explicit file list, never as a director
     setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
     const found = discoverCaches().find((c) => c.name === 'Metro file maps');
     expect(found).toBeTruthy();
+    assert(found);
+    assert(found.files);
     expect(Array.isArray(found.files) && found.files.length > 0).toBeTruthy();
     expect(found.files.includes(stray)).toBeTruthy();
     expect(found.files.every((f) => f.startsWith(tmpdir()))).toBeTruthy();
@@ -72,7 +75,9 @@ test('sizeCaches keeps a precounted size and measures the rest', () => {
       makeCacheDescriptor({ name: 'walked', dir }),
     ]);
     expect(sized[0].bytes).toBe(42);
-    expect(sized[1].bytes >= 2048).toBeTruthy();
+    const walkedBytes = sized[1].bytes;
+    assert(walkedBytes !== undefined);
+    expect(walkedBytes >= 2048).toBeTruthy();
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -268,8 +273,12 @@ test('discoverCaches says of each cache whether a project registered it', () => 
     register({ dir: registeredDir, name: 'Registered one' });
 
     const found = discoverCaches({ declared: [declaredDir] });
-    expect(found.find((c) => c.dir === registeredDir).source).toBe('registered');
-    expect(found.find((c) => c.dir === declaredDir).source).toBe('detected');
+    const registered = found.find((c) => c.dir === registeredDir);
+    const detected = found.find((c) => c.dir === declaredDir);
+    assert(registered);
+    assert(detected);
+    expect(registered.source).toBe('registered');
+    expect(detected.source).toBe('detected');
   } finally {
     rmSync(registeredDir, { recursive: true, force: true });
     rmSync(declaredDir, { recursive: true, force: true });

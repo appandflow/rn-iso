@@ -27,12 +27,13 @@ import {
   getConcurrencyLimits,
 } from '../config.ts';
 import { makeConfig } from './_factories.ts';
+import assert from 'node:assert';
 
-let tmpHome;
+let tmpHome: string;
 
 // Claims from nonexistent paths are filtered, so tests that want a claim to
 // be visible must register a directory that actually exists.
-function liveProjectDir(name) {
+function liveProjectDir(name: string) {
   const dir = join(tmpHome, name);
   mkdirSync(dir, { recursive: true });
   return dir;
@@ -65,6 +66,7 @@ test('ensureConfig creates and returns empty config', () => {
 test('saveConfig + loadConfig roundtrip', () => {
   saveConfig(makeConfig({ version: 1, projects: { '/foo': { metroPort: 8082, platforms: {} } } }));
   const cfg = loadConfig();
+  assert(cfg);
   expect(cfg.projects['/foo'].metroPort).toBe(8082);
 });
 
@@ -109,7 +111,9 @@ test('withConfigLock is reentrant, so nested mutators cannot deadlock', () => {
   const result = withConfigLock(() => {
     upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
     claimMetroPort('/p', 8082);
-    return getProject('/p').metroPort;
+    const proj = getProject('/p');
+    assert(proj);
+    return proj.metroPort;
   });
   expect(result).toBe(8082);
   expect(existsSync(join(tmpHome, 'config.lock'))).toBe(false);
@@ -167,6 +171,7 @@ test('concurrent processes each keep their record', async () => {
   );
 
   const cfg = loadConfig();
+  assert(cfg);
   for (const key of keys) {
     expect(cfg.projects[key]).toBeTruthy();
   }
@@ -177,7 +182,9 @@ test('concurrent processes each keep their record', async () => {
 test('claimMetroPort records the port when nothing else holds it', () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   expect(claimMetroPort('/a', 8082)).toBe(8082);
-  expect(getProject('/a').metroPort).toBe(8082);
+  const a = getProject('/a');
+  assert(a);
+  expect(a.metroPort).toBe(8082);
 });
 
 // Two `up` runs probe the same free port at the same time; only one may keep
@@ -187,7 +194,9 @@ test('claimMetroPort refuses a port another project claimed first', () => {
   upsertProject('/b', { bundleId: 'b', androidPackage: 'b', isExpo: false });
   expect(claimMetroPort('/a', 8082)).toBe(8082);
   expect(claimMetroPort('/b', 8082)).toBe(null);
-  expect(getProject('/b').metroPort).toBe(null);
+  const b = getProject('/b');
+  assert(b);
+  expect(b.metroPort).toBe(null);
 });
 
 test("claimMetroPort re-claiming a project's own port is not a conflict", () => {
@@ -212,6 +221,7 @@ test('upsertProject preserves existing fields when called again', () => {
   claimMetroPort('/p', 8082);
   upsertProject('/p', { bundleId: 'com.b', androidPackage: 'com.b', isExpo: false });
   const proj = getProject('/p');
+  assert(proj);
   expect(proj.bundleId).toBe('com.b');
   expect(proj.metroPort).toBe(8082);
 });
@@ -219,9 +229,13 @@ test('upsertProject preserves existing fields when called again', () => {
 test('setDevice and clearDevice mutate platforms', () => {
   upsertProject('/p', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
   setDevice('/p', 'ios', { deviceUdid: 'ABC' });
-  expect(getProject('/p').platforms.ios.deviceUdid).toBe('ABC');
+  const proj = getProject('/p');
+  assert(proj?.platforms?.ios);
+  expect(proj.platforms.ios.deviceUdid).toBe('ABC');
   clearDevice('/p', 'ios');
-  expect(getProject('/p').platforms.ios).toBe(undefined);
+  const cleared = getProject('/p');
+  assert(cleared);
+  expect(cleared.platforms?.ios).toBe(undefined);
 });
 
 test('allMetroPorts collects ports from all projects', () => {

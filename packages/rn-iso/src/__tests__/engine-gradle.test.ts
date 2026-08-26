@@ -6,10 +6,12 @@
 // project (one deliberately uncompilable source file), run through this
 // module's own line reader, using the distribution already on the machine so
 // nothing was downloaded and no emulator was involved.
+import assert from 'node:assert';
 import { EventEmitter } from 'node:events';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import {
   ASSEMBLE_TASK,
   BUILD_ERROR,
@@ -22,10 +24,11 @@ import {
   parseOutputMetadata,
   pickDebugApk,
 } from '../engine/gradle.ts';
+import { makeWriter } from './_factories.ts';
 
-let root;
-let sdk;
-let savedAndroidHome;
+let root: string;
+let sdk: string;
+let savedAndroidHome: string | undefined;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'rn-iso-gradle-'));
@@ -86,6 +89,7 @@ describe('discoverAndroidProject', () => {
 describe('androidSdkRefusal', () => {
   test('refuses with the ANDROID_HOME remedy when nothing points at an SDK', () => {
     const refusal = androidSdkRefusal({ sdkPath: '/nope', sdkExists: false, hasLocalProperties: false });
+    assert(refusal);
     expect(refusal.code).toBe(BUILD_ERROR);
     expect(refusal.remedy).toMatch(/ANDROID_HOME/);
     expect(refusal.remedy).toMatch(/JAVA_HOME/);
@@ -188,7 +192,21 @@ describe('locateDebugApk', () => {
 
 // --- buildAndroid ----------------------------------------------------------
 
-function fakeChild({ lines = [], stderrLines = [], code = 0, signal = null, error = null, onExit = null } = {}) {
+function fakeChild({
+  lines = [],
+  stderrLines = [],
+  code = 0,
+  signal = null,
+  error = null,
+  onExit = null,
+}: {
+  lines?: string[];
+  stderrLines?: string[];
+  code?: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: Error | null;
+  onExit?: (() => void) | null;
+} = {}) {
   const child: any = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -207,16 +225,22 @@ function fakeChild({ lines = [], stderrLines = [], code = 0, signal = null, erro
   return child;
 }
 
-function recordingWriter() {
-  const records = [];
-  return { records, write: (r) => records.push(r) } as any;
+function recordingWriter(): NdjsonWriter & { records: NdjsonRecord[] } {
+  const records: NdjsonRecord[] = [];
+  const writer = makeWriter({
+    write(record) {
+      records.push(record as NdjsonRecord);
+      return true;
+    },
+  });
+  return Object.assign(writer, { records });
 }
 
 describe('buildAndroid', () => {
   test('runs ./gradlew assembleDebug in android/ and streams every line as it arrives', async () => {
     makeAndroidProject();
     const writer = recordingWriter();
-    const calls = [];
+    const calls: { cmd: string; args: string[]; opts: Record<string, unknown> }[] = [];
     const result = await buildAndroid(
       { root, logWriter: writer },
       {
@@ -241,7 +265,9 @@ describe('buildAndroid', () => {
     expect(calls[0].args).toEqual(['assembleDebug']);
     expect(ASSEMBLE_TASK).toBe('assembleDebug');
     expect(calls[0].opts.cwd).toBe(join(root, 'android'));
-    expect(calls[0].opts.stdio[0]).toBe('ignore');
+    const { stdio } = calls[0].opts;
+    assert(Array.isArray(stdio));
+    expect(stdio[0]).toBe('ignore');
 
     expect((result as any).ok).toBe(true);
     expect((result as any).apkPath).toBe(join(debugApkDir(root), 'app-debug.apk'));
@@ -276,6 +302,7 @@ describe('buildAndroid', () => {
     expect(result.code).toBe(BUILD_ERROR);
     expect(result.reason).toMatch(/exit code 1/);
     expect(result.durationMs).toBe(2000);
+    assert(result.diagnostics);
     expect(result.diagnostics.length > 0).toBeTruthy();
     expect(result.diagnostics.some((d) => (d.file || '').endsWith('Broken.java'))).toBeTruthy();
     expect(result.truncated).toBe(0);

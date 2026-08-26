@@ -8,10 +8,13 @@
 //   - identity: health is resolveProjectMetro, so a FOREIGN listener on the
 //     reserved port moves the reservation instead of counting as success;
 //   - a failure prints the supervisor log's tail and its path, not a stack.
+import assert from 'node:assert';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import type { SpawnOptions } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Command } from 'commander';
 import { getProject, upsertProject } from '../config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { supervisorLogFile, workspaceLogsDir } from '../paths.ts';
@@ -27,8 +30,8 @@ import {
 } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
 
-let tmpHome;
-let root;
+let tmpHome: string;
+let root: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -48,10 +51,23 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
+// The action callback commander invokes: `(opts)`.
+type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
+
+// The subset of commander's Command that registerStart chains off of. A real
+// Command is assignable to this, so `stub as Command` is a plain widening cast
+// (no `as unknown` needed) that lets the stub stand in for the real object.
+interface CommandStub {
+  command(nameAndArgs?: string): CommandStub;
+  description(str?: string): CommandStub;
+  option(flags?: string, description?: string): CommandStub;
+  action(fn: ActionFn): CommandStub;
+}
+
 // The same commander stub the other command tests use.
-function captureAction(register) {
-  let captured;
-  const stub = {
+function captureAction(register: (cmd: Command) => void) {
+  let captured: ActionFn | undefined;
+  const stub: CommandStub = {
     command() {
       return stub;
     },
@@ -66,15 +82,50 @@ function captureAction(register) {
       return stub;
     },
   };
-  register(stub);
-  return (opts = {}) => captured(opts);
+  register(stub as Command);
+  return (opts: Record<string, unknown> = {}) => {
+    if (!captured) throw new Error('register did not register an action');
+    return captured(opts);
+  };
+}
+
+// The child `start` spawns and then wires listeners onto: a minimal stand-in
+// for the ChildProcess `getExecutor().spawn` returns. `on` carries the
+// (event, cb) shape so a test can drive the 'exit' listener.
+interface ChildStub {
+  pid: number | undefined;
+  unref(): void;
+  on(event: string, cb: (...args: unknown[]) => void): void;
+}
+
+interface SpawnCall {
+  cmd: string;
+  args: readonly string[];
+  opts: SpawnOptions;
+}
+
+interface MetroExecutorMock {
+  calls: { run: string[]; spawn: SpawnCall[] };
+  listening: boolean;
+  run(): string;
+  runFile(): string;
+  runQuiet(cmd: string): string;
+  spawn(cmd: string, args: readonly string[], opts: SpawnOptions): ChildStub;
 }
 
 // resolveProjectMetro asks lsof who listens, probes /status for real, then
 // reads that pid's cwd and process group. This mock answers the three shell
 // calls; the /status half is a real listener started by the test.
-function metroExecutor({ listeners = {}, cwd = root, spawnResult = null } = {}) {
-  const calls = { run: [], spawn: [] };
+function metroExecutor({
+  listeners = {},
+  cwd = root,
+  spawnResult = null,
+}: {
+  listeners?: Record<string, number>;
+  cwd?: string;
+  spawnResult?: ChildStub | null;
+} = {}): MetroExecutorMock {
+  const calls: { run: string[]; spawn: SpawnCall[] } = { run: [], spawn: [] };
   return {
     calls,
     listening: false,
@@ -101,9 +152,9 @@ function metroExecutor({ listeners = {}, cwd = root, spawnResult = null } = {}) 
 
 // Every listener is registered for teardown: one left open by a test whose
 // assertion failed first would keep the test runner's process alive.
-const openServers = [];
+const openServers: Server[] = [];
 
-function metroListener(port): Promise<Server> {
+function metroListener(port: number): Promise<Server> {
   const server = createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('packager-status:running');
@@ -112,10 +163,10 @@ function metroListener(port): Promise<Server> {
   return new Promise<Server>((resolve) => server.listen(port, '127.0.0.1', () => resolve(server)));
 }
 
-async function runAction(opts) {
+async function runAction(opts: Record<string, unknown>) {
   const run = captureAction(registerStart);
-  const logs = [];
-  const errs = [];
+  const logs: string[] = [];
+  const errs: string[] = [];
   const origLog = console.log;
   const origErr = console.error;
   const origExit = process.exit;
@@ -182,6 +233,7 @@ describe('liveSupervisor', () => {
       port: 8082,
       isAlive: alive,
     });
+    assert(found);
     expect(found.pid).toBe(11);
     expect(found.mode).toBe(null);
   });
@@ -316,7 +368,7 @@ describe('action: spawning the supervisor', () => {
   test('spawns node run.js --root --port detached, with stdio into supervisor.log, and waits for health', async () => {
     const port = 8154;
     const exec = metroExecutor({ listeners: {} });
-    let server = null;
+    const held: { server: Server | null } = { server: null };
     // The fake supervisor: spawning it is what makes the port answer, exactly
     // as the real one does.
     exec.spawn = (cmd, args, opts) => {
@@ -326,7 +378,7 @@ describe('action: spawning the supervisor', () => {
       // the supervisor is already gone.
       writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
       metroListener(port).then((s) => {
-        server = s;
+        held.server = s;
         exec.listening = true;
       });
       return { pid: process.pid, unref() {}, on() {} };
@@ -343,7 +395,7 @@ describe('action: spawning the supervisor', () => {
     try {
       result = await runAction({ json: true, wait: '10' });
     } finally {
-      server?.close();
+      held.server?.close();
     }
 
     expect(result.exitCode).toBe(null);
@@ -352,9 +404,11 @@ describe('action: spawning the supervisor', () => {
     expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port)]);
     expect(spawned.opts.cwd).toBe(root);
     expect(spawned.opts.detached).toBe(true);
-    expect(spawned.opts.stdio[0]).toBe('ignore');
-    expect(typeof spawned.opts.stdio[1]).toBe('number');
-    expect(spawned.opts.stdio[1]).toBe(spawned.opts.stdio[2]);
+    const stdio = spawned.opts.stdio;
+    assert(Array.isArray(stdio));
+    expect(stdio[0]).toBe('ignore');
+    expect(typeof stdio[1]).toBe('number');
+    expect(stdio[1]).toBe(stdio[2]);
     expect(existsSync(supervisorLogFile(root))).toBeTruthy();
 
     const facts = JSON.parse(result.logs[0]);
@@ -412,10 +466,10 @@ describe('action: spawning the supervisor', () => {
   test('a supervisor that exits during startup ends the wait immediately', async () => {
     const port = 8156;
     const exec = metroExecutor({ listeners: {} });
-    const handlers: Record<string, (...args: any[]) => void> = {};
+    const handlers: Record<string, (...args: unknown[]) => void> = {};
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      const child = {
+      const child: ChildStub = {
         pid: process.pid,
         unref() {},
         on(event, cb) {
@@ -438,7 +492,9 @@ describe('action: spawning the supervisor', () => {
     expect(result.errs.join('\n')).toMatch(/supervisor exited \(code 1\) before the dev server came up/);
     // A supervisor that DIED and one that is merely slow need different next
     // steps, so they carry different codes rather than one generic failure.
-    const facts = JSON.parse(result.logs.at(-1));
+    const lastLog = result.logs.at(-1);
+    assert(lastLog);
+    const facts = JSON.parse(lastLog);
     expect(facts.code).toBe('RN_ISO_SUPERVISOR_EXITED');
     expect(facts.remedy).toMatch(/start` again/);
   });
@@ -528,7 +584,9 @@ describe('action: the reserved port', () => {
       server.close();
     }
 
-    const reserved = getProject(root).metroPort;
+    const project = getProject(root);
+    assert(project);
+    const reserved = project.metroPort;
     expect(reserved).not.toBe(port);
     expect(result.errs.join('\n')).toMatch(/is held by something else/);
     // It then tries to start on the new port, and fails to come up within 1s.
@@ -546,7 +604,9 @@ describe('action: the reserved port', () => {
 
     const result = await runAction({ json: true, wait: '1' });
 
-    const reserved = getProject(root).metroPort;
+    const project = getProject(root);
+    assert(project);
+    const reserved = project.metroPort;
     expect(typeof reserved).toBe('number');
     expect(exec.calls.spawn[0].args[4]).toBe(String(reserved));
     expect(result.exitCode).toBe(1);
@@ -583,7 +643,7 @@ describe('action: an existing supervisor that is not answering', () => {
   test('and reports success once that supervisor answers', async () => {
     const port = 8159;
     const exec = metroExecutor({ listeners: {} });
-    let server = null;
+    const held: { server: Server | null } = { server: null };
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
       if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5152' : '';
@@ -593,7 +653,7 @@ describe('action: an existing supervisor that is not answering', () => {
     upsertProject(root, { metroPort: port });
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
     metroListener(port).then((s) => {
-      server = s;
+      held.server = s;
       exec.listening = true;
     });
 
@@ -601,7 +661,7 @@ describe('action: an existing supervisor that is not answering', () => {
     try {
       result = await runAction({ json: true, wait: '10' });
     } finally {
-      server?.close();
+      held.server?.close();
     }
 
     expect(result.exitCode).toBe(null);

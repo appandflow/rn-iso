@@ -15,8 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "npm run build --workspaces --if-present",
-    "test:e2e": "node --test test/e2e/*.e2e.js",
-    "typecheck:tests": "tsc --noEmit -p packages/rn-iso/tsconfig.test.json"
+    "test:e2e": "node --test test/e2e/*.e2e.js"
   },
   "devDependencies": {
     "@types/node": "26.3.0",

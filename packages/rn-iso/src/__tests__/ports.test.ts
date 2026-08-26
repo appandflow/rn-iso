@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -10,7 +11,7 @@ import { computeNextPort, findReclaimablePort, allocatePort, reserveMetroPort, i
 // this machine happens to be running.
 const allFree = async () => true;
 
-let tmpHome;
+let tmpHome: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -54,7 +55,7 @@ test('findReclaimablePort returns first dead port and its owner', async () => {
   claimMetroPort('/a', 8082);
   claimMetroPort('/b', 8083);
   // 8082 alive, 8083 dead
-  const probe = async (port) => port === 8082;
+  const probe = async (port: number) => port === 8082;
   const r = await findReclaimablePort('/c', probe);
   expect(r).toEqual({ port: 8083, ownerPath: '/b' });
 });
@@ -201,15 +202,21 @@ test('reserveMetroPort moves on when another project claims the port first', asy
   };
   const port = await reserveMetroPort(dirB, async () => false, isFree);
   expect(port).toBe(8083);
-  expect(getProject(dirB).metroPort).toBe(8083);
-  expect(getProject(dirA).metroPort).toBe(8082);
+  const recB = getProject(dirB);
+  const recA = getProject(dirA);
+  assert(recB);
+  assert(recA);
+  expect(recB.metroPort).toBe(8083);
+  expect(recA.metroPort).toBe(8082);
 });
 
 test('reserveMetroPort records the port it hands back', async () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   const port = await reserveMetroPort('/a', async () => false, allFree);
   expect(port).toBe(8082);
-  expect(getProject('/a').metroPort).toBe(8082);
+  const rec = getProject('/a');
+  assert(rec);
+  expect(rec.metroPort).toBe(8082);
 });
 
 // A reclaimable port belongs to a dead project, but something unrelated may
@@ -218,7 +225,7 @@ test('allocatePort does not reuse a reclaimable port that is now occupied', asyn
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   claimMetroPort('/a', 8082);
   const deadMetro = async () => false; // /a's Metro is gone
-  const isFree = async (p) => p !== 8082; // ...but 8082 is held by something else
+  const isFree = async (p: number) => p !== 8082; // ...but 8082 is held by something else
   const port = await allocatePort('/new', deadMetro, isFree);
   expect(port).not.toBe(8082);
   expect(port).toBe(8083);

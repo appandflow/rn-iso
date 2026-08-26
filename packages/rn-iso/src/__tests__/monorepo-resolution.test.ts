@@ -20,12 +20,12 @@ import { detectIsExpo, isPackageResolvable, resolvePackageJson } from '../projec
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
 
-let home;
-let ws;
-let app;
+let home: string;
+let ws: string;
+let app: string;
 
 // The hoisted install, as an installer would leave it.
-function write(path, text, { exec = false } = {}) {
+function write(path: string, text: string, { exec = false } = {}) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, text);
   if (exec) chmodSync(path, 0o755);

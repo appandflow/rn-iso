@@ -5,7 +5,7 @@ import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, setDevice, getProject } from '../config.ts';
 import { describeDereferenced } from '../reclaim.ts';
 
-let tmpHome;
+let tmpHome: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -50,7 +50,7 @@ test('reclaimProject removes the config entry', async () => {
 // artifacts to find or measure: it must not walk a global DerivedData tree
 // (one `plutil` per directory) or size anything (one `du` walk per match).
 test('reclaimProject scans and sizes no build output at all', async () => {
-  const calls = [];
+  const calls: string[] = [];
   setExecutor({
     run: (cmd) => {
       calls.push(cmd);

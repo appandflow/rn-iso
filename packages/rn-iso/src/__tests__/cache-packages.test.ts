@@ -21,7 +21,7 @@ const PACKAGES = join(fileURLToPath(import.meta.url), '..', '..', '..', '..');
 
 // Registration is deliberately fire-and-forget, so the caller returns before the
 // import resolves. Poll rather than sleep: it lands within a tick or two.
-async function waitForRegistration(dir, timeoutMs = 5000) {
+async function waitForRegistration(dir: string, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const found = readManifest().caches.find((c) => c.dir === dir);
@@ -66,7 +66,7 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
     // Metro's own FileStore is not a dependency of rn-iso, and the store object
     // is not what is under test here.
     class FakeStore {
-      constructor(options) {
+      constructor(options: { root: string }) {
         (this as any).root = options.root;
       }
     }

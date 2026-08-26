@@ -13,10 +13,12 @@ import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { saveConfig } from '../config.ts';
 import type { AddressInfo } from 'node:net';
+import assert from 'node:assert';
 import { makeConfig } from './_factories.ts';
 import statusCommand, { readVolumes } from '../commands/status.ts';
+import type { NdjsonRecord } from '../ndjson.ts';
 
-let tmpHome;
+let tmpHome: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -53,7 +55,7 @@ afterEach(() => {
 async function runStatus() {
   const program = new Command();
   statusCommand(program);
-  const logs = [];
+  const logs: string[] = [];
   const originalLog = console.log;
   console.log = (msg) => logs.push(msg);
   try {
@@ -162,7 +164,7 @@ test('status still warns about a recorded sim missing from a readable listing', 
 async function runStatusJson() {
   const program = new Command();
   statusCommand(program);
-  const logs = [];
+  const logs: string[] = [];
   const originalLog = console.log;
   console.log = (msg) => logs.push(msg);
   try {
@@ -173,12 +175,12 @@ async function runStatusJson() {
   return JSON.parse(logs.join('\n'));
 }
 
-function writeLogs(root, records) {
+function writeLogs(root: string, records: NdjsonRecord[]) {
   mkdirSync(join(root, '.rn-iso', 'logs'), { recursive: true });
   writeFileSync(join(root, '.rn-iso', 'logs', 'metro.ndjson'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
 }
 
-function writeState(root, supervisor) {
+function writeState(root: string, supervisor: { pid: number; port: number; mode: string; startedAt: number }) {
   mkdirSync(join(root, '.rn-iso'), { recursive: true });
   writeFileSync(join(root, '.rn-iso', 'state.json'), JSON.stringify({ supervisor }));
 }
@@ -330,7 +332,7 @@ test('the printed lines name the supervisor and the error count', async () => {
 // volume that can actually fill up -- build output is workspace-local -- went
 // unmentioned. `volumeRootFor` decides which volumes are in play, so this is
 // checked with an explicit path rather than against wherever the suite runs.
-function dfOutput({ totalKb, availableKb }) {
+function dfOutput({ totalKb, availableKb }: { totalKb: number; availableKb: number }) {
   const usedKb = totalKb - availableKb;
   const capacity = Math.round((usedKb / totalKb) * 100);
   return (
@@ -339,8 +341,8 @@ function dfOutput({ totalKb, availableKb }) {
   );
 }
 
-function dfExecutor(byVolume) {
-  const asked = [];
+function dfExecutor(byVolume: Record<string, string>) {
+  const asked: string[] = [];
   setExecutor({
     run() {
       return '';
@@ -373,6 +375,7 @@ test('a project on another volume reports that volume alongside the boot one', a
   const volumes = readVolumes('/Volumes/ExternalSSD/Developer/app');
   expect(asked).toEqual(['/', '/Volumes/ExternalSSD']);
   expect(volumes.map((v) => v.volume)).toEqual(['/', '/Volumes/ExternalSSD']);
+  assert(volumes[1].disk);
   expect(volumes[1].disk.availableMb).toBe(1536 * 1024);
 });
 

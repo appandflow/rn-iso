@@ -7,6 +7,7 @@
 // failed build, and dependency resolution. The `assembleDebug` transcripts
 // captured from a real gradle 8.13 run are in test/fixtures/gradle-*.txt --
 // see test/engine-gradle.test.js for how they were produced.
+import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -17,7 +18,7 @@ import {
   remedyFor,
 } from '../engine/errors-gradle.ts';
 
-const fixture = (name) => readFileSync(join(import.meta.dirname, 'fixtures', name), 'utf-8');
+const fixture = (name: string) => readFileSync(join(import.meta.dirname, 'fixtures', name), 'utf-8');
 
 describe('what is recognized', () => {
   test('the FAILURE block reduces to its What went wrong section, causes and all', () => {
@@ -174,8 +175,8 @@ describe('what is not', () => {
 
   test('non-text and empty input yield nothing', () => {
     expect(extractGradleDiagnostics('')).toEqual([]);
-    expect(extractGradleDiagnostics(null)).toEqual([]);
-    expect(extractGradleDiagnostics(undefined)).toEqual([]);
+    expect(extractGradleDiagnostics(null as any)).toEqual([]);
+    expect(extractGradleDiagnostics(undefined as any)).toEqual([]);
     expect(extractGradleDiagnostics(42 as any)).toEqual([]);
   });
 
@@ -226,7 +227,7 @@ describe('dedupe, order and the cap', () => {
 
   test('capDiagnostics is a no-op under the limit and tolerates junk', () => {
     expect(capDiagnostics([{ message: 'a' }])).toEqual({ shown: [{ message: 'a' }], truncated: 0 });
-    expect(capDiagnostics(null)).toEqual({ shown: [], truncated: 0 });
+    expect(capDiagnostics(null as any)).toEqual({ shown: [], truncated: 0 });
   });
 
   test('a runaway message is clipped rather than printed whole', () => {
@@ -252,6 +253,7 @@ describe('against transcripts captured from a real gradle run', () => {
     expect(diagnostics.some((d) => /FAILED/.test(d.message))).toBeTruthy();
     const located = diagnostics.find((d) => d.file && d.line);
     expect(located).toBeTruthy();
+    assert(located);
     expect(located.file).toMatch(/Broken\.java$/);
     expect(diagnostics.map((d) => d.message).join(' | ')).toMatch(/Execution failed for task/);
   });

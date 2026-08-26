@@ -20,11 +20,14 @@
 // that what the live tests build is visible beside what they assert. It is a
 // single Objective-C file with no UIKit: enough to produce a real .app with a
 // real Info.plist, and small enough to build in about two seconds.
+import assert from 'node:assert';
+import type { SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { createNdjsonWriter, parseNdjsonText } from '../ndjson.ts';
 import {
   buildIos,
@@ -74,7 +77,7 @@ const REAL_WORKSPACE_LIST_JSON = `{
   }
 }`;
 
-let tmp;
+let tmp: string;
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'rn-iso-xcode-'));
 });
@@ -83,18 +86,21 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-function recordingWriter(file = '/dev/null/not-used'): any {
-  const records = [];
+function recordingWriter(file = '/dev/null/not-used'): NdjsonWriter & { records: NdjsonRecord[] } {
+  const records: NdjsonRecord[] = [];
   return {
     file,
     records,
-    write(record) {
-      records.push(record);
+    write(record: unknown) {
+      records.push(record as NdjsonRecord);
       return true;
     },
     close() {
       return { file, written: records.length, dropped: 0, lastError: null };
     },
+    written: 0,
+    dropped: 0,
+    lastError: null,
   };
 }
 
@@ -107,7 +113,7 @@ function fakeChild() {
 }
 
 // A minimal project on disk: enough shape for discovery, no Xcode required.
-function stubProject(root, { workspace = false, project = true, name = 'App' } = {}) {
+function stubProject(root: string, { workspace = false, project = true, name = 'App' } = {}) {
   const ios = join(root, 'ios');
   mkdirSync(ios, { recursive: true });
   if (project) mkdirSync(join(ios, `${name}.xcodeproj`));
@@ -139,12 +145,17 @@ describe('pickXcodeProject', () => {
 
   test('among several workspaces, the one named after a project beside it wins', () => {
     const picked = pickXcodeProject(['Other.xcworkspace', 'App.xcworkspace', 'App.xcodeproj']);
+    assert(picked);
     expect(picked.file).toBe('App.xcworkspace');
   });
 
   test('with no name to match, the choice is alphabetical so it never varies between runs', () => {
-    expect(pickXcodeProject(['b.xcworkspace', 'a.xcworkspace']).file).toBe('a.xcworkspace');
-    expect(pickXcodeProject(['b.xcodeproj', 'a.xcodeproj']).file).toBe('a.xcodeproj');
+    const workspace = pickXcodeProject(['b.xcworkspace', 'a.xcworkspace']);
+    assert(workspace);
+    expect(workspace.file).toBe('a.xcworkspace');
+    const project = pickXcodeProject(['b.xcodeproj', 'a.xcodeproj']);
+    assert(project);
+    expect(project.file).toBe('a.xcodeproj');
   });
 
   test('nothing buildable is null, not a throw', () => {
@@ -170,6 +181,7 @@ describe('discoverXcodeProject', () => {
 
   test('no ios/ directory is an error naming prebuild, not an exception', () => {
     const { error } = discoverXcodeProject(tmp);
+    assert(error);
     expect(error.code).toBe('RN_ISO_BUILD_FAILED');
     expect(error.message).toMatch(/No ios\/ directory/);
     expect(error.remedy).toMatch(/expo prebuild -p ios/);
@@ -179,6 +191,7 @@ describe('discoverXcodeProject', () => {
     mkdirSync(join(tmp, 'ios'), { recursive: true });
     writeFileSync(join(tmp, 'ios', 'Podfile'), 'platform :ios');
     const { error } = discoverXcodeProject(tmp);
+    assert(error);
     expect(error.code).toBe('RN_ISO_BUILD_FAILED');
     expect(error.message).toMatch(/contains no \.xcworkspace and no \.xcodeproj/);
     expect(error.remedy).toMatch(/prebuild/);
@@ -262,7 +275,7 @@ describe('listSchemes and resolveScheme', () => {
   const project = { flag: '-project', path: '/p/ios/App.xcodeproj', name: 'App', dir: '/p/ios' };
 
   test('runs xcodebuild -list -json through runFile, so a path with a space stays one argument', () => {
-    const calls = [];
+    const calls: [string, string[] | undefined][] = [];
     setExecutor({
       run: () => '',
       runQuiet: () => null,
@@ -298,6 +311,7 @@ describe('listSchemes and resolveScheme', () => {
       },
     });
     const { error } = resolveScheme(project);
+    assert(error);
     expect(error.code).toBe('RN_ISO_NO_SCHEME');
     expect(error.message).toMatch(/Could not list schemes/);
     expect(error.remedy).toMatch(/-list/);
@@ -311,6 +325,7 @@ describe('listSchemes and resolveScheme', () => {
       runFile: () => '{"project":{"name":"App","schemes":["one","two"]}}',
     });
     const { error } = resolveScheme(project);
+    assert(error);
     expect(error.code).toBe('RN_ISO_NO_SCHEME');
     expect(error.message).toMatch(/schemes: one, two/);
     expect(error.remedy).toMatch(/Shared/);
@@ -424,7 +439,7 @@ describe('reading the bundle id', () => {
   });
 
   test('readBundleId asks plutil first, with the .plist path', () => {
-    const calls = [];
+    const calls: [string, string[] | undefined][] = [];
     setExecutor({
       run: () => '',
       runQuiet: () => null,
@@ -439,7 +454,7 @@ describe('reading the bundle id', () => {
   });
 
   test('falls back to `defaults read`, which takes the path WITHOUT the extension', () => {
-    const calls = [];
+    const calls: string[] = [];
     setExecutor({
       run: () => '',
       runQuiet: () => null,
@@ -480,10 +495,10 @@ describe('buildIos with a mocked executor', () => {
   // Everything a build needs except an actual Xcode: a project on disk, a
   // scheme listing, a fake child to drive, and a plutil that answers.
   function harness(
-    root,
+    root: string,
     { child, listing = '{"project":{"name":"App","schemes":["App"]}}', bundleId = 'com.example.app' }: any = {},
   ) {
-    const spawnCalls = [];
+    const spawnCalls: { cmd: string; args: readonly string[] | undefined; opts: SpawnOptions | undefined }[] = [];
     setExecutor({
       run: () => '',
       runQuiet: () => null,
@@ -504,7 +519,7 @@ describe('buildIos with a mocked executor', () => {
     return spawnCalls;
   }
 
-  function makeProduct(derivedDataPath, name = 'App') {
+  function makeProduct(derivedDataPath: string, name = 'App') {
     const dir = productsDir(derivedDataPath);
     mkdirSync(dir, { recursive: true });
     mkdirSync(join(dir, `${name}.app`), { recursive: true });
@@ -522,6 +537,7 @@ describe('buildIos with a mocked executor', () => {
 
     expect(spawnCalls.length).toBe(1);
     const { cmd, args, opts } = spawnCalls[0];
+    assert(opts);
     expect(cmd).toBe('xcodebuild');
     expect(args).toEqual([
       '-project',
@@ -543,6 +559,7 @@ describe('buildIos with a mocked executor', () => {
     expect(opts.detached).toBe(false);
     // Without this xcodebuild block-buffers into a pipe and the whole
     // transcript arrives at exit, which silently un-does the streaming.
+    assert(opts.env);
     expect(opts.env.NSUnbufferedIO).toBe('YES');
 
     makeProduct(dd);
@@ -584,7 +601,7 @@ describe('buildIos with a mocked executor', () => {
     child.emit('close', 65, null);
     const result: any = await promise;
     expect(result.failed).toBe(true);
-    expect(result.diagnostics.map((d) => d.message)).toEqual(['died mid-line with no newline']);
+    expect(result.diagnostics.map((d: { message: string }) => d.message)).toEqual(['died mid-line with no newline']);
   });
 
   test('blank lines are kept for extraction and dropped from the log', async () => {
@@ -625,6 +642,7 @@ describe('buildIos with a mocked executor', () => {
     expect(result.durationMs).toBe(160500);
     expect(result.scheme).toBe('App');
     const done = writer.records.find((r) => r.event === 'build_done');
+    assert(done);
     expect(done.level).toBe('info');
     expect(done.msg).toMatch(/BUILD SUCCEEDED/);
   });
@@ -1023,7 +1041,7 @@ int main(int argc, char *argv[]) {
 }
 `;
 
-function writeScratchProject(root, { main = WORKING_MAIN, workspace = false } = {}) {
+function writeScratchProject(root: string, { main = WORKING_MAIN, workspace = false } = {}) {
   const ios = join(root, 'ios');
   const proj = join(ios, 'Scratch.xcodeproj');
   mkdirSync(join(proj, 'xcshareddata', 'xcschemes'), { recursive: true });
@@ -1106,8 +1124,8 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as any }, () => {
     const transcript = records.filter((r) => r.level === 'debug');
     expect(transcript.length > 20).toBeTruthy();
     expect(transcript.every((r) => r.src === 'build')).toBeTruthy();
-    expect(transcript.some((r) => r.msg.includes('BUILD SUCCEEDED'))).toBeTruthy();
-    expect(records.at(-1).event).toBe('build_done');
+    expect(transcript.some((r) => r.msg?.includes('BUILD SUCCEEDED'))).toBeTruthy();
+    expect(records.at(-1)?.event).toBe('build_done');
     expect(records.filter((r) => r.level === 'error').length).toBe(0);
   });
 
@@ -1148,6 +1166,6 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as any }, () => {
     const errors = records.filter((r) => r.level === 'error');
     expect(errors.length).toBe(1);
     expect(errors[0].msg).toMatch(/main\.m:5:18: use of undeclared identifier/);
-    expect(records.some((r) => r.level === 'debug' && r.msg.includes('** BUILD FAILED **'))).toBeTruthy();
+    expect(records.some((r) => r.level === 'debug' && r.msg?.includes('** BUILD FAILED **'))).toBeTruthy();
   });
 });

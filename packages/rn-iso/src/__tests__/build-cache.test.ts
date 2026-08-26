@@ -1,12 +1,13 @@
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import assert from 'node:assert';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { artifactIn, buildCacheKey, entryDir, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.ts';
 import { buildCacheKey as providerKey } from '../../../expo-build-cache/index.js';
 
-let root;
-let tmpHome;
+let root: string;
+let tmpHome: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'rn-iso-bc-'));
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-bc-home-'));
@@ -19,7 +20,7 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-function seedEntry(platform, hash, name = 'MyApp.app') {
+function seedEntry(platform: string, hash: string, name = 'MyApp.app') {
   const dir = entryDir(platform, hash, root);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, name), 'binary');
@@ -63,7 +64,7 @@ test('storeBuild stages elsewhere and renames, so a partial copy is never visibl
   mkdirSync(build, { recursive: true });
   writeFileSync(join(build, 'bin'), 'x');
 
-  const calls = [];
+  const calls: { file: string; args: string[] }[] = [];
   setExecutor({
     run: () => {
       throw new Error('the copy must not go through a shell');
@@ -80,6 +81,7 @@ test('storeBuild stages elsewhere and renames, so a partial copy is never visibl
   });
 
   const stored = storeBuild('ios', 'fp1', build, root);
+  assert(stored);
   expect(stored.endsWith('MyApp.app')).toBeTruthy();
   expect(existsSync(stored)).toBe(true);
   expect(calls[0].file).toBe('cp');
@@ -128,6 +130,7 @@ test('storeBuild with { overwrite } REPLACES an existing entry, so a poisoned on
   });
 
   const stored = storeBuild('ios', 'fp-overwrite', fresh, { root, overwrite: true });
+  assert(stored);
   expect(readFileSync(stored, 'utf-8')).toBe('rebuilt');
   expect(existsSync(`${entryDir('ios', 'fp-overwrite', root)}.staging-${process.pid}`)).toBe(false);
 });
@@ -154,7 +157,7 @@ test('storeBuild passes the build path as one argument, never through a shell', 
   mkdirSync(build, { recursive: true });
   writeFileSync(join(build, 'bin'), 'x');
 
-  let seen = null;
+  let seen: string[] | null = null;
   setExecutor({
     run: () => {
       throw new Error('the copy must not go through a shell');
@@ -170,6 +173,7 @@ test('storeBuild passes the build path as one argument, never through a shell', 
   });
 
   storeBuild('ios', 'fp4', build, root);
+  assert(seen);
   expect(seen[1]).toBe(build);
 });
 
@@ -182,6 +186,7 @@ test('storeBuild copies a real .app whose name contains a space', () => {
   writeFileSync(join(build, 'Contents', 'bin'), 'x');
 
   const stored = storeBuild('ios', 'fp5', build, root);
+  assert(stored);
   expect(stored).toBe(join(entryDir('ios', 'fp5', root), 'My App.app'));
   expect(existsSync(join(stored, 'Contents', 'bin'))).toBe(true);
 });
@@ -249,7 +254,7 @@ test('storing a build registers the cache root at the depth its entries actually
 
   const { registeredCaches } = await import('../cache-manifest.ts');
   const record = registeredCaches().find((c) => c.dir === root);
-  expect(record).toBeTruthy();
+  assert(record);
   expect(record.entriesDepth).toBe(2);
 });
 
@@ -263,25 +268,25 @@ test('storing a build registers the cache root at the depth its entries actually
 // android key. With platforms scoped to the platform being built, both
 // worktrees fingerprinted identically (b5a268e6...).
 test('fingerprintProject scopes the hash to the platform being built', async () => {
-  const seen = [];
+  const seen: { dir: string; options: { platforms: string[] } | undefined }[] = [];
   const load = () => ({
-    createFingerprintAsync: async (dir, options) => {
+    createFingerprintAsync: async (dir: string, options?: { platforms: string[] }) => {
       seen.push({ dir, options });
       return { hash: `hash-${options?.platforms?.join('+')}` };
     },
   });
   expect(await fingerprintProject(root, { platform: 'ios', load })).toBe('hash-ios');
   expect(await fingerprintProject(root, { platform: 'android', load })).toBe('hash-android');
-  expect(seen.map((s) => s.options.platforms)).toEqual([['ios'], ['android']]);
+  expect(seen.map((s) => s.options?.platforms)).toEqual([['ios'], ['android']]);
 });
 
 // No platform means no scoping: the option is omitted entirely rather than
 // passed as an empty array, which @expo/fingerprint would read as "hash
 // nothing native".
 test('fingerprintProject without a platform passes no platforms option', async () => {
-  let options = 'unset';
+  let options: { platforms: string[] } | undefined | 'unset' = 'unset';
   const load = () => ({
-    createFingerprintAsync: async (_dir, opts) => {
+    createFingerprintAsync: async (_dir: string, opts?: { platforms: string[] }) => {
       options = opts;
       return { hash: 'h' };
     },
@@ -293,9 +298,9 @@ test('fingerprintProject without a platform passes no platforms option', async (
 // An unknown platform is not silently turned into a scope: `platforms: ['web']`
 // would hash nothing and produce one key for every project on the machine.
 test('fingerprintProject ignores a platform it does not know', async () => {
-  let options = 'unset';
+  let options: { platforms: string[] } | undefined | 'unset' = 'unset';
   const load = () => ({
-    createFingerprintAsync: async (_dir, opts) => {
+    createFingerprintAsync: async (_dir: string, opts?: { platforms: string[] }) => {
       options = opts;
       return { hash: 'h' };
     },
