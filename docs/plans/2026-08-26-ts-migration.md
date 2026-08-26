@@ -11,7 +11,7 @@ TypeScript + oxlint + oxfmt + tsdown + vitest(-on-rolldown), tests colocated in
 - **Node >=22 everywhere** (consumers AND dev). Node 20 is EOL (2026-04-30), so
   raising the floor excludes a dead runtime and unifies dev/consumer versions.
   tsdown target node22 (no downleveling). This is a breaking engines bump ->
-  the release is **2.0.0**. CI matrix [22, 24].
+  the release is **1.2.0**. CI matrix [22, 24].
 - **Public surface stable**: bin, the `./cache-manifest` export, and the
   `rn-iso <command>` CLI surface are unchanged. `exports`/`bin` point at `dist/`.
   Node 22 floor; no real consumers yet, so ships as MINOR **1.2.0**.
