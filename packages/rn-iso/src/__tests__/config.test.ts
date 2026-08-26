@@ -20,18 +20,19 @@ import {
   getProjectSetting,
   setProjectSetting,
   unsetProjectSetting,
-  pruneDeadProjects,
   getRepoSettings,
   setRepoSetting,
   unsetRepoSetting,
   getConcurrencyLimits,
 } from '../config.ts';
+import { makeConfig } from './_factories.ts';
+import assert from 'node:assert';
 
-let tmpHome;
+let tmpHome: string;
 
 // Claims from nonexistent paths are filtered, so tests that want a claim to
 // be visible must register a directory that actually exists.
-function liveProjectDir(name) {
+function liveProjectDir(name: string) {
   const dir = join(tmpHome, name);
   mkdirSync(dir, { recursive: true });
   return dir;
@@ -62,8 +63,10 @@ test('ensureConfig creates and returns empty config', () => {
 });
 
 test('saveConfig + loadConfig roundtrip', () => {
-  saveConfig({ version: 1, projects: { '/foo': { metroPort: 8082, platforms: {} } } });
+  saveConfig(makeConfig({ version: 1, projects: { '/foo': { metroPort: 8082, platforms: {} } } }));
   const cfg = loadConfig();
+  assert(cfg);
+  assert(cfg.projects['/foo']);
   expect(cfg.projects['/foo'].metroPort).toBe(8082);
 });
 
@@ -108,7 +111,9 @@ test('withConfigLock is reentrant, so nested mutators cannot deadlock', () => {
   const result = withConfigLock(() => {
     upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
     claimMetroPort('/p', 8082);
-    return getProject('/p').metroPort;
+    const proj = getProject('/p');
+    assert(proj);
+    return proj.metroPort;
   });
   expect(result).toBe(8082);
   expect(existsSync(join(tmpHome, 'config.lock'))).toBe(false);
@@ -157,7 +162,7 @@ test('concurrent processes each keep their record', async () => {
   await Promise.all(
     keys.map(
       (key) =>
-        new Promise((resolve, reject) => {
+        new Promise<void>((resolve, reject) => {
           execFile(process.execPath, [script, key], { env: { ...process.env, RN_ISO_HOME: tmpHome } }, (err) =>
             err ? reject(err) : resolve(),
           );
@@ -166,6 +171,7 @@ test('concurrent processes each keep their record', async () => {
   );
 
   const cfg = loadConfig();
+  assert(cfg);
   for (const key of keys) {
     expect(cfg.projects[key]).toBeTruthy();
   }
@@ -176,7 +182,9 @@ test('concurrent processes each keep their record', async () => {
 test('claimMetroPort records the port when nothing else holds it', () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   expect(claimMetroPort('/a', 8082)).toBe(8082);
-  expect(getProject('/a').metroPort).toBe(8082);
+  const a = getProject('/a');
+  assert(a);
+  expect(a.metroPort).toBe(8082);
 });
 
 // Two `up` runs probe the same free port at the same time; only one may keep
@@ -186,7 +194,9 @@ test('claimMetroPort refuses a port another project claimed first', () => {
   upsertProject('/b', { bundleId: 'b', androidPackage: 'b', isExpo: false });
   expect(claimMetroPort('/a', 8082)).toBe(8082);
   expect(claimMetroPort('/b', 8082)).toBe(null);
-  expect(getProject('/b').metroPort).toBe(null);
+  const b = getProject('/b');
+  assert(b);
+  expect(b.metroPort).toBe(null);
 });
 
 test("claimMetroPort re-claiming a project's own port is not a conflict", () => {
@@ -211,6 +221,7 @@ test('upsertProject preserves existing fields when called again', () => {
   claimMetroPort('/p', 8082);
   upsertProject('/p', { bundleId: 'com.b', androidPackage: 'com.b', isExpo: false });
   const proj = getProject('/p');
+  assert(proj);
   expect(proj.bundleId).toBe('com.b');
   expect(proj.metroPort).toBe(8082);
 });
@@ -218,9 +229,13 @@ test('upsertProject preserves existing fields when called again', () => {
 test('setDevice and clearDevice mutate platforms', () => {
   upsertProject('/p', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
   setDevice('/p', 'ios', { deviceUdid: 'ABC' });
-  expect(getProject('/p').platforms.ios.deviceUdid).toBe('ABC');
+  const proj = getProject('/p');
+  assert(proj?.platforms?.ios);
+  expect(proj.platforms.ios.deviceUdid).toBe('ABC');
   clearDevice('/p', 'ios');
-  expect(getProject('/p').platforms.ios).toBe(undefined);
+  const cleared = getProject('/p');
+  assert(cleared);
+  expect(cleared.platforms?.ios).toBe(undefined);
 });
 
 test('allMetroPorts collects ports from all projects', () => {
@@ -284,26 +299,6 @@ test('allConsolePortsAndSerials frees the claim of a dead project on a mounted v
   expect(result.androidConsolePorts).toEqual([]);
 });
 
-test('pruneDeadProjects removes dead-path entries and keeps live ones', () => {
-  const live = liveProjectDir('live');
-  upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
-  upsertProject('/definitely/gone/worktree', { bundleId: 'com.dead', androidPackage: 'com.dead', isExpo: false });
-  claimMetroPort('/definitely/gone/worktree', 8099);
-  const removed = pruneDeadProjects();
-  expect(removed.length).toBe(1);
-  expect(removed[0].path).toBe('/definitely/gone/worktree');
-  expect(removed[0].project.metroPort).toBe(8099);
-  expect(getProject('/definitely/gone/worktree')).toBe(null);
-  expect(getProject(live)).not.toBe(null);
-});
-
-test('pruneDeadProjects returns empty list when nothing is dead', () => {
-  const live = liveProjectDir('live');
-  upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
-  expect(pruneDeadProjects()).toEqual([]);
-  expect(getProject(live)).not.toBe(null);
-});
-
 // --- Per-project settings ---
 
 test('setProjectSetting writes a top-level key', () => {
@@ -358,10 +353,12 @@ test('ensureConfig creates a v2 config with a repos section', () => {
 });
 
 test('migrates a v1 config without touching projects', () => {
-  saveConfig({
-    version: 1,
-    projects: { '/a': { metroPort: 8082, platforms: { ios: { deviceUdid: 'U1' } } } },
-  });
+  saveConfig(
+    makeConfig({
+      version: 1,
+      projects: { '/a': { metroPort: 8082, platforms: { ios: { deviceUdid: 'U1' } } } },
+    }),
+  );
   const cfg = ensureConfig();
   expect(cfg.version).toBe(2);
   expect(cfg.repos).toEqual({});

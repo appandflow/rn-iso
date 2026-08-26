@@ -4,6 +4,7 @@
 // sources", so a build launch marker written to build-ios.ndjson resets the
 // window for client errors too -- otherwise the previous run's redbox reads as
 // this run's failure forever.
+import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,7 +22,7 @@ import {
   advanceTail,
 } from '../logs-query.ts';
 
-let dir;
+let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'rn-iso-logsq-'));
 });
@@ -29,7 +30,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function writeLog(name, records) {
+function writeLog(name: string, records: unknown[]) {
   writeFileSync(join(dir, name), records.map((r) => `${JSON.stringify(r)}\n`).join(''));
 }
 
@@ -65,6 +66,7 @@ describe('parseSince', () => {
 describe('compileGrep', () => {
   test('compiles a pattern', () => {
     const { re } = compileGrep('fail(ed)?');
+    assert(re);
     expect(re.test('this failed')).toBe(true);
     expect(re.test('nothing here')).toBe(false);
   });
@@ -330,7 +332,7 @@ describe('queryLogs', () => {
   // wall-clock timestamps because the ORDER and the GAP are the whole bug: one
   // second between a crash and the marker that swallowed it.
   describe('errorsOnly, against the field capture', () => {
-    const at = (sec, ms = 0) =>
+    const at = (sec: number, ms = 0) =>
       Date.parse(`2026-08-24T16:03:${String(sec).padStart(2, '0')}.${String(ms).padStart(3, '0')}Z`);
 
     // THE bug. The app threw at 16:03:54 while evaluating the bundle; Metro
@@ -351,6 +353,7 @@ describe('queryLogs', () => {
 
       // The marker IS later than the error -- this is not a sorting accident.
       const window = markerWindow(readAll());
+      assert(window.bundleTs !== null);
       expect(window.bundleTs > at(54)).toBeTruthy();
       expect(window.launchTs).toBe(at(50));
 

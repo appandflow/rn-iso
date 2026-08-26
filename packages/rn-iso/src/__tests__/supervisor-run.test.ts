@@ -7,6 +7,7 @@
 //      still findable;
 //   2. every exit path -- signal, failed start, server death -- writes a final
 //      record and clears every one of those records.
+import assert from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -18,6 +19,7 @@ import { describeError, supervisorError } from '../supervisor/errors.ts';
 import {
   MODE_BARE,
   MODE_EXPO,
+  type ServerExitInfo,
   clearWorkspaceSupervisor,
   parseArgs,
   readPidFile,
@@ -27,8 +29,8 @@ import {
   writeWorkspaceState,
 } from '../supervisor/run.ts';
 
-let tmpHome;
-let root;
+let tmpHome: string;
+let root: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -89,13 +91,19 @@ describe('Contract 2: the workspace state file', () => {
   test('writeWorkspaceState creates .rn-iso/state.json and reads back', () => {
     writeWorkspaceState(root, { supervisor: { pid: 1, port: 8082, mode: MODE_BARE } });
     expect(existsSync(workspaceStateFile(root))).toBeTruthy();
-    expect(readWorkspaceState(root).supervisor.port).toBe(8082);
+    const state = readWorkspaceState(root);
+    assert(state);
+    assert(state.supervisor);
+    expect(state.supervisor.port).toBe(8082);
   });
 
   test("writing merges rather than replaces, so a later step's lastBuild survives", () => {
     writeWorkspaceState(root, { lastBuild: { fingerprint: 'abc' } });
     writeWorkspaceState(root, { supervisor: { pid: 2, port: 8083 } });
     const state = readWorkspaceState(root);
+    assert(state);
+    assert(state.lastBuild);
+    assert(state.supervisor);
     expect(state.lastBuild.fingerprint).toBe('abc');
     expect(state.supervisor.pid).toBe(2);
   });
@@ -119,7 +127,9 @@ describe('Contract 2: the workspace state file', () => {
     writeWorkspaceState(root, { lastBuild: { fingerprint: 'abc' }, supervisor: { pid: 5, port: 1 } });
     clearWorkspaceSupervisor(root);
     const state = readWorkspaceState(root);
+    assert(state);
     expect(state.supervisor).toBe(undefined);
+    assert(state.lastBuild);
     expect(state.lastBuild.fingerprint).toBe('abc');
   });
 
@@ -210,13 +220,16 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
 
 describe('runSupervisor', () => {
   function fakeServer(overrides = {}) {
-    const state = { closed: 0, listeners: [] };
+    const state: { closed: number; listeners: Array<(info?: ServerExitInfo | null) => void> } = {
+      closed: 0,
+      listeners: [],
+    };
     return {
       state,
       handle: {
         mode: MODE_BARE,
         serverPid: null,
-        onExit(cb) {
+        onExit(cb: (info?: ServerExitInfo | null) => void) {
           state.listeners.push(cb);
         },
         async close() {
@@ -228,7 +241,13 @@ describe('runSupervisor', () => {
   }
 
   test('records the supervisor BEFORE the server starts', async () => {
-    let seenAtStart = null;
+    const seen: {
+      current: {
+        pid: ReturnType<typeof readPidFile>;
+        state: ReturnType<typeof readWorkspaceState>;
+        config: NonNullable<ReturnType<typeof getProject>>['supervisor'] | null;
+      } | null;
+    } = { current: null };
     const server = fakeServer();
     await runSupervisor({
       root,
@@ -239,7 +258,7 @@ describe('runSupervisor', () => {
       startBare: async () => {
         // The crash-safety rule: everything that makes this process findable
         // exists by the time the server is asked to start.
-        seenAtStart = {
+        seen.current = {
           pid: readPidFile(root),
           state: readWorkspaceState(root),
           config: getProject(root)?.supervisor ?? null,
@@ -248,12 +267,19 @@ describe('runSupervisor', () => {
       },
     });
 
+    const seenAtStart = seen.current;
+    assert(seenAtStart);
+    const startState = seenAtStart.state;
+    assert(startState);
+    assert(startState.supervisor);
+    const startConfig = seenAtStart.config;
+    assert(startConfig);
     expect(seenAtStart.pid).toBe(process.pid);
-    expect(seenAtStart.state.supervisor.port).toBe(8091);
-    expect(seenAtStart.state.supervisor.mode).toBe(MODE_BARE);
-    expect(seenAtStart.config.pid).toBe(process.pid);
-    expect(seenAtStart.config.port).toBe(8091);
-    expect(typeof seenAtStart.state.supervisor.startedAt).toBe('string');
+    expect(startState.supervisor.port).toBe(8091);
+    expect(startState.supervisor.mode).toBe(MODE_BARE);
+    expect(startConfig.pid).toBe(process.pid);
+    expect(startConfig.port).toBe(8091);
+    expect(typeof startState.supervisor.startedAt).toBe('string');
   });
 
   test('detects the ecosystem and hosts Expo as a child', async () => {
@@ -271,17 +297,21 @@ describe('runSupervisor', () => {
       },
       startExpo: async () => server.handle,
     });
+    assert(running);
     expect(bareCalled).toBe(false);
     expect(running.mode).toBe(MODE_EXPO);
     // Contract 2's serverPid: the expo child, recorded once it exists.
-    expect(readWorkspaceState(root).supervisor.serverPid).toBe(31337);
-    expect(readWorkspaceState(root).supervisor.mode).toBe(MODE_EXPO);
+    const state = readWorkspaceState(root);
+    assert(state);
+    assert(state.supervisor);
+    expect(state.supervisor.serverPid).toBe(31337);
+    expect(state.supervisor.mode).toBe(MODE_EXPO);
   });
 
   test('SIGTERM-shaped shutdown closes the server, writes a final record and clears every registration', async () => {
-    upsertProject(root, { bundleId: null, androidPackage: null, isExpo: false });
+    upsertProject(root, { bundleId: undefined, androidPackage: undefined, isExpo: false });
     const server = fakeServer();
-    const exits = [];
+    const exits: number[] = [];
     const running = await runSupervisor({
       root,
       port: 8093,
@@ -291,6 +321,7 @@ describe('runSupervisor', () => {
       startBare: async () => server.handle,
     });
 
+    assert(running);
     await running.shutdown(0, 'supervisor_stopped', 'received SIGTERM; stopping the dev server');
 
     expect(server.state.closed).toBe(1);
@@ -302,15 +333,19 @@ describe('runSupervisor', () => {
     expect(getProject(root)).toBeTruthy();
 
     const records = readMetroLog();
-    expect(records.at(0).event).toBe('supervisor_started');
-    expect(records.at(-1).event).toBe('supervisor_stopped');
-    expect(records.at(-1).level).toBe('info');
-    expect(records.at(-1).src).toBe('metro');
+    const first = records.at(0);
+    assert(first);
+    const last = records.at(-1);
+    assert(last);
+    expect(first.event).toBe('supervisor_started');
+    expect(last.event).toBe('supervisor_stopped');
+    expect(last.level).toBe('info');
+    expect(last.src).toBe('metro');
   });
 
   test('a second shutdown is a no-op: the server is closed once', async () => {
     const server = fakeServer();
-    const exits = [];
+    const exits: number[] = [];
     const running = await runSupervisor({
       root,
       port: 8094,
@@ -319,6 +354,7 @@ describe('runSupervisor', () => {
       onExit: (code) => exits.push(code),
       startBare: async () => server.handle,
     });
+    assert(running);
     await running.shutdown(0, 'supervisor_stopped', 'first');
     await running.shutdown(0, 'supervisor_stopped', 'second');
     expect(server.state.closed).toBe(1);
@@ -327,7 +363,7 @@ describe('runSupervisor', () => {
 
   test('a dev server that dies on its own takes the supervisor with it, exit 1', async () => {
     const server = fakeServer();
-    const exits = [];
+    const exits: number[] = [];
     await runSupervisor({
       root,
       port: 8095,
@@ -338,7 +374,7 @@ describe('runSupervisor', () => {
     });
 
     expect(server.state.listeners.length).toBe(1);
-    server.state.listeners[0]({ code: 3, signal: null });
+    server.state.listeners[0]?.({ code: 3, signal: null });
     // The shutdown is async; let it settle.
     await new Promise((r) => setTimeout(r, 10));
 
@@ -346,14 +382,15 @@ describe('runSupervisor', () => {
     expect(existsSync(supervisorPidFile(root))).toBe(false);
     expect(getProject(root)?.supervisor).toBe(undefined);
     const last = readMetroLog().at(-1);
+    assert(last);
     expect(last.event).toBe('supervisor_stopped');
     expect(last.level).toBe('error');
     expect(last.msg).toMatch(/exited unexpectedly \(exit code 3\)/);
   });
 
   test('a server that fails to start leaves no registration and exits 1 with the structured error', async () => {
-    const exits = [];
-    const stderr = [];
+    const exits: number[] = [];
+    const stderr: string[] = [];
     const handle = await runSupervisor({
       root,
       port: 8096,
@@ -373,6 +410,7 @@ describe('runSupervisor', () => {
     expect(getProject(root)?.supervisor).toBe(undefined);
 
     const last = readMetroLog().at(-1);
+    assert(last);
     expect(last.event).toBe('supervisor_failed');
     expect(last.level).toBe('fatal');
     expect(last.msg).toMatch(/RN_ISO_BARE_DEPS/);

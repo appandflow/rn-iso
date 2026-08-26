@@ -19,37 +19,12 @@ import { listWorktrees } from '../worktree.ts';
 import type { WorktreeEntry } from '../worktree.ts';
 import { volumeRootFor } from '../fs-util.ts';
 import { capacity, diskLine, environmentState, parseDfFree, tightVolumes, unprovisionedWorktrees } from '../status.ts';
-import type { EnvironmentState, VolumeInfo } from '../status.ts';
+import type { EnvironmentState, VolumeInfo, SimFacts, MetroFacts, WorktreeFacts } from '../status.ts';
 
 // config.ts's SupervisorRecord does not declare `mode` (start.ts writes it
 // alongside pid/port/startedAt); extended locally rather than editing the
 // shared type (see the same extension in commands/stop.ts).
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
-
-// src/status.ts's SimFacts / MetroFacts / WorktreeFacts are private (loosely
-// typed views of facts this command already resolved), each with an index
-// signature so environmentState can read defensively. Mirrored here with the
-// same shape purely so the values built below satisfy that structural type --
-// IosSimRecord, MetroResolution and WorktreeEntry are all real, closed
-// interfaces with no index signature of their own.
-interface SimFactsLike {
-  udid?: string;
-  name?: string;
-  state?: string;
-  [key: string]: unknown;
-}
-
-interface MetroFactsLike {
-  metro?: { pid: number } | null;
-  notOurs?: string;
-  [key: string]: unknown;
-}
-
-interface WorktreeFactsLike {
-  path: string;
-  branch?: string;
-  [key: string]: unknown;
-}
 
 interface StatusOptions {
   json?: boolean;
@@ -77,7 +52,7 @@ export default function statusCommand(program: Command) {
         for (const sim of listAllIosSims()) simsByUdid[sim.udid] = sim;
       } catch (e) {
         simsAvailable = false;
-        simctlError = String((e as Error)?.message || e).split('\n')[0];
+        simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
       }
 
       // The first entry is the main checkout, not a workspace: listing it as
@@ -97,10 +72,14 @@ export default function statusCommand(program: Command) {
           environmentState(
             { ...proj, __path: path },
             {
-              // Structural casts: see the *Like interfaces above.
-              simsByUdid: simsByUdid as unknown as Record<string, SimFactsLike>,
-              metro: metro as unknown as MetroFactsLike | null,
-              worktrees: worktrees as unknown as WorktreeFactsLike[],
+              // environmentState's Facts views carry an index signature (so it
+              // can read facts defensively); the resolved records here --
+              // IosSimRecord, MetroResolution, WorktreeEntry -- are closed
+              // interfaces, which TS will not assign to an index-signatured type
+              // without this bridge. The values are structurally compatible.
+              simsByUdid: simsByUdid as unknown as Record<string, SimFacts>,
+              metro: metro as unknown as MetroFacts | null,
+              worktrees: worktrees as unknown as WorktreeFacts[],
               simsAvailable,
               supervisor,
               logs: logFacts(path),
@@ -112,7 +91,7 @@ export default function statusCommand(program: Command) {
       const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
       const cap = capacity(states, totalMemoryMb);
       const orphanWorktrees = unprovisionedWorktrees(
-        worktrees as unknown as WorktreeFactsLike[],
+        worktrees as unknown as WorktreeFacts[],
         projects.map(([p]) => p),
       );
 
@@ -145,7 +124,10 @@ export default function statusCommand(program: Command) {
       }
 
       for (const [i, [path, proj]] of projects.entries()) {
+        // states is built one-per-project in the loop above, in the same order,
+        // so states[i] is always present; guard only to satisfy the checker.
         const state = states[i];
+        if (!state) continue;
         const shortcut = projectShortcut(path, proj);
         const marker = path === cwdRoot ? chalk.bold.cyan(`* ${shortcut}`) : shortcut;
         const idle = state.live ? '' : chalk.dim(' [idle]');

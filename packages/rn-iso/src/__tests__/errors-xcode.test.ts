@@ -23,6 +23,7 @@ import {
   describeDiagnostic,
   extractXcodeDiagnostics,
 } from '../engine/errors-xcode.ts';
+import type { Diagnostic } from '../engine/errors-xcode.ts';
 
 const REAL_COMPILE_FAILURE = [
   "CompileC /tmp/rn-iso-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/rn-iso-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
@@ -183,16 +184,16 @@ describe('real transcripts', () => {
     // The clang line names the project rather than a source file, so the
     // project path is the only location there is -- and it is a path, so it
     // survives, where the "Scratch: clang:" that follows it does not.
-    expect(found[2].file).toBe('/tmp/rn-iso-xc/Scratch.xcodeproj');
-    expect(found[0].file).toBe(undefined);
+    expect(found[2]?.file).toBe('/tmp/rn-iso-xc/Scratch.xcodeproj');
+    expect(found[0]?.file).toBe(undefined);
   });
 
   test('the CocoaPods sandbox error carries the remedy that fixes it', () => {
     const found = extractXcodeDiagnostics(REAL_PODS_FAILURE);
     expect(found.length).toBe(1);
-    expect(found[0].message).toMatch(/The sandbox is not in sync with the Podfile\.lock/);
-    expect(found[0].remedy).toMatch(/pod install/);
-    expect(found[0].file).toBe(undefined);
+    expect(found[0]?.message).toMatch(/The sandbox is not in sync with the Podfile\.lock/);
+    expect(found[0]?.remedy).toMatch(/pod install/);
+    expect(found[0]?.file).toBe(undefined);
   });
 
   test('the run-script warning in that same transcript is not promoted to an error', () => {
@@ -205,9 +206,9 @@ describe('real transcripts', () => {
   test('a signing failure is recognized as one, and told it should not be signing', () => {
     const found = extractXcodeDiagnostics(REAL_SIGNING_FAILURE);
     expect(found.length).toBe(1);
-    expect(found[0].file).toBe('/tmp/rn-iso-xc/Scratch.xcodeproj');
-    expect(found[0].message).toMatch(/No profiles for 'com\.rniso\.scratch' were found/);
-    expect(found[0].remedy).toMatch(/simulator, which needs no signing/);
+    expect(found[0]?.file).toBe('/tmp/rn-iso-xc/Scratch.xcodeproj');
+    expect(found[0]?.message).toMatch(/No profiles for 'com\.rniso\.scratch' were found/);
+    expect(found[0]?.remedy).toMatch(/simulator, which needs no signing/);
   });
 
   test('an xcodebuild invocation error survives its own timestamped log line', () => {
@@ -217,9 +218,9 @@ describe('real transcripts', () => {
     // not be picked up.
     const found = extractXcodeDiagnostics(REAL_SCHEME_FAILURE);
     expect(found.length).toBe(1);
-    expect(found[0].message).toMatch(/does not contain a scheme named "NoSuchScheme"/);
-    expect(found[0].remedy).toMatch(/xcodebuild -list/);
-    expect(found[0].file).toBe(undefined);
+    expect(found[0]?.message).toMatch(/does not contain a scheme named "NoSuchScheme"/);
+    expect(found[0]?.remedy).toMatch(/xcodebuild -list/);
+    expect(found[0]?.file).toBe(undefined);
   });
 
   test('a successful build yields no diagnostics at all', () => {
@@ -282,20 +283,22 @@ describe('what is and is not a diagnostic', () => {
     const transcript = '/app/ios/App.xcodeproj: error: Signing for "App" requires a development team.';
     const found = extractXcodeDiagnostics(transcript);
     expect(found.length).toBe(1);
-    expect(found[0].remedy).toMatch(/needs no signing/);
+    expect(found[0]?.remedy).toMatch(/needs no signing/);
   });
 
   test('a compile error gets no remedy, because there is no mechanical fix to name', () => {
     const found = extractXcodeDiagnostics('/a/b.m:1:1: error: expected identifier');
-    expect(found[0].remedy).toBe(undefined);
+    expect(found[0]?.remedy).toBe(undefined);
   });
 
   test('nothing recognizable returns [], so a caller knows to fall back to the log tail', () => {
     expect(extractXcodeDiagnostics('note: Building targets in dependency order\nSome prose.')).toEqual([]);
     expect(extractXcodeDiagnostics('')).toEqual([]);
-    expect(extractXcodeDiagnostics(null)).toEqual([]);
-    expect(extractXcodeDiagnostics(undefined)).toEqual([]);
-    expect(extractXcodeDiagnostics(42)).toEqual([]);
+    // Invalid-input validation: the signature is `string`, but the guard must
+    // tolerate these, so the calls use the same documented cast as `42` below.
+    expect(extractXcodeDiagnostics(null as unknown as string)).toEqual([]);
+    expect(extractXcodeDiagnostics(undefined as unknown as string)).toEqual([]);
+    expect(extractXcodeDiagnostics(42 as unknown as string)).toEqual([]);
   });
 
   test('CRLF transcripts parse the same as LF ones', () => {
@@ -334,7 +337,7 @@ describe('dedupe and order', () => {
 });
 
 describe('capDiagnostics', () => {
-  const many = (n) => Array.from({ length: n }, (_, i) => ({ message: `e${i}` }));
+  const many = (n: number) => Array.from({ length: n }, (_, i) => ({ message: `e${i}` }));
 
   test('the cap is ten', () => {
     expect(MAX_DIAGNOSTICS).toBe(10);
@@ -350,8 +353,8 @@ describe('capDiagnostics', () => {
     const { diagnostics, truncated } = capDiagnostics(many(31));
     expect(diagnostics.length).toBe(10);
     expect(truncated).toBe(21);
-    expect(diagnostics[0].message).toBe('e0');
-    expect(diagnostics[9].message).toBe('e9');
+    expect(diagnostics[0]?.message).toBe('e0');
+    expect(diagnostics[9]?.message).toBe('e9');
   });
 
   test('the cap is a parameter, so a caller that wants everything is not fighting the parser', () => {
@@ -367,8 +370,10 @@ describe('capDiagnostics', () => {
   });
 
   test('a non-array is the empty result, not a throw', () => {
-    expect(capDiagnostics(null)).toEqual({ diagnostics: [], truncated: 0 });
-    expect(capDiagnostics(undefined)).toEqual({ diagnostics: [], truncated: 0 });
+    // Invalid-input validation: the signature is `Diagnostic[]`, but the guard
+    // must tolerate a non-array, so the calls cast the same way as above.
+    expect(capDiagnostics(null as unknown as Diagnostic[])).toEqual({ diagnostics: [], truncated: 0 });
+    expect(capDiagnostics(undefined as unknown as Diagnostic[])).toEqual({ diagnostics: [], truncated: 0 });
   });
 });
 
@@ -388,6 +393,6 @@ describe('describeDiagnostic', () => {
   test('garbage renders as the empty string rather than throwing', () => {
     expect(describeDiagnostic(null)).toBe('');
     expect(describeDiagnostic(undefined)).toBe('');
-    expect(describeDiagnostic('not an object')).toBe('');
+    expect(describeDiagnostic('not an object' as unknown as Diagnostic)).toBe('');
   });
 });

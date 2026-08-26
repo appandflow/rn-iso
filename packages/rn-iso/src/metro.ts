@@ -6,7 +6,9 @@ import { sep } from 'path';
 export function findPidListeningOnPort(port: number): number | null {
   const out = getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`);
   if (!out) return null;
-  const pid = parseInt(out.split('\n')[0], 10);
+  const first = out.split('\n')[0];
+  if (!first) return null;
+  const pid = parseInt(first, 10);
   return Number.isFinite(pid) ? pid : null;
 }
 
@@ -78,10 +80,10 @@ export function isInsideProject(cwd: string | null | undefined, projectPath: str
   return a === b || a.startsWith(b.endsWith(sep) ? b : b + sep);
 }
 
-// Three outcomes, mirroring resolveOwnedIosSim. A port is NOT identity: the
-// final 0.7.0 review's one Critical finding was Android teardown trusting a
-// console port that a foreign emulator could occupy. Killing by port alone
-// repeats that mistake, so identity is proven before anything dies.
+// Three outcomes, mirroring resolveOwnedIosSim. A port is NOT identity:
+// Android teardown that trusts a console port a foreign emulator could occupy
+// is a known hazard. Killing by port alone repeats that mistake, so identity
+// is proven before anything dies.
 //   { metro: {pid, leader, cwd} }  proven to be this project's Metro
 //   { missing: true }              nothing listening; already gone, not an error
 //   { notOurs: <reason>, kind }    listening but unproven; report, never kill
@@ -97,7 +99,7 @@ export function isInsideProject(cwd: string | null | undefined, projectPath: str
 //   'foreign-cwd'    answered from OUTSIDE this project. Terminal: another
 //                    workspace's bundler will not become ours by waiting.
 export const NOT_OURS_UNRESPONSIVE = 'unresponsive';
-export const NOT_OURS_UNREADABLE_CWD = 'unreadable-cwd';
+const NOT_OURS_UNREADABLE_CWD = 'unreadable-cwd';
 export const NOT_OURS_FOREIGN_CWD = 'foreign-cwd';
 
 // A flat interface rather than a discriminated union: every consumer today
@@ -118,8 +120,8 @@ export async function resolveProjectMetro(
   { probe = isMetroRunning }: { probe?: (port: number) => Promise<boolean> | boolean } = {},
 ): Promise<MetroResolution> {
   const pids = parseLsofPids(getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`));
-  if (pids.length === 0) return { missing: true };
   const pid = pids[0];
+  if (pid === undefined) return { missing: true };
 
   if (!(await probe(port))) {
     return { notOurs: `pid ${pid} on port ${port} does not answer Metro's /status`, kind: NOT_OURS_UNRESPONSIVE, pid };
@@ -157,11 +159,17 @@ function ownProcessGroup(): number | null {
 // node child 59914 actually holding the port). Killing only the listener
 // orphans the wrapper. The one exception is a group rn-iso is itself a member
 // of: there the bare pid is signalled instead.
-export function killMetroTree(leader: number | null | undefined): boolean {
+export function killMetroTree(leader: number | null | undefined, listenerPid?: number | null): boolean {
   if (!leader) return false;
   if (leader === ownProcessGroup()) {
+    // The process-group leader IS rn-iso's own group -- this is a Metro that a
+    // non-interactive script backgrounded into rn-iso's group. Signalling the
+    // group (`-leader`) would take rn-iso and the shell down too, and the
+    // leader itself is that shell, not Metro. Signal the listener directly:
+    // it is the process actually holding the port.
+    const target = listenerPid ?? leader;
     try {
-      process.kill(leader, 'SIGTERM');
+      process.kill(target, 'SIGTERM');
       return true;
     } catch {
       return false;
@@ -172,7 +180,7 @@ export function killMetroTree(leader: number | null | undefined): boolean {
     return true;
   } catch {
     try {
-      process.kill(leader, 'SIGTERM');
+      process.kill(listenerPid ?? leader, 'SIGTERM');
       return true;
     } catch {
       return false;

@@ -4,7 +4,8 @@
 // The parsing rules are pure functions because they carry the whole risk: a
 // line classified as an error that is not one makes `logs --errors` -- the
 // query an agent loop branches on -- report a healthy build as broken.
-import { EventEmitter } from 'node:events';
+import assert from 'node:assert';
+import type { SpawnOptions } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,10 +20,14 @@ import {
   startExpoServer,
   stripAnsi,
 } from '../supervisor/server-expo.ts';
+import { makeChildProcess } from './_factories.ts';
 
 const ESC = '\u001B';
 
-let root;
+// Mirrors the (unexported) ExpoExitInfo shape onExit hands back.
+type ExpoExitInfo = { code: number | null; signal: NodeJS.Signals | null; error?: Error };
+
+let root: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'rn-iso-expo-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
@@ -43,11 +48,7 @@ function fakeBin(dir = root) {
 }
 
 function fakeChild(pid = 999999) {
-  const child = new EventEmitter();
-  child.pid = pid;
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  return child;
+  return makeChildProcess({ pid });
 }
 
 describe('line parsing', () => {
@@ -99,6 +100,7 @@ describe('line parsing', () => {
   test('the dev-client NAVIGATE record is demoted: rn-iso own deep link is not an app error', () => {
     expect(inferLevel(NAVIGATE_ERROR)).toBe('info');
     const record = recordFromLine(NAVIGATE_ERROR);
+    assert(record);
     expect(record.level).toBe('info');
     expect(record.msg).toBe(NAVIGATE_ERROR);
   });
@@ -121,6 +123,7 @@ describe('line parsing', () => {
 
   test('recordFromLine produces a Contract-1 record flagged as inferred', () => {
     const record = recordFromLine(`${ESC}[31mERROR  boom${ESC}[39m`, { stream: 'stderr' });
+    assert(record);
     expect(record.src).toBe('metro');
     expect(record.level).toBe('error');
     expect(record.msg).toBe('ERROR  boom');
@@ -137,7 +140,7 @@ describe('line parsing', () => {
 
 describe('createLineReader', () => {
   test('reassembles lines split across chunk boundaries', () => {
-    const lines = [];
+    const lines: string[] = [];
     const reader = createLineReader((l) => lines.push(l));
     reader.push('Starting ');
     reader.push('Metro\niOS Bun');
@@ -146,7 +149,7 @@ describe('createLineReader', () => {
   });
 
   test('flush emits the trailing partial line, which is usually the interesting one', () => {
-    const lines = [];
+    const lines: string[] = [];
     const reader = createLineReader((l) => lines.push(l));
     reader.push('Error: died mid-');
     expect(lines).toEqual([]);
@@ -174,23 +177,25 @@ describe('startExpoServer', () => {
 
   test('spawns `expo start --port <n>` and NOTHING else, from the project root', async () => {
     fakeBin();
-    let call = null;
+    const calls: { cmd: string; args: string[]; opts: SpawnOptions }[] = [];
     await startExpoServer({
       root,
       port: 8111,
       logsDir: join(root, 'logs'),
       spawnFn: (cmd, args, opts) => {
-        call = { cmd, args, opts };
+        calls.push({ cmd, args, opts });
         return fakeChild();
       },
     });
-    expect(call.cmd).toBe(expoBinPath(root));
-    expect(call.args).toEqual(['start', '--port', '8111']);
-    expect(call.opts.cwd).toBe(root);
-    expect(call.opts.stdio).toEqual(['ignore', 'pipe', 'pipe']);
+    const seen = calls[0];
+    assert(seen);
+    expect(seen.cmd).toBe(expoBinPath(root));
+    expect(seen.args).toEqual(['start', '--port', '8111']);
+    expect(seen.opts.cwd).toBe(root);
+    expect(seen.opts.stdio).toEqual(['ignore', 'pipe', 'pipe']);
     // detached:false is what keeps the child in the supervisor's process
     // group, so it can never outlive it.
-    expect(call.opts.detached).toBe(false);
+    expect(seen.opts.detached).toBe(false);
   });
 
   test('stdout and stderr lines land in metro.ndjson as Contract-1 records', async () => {
@@ -203,16 +208,16 @@ describe('startExpoServer', () => {
       logsDir,
       spawnFn: () => child,
     });
-    child.stdout.emit('data', 'Starting project at /app\niOS Bundled 812ms index.js (1150 modules)\n');
-    child.stderr.emit('data', 'ERROR  Unable to resolve module ./nope\n');
+    child.stdout!.emit('data', 'Starting project at /app\niOS Bundled 812ms index.js (1150 modules)\n');
+    child.stderr!.emit('data', 'ERROR  Unable to resolve module ./nope\n');
 
     const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
     expect(records.length).toBe(3);
     expect(records.map((r) => r.level)).toEqual(['info', 'info', 'error']);
     expect(records.every((r) => r.src === 'metro' && r.raw === true)).toBeTruthy();
     expect(records.every((r) => typeof r.ts === 'number')).toBeTruthy();
-    expect(records[1].marker).toBe(true);
-    expect(records[2].event).toBe('expo_stderr');
+    expect(records[1]?.marker).toBe(true);
+    expect(records[2]?.event).toBe('expo_stderr');
     expect(handle.serverPid).toBe(child.pid);
     expect(handle.mode).toBe('expo-child');
   });
@@ -222,27 +227,32 @@ describe('startExpoServer', () => {
     const child = fakeChild();
     const logsDir = join(root, '.rn-iso', 'logs');
     const handle = await startExpoServer({ root, port: 8113, logsDir, spawnFn: () => child });
-    const exits = [];
+    const exits: (ExpoExitInfo | null)[] = [];
     handle.onExit((info) => exits.push(info));
 
-    child.stdout.emit('data', 'Error: port already in use');
+    child.stdout!.emit('data', 'Error: port already in use');
     child.emit('exit', 1, null);
 
     expect(exits).toEqual([{ code: 1, signal: null }]);
     const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
-    expect(records.at(-1).msg).toBe('Error: port already in use');
-    expect(records.at(-1).level).toBe('error');
+    const last = records.at(-1);
+    assert(last);
+    expect(last.msg).toBe('Error: port already in use');
+    expect(last.level).toBe('error');
   });
 
   test('a spawn that never starts (ENOENT) reports an exit rather than hanging', async () => {
     fakeBin();
     const child = fakeChild();
     const handle = await startExpoServer({ root, port: 8114, logsDir: join(root, 'logs'), spawnFn: () => child });
-    const exits = [];
+    const exits: (ExpoExitInfo | null)[] = [];
     handle.onExit((info) => exits.push(info));
     child.emit('error', new Error('spawn EACCES'));
     expect(exits.length).toBe(1);
-    expect(exits[0].error.message).toMatch(/EACCES/);
+    const first = exits[0];
+    assert(first);
+    assert(first.error);
+    expect(first.error.message).toMatch(/EACCES/);
   });
 
   test('onExit after the child is already gone still fires', async () => {
@@ -250,7 +260,7 @@ describe('startExpoServer', () => {
     const child = fakeChild();
     const handle = await startExpoServer({ root, port: 8115, logsDir: join(root, 'logs'), spawnFn: () => child });
     child.emit('exit', 0, null);
-    const exits = [];
+    const exits: (ExpoExitInfo | null)[] = [];
     handle.onExit((info) => exits.push(info));
     expect(exits.length).toBe(1);
   });
@@ -265,12 +275,13 @@ describe('startExpoServer', () => {
       spawnFn: () => child,
       killTimeoutMs: 50,
     });
-    const signals = [];
+    const signals: Array<[number, string | number]> = [];
     const realKill = process.kill;
-    process.kill = (pid, sig) => {
+    process.kill = ((pid: number, sig: string | number) => {
       signals.push([pid, sig]);
       if (sig === 'SIGTERM') child.emit('exit', 0, 'SIGTERM');
-    };
+      return true;
+    }) as typeof process.kill;
     try {
       await handle.close();
     } finally {
@@ -291,12 +302,13 @@ describe('startExpoServer', () => {
       spawnFn: () => child,
       killTimeoutMs: 20,
     });
-    const signals = [];
+    const signals: Array<[number, string | number]> = [];
     const realKill = process.kill;
-    process.kill = (pid, sig) => {
+    process.kill = ((pid: number, sig: string | number) => {
       signals.push([pid, sig]);
       if (sig === 'SIGKILL') child.emit('exit', null, 'SIGKILL');
-    };
+      return true;
+    }) as typeof process.kill;
     try {
       await handle.close();
     } finally {
@@ -315,9 +327,10 @@ describe('startExpoServer', () => {
     child.emit('exit', 0, null);
     const realKill = process.kill;
     let called = 0;
-    process.kill = () => {
+    process.kill = (() => {
       called += 1;
-    };
+      return true;
+    }) as typeof process.kill;
     try {
       await handle.close();
     } finally {

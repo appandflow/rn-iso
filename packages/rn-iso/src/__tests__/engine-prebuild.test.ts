@@ -2,7 +2,7 @@
 //
 // No real prebuild is executed here: `expo prebuild` writes a native project
 // into the repo it is pointed at, so every case below uses a fake spawn.
-import { EventEmitter } from 'node:events';
+import assert from 'node:assert';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,8 +14,15 @@ import {
   runPrebuild,
   shouldPrebuild,
 } from '../engine/prebuild.ts';
+import { makeChildProcess, makeWriter } from './_factories.ts';
 
-let root;
+// The build-log records the collecting writer captures; only these fields are read.
+type WriteRecord = { src: string; level: string; msg: string };
+
+// The spawn invocation the test records to assert cmd/args/opts.
+type SpawnCall = { cmd: string; args: string[]; opts: Record<string, unknown> };
+
+let root: string;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'rn-iso-prebuild-'));
@@ -62,6 +69,7 @@ describe('the decision', () => {
   // the app. Refusing with a remedy is the honest answer.
   test('prebuildRefusal names the bare-project case and nothing else', () => {
     const refusal = prebuildRefusal({ isExpo: false, platform: 'ios', nativeDirExists: false });
+    assert(refusal);
     expect(refusal.code).toBe(PREBUILD_ERROR);
     expect(refusal.message).toMatch(/no ios\/ directory and is not an Expo/);
     expect(refusal.remedy).toMatch(/expo/);
@@ -70,14 +78,22 @@ describe('the decision', () => {
   });
 });
 
-function fakeExpoChild({ lines = [], code = 0, signal = null, error = null, onExitSideEffect = null } = {}) {
-  const child = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  child.stdout.setEncoding = () => {};
-  child.stderr.setEncoding = () => {};
+function fakeExpoChild({
+  lines = [],
+  code = 0,
+  signal = null,
+  error = null,
+  onExitSideEffect = null,
+}: {
+  lines?: string[];
+  code?: number;
+  signal?: NodeJS.Signals | null;
+  error?: Error | null;
+  onExitSideEffect?: (() => void) | null;
+} = {}) {
+  const child = makeChildProcess();
   setImmediate(() => {
-    for (const line of lines) child.stdout.emit('data', `${line}\n`);
+    for (const line of lines) child.stdout?.emit('data', `${line}\n`);
     if (error) {
       child.emit('error', error);
       return;
@@ -89,25 +105,25 @@ function fakeExpoChild({ lines = [], code = 0, signal = null, error = null, onEx
 }
 
 function collectingWriter() {
-  const records = [];
-  return {
-    records,
-    write: (r) => {
+  const records: WriteRecord[] = [];
+  const writer = makeWriter({
+    write: (r: WriteRecord) => {
       records.push(r);
       return true;
     },
-  };
+  });
+  return Object.assign(writer, { records });
 }
 
 describe('runPrebuild', () => {
   test("runs the PROJECT's own expo bin with `prebuild -p <platform> --no-install`", async () => {
     const bin = installFakeExpoBin();
     const writer = collectingWriter();
-    let spawned = null;
+    const spawnCalls: SpawnCall[] = [];
     const result = await runPrebuild(root, 'ios', writer, {
       isExpo: true,
       spawnFn: (cmd, args, opts) => {
-        spawned = { cmd, args, opts };
+        spawnCalls.push({ cmd, args, opts });
         return fakeExpoChild({
           lines: ['Creating native directory (./ios)'],
           onExitSideEffect: () => mkdirSync(join(root, 'ios'), { recursive: true }),
@@ -117,6 +133,8 @@ describe('runPrebuild', () => {
     expect(result.ok).toBe(true);
     // Never `npx expo`: npx would download whatever version is newest and
     // generate a native project that does not match the app's SDK.
+    const spawned = spawnCalls[0];
+    assert(spawned);
     expect(spawned.cmd).toBe(bin);
     expect(spawned.args).toEqual(['prebuild', '-p', 'ios', '--no-install']);
     expect(spawned.opts.cwd).toBe(root);
@@ -134,6 +152,7 @@ describe('runPrebuild', () => {
     expect(result.failed).toBe(true);
     expect(result.code).toBe(PREBUILD_ERROR);
     expect(result.reason).toMatch(/exit code 1/);
+    assert(result.lastLines);
     expect(result.lastLines.join('\n')).toMatch(/package name/);
   });
 
@@ -161,6 +180,7 @@ describe('runPrebuild', () => {
     expect(result.code).toBe(PREBUILD_ERROR);
     expect(result.reason).toMatch(/not an Expo/);
     expect(result.remedy).toMatch(/react-native-community/);
+    assert(result.error);
     expect(result.error.code).toBe(PREBUILD_ERROR);
   });
 

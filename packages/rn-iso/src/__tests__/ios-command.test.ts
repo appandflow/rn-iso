@@ -12,12 +12,14 @@
 //     whole reason a second worktree is fast;
 //   - the collector is REPLACED, never duplicated, and the state file is
 //     MERGED, never overwritten, so `stop` can still find the supervisor.
+import assert from 'node:assert';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import type { WorkspaceState } from '../supervisor/run.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../supervisor/run.ts';
 import {
   appNameFromPath,
@@ -43,12 +45,37 @@ import {
   shortUdid,
   writeLastBuild,
 } from '../commands/ios.ts';
+import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroResolution } from './_factories.ts';
 
 const UDID = 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9';
 const FINGERPRINT = 'a3f9b1c2d3e4f5';
 
-let tmpHome;
-let root;
+// The seam registerIos accepts: Partial<typeof DEFAULT_DEPS>. Deriving it from
+// the exported function lets every override object be contextually typed
+// without DEFAULT_DEPS itself being exported.
+type IosDeps = NonNullable<Parameters<typeof registerIos>[1]>;
+
+// The mocks intentionally return partial shapes (the command reads only the
+// fields it needs), so the seam's real RETURN types must not be enforced. This
+// keeps each mock's parameter types (from the real signature, so a callback
+// like `(platform, key, path)` is typed) while leaving returns free.
+type LooseDeps = {
+  [K in keyof Required<IosDeps>]?: Required<IosDeps>[K] extends (...args: infer A) => unknown
+    ? (...args: A) => unknown
+    : Required<IosDeps>[K];
+};
+
+// The replaceCollector seam, derived from the exported function so its spawn/
+// kill callbacks are typed without ReplaceCollectorArgs being exported.
+type ReplaceCollectorArgs = Parameters<typeof replaceCollector>[0];
+
+// Argument shapes for the seams the tests below record, derived the same way.
+type CheckEasAuthArgs = Parameters<NonNullable<IosDeps['checkEasAuth']>>[0];
+type CheckDeviceCapacityArgs = Parameters<NonNullable<IosDeps['checkDeviceCapacity']>>[0];
+type AcquireBuildSlotArgs = Parameters<NonNullable<IosDeps['acquireBuildSlot']>>[0];
+
+let tmpHome: string;
+let root: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -65,9 +92,11 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-// The same commander stub the other command tests use.
-function captureAction(register, deps) {
-  let captured;
+// The same commander stub the other command tests use. `register` is the real
+// registerIos, but the stub is a partial commander mock; typing register as its
+// exact signature would demand a full Command here, so it stays loose.
+function captureAction(register: typeof registerIos, deps: LooseDeps) {
+  let captured: ((opts: Record<string, unknown>) => unknown) | undefined;
   const stub = {
     command() {
       return stub;
@@ -78,26 +107,58 @@ function captureAction(register, deps) {
     option() {
       return stub;
     },
-    action(fn) {
+    action(fn: (opts: Record<string, unknown>) => unknown) {
       captured = fn;
       return stub;
     },
   };
-  register(stub, deps);
-  return (opts = {}) => captured(opts);
+  // The stub is a partial commander mock and deps are partial engine seams;
+  // registerIos wants a full Command and full deps, so cast at this one seam.
+  register(stub as unknown as Parameters<typeof registerIos>[0], deps as unknown as IosDeps);
+  return (opts: Record<string, unknown> = {}) => {
+    assert(captured);
+    return captured(opts);
+  };
 }
 
 // Every engine call is a seam. The defaults describe the happy path with a
 // cache MISS; each test overrides the one fact it is about.
-function harness(overrides = {}) {
-  const calls = { order: [], args: {} };
-  const record = (name, value) => {
+// The first NDJSON payload a --json command put on stdout, parsed. Asserts it
+// is present (noUncheckedIndexedAccess) then parses; the parsed value stays
+// JSON.parse-shaped, read one field at a time by the caller.
+function parseFirst(lines: string[]) {
+  const [first] = lines;
+  assert(first);
+  return JSON.parse(first);
+}
+
+// The seam arguments each recorded call carries. Every field the assertions
+// read is modelled as `unknown` (compared one at a time); the index signature
+// keeps the recorder's `args[name] = value` write untyped.
+interface RecordedArgs {
+  [key: string]: unknown;
+  installIosApp: { appPath?: unknown };
+  launchIosApp: { devClientScheme?: unknown; metroPort?: unknown; bundleId?: unknown };
+  storeBuild: { options?: unknown; platform?: unknown; path?: unknown };
+  resolveBuild: { key?: unknown };
+  verifyLaunch: { since?: unknown; logsDir?: unknown };
+  uploadRemote: { fingerprintHash?: unknown; buildPath?: unknown };
+  resolveRemote: { projectRoot?: unknown; platform?: unknown; fingerprintHash?: unknown };
+  replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown };
+  loadProjectProvider: { isExpo?: unknown };
+  acquireBuildLock: { root?: unknown; platform?: unknown; logFile?: unknown; key?: unknown };
+  ensureWorkspaceIgnored: unknown;
+}
+
+function harness(overrides: LooseDeps = {}) {
+  const calls: { order: string[]; args: RecordedArgs } = { order: [], args: {} as RecordedArgs };
+  const record = (name: string, value: unknown) => {
     calls.order.push(name);
     calls.args[name] = value;
   };
   const appPath = join(root, 'build', 'Fixture.app');
 
-  const deps = {
+  const deps: LooseDeps = {
     findProjectRoot: () => root,
     gitCommonDir: () => null,
     repoRoot: () => null,
@@ -215,20 +276,20 @@ function harness(overrides = {}) {
   return { deps, calls, appPath };
 }
 
-async function run(opts = {}, overrides = {}) {
+async function run(opts: Record<string, unknown> = {}, overrides: LooseDeps = {}) {
   const { deps, calls, appPath } = harness(overrides);
   const action = captureAction(registerIos, deps);
-  const logs = [];
-  const errs = [];
+  const logs: string[] = [];
+  const errs: string[] = [];
   const origLog = console.log;
   const origErr = console.error;
   const origExit = process.exit;
-  let exitCode = null;
+  let exitCode: string | number | null | undefined = null;
   console.log = (l) => logs.push(String(l));
   console.error = (l) => errs.push(String(l));
-  process.exit = (c) => {
+  process.exit = asProcessExit((c) => {
     exitCode = c;
-  };
+  });
   try {
     await action(opts);
   } finally {
@@ -309,7 +370,7 @@ describe('the Metro gate', () => {
     reserve();
     const { logs, calls, errs } = await run({ json: true, metroCheck: false });
     expect(!calls.order.includes('verifyLaunch')).toBeTruthy();
-    expect(JSON.parse(logs[0]).launched).toBe('unverified');
+    expect(parseFirst(logs).launched).toBe('unverified');
     expect(errs.join('\n')).toMatch(/skipped \(--no-metro-check\)/);
   });
 });
@@ -358,7 +419,7 @@ describe('the Metro gate retries an indexing Metro', () => {
   });
 
   test('gateShouldRetry is the rule, stated once', () => {
-    expect(gateShouldRetry({ missing: true })).toBe(true);
+    expect(gateShouldRetry(makeMetroResolution.missing())).toBe(true);
     expect(gateShouldRetry({ notOurs: 'x', kind: 'unresponsive' })).toBe(true);
     expect(gateShouldRetry({ notOurs: 'x', kind: 'unreadable-cwd' })).toBe(true);
     expect(gateShouldRetry({ notOurs: 'x', kind: 'foreign-cwd' })).toBe(false);
@@ -396,15 +457,15 @@ describe('the Metro gate retries an indexing Metro', () => {
 
   test('noMetroMessage names a supervisor only when it is for THIS port and alive', () => {
     const supervisor = { pid: 7, port: 8082, mode: 'expo-child' };
-    expect(noMetroMessage({ port: 8082, resolution: { missing: true }, supervisor, supervisorAlive: true })).toMatch(
-      /supervisor record exists/,
-    );
-    expect(noMetroMessage({ port: 8082, resolution: { missing: true }, supervisor, supervisorAlive: false })).toMatch(
-      /Nothing is serving/,
-    );
-    expect(noMetroMessage({ port: 8099, resolution: { missing: true }, supervisor, supervisorAlive: true })).toMatch(
-      /Nothing is serving/,
-    );
+    expect(
+      noMetroMessage({ port: 8082, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: true }),
+    ).toMatch(/supervisor record exists/);
+    expect(
+      noMetroMessage({ port: 8082, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: false }),
+    ).toMatch(/Nothing is serving/);
+    expect(
+      noMetroMessage({ port: 8099, resolution: makeMetroResolution.missing(), supervisor, supervisorAlive: true }),
+    ).toMatch(/Nothing is serving/);
   });
 });
 
@@ -417,7 +478,7 @@ describe('launch verification', () => {
     reserve();
     const { logs, errs, exitCode, calls } = await run({ json: true });
     expect(exitCode).toBe(null);
-    expect(JSON.parse(logs[0]).launched).toBe(true);
+    expect(parseFirst(logs).launched).toBe(true);
     expect(errs.join('\n')).toMatch(/verify.*bundle requested from Metro port 8082/);
     // It polls THIS workspace's timeline, from the launch onwards.
     expect(calls.args.verifyLaunch.logsDir).toBe(workspaceLogsDir(root));
@@ -436,7 +497,7 @@ describe('launch verification', () => {
     // Exit 0: the app IS launched, and refusing here would break every slow
     // launch. What changes is the FACT, which is what an agent branches on.
     expect(exitCode).toBe(null);
-    expect(JSON.parse(logs[0]).launched).toBe('unverified');
+    expect(parseFirst(logs).launched).toBe('unverified');
     const text = errs.join('\n');
     expect(text).toMatch(/UNVERIFIED/);
     expect(text).toMatch(/DEVELOPMENT SERVERS/);
@@ -464,7 +525,7 @@ describe('launch verification', () => {
     expect(text).toMatch(/Open in/);
     expect(text).toMatch(new RegExp(`xcrun simctl openurl ${UDID}`));
     expect(text).toMatch(/fixture:\/\/expo-development-client/);
-    expect(JSON.parse(logs[0]).launched).toBe('unverified');
+    expect(parseFirst(logs).launched).toBe('unverified');
   });
 
   test('the collector is attached BEFORE the poll: its 20s are the ones worth logging', async () => {
@@ -478,6 +539,7 @@ describe('launch verification', () => {
     await run({}, { verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) });
     const record = buildRecords().find((r) => r.event === 'launch_unverified');
     expect(record).toBeTruthy();
+    assert(record);
     expect(record.level).toBe('warn');
     expect(record.msg).toMatch(/no bundle request .* reached this workspace's Metro on port 8082/);
 
@@ -530,7 +592,7 @@ describe('the cache', () => {
     expect(!calls.order.includes('runPodInstall')).toBeTruthy();
     expect(!calls.order.includes('storeBuild')).toBeTruthy();
     expect(calls.args.installIosApp.appPath).toBe(cachedApp);
-    const facts = JSON.parse(logs[0]);
+    const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('local');
     expect(facts.appPath).toBe(cachedApp);
   });
@@ -609,7 +671,7 @@ describe('the cache', () => {
     expect(exitCode).toBe(null);
     expect(calls.order.includes('buildIos')).toBeTruthy();
     expect(!calls.order.includes('resolveRemote')).toBeTruthy();
-    const facts = JSON.parse(logs[0]);
+    const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe(false);
     expect(facts.cacheSkipped).toBe(true);
     expect(!facts.appPath.startsWith(cachedApp)).toBeTruthy();
@@ -690,7 +752,7 @@ describe('the remote cache', () => {
     reserve();
     const remoteApp = join(root, 'downloaded', 'Fixture.app');
     const storedApp = join(tmpHome, 'build-cache', 'ios', 'key', 'Fixture.app');
-    const stored = [];
+    const stored: { platform: unknown; key: unknown; path: unknown; options: unknown }[] = [];
     const { exitCode, calls, logs, errs } = await run(
       { json: true },
       {
@@ -707,14 +769,18 @@ describe('the remote cache', () => {
     expect(!calls.order.includes('buildIos')).toBeTruthy();
     expect(!calls.order.includes('runPrebuild')).toBeTruthy();
     expect(stored.length).toBe(1);
-    expect(stored[0].path).toBe(remoteApp);
-    expect(stored[0].key).toBe(calls.args.resolveBuild.key);
+    const storedEntry = stored[0];
+    assert(storedEntry);
+    expect(storedEntry.path).toBe(remoteApp);
+    expect(storedEntry.key).toBe(calls.args.resolveBuild.key);
     expect(calls.args.installIosApp.appPath).toBe(storedApp);
     expect(errs.join('\n')).toMatch(/^cache {7}remote hit \(eas\) -> stored locally$/m);
-    const facts = JSON.parse(logs[0]);
+    const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('remote');
     expect(facts.appPath).toBe(storedApp);
-    expect(readWorkspaceState(root).lastBuild.cacheHit).toBe('remote');
+    const stateAfter = readWorkspaceState(root);
+    assert(stateAfter?.lastBuild);
+    expect(stateAfter.lastBuild.cacheHit).toBe('remote');
   });
 
   test("the provider is asked with this workspace's fingerprint and platform", async () => {
@@ -770,11 +836,11 @@ describe('the remote cache', () => {
 
   test('a provider that TIMES OUT does not stall the loop, and the command stops holding the process open', async () => {
     reserve();
-    const exits = [];
+    const exits: (string | number | null | undefined)[] = [];
     const originalExit = process.exit;
-    process.exit = (code) => {
+    process.exit = asProcessExit((code) => {
       exits.push(code);
-    };
+    });
     let errs;
     let calls;
     try {
@@ -867,7 +933,7 @@ describe('the remote cache', () => {
 
   test('the session is checked with the owner the config named, and only once', async () => {
     reserve();
-    const asked = [];
+    const asked: CheckEasAuthArgs[] = [];
     await run(
       {},
       {
@@ -880,8 +946,10 @@ describe('the remote cache', () => {
       },
     );
     expect(asked.length).toBe(1);
-    expect(asked[0].owner).toBe('th3rd-wave');
-    expect(asked[0].projectRoot).toBe(root);
+    const askedEntry = asked[0];
+    assert(askedEntry);
+    expect(askedEntry.owner).toBe('th3rd-wave');
+    expect(askedEntry.projectRoot).toBe(root);
   });
 
   test('a custom provider is never asked about EAS at all', async () => {
@@ -1077,7 +1145,7 @@ describe('single-flight builds', () => {
     expect(!calls.order.includes('releaseBuildLock')).toBeTruthy();
     expect(calls.args.installIosApp.appPath).toBe(waited);
 
-    const facts = JSON.parse(logs[0]);
+    const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('local');
     expect(facts.waitedForBuild).toEqual({ pid: 41233, ms: 761000 });
     expect(stderr).toMatch(/waited 12m41s for \/w\/app-999's build -> installed from cache/);
@@ -1086,7 +1154,7 @@ describe('single-flight builds', () => {
   test('a run that did not wait reports waitedForBuild: null', async () => {
     reserve();
     const { logs } = await run({ json: true });
-    expect(JSON.parse(logs[0]).waitedForBuild).toBe(null);
+    expect(parseFirst(logs).waitedForBuild).toBe(null);
   });
 
   test('the wait is announced when it starts, naming who is building and what to tail', async () => {
@@ -1110,7 +1178,7 @@ describe('single-flight builds', () => {
       {
         acquireBuildLock: () => heldBy(),
         waitForBuild: async ({ out }) => {
-          out('build       waiting on /w/app-999 (pid 41233, 4m elapsed) -- tail /w/app-999/x.ndjson');
+          out?.('build       waiting on /w/app-999 (pid 41233, 4m elapsed) -- tail /w/app-999/x.ndjson');
           return { hit: '/cache/Fixture.app', waitedMs: 240000 };
         },
       },
@@ -1184,7 +1252,7 @@ describe('single-flight builds', () => {
   // `fail` never sees it and only the `finally` can free the waiters.
   test('a build that THROWS releases the lock on the way out', async () => {
     reserve();
-    let released = null;
+    const released: { handle?: { lock?: { pid?: number | null } } | null } = {};
     await expect(() =>
       run(
         {},
@@ -1193,14 +1261,15 @@ describe('single-flight builds', () => {
             throw new Error('xcodebuild exploded');
           },
           releaseBuildLock: (handle) => {
-            released = handle;
+            released.handle = handle;
             return true;
           },
         },
       ),
     ).rejects.toThrow(/xcodebuild exploded/);
-    expect(released).toBeTruthy();
-    expect(released.lock.pid).toBe(process.pid);
+    expect(released.handle).toBeTruthy();
+    assert(released.handle?.lock);
+    expect(released.handle.lock.pid).toBe(process.pid);
   });
 
   test('a prebuild or pod failure releases the lock too', async () => {
@@ -1227,17 +1296,17 @@ describe('single-flight builds', () => {
       {
         acquireBuildLock: () => heldBy(),
         waitForBuild: async () => {
-          const err = new Error('Waited 90m ... The lock is /home/build-locks/ios-key.lock');
-          err.code = 'RN_ISO_BUILD_WAIT_TIMEOUT';
-          err.lockPath = '/home/build-locks/ios-key.lock';
-          throw err;
+          throw makeError('Waited 90m ... The lock is /home/build-locks/ios-key.lock', {
+            code: 'RN_ISO_BUILD_WAIT_TIMEOUT',
+            lockPath: '/home/build-locks/ios-key.lock',
+          });
         },
       },
     );
     expect(exitCode).toBe(1);
     expect(!calls.order.includes('buildIos')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/RN_ISO_BUILD_WAIT_TIMEOUT/);
-    expect(JSON.parse(logs[0]).code).toBe('RN_ISO_BUILD_WAIT_TIMEOUT');
+    expect(parseFirst(logs).code).toBe('RN_ISO_BUILD_WAIT_TIMEOUT');
   });
 
   // Same containment rule the cache store and the provider follow: this is an
@@ -1348,7 +1417,7 @@ describe('failure output', () => {
     // The shape is `android`'s, and BOTH fields are populated: a payload
     // carrying only a code made `ios --json` the one command whose failure a
     // caller could not report without also parsing stderr prose.
-    const payload = JSON.parse(logs[0]);
+    const payload = parseFirst(logs);
     expect(payload.code).toBe('RN_ISO_BUILD_FAILED');
     expect(payload.message).toMatch(/xcodebuild` failed/);
     expect(payload.message).toMatch(/exit code 65/);
@@ -1370,7 +1439,7 @@ describe('failure output', () => {
     const { logs, exitCode } = await run({ json: true });
     expect(exitCode).toBe(1);
     expect(logs.length).toBe(1);
-    const payload = JSON.parse(logs[0]);
+    const payload = parseFirst(logs);
     expect(payload.code).toBe('RN_ISO_NO_METRO');
     expect(payload.message).toMatch(/no dev server/);
     expect(payload.remedy).toMatch(/rn-iso start/);
@@ -1417,7 +1486,9 @@ describe('failure output', () => {
         }),
       },
     );
-    const { lastBuild } = readWorkspaceState(root);
+    const stateAfterFail = readWorkspaceState(root);
+    assert(stateAfterFail?.lastBuild);
+    const { lastBuild } = stateAfterFail;
     expect(lastBuild.status).toBe('failed');
     expect(lastBuild.errorCode).toBe('RN_ISO_BUILD_FAILED');
     expect(lastBuild.platform).toBe('ios');
@@ -1450,7 +1521,9 @@ describe('failure output', () => {
     );
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/RN_ISO_INSTALL_FAILED/);
-    expect(readWorkspaceState(root).lastBuild.errorCode).toBe('RN_ISO_INSTALL_FAILED');
+    const stateAfterInstall = readWorkspaceState(root);
+    assert(stateAfterInstall?.lastBuild);
+    expect(stateAfterInstall.lastBuild.errorCode).toBe('RN_ISO_INSTALL_FAILED');
   });
 });
 
@@ -1473,7 +1546,7 @@ describe('success output', () => {
     reserve();
     const { logs, appPath } = await run({ json: true });
     expect(logs.length).toBe(1);
-    const facts = JSON.parse(logs[0]);
+    const facts = parseFirst(logs);
     expect(facts.platform).toBe('ios');
     expect(facts.udid).toBe(UDID);
     expect(facts.deviceName).toBe('rn-iso-fixture');
@@ -1493,6 +1566,7 @@ describe('success output', () => {
     await run({});
     const marker = buildRecords().find((r) => r.marker);
     expect(marker).toBeTruthy();
+    assert(marker);
     expect(marker.src).toBe('build');
     expect(marker.msg).toMatch(/launched com\.example\.app on BF2A.* against Metro port 8082/);
   });
@@ -1538,30 +1612,34 @@ describe('Contract 6: the dev-client scheme', () => {
 // --- Contract 5 -----------------------------------------------------------
 
 describe('the collector', () => {
-  function collectorHarness({ state = null, killImpl = null } = {}) {
+  function collectorHarness({
+    state = null,
+    killImpl = null,
+  }: {
+    state?: WorkspaceState | null;
+    killImpl?: ((pid: number, signal: NodeJS.Signals) => void) | null;
+  } = {}) {
     if (state) writeWorkspaceState(root, state);
-    const spawns = [];
-    const kills = [];
-    return {
-      spawns,
-      kills,
-      opts: {
-        root,
-        udid: UDID,
-        bundleId: 'com.example.app',
-        appName: 'FixtureDev',
-        spawn: (cmd, args, opts) => {
-          spawns.push({ cmd, args, opts });
-          return { pid: 7001, unref() {} };
-        },
-        kill: (pid, signal) => {
-          kills.push({ pid, signal });
-          if (killImpl) killImpl(pid, signal);
-        },
-        alive: () => false,
-        waitMs: 0,
+    const spawns: { cmd: string; args: readonly string[]; opts: Record<string, unknown> }[] = [];
+    const kills: { pid: number; signal: NodeJS.Signals }[] = [];
+    const opts: ReplaceCollectorArgs = {
+      root,
+      udid: UDID,
+      bundleId: 'com.example.app',
+      appName: 'FixtureDev',
+      spawn: (cmd, args, opts) => {
+        spawns.push({ cmd, args, opts });
+        return makeChildProcess({ pid: 7001 });
       },
+      kill: (pid, signal) => {
+        kills.push({ pid, signal });
+        if (killImpl) killImpl(pid, signal);
+        return true;
+      },
+      alive: () => false,
+      waitMs: 0,
     };
+    return { spawns, kills, opts };
   }
 
   test('a previous collector is SIGTERMed and replaced, not duplicated', async () => {
@@ -1577,9 +1655,7 @@ describe('the collector', () => {
     const h = collectorHarness({
       state: { collectors: { ios: { pid: 999 } } },
       killImpl: () => {
-        const e = new Error('kill ESRCH');
-        e.code = 'ESRCH';
-        throw e;
+        throw makeError('kill ESRCH', { code: 'ESRCH' });
       },
     });
     const result = await replaceCollector(h.opts);
@@ -1590,7 +1666,9 @@ describe('the collector', () => {
   test('the collector is spawned detached, unref-ed, with the REAL app name from the .app path', async () => {
     const h = collectorHarness();
     await replaceCollector(h.opts);
-    const { cmd, args, opts } = h.spawns[0];
+    const firstSpawn = h.spawns[0];
+    assert(firstSpawn);
+    const { cmd, args, opts } = firstSpawn;
     expect(cmd).toBe(process.execPath);
     expect(args[0]).toBe(collectorEntry());
     expect(existsSync(collectorEntry())).toBeTruthy();
@@ -1712,12 +1790,12 @@ describe('podAction', () => {
 });
 
 describe('devClientScheme', () => {
-  const dirs = [];
+  const dirs: string[] = [];
   afterEach(() => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  function project(app, pkg) {
+  function project(app: unknown, pkg?: unknown) {
     const dir = mkdtempSync(join(tmpdir(), 'rn-iso-scheme-'));
     dirs.push(dir);
     if (app) writeFileSync(join(dir, 'app.json'), JSON.stringify(app));
@@ -1748,24 +1826,24 @@ describe('devClientScheme', () => {
   // deep link was skipped and the app opened the dev-launcher's server picker.
   test("prefers the built app's Info.plist over app.json", () => {
     const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
-    const exec = {
+    const exec = makeExecutor({
       runFile: (cmd, args) => {
         expect(cmd).toBe('plutil');
-        expect(args.slice(0, 4)).toEqual(['-convert', 'json', '-o', '-']);
-        expect(args[4]).toMatch(/Fixture\.app\/Info\.plist$/);
+        expect(args?.slice(0, 4)).toEqual(['-convert', 'json', '-o', '-']);
+        expect(args?.[4]).toMatch(/Fixture\.app\/Info\.plist$/);
         return JSON.stringify({ CFBundleURLTypes: [{ CFBundleURLSchemes: ['io.tlon.groups'] }] });
       },
-    };
+    });
     expect(devClientScheme(dir, '/b/Fixture.app', { exec })).toBe('io.tlon.groups');
   });
 
   test('falls back to app.json when the bundle cannot be read', () => {
     const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
-    const exec = {
+    const exec = makeExecutor({
       runFile: () => {
         throw new Error('plutil: file does not exist');
       },
-    };
+    });
     expect(devClientScheme(dir, '/b/Fixture.app', { exec })).toBe('from-app-json');
   });
 
@@ -1862,7 +1940,7 @@ describe('iosFacts', () => {
   // artifact really did come from the local cache; what this adds is that it
   // was not there when the run started, and what it cost to get it.
   test('waitedForBuild names the builder waited on and what the wait cost', () => {
-    const facts = iosFacts({ cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } });
+    const facts = iosFacts({ udid: UDID, cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } });
     expect(facts.cacheHit).toBe('local');
     expect(facts.waitedForBuild).toEqual({ pid: 41233, ms: 761000 });
   });
@@ -1871,14 +1949,14 @@ describe('iosFacts', () => {
   // install from one that cost a download, and those are not the same thing to
   // plan around. Anything that is not a level rendered as `false`.
   test('cacheHit is a LEVEL, and an unknown value is a miss rather than a truthy string', () => {
-    expect(iosFacts({ cacheHit: 'remote' }).cacheHit).toBe('remote');
-    expect(iosFacts({ cacheHit: true }).cacheHit).toBe(false);
-    expect(iosFacts({ cacheHit: false }).cacheHit).toBe(false);
+    expect(iosFacts({ udid: UDID, cacheHit: 'remote' }).cacheHit).toBe('remote');
+    expect(iosFacts({ udid: UDID, cacheHit: true }).cacheHit).toBe(false);
+    expect(iosFacts({ udid: UDID, cacheHit: false }).cacheHit).toBe(false);
   });
 
   test('cacheSkipped separates "found nothing" from "was told not to look"', () => {
-    expect(iosFacts({ cacheHit: false }).cacheSkipped).toBe(false);
-    expect(iosFacts({ cacheHit: false, cacheSkipped: true }).cacheSkipped).toBe(true);
+    expect(iosFacts({ udid: UDID, cacheHit: false }).cacheSkipped).toBe(false);
+    expect(iosFacts({ udid: UDID, cacheHit: false, cacheSkipped: true }).cacheSkipped).toBe(true);
   });
 });
 
@@ -1896,7 +1974,7 @@ describe('cacheDescription', () => {
 // src/build-cache.js for why this is not cosmetic.
 test('ios fingerprints with platforms scoped to ios', async () => {
   reserve();
-  const seen = [];
+  const seen: { path: unknown; options?: { platform?: unknown } }[] = [];
   await run(
     {},
     {
@@ -1907,8 +1985,10 @@ test('ios fingerprints with platforms scoped to ios', async () => {
     },
   );
   expect(seen.length).toBe(1);
-  expect(seen[0].path).toBe(root);
-  expect(seen[0].options?.platform).toBe('ios');
+  const seenEntry = seen[0];
+  assert(seenEntry);
+  expect(seenEntry.path).toBe(root);
+  expect(seenEntry.options?.platform).toBe('ios');
 });
 
 // The generic half of the same contract: nothing recognizable in the
@@ -1931,7 +2011,7 @@ test('--json says so when a build failed with no recognizable diagnostic', async
     },
   );
   expect(exitCode).toBe(1);
-  const payload = JSON.parse(logs[0]);
+  const payload = parseFirst(logs);
   expect(payload.message).toMatch(/no recognizable diagnostic/);
   expect(payload.remedy).toMatch(/build-ios\.ndjson/);
 });
@@ -1958,13 +2038,13 @@ describe('concurrency limits', () => {
 
   test('maxDevices at capacity refuses with RN_ISO_AT_CAPACITY, before ensuring a device', async () => {
     reserve();
-    let capacityArgs = null;
+    const capacity: { args?: CheckDeviceCapacityArgs } = {};
     const { errs, exitCode, calls } = await run(
       {},
       {
         getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 2 }),
         checkDeviceCapacity: (args) => {
-          capacityArgs = args;
+          capacity.args = args;
           return {
             code: 'RN_ISO_AT_CAPACITY',
             message: 'at capacity',
@@ -1974,7 +2054,8 @@ describe('concurrency limits', () => {
       },
     );
     expect(exitCode).toBe(1);
-    expect(capacityArgs.max).toBe(2);
+    assert(capacity.args);
+    expect(capacity.args.max).toBe(2);
     expect(errs.join('\n')).toMatch(/RN_ISO_AT_CAPACITY/);
     expect(errs.join('\n')).toMatch(/rn-iso stop/);
     expect(!calls.order.includes('ensureOwnedDevice')).toBeTruthy();
@@ -1982,8 +2063,8 @@ describe('concurrency limits', () => {
 
   test('maxBuilds takes a slot AFTER the single-flight lock and releases it after the build', async () => {
     reserve();
-    const seq = [];
-    let slotArgs = null;
+    const seq: string[] = [];
+    const slot: { args?: AcquireBuildSlotArgs } = {};
     const { exitCode } = await run(
       {},
       {
@@ -1998,7 +2079,7 @@ describe('concurrency limits', () => {
         },
         acquireBuildSlot: async (args) => {
           seq.push('slot');
-          slotArgs = args;
+          slot.args = args;
           return { acquired: true, path: '/slot', index: 0, slot: { pid: process.pid } };
         },
         releaseBuildSlot: () => {
@@ -2020,8 +2101,9 @@ describe('concurrency limits', () => {
     // Slot comes after the single-flight lock, before the compile, and is
     // released with the lock once the artifact is stored.
     expect(seq).toEqual(['lock', 'slot', 'build', 'releaseLock', 'releaseSlot']);
-    expect(slotArgs.max).toBe(2);
-    expect(slotArgs.root).toBe(root);
+    assert(slot.args);
+    expect(slot.args.max).toBe(2);
+    expect(slot.args.root).toBe(root);
   });
 
   test("a waiter that installs another workspace's artifact never consumes a slot", async () => {

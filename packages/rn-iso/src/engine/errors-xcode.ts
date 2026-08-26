@@ -137,7 +137,7 @@ function fileFromPrefix(prefix: string): string | null {
   if (!trimmed) return null;
   // "/path/App.xcodeproj: Scratch: clang" -- take the first segment, which is
   // where the path is, and only when it is one.
-  const head = trimmed.split(': ')[0].trim();
+  const head = (trimmed.split(': ')[0] ?? '').trim();
   if (!head.includes('/')) return null;
   return head;
 }
@@ -187,21 +187,27 @@ export function extractXcodeDiagnostics(transcript: string): Diagnostic[] {
   };
 
   for (let i = 0; i < lines.length; i += 1) {
-    const raw = lines[i].replace(/\r$/, '');
+    const rawLine = lines[i];
+    if (rawLine === undefined) continue;
+    const raw = rawLine.replace(/\r$/, '');
     if (raw.includes(BUILD_FAILED)) break;
 
     if (UNDEFINED_HEADER.test(raw)) {
       // Consume the indented symbol list that follows. Anything else ends the
       // block, including the blank line the linker leaves after it.
       for (let j = i + 1; j < lines.length; j += 1) {
-        const sym = UNDEFINED_SYMBOL.exec(lines[j].replace(/\r$/, ''));
+        const symLine = lines[j];
+        if (symLine === undefined) continue;
+        const sym = UNDEFINED_SYMBOL.exec(symLine.replace(/\r$/, ''));
         if (sym) {
-          push(makeDiagnostic({ message: undefinedSymbolMessage(sym[1]) }));
+          // Group 1 is a required capture; guard defensively.
+          const symbol = sym[1];
+          if (symbol !== undefined) push(makeDiagnostic({ message: undefinedSymbolMessage(symbol) }));
           continue;
         }
         // The `_main in main.o` continuation lines are indented further and
         // carry no new fact; skip them and keep looking for the next symbol.
-        if (/^\s+\S/.test(lines[j]) && !/^\S/.test(lines[j])) continue;
+        if (/^\s+\S/.test(symLine) && !/^\S/.test(symLine)) continue;
         i = j - 1;
         break;
       }
@@ -216,12 +222,14 @@ export function extractXcodeDiagnostics(transcript: string): Diagnostic[] {
 
     const positioned = POSITIONED.exec(raw);
     if (positioned) {
+      const posMsg = positioned[4];
+      if (posMsg === undefined) continue;
       push(
         makeDiagnostic({
           file: positioned[1],
           line: Number(positioned[2]),
           column: positioned[3] === undefined ? null : Number(positioned[3]),
-          message: positioned[4],
+          message: posMsg,
         }),
       );
       continue;
@@ -229,7 +237,9 @@ export function extractXcodeDiagnostics(transcript: string): Diagnostic[] {
 
     const plain = UNPOSITIONED.exec(raw);
     if (plain) {
-      push(makeDiagnostic({ file: fileFromPrefix(plain[1] || ''), message: plain[2] }));
+      const plainMsg = plain[2];
+      if (plainMsg === undefined) continue;
+      push(makeDiagnostic({ file: fileFromPrefix(plain[1] || ''), message: plainMsg }));
     }
   }
 

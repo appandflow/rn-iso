@@ -17,11 +17,11 @@
 // were the same thing written twice.
 import { mkdirSync, rmSync, statSync } from 'node:fs';
 
-export const DEFAULT_STALE_MS = 10000;
+const DEFAULT_STALE_MS = 10000;
 // Longer than the stale window so a lock left behind by a killed process is
 // always taken over rather than reported as a timeout.
-export const DEFAULT_WAIT_MS = 12000;
-export const DEFAULT_POLL_MS = 25;
+const DEFAULT_WAIT_MS = 12000;
+const DEFAULT_POLL_MS = 25;
 
 function sleepSync(ms: number) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);

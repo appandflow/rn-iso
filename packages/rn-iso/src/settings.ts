@@ -30,7 +30,7 @@ export function mergeSettingsLayers(layers: Array<SettingsObject | null | undefi
 // Every setting rn-iso actually reads. Kept next to the resolver so deleting a
 // feature forces a decision about its setting: a key that quietly stops being
 // honoured is worse than one that errors. A committed `worktree.install`
-// silently became a no-op in 0.9.0 and the only symptom was a worktree with no
+// is silently not read, and the only symptom would be a worktree with no
 // dependencies.
 const KNOWN_SETTINGS = new Set([
   'ios.deviceType',

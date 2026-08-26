@@ -6,10 +6,13 @@
 // project (one deliberately uncompilable source file), run through this
 // module's own line reader, using the distribution already on the machine so
 // nothing was downloaded and no emulator was involved.
+import assert from 'node:assert';
+import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import {
   ASSEMBLE_TASK,
   BUILD_ERROR,
@@ -22,10 +25,11 @@ import {
   parseOutputMetadata,
   pickDebugApk,
 } from '../engine/gradle.ts';
+import { makeWriter } from './_factories.ts';
 
-let root;
-let sdk;
-let savedAndroidHome;
+let root: string;
+let sdk: string;
+let savedAndroidHome: string | undefined;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'rn-iso-gradle-'));
@@ -86,6 +90,7 @@ describe('discoverAndroidProject', () => {
 describe('androidSdkRefusal', () => {
   test('refuses with the ANDROID_HOME remedy when nothing points at an SDK', () => {
     const refusal = androidSdkRefusal({ sdkPath: '/nope', sdkExists: false, hasLocalProperties: false });
+    assert(refusal);
     expect(refusal.code).toBe(BUILD_ERROR);
     expect(refusal.remedy).toMatch(/ANDROID_HOME/);
     expect(refusal.remedy).toMatch(/JAVA_HOME/);
@@ -188,10 +193,27 @@ describe('locateDebugApk', () => {
 
 // --- buildAndroid ----------------------------------------------------------
 
-function fakeChild({ lines = [], stderrLines = [], code = 0, signal = null, error = null, onExit = null } = {}) {
-  const child: any = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
+function fakeChild({
+  lines = [],
+  stderrLines = [],
+  code = 0,
+  signal = null,
+  error = null,
+  onExit = null,
+}: {
+  lines?: string[];
+  stderrLines?: string[];
+  code?: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: Error | null;
+  onExit?: (() => void) | null;
+} = {}): ChildProcess {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter & { setEncoding: (enc?: string) => void };
+    stderr: EventEmitter & { setEncoding: (enc?: string) => void };
+  };
+  child.stdout = new EventEmitter() as EventEmitter & { setEncoding: (enc?: string) => void };
+  child.stderr = new EventEmitter() as EventEmitter & { setEncoding: (enc?: string) => void };
   child.stdout.setEncoding = () => {};
   child.stderr.setEncoding = () => {};
   setImmediate(() => {
@@ -204,19 +226,38 @@ function fakeChild({ lines = [], stderrLines = [], code = 0, signal = null, erro
     if (onExit) onExit();
     child.emit('exit', code, signal);
   });
-  return child;
+  return child as unknown as ChildProcess;
 }
 
-function recordingWriter() {
-  const records = [];
-  return { records, write: (r) => records.push(r) } as any;
+function recordingWriter(): NdjsonWriter & { records: NdjsonRecord[] } {
+  const records: NdjsonRecord[] = [];
+  const writer = makeWriter({
+    write(record) {
+      records.push(record as NdjsonRecord);
+      return true;
+    },
+  });
+  return Object.assign(writer, { records });
 }
+
+// buildAndroid returns a wide union (success vs several failure shapes); tests
+// reach for the field the case under test carries, so a permissive view keeps
+// them off `any` without asserting a single variant.
+type BuildAndroidResultLike = {
+  ok?: boolean;
+  apkPath?: string;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+  remedy?: string;
+  durationMs?: number;
+};
 
 describe('buildAndroid', () => {
   test('runs ./gradlew assembleDebug in android/ and streams every line as it arrives', async () => {
     makeAndroidProject();
     const writer = recordingWriter();
-    const calls = [];
+    const calls: { cmd: string; args: string[]; opts: Record<string, unknown> }[] = [];
     const result = await buildAndroid(
       { root, logWriter: writer },
       {
@@ -235,16 +276,20 @@ describe('buildAndroid', () => {
     );
 
     expect(calls.length).toBe(1);
-    expect(calls[0].cmd).toBe(join(root, 'android', 'gradlew'));
+    const call = calls[0];
+    assert(call);
+    expect(call.cmd).toBe(join(root, 'android', 'gradlew'));
     // The literal, not the constant: a test that reads the task name out of
     // the module under test cannot notice the module changing it.
-    expect(calls[0].args).toEqual(['assembleDebug']);
+    expect(call.args).toEqual(['assembleDebug']);
     expect(ASSEMBLE_TASK).toBe('assembleDebug');
-    expect(calls[0].opts.cwd).toBe(join(root, 'android'));
-    expect(calls[0].opts.stdio[0]).toBe('ignore');
+    expect(call.opts.cwd).toBe(join(root, 'android'));
+    const { stdio } = call.opts;
+    assert(Array.isArray(stdio));
+    expect(stdio[0]).toBe('ignore');
 
-    expect((result as any).ok).toBe(true);
-    expect((result as any).apkPath).toBe(join(debugApkDir(root), 'app-debug.apk'));
+    expect((result as BuildAndroidResultLike).ok).toBe(true);
+    expect((result as BuildAndroidResultLike).apkPath).toBe(join(debugApkDir(root), 'app-debug.apk'));
     expect(result.durationMs).toBe(41000);
     // Contract 1: the raw transcript is src "build", level debug.
     expect(writer.records.map((r) => r.msg)).toEqual(['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s']);
@@ -276,6 +321,7 @@ describe('buildAndroid', () => {
     expect(result.code).toBe(BUILD_ERROR);
     expect(result.reason).toMatch(/exit code 1/);
     expect(result.durationMs).toBe(2000);
+    assert(result.diagnostics);
     expect(result.diagnostics.length > 0).toBeTruthy();
     expect(result.diagnostics.some((d) => (d.file || '').endsWith('Broken.java'))).toBeTruthy();
     expect(result.truncated).toBe(0);
@@ -306,7 +352,7 @@ describe('buildAndroid', () => {
     );
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/produced no APK/);
-    expect((result as any).remedy).toMatch(/assembleDebug/);
+    expect((result as BuildAndroidResultLike).remedy).toMatch(/assembleDebug/);
   });
 
   test('a wrapper that will not execute names the permission bit', async () => {
@@ -321,7 +367,7 @@ describe('buildAndroid', () => {
       },
     );
     expect(result.failed).toBe(true);
-    expect((result as any).remedy).toMatch(/chmod \+x/);
+    expect((result as BuildAndroidResultLike).remedy).toMatch(/chmod \+x/);
   });
 
   // A spawn that fails emits `error` and never `exit`; awaiting exit alone
@@ -352,7 +398,7 @@ describe('buildAndroid', () => {
     );
     expect(spawned).toBe(false);
     expect(result.failed).toBe(true);
-    expect((result as any).remedy).toMatch(/prebuild/);
+    expect((result as BuildAndroidResultLike).remedy).toMatch(/prebuild/);
     expect(result.diagnostics).toEqual([]);
   });
 
@@ -371,7 +417,7 @@ describe('buildAndroid', () => {
     );
     expect(spawned).toBe(false);
     expect(result.failed).toBe(true);
-    expect((result as any).remedy).toMatch(/ANDROID_HOME/);
+    expect((result as BuildAndroidResultLike).remedy).toMatch(/ANDROID_HOME/);
   });
 
   test('android/local.properties satisfies the SDK check on its own', async () => {
@@ -384,6 +430,6 @@ describe('buildAndroid', () => {
         spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() }),
       },
     );
-    expect((result as any).ok).toBe(true);
+    expect((result as BuildAndroidResultLike).ok).toBe(true);
   });
 });

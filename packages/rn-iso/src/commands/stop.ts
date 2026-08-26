@@ -1,6 +1,6 @@
 // src/commands/stop.js
 //
-// v3's `stop` is the inverse of `start`, and nothing more: it halts the
+// `stop` is the inverse of `start`, and nothing more: it halts the
 // supervisor, reaps this workspace's device-log collectors, shuts the owned
 // device DOWN, and frees the port. It is not
 // destructive and it never deletes a device, because destruction lives in
@@ -8,13 +8,13 @@
 // reaching for `stop` to reclaim memory must not have a `--delete` within
 // reach of a typo, so there is no flag here that could become one.
 //
-// What survives from v2 is the identity discipline, in two places:
+// The identity discipline lives in two places:
 //   1. A supervisor pid is signalled only when it is ALIVE and PROVABLY ours --
 //      recorded in this workspace's state.json (or in the global registration
 //      for this exact path) and holding the port this project reserved. A pid
 //      is a number the OS reuses; a port is a slot anyone can occupy. Neither
 //      alone is proof.
-//   2. With no supervisor, the fallback is v2's `resolveProjectMetro` check
+//   2. With no supervisor, the fallback is the `resolveProjectMetro` check
 //      before killing whatever answers the reserved port, with `--force` still
 //      the only way past an unproven listener. That flag guards THAT case; it
 //      has nothing to do with the supervisor, and it destroys nothing.
@@ -60,8 +60,9 @@ interface CollectorStateRecord {
 
 type CollectorStateMap = Record<string, CollectorStateRecord | undefined>;
 
-// Local, flat shape for what teardown.ts's outcomes look like -- teardown.ts
-// is typed by another agent concurrently, so this is not imported from there.
+// Local, flat view of teardown.ts's outcomes -- deliberately looser (status as
+// a bare string) than the exported TeardownOutcome, reading only the fields
+// stop branches on.
 interface TeardownResult {
   status: string;
   kind?: string;
@@ -278,7 +279,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 // Polls rather than waiting on the process, because it is not our child: a
 // detached supervisor is reparented to init, so there is no exit event to
 // listen for.
-export async function waitForExit(
+async function waitForExit(
   pid: number,
   {
     timeoutMs = DEFAULT_WAIT_MS,
@@ -394,7 +395,7 @@ export async function runStop({
   waitForDeath?: ((pid: number) => Promise<boolean>) | undefined;
   waitMs?: number;
   resolveMetro?: (port: number, root: string) => Promise<MetroResolution>;
-  killMetro?: (leader: number | null | undefined) => boolean;
+  killMetro?: (leader: number | null | undefined, listenerPid?: number | null) => boolean;
   findListener?: (port: number) => number | null;
   teardownIos?: (udid: string, opts: { del?: boolean; label?: string }) => TeardownResult;
   teardownAvd?: (avdName: string, opts: { del?: boolean }) => TeardownResult;
@@ -612,7 +613,7 @@ async function stopMetro(
   }: {
     force: boolean;
     resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
-    killMetro: (leader: number | null | undefined) => boolean;
+    killMetro: (leader: number | null | undefined, listenerPid?: number | null) => boolean;
     findListener: (port: number) => number | null;
     report: (line: string) => void;
   },
@@ -634,7 +635,7 @@ async function stopMetro(
     report(chalk.dim(`metro: nothing listening on port ${port}`));
     return { status: 'missing', port };
   }
-  if (!killMetro(leader)) {
+  if (!killMetro(leader, pid)) {
     const reason = `could not kill the process on port ${port}`;
     report(chalk.red(`metro: ${reason}`));
     return { status: 'failed', port, pid, reason };
@@ -688,7 +689,7 @@ export function parseSimHolders(
     const args = `${m[2]}${m[3]}`;
     if (/(?:^|\/)rn-iso(?:\s|$)|collector\/run\.js/.test(args)) continue;
     seen.add(pid);
-    holders.push(`${m[2].split('/').pop()} (pid ${pid})`);
+    holders.push(`${(m[2] ?? '').split('/').pop()} (pid ${pid})`);
     if (holders.length >= limit) break;
   }
   return holders;
@@ -704,7 +705,7 @@ function defaultSimHolders(udid: string): string[] {
 }
 
 // PURE. The occupied skip, with whoever can be named appended to it.
-export function occupiedSkipReason(reason: string, holders: string[] | null | undefined): string {
+function occupiedSkipReason(reason: string, holders: string[] | null | undefined): string {
   const named = (holders || []).filter(Boolean);
   return named.length ? `${reason} -- held by ${named.join(', ')}` : `${reason} -- ${OCCUPANCY_HINT}`;
 }

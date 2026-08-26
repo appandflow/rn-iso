@@ -12,8 +12,9 @@ import {
   ownedSimName,
   deleteIosSim,
 } from '../sim/ios.ts';
+import assert from 'node:assert';
 
-let tmpHome;
+let tmpHome: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -48,6 +49,7 @@ test('parseSimctlList flattens devices and filters unavailable', () => {
 test('parseSimctlList includes runtime in each entry', () => {
   const sims = parseSimctlList(SIMCTL_OUTPUT);
   const a = sims.find((s) => s.udid === 'UDID-A');
+  assert(a);
   expect(a.runtime).toBe('com.apple.CoreSimulator.SimRuntime.iOS-17-2');
 });
 
@@ -117,7 +119,10 @@ test('parseOccupyingApps ignores apple system apps', () => {
 
 test('parseOccupyingApps fails open on unparseable output', () => {
   expect(parseOccupyingApps('')).toEqual([]);
-  expect(parseOccupyingApps(null)).toEqual([]);
+  // parseOccupyingApps is typed (launchctlOutput: string) but guards against a
+  // non-string at runtime; exercise that fail-open path. Matches the sibling
+  // convention (errors-gradle.test.ts's `null as any`, errors-xcode's `as unknown as string`).
+  expect(parseOccupyingApps(null as unknown as string)).toEqual([]);
 });
 
 test('pickDefaultIosCreation picks the newest iPhone on the newest runtime', () => {
@@ -141,6 +146,7 @@ test('pickDefaultIosCreation picks the newest iPhone on the newest runtime', () 
     },
   ];
   const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
+  assert(pick);
   expect(pick.runtimeId).toBe('com.apple.CoreSimulator.SimRuntime.iOS-26-5');
   expect(pick.deviceTypeId).toBe('com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro');
 });
@@ -152,6 +158,7 @@ test('pickDefaultIosCreation honors explicit deviceType and runtime by name', ()
     { identifier: 'rt.26-5', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes },
   ];
   const pick = pickDefaultIosCreation(deviceTypes, runtimes, { deviceType: 'iPhone 16', runtime: '26.2' });
+  assert(pick);
   expect(pick.deviceTypeId).toBe('dt.iphone16');
   expect(pick.runtimeId).toBe('rt.26-2');
 });
@@ -176,6 +183,7 @@ test('pickDefaultIosCreation prefers a numbered iPhone over lettered models (SE,
   ];
   const runtimes = [{ identifier: 'rt.26-5', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
   const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
+  assert(pick);
   expect(pick.deviceTypeId).toBe('dt.17pm');
 });
 
@@ -185,7 +193,9 @@ test('pickDefaultIosCreation compares iPhone generations numerically, not lexica
     { identifier: 'dt.17', name: 'iPhone 17' },
   ];
   const runtimes = [{ identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
-  expect(pickDefaultIosCreation(deviceTypes, runtimes, {}).deviceTypeId).toBe('dt.17');
+  const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
+  assert(pick);
+  expect(pick.deviceTypeId).toBe('dt.17');
 });
 
 test('pickDefaultIosCreation picks the base model over Pro/Pro Max of the same generation', () => {
@@ -195,13 +205,17 @@ test('pickDefaultIosCreation picks the base model over Pro/Pro Max of the same g
     { identifier: 'dt.17', name: 'iPhone 17' },
   ];
   const runtimes = [{ identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
-  expect(pickDefaultIosCreation(deviceTypes, runtimes, {}).deviceTypeId).toBe('dt.17');
+  const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
+  assert(pick);
+  expect(pick.deviceTypeId).toBe('dt.17');
 });
 
 test('pickDefaultIosCreation still picks a lettered model when it is the only iPhone', () => {
   const deviceTypes = [{ identifier: 'dt.se3', name: 'iPhone SE (3rd generation)' }];
   const runtimes = [{ identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
-  expect(pickDefaultIosCreation(deviceTypes, runtimes, {}).deviceTypeId).toBe('dt.se3');
+  const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
+  assert(pick);
+  expect(pick.deviceTypeId).toBe('dt.se3');
 });
 
 test('sanitizeDeviceLabel strips characters simctl names should not carry', () => {
@@ -236,7 +250,7 @@ const OWNED_SIM_LIST = JSON.stringify({
 });
 
 test('deleteIosSim deletes an rn-iso-owned sim', () => {
-  const ran = [];
+  const ran: string[] = [];
   setExecutor({
     run: (cmd) => {
       ran.push(cmd);

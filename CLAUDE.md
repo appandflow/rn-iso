@@ -22,16 +22,15 @@ in the order an agent uses them:
   supervisor, reap the collectors, shut the owned device DOWN, free the port —
   it never deletes).
 
-The v3 lifecycle is `worktree create` -> `start` -> `ios|android` ->
+The lifecycle is `worktree create` -> `start` -> `ios|android` ->
 `logs --errors` -> edit -> `logs` -> `stop` / `worktree remove` (which reaps the
 owned device(s) along with the worktree).
 
-**The surface is closed, at eleven commands.** `doctor`, `worktree
+**The surface is closed, at ten commands.** `doctor`, `worktree
 create|remove`, `start`, `stop`, `ios`, `android`, `logs`, `status`, `gc`, plus
-`guide` and `skill`. That is all of it, deliberately (spec: "Command surface").
-v2's `up`, `device`, `release`, `shutdown`, `config`, `build-cache` and
-`worktree list` are deleted, along with `--serial` and all physical-device
-support. A project needing more wraps rn-iso in an npm script rather than
+`guide`. That is all of it, deliberately (spec: "Command surface").
+There is no `up`, `device`, `release`, `shutdown`, `config`, `build-cache` or
+`worktree list`, no `--serial`, and no physical-device support. A project needing more wraps rn-iso in an npm script rather than
 rn-iso growing a flag.
 
 **`init` went too, and it is the most recent deletion — do not bring it back.**
@@ -40,7 +39,7 @@ the project already owns (a `metro.config.js` with its own transformer, a
 `Podfile` with existing `post_install` logic, an app config that may be
 TypeScript), which is judgement, not templating. `doctor` reports the findings
 read-only and `skill/rn-iso-init/SKILL.md` is the playbook an agent follows to
-apply each one by hand. The generated `scripts/dev` went with it: v3 IS the
+apply each one by hand. The generated `scripts/dev` went with it: rn-iso IS the
 build command, so there was no bundler or build command left to wrap. The one
 edit that never needed judgement — `.rn-iso/` in `.gitignore` — is now
 SELF-ENSURED by the commands that create the directory
@@ -221,7 +220,6 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # with nothing able to clear it; --delete clears the RECORD only), and
                           # report the shared caches (every run; there is no --caches flag)
       guide.js            # version-matched reference topics, printed by the binary
-      skill.js            # copy the bundled skills into ~/.claude and ~/.agents
   test/
     *.test.js             # `node --test` (no framework)
   skill/
@@ -275,9 +273,9 @@ checklist:
 - Behavior change (e.g., a new `--json` field, a new destructive side effect)?
   Update both the relevant section and "When things go wrong".
 
-Two skills ship in the package, and `skill install` copies both:
+Two skills ship in the package, installed with `npx skills`:
 `skill/SKILL.md` (how to drive the CLI) and `skill/rn-iso-init/SKILL.md`
-(how to make a repo fast for parallel agents). The second one is now the whole
+(how to make a repo fast for parallel agents). The second one is the whole
 of repo setup -- it is a PLAYBOOK an agent applies by hand, not a description of
 a command -- so a change to caching or to `doctor` belongs there, not in the
 first.
@@ -293,7 +291,7 @@ owning project (`worktree remove`, or `gc` sweeping an orphan) destroys the
 device it owns, not just a claim on it.
 
 **The rule now has no carve-out.** It used to read "the one exception is
-physical devices: hardware cannot be spawned" — v3 deleted `--serial` and all
+physical devices: hardware cannot be spawned" — rn-iso has no `--serial` and no
 physical support (spec: "Out of scope"), so every device rn-iso touches is one
 rn-iso created, and `teardown.js` lost its unowned branch. A legacy record
 naming a serial is reported once in `engine/device.js` and falls through to
@@ -323,28 +321,22 @@ command, and never touch a device rn-iso didn't create.
 
 ### 3. Reimplementation, not reconstruction — and the option surface does not grow
 
-**The rule that is still load-bearing:** rn-iso must never RECONSTRUCT a command
-line that already exists in the project. That is what v1 did — the deleted
-`runner.js` inferred and rebuilt a build command, and every inference could be
-wrong, silently. The concrete failure that settled it: on `member-app`, whose
-own start script is `react-native start --client-logs`, rn-iso spawned
+**The rule that is load-bearing:** rn-iso must never RECONSTRUCT a command
+line that already exists in the project. Inferring and rebuilding a build
+command — which an earlier `runner.js` did — can be wrong, silently. The
+concrete failure that settled it: on `member-app`, whose own start script is
+`react-native start --client-logs`, rn-iso spawned
 `react-native start --port 8082` and silently dropped the project's flag.
 
-For two releases the conclusion drawn from that was "rn-iso is a broker and
-invokes no project tooling at all" (0.7.0 deleted build dispatch, 0.8.0 deleted
-bundler spawning, 0.9.0 deleted `worktree create`'s install pipeline).
-
-**v3 amends that conclusion for BOTH halves — the dev server and the build.**
-The reasoning was right about reconstruction and does not carry against
-REIMPLEMENTATION. `start` hosts a bare RN project's Metro in-process from the
-project's own `node_modules`, and for Expo runs `expo start --port <n>` and
-NOTHING else, ever. `ios` / `android` drive `xcodebuild` / `gradlew` directly
-with a fixed argument list this codebase composes, never one it inferred from a
-package.json script. Nothing reads `scripts.start` or `scripts.ios`; when v3's
-`init` templates stopped needing to, `bundlerCommand` / `runCommandFor` /
-`detectPackageManager` were deleted outright — and `init` itself followed them
-when the templates it was left holding turned out to be judgement calls rather
-than files.
+**The rule is about RECONSTRUCTION, and does not carry against REIMPLEMENTATION**
+— for either half, the dev server or the build. `start` hosts a bare RN
+project's Metro in-process from the project's own `node_modules`, and for Expo
+runs `expo start --port <n>` and NOTHING else, ever. `ios` / `android` drive
+`xcodebuild` / `gradlew` directly with a fixed argument list this codebase
+composes, never one it inferred from a package.json script. Nothing reads
+`scripts.start` or `scripts.ios`; there is no `init`, and no `bundlerCommand` /
+`runCommandFor` / `detectPackageManager` — repo setup is judgement (the
+`rn-iso-init` skill applying `doctor`'s findings by hand), not templating.
 
 **What replaces the broker rule as the guard is the OPTION SURFACE.** It is
 fixed and it does not grow:
@@ -379,9 +371,8 @@ dependencies instead of guessing how to produce them.
 del, label })` and `teardownOwnedAvd(avdName, { del })`. Every site
 that touches an owned device — `reclaim.js` (and through it `gc` and
 `worktree remove`), `commands/stop.js`, and `gc.js`'s orphan sweep — calls one
-of them. Until 0.10.0 this file said reclaim.js was "the one place" while
-admitting three others re-implemented the pattern inline; both could not be
-true, and the copies had begun to drift. Do not add another copy.
+of them. This is the ONE place the pattern lives: when it was re-implemented
+inline across several sites, the copies drifted. Do not add another copy.
 
 The invariants it enforces, in order: (1) re-resolve the device against the
 _live_ sim/AVD list immediately before issuing any command at it
@@ -602,7 +593,7 @@ builds or booted sims as there are agents.
 
 `doctor` prints one note (caps + live count) only when a cap is set; `gc`
 reports and `--delete` clears stale build slots like stale build locks. There is
-NO config CLI (removed in v3) -- these are set via `config.json` + env only, and
+NO config CLI -- these are set via `config.json` + env only, and
 documented in `guide` (settings/errors/lifecycle) and the two skills.
 
 ## Things explicitly out of scope (for now)

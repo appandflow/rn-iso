@@ -7,6 +7,7 @@
 // asserting -- that lastBuild merges into state.json instead of clobbering
 // it, and that the launch marker lands in the build log -- are only true if
 // the real writers are used.
+import assert from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,12 +37,13 @@ import {
 } from '../commands/android.ts';
 import { BUILD_ERROR } from '../engine/gradle.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
+import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_factories.ts';
 
 const FINGERPRINT = 'a3f9b1c2d3e4f5a6b7c8d9e0f1a2b3c4';
 const CACHE_KEY = `${FINGERPRINT}-debug-sim`;
 
-let home;
-let root;
+let home: string;
+let root: string;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'rn-iso-home-'));
@@ -72,12 +74,84 @@ function fakeApk(name = 'app-debug.apk') {
   return path;
 }
 
-const never = (what) => () => {
+const never = (what: string) => () => {
   throw new Error(`${what} must not run in this case`);
 };
 
+interface SpawnCall {
+  cmd: string;
+  args: readonly string[];
+  opts: Record<string, unknown>;
+  unrefed?: boolean;
+}
+
+// The read-shapes below are the SUBSET of each seam's real argument object that
+// the assertions read back. The production interfaces (which have no index
+// signature) are assignable to these subsets, so they double as the mock
+// parameter types.
+interface AcquireLockArgs {
+  platform?: string;
+  key?: string;
+  root?: string | null;
+  logFile?: string | null;
+}
+interface BuildArgs {
+  root?: string;
+  logWriter?: unknown;
+}
+interface InstallArgs {
+  apkPath?: string | null;
+}
+interface LaunchArgs {
+  metroPort?: string | number;
+  devClientScheme?: string | null;
+}
+interface RemoteBuildArgs {
+  platform?: string | null;
+  fingerprintHash?: string | null;
+  projectRoot?: string | null;
+}
+interface UploadArgs {
+  buildPath?: string | null;
+  fingerprintHash?: string | null;
+}
+interface EasAuthArgs {
+  owner?: string | null;
+  projectRoot?: string | null;
+}
+interface VerifyArgs {
+  logsDir?: string;
+  since?: string | number;
+}
+
+interface Calls {
+  ensureDevice: unknown[];
+  booted: unknown[];
+  metro: unknown[][];
+  fingerprint: unknown[];
+  resolveCached: unknown[][];
+  storeCached: unknown[][];
+  prebuild: unknown[][];
+  build: BuildArgs[];
+  install: InstallArgs[];
+  launch: LaunchArgs[];
+  scheme: unknown[][];
+  spawn: SpawnCall[];
+  kill: unknown[][];
+  loadProvider: unknown[][];
+  resolveRemoteBuild: RemoteBuildArgs[];
+  uploadRemoteBuild: UploadArgs[];
+  easAuth: EasAuthArgs[];
+  acquireLock: AcquireLockArgs[];
+  releaseLock: unknown[];
+  waitForBuild: unknown[];
+  verify: VerifyArgs[];
+  ensureIgnored: unknown[];
+  order: string[];
+}
+
 function harness(overrides = {}) {
-  const calls = {
+  const calls: Calls = {
     ensureDevice: [],
     booted: [],
     metro: [],
@@ -104,94 +178,105 @@ function harness(overrides = {}) {
     // single-flight tests below are actually about.
     order: [],
   };
-  const stderr = [];
-  const stdout = [];
+  const stderr: string[] = [];
+  const stdout: string[] = [];
   const options = {
     root,
-    ensureDevice: async (args) => {
+    ensureDevice: async (args: unknown = {}) => {
       calls.ensureDevice.push(args);
       return { avdName: 'rn-iso-app-412', consolePort: 5584, owned: true };
     },
-    ensureDeviceBooted: async (args) => {
+    ensureDeviceBooted: async (args: unknown = {}) => {
       calls.booted.push(args);
       return { ok: true, serial: 'emulator-5584' };
     },
-    resolveMetro: async (port, path) => {
+    resolveMetro: async (port: number, path: string) => {
       calls.metro.push([port, path]);
       return { metro: { pid: 41233, leader: 41233, cwd: root } };
     },
-    fingerprint: async (path) => {
+    fingerprint: async (path: string) => {
       calls.fingerprint.push(path);
       return FINGERPRINT;
     },
-    resolveCached: (platform, key) => {
+    resolveCached: (platform: string, key: string) => {
       calls.order.push('resolveCached');
       calls.resolveCached.push([platform, key]);
       return null;
     },
-    storeCached: (platform, key, path, opts) => {
+    storeCached: (platform: string, key: string, path: string, opts: unknown = {}) => {
       calls.order.push('storeCached');
       calls.storeCached.push([platform, key, path, opts]);
       return path;
     },
     // Level two. The default is the ordinary case: no provider configured, so
     // nothing is asked and nothing is called.
-    loadProvider: async (projectRoot, opts) => {
+    loadProvider: async (projectRoot: string, opts: Record<string, unknown> = {}) => {
       calls.loadProvider.push([projectRoot, opts]);
-      return { none: true };
+      return { none: true as const };
     },
     // Never the real one: it shells out to `eas whoami`, which is a network
     // call. The EAS-session tests override it with the state they are about.
-    easAuth: (args) => {
+    easAuth: (args: EasAuthArgs = {}) => {
       calls.easAuth.push(args);
-      return { ok: true, account: 'janic' };
+      return { ok: true as const, account: 'janic' };
     },
-    resolveRemoteBuild: async (args) => {
+    resolveRemoteBuild: async (args: RemoteBuildArgs = {}) => {
       calls.order.push('resolveRemoteBuild');
       calls.resolveRemoteBuild.push(args);
       return null;
     },
     // Single flight. The default is the ordinary case: nothing else on this
     // machine is building this fingerprint, so this run is the one builder.
-    acquireLock: (args) => {
+    acquireLock: (args: AcquireLockArgs = {}) => {
       calls.order.push('acquireLock');
       calls.acquireLock.push(args);
-      return { acquired: true, path: join(home, 'build-locks', 'android-k.lock'), lock: { pid: process.pid } };
+      return {
+        acquired: true as const,
+        path: join(home, 'build-locks', 'android-k.lock'),
+        lock: {
+          pid: process.pid,
+          projectRoot: root,
+          startedAt: new Date().toISOString(),
+          logFile: join(home, 'build-locks', 'android-k.log'),
+        },
+      };
     },
-    releaseLock: (handle) => {
+    releaseLock: (handle: unknown) => {
       calls.order.push('releaseLock');
       calls.releaseLock.push(handle);
       return true;
     },
-    waitForBuild: async (args) => {
+    waitForBuild: async (args: unknown) => {
       calls.waitForBuild.push(args);
       throw new Error('nothing should be waited for unless the lock was held');
     },
-    uploadRemoteBuild: async (args) => {
+    uploadRemoteBuild: async (args: UploadArgs = {}) => {
       calls.uploadRemoteBuild.push(args);
-      return { uploaded: true };
+      return { uploaded: true as const };
     },
-    prebuild: async (...args) => {
+    prebuild: async (...args: unknown[]) => {
       calls.prebuild.push(args);
-      return { ok: true, durationMs: 12000 };
+      return { ok: true, durationMs: 12000, nativeDir: join(root, 'android') };
     },
-    build: async (args) => {
+    build: async (args: BuildArgs = {}) => {
       calls.order.push('build');
       calls.build.push(args);
-      return { ok: true, apkPath: fakeApk(), durationMs: 161000 };
+      return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
     },
-    install: (args) => {
+    install: (args: InstallArgs = {}) => {
       calls.install.push(args);
-      return { ok: true };
+      return { ok: true, apkPath: args.apkPath ?? '' };
     },
     // The default is what launchAndroidApp returns for a project with no
     // dev-client scheme: the launcher activity, both port mechanisms in
     // place. The dev-client shape has its own tests below.
-    launch: (args) => {
+    launch: (args: LaunchArgs = {}) => {
       calls.launch.push(args);
       return {
         ok: true,
         mode: 'am-start',
+        component: 'com.example.app/.MainActivity',
+        devClientNote: null,
         reversed: ['tcp:8081->tcp:8082', 'tcp:8082->tcp:8082'],
         debugHttpHost: '10.0.2.2:8082',
         debugHttpHostNote: null,
@@ -199,43 +284,50 @@ function harness(overrides = {}) {
     },
     // Reading the scheme out of the APK shells out to aapt; the resolver has
     // its own tests (against a real dump), so the flow injects the answer.
-    resolveDevClientScheme: (projectRoot, apkPath) => {
+    resolveDevClientScheme: (projectRoot: string, apkPath: unknown) => {
       calls.scheme.push([projectRoot, apkPath]);
       return undefined;
     },
-    spawn: (cmd, args, opts) => {
+    spawn: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => {
       calls.spawn.push({ cmd, args, opts });
-      return {
+      return makeChildProcess({
         pid: 9001,
         unref: () => {
-          calls.spawn.at(-1).unrefed = true;
+          const last = calls.spawn.at(-1);
+          if (last) last.unrefed = true;
+          return makeChildProcess();
         },
-      };
+      });
     },
-    kill: (pid, signal) => {
+    kill: (pid: number, signal: NodeJS.Signals) => {
       calls.kill.push([pid, signal]);
+      return true;
     },
     // The retry is real (one test below is about it); only the sleep is
     // removed, so a refusal costs no wall time.
-    resolveMetroRetrying: (resolve, port, path, opts) =>
-      resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
+    resolveMetroRetrying: (
+      resolve: Parameters<typeof resolveMetroWithRetry>[0],
+      port: Parameters<typeof resolveMetroWithRetry>[1],
+      path: Parameters<typeof resolveMetroWithRetry>[2],
+      opts: Parameters<typeof resolveMetroWithRetry>[3],
+    ) => resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
     // The default is a launch that verified -- the app fetched a bundle from
     // THIS workspace's Metro. The picker case has its own tests.
-    verifyLaunched: async (args) => {
+    verifyLaunched: async (args: VerifyArgs = {}) => {
       calls.verify.push(args);
-      return { verified: true, waitedMs: 3100 };
+      return { verified: true, waitedMs: 3100, timedOut: false, mode: null };
     },
-    ensureIgnored: async (dir) => {
+    ensureIgnored: async (dir: string) => {
       calls.ensureIgnored.push(dir);
     },
-    out: (line) => stderr.push(line),
-    emit: (line) => stdout.push(line),
+    out: (line: string) => stderr.push(line),
+    emit: (line: string) => stdout.push(line),
     ...overrides,
   };
-  return { calls, stderr, stdout, run: () => runAndroid(options as any) };
+  return { calls, stderr, stdout, run: () => runAndroid(options) };
 }
 
-const labelled = (lines, label) => lines.filter((l) => l.startsWith(`  ${label}`));
+const labelled = (lines: string[], label: string) => lines.filter((l) => l.startsWith(`  ${label}`));
 const readState = () => JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
 
 // --- the flow --------------------------------------------------------------
@@ -252,7 +344,8 @@ describe('a cache hit', () => {
     const result = await h.run();
 
     expect(result.ok).toBe(true);
-    expect(h.calls.install[0].apkPath).toBe(cached);
+    expect(h.calls.install[0]?.apkPath).toBe(cached);
+    assert(result.facts);
     expect(result.facts.cacheHit).toBe('local');
     expect(result.facts.appPath).toBe(cached);
     expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/a3f9b1\.\. hit/);
@@ -279,7 +372,9 @@ describe('a cache hit', () => {
     const h = harness({ json: true, resolveCached: () => '/cache/app-debug.apk', build: never('the build') });
     const result = await h.run();
     expect(h.stdout.length).toBe(1);
-    expect(JSON.parse(h.stdout[0])).toEqual({
+    const stdout0 = h.stdout[0];
+    assert(stdout0);
+    expect(JSON.parse(stdout0)).toEqual({
       platform: 'android',
       serial: 'emulator-5584',
       avdName: 'rn-iso-app-412',
@@ -296,7 +391,8 @@ describe('a cache hit', () => {
       devClientUrl: null,
       logs: workspaceLogsDir(root),
     });
-    expect(JSON.parse(h.stdout[0])).toEqual(result.facts);
+    assert(result.facts);
+    expect(JSON.parse(stdout0)).toEqual(result.facts);
   });
 });
 
@@ -307,12 +403,13 @@ describe('a cache miss', () => {
 
     expect(result.ok).toBe(true);
     expect(h.calls.build.length).toBe(1);
-    expect(h.calls.build[0].root).toBe(root);
-    expect(h.calls.build[0].logWriter).toBeTruthy();
-    expect(h.calls.storeCached[0].slice(0, 2)).toEqual(['android', CACHE_KEY]);
-    expect(h.calls.install[0].apkPath).toBe(h.calls.storeCached[0][2]);
+    expect(h.calls.build[0]?.root).toBe(root);
+    expect(h.calls.build[0]?.logWriter).toBeTruthy();
+    expect(h.calls.storeCached[0]?.slice(0, 2)).toEqual(['android', CACHE_KEY]);
+    expect(h.calls.install[0]?.apkPath).toBe(h.calls.storeCached[0]?.[2]);
     expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/miss/);
     expect(labelled(h.stderr, 'build')[0]).toMatch(/app-debug\.apk \(2m41s\)/);
+    assert(result.facts);
     expect(result.facts.cacheHit).toBe(false);
   });
 
@@ -334,9 +431,9 @@ describe('a cache miss', () => {
       join(root, 'app.json'),
       JSON.stringify({ expo: { name: 'app', android: { package: 'com.example.app' } } }),
     );
-    const order = [];
+    const order: string[] = [];
     const h = harness({
-      prebuild: async (...args) => {
+      prebuild: async (..._args: unknown[]) => {
         order.push('prebuild');
         return { ok: true, durationMs: 12000 };
       },
@@ -370,6 +467,7 @@ describe('metro is verified before any build work', () => {
     const result = await h.run();
 
     expect(result.ok).toBe(false);
+    assert(result.error);
     expect(result.error.code).toBe(NO_METRO);
     expect(result.error.message).toMatch(/port 8082/);
     expect(result.error.remedy).toMatch(/rn-iso start/);
@@ -385,6 +483,7 @@ describe('metro is verified before any build work', () => {
       build: never('the build'),
     });
     const result = await h.run();
+    assert(result.error);
     expect(result.error.code).toBe(NO_METRO);
     expect(result.error.message).toMatch(/pid 900 runs from \/elsewhere/);
   });
@@ -416,6 +515,7 @@ describe('metro is verified before any build work', () => {
       build: never('the build'),
     });
     const result = await h.run();
+    assert(result.error);
     expect(result.error.code).toBe(NO_METRO);
     expect(result.error.message).toMatch(/A supervisor record exists for port 8082/);
     expect(result.error.message).toMatch(/still be indexing/);
@@ -426,6 +526,7 @@ describe('metro is verified before any build work', () => {
     upsertProject(root, { metroPort: null });
     const h = harness({ resolveMetro: never('the metro probe'), build: never('the build') });
     const result = await h.run();
+    assert(result.error);
     expect(result.error.code).toBe(NO_METRO);
     expect(result.error.message).toMatch(/No Metro port is reserved/);
   });
@@ -436,14 +537,16 @@ describe('metro is verified before any build work', () => {
     expect(result.ok).toBe(true);
     expect(labelled(h.stderr, 'metro')[0]).toMatch(/not checked/);
     // The reservation is still what the app is wired to.
-    expect(h.calls.launch[0].metroPort).toBe(8082);
+    expect(h.calls.launch[0]?.metroPort).toBe(8082);
   });
 
   test('in --json mode a refusal is the error contract, on stdout, alone', async () => {
     const h = harness({ json: true, resolveMetro: async () => ({ missing: true }), build: never('the build') });
     await h.run();
     expect(h.stdout.length).toBe(1);
-    const payload = JSON.parse(h.stdout[0]);
+    const stdout0 = h.stdout[0];
+    assert(stdout0);
+    const payload = JSON.parse(stdout0);
     expect(payload.code).toBe(NO_METRO);
     expect(payload.message && payload.remedy).toBeTruthy();
   });
@@ -457,6 +560,7 @@ describe('the other refusals', () => {
       build: never('the build'),
     });
     const result = await h.run();
+    assert(result.error);
     expect(result.error.code).toBe(NO_FINGERPRINT);
     expect(result.error.remedy).toMatch(/npm i -D @expo\/fingerprint/);
   });
@@ -469,6 +573,7 @@ describe('the other refusals', () => {
       build: never('the build'),
     });
     const result = await h.run();
+    assert(result.error);
     expect(result.error.code).toBe(NO_FINGERPRINT);
     expect(result.error.message).toMatch(/bad app\.json/);
   });
@@ -482,6 +587,7 @@ describe('the other refusals', () => {
       build: never('the build'),
     });
     const result = await h.run();
+    assert(result.error);
     expect(result.error.code).toBe(NO_DEVICE);
     expect(result.error.message).toMatch(/no longer exists/);
   });
@@ -499,6 +605,7 @@ describe('the other refusals', () => {
       build: never('the build'),
     });
     const result = await h.run();
+    assert(result.error);
     expect(result.error.code).toBe(PREBUILD_ERROR);
     expect(h.stderr.some((l) => /boom/.test(l))).toBeTruthy();
     expect(readState().lastBuild.status).toBe('failed');
@@ -515,6 +622,7 @@ describe('the other refusals', () => {
       launch: never('the launch'),
     });
     const result = await h.run();
+    assert(result.error);
     expect(result.error.code).toBe('RN_ISO_INSTALL_FAILED');
     expect(result.error.remedy).toMatch(/emulator-5584/);
     expect(readState().lastBuild.errorCode).toBe('RN_ISO_INSTALL_FAILED');
@@ -523,6 +631,7 @@ describe('the other refusals', () => {
   test('a launch failure is reported after a successful install', async () => {
     const h = harness({ launch: () => ({ failed: true, code: 'RN_ISO_LAUNCH_FAILED', reason: 'am start failed' }) });
     const result = await h.run();
+    assert(result.error);
     expect(result.error.code).toBe('RN_ISO_LAUNCH_FAILED');
     expect(readState().lastBuild.status).toBe('failed');
   });
@@ -552,6 +661,7 @@ describe('a failed build', () => {
     const result = await h.run();
 
     expect(result.ok).toBe(false);
+    assert(result.error);
     expect(result.error.code).toBe(BUILD_ERROR);
     expect(labelled(h.stderr, 'build')[0]).toMatch(/FAILED after 2m41s/);
     const errors = labelled(h.stderr, 'error');
@@ -577,8 +687,8 @@ describe('a failed build', () => {
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
     const errors = records.filter((r) => r.level === 'error');
     expect(errors.length).toBe(2);
-    expect(errors[0].src).toBe('build');
-    expect(errors[1].msg).toMatch(/MainActivity\.kt:23:9/);
+    expect(errors[0]?.src).toBe('build');
+    expect(errors[1]?.msg).toMatch(/MainActivity\.kt:23:9/);
   });
 
   test('records lastBuild as failed, with the code and what it knew', async () => {
@@ -619,7 +729,7 @@ describe('the remote cache', () => {
     // which is what detectIsExpo reads.
     const h = harness();
     await h.run();
-    expect(h.calls.loadProvider[0][1]).toEqual({ isExpo: false });
+    expect(h.calls.loadProvider[0]?.[1]).toEqual({ isExpo: false });
     expect(h.calls.resolveRemoteBuild.length).toBe(0);
   });
 
@@ -635,7 +745,7 @@ describe('the remote cache', () => {
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
     const h = harness();
     const result = await h.run();
-    expect(h.calls.loadProvider[0][1]).toEqual({ isExpo: true });
+    expect(h.calls.loadProvider[0]?.[1]).toEqual({ isExpo: true });
     expect(result.ok).toBe(true);
     expect(h.calls.resolveRemoteBuild.length).toBe(0);
     expect(h.calls.uploadRemoteBuild.length).toBe(0);
@@ -648,19 +758,20 @@ describe('the remote cache', () => {
     const h = harness({
       loadProvider: async () => provider(),
       resolveRemoteBuild: async () => ({ appPath: downloaded }),
-      storeCached: (platform, key, path, opts) => {
+      storeCached: (platform: string, key: string, path: string, opts: unknown) => {
         h_calls.push([platform, key, path, opts]);
         return stored;
       },
       build: never('the build'),
       prebuild: never('prebuild'),
     });
-    const h_calls = [];
+    const h_calls: unknown[][] = [];
     const result = await h.run();
 
     expect(result.ok).toBe(true);
-    expect(h_calls[0].slice(0, 3)).toEqual(['android', CACHE_KEY, downloaded]);
-    expect(h.calls.install[0].apkPath).toBe(stored);
+    expect(h_calls[0]?.slice(0, 3)).toEqual(['android', CACHE_KEY, downloaded]);
+    expect(h.calls.install[0]?.apkPath).toBe(stored);
+    assert(result.facts);
     expect(result.facts.cacheHit).toBe('remote');
     expect(labelled(h.stderr, 'cache')[0]).toMatch(/remote hit \(eas\) -> stored locally/);
     expect(readState().lastBuild.cacheHit).toBe('remote');
@@ -669,9 +780,9 @@ describe('the remote cache', () => {
   test("the provider is asked with this workspace's fingerprint and platform", async () => {
     const h = harness({ loadProvider: async () => provider('./p.cjs') });
     await h.run();
-    expect(h.calls.resolveRemoteBuild[0].platform).toBe('android');
-    expect(h.calls.resolveRemoteBuild[0].fingerprintHash).toBe(FINGERPRINT);
-    expect(h.calls.resolveRemoteBuild[0].projectRoot).toBe(root);
+    expect(h.calls.resolveRemoteBuild[0]?.platform).toBe('android');
+    expect(h.calls.resolveRemoteBuild[0]?.fingerprintHash).toBe(FINGERPRINT);
+    expect(h.calls.resolveRemoteBuild[0]?.projectRoot).toBe(root);
   });
 
   test('a remote MISS builds, stores locally, and uploads the result', async () => {
@@ -680,8 +791,8 @@ describe('the remote cache', () => {
     expect(result.ok).toBe(true);
     expect(h.calls.build.length).toBe(1);
     expect(h.calls.storeCached.length).toBe(1);
-    expect(h.calls.uploadRemoteBuild[0].buildPath).toBe(h.calls.storeCached[0][2]);
-    expect(h.calls.uploadRemoteBuild[0].fingerprintHash).toBe(FINGERPRINT);
+    expect(h.calls.uploadRemoteBuild[0]?.buildPath).toBe(h.calls.storeCached[0]?.[2]);
+    expect(h.calls.uploadRemoteBuild[0]?.fingerprintHash).toBe(FINGERPRINT);
     expect(labelled(h.stderr, 'cache').at(-1)).toMatch(/uploaded \(eas\)/);
   });
 
@@ -697,11 +808,11 @@ describe('the remote cache', () => {
   });
 
   test('a provider that TIMES OUT does not stall the loop, and the command stops holding the process open', async () => {
-    const exits = [];
+    const exits: Array<string | number | null | undefined> = [];
     const originalExit = process.exit;
-    process.exit = ((code) => {
+    process.exit = asProcessExit((code) => {
       exits.push(code);
-    }) as typeof process.exit;
+    });
     let h;
     try {
       h = harness({
@@ -757,8 +868,8 @@ describe('the remote cache', () => {
     });
     await h.run();
     expect(h.calls.easAuth.length).toBe(1);
-    expect(h.calls.easAuth[0].owner).toBe('th3rd-wave');
-    expect(h.calls.easAuth[0].projectRoot).toBe(root);
+    expect(h.calls.easAuth[0]?.owner).toBe('th3rd-wave');
+    expect(h.calls.easAuth[0]?.projectRoot).toBe(root);
   });
 
   test('a custom provider is never asked about EAS at all', async () => {
@@ -824,6 +935,7 @@ describe('--no-build-cache', () => {
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(h.calls.build.length).toBe(1);
+    assert(result.facts);
     expect(result.facts.cacheHit).toBe(false);
     expect(result.facts.cacheSkipped).toBe(true);
     expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/miss \(--no-build-cache\)/);
@@ -837,14 +949,14 @@ describe('--no-build-cache', () => {
       loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
     });
     await h.run();
-    expect(h.calls.storeCached[0][3]).toEqual({ overwrite: true });
+    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: true });
     expect(h.calls.uploadRemoteBuild.length).toBe(1);
   });
 
   test('a default run stores without overwriting: two worktrees at the same fingerprint agree', async () => {
     const h = harness();
     await h.run();
-    expect(h.calls.storeCached[0][3]).toEqual({ overwrite: false });
+    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: false });
   });
 });
 
@@ -875,10 +987,10 @@ describe('single-flight builds', () => {
         ['resolveCached', 'resolveRemoteBuild', 'acquireLock', 'build', 'storeCached', 'releaseLock'].includes(o),
       ),
     ).toEqual(['resolveCached', 'resolveRemoteBuild', 'acquireLock', 'build', 'storeCached', 'releaseLock']);
-    expect(h.calls.acquireLock[0].platform).toBe('android');
-    expect(h.calls.acquireLock[0].key).toBe(CACHE_KEY);
-    expect(h.calls.acquireLock[0].root).toBe(root);
-    expect(h.calls.acquireLock[0].logFile).toMatch(/build-android\.ndjson$/);
+    expect(h.calls.acquireLock[0]?.platform).toBe('android');
+    expect(h.calls.acquireLock[0]?.key).toBe(CACHE_KEY);
+    expect(h.calls.acquireLock[0]?.root).toBe(root);
+    expect(h.calls.acquireLock[0]?.logFile).toMatch(/build-android\.ndjson$/);
   });
 
   test('a cache hit at either level never takes the lock', async () => {
@@ -919,7 +1031,8 @@ describe('single-flight builds', () => {
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(h.calls.releaseLock.length).toBe(0);
-    expect(h.calls.install[0].apkPath).toBe(waited);
+    expect(h.calls.install[0]?.apkPath).toBe(waited);
+    assert(result.facts);
     expect(result.facts.cacheHit).toBe('local');
     expect(result.facts.waitedForBuild).toEqual({ pid: 41233, ms: 761000 });
     expect(h.stderr.join('\n')).toMatch(/waited 12m41s for \/w\/app-999's build -> installed from cache/);
@@ -927,13 +1040,15 @@ describe('single-flight builds', () => {
 
   test('a run that did not wait reports waitedForBuild: null', async () => {
     const h = harness();
-    expect((await h.run()).facts.waitedForBuild).toBe(null);
+    const facts = (await h.run()).facts;
+    assert(facts);
+    expect(facts.waitedForBuild).toBe(null);
   });
 
   test('the wait is announced, and its progress reaches stderr as it happens', async () => {
     const h = harness({
       acquireLock: () => heldBy(),
-      waitForBuild: async ({ out }) => {
+      waitForBuild: async ({ out }: { out: (line: string) => void }) => {
         out('build       waiting on /w/app-999 (pid 41233, 4m elapsed) -- tail /w/app-999/x.ndjson');
         return { hit: '/cache/app-debug.apk', waitedMs: 240000 };
       },
@@ -1004,14 +1119,15 @@ describe('single-flight builds', () => {
     const h = harness({
       acquireLock: () => heldBy(),
       waitForBuild: async () => {
-        const err = new Error('Waited 90m ... The lock is /home/build-locks/android-key.lock');
-        (err as any).code = 'RN_ISO_BUILD_WAIT_TIMEOUT';
-        (err as any).lockPath = '/home/build-locks/android-key.lock';
-        throw err;
+        throw makeError('Waited 90m ... The lock is /home/build-locks/android-key.lock', {
+          code: 'RN_ISO_BUILD_WAIT_TIMEOUT',
+          lockPath: '/home/build-locks/android-key.lock',
+        });
       },
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
+    assert(result.error);
     expect(result.error.code).toBe('RN_ISO_BUILD_WAIT_TIMEOUT');
     expect(h.calls.build.length).toBe(0);
   });
@@ -1043,6 +1159,7 @@ describe('Contract 4: state.json.lastBuild', () => {
     expect(lastBuild.fingerprint).toBe(FINGERPRINT);
     expect(lastBuild.cacheKey).toBe(CACHE_KEY);
     expect(lastBuild.cacheHit).toBe(false);
+    assert(result.facts);
     expect(lastBuild.appPath).toBe(result.facts.appPath);
     expect(lastBuild.bundleId).toBe('com.example.app');
     expect(Number.isFinite(lastBuild.durationMs)).toBeTruthy();
@@ -1077,7 +1194,9 @@ describe('Contract 5: the device-log collector', () => {
     const h = harness();
     await h.run();
     expect(h.calls.spawn.length).toBe(1);
-    const { args, opts, unrefed } = h.calls.spawn[0];
+    const spawn0 = h.calls.spawn[0];
+    assert(spawn0);
+    const { args, opts, unrefed } = spawn0;
     expect(args[0]).toMatch(/collector\/run\.ts$/);
     expect(args.slice(1)).toEqual([
       '--platform',
@@ -1130,6 +1249,7 @@ describe('Contract 1: the launch marker', () => {
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
     const marker = records.find((r) => r.marker === true);
     expect(marker).toBeTruthy();
+    assert(marker);
     expect(marker.src).toBe('build');
     expect(marker.event).toBe('app_launched');
     expect(marker.msg).toMatch(/com\.example\.app on emulator-5584 against Metro port 8082/);
@@ -1216,11 +1336,14 @@ describe('the pure parts', () => {
   });
 
   test('killPreviousCollector signals a recorded pid and tolerates a dead one', () => {
-    const signalled = [];
+    const signalled: Array<[number, NodeJS.Signals]> = [];
     expect(
       killPreviousCollector(root, {
         collectors: { android: { pid: 4242 } },
-        kill: (pid, sig) => signalled.push([pid, sig]) as any,
+        kill: (pid, sig) => {
+          signalled.push([pid, sig]);
+          return true;
+        },
       }),
     ).toBe(4242);
     expect(signalled).toEqual([[4242, 'SIGTERM']]);
@@ -1259,9 +1382,10 @@ describe('launch verification', () => {
   test("a verified launch reports launched: true and polls this workspace's timeline", async () => {
     const h = harness();
     const result = await h.run();
+    assert(result.facts);
     expect(result.facts.launched).toBe(true);
-    expect(h.calls.verify[0].logsDir).toBe(workspaceLogsDir(root));
-    expect(Number.isFinite(h.calls.verify[0].since)).toBeTruthy();
+    expect(h.calls.verify[0]?.logsDir).toBe(workspaceLogsDir(root));
+    expect(Number.isFinite(h.calls.verify[0]?.since)).toBeTruthy();
     expect(h.stderr.some((l) => /verify.*bundle requested from Metro port 8082/.test(l))).toBeTruthy();
   });
 
@@ -1271,6 +1395,7 @@ describe('launch verification', () => {
     // ok stays true: the app IS launched. What changes is the fact an agent
     // branches on, and the warning that says what to do about it.
     expect(result.ok).toBe(true);
+    assert(result.facts);
     expect(result.facts.launched).toBe('unverified');
     const text = h.stderr.join('\n');
     expect(text).toMatch(/UNVERIFIED/);
@@ -1288,6 +1413,7 @@ describe('the launch outcome reaches the timeline', () => {
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
     const record = records.find((r) => r.event === 'launch_unverified');
     expect(record).toBeTruthy();
+    assert(record);
     expect(record.level).toBe('warn');
   });
 });
@@ -1315,6 +1441,7 @@ describe('the port wiring is reported', () => {
     expect(labelled(h.stderr, 'wired')[0]).toMatch(
       /debug_http_host 10\.0\.2\.2:8082 \+ adb reverse tcp:8081 -> tcp:8082/,
     );
+    assert(result.facts);
     expect(result.facts.debugHttpHost).toBe('10.0.2.2:8082');
     expect(result.facts.debugHttpHostNote).toBe(null);
   });
@@ -1335,11 +1462,13 @@ describe('the port wiring is reported', () => {
     const wired = labelled(h.stderr, 'wired')[0];
     expect(wired).toMatch(/not debuggable/);
     expect(wired).toMatch(/adb reverse tcp:8081 -> tcp:8082/);
+    assert(result.facts);
     expect(result.facts.debugHttpHost).toBe(null);
     expect(result.facts.debugHttpHostNote).toMatch(/relying on adb reverse/);
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
     const record = records.find((r) => r.event === 'debug_http_host_failed');
     expect(record).toBeTruthy();
+    assert(record);
     expect(record.level).toBe('warn');
   });
 });
@@ -1347,19 +1476,19 @@ describe('the port wiring is reported', () => {
 // --- the dev-client deep link (F7) -----------------------------------------
 describe('the dev-client deep link', () => {
   test('the scheme is read from the APK that was just installed, and passed to the launch', async () => {
-    const asked = [];
+    const asked: unknown[][] = [];
     const h = harness({
-      resolveDevClientScheme: (projectRoot, apkPath) => {
+      resolveDevClientScheme: (projectRoot: string, apkPath: unknown) => {
         asked.push([projectRoot, apkPath]);
         return 'exp+app';
       },
     });
     await h.run();
     expect(asked.length).toBe(1);
-    expect(h.calls.launch[0].devClientScheme).toBe('exp+app');
+    expect(h.calls.launch[0]?.devClientScheme).toBe('exp+app');
     // The apk the resolver is pointed at is the one that was installed, not
     // a source tree it would have to guess a build output path in.
-    expect(asked[0]).toEqual([root, h.calls.install[0].apkPath]);
+    expect(asked[0]).toEqual([root, h.calls.install[0]?.apkPath]);
   });
 
   test('the deep-link launch says so, and the url is in the facts', async () => {
@@ -1370,6 +1499,7 @@ describe('the dev-client deep link', () => {
     });
     const result = await h.run();
     expect(labelled(h.stderr, 'launch')[0]).toMatch(/expo-dev-client deep link/);
+    assert(result.facts);
     expect(result.facts.devClientUrl).toBe(url);
   });
 
@@ -1426,6 +1556,7 @@ describe('the device identity is recorded', () => {
   test('avdName and deviceName reach the facts and state.json lastBuild', async () => {
     const h = harness();
     const result = await h.run();
+    assert(result.facts);
     expect(result.facts.avdName).toBe('rn-iso-app-412');
     expect(result.facts.deviceName).toBe('rn-iso-app-412');
     expect(result.facts.serial).toBe('emulator-5584');
@@ -1469,14 +1600,15 @@ describe('the APK dev-client scheme', () => {
   test('an unresolved @0x resource reference is not a scheme', () => {
     // MainActivity's first VIEW filter carries `android:scheme=@0x7f1300c6`.
     const tree = parseXmltree(dump());
-    const values = [];
-    const walk = (n) => {
+    const values: (string | null)[] = [];
+    const walk = (n: ReturnType<typeof parseXmltree>) => {
       if ('android:scheme' in n.attrs) values.push(n.attrs['android:scheme']);
       n.children.forEach(walk);
     };
     walk(tree);
     expect(values.includes(null)).toBeTruthy();
-    expect(!apkDevClientFacts(dump()).schemes.includes(null)).toBeTruthy();
+    const schemes: readonly (string | null)[] = apkDevClientFacts(dump()).schemes;
+    expect(!schemes.includes(null)).toBeTruthy();
   });
 
   test('an app with no expo-dev-launcher in it is not a dev client', () => {
@@ -1542,35 +1674,35 @@ describe('the APK dev-client scheme', () => {
   });
 
   test('dumpApkManifest spells the dump the way each tool wants, and swallows failures', () => {
-    const calls = [];
-    const exec = {
-      runFile: (file, args) => {
+    const calls: unknown[][] = [];
+    const exec = makeExecutor({
+      runFile: (file, args = []) => {
         calls.push([file, ...args]);
         return 'E: manifest (line=2)\n';
       },
-    };
-    dumpApkManifest('/x/app.apk', { exec, aapt: { path: '/sdk/aapt', tool: 'aapt' } } as any);
-    dumpApkManifest('/x/app.apk', { exec, aapt: { path: '/sdk/aapt2', tool: 'aapt2' } } as any);
+    });
+    dumpApkManifest('/x/app.apk', { exec, aapt: { path: '/sdk/aapt', tool: 'aapt', version: '36.0.0' } });
+    dumpApkManifest('/x/app.apk', { exec, aapt: { path: '/sdk/aapt2', tool: 'aapt2', version: '36.0.0' } });
     expect(calls).toEqual([
       ['/sdk/aapt', 'dump', 'xmltree', '/x/app.apk', 'AndroidManifest.xml'],
       ['/sdk/aapt2', 'dump', 'xmltree', '--file', 'AndroidManifest.xml', '/x/app.apk'],
     ]);
-    const throwing = {
+    const throwing = makeExecutor({
       runFile: () => {
         throw new Error('Invalid file');
       },
-    };
-    expect(dumpApkManifest('/x/app.apk', { exec: throwing, aapt: { path: '/sdk/aapt', tool: 'aapt' } } as any)).toBe(
-      null,
-    );
+    });
+    expect(
+      dumpApkManifest('/x/app.apk', { exec: throwing, aapt: { path: '/sdk/aapt', tool: 'aapt', version: '36.0.0' } }),
+    ).toBe(null);
     // Output that is not a manifest tree is not a manifest tree.
     expect(
       dumpApkManifest('/x/app.apk', {
-        exec: { runFile: () => 'ERROR: dump failed' },
-        aapt: { path: '/sdk/aapt', tool: 'aapt' },
-      } as any),
+        exec: makeExecutor({ runFile: () => 'ERROR: dump failed' }),
+        aapt: { path: '/sdk/aapt', tool: 'aapt', version: '36.0.0' },
+      }),
     ).toBe(null);
-    expect(dumpApkManifest(null, { exec: throwing } as any)).toBe(null);
+    expect(dumpApkManifest(null, { exec: throwing })).toBe(null);
   });
 });
 
@@ -1579,17 +1711,17 @@ describe('the APK dev-client scheme', () => {
 // ios/Podfile.lock then makes every cross-worktree android build a cache miss.
 // See the field note above fingerprintProject in src/build-cache.js.
 test('android fingerprints with platforms scoped to android', async () => {
-  const seen = [];
+  const seen: Array<{ path: string; options?: Record<string, unknown> }> = [];
   const h = harness({
-    fingerprint: async (path, options) => {
+    fingerprint: async (path: string, options?: Record<string, unknown>) => {
       seen.push({ path, options });
       return FINGERPRINT;
     },
   });
   await h.run();
   expect(seen.length).toBe(1);
-  expect(seen[0].path).toBe(root);
-  expect(seen[0].options?.platform).toBe('android');
+  expect(seen[0]?.path).toBe(root);
+  expect(seen[0]?.options?.platform).toBe('android');
 });
 
 // --- opt-in concurrency (unlimited by default) ---
@@ -1609,11 +1741,11 @@ describe('concurrency limits', () => {
   });
 
   test('maxDevices at capacity refuses with RN_ISO_AT_CAPACITY, before ensuring a device', async () => {
-    let capacityArgs = null;
+    const capacityCalls: Record<string, unknown>[] = [];
     const h = harness({
       getLimits: () => ({ maxBuilds: 0, maxDevices: 3 }),
-      checkCapacity: (args) => {
-        capacityArgs = args;
+      checkCapacity: (args: Record<string, unknown>) => {
+        capacityCalls.push(args);
         return {
           code: 'RN_ISO_AT_CAPACITY',
           message: 'at capacity',
@@ -1623,19 +1755,22 @@ describe('concurrency limits', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
+    assert(result.error);
     expect(result.error.code).toBe('RN_ISO_AT_CAPACITY');
+    const capacityArgs = capacityCalls[0];
+    assert(capacityArgs);
     expect(capacityArgs.max).toBe(3);
     expect(h.calls.ensureDevice.length).toBe(0);
     expect(h.stderr.join('\n')).toMatch(/rn-iso stop/);
   });
 
   test('maxBuilds takes a slot to build and releases it, with the right args', async () => {
-    let slotArgs = null;
+    const slotCalls: Record<string, unknown>[] = [];
     let released = 0;
     const h = harness({
       getLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
-      acquireSlot: async (args) => {
-        slotArgs = args;
+      acquireSlot: async (args: Record<string, unknown>) => {
+        slotCalls.push(args);
         return { acquired: true, path: '/slot', index: 0, slot: { pid: process.pid } };
       },
       releaseSlot: () => {
@@ -1645,7 +1780,9 @@ describe('concurrency limits', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
+    const slotArgs = slotCalls[0];
     expect(slotArgs).toBeTruthy();
+    assert(slotArgs);
     expect(slotArgs.max).toBe(2);
     expect(slotArgs.root).toBe(root);
     expect(released).toBe(1);

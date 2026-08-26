@@ -3,12 +3,18 @@ import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 
 afterEach(() => resetExecutor());
 
-function iosExecutor({ sims = [], occupied = '', throwOn = null } = {}) {
-  const calls = [];
+interface IosExecutorOptions {
+  sims?: unknown[];
+  occupied?: string;
+  throwOn?: string | null;
+}
+
+function iosExecutor({ sims = [], occupied = '', throwOn = null }: IosExecutorOptions = {}) {
+  const calls: string[] = [];
   const listJson = JSON.stringify({
     devices: { 'com.apple.CoreSimulator.SimRuntime.iOS-26-5': sims },
   });
-  const answer = (cmd) => {
+  const answer = (cmd: string) => {
     calls.push(cmd);
     if (throwOn && cmd.includes(throwOn)) throw new Error('boom');
     if (cmd.includes('simctl list devices --json')) return listJson;
@@ -112,9 +118,16 @@ test('teardownOwnedIosSim contains a throw instead of propagating it', () => {
   expect(r.reason).toMatch(/boom/);
 });
 
-function androidExecutor({ avds = [], adb = '', avdName = null, throwOn = null } = {}) {
-  const calls = [];
-  const answer = (cmd) => {
+interface AndroidExecutorOptions {
+  avds?: string[];
+  adb?: string;
+  avdName?: string | null;
+  throwOn?: string | null;
+}
+
+function androidExecutor({ avds = [], adb = '', avdName = null, throwOn = null }: AndroidExecutorOptions = {}) {
+  const calls: string[] = [];
+  const answer = (cmd: string) => {
     calls.push(cmd);
     if (throwOn && cmd.includes(throwOn)) throw new Error('boom');
     if (cmd === 'emulator -list-avds') return avds.join('\n');

@@ -31,7 +31,7 @@
 // `resolveBuild` first and only asks about the lock when there is still
 // nothing there. A released lock with no artifact means the build FAILED, and
 // the waiter takes over rather than waiting for something that is not coming.
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir } from '../config.ts';
 import { resolveBuild } from '../build-cache.ts';
@@ -210,6 +210,25 @@ function dirAgeMs(path: string, now: number): number | null {
  * `isAlive` and `now` are seams; nothing else about this is injectable,
  * because the atomicity being relied on is the real mkdir's.
  */
+// Reclaim a stale lock directory ATOMICALLY. A plain `rmSync(path, { force })`
+// is unconditional and, arriving late (a waiter that read the stale record
+// before another waiter took over and re-created the lock), deletes the NEW
+// holder's fresh directory -- letting two waiters both "acquire" and compile the
+// same fingerprint. renameSync moves the stale dir aside and succeeds for only
+// ONE reaper; every other waiter gets ENOENT and loops to re-read (finding the
+// winner's fresh lock, or nothing). The reaper then removes the moved-aside
+// debris.
+function reapStaleLock(path: string): void {
+  const aside = `${path}.reap-${process.pid}`;
+  try {
+    rmSync(aside, { recursive: true, force: true });
+    renameSync(path, aside);
+  } catch {
+    return; // another waiter reaped it first; caller loops and re-reads
+  }
+  rmSync(aside, { recursive: true, force: true });
+}
+
 export function acquireBuildLock({
   platform,
   key,
@@ -247,14 +266,9 @@ export function acquireBuildLock({
     }
 
     if (info) {
-      // A dead pid is the only kind of stale lock. Removing it may race with
-      // another waiter doing the same thing -- whoever's mkdir lands next
-      // wins, and the loop re-reads.
-      try {
-        rmSync(path, { recursive: true, force: true });
-      } catch {
-        /* another taker-over got there first */
-      }
+      // A dead pid is the only kind of stale lock. Take it over atomically so
+      // two racing waiters cannot both win.
+      reapStaleLock(path);
       continue;
     }
 
@@ -263,11 +277,7 @@ export function acquireBuildLock({
     const age = dirAgeMs(path, now());
     if (age === null) continue; // released underneath us; retry the mkdir
     if (age > RECORD_GRACE_MS) {
-      try {
-        rmSync(path, { recursive: true, force: true });
-      } catch {
-        /* same race as above */
-      }
+      reapStaleLock(path);
       continue;
     }
     if (now() >= deadline) {

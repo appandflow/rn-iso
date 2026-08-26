@@ -22,7 +22,7 @@
 // lock (decides WHO compiles) -> take a build slot (limits HOW MANY compile at
 // once) -> build. The slot is released process.exit-safe, exactly as the build
 // lock is.
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir } from '../config.ts';
 import { isPidAlive } from '../metro.ts';
@@ -150,17 +150,24 @@ function claimSlot(path: string, { isAlive, now }: { isAlive: (pid: number) => b
     const age = dirAgeMs(path, now());
     if (age !== null && age <= RECORD_GRACE_MS) return false;
   }
-  // Stale (dead pid, or an aged-out recordless directory): reclaim and retry.
+  // Stale (dead pid, or an aged-out recordless directory): reclaim atomically
+  // and retry. A plain `rmSync` here is unconditional and, arriving late, can
+  // delete the slot another waiter just claimed -- over-subscribing the
+  // semaphore by one. renameSync moves the stale dir aside for only ONE reaper;
+  // the rest fall through to the mkdir, which the kernel decides.
+  const aside = `${path}.reap-${process.pid}`;
   try {
-    rmSync(path, { recursive: true, force: true });
+    rmSync(aside, { recursive: true, force: true });
+    renameSync(path, aside);
+    rmSync(aside, { recursive: true, force: true });
   } catch {
-    /* another taker-over got there first */
+    /* another taker-over got there first; the mkdir below decides */
   }
   try {
     mkdirSync(path);
     return true;
   } catch {
-    return false; // someone else re-created it between the rm and here
+    return false; // someone else re-created it between the reap and here
   }
 }
 

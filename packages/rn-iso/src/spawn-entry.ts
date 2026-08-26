@@ -11,11 +11,13 @@
 // dist/collector-run.js), so the child is a sibling `.js` of THIS bundled
 // module.
 //
-// The discriminator is where THIS module is running from. In dev its own
-// file:// URL contains `/src/`; once bundled into dist/cli.js it does not.
-// import.meta.url is always a file:// URL that uses `/`, so the substring test
-// is portable.
-import { dirname, join } from 'node:path';
+// The discriminator is where THIS module is running from: its IMMEDIATE parent
+// directory. In dev this module is `src/spawn-entry.ts`, so the parent is
+// `src`; once bundled it is `dist/cli.js`, so the parent is `dist`. Testing the
+// parent dir name -- not a substring of the whole path -- is what keeps this
+// correct for a package installed under a path that itself contains a `src`
+// segment (e.g. `~/src/app/node_modules/rn-iso/dist/cli.js`).
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export type SpawnEntryName = 'supervisor-run' | 'collector-run';
@@ -29,8 +31,9 @@ const DEV_ENTRIES: Record<SpawnEntryName, string> = {
 };
 
 export function spawnEntry(name: SpawnEntryName): string {
-  if (import.meta.url.includes('/src/')) {
+  const here = fileURLToPath(import.meta.url);
+  if (basename(dirname(here)) === 'src') {
     return fileURLToPath(new URL(DEV_ENTRIES[name], import.meta.url));
   }
-  return join(dirname(fileURLToPath(import.meta.url)), `${name}.js`);
+  return join(dirname(here), `${name}.js`);
 }

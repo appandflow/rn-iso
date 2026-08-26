@@ -7,6 +7,7 @@
 // failed build, and dependency resolution. The `assembleDebug` transcripts
 // captured from a real gradle 8.13 run are in test/fixtures/gradle-*.txt --
 // see test/engine-gradle.test.js for how they were produced.
+import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -16,8 +17,9 @@ import {
   formatDiagnostic,
   remedyFor,
 } from '../engine/errors-gradle.ts';
+import type { Diagnostic } from '../engine/errors-gradle.ts';
 
-const fixture = (name) => readFileSync(join(import.meta.dirname, 'fixtures', name), 'utf-8');
+const fixture = (name: string) => readFileSync(join(import.meta.dirname, 'fixtures', name), 'utf-8');
 
 describe('what is recognized', () => {
   test('the FAILURE block reduces to its What went wrong section, causes and all', () => {
@@ -37,10 +39,10 @@ Execution failed for task ':app:compileDebugKotlin'.
 BUILD FAILED in 41s
 `);
     expect(diagnostics.length).toBe(1);
-    expect(diagnostics[0].message).toMatch(/Execution failed for task ':app:compileDebugKotlin'/);
+    expect(diagnostics[0]?.message).toMatch(/Execution failed for task ':app:compileDebugKotlin'/);
     // The nested cause carries the useful half, so it is kept rather than
     // dropped: "Execution failed for task X" alone says nothing.
-    expect(diagnostics[0].message).toMatch(/Compilation error/);
+    expect(diagnostics[0]?.message).toMatch(/Compilation error/);
     // "* Try:" is gradle telling the user to re-run with --stacktrace, which
     // is not a diagnostic.
     expect(diagnostics.filter((d) => /stacktrace/.test(d.message)).length).toBe(0);
@@ -84,7 +86,7 @@ BUILD FAILED in 41s
     const diagnostics = extractGradleDiagnostics(
       'e: file:///Users/me/My%20App/android/app/src/main/java/A.kt:3:1 Expecting an expression',
     );
-    expect(diagnostics[0].file).toBe('/Users/me/My App/android/app/src/main/java/A.kt');
+    expect(diagnostics[0]?.file).toBe('/Users/me/My App/android/app/src/main/java/A.kt');
   });
 
   test('javac diagnostics keep the file and line', () => {
@@ -131,8 +133,8 @@ Could not determine the dependencies of task ':app:compileDebugJavaWithJavac'.
    > Could not find com.facebook.react:react-android:0.99.0.
 `);
     expect(diagnostics.length).toBe(1);
-    expect(diagnostics[0].message).toMatch(/Could not find com\.facebook\.react:react-android:0\.99\.0/);
-    expect(diagnostics[0].remedy).toMatch(/refresh-dependencies/);
+    expect(diagnostics[0]?.message).toMatch(/Could not find com\.facebook\.react:react-android:0\.99\.0/);
+    expect(diagnostics[0]?.remedy).toMatch(/refresh-dependencies/);
   });
 
   // The two environment failures rn-iso must name rather than let an agent
@@ -145,14 +147,14 @@ FAILURE: Build failed with an exception.
 A problem occurred configuring project ':app'.
 > SDK location not found. Define a valid SDK location with an ANDROID_HOME environment variable or by setting the sdk.dir path in your project's local properties file at '/Users/me/app/android/local.properties'.
 `);
-    expect(diagnostics[0].remedy).toMatch(/ANDROID_HOME/);
+    expect(diagnostics[0]?.remedy).toMatch(/ANDROID_HOME/);
   });
 
   test('a JAVA_HOME pointed at nothing carries the JDK remedy', () => {
     const diagnostics = extractGradleDiagnostics(
       'ERROR: JAVA_HOME is set to an invalid directory: /nope\n\nPlease set the JAVA_HOME variable in your environment to match the\nlocation of your Java installation.',
     );
-    expect(diagnostics[0].remedy).toMatch(/JAVA_HOME/);
+    expect(diagnostics[0]?.remedy).toMatch(/JAVA_HOME/);
   });
 
   test('gradle rich-console carriage returns do not glue lines together', () => {
@@ -174,9 +176,9 @@ describe('what is not', () => {
 
   test('non-text and empty input yield nothing', () => {
     expect(extractGradleDiagnostics('')).toEqual([]);
-    expect(extractGradleDiagnostics(null)).toEqual([]);
-    expect(extractGradleDiagnostics(undefined)).toEqual([]);
-    expect(extractGradleDiagnostics(42 as any)).toEqual([]);
+    expect(extractGradleDiagnostics(null as unknown as string)).toEqual([]);
+    expect(extractGradleDiagnostics(undefined as unknown as string)).toEqual([]);
+    expect(extractGradleDiagnostics(42 as unknown as string)).toEqual([]);
   });
 
   test('warnings are not errors', () => {
@@ -221,18 +223,20 @@ describe('dedupe, order and the cap', () => {
     const capped = capDiagnostics(all);
     expect(capped.shown.length).toBe(MAX_DIAGNOSTICS);
     expect(capped.truncated).toBe(4);
-    expect(capped.shown[0].line).toBe(1);
+    expect(capped.shown[0]?.line).toBe(1);
   });
 
   test('capDiagnostics is a no-op under the limit and tolerates junk', () => {
     expect(capDiagnostics([{ message: 'a' }])).toEqual({ shown: [{ message: 'a' }], truncated: 0 });
-    expect(capDiagnostics(null)).toEqual({ shown: [], truncated: 0 });
+    expect(capDiagnostics(null as unknown as Diagnostic[])).toEqual({ shown: [], truncated: 0 });
   });
 
   test('a runaway message is clipped rather than printed whole', () => {
     const diagnostics = extractGradleDiagnostics(`e: file:///a/B.kt:1:1 ${'x'.repeat(900)}`);
-    expect(diagnostics[0].message.length <= 300).toBeTruthy();
-    expect(diagnostics[0].message).toMatch(/\.\.\.$/);
+    const first = diagnostics[0];
+    assert(first);
+    expect(first.message.length <= 300).toBeTruthy();
+    expect(first.message).toMatch(/\.\.\.$/);
   });
 });
 
@@ -252,6 +256,7 @@ describe('against transcripts captured from a real gradle run', () => {
     expect(diagnostics.some((d) => /FAILED/.test(d.message))).toBeTruthy();
     const located = diagnostics.find((d) => d.file && d.line);
     expect(located).toBeTruthy();
+    assert(located);
     expect(located.file).toMatch(/Broken\.java$/);
     expect(diagnostics.map((d) => d.message).join(' | ')).toMatch(/Execution failed for task/);
   });

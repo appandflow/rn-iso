@@ -12,11 +12,15 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import assert from 'node:assert';
 import { deviceCapacityRefusal, deviceTypeMismatch, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import { getProject, setDevice, upsertProject } from '../config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import { makeAdbDevices, makeConfig, makeIosSim } from './_factories.ts';
 
-let tmpHome;
+type SimEntry = { udid: string; name: string; state: string; isAvailable: boolean };
+
+let tmpHome: string;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -29,13 +33,13 @@ afterEach(() => {
   resetExecutor();
 });
 
-function simList(devices) {
+function simList(devices: SimEntry[]) {
   return JSON.stringify({ devices: { 'com.apple.CoreSimulator.SimRuntime.iOS-26-2': devices } });
 }
 
 describe('ensureBooted: ios', () => {
   test('returns the udid without touching simctl boot when the sim is already Booted', async () => {
-    const commands = [];
+    const commands: string[] = [];
     setExecutor({
       run: (cmd) => {
         commands.push(cmd);
@@ -57,7 +61,7 @@ describe('ensureBooted: ios', () => {
 
   test('boots a shut-down owned sim and waits for the Booted state', async () => {
     let listCalls = 0;
-    const commands = [];
+    const commands: string[] = [];
     setExecutor({
       run: (cmd) => {
         commands.push(cmd);
@@ -132,7 +136,7 @@ describe('ensureBooted: android', () => {
   // emulator mid-boot fails with "Can't find service: package", so a running
   // emulator is still waited on.
   test('waits for boot completion on an already-running owned AVD', async () => {
-    const commands = [];
+    const commands: string[] = [];
     setExecutor({
       run: (cmd) => {
         commands.push(cmd);
@@ -159,7 +163,7 @@ describe('ensureBooted: android', () => {
   });
 
   test('boots a stopped owned AVD on its recorded port and waits', async () => {
-    const spawned = [];
+    const spawned: string[][] = [];
     let booted = false;
     setExecutor({
       run: (cmd) => {
@@ -192,8 +196,8 @@ describe('ensureBooted: android', () => {
   // emulator starts at 5554 too. Booting onto an occupied port silently
   // attaches this workspace to a foreign emulator.
   test('allocates a fresh console port when the recorded one is taken by a foreign emulator', async () => {
-    const spawned = [];
-    let ourSerial = null;
+    const spawned: string[][] = [];
+    let ourSerial: string | null = null;
     setExecutor({
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'rn-iso-app';
@@ -223,7 +227,10 @@ describe('ensureBooted: android', () => {
     });
     expect(result.ok).toBe(true);
     expect(result.serial).not.toBe('emulator-5554');
-    expect(spawned[0][4]).toBe(result.serial.replace('emulator-', ''));
+    assert(result.serial);
+    const call = spawned[0];
+    assert(call);
+    expect(call[4]).toBe(result.serial.replace('emulator-', ''));
   });
 
   test('refuses an AVD that is not rn-iso-owned by name', async () => {
@@ -258,10 +265,10 @@ describe('ensureBooted: android', () => {
         throw new Error('rn-iso must never try to boot hardware');
       },
     });
-    const result = await ensureBooted({
-      platform: 'android',
-      device: { serial: 'R5CT10', kind: 'physical', owned: false },
-    });
+    // A legacy physical record still carries `kind` (CLAUDE.md item 2); bind it
+    // to a local so the extra field is structurally accepted without a cast.
+    const physical = { serial: 'R5CT10', kind: 'physical', owned: false };
+    const result = await ensureBooted({ platform: 'android', device: physical });
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/No owned Android emulator is recorded/);
   });
@@ -281,23 +288,26 @@ const TYPES = [
   { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', name: 'iPhone 17 Pro' },
   { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16', name: 'iPhone 16' },
 ];
+const [TYPE_17_PRO, TYPE_16] = TYPES;
+assert(TYPE_17_PRO);
+assert(TYPE_16);
 
 test('deviceTypeMismatch returns null when nothing was requested', () => {
-  expect(deviceTypeMismatch(TYPES[0].identifier, undefined, TYPES)).toBe(null);
+  expect(deviceTypeMismatch(TYPE_17_PRO.identifier, undefined, TYPES)).toBe(null);
 });
 
 test('deviceTypeMismatch returns null when the recorded sim is the requested type', () => {
-  expect(deviceTypeMismatch(TYPES[0].identifier, 'iPhone 17 Pro', TYPES)).toBe(null);
+  expect(deviceTypeMismatch(TYPE_17_PRO.identifier, 'iPhone 17 Pro', TYPES)).toBe(null);
 });
 
 test('deviceTypeMismatch describes the mismatch when the recorded sim is a different model', () => {
-  const msg = deviceTypeMismatch(TYPES[1].identifier, 'iPhone 17 Pro', TYPES);
+  const msg = deviceTypeMismatch(TYPE_16.identifier, 'iPhone 17 Pro', TYPES);
   expect(msg).toMatch(/iPhone 16/);
   expect(msg).toMatch(/iPhone 17 Pro/);
 });
 
 test('deviceTypeMismatch returns null when the requested type is unknown, leaving creation to error', () => {
-  expect(deviceTypeMismatch(TYPES[0].identifier, 'iPhone 99 Ultra', TYPES)).toBe(null);
+  expect(deviceTypeMismatch(TYPE_17_PRO.identifier, 'iPhone 99 Ultra', TYPES)).toBe(null);
 });
 
 test('deviceTypeMismatch returns null when the recorded type is unknown', () => {
@@ -323,16 +333,16 @@ const RUNTIMES_JSON = JSON.stringify({
 function projectDir() {
   const dir = mkdtempSync(join(tmpdir(), 'rn-iso-test-proj-'));
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'scratch-app' }));
-  upsertProject(dir, { bundleId: null, androidPackage: null, isExpo: false });
+  upsertProject(dir, { bundleId: undefined, androidPackage: undefined, isExpo: false });
   return dir;
 }
 
-function iosExecutor(devices) {
-  const run = [];
+function iosExecutor(devices: SimEntry[]) {
+  const run: string[] = [];
   return {
     run,
     exec: {
-      run(cmd) {
+      run(cmd: string) {
         run.push(cmd);
         if (/simctl list devicetypes --json/.test(cmd)) return DEVICE_TYPES_JSON;
         if (/simctl list runtimes --json/.test(cmd)) return RUNTIMES_JSON;
@@ -341,7 +351,7 @@ function iosExecutor(devices) {
         if (/simctl boot/.test(cmd)) return '';
         throw new Error(`unexpected run: ${cmd}`);
       },
-      runQuiet(cmd) {
+      runQuiet(cmd: string) {
         try {
           return this.run(cmd);
         } catch {
@@ -367,7 +377,7 @@ describe('ensureOwnedDevice: ios', () => {
         { udid: 'U1', name: 'Renamed-By-User', state: 'Shutdown', isAvailable: true },
       ]);
       setExecutor(exec);
-      const notes = [];
+      const notes: string[] = [];
       const result = await ensureOwnedDevice({
         platform: 'ios',
         project: getProject(root),
@@ -392,7 +402,7 @@ describe('ensureOwnedDevice: ios', () => {
       setDevice(root, 'ios', { deviceUdid: 'U1' });
       const { run, exec } = iosExecutor([{ udid: 'U1', name: 'iPhone 16', state: 'Shutdown', isAvailable: true }]);
       setExecutor(exec);
-      const notes = [];
+      const notes: string[] = [];
       const result = await ensureOwnedDevice({
         platform: 'ios',
         project: getProject(root),
@@ -413,8 +423,8 @@ describe('ensureOwnedDevice: ios', () => {
 });
 
 describe('ensureOwnedDevice: android', () => {
-  let androidHome;
-  let prevAndroidHome;
+  let androidHome: string;
+  let prevAndroidHome: string | undefined;
 
   beforeEach(() => {
     androidHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-sdk-'));
@@ -429,14 +439,17 @@ describe('ensureOwnedDevice: android', () => {
     else process.env.ANDROID_HOME = prevAndroidHome;
   });
 
-  function androidExecutor({ avds = [], createAvdError = null } = {}) {
-    const run = [];
-    const spawn = [];
+  function androidExecutor({
+    avds = [],
+    createAvdError = null,
+  }: { avds?: string[]; createAvdError?: string | null } = {}) {
+    const run: string[] = [];
+    const spawn: { cmd: string; args: readonly string[]; opts?: object }[] = [];
     return {
       run,
       spawn,
       exec: {
-        run(cmd) {
+        run(cmd: string) {
           run.push(cmd);
           if (cmd === 'emulator -list-avds') return avds.length ? `${avds.join('\n')}\n` : '';
           if (/create avd/.test(cmd)) {
@@ -449,7 +462,7 @@ describe('ensureOwnedDevice: android', () => {
           if (/getprop /.test(cmd)) return '';
           throw new Error(`unexpected run: ${cmd}`);
         },
-        runQuiet(cmd) {
+        runQuiet(cmd: string) {
           try {
             return this.run(cmd);
           } catch {
@@ -459,7 +472,7 @@ describe('ensureOwnedDevice: android', () => {
         runFile() {
           return '';
         },
-        spawn(cmd, args, opts) {
+        spawn(cmd: string, args: readonly string[], opts?: object) {
           spawn.push({ cmd, args, opts });
           return { pid: 9999, unref() {} };
         },
@@ -476,7 +489,7 @@ describe('ensureOwnedDevice: android', () => {
       setDevice(root, 'android', { serial: 'R5CT10', kind: 'physical', owned: false });
       const { run, exec } = androidExecutor();
       setExecutor(exec);
-      const notes = [];
+      const notes: string[] = [];
       const result = await ensureOwnedDevice({
         platform: 'android',
         project: getProject(root),
@@ -524,8 +537,8 @@ describe('ensureOwnedDevice: android', () => {
 // maxDevices refuses a NEW device once the machine is at the cap, but never
 // refuses a workspace that already has a live device of its own (idempotent).
 describe('deviceCapacityRefusal', () => {
-  const booted = (udid, name) => ({ udid, name, state: 'Booted' });
-  const shutdown = (udid, name) => ({ udid, name, state: 'Shutdown' });
+  const booted = (udid: string, name: string) => makeIosSim({ udid, name, state: 'Booted' });
+  const shutdown = (udid: string, name: string) => makeIosSim({ udid, name, state: 'Shutdown' });
 
   test('unlimited (max 0) never refuses', () => {
     const sims = [booted('u1', 'rn-iso-a'), booted('u2', 'rn-iso-b')];
@@ -535,8 +548,8 @@ describe('deviceCapacityRefusal', () => {
         project: {},
         max: 0,
         sims,
-        adb: { emulators: [] },
-        config: { projects: {} },
+        adb: makeAdbDevices({ emulators: [] }),
+        config: makeConfig(),
       }),
     ).toBe(null);
   });
@@ -548,9 +561,10 @@ describe('deviceCapacityRefusal', () => {
       project: { platforms: {} },
       max: 2,
       sims,
-      adb: { emulators: [] },
-      config: { projects: {} },
+      adb: makeAdbDevices({ emulators: [] }),
+      config: makeConfig(),
     });
+    assert(refusal);
     expect(refusal.code).toBe('RN_ISO_AT_CAPACITY');
     expect(refusal.remedy).toMatch(/rn-iso stop|maxDevices/);
   });
@@ -564,8 +578,8 @@ describe('deviceCapacityRefusal', () => {
         project,
         max: 2,
         sims,
-        adb: { emulators: [] },
-        config: { projects: {} },
+        adb: makeAdbDevices({ emulators: [] }),
+        config: makeConfig(),
       }),
     ).toBe(null);
   });
@@ -579,17 +593,17 @@ describe('deviceCapacityRefusal', () => {
         project: { platforms: {} },
         max: 2,
         sims,
-        adb: { emulators: [] },
-        config: { projects: {} },
+        adb: makeAdbDevices({ emulators: [] }),
+        config: makeConfig(),
       }),
     ).toBe(null);
   });
 
   test('a running owned Android emulator counts via the registry', () => {
-    const config = {
+    const config = makeConfig({
       projects: { '/w/x': { platforms: { android: { avdName: 'rn-iso-x', consolePort: 5556, owned: true } } } },
-    };
-    const adb = { emulators: [{ consolePort: 5556 }] };
+    });
+    const adb = makeAdbDevices({ emulators: [{ serial: 'emulator-5556', consolePort: 5556 }] });
     const refusal = deviceCapacityRefusal({
       platform: 'android',
       project: { platforms: {} },
@@ -598,6 +612,7 @@ describe('deviceCapacityRefusal', () => {
       adb,
       config,
     });
+    assert(refusal);
     expect(refusal.code).toBe('RN_ISO_AT_CAPACITY');
   });
 });

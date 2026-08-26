@@ -11,10 +11,13 @@
 // (kRCTJsLocationKey line 30, jsLocation line 554, serverRootWithHostPort
 // line 70), and the dev-client URL in expo's UrlCreator.ts line 88 plus
 // EXDevLauncherURLHelperTests.swift line 15.
+import assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Executor } from '../exec.ts';
+import type { NdjsonRecord } from '../ndjson.ts';
 import { isBundleActivityLine } from '../supervisor/server-expo.ts';
 import {
   DEFAULT_METRO_PORT,
@@ -40,18 +43,41 @@ import {
   writeDebugHttpHost,
 } from '../engine/app-install.ts';
 
+// launchAndroidApp / launchIosApp return a union of success and failure shapes;
+// a permissive structural view lets a test read the branch it exercised.
+type LaunchResult = {
+  ok?: boolean;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+  mode?: string;
+  component?: string;
+  devClientUrl?: string;
+  devClientNote?: string | null;
+  reversed?: string[];
+  debugHttpHost?: string | null;
+  debugHttpHostNote?: string | null;
+  [key: string]: unknown;
+};
+
 // Records every runFile call as a flat argv array, and lets a test make a
 // particular one fail.
-function recordingExec({ fail = null, outputs = {} }: any = {}): any {
-  const calls: any[] = [];
+interface RecordingExec extends Executor {
+  calls: string[][];
+}
+function recordingExec({
+  fail = null,
+  outputs = {},
+}: { fail?: string | null; outputs?: Record<string, string> } = {}): RecordingExec {
+  const calls: string[][] = [];
   return {
     calls,
-    runFile(file: any, args: any) {
+    runFile(file: string, args: string[] = []) {
       calls.push([file, ...args]);
       const key = [file, ...args].join(' ');
       if (fail && key.includes(fail)) {
         const err = new Error(`Command failed: ${key}`);
-        (err as any).stderr = 'device not booted';
+        (err as Error & { stderr?: string }).stderr = 'device not booted';
         throw err;
       }
       for (const [match, value] of Object.entries(outputs)) {
@@ -205,7 +231,7 @@ describe('android: install and launch', () => {
     const exec = recordingExec({
       outputs: { 'resolve-activity': 'priority=0 isDefault=true\ncom.example.app/.MainActivity\n' },
     });
-    const result: any = launchAndroidApp(
+    const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
       { exec },
     );
@@ -231,13 +257,15 @@ describe('android: install and launch', () => {
       ],
       ['adb', '-s', 'emulator-5554', 'shell', 'am', 'start', '-n', 'com.example.app/.MainActivity'],
     ]);
-    expect(exec.calls[2].slice(0, 6)).toEqual(['adb', '-s', 'emulator-5554', 'shell', 'run-as', 'com.example.app']);
-    expect(exec.calls[2].at(-1)).toMatch(/debug_http_host.*10\.0\.2\.2:8082/);
+    const httpHostCall = exec.calls[2];
+    assert(httpHostCall);
+    expect(httpHostCall.slice(0, 6)).toEqual(['adb', '-s', 'emulator-5554', 'shell', 'run-as', 'com.example.app']);
+    expect(httpHostCall.at(-1)).toMatch(/debug_http_host.*10\.0\.2\.2:8082/);
   });
 
   test('falls back to monkey when no launcher activity resolves', () => {
     const exec = recordingExec({ outputs: { 'resolve-activity': 'No activity found\n' } });
-    const result: any = launchAndroidApp(
+    const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
       { exec },
     );
@@ -250,7 +278,7 @@ describe('android: install and launch', () => {
   // which is a much worse diagnostic than the adb failure itself.
   test('a failed reverse stops the launch', () => {
     const exec = recordingExec({ fail: 'reverse' });
-    const result: any = launchAndroidApp(
+    const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
       { exec },
     );
@@ -265,14 +293,18 @@ describe('android: install and launch', () => {
       outputs: { 'resolve-activity': 'priority=0\ncom.example.app/.MainActivity\n' },
     });
     expect(
-      (launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 }, { exec }) as any)
-        .reason,
+      (
+        launchAndroidApp(
+          { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
+          { exec },
+        ) as LaunchResult
+      ).reason,
     ).toMatch(/am start/);
   });
 
   test('an adb failure while resolving the activity falls through to monkey', () => {
     const exec = recordingExec({ fail: 'resolve-activity' });
-    const result: any = launchAndroidApp(
+    const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
       { exec },
     );
@@ -282,17 +314,18 @@ describe('android: install and launch', () => {
 
 // --- debug_http_host (the react-native-worktree trick) ----------------------
 test('writeDebugHttpHost writes host:port via run-as and reports it', () => {
-  const calls = [];
-  const exec: any = {
-    runFile: (cmd, args) => {
+  const calls: string[][] = [];
+  const exec = {
+    runFile: (cmd: string, args: string[]) => {
       calls.push([cmd, ...args]);
       return '';
     },
-  };
+  } as unknown as Executor;
   const r = writeDebugHttpHost({ serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082 }, { exec });
   expect(r.ok).toBe(true);
   expect(r.host).toBe('10.0.2.2:8082');
   const argv = calls[0];
+  assert(argv);
   expect(argv[0]).toBe('adb');
   expect(argv.slice(1, 6)).toEqual(['-s', 'emulator-5554', 'shell', 'run-as', 'com.x']);
   expect(argv[8]).toMatch(/debug_http_host/);
@@ -300,8 +333,8 @@ test('writeDebugHttpHost writes host:port via run-as and reports it', () => {
 });
 
 test('a failed prefs write does not fail the launch', () => {
-  const exec: any = {
-    runFile: (cmd, args) => {
+  const exec = {
+    runFile: (_cmd: string, args: string[]) => {
       if (args.includes('run-as')) {
         const e = new Error('run-as: package not debuggable');
         throw e;
@@ -309,8 +342,11 @@ test('a failed prefs write does not fail the launch', () => {
       return '';
     },
     runQuiet: () => 'com.x/.MainActivity',
-  };
-  const r: any = launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082 }, { exec });
+  } as unknown as Executor;
+  const r: LaunchResult = launchAndroidApp(
+    { serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082 },
+    { exec },
+  );
   expect(r.ok).toBe(true);
   expect(r.debugHttpHost).toBe(null);
   expect(r.debugHttpHostNote).toMatch(/relying on adb reverse/);
@@ -333,10 +369,10 @@ function fakeClock(start = 1000) {
   let t = start;
   return {
     now: () => t,
-    sleep: async (ms) => {
+    sleep: async (ms: number) => {
       t += ms;
     },
-    advance: (ms) => {
+    advance: (ms: number) => {
       t += ms;
     },
     at: () => t,
@@ -391,7 +427,7 @@ describe('isBundleProof', () => {
 describe('verifyLaunch', () => {
   test('verified: the poll returns as soon as a bundle request lands', async () => {
     const clock = fakeClock();
-    const records = [];
+    const records: NdjsonRecord[] = [];
     let reads = 0;
     const result = await verifyLaunch({
       since: clock.at(),
@@ -405,6 +441,7 @@ describe('verifyLaunch', () => {
       },
     });
     expect(result.verified).toBe(true);
+    assert(result.record);
     expect(result.record.event).toBe('bundle_build_started');
     expect(result.waitedMs > 0 && result.waitedMs < VERIFY_TIMEOUT_MS).toBeTruthy();
   });
@@ -469,6 +506,7 @@ describe('verifyLaunch', () => {
       );
       const result = await verifyLaunch({ logsDir: dir, since: clock.at(), now: clock.now, sleep: clock.sleep });
       expect(result.verified).toBe(true);
+      assert(result.record);
       expect(result.record.ts).toBe(clock.at() + 10);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -587,7 +625,7 @@ describe('unverifiedLaunchLines: the action comes first', () => {
 // debuggable app -- see the change's report. This is the part of it that can
 // run in CI.
 describe('the debug_http_host script, run for real under sh', () => {
-  let dir;
+  let dir: string;
   const PKG = 'com.example.app';
   const prefsPath = () => join(dir, 'shared_prefs', `${PKG}_preferences.xml`);
 
@@ -600,7 +638,7 @@ describe('the debug_http_host script, run for real under sh', () => {
 
   // The device shell, then the script's shell. Throws (non-zero exit) exactly
   // where adb would report a failure.
-  const runScript = (port) =>
+  const runScript = (port: number) =>
     execFileSync(
       '/bin/sh',
       [
@@ -613,27 +651,35 @@ describe('the debug_http_host script, run for real under sh', () => {
   // A strict-enough XML reader: it fails on unbalanced or unclosed tags, so
   // "the file parses" is an assertion and not a grep. Returns the <map>'s
   // string entries.
-  const parsePrefs = (text) => {
-    const entries = {};
-    const stack = [];
+  const parsePrefs = (text: string) => {
+    const entries: Record<string, string> = {};
+    const stack: Array<{ name: string; attrs: Record<string, string> }> = [];
     const tag = /<(\/?)([\w:.-]+)((?:\s+[\w:.-]+\s*=\s*"[^"]*")*)\s*(\/?)>/g;
     const body = text.replace(/<\?xml[^>]*\?>/g, '');
     let last = 0;
     let m;
     while ((m = tag.exec(body)) !== null) {
       const [full, closing, name, attrs, selfClosing] = m;
+      if (full === undefined || name === undefined || attrs === undefined) continue;
       const between = body.slice(last, m.index);
       last = m.index + full.length;
       if (closing) {
         const open = stack.pop();
-        expect(open?.name).toBe(name);
-        if (name === 'string') entries[open.attrs.name] = between;
+        assert(open);
+        expect(open.name).toBe(name);
+        const key = open.attrs.name;
+        if (name === 'string' && key !== undefined) entries[key] = between;
         continue;
       }
-      const attrMap = {};
-      for (const a of attrs.matchAll(/([\w:.-]+)\s*=\s*"([^"]*)"/g)) attrMap[a[1]] = a[2];
+      const attrMap: Record<string, string> = {};
+      for (const a of attrs.matchAll(/([\w:.-]+)\s*=\s*"([^"]*)"/g)) {
+        const k = a[1];
+        const v = a[2];
+        if (k !== undefined && v !== undefined) attrMap[k] = v;
+      }
       if (selfClosing) {
-        if (name === 'string') entries[attrMap.name] = '';
+        const key = attrMap.name;
+        if (name === 'string' && key !== undefined) entries[key] = '';
         continue;
       }
       stack.push({ name, attrs: attrMap });
@@ -654,7 +700,9 @@ describe('the debug_http_host script, run for real under sh', () => {
     runScript(8099);
     const text = readFileSync(prefsPath(), 'utf-8');
     expect(parsePrefs(text)).toEqual({ debug_http_host: '10.0.2.2:8099' });
-    expect(text.match(/debug_http_host/g).length).toBe(1);
+    const hostMatches = text.match(/debug_http_host/g);
+    assert(hostMatches);
+    expect(hostMatches.length).toBe(1);
   });
 
   test('case 3: a prefs file WITHOUT the key keeps every other entry', () => {
@@ -717,7 +765,7 @@ describe('the Android dev-client deep link', () => {
 
   test('launchAndroidApp sends it, quoted for the device shell, and skips resolve-activity', () => {
     const exec = recordingExec();
-    const result = launchAndroidApp(
+    const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' },
       { exec },
     );
@@ -737,7 +785,7 @@ describe('the Android dev-client deep link', () => {
       '-d',
       `'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082'`,
     ]);
-    expect(!exec.calls.some((c) => c.includes('resolve-activity'))).toBeTruthy();
+    expect(!exec.calls.some((c: string[]) => c.includes('resolve-activity'))).toBeTruthy();
     // The port wiring still ran first, both halves of it.
     expect(result.debugHttpHost).toBe('10.0.2.2:8082');
     expect(result.reversed).toEqual(['tcp:8081->tcp:8082', 'tcp:8082->tcp:8082']);
@@ -769,7 +817,7 @@ describe('the Android dev-client deep link', () => {
         'resolve-activity': 'priority=0 isDefault=true\ncom.example.app/.MainActivity\n',
       },
     });
-    const result = launchAndroidApp(
+    const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' },
       { exec },
     );

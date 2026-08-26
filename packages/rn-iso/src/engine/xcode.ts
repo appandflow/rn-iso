@@ -32,7 +32,7 @@ import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagno
 // cost when they drift.
 import { cleanLine, createLineReader } from '../supervisor/server-expo.ts';
 
-export const IOS_DIR = 'ios';
+const IOS_DIR = 'ios';
 
 // The remedy every "there is no iOS project here" failure carries. rn-iso's
 // own flow prebuilds before it gets here, so reaching this means either the
@@ -85,10 +85,12 @@ export function pickXcodeProject(entries: unknown): { kind: string; flag: string
     const projectNames = new Set(projects.map((p) => basename(p, '.xcodeproj')));
     const match = workspaces.find((w) => projectNames.has(basename(w, '.xcworkspace')));
     const file = match || workspaces[0];
+    if (file === undefined) return null; // workspaces.length > 0 checked above; guards index type
     return { kind: 'workspace', flag: '-workspace', file, name: basename(file, '.xcworkspace') };
   }
   if (projects.length > 0) {
     const file = projects[0];
+    if (file === undefined) return null; // projects.length > 0 checked above; guards index type
     return { kind: 'project', flag: '-project', file, name: basename(file, '.xcodeproj') };
   }
   return null;
@@ -127,7 +129,7 @@ export function parseSchemeList(text: unknown): { name: string | null; schemes: 
   if (start < 0 || end <= start) return empty;
   // JSON.parse's result is deliberately loosely typed here: xcodebuild's own
   // JSON shape is what this parses, and it is genuinely dynamic output.
-  let data: any;
+  let data: unknown;
   try {
     data = JSON.parse(text.slice(start, end + 1));
   } catch {
@@ -137,12 +139,14 @@ export function parseSchemeList(text: unknown): { name: string | null; schemes: 
   // A workspace listing carries `workspace`, a project listing `project`; the
   // project form additionally has targets and configurations, which nothing
   // here needs.
-  const container = data.workspace || data.project;
+  const record = data as { workspace?: unknown; project?: unknown };
+  const container = record.workspace || record.project;
   if (!container || typeof container !== 'object') return empty;
-  const schemes: string[] = Array.isArray(container.schemes)
-    ? container.schemes.filter((s: unknown) => typeof s === 'string' && s.trim() !== '')
+  const info = container as { schemes?: unknown; name?: unknown };
+  const schemes: string[] = Array.isArray(info.schemes)
+    ? info.schemes.filter((s: unknown) => typeof s === 'string' && s.trim() !== '')
     : [];
-  return { name: typeof container.name === 'string' ? container.name : null, schemes };
+  return { name: typeof info.name === 'string' ? info.name : null, schemes };
 }
 
 // Test schemes are never buildable-and-runnable app schemes, and an RN project
@@ -308,14 +312,14 @@ export function parseBundleId(plistJson: unknown) {
   if (typeof plistJson !== 'string') return null;
   // Genuinely dynamic: this is Info.plist converted to JSON by `plutil`, an
   // Apple-defined shape this module has no reason to model beyond one field.
-  let data: any;
+  let data: unknown;
   try {
     data = JSON.parse(plistJson);
   } catch {
     return null;
   }
   if (!data || typeof data !== 'object') return null;
-  const id = data.CFBundleIdentifier;
+  const id = (data as { CFBundleIdentifier?: unknown }).CFBundleIdentifier;
   return typeof id === 'string' && id.trim() !== '' ? id.trim() : null;
 }
 

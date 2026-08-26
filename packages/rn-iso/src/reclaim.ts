@@ -1,6 +1,27 @@
 import { type ProjectRecord, getProject, removeProject } from './config.ts';
-import { resolveProjectMetro, killMetroTree } from './metro.ts';
+import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.ts';
+import { readCollectors } from './collector/state.ts';
+
+// Stop this workspace's device-log collectors. Their record in state.json is
+// the only thing that names them, so they must be reaped before the entry (and,
+// for `worktree remove`, the whole tree) is removed: a collector left running
+// leaks, and its own exit path rewrites state.json -- resurrecting a zombie
+// `.rn-iso` under a directory that was just deleted. `stop` reaps them the same
+// way; the shared reclaim path did not, relying on device teardown to end the
+// `log stream` / `logcat` indirectly, which a failed or already-stopped device
+// does not do.
+function reapCollectors(root: string): void {
+  for (const record of Object.values(readCollectors(root))) {
+    const pid = (record as { pid?: unknown } | null)?.pid;
+    if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !isPidAlive(pid)) continue;
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      /* already gone between the read and the signal */
+    }
+  }
+}
 
 // A device this function skipped or failed to tear down: reported alongside
 // `deletedDevices` so a caller can tell what happened to every owned device,
@@ -122,6 +143,10 @@ export async function reclaimProject(
   const project = getProject(path);
   const dereferenced = describeDereferenced(project);
 
+  // Reap collectors first: they hold the device open via `log stream`/`logcat`,
+  // and their state.json record is about to be removed.
+  reapCollectors(path);
+
   const {
     deletedDevices,
     skippedDevices,
@@ -141,7 +166,7 @@ export async function reclaimProject(
   if (typeof project?.metroPort === 'number') {
     const resolution = await resolveProjectMetro(project.metroPort, path);
     if (resolution.metro) {
-      killedPid = killMetroTree(resolution.metro.leader) ? resolution.metro.pid : null;
+      killedPid = killMetroTree(resolution.metro.leader, resolution.metro.pid) ? resolution.metro.pid : null;
       if (killedPid === null) skippedMetro = `could not kill pid ${resolution.metro.pid}`;
     } else if (resolution.notOurs) {
       skippedMetro = resolution.notOurs;

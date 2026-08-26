@@ -12,8 +12,9 @@
 // No simulator or emulator is touched: the shims are shell scripts that print
 // canned lines (taken from the real captures in test/fixtures/) and then
 // sleep.
-import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import assert from 'node:assert';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,13 +22,25 @@ import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { parseArgs, readCollectors, registerCollector, runCollector, unregisterCollector } from '../collector/run.ts';
 import { writeWorkspaceState } from '../supervisor/run.ts';
+import { makeChildProcess } from './_factories.ts';
 
 const ENTRY = fileURLToPath(new URL('../collector/run.ts', import.meta.url));
 
-let tmpHome;
-let root;
-let shimDir;
-let running = [];
+// The registration entry readCollectors returns is Record<string, unknown>; this
+// structural view lets a test read the two fields it asserts on, matching the
+// narrowing the android reattach test already does inline below.
+type CollectorEntry = { pid?: number; startedAt?: string };
+
+// A spawned child always has a pid; assert it so process.kill takes a number.
+function childPid(child: ChildProcess): number {
+  assert(child.pid !== undefined, 'spawned child has no pid');
+  return child.pid;
+}
+
+let tmpHome: string;
+let root: string;
+let shimDir: string;
+let running: ChildProcess[] = [];
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -41,7 +54,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const child of running) {
     try {
-      process.kill(child.pid, 'SIGKILL');
+      process.kill(childPid(child), 'SIGKILL');
     } catch {
       /* already gone */
     }
@@ -52,14 +65,14 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-function writeShim(name, body) {
+function writeShim(name: string, body: string) {
   const file = join(shimDir, name);
   writeFileSync(file, `#!/bin/sh\n${body}`);
   chmodSync(file, 0o755);
   return file;
 }
 
-function spawnCollector(args, env = {}) {
+function spawnCollector(args: string[], env: Record<string, string> = {}) {
   const child = spawn(process.execPath, [ENTRY, ...args], {
     env: { ...process.env, PATH: `${shimDir}${delimiter}${process.env.PATH}`, RN_ISO_HOME: tmpHome, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -84,7 +97,10 @@ function state() {
   }
 }
 
-async function until(predicate, { timeoutMs = 15000, label = 'condition' } = {}) {
+async function until<T>(
+  predicate: () => T | null | undefined,
+  { timeoutMs = 15000, label = 'condition' } = {},
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = predicate();
@@ -94,8 +110,10 @@ async function until(predicate, { timeoutMs = 15000, label = 'condition' } = {})
   }
 }
 
-function exited(child) {
-  return new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+function exited(child: ChildProcess) {
+  return new Promise<{ code: number | null; signal: string | null }>((resolve) =>
+    child.on('exit', (code, signal) => resolve({ code, signal })),
+  );
 }
 
 describe('parseArgs', () => {
@@ -231,7 +249,9 @@ describe('the ios collector, spawned for real against a fake xcrun', () => {
       'com.example.MyApp',
     ]);
 
-    const registered = await until(() => readCollectors(root).ios, { label: 'the collector registration' });
+    const registered = await until(() => readCollectors(root).ios as CollectorEntry, {
+      label: 'the collector registration',
+    });
     expect(registered.pid).toBe(child.pid);
     expect(registered.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
@@ -242,11 +262,15 @@ describe('the ios collector, spawned for real against a fake xcrun', () => {
       },
       { label: 'a parsed device record' },
     );
-    expect(records[0].msg).toMatch(/LocationProvider/);
-    expect(records[0].proc).toBe('locationd');
-    expect(deviceLog()[0].event).toBe('collector_started');
+    const first = records[0];
+    assert(first);
+    expect(first.msg).toMatch(/LocationProvider/);
+    expect(first.proc).toBe('locationd');
+    const firstLog = deviceLog()[0];
+    assert(firstLog);
+    expect(firstLog.event).toBe('collector_started');
 
-    process.kill(child.pid, 'SIGTERM');
+    process.kill(childPid(child), 'SIGTERM');
     const result = await exited(child);
     expect(result).toEqual({ code: 0, signal: null });
     expect('collectors' in (state() || {})).toBe(false);
@@ -281,6 +305,7 @@ describe('the ios collector, spawned for real against a fake xcrun', () => {
     expect(result.code).toBe(0);
     const stopped = deviceLog().find((r) => r.event === 'collector_stopped');
     expect(stopped).toBeTruthy();
+    assert(stopped);
     expect(stopped.msg).toMatch(/device log stream ended/);
     expect('collectors' in (state() || {})).toBe(false);
   });
@@ -317,7 +342,9 @@ describe('the android collector, spawned for real against a fake adb', () => {
       'com.example.app',
     ]);
 
-    const registered = await until(() => readCollectors(root).android, { label: 'the android registration' });
+    const registered = await until(() => readCollectors(root).android as CollectorEntry, {
+      label: 'the android registration',
+    });
     expect(registered.pid).toBe(child.pid);
 
     const errors = await until(
@@ -327,12 +354,14 @@ describe('the android collector, spawned for real against a fake adb', () => {
       },
       { label: 'a parsed logcat record' },
     );
-    expect(errors[0].msg).toMatch(/undefined is not a function/);
-    expect(errors[0].proc).toBe('ReactNativeJS(3132)');
+    const firstError = errors[0];
+    assert(firstError);
+    expect(firstError.msg).toMatch(/undefined is not a function/);
+    expect(firstError.proc).toBe('ReactNativeJS(3132)');
     // The banner is skipped, not recorded raw.
     expect(deviceLog().some((r) => r.msg?.includes('beginning of main'))).toBe(false);
 
-    process.kill(child.pid, 'SIGTERM');
+    process.kill(childPid(child), 'SIGTERM');
     expect(await exited(child)).toEqual({ code: 0, signal: null });
     expect('collectors' in (state() || {})).toBe(false);
   });
@@ -354,10 +383,12 @@ describe('the android collector, spawned for real against a fake adb', () => {
       '--package',
       'com.example.app',
     ]);
-    const registered = await until(() => readCollectors(root).android, { label: 'the android registration' });
+    const registered = await until(() => readCollectors(root).android as CollectorEntry, {
+      label: 'the android registration',
+    });
     expect(registered.pid).toBe(child.pid);
     expect(deviceLog().some((r) => r.event === 'collector_started')).toBe(false);
-    process.kill(child.pid, 'SIGKILL');
+    process.kill(childPid(child), 'SIGKILL');
     await exited(child);
   });
 
@@ -379,7 +410,7 @@ describe('the android collector, spawned for real against a fake adb', () => {
       'com.example.app',
     ]);
     await until(() => readCollectors(root).android, { label: 'the android registration' });
-    process.kill(child.pid, 'SIGTERM');
+    process.kill(childPid(child), 'SIGTERM');
     expect(await exited(child)).toEqual({ code: 0, signal: null });
     expect('collectors' in (state() || {})).toBe(false);
     expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
@@ -408,6 +439,7 @@ describe('runCollector seams', () => {
     expect(result).toBe(null);
     expect(code).toBe(1);
     const failed = deviceLog().find((r) => r.event === 'collector_failed');
+    assert(failed);
     expect(failed.msg).toMatch(/no process appeared/);
     expect(failed.level).toBe('error');
     expect('collectors' in (state() || {})).toBe(false);
@@ -430,7 +462,9 @@ describe('runCollector seams', () => {
     });
     expect(result).toBe(null);
     expect(code).toBe(1);
-    expect(deviceLog().find((r) => r.event === 'collector_failed').msg).toMatch(/ENOENT/);
+    const failed = deviceLog().find((r) => r.event === 'collector_failed');
+    assert(failed);
+    expect(failed.msg).toMatch(/ENOENT/);
   });
 });
 
@@ -484,10 +518,10 @@ describe('the android collector follows the app across a restart', () => {
 
     // Still one collector, still registered under this pid, still alive: a
     // restart is not an exit.
-    expect(readCollectors(root).android.pid).toBe(child.pid);
+    expect((readCollectors(root).android as { pid?: number }).pid).toBe(child.pid);
     expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBe(false);
 
-    process.kill(child.pid, 'SIGTERM');
+    process.kill(childPid(child), 'SIGTERM');
     expect(await exited(child)).toEqual({ code: 0, signal: null });
     expect('collectors' in (state() || {})).toBe(false);
   });
@@ -512,7 +546,7 @@ describe('the android collector follows the app across a restart', () => {
     await until(() => deviceLog().some((r) => /steady/.test(r.msg || '')), { label: 'the stream' });
     await new Promise((r) => setTimeout(r, 400)); // several polls
     expect(deviceLog().filter((r) => r.event === 'collector_reattached').length).toBe(0);
-    process.kill(child.pid, 'SIGKILL');
+    process.kill(childPid(child), 'SIGKILL');
     await exited(child);
   });
 });
@@ -521,26 +555,12 @@ describe('the android collector follows the app across a restart', () => {
 // that ends on its own while the app is back under a new pid, and a watcher
 // that must not outlive the collector.
 describe('runCollector reattach seams', () => {
-  const fakeChild = (pid) => {
-    const handlers = {};
-    return {
-      pid,
-      stdout: { setEncoding() {}, on() {} },
-      stderr: { setEncoding() {}, on() {} },
-      on(event, fn) {
-        handlers[event] = fn;
-      },
-      emit(event, ...args) {
-        handlers[event]?.(...args);
-      },
-      kill() {
-        this.killed = true;
-      },
-    };
-  };
+  // startStream hands back the stream pid, typed `number | null` on the seam;
+  // at runtime it is always the resolved number, so a null collapses to undefined.
+  const fakeChild = (pid: number | null | undefined) => makeChildProcess({ pid: pid ?? undefined });
 
   test('a stream that ends while the app is back under a new pid reattaches instead of exiting', async () => {
-    const started = [];
+    const started: ChildProcess[] = [];
     let pid = 3132;
     let code = null;
     const result = await runCollector({
@@ -566,11 +586,14 @@ describe('runCollector reattach seams', () => {
     expect(started.map((c) => c.pid)).toEqual([3132]);
 
     pid = 4200;
-    started[0].emit('exit', 0, null);
+    const firstStarted = started[0];
+    assert(firstStarted);
+    firstStarted.emit('exit', 0, null);
 
     expect(started.map((c) => c.pid)).toEqual([3132, 4200]);
     expect(code).toBe(null);
     expect(deviceLog().some((r) => r.event === 'collector_reattached')).toBeTruthy();
+    assert(result);
     result.finish(0, 'info', 'done', 'collector_stopped');
   });
 
@@ -590,6 +613,7 @@ describe('runCollector reattach seams', () => {
         code = c;
       },
     });
+    assert(result?.child);
     result.child.emit('exit', 0, null);
     expect(code).toBe(0);
     expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
@@ -618,6 +642,7 @@ describe('runCollector reattach seams', () => {
       onExit: () => {},
     });
     expect(result).toBeTruthy();
+    assert(result);
     result.finish(0, 'info', 'done', 'collector_stopped');
     expect(stopped).toBe(true);
   });

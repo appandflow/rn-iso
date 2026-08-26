@@ -5,9 +5,11 @@
 //    healthy build as a failure.
 // 2. --json emits the raw records, one per line, so its stdout is itself
 //    valid NDJSON and can be piped straight back into a parser.
+import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Command } from 'commander';
 import { parseNdjsonLine } from '../ndjson.ts';
 import logsCommand, {
   ERRORS_PRINT_CAP,
@@ -19,11 +21,31 @@ import logsCommand, {
   validateSources,
 } from '../commands/logs.ts';
 
+// The action callback commander invokes for `logs`: `(opts)`.
+type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
+
+interface CommandStub {
+  command(nameAndArgs?: string): CommandStub;
+  description(str?: string): CommandStub;
+  option(flags?: string, description?: string): CommandStub;
+  action(fn: ActionFn): CommandStub;
+}
+
+// Turns the merged NDJSON lines a --json run prints back into their record
+// messages, asserting each line parsed (parseNdjsonLine returns null on junk).
+function parsedMsgs(lines: string[]): unknown[] {
+  return lines.map((l) => {
+    const record = parseNdjsonLine(l);
+    assert(record);
+    return record.msg;
+  });
+}
+
 // Same commander stub the other command tests use: capturing the action is the
 // only way to run it without commander's own argument parsing.
-function captureAction(register) {
-  let captured;
-  const stub = {
+function captureAction(register: (program: Command) => void) {
+  let captured: ActionFn | undefined;
+  const stub: CommandStub = {
     command() {
       return stub;
     },
@@ -33,20 +55,23 @@ function captureAction(register) {
     option() {
       return stub;
     },
-    action(fn) {
+    action(fn: ActionFn) {
       captured = fn;
       return stub;
     },
   };
-  register(stub);
-  return (opts = {}) => captured(opts);
+  register(stub as Command);
+  return (opts: Record<string, unknown> = {}) => {
+    if (!captured) throw new Error('register did not register an action');
+    return captured(opts);
+  };
 }
 
 describe('formatting', () => {
   test('formatTime renders local wall clock to the millisecond', () => {
     const ts = Date.UTC(2026, 7, 25, 12, 34, 56, 789);
     const d = new Date(ts);
-    const pad = (n, w = 2) => String(n).padStart(w, '0');
+    const pad = (n: number, w = 2) => String(n).padStart(w, '0');
     const expected = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
     expect(formatTime(ts)).toBe(expected);
     expect(formatTime(ts)).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3}$/);
@@ -163,16 +188,16 @@ describe('option validation', () => {
 });
 
 describe('logs command', () => {
-  let tmpHome;
-  let project;
-  let logsDir;
-  let cwd;
-  let out;
-  let errOut;
-  let exitCode;
-  let origLog;
-  let origError;
-  let origExit;
+  let tmpHome: string;
+  let project: string;
+  let logsDir: string;
+  let cwd: string;
+  let out: string[];
+  let errOut: string[];
+  let exitCode: string | number | null | undefined;
+  let origLog: typeof console.log;
+  let origError: typeof console.error;
+  let origExit: typeof process.exit;
 
   beforeEach(() => {
     tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-logscmd-home-'));
@@ -208,15 +233,15 @@ describe('logs command', () => {
     delete process.env.RN_ISO_HOME;
   });
 
-  function writeLog(name, records) {
+  function writeLog(name: string, records: unknown[]) {
     writeFileSync(join(logsDir, name), records.map((r) => `${JSON.stringify(r)}\n`).join(''));
   }
 
-  function run(opts) {
+  function run(opts: Record<string, unknown>) {
     try {
       captureAction(logsCommand)(opts);
     } catch (err) {
-      if (err.message !== 'exit') throw err;
+      if ((err as Error).message !== 'exit') throw err;
     }
   }
 
@@ -259,7 +284,7 @@ describe('logs command', () => {
     ]);
     writeLog('build-ios.ndjson', [{ ts: 20, src: 'build', level: 'info', msg: 'launched', marker: true }]);
     run({ errors: true, json: true });
-    expect(out.map((l) => parseNdjsonLine(l).msg)).toEqual(['fresh']);
+    expect(parsedMsgs(out)).toEqual(['fresh']);
   });
 
   test('--source, --level, --grep and --tail reach the query', () => {
@@ -270,7 +295,7 @@ describe('logs command', () => {
     ]);
     writeLog('client.ndjson', [{ ts: 4, src: 'client', level: 'error', msg: 'Unable to resolve module c' }]);
     run({ source: ['metro'], level: 'error', grep: 'resolve module', tail: '1', json: true });
-    expect(out.map((l) => parseNdjsonLine(l).msg)).toEqual(['Unable to resolve module b']);
+    expect(parsedMsgs(out)).toEqual(['Unable to resolve module b']);
   });
 
   test('a bad --since exits 1 with a message naming the accepted forms', () => {
@@ -333,7 +358,7 @@ describe('logs command', () => {
       { ts: now - 1000, src: 'metro', level: 'info', msg: 'a second ago' },
     ]);
     run({ since: '30s', json: true });
-    expect(out.map((l) => parseNdjsonLine(l).msg)).toEqual(['a second ago']);
+    expect(parsedMsgs(out)).toEqual(['a second ago']);
   });
 
   // --- the field case ------------------------------------------------------
@@ -357,11 +382,11 @@ describe('logs command', () => {
       writeLog('client.ndjson', [{ ts: 2, src: 'client', level: 'error', msg: 'js crash' }]);
 
       run({ errors: true, source: ['device'], json: true });
-      expect(out.map((l) => parseNdjsonLine(l).msg)).toEqual(['native crash']);
+      expect(parsedMsgs(out)).toEqual(['native crash']);
 
       out.length = 0;
       run({ errors: true, source: ['all'], json: true });
-      expect(out.map((l) => parseNdjsonLine(l).msg)).toEqual(['native crash', 'js crash']);
+      expect(parsedMsgs(out)).toEqual(['native crash', 'js crash']);
     });
 
     test('a plain logs (no --errors) still prints the device stream', () => {
@@ -416,7 +441,7 @@ describe('logs command', () => {
     // The field sequence: the crash at 16:03:54 and the bundle_build_done
     // marker that landed at 16:03:55 and used to swallow it.
     test('a bundle marker one second after a startup crash does not hide it', () => {
-      const at = (sec) => Date.parse(`2026-08-24T16:03:${sec}Z`);
+      const at = (sec: number) => Date.parse(`2026-08-24T16:03:${sec}Z`);
       writeLog('build-ios.ndjson', [{ ts: at(50), src: 'build', level: 'info', msg: 'launched', marker: true }]);
       writeLog('client.ndjson', [
         { ts: at(54), src: 'client', level: 'error', msg: '[Error: Exception in HostFunction]' },
@@ -425,7 +450,7 @@ describe('logs command', () => {
         { ts: at(55), src: 'metro', level: 'info', msg: 'bundle build done (1)', marker: true },
       ]);
       run({ errors: true, json: true });
-      expect(out.map((l) => parseNdjsonLine(l).msg)).toEqual(['[Error: Exception in HostFunction]']);
+      expect(parsedMsgs(out)).toEqual(['[Error: Exception in HostFunction]']);
     });
   });
 });
