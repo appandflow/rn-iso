@@ -23,7 +23,7 @@ import chalk from 'chalk';
 import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawnEntry } from '../spawn-entry.ts';
 import type { Command } from 'commander';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.ts';
 import { getConcurrencyLimits, getProject, upsertProject, type ProjectRecord } from '../config.ts';
@@ -201,7 +201,7 @@ export function collectorLogFile(root: string): string {
 }
 
 export function collectorEntry() {
-  return fileURLToPath(new URL('../collector/run.ts', import.meta.url));
+  return spawnEntry('collector-run');
 }
 
 // How many extracted diagnostics reach stderr. The engine caps at 10; the

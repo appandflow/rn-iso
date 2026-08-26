@@ -28,7 +28,7 @@ import chalk from 'chalk';
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawnEntry } from '../spawn-entry.ts';
 import type { Command } from 'commander';
 import type { AndroidFacts, WaitedForBuild } from '../types.ts';
 import { getConcurrencyLimits, getProject, upsertProject, type ProjectRecord } from '../config.ts';
@@ -54,7 +54,7 @@ import {
 } from './ios.ts';
 import { resolveSettings } from '../settings.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
-import { readCollectors } from '../collector/run.ts';
+import { readCollectors } from '../collector/state.ts';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
 import { DEFAULT_METRO_PORT, LAUNCH_UNVERIFIED, androidDevClientUrl, installAndroidApp, launchAndroidApp, unverifiedLaunchLines, verifyLaunch } from '../engine/app-install.ts';
 import { androidHome } from '../sim/android.ts';
@@ -408,7 +408,7 @@ export function androidDevClientScheme(root: string, apkPath: unknown, { exec = 
 }
 
 export function collectorEntry(): string {
-  return fileURLToPath(new URL('../collector/run.ts', import.meta.url));
+  return spawnEntry('collector-run');
 }
 
 // PURE. `  fingerprint a3f9b1.. hit`

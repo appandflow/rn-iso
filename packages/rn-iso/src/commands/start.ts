@@ -16,7 +16,6 @@
 // judgment to make.
 import chalk from 'chalk';
 import { mkdirSync, openSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import type { Command } from 'commander';
 import type { StartError, StartFacts, SupervisorRecord } from '../types.ts';
 import { getProject, upsertProject } from '../config.ts';
@@ -29,13 +28,14 @@ import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } f
 import { installedSkillVersions, staleSkillWarning } from './skill.ts';
 import { readWorkspaceState } from '../supervisor/state.ts';
 import { ensureWorkspaceIgnored } from '../engine/workspace.ts';
+import { spawnEntry } from '../spawn-entry.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
 const LOG_TAIL_LINES = 5;
 
 export function supervisorEntry() {
-  return fileURLToPath(new URL('../supervisor/run.ts', import.meta.url));
+  return spawnEntry('supervisor-run');
 }
 
 interface WaitResult {

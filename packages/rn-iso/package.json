@@ -4,11 +4,10 @@
   "description": "Isolated React Native dev environments per project/worktree",
   "type": "module",
   "bin": {
-    "rn-iso": "bin/cli.ts"
+    "rn-iso": "dist/cli.js"
   },
   "files": [
-    "bin",
-    "src",
+    "dist",
     "skill",
     "LICENSE",
     "README.md"
@@ -45,6 +44,9 @@
   "license": "MIT",
   "author": "Janic Duplessis",
   "exports": {
-    "./cache-manifest": "./src/cache-manifest.ts"
+    "./cache-manifest": {
+      "types": "./dist/cache-manifest.d.ts",
+      "default": "./dist/cache-manifest.js"
+    }
   }
 }

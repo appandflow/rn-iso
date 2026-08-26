@@ -35,7 +35,6 @@ import type { Executor } from '../exec.ts';
 import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../paths.ts';
 import { createLineReader } from '../supervisor/server-expo.ts';
-import { readWorkspaceState, withWorkspaceStateLock, writeWorkspaceState } from '../supervisor/state.ts';
 import { appNameFromBundleId, parseLogStreamLine, startIosLogStream } from './ios.ts';
 import { type PidResolution, type PidWatcher, parseLogcatLine, startAndroidLogcat, waitForAppPid, watchAppPid } from './android.ts';
 
@@ -97,42 +96,12 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
 
 // --- Contract 5: the collector registration -------------------------------
 //
-// Merged into the SAME state.json the supervisor writes, under its own
-// `collectors` key, so `stop` and `status` read one file. Both writers
-// read-modify-write, which is why each only ever touches its own key: a
-// collector exiting must never take `supervisor` or the other platform's
-// entry with it.
-
-// The collectors merge (read `collectors`, add or drop this platform, write)
-// is itself a read-modify-write, so it runs inside the state lock -- two
-// collectors (ios + android) registering at once would otherwise each read the
-// other's absence and drop it. The nested writeWorkspaceState re-acquires the
-// same lock, which is reentrant, so this does not deadlock.
-export function registerCollector(root: string, platform: string, record: Record<string, unknown>): Record<string, unknown> {
-  return withWorkspaceStateLock(root, () => {
-    const collectors = { ...(readWorkspaceState(root)?.collectors || {}), [platform]: record };
-    writeWorkspaceState(root, { collectors });
-    return collectors;
-  });
-}
-
-export function unregisterCollector(root: string, platform: string): Record<string, unknown> {
-  return withWorkspaceStateLock(root, () => {
-    const state = readWorkspaceState(root);
-    const collectors: Record<string, unknown> = { ...(state?.collectors || {}) };
-    if (!(platform in collectors)) return collectors;
-    delete collectors[platform];
-    // JSON.stringify drops an undefined value, so passing undefined REMOVES the
-    // key rather than leaving an empty object behind -- and it does so through
-    // the same merging writer, instead of a second copy of the atomic write.
-    writeWorkspaceState(root, { collectors: Object.keys(collectors).length ? collectors : undefined });
-    return collectors;
-  });
-}
-
-export function readCollectors(root: string): Record<string, unknown> {
-  return readWorkspaceState(root)?.collectors || {};
-}
+// The Contract-5 collector state helpers now live in a guard-free module
+// (collector/state.ts) so `android` can import them without dragging this
+// spawnable daemon entry into the CLI bundle. Re-exported here for callers --
+// and tests -- that still reach for them on run.ts.
+import { readCollectors, registerCollector, unregisterCollector } from './state.ts';
+export { readCollectors, registerCollector, unregisterCollector };
 
 // --- the collector itself -------------------------------------------------
 
