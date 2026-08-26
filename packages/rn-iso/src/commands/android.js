@@ -28,10 +28,11 @@ import chalk from 'chalk';
 import { existsSync, readdirSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getProject, upsertProject } from '../config.js';
+import { getConcurrencyLimits, getProject, upsertProject } from '../config.js';
 import { getExecutor } from '../exec.js';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.js';
 import { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild } from '../engine/build-lock.js';
+import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.js';
 import { createNdjsonWriter } from '../ndjson.js';
 import { isPidAlive, resolveProjectMetro } from '../metro.js';
 import { workspaceLogsDir } from '../paths.js';
@@ -54,7 +55,7 @@ import { readCollectors } from '../collector/run.js';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/run.js';
 import { DEFAULT_METRO_PORT, LAUNCH_UNVERIFIED, androidDevClientUrl, installAndroidApp, launchAndroidApp, unverifiedLaunchLines, verifyLaunch } from '../engine/app-install.js';
 import { androidHome } from '../sim/android.js';
-import { ensureBooted, ensureOwnedDevice } from '../engine/device.js';
+import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.js';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.js';
 import { buildAndroid } from '../engine/gradle.js';
 import {
@@ -439,6 +440,10 @@ export async function runAndroid({
   // project's provider both -- and nothing else: the fresh build is still
   // stored (over the entry it was told not to trust) and still uploaded.
   useBuildCache = true,
+  getLimits = getConcurrencyLimits,
+  checkCapacity = checkDeviceCapacity,
+  acquireSlot = acquireBuildSlot,
+  releaseSlot = releaseBuildSlot,
   ensureDevice = ensureOwnedDevice,
   ensureDeviceBooted = ensureBooted,
   resolveMetro = resolveProjectMetro,
@@ -501,6 +506,21 @@ export async function runAndroid({
     }
   };
 
+  // The build SLOT (engine/build-slots.js), when concurrency.maxBuilds is set
+  // and this run compiles. Acquired inside the build try below and released in
+  // the same finally as the build lock, so a return through fail() frees it too.
+  let buildSlot = null;
+  const releaseHeldSlot = () => {
+    if (!buildSlot) return;
+    const held = buildSlot;
+    buildSlot = null;
+    try {
+      releaseSlot(held);
+    } catch (err) {
+      out(phaseLine('build', chalk.dim(`could not release the build slot: ${err?.message || err}`)));
+    }
+  };
+
   const phase = (label, text) => out(phaseLine(label, text));
   // One formatter for every refusal, so a failed run reads the same whatever
   // step failed: the code and the message, then whatever was extracted, then
@@ -533,6 +553,16 @@ export async function runAndroid({
   upsertProject(root, { bundleId: detectBundleId(root), androidPackage, isExpo });
   const project = getProject(root);
   const label = projectShortcut(root, project);
+
+  // ---- concurrency: opt-in, unlimited by default ----
+  const limits = getLimits();
+
+  // The device cap is checked BEFORE ensureDevice, which creates and boots an
+  // emulator: a refusal has to fire before that. It never refuses a workspace
+  // whose own emulator is already running (re-running `android` is
+  // idempotent), only a NEW device over concurrency.maxDevices.
+  const capacity = checkCapacity({ platform: PLATFORM, project, max: limits.maxDevices });
+  if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
 
   // ---- device --------------------------------------------------------
   let device;
@@ -774,6 +804,19 @@ export async function runAndroid({
     // below, so a waiting workspace starts installing the moment the artifact
     // is in the cache rather than when this run finishes launching.
     try {
+      // ---- build slot (opt-in concurrency limit) ----
+      //
+      // AFTER single-flight dedup: a run that installed another workspace's
+      // artifact never reached here, so it never consumed a slot. A full slate
+      // WAITS, with the same pid-liveness a dead builder frees within a poll.
+      if (limits.maxBuilds) {
+        try {
+          buildSlot = await acquireSlot({ max: limits.maxBuilds, root, logFile: buildLog, out });
+        } catch (err) {
+          phase('build', chalk.yellow(`could not take a build slot: ${err?.message || err}; building anyway`));
+        }
+      }
+
       if (needsPrebuildFor(root, PLATFORM, isExpo)) {
         const pre = await prebuild(root, PLATFORM, writer, { isExpo });
         if (pre.failed) {
@@ -837,6 +880,7 @@ export async function runAndroid({
       }
     } finally {
       releaseHeldLock();
+      releaseHeldSlot();
     }
   }
   record.appPath = apkPath;

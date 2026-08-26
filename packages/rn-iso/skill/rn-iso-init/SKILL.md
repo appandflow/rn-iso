@@ -452,3 +452,35 @@ for anything needing a depth or `atomic`.
 ```json
 { "caches": ["~/.myapp-metro-cache", "~/.myapp-build-cache"] }
 ```
+
+## Optional: cap parallelism on a machine that cannot take it
+
+Everything above makes a second workspace cheap; none of it limits how many run
+at once, and by default rn-iso imposes no limit. If a machine genuinely cannot
+host as many parallel builds or booted simulators as there are agents, two
+machine-level caps are the opt-in. They are NOT per-project (the resource being
+shared — cores, RAM, booted sims — is the whole machine's), so they live under a
+top-level `concurrency` key in `~/.rn-iso/config.json`, not in a committed
+`.rn-iso.json`:
+
+```json
+{ "concurrency": { "maxBuilds": 2, "maxDevices": 3 } }
+```
+
+`RN_ISO_MAX_BUILDS` / `RN_ISO_MAX_DEVICES` override the file for a single run.
+Unset, `0`, or any non-positive value means no enforcement — the default.
+
+- `maxBuilds` caps concurrent **compiles**. A build over the cap WAITS for a
+  free slot (batch-shaped), the same way a second workspace waits on the
+  single-flight build lock. A waiter that only installs another workspace's
+  cached artifact never consumes a slot.
+- `maxDevices` caps **booted** rn-iso devices. A new `rn-iso ios`/`android` at
+  the cap is REFUSED with `RN_ISO_AT_CAPACITY` (interactive-shaped — it does not
+  queue). Re-running on a workspace whose device is already booted is never
+  refused. Free one with `rn-iso stop`, or raise the cap.
+
+`rn-iso doctor` prints one note echoing the caps and the current live count, but
+only when a cap is set. `rn-iso gc` reports stale build slots (a builder that
+died holding one) the way it reports stale build locks, and `gc --delete`
+clears them. There is no `rn-iso config` command — this is a file and two env
+vars; see `rn-iso guide lifecycle` and `guide settings`.

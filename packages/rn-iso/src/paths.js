@@ -38,6 +38,14 @@ export function workspaceStateFile(projectRoot) {
   return join(workspaceDir(projectRoot), 'state.json');
 }
 
+// The advisory lock guarding state.json's multi-writer read-modify-write (the
+// supervisor, each collector, and ios/android's lastBuild all patch this one
+// file). mkdir-mtime, like the config lock -- these writes are milliseconds, so
+// the staleness guard is age, not pid-liveness. See src/dir-lock.js.
+export function workspaceStateLock(projectRoot) {
+  return join(workspaceDir(projectRoot), 'state.lock');
+}
+
 // The supervisor's own stdio, raw rather than NDJSON: it is what a spawn that
 // died before it could write a single structured record leaves behind, so it
 // is the one file `start` quotes when a supervisor never comes up.

@@ -34,6 +34,7 @@ import {
   volumeRootFor,
 } from '../fs-util.js';
 import { listBuildLocks } from '../engine/build-lock.js';
+import { listBuildSlots } from '../engine/build-slots.js';
 import { reclaimProject } from '../reclaim.js';
 import { listAllIosSims } from '../sim/ios.js';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.js';
@@ -271,6 +272,7 @@ export function formatGcReport({
   staleDevices = [],
   staleDeviceRecords = [],
   buildLocks = { stale: [], live: [] },
+  buildSlots = { stale: [], live: [] },
   deviceSweepNotices = [],
   caches = [],
   olderThan = null,
@@ -278,9 +280,10 @@ export function formatGcReport({
   const lines = [];
   const staleLocks = buildLocks?.stale ?? [];
   const liveLocks = buildLocks?.live ?? [];
+  const staleSlots = buildSlots?.stale ?? [];
 
   if (deadProjects.length === 0 && orphanedDevices.length === 0 && staleDevices.length === 0
-    && staleDeviceRecords.length === 0 && staleLocks.length === 0) {
+    && staleDeviceRecords.length === 0 && staleLocks.length === 0 && staleSlots.length === 0) {
     const reasons = [];
     if (skipped.length > 0) {
       reasons.push(`${skipped.length} entr${skipped.length === 1 ? 'y' : 'ies'} could not be checked`);
@@ -334,6 +337,18 @@ export function formatGcReport({
     for (const lock of staleLocks) {
       lines.push(`  ${lock.platform} ${shortKey(lock.key)} (pid ${lock.pid ?? '?'} is not running)`);
       lines.push(`              started by ${lock.projectRoot || 'an unrecorded workspace'}`);
+    }
+  }
+
+  // The opt-in concurrency limit's slots, reported the same way and for the
+  // same reason as the locks above: a slot whose builder is gone is debris a
+  // reboot or a SIGKILL left behind, and --delete clears it. A LIVE slot is a
+  // build in progress and is never listed here.
+  if (staleSlots.length) {
+    lines.push(`Stale build slots (${staleSlots.length}) - the process that was building is gone:`);
+    for (const slot of staleSlots) {
+      lines.push(`  slot ${slot.index ?? '?'} (pid ${slot.pid ?? '?'} is not running)`);
+      lines.push(`              held by ${slot.projectRoot || 'an unrecorded workspace'}`);
     }
   }
 
@@ -711,6 +726,10 @@ export async function collectGcReport({
   // machine-global and need the guard above. A throwaway home simply has no
   // locks in it.
   const locks = listBuildLocks();
+  // Build slots are the opt-in concurrency limit's semaphore, under the config
+  // dir like the locks, so RN_ISO_HOME scopes them the same way. A stale slot
+  // is a build that died holding one; a live slot is a build in progress.
+  const slots = listBuildSlots();
 
   return {
     skipped,
@@ -721,6 +740,10 @@ export async function collectGcReport({
     buildLocks: {
       stale: locks.filter(l => !l.alive),
       live: locks.filter(l => l.alive),
+    },
+    buildSlots: {
+      stale: slots.filter(s => !s.alive),
+      live: slots.filter(s => s.alive),
     },
     deviceSweepNotices,
     caches,
@@ -745,7 +768,7 @@ export async function runGc(opts = {}) {
   });
   for (const line of formatGcReport(report)) console.log(line);
 
-  const { deadProjects, orphanedDevices, staleDevices, staleDeviceRecords, buildLocks, caches } = report;
+  const { deadProjects, orphanedDevices, staleDevices, staleDeviceRecords, buildLocks, buildSlots, caches } = report;
   // Caches only count as actionable with --older-than: emptying one whole is a
   // performance decision aimed at a specific cache, not something a sweep
   // should do on the way past.
@@ -754,6 +777,7 @@ export async function runGc(opts = {}) {
     || staleDevices.length > 0
     || staleDeviceRecords.length > 0
     || buildLocks.stale.length > 0
+    || buildSlots.stale.length > 0
     || ((olderThan !== null || all) && caches.length > 0);
 
   if (!opts.delete) {
@@ -850,6 +874,18 @@ export async function runGc(opts = {}) {
     } catch (err) {
       deleteFailures++;
       console.log(chalk.red(`Failed to clear the build lock at ${lock.path}: ${err?.message || err}`));
+    }
+  }
+
+  // Stale build slots, the same way: only ever the directory, and only a slot
+  // no live builder holds (a live one was never in this list).
+  for (const slot of buildSlots.stale) {
+    try {
+      rmSync(slot.path, { recursive: true, force: true });
+      console.log(chalk.green(`Cleared build slot ${slot.index ?? '?'} left by pid ${slot.pid ?? '?'} (${slot.projectRoot || 'unrecorded workspace'})`));
+    } catch (err) {
+      deleteFailures++;
+      console.log(chalk.red(`Failed to clear the build slot at ${slot.path}: ${err?.message || err}`));
     }
   }
 

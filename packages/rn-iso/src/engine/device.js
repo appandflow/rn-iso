@@ -247,6 +247,85 @@ async function bootOwnedAvdOnFreshPort({ avdName, projectPath, deviceName, out }
   return newRecord;
 }
 
+// --- the OPT-IN device concurrency cap -----------------------------------
+//
+// concurrency.maxDevices caps how many rn-iso-owned devices are booted at
+// once. Unlike the build slots, this does NOT queue: booting a device is
+// interactive-shaped (a person is waiting on `rn-iso ios`), so at the cap the
+// command REFUSES with RN_ISO_AT_CAPACITY rather than blocking. The refusal is
+// only for a NEW device: a workspace whose own device is already live is
+// idempotent and never refused, so re-running `rn-iso ios` on an environment
+// you already have costs nothing.
+//
+// PURE: the sim list, the adb result and the config all come in as arguments,
+// so the verdict is testable without a simulator. checkDeviceCapacity below is
+// the thin I/O wrapper that gathers them.
+
+// The machine-wide count of LIVE rn-iso-owned devices. iOS ownership is by the
+// `rn-iso-` name prefix on a Booted sim; an Android emulator carries no name in
+// `adb devices`, so its ownership is read from the registry -- a running
+// console port recorded by some project as an owned AVD.
+export function liveOwnedDeviceCount({ sims = [], adbEmulators = [], config = null } = {}) {
+  let count = 0;
+  for (const sim of sims) {
+    if (sim?.state === 'Booted' && sim.name?.startsWith('rn-iso-')) count++;
+  }
+  const livePorts = new Set(adbEmulators.map(e => e.consolePort));
+  for (const proj of Object.values(config?.projects || {})) {
+    const android = proj?.platforms?.android;
+    if (android?.owned && android.avdName && typeof android.consolePort === 'number' && livePorts.has(android.consolePort)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+// Does THIS workspace already have a live device of its own for `platform`?
+export function workspaceHasLiveDevice({ platform, project, sims = [], adbEmulators = [] } = {}) {
+  const record = project?.platforms?.[platform];
+  if (!record) return false;
+  if (platform === 'ios') {
+    return sims.some(s => s.udid === record.deviceUdid && s.state === 'Booted');
+  }
+  return typeof record.consolePort === 'number' && adbEmulators.some(e => e.consolePort === record.consolePort);
+}
+
+// PURE. The refusal, or null when a device may be booted. `null` covers three
+// cases: no cap set, under the cap, or this workspace already booted its own.
+export function deviceCapacityRefusal({ platform, project, max, sims = [], adb = null, config = null } = {}) {
+  if (!max || max <= 0) return null;
+  const adbEmulators = adb?.emulators || [];
+  if (workspaceHasLiveDevice({ platform, project, sims, adbEmulators })) return null;
+  const count = liveOwnedDeviceCount({ sims, adbEmulators, config });
+  if (count < max) return null;
+  return {
+    code: 'RN_ISO_AT_CAPACITY',
+    message: `${count} rn-iso device(s) are already booted and concurrency.maxDevices is ${max}, so booting another would exceed the cap.`,
+    remedy: 'stop an environment (rn-iso stop) or raise concurrency.maxDevices',
+  };
+}
+
+// The thin I/O wrapper `ios` / `android` call: gathers the live sim list, adb
+// devices and the config, and returns deviceCapacityRefusal's verdict. A
+// tool failure while gathering fails OPEN (returns null): a cap is an
+// optimisation for a busy machine, and a flaky simctl must not block a build.
+export function checkDeviceCapacity({ platform, project, max, sims = listAllIosSims, adb = listAdbDevices, config = loadConfig } = {}) {
+  if (!max || max <= 0) return null;
+  let simList = [];
+  let adbRes = { emulators: [] };
+  try {
+    simList = typeof sims === 'function' ? (sims() || []) : (sims || []);
+  } catch { /* fail open */ }
+  try {
+    adbRes = typeof adb === 'function' ? (adb() || { emulators: [] }) : (adb || { emulators: [] });
+  } catch { /* fail open */ }
+  let cfg = null;
+  try {
+    cfg = typeof config === 'function' ? config() : config;
+  } catch { /* fail open */ }
+  return deviceCapacityRefusal({ platform, project, max, sims: simList, adb: adbRes, config: cfg });
+}
+
 // Pure. Answers "is the sim we already own the model the caller just asked
 // for?" -- returns a human-readable mismatch or null. Before this, the
 // requested device type was consulted only on CREATION, so asking for a

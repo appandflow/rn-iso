@@ -15,6 +15,7 @@ import {
   metroConfigDelegate,
   detectXcodeMajor,
   parseXcodeMajor,
+  checkConcurrency,
 } from '../src/doctor.js';
 import { resetExecutor, setExecutor } from '../src/exec.js';
 
@@ -410,4 +411,38 @@ test('the EAS finding reaches the report runDoctor returns', () => {
   });
   assert.ok(findings.some(f => /EAS/.test(f.title) && f.level === 'cost'));
   rmSync(dir, { recursive: true, force: true });
+});
+
+// --- concurrency note (only when limits are set) ---
+test('checkConcurrency is silent when no limit is set', () => {
+  assert.equal(checkConcurrency({ maxBuilds: 0, maxDevices: 0 }), null);
+});
+
+test('checkConcurrency echoes the caps and the current live count when set', () => {
+  const f = checkConcurrency({ maxBuilds: 2, maxDevices: 3, liveDevices: 1, activeBuilds: 0 });
+  assert.equal(f.level, 'note');
+  assert.match(f.detail, /maxBuilds 2/);
+  assert.match(f.detail, /maxDevices 3/);
+  assert.match(f.detail, /1 /); // live device count echoed
+});
+
+test('runDoctor stays silent about concurrency when nothing is set', () => {
+  const project = mkdtempSync(join(tmpdir(), 'rn-iso-doc-conc-'));
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+  const findings = runDoctor(project, { concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }) });
+  assert.ok(!findings.some(f => /concurrency/i.test(f.title)), 'no concurrency finding when unset');
+  rmSync(project, { recursive: true, force: true });
+});
+
+test('runDoctor emits one concurrency note when a limit is set', () => {
+  const project = mkdtempSync(join(tmpdir(), 'rn-iso-doc-conc2-'));
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+  const findings = runDoctor(project, {
+    concurrency: () => ({ maxBuilds: 1, maxDevices: 2 }),
+    liveDevices: () => 0,
+    activeBuilds: () => 0,
+  });
+  const notes = findings.filter(f => /concurrency/i.test(f.title));
+  assert.equal(notes.length, 1);
+  rmSync(project, { recursive: true, force: true });
 });

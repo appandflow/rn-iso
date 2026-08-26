@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { createNdjsonWriter } from '../ndjson.js';
 import { workspaceLogsDir } from '../paths.js';
 import { createLineReader } from '../supervisor/server-expo.js';
-import { readWorkspaceState, writeWorkspaceState } from '../supervisor/run.js';
+import { readWorkspaceState, withWorkspaceStateLock, writeWorkspaceState } from '../supervisor/run.js';
 import { appNameFromBundleId, parseLogStreamLine, startIosLogStream } from './ios.js';
 import { parseLogcatLine, startAndroidLogcat, waitForAppPid, watchAppPid } from './android.js';
 
@@ -80,22 +80,31 @@ export function parseArgs(argv) {
 // collector exiting must never take `supervisor` or the other platform's
 // entry with it.
 
+// The collectors merge (read `collectors`, add or drop this platform, write)
+// is itself a read-modify-write, so it runs inside the state lock -- two
+// collectors (ios + android) registering at once would otherwise each read the
+// other's absence and drop it. The nested writeWorkspaceState re-acquires the
+// same lock, which is reentrant, so this does not deadlock.
 export function registerCollector(root, platform, record) {
-  const collectors = { ...(readWorkspaceState(root)?.collectors || {}), [platform]: record };
-  writeWorkspaceState(root, { collectors });
-  return collectors;
+  return withWorkspaceStateLock(root, () => {
+    const collectors = { ...(readWorkspaceState(root)?.collectors || {}), [platform]: record };
+    writeWorkspaceState(root, { collectors });
+    return collectors;
+  });
 }
 
 export function unregisterCollector(root, platform) {
-  const state = readWorkspaceState(root);
-  const collectors = { ...(state?.collectors || {}) };
-  if (!(platform in collectors)) return collectors;
-  delete collectors[platform];
-  // JSON.stringify drops an undefined value, so passing undefined REMOVES the
-  // key rather than leaving an empty object behind -- and it does so through
-  // the same merging writer, instead of a second copy of the atomic write.
-  writeWorkspaceState(root, { collectors: Object.keys(collectors).length ? collectors : undefined });
-  return collectors;
+  return withWorkspaceStateLock(root, () => {
+    const state = readWorkspaceState(root);
+    const collectors = { ...(state?.collectors || {}) };
+    if (!(platform in collectors)) return collectors;
+    delete collectors[platform];
+    // JSON.stringify drops an undefined value, so passing undefined REMOVES the
+    // key rather than leaving an empty object behind -- and it does so through
+    // the same merging writer, instead of a second copy of the atomic write.
+    writeWorkspaceState(root, { collectors: Object.keys(collectors).length ? collectors : undefined });
+    return collectors;
+  });
 }
 
 export function readCollectors(root) {

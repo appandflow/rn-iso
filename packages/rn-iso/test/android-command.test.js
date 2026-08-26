@@ -1273,3 +1273,66 @@ test('android fingerprints with platforms scoped to android', async () => {
   assert.equal(seen[0].path, root);
   assert.equal(seen[0].options?.platform, 'android');
 });
+
+// --- opt-in concurrency (unlimited by default) ---
+describe('concurrency limits', () => {
+  test('unset limits change nothing: no slot is taken, no capacity refuses', async () => {
+    let slotAcquired = 0;
+    const h = harness({
+      getLimits: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      acquireSlot: async () => { slotAcquired++; return { acquired: true }; },
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true);
+    assert.equal(slotAcquired, 0, 'no slot is acquired when maxBuilds is unset');
+  });
+
+  test('maxDevices at capacity refuses with RN_ISO_AT_CAPACITY, before ensuring a device', async () => {
+    let capacityArgs = null;
+    const h = harness({
+      getLimits: () => ({ maxBuilds: 0, maxDevices: 3 }),
+      checkCapacity: (args) => {
+        capacityArgs = args;
+        return { code: 'RN_ISO_AT_CAPACITY', message: 'at capacity', remedy: 'stop an environment (rn-iso stop) or raise concurrency.maxDevices' };
+      },
+    });
+    const result = await h.run();
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'RN_ISO_AT_CAPACITY');
+    assert.equal(capacityArgs.max, 3);
+    assert.equal(h.calls.ensureDevice.length, 0, 'the refusal fires before any device is created/booted');
+    assert.match(h.stderr.join('\n'), /rn-iso stop/);
+  });
+
+  test('maxBuilds takes a slot to build and releases it, with the right args', async () => {
+    let slotArgs = null;
+    let released = 0;
+    const h = harness({
+      getLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
+      acquireSlot: async (args) => { slotArgs = args; return { acquired: true, path: '/slot', index: 0, slot: { pid: process.pid } }; },
+      releaseSlot: () => { released++; return true; },
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true);
+    assert.ok(slotArgs, 'a slot is acquired to compile');
+    assert.equal(slotArgs.max, 2);
+    assert.equal(slotArgs.root, root);
+    assert.equal(released, 1, 'the slot is released after the build');
+  });
+
+  test('a waiter that installs another workspace\'s artifact never consumes a slot', async () => {
+    let slotAcquired = 0;
+    let built = 0;
+    const h = harness({
+      getLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
+      acquireLock: () => ({ held: { pid: 41233, projectRoot: '/w/other', logFile: null } }),
+      waitForBuild: async () => ({ hit: fakeApk(), waitedMs: 5000 }),
+      acquireSlot: async () => { slotAcquired++; return { acquired: true }; },
+      build: async () => { built++; return { ok: true, apkPath: fakeApk(), durationMs: 1 }; },
+    });
+    const result = await h.run();
+    assert.equal(result.ok, true);
+    assert.equal(slotAcquired, 0, 'a waiter must not take a build slot');
+    assert.equal(built, 0, 'the waiter installs the cached artifact, it does not compile');
+  });
+});

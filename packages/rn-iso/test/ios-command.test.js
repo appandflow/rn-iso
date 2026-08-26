@@ -1587,3 +1587,71 @@ test('--json says so when a build failed with no recognizable diagnostic', async
   assert.match(payload.message, /no recognizable diagnostic/);
   assert.match(payload.remedy, /build-ios\.ndjson/, 'with no diagnostic remedy, the log path is the next step');
 });
+
+// --- opt-in concurrency (unlimited by default) ---
+describe('concurrency limits', () => {
+  test('unset limits change nothing: no slot is taken, no capacity check refuses', async () => {
+    reserve();
+    let slotAcquired = 0;
+    const { exitCode, calls } = await run({}, {
+      getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      acquireBuildSlot: async () => { slotAcquired++; return { acquired: true }; },
+    });
+    assert.equal(exitCode, null, 'a normal build succeeds');
+    assert.equal(slotAcquired, 0, 'no slot is acquired when maxBuilds is unset');
+    assert.ok(calls.order.includes('buildIos'));
+  });
+
+  test('maxDevices at capacity refuses with RN_ISO_AT_CAPACITY, before ensuring a device', async () => {
+    reserve();
+    let capacityArgs = null;
+    const { errs, exitCode, calls } = await run({}, {
+      getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 2 }),
+      checkDeviceCapacity: (args) => {
+        capacityArgs = args;
+        return { code: 'RN_ISO_AT_CAPACITY', message: 'at capacity', remedy: 'stop an environment (rn-iso stop) or raise concurrency.maxDevices' };
+      },
+    });
+    assert.equal(exitCode, 1);
+    assert.equal(capacityArgs.max, 2);
+    assert.match(errs.join('\n'), /RN_ISO_AT_CAPACITY/);
+    assert.match(errs.join('\n'), /rn-iso stop/);
+    assert.ok(!calls.order.includes('ensureOwnedDevice'), 'the refusal fires before any device is created/booted');
+  });
+
+  test('maxBuilds takes a slot AFTER the single-flight lock and releases it after the build', async () => {
+    reserve();
+    const seq = [];
+    let slotArgs = null;
+    const { exitCode } = await run({}, {
+      getConcurrencyLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
+      acquireBuildLock: () => { seq.push('lock'); return { acquired: true, path: '/lock', lock: { pid: process.pid } }; },
+      releaseBuildLock: () => { seq.push('releaseLock'); return true; },
+      acquireBuildSlot: async (args) => { seq.push('slot'); slotArgs = args; return { acquired: true, path: '/slot', index: 0, slot: { pid: process.pid } }; },
+      releaseBuildSlot: () => { seq.push('releaseSlot'); return true; },
+      buildIos: async () => { seq.push('build'); return { appPath: join(root, 'build', 'Fixture.app'), bundleId: 'com.example.app', durationMs: 1000, scheme: 'Fixture' }; },
+    });
+    assert.equal(exitCode, null);
+    // Slot comes after the single-flight lock, before the compile, and is
+    // released with the lock once the artifact is stored.
+    assert.deepEqual(seq, ['lock', 'slot', 'build', 'releaseLock', 'releaseSlot']);
+    assert.equal(slotArgs.max, 2);
+    assert.equal(slotArgs.root, root);
+  });
+
+  test('a waiter that installs another workspace\'s artifact never consumes a slot', async () => {
+    reserve();
+    let slotAcquired = 0;
+    let built = 0;
+    const { exitCode } = await run({}, {
+      getConcurrencyLimits: () => ({ maxBuilds: 2, maxDevices: 0 }),
+      acquireBuildLock: () => ({ held: { pid: 41233, projectRoot: '/w/other', logFile: null } }),
+      waitForBuild: async () => ({ hit: join(root, 'build', 'Fixture.app'), waitedMs: 5000 }),
+      acquireBuildSlot: async () => { slotAcquired++; return { acquired: true }; },
+      buildIos: async () => { built++; return { appPath: join(root, 'build', 'Fixture.app'), bundleId: 'com.example.app', durationMs: 1, scheme: 'F' }; },
+    });
+    assert.equal(exitCode, null);
+    assert.equal(slotAcquired, 0, 'a waiter must not take a build slot');
+    assert.equal(built, 0, 'the waiter installs the cached artifact, it does not compile');
+  });
+});

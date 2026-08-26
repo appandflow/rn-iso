@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deviceTypeMismatch, ensureBooted, ensureOwnedDevice } from '../src/engine/device.js';
+import { deviceCapacityRefusal, deviceTypeMismatch, ensureBooted, ensureOwnedDevice } from '../src/engine/device.js';
 import { getProject, setDevice, upsertProject } from '../src/config.js';
 import { resetExecutor, setExecutor } from '../src/exec.js';
 
@@ -432,5 +432,44 @@ describe('ensureOwnedDevice: android', () => {
       rmSync(other, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// --- device concurrency cap (opt-in) ---
+// maxDevices refuses a NEW device once the machine is at the cap, but never
+// refuses a workspace that already has a live device of its own (idempotent).
+describe('deviceCapacityRefusal', () => {
+  const booted = (udid, name) => ({ udid, name, state: 'Booted' });
+  const shutdown = (udid, name) => ({ udid, name, state: 'Shutdown' });
+
+  test('unlimited (max 0) never refuses', () => {
+    const sims = [booted('u1', 'rn-iso-a'), booted('u2', 'rn-iso-b')];
+    assert.equal(deviceCapacityRefusal({ platform: 'ios', project: {}, max: 0, sims, adb: { emulators: [] }, config: { projects: {} } }), null);
+  });
+
+  test('at the cap, a fresh workspace is refused with RN_ISO_AT_CAPACITY', () => {
+    const sims = [booted('u1', 'rn-iso-a'), booted('u2', 'rn-iso-b')];
+    const refusal = deviceCapacityRefusal({ platform: 'ios', project: { platforms: {} }, max: 2, sims, adb: { emulators: [] }, config: { projects: {} } });
+    assert.equal(refusal.code, 'RN_ISO_AT_CAPACITY');
+    assert.match(refusal.remedy, /rn-iso stop|maxDevices/);
+  });
+
+  test('a workspace whose OWN sim is already booted is never refused', () => {
+    const sims = [booted('u1', 'rn-iso-a'), booted('u2', 'rn-iso-b')];
+    const project = { platforms: { ios: { deviceUdid: 'u1', owned: true } } };
+    assert.equal(deviceCapacityRefusal({ platform: 'ios', project, max: 2, sims, adb: { emulators: [] }, config: { projects: {} } }), null);
+  });
+
+  test('only BOOTED rn-iso sims count toward the cap', () => {
+    const sims = [booted('u1', 'rn-iso-a'), shutdown('u2', 'rn-iso-b'), booted('u3', 'someone-else')];
+    // One booted rn-iso sim, cap of 2 -> under cap, a fresh workspace is allowed.
+    assert.equal(deviceCapacityRefusal({ platform: 'ios', project: { platforms: {} }, max: 2, sims, adb: { emulators: [] }, config: { projects: {} } }), null);
+  });
+
+  test('a running owned Android emulator counts via the registry', () => {
+    const config = { projects: { '/w/x': { platforms: { android: { avdName: 'rn-iso-x', consolePort: 5556, owned: true } } } } };
+    const adb = { emulators: [{ consolePort: 5556 }] };
+    const refusal = deviceCapacityRefusal({ platform: 'android', project: { platforms: {} }, max: 1, sims: [], adb, config });
+    assert.equal(refusal.code, 'RN_ISO_AT_CAPACITY');
   });
 });

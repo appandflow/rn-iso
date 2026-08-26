@@ -26,6 +26,7 @@ import {
   getRepoSettings,
   setRepoSetting,
   unsetRepoSetting,
+  getConcurrencyLimits,
 } from '../src/config.js';
 
 let tmpHome;
@@ -368,4 +369,31 @@ test('repo settings round-trip by git common dir', () => {
 
 test('getRepoSettings returns an empty object for an unknown repo', () => {
   assert.deepEqual(getRepoSettings('/nope/.git'), {});
+});
+
+// --- concurrency limits (opt-in, unlimited by default) ---
+
+test('getConcurrencyLimits is unlimited (0) when nothing is set', () => {
+  const env = {};
+  assert.deepEqual(getConcurrencyLimits({ env }), { maxBuilds: 0, maxDevices: 0 });
+});
+
+test('getConcurrencyLimits reads config.json concurrency', () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, concurrency: { maxBuilds: 2, maxDevices: 3 } });
+  assert.deepEqual(getConcurrencyLimits({ env: {} }), { maxBuilds: 2, maxDevices: 3 });
+});
+
+test('env overrides config, and 0/absent means no enforcement', () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, concurrency: { maxBuilds: 2, maxDevices: 3 } });
+  assert.deepEqual(
+    getConcurrencyLimits({ env: { RN_ISO_MAX_BUILDS: '5', RN_ISO_MAX_DEVICES: '0' } }),
+    { maxBuilds: 5, maxDevices: 0 }
+  );
+});
+
+test('a negative or garbage value reads as unlimited', () => {
+  assert.deepEqual(
+    getConcurrencyLimits({ env: { RN_ISO_MAX_BUILDS: '-1', RN_ISO_MAX_DEVICES: 'lots' } }),
+    { maxBuilds: 0, maxDevices: 0 }
+  );
 });

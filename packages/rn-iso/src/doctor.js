@@ -14,6 +14,11 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { getExecutor } from './exec.js';
 import { detectIsExpo } from './project.js';
+import { getConcurrencyLimits, loadConfig } from './config.js';
+import { liveOwnedDeviceCount } from './engine/device.js';
+import { listBuildSlots } from './engine/build-slots.js';
+import { listAllIosSims } from './sim/ios.js';
+import { listAdbDevices } from './sim/android.js';
 // The engine owns the eas-cli half (resolution, whoami, the parse); this file
 // owns what to SAY about it. Imported under a second name because the pure
 // check below is the doctor-side function of the same idea.
@@ -412,9 +417,34 @@ export function checkEasAuth({ provider, owner = null, auth = null } = {}) {
   return null;
 }
 
+// The one note about concurrency limits, and ONLY when a limit is set: an
+// unset cap is the default (rn-iso imposes nothing), so saying "no limits are
+// configured" on every run would be noise. When one IS set, echoing the caps
+// beside the current live count is what makes the two RN_ISO_AT_CAPACITY /
+// slot-wait behaviours legible before they fire.
+export function checkConcurrency({ maxBuilds = 0, maxDevices = 0, liveDevices = 0, activeBuilds = 0 } = {}) {
+  if (!maxBuilds && !maxDevices) return null;
+  const caps = `maxBuilds ${maxBuilds || 'unlimited'}, maxDevices ${maxDevices || 'unlimited'}`;
+  return finding(
+    'note',
+    'Concurrency limits are set',
+    `${caps}. Right now ${liveDevices} rn-iso device(s) are booted and ${activeBuilds} build slot(s) are in use on this machine. `
+    + 'At the device cap a new `rn-iso ios`/`android` is refused with RN_ISO_AT_CAPACITY (stop an environment or raise it); '
+    + 'at the build cap a compile waits for a free slot.',
+    null
+  );
+}
+
 // Runs every check against one project directory. Pure enough to test: all file
 // reads happen here, and each check is a function of the text it was given.
-export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = null, easAuth = probeEasAuth } = {}) {
+export function runDoctor(projectRoot, {
+  readFile = readFileSync,
+  xcodeMajor = null,
+  easAuth = probeEasAuth,
+  concurrency = getConcurrencyLimits,
+  liveDevices = null,
+  activeBuilds = null,
+} = {}) {
   const read = (rel) => {
     const p = join(projectRoot, rel);
     if (!existsSync(p)) return null;
@@ -454,6 +484,19 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
     ? checkEasAuth({ provider, owner, auth: easAuth({ projectRoot, owner }) })
     : null;
 
+  // Concurrency: gathered only when a cap is set, so an unset default costs no
+  // simctl/adb enumeration and stays silent.
+  const limits = typeof concurrency === 'function' ? concurrency() : concurrency;
+  let concurrencyFinding = null;
+  if (limits && (limits.maxBuilds || limits.maxDevices)) {
+    concurrencyFinding = checkConcurrency({
+      maxBuilds: limits.maxBuilds,
+      maxDevices: limits.maxDevices,
+      liveDevices: liveDevices ? liveDevices() : countLiveDevices(),
+      activeBuilds: activeBuilds ? activeBuilds() : countActiveBuilds(),
+    });
+  }
+
   return [
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
@@ -462,5 +505,26 @@ export function runDoctor(projectRoot, { readFile = readFileSync, xcodeMajor = n
     checkCcacheConflict(podfile, podfileProperties),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
     easFinding,
+    concurrencyFinding,
   ].filter(Boolean);
+}
+
+// The thin I/O behind the concurrency note. Both fail OPEN (0): a flaky simctl
+// or adb must not turn a read-only advice command into an error.
+function countLiveDevices() {
+  let sims = [];
+  let adb = { emulators: [] };
+  let config = null;
+  try { sims = listAllIosSims() || []; } catch { /* fail open */ }
+  try { adb = listAdbDevices() || { emulators: [] }; } catch { /* fail open */ }
+  try { config = loadConfig(); } catch { /* fail open */ }
+  return liveOwnedDeviceCount({ sims, adbEmulators: adb.emulators || [], config });
+}
+
+function countActiveBuilds() {
+  try {
+    return listBuildSlots().filter(s => s.alive).length;
+  } catch {
+    return 0;
+  }
 }

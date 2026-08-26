@@ -24,11 +24,12 @@ import { mkdirSync, openSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.js';
-import { getProject, upsertProject } from '../config.js';
+import { getConcurrencyLimits, getProject, upsertProject } from '../config.js';
 import { DEFAULT_METRO_PORT, LAUNCH_UNVERIFIED, devClientUrl, installIosApp, launchIosApp, unverifiedLaunchLines, verifyLaunch } from '../engine/app-install.js';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../engine/build-lock.js';
+import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.js';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.js';
-import { ensureBooted, ensureOwnedDevice } from '../engine/device.js';
+import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.js';
 import { describeDiagnostic } from '../engine/errors-xcode.js';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.js';
 import { RESOLVE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, cacheLevel, checkEasAuth, easAuthNote, exitAfterFlush, isEasAuthFailureText, loadProjectProvider, resolveRemote, uploadRemote } from '../engine/remote-cache.js';
@@ -514,18 +515,22 @@ const DEFAULT_DEPS = {
   getProject,
   upsertProject,
   projectShortcut,
+  checkDeviceCapacity,
   ensureOwnedDevice,
   ensureBooted,
   resolveProjectMetro,
   resolveMetroWithRetry,
   readWorkspaceState,
   isPidAlive,
+  getConcurrencyLimits,
   fingerprintProject,
   resolveBuild,
   storeBuild,
   acquireBuildLock,
   releaseBuildLock,
   waitForBuild,
+  acquireBuildSlot,
+  releaseBuildSlot,
   loadProjectProvider,
   checkEasAuth,
   resolveRemote,
@@ -634,8 +639,25 @@ export async function runIos(opts = {}, overrides = {}) {
     }
   };
 
+  // The build SLOT (engine/build-slots.js), when concurrency.maxBuilds is set
+  // and this run is one that actually compiles. Released the same
+  // process.exit-safe way the build lock is: every exit from the build goes
+  // through `fail` (which releases both) or the finally below.
+  let buildSlot = null;
+  const releaseSlot = () => {
+    if (!buildSlot) return;
+    const held = buildSlot;
+    buildSlot = null;
+    try {
+      d.releaseBuildSlot(held);
+    } catch (e) {
+      note(chalk.dim(`Could not release the build slot: ${e?.message || e}`));
+    }
+  };
+
   const fail = ({ code, message, remedy = null, lines = [], logPath = null, build = null }) => {
     releaseLock();
+    releaseSlot();
     if (message) note(chalk.red(phaseLine('error', message)));
     for (const line of lines) note(chalk.dim(phaseLine('', line)));
     if (remedy) note(chalk.dim(phaseLine('remedy', remedy)));
@@ -672,6 +694,16 @@ export async function runIos(opts = {}, overrides = {}) {
   d.upsertProject(root, { bundleId: d.detectBundleId(root), isExpo });
   const proj = d.getProject(root);
   const label = d.projectShortcut(root, proj);
+
+  // ---- concurrency: opt-in, unlimited by default ----
+  const limits = d.getConcurrencyLimits();
+
+  // The device cap is checked BEFORE ensureOwnedDevice, which creates and boots
+  // a sim: a refusal has to fire before that, not after. It never refuses a
+  // workspace whose own sim is already booted (re-running `ios` is idempotent),
+  // only a NEW device that would push the machine over concurrency.maxDevices.
+  const capacity = d.checkDeviceCapacity({ platform: PLATFORM, project: proj, max: limits.maxDevices });
+  if (capacity) return fail(capacity);
 
   // ---- device: owned, and actually booted ----
   let device;
@@ -961,6 +993,24 @@ export async function runIos(opts = {}, overrides = {}) {
     // install below, so a waiting workspace starts installing the moment the
     // artifact is in the cache rather than when this run finishes launching.
     try {
+      // ---- build slot (opt-in concurrency limit) ----
+      //
+      // AFTER single-flight dedup: a run that installed another workspace's
+      // artifact never reached here, so it never consumed a slot. This is the
+      // one place a compile actually happens, so it is where the maxBuilds cap
+      // applies. A full slate WAITS (the builder already holds the single-flight
+      // lock, so waiters on this exact fingerprint keep waiting on it), with the
+      // same pid-liveness a dead builder frees within a poll.
+      if (limits.maxBuilds) {
+        try {
+          buildSlot = await d.acquireBuildSlot({ max: limits.maxBuilds, root, logFile, out: note });
+        } catch (e) {
+          // Same containment as the build lock: a slot system that cannot run
+          // must never stop a build, only stop limiting it.
+          note(chalk.yellow(phaseLine('build', `could not take a build slot: ${e?.message || e}; building anyway`)));
+        }
+      }
+
       // ---- prebuild (Expo, and only when ios/ is absent) ----
       if (d.needsPrebuild(root, PLATFORM, isExpo)) {
         const result = await d.runPrebuild(root, PLATFORM, logWriter());
@@ -1043,6 +1093,7 @@ export async function runIos(opts = {}, overrides = {}) {
       }
     } finally {
       releaseLock();
+      releaseSlot();
     }
   }
 

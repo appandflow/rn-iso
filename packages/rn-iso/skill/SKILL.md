@@ -81,7 +81,9 @@ Destruction lives in exactly **two** commands. Everything else, including `stop`
 
 ## Capacity
 
-A booted iOS sim is roughly 1-2 GB of RAM, an Android emulator 2-3 GB. On a 16 GB machine plan for **2-3 live environments**, not more. Nothing enforces this. `npx rn-iso status` reports every workspace on the machine (it is machine-wide by default, not scoped to where you are standing), which is how you find out you would be the fourth. Tear down what you're done with before creating more.
+A booted iOS sim is roughly 1-2 GB of RAM, an Android emulator 2-3 GB. On a 16 GB machine plan for **2-3 live environments**, not more. By default nothing enforces this. `npx rn-iso status` reports every workspace on the machine (it is machine-wide by default, not scoped to where you are standing), which is how you find out you would be the fourth. Tear down what you're done with before creating more.
+
+**Opt-in concurrency limits (unlimited by default).** When a machine cannot host as many parallel builds or devices as there are agents, two machine-level caps can rein it in -- set them under a top-level `concurrency` key in `~/.rn-iso/config.json` (`{ "concurrency": { "maxBuilds": 2, "maxDevices": 3 } }`), or via `RN_ISO_MAX_BUILDS` / `RN_ISO_MAX_DEVICES` which override the file. `maxBuilds` caps how many builds **compile** at once (a full slate WAITS -- it is a semaphore taken after the single-flight lock, so a waiter installing another workspace's artifact never burns a slot); `maxDevices` caps how many rn-iso-owned devices are **booted** at once, and a new `ios`/`android` at that cap is **refused** with `RN_ISO_AT_CAPACITY` (interactive-shaped: it does not queue -- stop an environment or raise the cap). Unset, `0`, or any non-positive value means no enforcement. There is no `rn-iso config` command; these are files and env vars. See `npx rn-iso guide lifecycle` and `guide settings`.
 
 ## Skipping the build when nothing native changed
 

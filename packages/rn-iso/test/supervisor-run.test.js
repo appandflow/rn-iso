@@ -9,7 +9,8 @@
 //      record and clears every one of those records.
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, upsertProject } from '../src/config.js';
@@ -137,6 +138,56 @@ describe('Contract 2: the workspace state file', () => {
     writePidFile(root, 4242);
     assert.equal(readFileSync(supervisorPidFile(root), 'utf-8').trim(), '4242');
     assert.equal(readPidFile(root), 4242);
+  });
+});
+
+// state.json is a multi-writer read-modify-write: the supervisor writes
+// `supervisor`, each collector writes its own `collectors.<platform>`, and
+// `ios`/`android` write `lastBuild`. renameSync stops a reader ever seeing half
+// a file, but it does NOT stop a LOST UPDATE: two writers that both read the
+// old state and then rename their own version over it silently drop one side's
+// key. Losing `collectors.<platform>` leaks a log stream `stop` can never reap.
+// Every writer goes through writeWorkspaceState, so a lock there is what makes
+// the whole cycle atomic. This is the live proof, cross-process on purpose:
+// several real processes writing different keys against one file at once, every
+// key must survive.
+describe('state.json concurrent writers (Contract 2 lock)', () => {
+  test('4+ processes writing different keys never lose an update', async () => {
+    const script = join(tmpHome, 'state-writer.mjs');
+    const runUrl = new URL('../src/supervisor/run.js', import.meta.url).href;
+    writeFileSync(script, [
+      `const { writeWorkspaceState } = await import(${JSON.stringify(runUrl)});`,
+      'const root = process.argv[2];',
+      'const key = process.argv[3];',
+      'const startAt = Number(process.argv[4]);',
+      // A shared start instant so every process does its single read-modify-write
+      // at the same moment -- process startup otherwise dominates and the
+      // writers never overlap. One-shot writes are the faithful reproduction:
+      // the real supervisor, collector and ios/android writers each patch their
+      // own key ONCE, so whichever renames last silently drops every key it did
+      // not happen to read (the lost update renameSync cannot prevent).
+      'while (Date.now() < startAt) {}',
+      'writeWorkspaceState(root, { [key]: { pid: process.pid } });',
+    ].join('\n'));
+
+    const keys = ['supervisor', 'lastBuild', 'collectorsIos', 'collectorsAndroid', 'extra', 'sixth', 'seventh', 'eighth'];
+    // Repeated rounds: a single simultaneous volley loses a key often but not
+    // every time, so the assertion is over several volleys -- an unlocked
+    // writer drops a key in at least one, a locked one never does.
+    for (let round = 0; round < 8; round++) {
+      mkdirSync(join(root, '.rn-iso'), { recursive: true });
+      writeFileSync(workspaceStateFile(root), '{}\n');
+      const startAt = Date.now() + 250;
+      await Promise.all(keys.map(key => new Promise((resolve, reject) => {
+        execFile(process.execPath, [script, root, key, String(startAt)], { env: { ...process.env, RN_ISO_HOME: tmpHome } },
+          (err) => (err ? reject(err) : resolve()));
+      })));
+
+      const state = readWorkspaceState(root);
+      for (const key of keys) {
+        assert.ok(state && state[key], `round ${round}: ${key} must survive concurrent writers (lost update)`);
+      }
+    }
   });
 });
 

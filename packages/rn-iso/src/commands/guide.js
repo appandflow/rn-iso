@@ -375,6 +375,18 @@ RN_ISO_NO_DEVICE
   rn-iso thinks it owns. Re-running the command creates a fresh owned device
   when the recorded one is gone.
 
+RN_ISO_AT_CAPACITY
+  Only when concurrency.maxDevices is set (it is UNSET by default, so this never
+  fires unless you opted in). Booting a NEW owned device would exceed the cap:
+  the machine already has that many rn-iso-owned devices booted. It is a refusal, not
+  a queue -- \`ios\`/\`android\` are interactive-shaped, so rn-iso does not make
+  you wait at a prompt. The remedy is fixed: stop an environment
+  (\`rn-iso stop\`) to free a device, or raise concurrency.maxDevices. A
+  workspace whose OWN device is already booted is never refused -- re-running
+  \`ios\` on an environment you already have is idempotent. (The build cap
+  behaves differently: a compile WAITS for a free slot rather than refusing.
+  See \`guide lifecycle\`, "opt-in concurrency limits".)
+
 --- DEV-SERVER CODES (\`rn-iso start\`) ---
 
 RN_ISO_BARE_DEPS / RN_ISO_BARE_LOAD / RN_ISO_BARE_API  (bare RN)
@@ -607,6 +619,38 @@ ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   payload reports cacheSkipped: true so a caller can tell that run apart from
   a plain miss.
 
+OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
+  rn-iso imposes NO limits of its own: unset is exactly the behaviour above --
+  every build compiles, every device boots. When a machine cannot host as many
+  parallel builds or booted simulators as there are agents, two MACHINE-level
+  caps rein it in. They live under a top-level \`concurrency\` key in
+  ~/.rn-iso/config.json (not per-project -- the resource being shared is the
+  machine's), and RN_ISO_MAX_BUILDS / RN_ISO_MAX_DEVICES override the file.
+  Absent, 0, or any non-positive value means NO enforcement.
+
+    concurrency.maxBuilds   how many builds COMPILE at once. It is a semaphore
+                            of N slots (~/.rn-iso/build-slots). A run takes a
+                            slot AFTER the single-flight lock -- a workspace
+                            waiting to install another's identical artifact
+                            never burns a slot -- so it caps distinct compiles,
+                            not waiters. A full slate WAITS (this is batch work),
+                            printing the same kind of progress line the build
+                            lock does, and a dead builder frees its slot within
+                            a poll (pid-liveness, like the lock).
+
+    concurrency.maxDevices  how many rn-iso-owned devices are BOOTED at once. Checked
+                            at device time, before a sim is created or booted.
+                            At the cap, a NEW device is REFUSED with
+                            RN_ISO_AT_CAPACITY (interactive-shaped: it does not
+                            queue). A workspace whose own device is already
+                            booted is never refused. See \`guide errors\`.
+
+  \`rn-iso doctor\` prints one note echoing the caps and the current live count,
+  but ONLY when a cap is set. \`rn-iso gc\` reports stale build slots the way it
+  reports stale build locks, and \`gc --delete\` clears them. There is no
+  \`rn-iso config\` command: set these by editing ~/.rn-iso/config.json or via
+  the two env vars (see \`guide settings\`).
+
 THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds>
   ios / android   --json --no-metro-check --no-build-cache
@@ -774,6 +818,23 @@ KEYS RN-ISO READS
 Anything else is IGNORED, and rn-iso warns about it by name on every run that
 resolves settings. If you see such a warning, the key was either renamed or
 removed -- check this list rather than assuming it still applies.
+
+CONCURRENCY LIMITS ARE MACHINE-LEVEL, NOT A PER-PROJECT SETTING
+The caps above are not in the layered settings -- they are not per-project,
+because the resource they share (cores, RAM, booted simulators) is the whole
+machine's. They live under a top-level \`concurrency\` key in
+~/.rn-iso/config.json, edited by hand:
+
+  {
+    "concurrency": { "maxBuilds": 2, "maxDevices": 3 }
+  }
+
+or via the environment, which overrides the file:
+
+  RN_ISO_MAX_BUILDS=2 RN_ISO_MAX_DEVICES=3 npx rn-iso ios
+
+Unset, 0, or any non-positive value means NO enforcement -- the default, where
+rn-iso limits nothing. See \`guide lifecycle\` for what each cap does.
 
 PREFER SELF-REGISTRATION OVER THE 'caches' SETTING
 There is no 'cache' command. A cache registers itself from code instead, once,

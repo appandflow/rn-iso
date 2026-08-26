@@ -1108,3 +1108,55 @@ test('a bare gc removes no lock at all', async () => {
   await captureLog(() => sweepingGc({}));
   assert.equal(existsSync(stale), true, 'a bare gc reports and writes nothing');
 });
+
+// --- build slots (engine/build-slots.js) -----------------------------------
+//
+// A build SLOT is the opt-in concurrency limit's semaphore. Like a build lock,
+// a reboot or a SIGKILL leaves a stale one behind; gc reports and (with
+// --delete) clears the stale ones, and never touches a slot a live builder holds.
+
+function writeSlot({ index = 0, pid, projectRoot = '/w/app-412' }) {
+  const path = join(tmpHome, 'build-slots', `slot-${index}`);
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, 'slot.json'), JSON.stringify({ pid, index, projectRoot, startedAt: new Date().toISOString() }));
+  return path;
+}
+
+test('the report separates stale build slots from ones a live builder holds', async () => {
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+  writeSlot({ index: 0, pid: process.pid, projectRoot: '/w/alive' });
+  writeSlot({ index: 1, pid: 999999, projectRoot: '/w/dead' });
+
+  const report = await collectGcReport();
+  assert.equal(report.buildSlots.stale.length, 1);
+  assert.equal(report.buildSlots.stale[0].pid, 999999);
+  assert.equal(report.buildSlots.live.length, 1);
+});
+
+test('formatGcReport names a stale build slot', () => {
+  const lines = formatGcReport({
+    buildSlots: { stale: [{ index: 1, pid: 999999, projectRoot: '/w/dead', path: '/h/build-slots/slot-1' }], live: [] },
+  }).join('\n');
+  assert.match(lines, /Stale build slots \(1\)/);
+  assert.match(lines, /999999/);
+});
+
+test('a stale build slot counts as something to reclaim', () => {
+  const lines = formatGcReport({
+    buildSlots: { stale: [{ index: 0, pid: 9, projectRoot: '/w', path: '/h/slot-0' }], live: [] },
+  }).join('\n');
+  assert.doesNotMatch(lines.split('\n')[0], /^Nothing to reclaim\.$/);
+});
+
+test('--delete removes the stale build slot and leaves a live one alone', async () => {
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+  const live = writeSlot({ index: 0, pid: process.pid, projectRoot: '/w/alive' });
+  const stale = writeSlot({ index: 1, pid: 999999, projectRoot: '/w/dead' });
+
+  const output = await captureLog(() => sweepingGc({ delete: true }));
+  assert.equal(existsSync(stale), false, 'the debris goes');
+  assert.equal(existsSync(live), true, 'a build in progress is never interrupted');
+  assert.match(output, /build slot/i);
+});

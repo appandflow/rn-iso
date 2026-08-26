@@ -27,8 +27,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clearSupervisor, setSupervisor } from '../config.js';
+import { withDirLock } from '../dir-lock.js';
 import { createNdjsonWriter } from '../ndjson.js';
-import { supervisorPidFile, workspaceLogsDir, workspaceStateFile } from '../paths.js';
+import { supervisorPidFile, workspaceLogsDir, workspaceStateFile, workspaceStateLock } from '../paths.js';
 import { detectIsExpo } from '../project.js';
 import { describeError } from './errors.js';
 
@@ -70,8 +71,25 @@ export function readWorkspaceState(root) {
   }
 }
 
+// Runs `fn` with the state.json lock held (reentrant within this process).
+// EVERY read-modify-write of state.json goes through here so the whole cycle
+// is atomic: the supervisor patches `supervisor`, each collector patches its
+// own `collectors.<platform>`, ios/android patch `lastBuild`, and these run at
+// once (the detached collector registers during the launch-verify window right
+// before writeLastBuild). renameSync stops a torn file, not a lost update --
+// two writers that both read the old state and rename their own version over it
+// drop one side's key, and a dropped `collectors.<platform>` leaks a log stream
+// `stop` can never reap. The lock is the thing that closes that window.
+export function withWorkspaceStateLock(root, fn) {
+  const file = workspaceStateFile(root);
+  return withDirLock(workspaceStateLock(root), fn, {
+    ensureParent: () => mkdirSync(dirname(file), { recursive: true }),
+  });
+}
+
 export function writeWorkspaceState(root, patch) {
-  return replaceWorkspaceState(root, { ...(readWorkspaceState(root) || {}), ...patch });
+  return withWorkspaceStateLock(root, () =>
+    replaceWorkspaceState(root, { ...(readWorkspaceState(root) || {}), ...patch }));
 }
 
 // The whole file, not a merge. Kept separate because clearing a key through
@@ -90,15 +108,17 @@ function replaceWorkspaceState(root, state) {
 // stopped workspace has no state.json rather than an empty one -- but a
 // workspace that has recorded something else keeps it.
 export function clearWorkspaceSupervisor(root) {
-  const state = readWorkspaceState(root);
-  if (!state || !('supervisor' in state)) return;
-  delete state.supervisor;
-  const file = workspaceStateFile(root);
-  if (Object.keys(state).length === 0) {
-    try { rmSync(file, { force: true }); } catch { /* already gone */ }
-    return;
-  }
-  replaceWorkspaceState(root, state);
+  withWorkspaceStateLock(root, () => {
+    const state = readWorkspaceState(root);
+    if (!state || !('supervisor' in state)) return;
+    delete state.supervisor;
+    const file = workspaceStateFile(root);
+    if (Object.keys(state).length === 0) {
+      try { rmSync(file, { force: true }); } catch { /* already gone */ }
+      return;
+    }
+    replaceWorkspaceState(root, state);
+  });
 }
 
 export function writePidFile(root, pid) {

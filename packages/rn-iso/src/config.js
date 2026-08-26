@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { isOnMountedVolume } from './fs-util.js';
+import { withDirLock } from './dir-lock.js';
 
 export function getConfigDir() {
   return process.env.RN_ISO_HOME || join(homedir(), '.rn-iso');
@@ -20,95 +21,22 @@ function ensureDir() {
 //
 // Every mutator below is a read-modify-write of one JSON file, and several
 // rn-iso commands can run at once (a `worktree create` per agent, each
-// followed by its own `start` and `ios`). Two of them interleaving lose one side's
-// device record entirely, so the read, the modify and the write happen
-// while this lock is held.
-//
-// mkdirSync is the primitive: directory creation is atomic on every
-// filesystem rn-iso runs on, and needs no cleanup handler to be correct --
-// a process that dies holding the lock leaves a directory whose mtime ages
-// out, and the next waiter takes it over.
+// followed by its own `start` and `ios`). Two of them interleaving lose one
+// side's device record entirely, so the read, the modify and the write happen
+// while this lock is held. The mkdir-mtime discipline is shared with the
+// per-workspace state.json lock; see src/dir-lock.js.
 const LOCK_DIR_NAME = 'config.lock';
-const LOCK_STALE_MS = 10000;
-// Longer than LOCK_STALE_MS so a lock left behind by a killed process is
-// always taken over rather than reported as a timeout.
-const LOCK_WAIT_MS = 12000;
-const LOCK_POLL_MS = 25;
-
-// Depth, not a boolean: mutators call each other (upsertProject -> ensureConfig
-// -> saveConfig), and a nested acquire of a lock this process already holds
-// would deadlock against itself.
-let lockDepth = 0;
-
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
 
 function lockPath() {
   return join(getConfigDir(), LOCK_DIR_NAME);
 }
 
-function acquireLock() {
-  ensureDir();
-  const lock = lockPath();
-  const deadline = Date.now() + LOCK_WAIT_MS;
-  for (;;) {
-    try {
-      mkdirSync(lock);
-      return;
-    } catch (err) {
-      if (err?.code !== 'EEXIST') throw err;
-    }
-    let ageMs = null;
-    try {
-      ageMs = Date.now() - statSync(lock).mtimeMs;
-    } catch {
-      // The holder released it between the mkdir and the stat: retry at once.
-      continue;
-    }
-    if (ageMs > LOCK_STALE_MS) {
-      try {
-        rmSync(lock, { recursive: true, force: true });
-      } catch { /* another waiter took it over first */ }
-      continue;
-    }
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `Timed out waiting for the rn-iso config lock at ${lock}. ` +
-        'Another rn-iso command is holding it; if none is running, remove that directory.'
-      );
-    }
-    sleepSync(LOCK_POLL_MS);
-  }
-}
-
-function releaseLock() {
-  try {
-    rmSync(lockPath(), { recursive: true, force: true });
-  } catch { /* already taken over as stale */ }
-}
-
 // Runs `fn` with the config lock held. Reentrant within this process. `fn`
 // must be a short read-modify-write: the staleness check is the lock
-// directory's creation time, so a hold longer than LOCK_STALE_MS can be taken
-// over by another process.
+// directory's mtime, so a hold longer than the stale window can be taken over
+// by another process.
 export function withConfigLock(fn) {
-  if (lockDepth > 0) {
-    lockDepth++;
-    try {
-      return fn();
-    } finally {
-      lockDepth--;
-    }
-  }
-  acquireLock();
-  lockDepth = 1;
-  try {
-    return fn();
-  } finally {
-    lockDepth = 0;
-    releaseLock();
-  }
+  return withDirLock(lockPath(), fn, { ensureParent: ensureDir });
 }
 
 export function loadConfig() {
@@ -286,6 +214,33 @@ export function clearSupervisor(projectPath) {
     delete cfg.projects[projectPath].supervisor;
     saveConfig(cfg);
   });
+}
+
+// --- Machine-level concurrency limits (opt-in; unlimited by default) --------
+//
+// rn-iso imposes no limits of its own: an unset cap is exactly the current
+// behaviour. When a machine cannot host as many parallel builds or devices as
+// there are agents, these cap them. They are MACHINE-level (a top-level
+// `concurrency` key in ~/.rn-iso/config.json, NOT per-project), because the
+// resource being shared -- cores, RAM, booted simulators -- is the machine's,
+// not any one checkout's. RN_ISO_MAX_BUILDS / RN_ISO_MAX_DEVICES override the
+// file. Absent, 0, or anything that is not a positive integer means NO
+// enforcement -- the direction a broken value must fail is "do not limit",
+// never "block every build".
+export function getConcurrencyLimits({ env = process.env } = {}) {
+  const cfg = loadConfig();
+  const c = cfg?.concurrency || {};
+  return {
+    maxBuilds: resolveLimit(env.RN_ISO_MAX_BUILDS, c.maxBuilds),
+    maxDevices: resolveLimit(env.RN_ISO_MAX_DEVICES, c.maxDevices),
+  };
+}
+
+function resolveLimit(envVal, cfgVal) {
+  const hasEnv = envVal !== undefined && envVal !== null && envVal !== '';
+  const raw = hasEnv ? Number(envVal) : (typeof cfgVal === 'number' ? cfgVal : Number.NaN);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.floor(raw);
 }
 
 // --- Per-project settings (scripts, package manager, ...) ---

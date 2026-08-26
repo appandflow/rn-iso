@@ -53,6 +53,17 @@ per-workspace `<root>/.rn-iso/state.json` (the supervisor record, the collector
 records, and `lastBuild`). The `RN_ISO_HOME` env var redirects the global half
 for tests.
 
+Both of those JSON files are multi-writer, and **both read-modify-writes are
+locked** with the same primitive: `src/dir-lock.js` (`withDirLock`), an atomic
+`mkdir` + mtime-stale-takeover advisory lock, reentrant per lock path. The
+global config uses it as `withConfigLock` (lock at `~/.rn-iso/config.lock`);
+state.json uses it as `withWorkspaceStateLock` in `src/supervisor/run.js` (lock
+at `<root>/.rn-iso/state.lock`), which every state writer -- the supervisor, the
+two collectors, and `ios`/`android`'s `lastBuild` -- inherits by going through
+`writeWorkspaceState`. mtime staleness is correct for these because the writes
+are milliseconds long; a lock a process holds for *minutes* (a build) must use
+pid-liveness instead (`src/engine/build-lock.js`), never this.
+
 ## Architecture conventions
 
 - **ESM only, in `packages/rn-iso`.** `"type": "module"`, no transpiler, Node
@@ -566,9 +577,39 @@ failure mid-flow leaves the repo recoverable.
   script-based runner came in as separate commits even though they shipped
   in the same session.
 
+## Opt-in concurrency limits (1.1.0)
+
+rn-iso imposes no limits by default -- an unset cap is exactly the prior
+behaviour. Two MACHINE-level caps (a top-level `concurrency: {maxBuilds,
+maxDevices}` in `~/.rn-iso/config.json`, resolved by `getConcurrencyLimits` in
+`src/config.js`, with `RN_ISO_MAX_BUILDS`/`RN_ISO_MAX_DEVICES` overriding; 0 or
+absent = no enforcement) rein in a machine that cannot host as many parallel
+builds or booted sims as there are agents.
+
+- **`maxBuilds`** is an N-ary build-SLOT semaphore (`src/engine/build-slots.js`,
+  `~/.rn-iso/build-slots/slot-{0..N-1}`, acquire-any by atomic mkdir,
+  **pid-liveness** staleness like `build-lock.js` -- a slot is held for a whole
+  build). Acquired AFTER the single-flight dedup (a waiter installing another
+  workspace's artifact must not consume a slot) and released process.exit-safe,
+  exactly as the build lock is, in `commands/ios.js` / `commands/android.js`. A
+  full slate WAITS.
+- **`maxDevices`** caps booted owned devices. `deviceCapacityRefusal` /
+  `checkDeviceCapacity` in `src/engine/device.js` count live rn-iso-owned
+  devices (booted `rn-iso-` sims + running owned AVDs via the registry) at
+  device-ensure time and REFUSE a new one with `RN_ISO_AT_CAPACITY` -- it does
+  NOT queue (interactive-shaped). A workspace whose own device is already booted
+  is never refused (idempotent).
+
+`doctor` prints one note (caps + live count) only when a cap is set; `gc`
+reports and `--delete` clears stale build slots like stale build locks. There is
+NO config CLI (removed in v3) -- these are set via `config.json` + env only, and
+documented in `guide` (settings/errors/lifecycle) and the two skills.
+
 ## Things explicitly out of scope (for now)
 
-- Locking / mutex around device usage. The whole premise is dedicated sims.
+- Per-device locking / mutex. The premise is still dedicated sims; the 1.1.0
+  `maxDevices` cap is an opt-in COUNT limit that refuses a new boot over the
+  cap, not a mutex serialising access to any one device.
 - Auto-shutdown of sims after N hours of inactivity.
 - Cross-platform support beyond macOS (iOS) + macOS/Linux (Android).
 - Multi-app projects (one repo, multiple Expo apps via `--variant`).
