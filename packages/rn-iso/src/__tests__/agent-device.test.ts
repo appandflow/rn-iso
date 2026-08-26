@@ -191,10 +191,15 @@ describe('the bare-RN Metro hint', () => {
     expect(metroHintFrom('http://localhost:8085')).toEqual({ host: 'localhost', port: '8085' });
   });
 
-  test('an origin with no explicit port yields no hint', () => {
-    // An https tunnel on 443 cannot be expressed as host+port for these
-    // flags, so the dev-client deep link is the only wiring left there.
-    expect(metroHintFrom('https://abc.trycloudflare.com')).toBeNull();
+  test('a portless origin takes its port from the scheme', () => {
+    // Returning null here sent NO hint, which left a stale RCT_jsLocation in
+    // charge: the device then asked for https://<tunnel-host>:8085/... and
+    // could never resolve it. Observed on a real EAS simulator.
+    expect(metroHintFrom('https://abc.trycloudflare.com')).toEqual({ host: 'abc.trycloudflare.com', port: '443' });
+    expect(metroHintFrom('http://abc.example.com')).toEqual({ host: 'abc.example.com', port: '80' });
+  });
+
+  test('an unparseable origin yields no hint', () => {
     expect(metroHintFrom('not a url')).toBeNull();
   });
 });

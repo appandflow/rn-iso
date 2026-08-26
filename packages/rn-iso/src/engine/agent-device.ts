@@ -192,15 +192,30 @@ export function openArgs(
 }
 
 // PURE. Split a Metro origin into the host and port agent-device's hint flags
-// take, or null when it has no explicit port (an https tunnel on 443, say),
-// which those flags cannot express.
+// take, defaulting the port FROM THE SCHEME when the URL omits it.
+//
+// The default is not a convenience, it is the fix for a live failure. A
+// tunnel URL is normally portless (`https://x.trycloudflare.com`), and
+// returning null for it sent no hint at all -- which left whatever
+// RCT_jsLocation already held on the device in charge. The app then composed
+// the tunnel's HOST with a stale local PORT and asked for
+//
+//   https://x.trycloudflare.com:8085/index.ts.bundle
+//
+// which can never resolve: the tunnel listens on 443. Observed on a real EAS
+// simulator, and it survived passing `:443` in the deep link, because
+// RCTBundleURLProvider prefers RCT_jsLocation over the launch URL
+// (packagerServerHostPort, line 267). Naming the port explicitly is what
+// takes that decision away from the device.
 export function metroHintFrom(origin: string): { host: string; port: string } | null {
+  let url: URL;
   try {
-    const url = new URL(origin);
-    return url.port ? { host: url.hostname, port: url.port } : null;
+    url = new URL(origin);
   } catch {
     return null;
   }
+  const port = url.port || (url.protocol === 'https:' ? '443' : url.protocol === 'http:' ? '80' : '');
+  return port ? { host: url.hostname, port } : null;
 }
 
 // PURE. Release the lease and stop the Metro companion this workspace owns.
