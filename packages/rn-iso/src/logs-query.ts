@@ -95,7 +95,7 @@ export function compileGrep(pattern: unknown): GrepResult {
 // this is the second half of the same fix, for the ones nobody has curated
 // yet). A native crash that never reached JS is still findable -- `logs
 // --errors --source device`, `--source all`, or a plain `logs`.
-export const ERROR_SOURCES = ['metro', 'client', 'build'];
+export const ERROR_SOURCES: string[] = ['metro', 'client', 'build'];
 
 // THE MARKER WINDOW, and why it is two numbers rather than one.
 //

@@ -81,10 +81,10 @@ export function setExecutor(e: MockExecutor): void {
   active = e as Executor;
 }
 
-export function resetExecutor() {
+export function resetExecutor(): void {
   active = defaultExecutor;
 }
 
-export function getExecutor() {
+export function getExecutor(): Executor {
   return active;
 }

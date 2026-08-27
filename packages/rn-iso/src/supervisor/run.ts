@@ -135,7 +135,12 @@ export async function runSupervisor({
   onExit = (code: number) => process.exit(code),
   attachSignals = true,
   stderr = (line: string) => console.error(line),
-}: RunSupervisorOptions) {
+}: RunSupervisorOptions): Promise<{
+  mode: string;
+  server: ServerHandle | undefined;
+  shutdown: (code: number, event: string, msg: string) => Promise<void>;
+  startedAt: string;
+} | null> {
   const logsDir = workspaceLogsDir(root);
   const writer = createNdjsonWriter(join(logsDir, 'metro.ndjson'));
   const mode = isExpo(root) ? MODE_EXPO : MODE_BARE;

@@ -899,17 +899,17 @@ Registration is idempotent and keyed on the directory.`,
   },
 };
 
-export function topicNames() {
+export function topicNames(): string[] {
   return Object.keys(TOPICS);
 }
 
-export function renderTopic(name: string) {
+export function renderTopic(name: string): string | null {
   const topic = TOPICS[name];
   if (!topic) return null;
   return topic.body();
 }
 
-export function renderIndex(version: string) {
+export function renderIndex(version: string): string {
   const lines = [
     `rn-iso ${version} -- reference for the binary you are running.`,
     '',
@@ -927,7 +927,7 @@ export function renderIndex(version: string) {
   return lines.join('\n');
 }
 
-export default function guideCommand(program: Command, version: string) {
+export default function guideCommand(program: Command, version: string): void {
   program
     .command('guide [topic]')
     .description(

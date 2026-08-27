@@ -93,7 +93,7 @@ export const SLOT_PROGRESS_MS = 30000;
 // The ceiling for a slot held by an ALIVE-but-wedged builder -- the one case
 // liveness cannot see -- deliberately longer than any build this tool has
 // measured, exactly as waitForBuild's ceiling.
-export const SLOT_CEILING_MS = 90 * 60 * 1000;
+export const SLOT_CEILING_MS: number = 90 * 60 * 1000;
 
 function sleepAsync(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

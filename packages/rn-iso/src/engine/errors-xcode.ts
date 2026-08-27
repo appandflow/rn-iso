@@ -253,7 +253,7 @@ export function extractXcodeDiagnostics(transcript: string): Diagnostic[] {
 // CLI prints as "+N more", and is 0, not absent, when nothing was dropped.
 export function capDiagnostics(
   diagnostics: Diagnostic[],
-  max = MAX_DIAGNOSTICS,
+  max: number = MAX_DIAGNOSTICS,
 ): { diagnostics: Diagnostic[]; truncated: number } {
   const list = Array.isArray(diagnostics) ? diagnostics : [];
   if (list.length <= max) return { diagnostics: list.slice(), truncated: 0 };

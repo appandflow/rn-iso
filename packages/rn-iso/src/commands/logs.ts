@@ -29,7 +29,7 @@ interface StackFrame {
   fn?: string;
 }
 
-export function formatTime(ts: unknown) {
+export function formatTime(ts: unknown): string {
   if (typeof ts !== 'number' || !Number.isFinite(ts)) return '--:--:--.---';
   const d = new Date(ts);
   const pad = (n: number, w = 2) => String(n).padStart(w, '0');
@@ -39,7 +39,7 @@ export function formatTime(ts: unknown) {
 // Stacks arrive as {file,line,column,fn} and any field may be absent -- this
 // step passes frames through unsymbolicated, so a frame can be little more
 // than a file. Returns null when there is nothing worth printing.
-export function formatStackFrame(frame: StackFrame | null | undefined) {
+export function formatStackFrame(frame: StackFrame | null | undefined): string | null {
   if (!frame || typeof frame !== 'object') return null;
   const where = [frame.file, frame.line, frame.column]
     .filter((p) => p !== undefined && p !== null && p !== '')
@@ -55,7 +55,7 @@ export function formatStackFrame(frame: StackFrame | null | undefined) {
 export function formatRecord(
   record: Partial<NdjsonRecord> | null | undefined,
   { paint }: { paint?: (t: string) => string } = {},
-) {
+): string {
   const colour = paint || ((t: string) => t);
   const level = String(record?.level ?? '').padEnd(LEVEL_WIDTH);
   const src = String(record?.src ?? '').padEnd(SRC_WIDTH);
@@ -72,7 +72,7 @@ export function formatRecord(
   return lines.join('\n');
 }
 
-export function parseTail(value: unknown) {
+export function parseTail(value: unknown): { n?: number; error?: string } {
   if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return { n: value };
   if (typeof value !== 'string' || !/^\d+$/.test(value.trim())) {
     return { error: `Invalid --tail value ${JSON.stringify(value)}. Use a non-negative whole number, e.g. --tail 50.` };
@@ -147,7 +147,7 @@ interface LogsOptions {
   json?: boolean;
 }
 
-export default function logsCommand(program: Command) {
+export default function logsCommand(program: Command): void {
   program
     .command('logs')
     .description(

@@ -258,7 +258,7 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
 // PURE. What goes on the terminal, and what was left in the log.
 export function capDiagnostics(
   diagnostics: Diagnostic[],
-  limit = MAX_DIAGNOSTICS,
+  limit: number = MAX_DIAGNOSTICS,
 ): { shown: Diagnostic[]; truncated: number } {
   const all = Array.isArray(diagnostics) ? diagnostics : [];
   if (all.length <= limit) return { shown: all.slice(), truncated: 0 };

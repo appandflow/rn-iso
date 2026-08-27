@@ -41,13 +41,13 @@ export interface NdjsonWriter {
 }
 
 // Ordered lowest to highest; index is the rank used by --level filtering.
-export const LEVELS = ['debug', 'info', 'warn', 'error', 'fatal'];
+export const LEVELS: string[] = ['debug', 'info', 'warn', 'error', 'fatal'];
 
 // The `src` values Contract 1 defines. Records are not validated against this
 // on the way in -- a producer that invents a source still gets written -- but
 // `logs --source` validates against it, so a typo fails loudly instead of
 // returning an empty result that reads as a clean build.
-export const SOURCES = ['metro', 'client', 'device', 'build'];
+export const SOURCES: string[] = ['metro', 'client', 'device', 'build'];
 
 // An unrecognized level ranks at the bottom rather than being dropped: a
 // record with a level we do not know is still a record, and hiding it behind

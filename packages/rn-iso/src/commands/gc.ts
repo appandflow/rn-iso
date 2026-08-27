@@ -359,7 +359,7 @@ export function describeUnverifiableDevices(
   simNames: string[] = [],
   avdNames: string[] = [],
   { reason = 'no rn-iso config found' }: { reason?: string } = {},
-) {
+): string[] {
   const ours = [...simNames, ...avdNames].filter((n) => typeof n === 'string' && n.startsWith('rn-iso-'));
   if (ours.length === 0) return [`${reason}; device sweep skipped`];
   return [
@@ -388,7 +388,7 @@ export function formatGcReport({
   deviceSweepNotices = [],
   caches = [],
   olderThan = null,
-}: Partial<GcReport>) {
+}: Partial<GcReport>): string[] {
   const lines: string[] = [];
   const staleLocks = buildLocks?.stale ?? [];
   const liveLocks = buildLocks?.live ?? [];
@@ -880,7 +880,7 @@ export async function collectGcReport({
 // Report, then (only with --delete) act. Exported so the suite can drive the
 // device sweep with `unsafeAllowScopedDeviceSweep`; commander supplies only
 // the flags declared below.
-export async function runGc(opts: RunGcOptions = {}) {
+export async function runGc(opts: RunGcOptions = {}): Promise<void> {
   const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
   // --all reaches CACHES ONLY. It is not "delete everything gc knows about":
   // devices and project entries are reached by --delete alone, exactly as
@@ -1128,7 +1128,7 @@ function emptyCaches(caches: GcCache[]) {
   }
 }
 
-export default function gcCommand(program: Command) {
+export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(

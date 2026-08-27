@@ -3,8 +3,6 @@
   "compilerOptions": {
     "module": "preserve",
     "moduleResolution": "bundler",
-    "allowJs": true,
-    "checkJs": false,
     "types": ["node", "vitest/globals"]
   },
   "include": ["*.ts", "__tests__/**/*.ts"]

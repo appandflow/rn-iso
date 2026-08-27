@@ -224,6 +224,15 @@ function closeHttpServer(httpServer: BareModule, timeoutMs: number): Promise<voi
   });
 }
 
+// The ServerHandle runSupervisor drives, plus the pieces a test reaches for.
+export interface BareServerHandle {
+  mode: string;
+  serverPid: null;
+  httpServer: BareModule;
+  onExit(cb: (info: { code: number; reason?: string }) => void): void;
+  close(): Promise<void>;
+}
+
 export async function startBareServer({
   root,
   port,
@@ -240,7 +249,7 @@ export async function startBareServer({
   deps?: BareDeps | null;
   reporterFactory?: ((opts: { dir: string }) => BareModule) | null;
   closeTimeoutMs?: number;
-}) {
+}): Promise<BareServerHandle> {
   const { metro, devMiddleware, serverApi } = deps || resolveBareDeps(root);
   const makeReporter = reporterFactory === undefined ? loadNdjsonReporter(root) : reporterFactory;
 

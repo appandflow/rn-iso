@@ -407,7 +407,7 @@ export function liveOwnedDeviceCount({
   sims = [],
   adbEmulators = [],
   config = null,
-}: { sims?: SimRecord[]; adbEmulators?: EmulatorRecord[]; config?: Config | null } = {}) {
+}: { sims?: SimRecord[]; adbEmulators?: EmulatorRecord[]; config?: Config | null } = {}): number {
   let count = 0;
   for (const sim of sims) {
     if (sim?.state === 'Booted' && sim.name?.startsWith('rn-iso-')) count++;
@@ -528,7 +528,7 @@ export function deviceTypeMismatch(
   recordedTypeId: string | undefined | null,
   requestedName: string | undefined | null,
   deviceTypes: DeviceTypeInfo[],
-) {
+): string | null {
   if (!requestedName || !recordedTypeId) return null;
   const wanted = (deviceTypes || []).find((d) => d.name === requestedName);
   if (!wanted) return null;
