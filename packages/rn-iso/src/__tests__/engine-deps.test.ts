@@ -8,7 +8,15 @@ import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEPS_ERROR, extractPodDiagnostics, podsAreStale, readPodState, runPodInstall } from '../engine/deps.ts';
+import {
+  DEPS_ERROR,
+  extractPodDiagnostics,
+  podsAreStale,
+  readPodState,
+  runPodInstall,
+  podEnv,
+  readRubyVersion,
+} from '../engine/deps.ts';
 import { makeChildProcess, makeError, makeWriter } from './_factories.ts';
 
 // The build-log records the collecting writer captures; only these fields are read.
@@ -116,6 +124,46 @@ function collectingWriter() {
   });
   return Object.assign(writer, { records });
 }
+
+describe('podEnv (#43, #44)', () => {
+  test('defaults a UTF-8 locale without touching one the caller set', () => {
+    const env = podEnv('/repo', { env: { PATH: '/usr/bin' }, home: '/home/u', exists: () => false });
+    expect(env.LANG).toBe('en_US.UTF-8');
+    expect(env.LC_ALL).toBe('en_US.UTF-8');
+    const kept = podEnv('/repo', {
+      env: { PATH: '/usr/bin', LANG: 'fr_CA.UTF-8' },
+      home: '/home/u',
+      exists: () => false,
+    });
+    expect(kept.LANG).toBe('fr_CA.UTF-8');
+    expect(kept.LC_ALL).toBe('fr_CA.UTF-8');
+  });
+
+  test('prepends a pinned ruby that a version manager has installed', () => {
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, '.ruby-version'), 'ruby-3.3.10\n');
+    const rvmBin = '/home/u/.rvm/rubies/ruby-3.3.10/bin';
+    const rvmGems = '/home/u/.rvm/gems/ruby-3.3.10';
+    const env = podEnv(root, {
+      env: { PATH: '/usr/bin' },
+      home: '/home/u',
+      exists: (p) => p === rvmBin || p === rvmGems,
+    });
+    expect(env.PATH).toBe(`${rvmBin}:/usr/bin`);
+    expect(env.GEM_HOME).toBe(rvmGems);
+    const none = podEnv(root, { env: { PATH: '/usr/bin' }, home: '/home/u', exists: () => false });
+    expect(none.PATH).toBe('/usr/bin');
+    expect(none.GEM_HOME).toBeUndefined();
+  });
+
+  test('readRubyVersion strips the ruby- prefix and returns null when unpinned', () => {
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, '.ruby-version'), '3.4.1\n');
+    expect(readRubyVersion(root)).toBe('3.4.1');
+    rmSync(join(root, '.ruby-version'));
+    expect(readRubyVersion(root)).toBe(null);
+  });
+});
 
 describe('runPodInstall', () => {
   test('runs `pod install` with cwd ios/ and streams the transcript as build/debug records', async () => {
