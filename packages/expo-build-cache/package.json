@@ -1,6 +1,6 @@
 {
   "name": "@rn-iso/expo-build-cache",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Local Expo build cache provider: installs a cached .app/.apk instead of compiling when no native input changed.",
   "license": "MIT",
   "repository": {
@@ -27,7 +27,7 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@rn-iso/core": "^1.4.0"
+    "@rn-iso/core": "^1.5.0"
   },
   "engines": {
     "node": ">=22"

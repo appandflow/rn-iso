@@ -1,6 +1,6 @@
 {
   "name": "@rn-iso/metro",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Metro integration for rn-iso: one transform cache shared by every worktree, plus an NDJSON reporter for structured logs.",
   "license": "MIT",
   "repository": {
@@ -27,7 +27,7 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@rn-iso/core": "^1.4.0"
+    "@rn-iso/core": "^1.5.0"
   },
   "peerDependencies": {
     "metro-cache": "*"
