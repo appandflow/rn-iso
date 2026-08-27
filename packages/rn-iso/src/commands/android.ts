@@ -57,6 +57,9 @@ import {
   noMetroRemedy,
   pickDevClientScheme,
   resolveMetroWithRetry,
+  // The one step stopwatch both commands stamp their phase lines with, so a
+  // duration reads the same ("4s", "1m4s") whichever platform printed it.
+  stepTimer,
 } from './ios.ts';
 import { resolveSettings } from '../settings.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
@@ -966,15 +969,28 @@ export async function runAndroid(
   // to sit whole in front of the build. The catch holds a rare boot failure
   // until the await, where it fails with the same code it always did -- and
   // the build that ran anyway is in the shared cache for the retry.
-  const bootPromise = Promise.resolve(ensureDeviceBooted({ platform: PLATFORM, device, out })).catch((e) => ({
-    failed: true as const,
-    reason: String((e as Error)?.message || e),
-    serial: null,
-  }));
+  // The boot's own elapsed time, stamped the moment its promise settles: the
+  // boot overlaps the build by design, so reading the clock at the await
+  // would report the build's time, not the boot's.
+  const bootTimer = stepTimer(now);
+  let bootDuration = '';
+  const bootPromise = Promise.resolve(ensureDeviceBooted({ platform: PLATFORM, device, out }))
+    .catch((e) => ({
+      failed: true as const,
+      reason: String((e as Error)?.message || e),
+      serial: null,
+    }))
+    .then((result) => {
+      bootDuration = bootTimer();
+      return result;
+    });
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
 
   // ---- fingerprint ----------------------------------------------------
+  // Covers the fingerprint compute plus the LOCAL cache resolve; a remote
+  // consult reports its own time on its own cache line below.
+  const fingerprintTimer = stepTimer(now);
   let hash;
   try {
     // Scoped to Android. Unscoped, ios/ hashes into this key: a podspec that
@@ -1005,7 +1021,10 @@ export async function runAndroid(
   const cached = useBuildCache ? resolveCached(PLATFORM, cacheKey) : null;
   record.cacheHit = cached ? 'local' : false;
   record.cacheSkipped = !useBuildCache;
-  phase('fingerprint', `${shortHash(hash)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'}`);
+  phase(
+    'fingerprint',
+    `${shortHash(hash)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}`,
+  );
 
   // ---- level two: the project's OWN Expo build-cache provider ----------
   //
@@ -1051,6 +1070,7 @@ export async function runAndroid(
   }
 
   if (remote && useBuildCache) {
+    const remoteTimer = stepTimer(now);
     const hit = await resolveRemoteBuild({
       logWriter: writer,
       provider: remote.provider,
@@ -1069,7 +1089,7 @@ export async function runAndroid(
       }
       apkPath = stored || hit.appPath;
       record.cacheHit = 'remote';
-      phase('cache', `remote hit (${remote.name})${stored ? ' -> stored locally' : ''}`);
+      phase('cache', `remote hit (${remote.name})${stored ? ' -> stored locally' : ''} ${remoteTimer()}`);
     } else if (hit?.timedOut) {
       abandonedRemote = true;
       phase(
@@ -1085,7 +1105,7 @@ export async function runAndroid(
           : null;
       phase('cache', chalk.yellow(authNote || `${remote.name} could not be used: ${hit.failed}; building instead`));
     } else {
-      phase('cache', `remote miss (${remote.name})`);
+      phase('cache', `remote miss (${remote.name}) ${remoteTimer()}`);
     }
   }
 
@@ -1281,12 +1301,12 @@ export async function runAndroid(
     );
   }
   const serial = booted.serial;
-  phase('device', `${device.avdName || serial} (${serial}) booted`);
+  phase('device', `${device.avdName || serial} (${serial}) booted ${bootDuration}`);
 
   // serial and apkPath are provably set by this point: booted.failed already
   // returned, and apkPath is set by either the cache branch or a build that
   // did not report `failed`.
-  const installStarted = now();
+  const installTimer = stepTimer(now);
   const installed: InstallResultLike = install({ serial: serial!, apkPath: apkPath! });
   if (installed.failed) {
     return fail(
@@ -1296,10 +1316,7 @@ export async function runAndroid(
       { lastBuildStatus: true },
     );
   }
-  phase(
-    'install',
-    `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} (${formatDuration(now() - installStarted)})`,
-  );
+  phase('install', `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} ${installTimer()}`);
 
   // ---- launch (Contract 6) ---------------------------------------------
   // Project files first, then the APK itself: on a cache hit no prebuild ran,
@@ -1323,6 +1340,7 @@ export async function runAndroid(
   // iOS command gives: an app.json is not the truth on a project with a
   // dynamic config, and the artifact is in hand.
   const scheme = resolveDevClientScheme(root, apkPath);
+  const launchTimer = stepTimer(now);
   const launchedAt = now();
   // launchAndroidApp returns one of four flat shapes (see engine/app-install.ts);
   // read through the local, all-optional interface rather than the union.
@@ -1354,7 +1372,7 @@ export async function runAndroid(
   // workspace's bundle, `am-start` / `monkey` open whatever the launcher
   // activity shows.
   const launchMode = launched.mode === 'deep-link' ? 'expo-dev-client deep link' : launched.mode;
-  phase('launch', launchMode ? `${androidPackage} (${launchMode})` : androidPackage);
+  phase('launch', `${launchMode ? `${androidPackage} (${launchMode})` : androidPackage} ${launchTimer()}`);
 
   // Contract 6, reported. Both mechanisms ran before the launch and until now
   // NOTHING consumed their result: launchAndroidApp has always returned

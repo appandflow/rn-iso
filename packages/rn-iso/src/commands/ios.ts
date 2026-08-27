@@ -210,6 +210,15 @@ export function formatDuration(ms: unknown): string {
   return `${minutes}m${seconds}s`;
 }
 
+// A per-step stopwatch: created the moment a step is kicked off, read when
+// its phase line prints. Steps that overlap others (the boot runs beside the
+// build) stamp their result the moment they finish, so the number answers
+// "how long did this step itself take", never "how long was it awaited".
+export function stepTimer(now: () => number = Date.now): () => string {
+  const t0 = now();
+  return () => `(${formatDuration(now() - t0)})`;
+}
+
 // Enough of a fingerprint to compare two runs by eye, never enough to mistake
 // for the whole hash -- the ".." is the part that says so.
 export function shortHash(hash: unknown): string {
@@ -1079,15 +1088,28 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // added the whole boot ahead of a multi-minute compile for no reason. The
   // catch holds a rare boot failure until the await, where it fails with the
   // same code it always did.
+  // The boot's own elapsed time, stamped the moment its promise settles: the
+  // boot overlaps the build by design, so reading the clock where the await
+  // happens would report the build's time, not the boot's.
+  const bootTimer = stepTimer(d.now);
+  let bootDuration = '';
   const bootPromise: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined> = Promise.resolve(
     d.ensureBooted({ platform: PLATFORM, device, out: note }),
-  ).catch((e) => ({ ok: false, reason: String((e as Error)?.message || e) }));
+  )
+    .catch((e) => ({ ok: false, reason: String((e as Error)?.message || e) }))
+    .then((result) => {
+      bootDuration = bootTimer();
+      return result;
+    });
   // The build destination: the udid exists as soon as the device record does.
   // The rare record without one (legacy shapes) waits for the boot to resolve
   // it, which is exactly the old ordering.
   const udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
 
   // ---- fingerprint and cache ----
+  // Covers the fingerprint compute plus the LOCAL cache resolve; a remote
+  // consult reports its own time on its own cache line below.
+  const fingerprintTimer = stepTimer(d.now);
   let fingerprint;
   try {
     // Scoped to iOS: an unscoped hash folds android/ into the iOS key (and
@@ -1117,7 +1139,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   let cacheHit: CacheHitLevel = cached ? 'local' : false;
   phase(
     'fingerprint',
-    `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'}`,
+    `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}`,
   );
 
   let appPath: string | null = cached;
@@ -1172,6 +1194,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   }
 
   if (remote && useBuildCache) {
+    const remoteTimer = stepTimer(d.now);
     const hit = await d.resolveRemote({
       logWriter: logWriter(),
       provider: remote.provider,
@@ -1191,7 +1214,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       }
       appPath = stored || hit.appPath;
       cacheHit = 'remote';
-      phase('cache', `remote hit (${remote.name})${stored ? ' -> stored locally' : ''}`);
+      phase('cache', `remote hit (${remote.name})${stored ? ' -> stored locally' : ''} ${remoteTimer()}`);
     } else if (hit?.timedOut) {
       abandonedRemote = true;
       note(
@@ -1215,7 +1238,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         ),
       );
     } else {
-      phase('cache', `remote miss (${remote.name})`);
+      phase('cache', `remote miss (${remote.name}) ${remoteTimer()}`);
     }
   }
 
@@ -1465,12 +1488,13 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       remedy: 'Run `rn-iso ios` again to re-establish an owned simulator for this workspace.',
     });
   }
-  phase('device', `${deviceLabel(device, udid)} booted`);
+  phase('device', `${deviceLabel(device, udid)} booted ${bootDuration}`);
 
   // ---- install ----
   // appPath and bundleId are provably set by this point: the cache branch above
   // fails early when bundleId cannot be read, and the build branch's buildIos
   // success shape always carries both.
+  const installTimer = stepTimer(d.now);
   const installed = d.installIosApp({ udid, appPath: appPath! });
   if (installed?.failed) {
     return fail({
@@ -1480,7 +1504,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       build: { ...buildFailure, appPath, bundleId },
     });
   }
-  phase('install', `-> ${deviceLabel(device, udid)}`);
+  phase('install', `-> ${deviceLabel(device, udid)} ${installTimer()}`);
 
   // ---- launch, wired to THIS workspace's port (Contract 6) ----
   //
@@ -1488,6 +1512,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // dev-client app launched without its deep link opens the dev-launcher's
   // server picker, and the picker lists every workspace on the machine.
   const scheme = d.devClientScheme(root, appPath);
+  const launchTimer = stepTimer(d.now);
   const launchedAt = d.now();
   const launched = d.launchIosApp({
     udid,
@@ -1503,7 +1528,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       build: { ...buildFailure, appPath, bundleId },
     });
   }
-  phase('launch', bundleId!);
+  phase('launch', `${bundleId!} ${launchTimer()}`);
 
   // The launch marker (Contract 1). `logs --errors` uses it to bound the
   // window: errors from the run BEFORE this launch are not this run's.

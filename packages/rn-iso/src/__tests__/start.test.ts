@@ -749,7 +749,8 @@ describe('output contract', () => {
     }
 
     expect(result.exitCode).toBe(null);
-    expect(result.logs.join('\n')).toMatch(/OK: dev server on port 8160/);
+    // The OK line carries the total wait, in formatDuration's shape.
+    expect(result.logs.join('\n')).toMatch(/OK: dev server on port 8160.* \(\d+m?\d*s\)/);
     expect(result.logs.join('\n')).toMatch(/expo-child/);
     expect(result.logs.join('\n')).toMatch(new RegExp(workspaceLogsDir(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     for (const line of result.logs) {

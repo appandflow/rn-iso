@@ -17,13 +17,13 @@ npx rn-iso stop              # supervisor down, sim shut down, port freed
 
 ```
 $ npx rn-iso start
-OK: dev server on port 8082, supervisor pid 41233 (expo-child)
+OK: dev server on port 8082, supervisor pid 41233 (expo-child) (6s)
 
 $ npx rn-iso ios
-device      rn-iso-myproject (BF2A..) booted
-fingerprint a3f9b1.. hit
-install     from cache (3.1s)
-launch      com.example.app
+device      rn-iso-myproject (BF2A..) booted (9s)
+fingerprint a3f9b1.. hit (2s)
+install     from cache (3s)
+launch      com.example.app (1s)
 OK: com.example.app launched on BF2A..
 ```
 

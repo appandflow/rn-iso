@@ -29,6 +29,9 @@ import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } f
 import { readWorkspaceState } from '../supervisor/state.ts';
 import { ensureWorkspaceIgnored } from '../engine/workspace.ts';
 import { spawnEntry } from '../spawn-entry.ts';
+// The same stopwatch the build commands stamp their phase lines with, so the
+// OK line's total wait reads the same way ("4s", "1m4s").
+import { stepTimer } from './ios.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
@@ -195,6 +198,9 @@ export function registerStart(program: Command): void {
     .option('--wait <seconds>', `How long to wait for the dev server to answer (default ${DEFAULT_WAIT_SECONDS})`)
     .action(async (opts: StartOptions) => {
       const json = Boolean(opts.json);
+      // Total wait, command start to the OK line: `start` blocks on health by
+      // contract, and how long that took is part of the report.
+      const waitTimer = stepTimer();
       const out = (line: string) => {
         if (json) console.error(line);
         else console.log(line);
@@ -273,7 +279,7 @@ export function registerStart(program: Command): void {
           note(chalk.dim(`A dev server for this project already answers on port ${port}, started outside rn-iso.`));
           note(chalk.dim('Leaving it alone: rn-iso will not start a second bundler over a working one.'));
         }
-        report({ json, out, port, supervisor, logsDir, alreadyRunning: true });
+        report({ json, out, port, supervisor, logsDir, alreadyRunning: true, waited: waitTimer() });
         return;
       }
 
@@ -297,7 +303,7 @@ export function registerStart(program: Command): void {
           });
         }
         supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) || supervisor;
-        report({ json, out, port, supervisor, logsDir, alreadyRunning: true });
+        report({ json, out, port, supervisor, logsDir, alreadyRunning: true, waited: waitTimer() });
         return;
       }
 
@@ -377,7 +383,7 @@ export function registerStart(program: Command): void {
         // child.pid is only undefined if the spawn itself failed, which the
         // health check above would already have turned into a failure.
         { pid: child.pid as number, port, mode: null, startedAt: null };
-      report({ json, out, port, supervisor, logsDir, alreadyRunning: false });
+      report({ json, out, port, supervisor, logsDir, alreadyRunning: false, waited: waitTimer() });
     });
 }
 
@@ -480,6 +486,7 @@ function report({
   supervisor,
   logsDir,
   alreadyRunning,
+  waited,
 }: {
   json: boolean;
   out: (line: string) => void;
@@ -487,6 +494,9 @@ function report({
   supervisor: LiveSupervisor | null;
   logsDir: string;
   alreadyRunning: boolean;
+  // Pre-rendered "(4s)": the total wait, stamped by the caller's stepTimer.
+  // The --json payload does not carry it -- one contract, unchanged.
+  waited: string;
 }): StartFacts {
   // LiveSupervisor is a closed, non-null shape (see above); SupervisorRecord
   // is the loose index-signature bag startFacts (and the wider --json
@@ -505,7 +515,7 @@ function report({
   const who = facts.supervisorPid
     ? `supervisor pid ${facts.supervisorPid}${facts.mode ? ` (${facts.mode})` : ''}`
     : 'started outside rn-iso';
-  out(chalk.green(`OK: dev server on port ${port}, ${who}${alreadyRunning ? ' (already running)' : ''}`));
+  out(chalk.green(`OK: dev server on port ${port}, ${who}${alreadyRunning ? ' (already running)' : ''} ${waited}`));
   out(chalk.dim(`Logs: ${logsDir}`));
   return facts;
 }

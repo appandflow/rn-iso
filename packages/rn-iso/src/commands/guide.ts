@@ -580,10 +580,10 @@ but --base <ref> resolves to <sha>"  (worktree create)
   #    installed (or built), app launched wired to port 8082, device-log
   #    collector attached.
   npx rn-iso ios          # or: npx rn-iso android
-    device      rn-iso-app-412 (BF2A..) booted
-    fingerprint a3f9b1.. hit
-    install     from cache (3.1s)
-    launch      com.example.app
+    device      rn-iso-app-412 (BF2A..) booted (9s)
+    fingerprint a3f9b1.. hit (2s)
+    install     from cache (3s)
+    launch      com.example.app (1s)
 
   # 4. Did it work? Empty output and exit 0 is the pass condition.
   npx rn-iso logs --errors --json

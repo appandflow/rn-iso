@@ -362,6 +362,12 @@ describe('a cache hit', () => {
     expect(labelled(h.stderr, 'metro')[0]).toMatch(/port 8082 \(pid 41233\)/);
     expect(labelled(h.stderr, 'launch')[0]).toMatch(/com\.example\.app/);
     expect(labelled(h.stderr, 'logs')[0]).toMatch(/collector pid 9001/);
+    // Every timed phase line carries its own duration, in formatDuration's
+    // shape ("4s", "1m4s"), at the end of the line.
+    expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/\(\d+m?\d*s\)$/);
+    expect(labelled(h.stderr, 'device')[0]).toMatch(/booted \(\d+m?\d*s\)$/);
+    expect(labelled(h.stderr, 'install')[0]).toMatch(/from local cache \(\d+m?\d*s\)$/);
+    expect(labelled(h.stderr, 'launch')[0]).toMatch(/\(\d+m?\d*s\)$/);
     // Output discipline: everything above is stderr, and stdout carries the
     // single outcome line an agent reads.
     expect(h.stdout.length).toBe(1);
