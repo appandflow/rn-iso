@@ -128,17 +128,24 @@ That is all of it. There is no `init` -- repo setup is the `rn-iso-init` skill a
 
 `ios --remote` and `android --remote` install and launch on a simulator or emulator that is not on this machine. **The build still runs here** -- the fingerprint, the shared cache and single-flight builds are unchanged, and only the device moves. Reach for it when the machine runs out of simulators before it runs out of work, not as a default: a cloud session is billable, and a local device is faster.
 
-**A device on another machine needs Metro to be reachable from ITS network**, so expose the reserved port through a tunnel and name it:
+**A device on another machine needs Metro to be reachable from ITS network.** By default (`metro.tunnel: auto`, `guide settings`) rn-iso arranges this itself, and which piece does it depends on the project:
+
+- **Expo project:** `rn-iso start` passes `--tunnel` to the project's own `expo start` and records the URL Expo reports. This has to happen at `start`, not at `ios --remote` -- a later run cannot add `--tunnel` to an already-running dev server.
+- **Bare RN project, or `metro.tunnel: cloudflared`/`ngrok` on any project:** `ios`/`android --remote` starts a managed tunnel (ngrok preferred, then cloudflared) for the reserved port BEFORE creating any billable session, records it, and reuses it across re-runs rather than starting a second one.
+
+Either way, before the device is handed the address, rn-iso proves it actually reaches THIS workspace's Metro (requests a bundle and watches for the request in this workspace's own log) and refuses with `RN_ISO_REMOTE_METRO_WRONG` rather than connecting a session to a tunnel that now serves a different project -- the same failure a stale port reservation can otherwise produce silently.
+
+`off` asserts the device shares this machine (a local `agent-device proxy`) and is the only mode that needs no tunnel and no gate. Bringing your own tunnel still works -- set `metro.publicUrl` (or, for one run, `RN_ISO_METRO_PUBLIC_URL`) to its URL and rn-iso uses it instead of starting one, whatever `metro.tunnel` says:
 
 ```bash
 rn-iso start                                        # note the reserved port, e.g. 8085
 cloudflared tunnel --url http://127.0.0.1:8085      # wait for it -- a fresh quick tunnel takes a few minutes to route
-export RN_ISO_METRO_PUBLIC_URL=https://<that-url>
+export RN_ISO_METRO_PUBLIC_URL=https://<that-url>   # or metro.publicUrl in .rn-iso.json
 ```
 
-Set it BEFORE `rn-iso start`, not just before `ios`. `start` turns it into Expo's `EXPO_PACKAGER_PROXY_URL`, which is what makes the manifest advertise the tunnel. Without it Expo builds the manifest from its own port, the device is told to fetch `https://<tunnel-host>:8085/...`, and the launch dies at "Could not connect to development server" -- the manifest wins over the deep link, so it cannot be fixed from the device side. A loopback proxy needs none of this.
+An operator-supplied tunnel is still gated the same way a managed one is -- rn-iso did not create it and cannot vouch for what it reaches -- but it is never reaped: `stop`/`gc`/`worktree remove` only ever stop a tunnel THEY started.
 
-**`metro.tunnel` and `metro.publicUrl` are the settings form of the same decision** (`guide settings`), a repo-level policy instead of a manual cloudflared-plus-export each time: `auto` (default) assumes the device is elsewhere and arranges a tunnel; `off` asserts the device shares this machine (a local `agent-device proxy`) and is the only mode that needs no tunnel; `expo` lets the Expo dev server tunnel itself; `cloudflared` / `ngrok` name a provider explicitly. `metro.publicUrl` names an existing tunnel's URL -- the setting equivalent of the manual export above -- and takes precedence over rn-iso starting one, whatever `metro.tunnel` says.
+Set `metro.publicUrl` (or export the env var) BEFORE `rn-iso start`, not just before `ios`, on an Expo project: `start` turns it into Expo's `EXPO_PACKAGER_PROXY_URL`, which is what makes the manifest advertise the tunnel. Without it Expo builds the manifest from its own port, the device is told to fetch `https://<tunnel-host>:8085/...`, and the launch dies at "Could not connect to development server" -- the manifest wins over the deep link, so it cannot be fixed from the device side. This does not apply when rn-iso starts the tunnel itself (Expo's own, or a managed one): Expo sets its own manifest host correctly when it is tunnelling itself, and forcing `EXPO_PACKAGER_PROXY_URL` too is how you get a manifest advertising a host that does not serve.
 
 It needs `agent-device` on PATH, plus one of:
 
@@ -150,6 +157,8 @@ It needs `agent-device` on PATH, plus one of:
 **Give the user the watch link.** When rn-iso creates an EAS Simulator session it prints `Watch this device: <url>` and puts the same value in the `--json` payload as `webPreviewUrl`. That browser preview is the ONLY way a person can see a device in a datacenter, so **put the URL in your reply to them, on its own line, whenever you run `--remote`** -- especially before a long build, and again if the launch comes back `unverified` so they can look at what the screen is actually showing. Never pass it to `agent-device open`: it is a browser page, not a deep link, and sending it to the device renders a browser inside the simulator. A local device and a bring-your-own daemon have no preview, and the key is then absent rather than null.
 
 **`stop`, `worktree remove` and `gc` DESTROY a remote session**, unlike a local device which they only shut down (or delete, for `worktree remove`). A session bills until its max duration, so leaving one running is the worse failure. If the stop fails, the command exits non-zero and keeps the record so you can retry -- do not ignore that. The one case nothing can recover is a worktree you `rm -rf` by hand: that takes the session id with it, and the two-hour cap is all that stops the billing.
+
+The same three commands also stop a MANAGED tunnel (ngrok/cloudflared) the same way, independently of the session -- it is its own process, not billed by the minute but still a leak if nothing ever kills it. An Expo-hosted tunnel has no process of its own to stop there: it dies with the `expo start` child, which stopping the supervisor already ends.
 
 **There are no device logs on a remote device yet.** `logs --source device` is empty because the collector is local-only. The Metro half -- JS errors, redboxes, bundling failures -- is unaffected and is where nearly everything useful comes from anyway. `--errors` still works and still means what it says.
 

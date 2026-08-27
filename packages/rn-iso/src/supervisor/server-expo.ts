@@ -309,6 +309,18 @@ export function expoProxyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return publicUrl ? { EXPO_PACKAGER_PROXY_URL: publicUrl.replace(/\/+$/, '') } : {};
 }
 
+// PURE. Expo's own dev server prints `Waiting on <url>` once on a
+// non-interactive stdout -- the shape rn-iso's piped child always is -- for
+// whichever address is active, LAN, localhost, or a tunnel. `cleanLine` has
+// already stripped the ANSI underline Expo wraps the URL in by the time a
+// record reaches this, so the match is plain text.
+const WAITING_ON_RE = /^Waiting on (\S+)/;
+
+export function parseExpoWaitingOnUrl(line: unknown): string | null {
+  const match = WAITING_ON_RE.exec(String(line ?? ''));
+  return match ? (match[1] as string) : null;
+}
+
 // The ServerHandle runSupervisor drives, plus the pieces a test reaches for.
 export interface ExpoServerHandle {
   mode: string;
@@ -325,6 +337,8 @@ export async function startExpoServer({
   writer = null,
   spawnFn = null,
   killTimeoutMs = 5000,
+  tunnel = false,
+  onTunnelUrl = null,
 }: {
   root: string;
   port: number;
@@ -332,6 +346,11 @@ export async function startExpoServer({
   writer?: NdjsonWriter | null;
   spawnFn?: ((cmd: string, args: string[], opts: SpawnOptions) => ChildProcess) | null;
   killTimeoutMs?: number;
+  // `metro.tunnel` resolved to expo (or auto on an Expo project): pass
+  // `--tunnel` and report the URL Expo prints once it comes up. `ios --remote`
+  // cannot add this after the fact, so it has to be decided here, at start.
+  tunnel?: boolean;
+  onTunnelUrl?: ((url: string) => void) | null;
 }): Promise<ExpoServerHandle> {
   const bin = expoBinPath(root);
   if (!bin) {
@@ -342,7 +361,8 @@ export async function startExpoServer({
   const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'));
   const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
 
-  const child = spawn(bin, ['start', '--port', String(port)], {
+  const args = tunnel ? ['start', '--port', String(port), '--tunnel'] : ['start', '--port', String(port)];
+  const child = spawn(bin, args, {
     cwd: root,
     // stdin is ignored on purpose: a detached supervisor has no terminal, and
     // an Expo waiting on keypresses would look hung.
@@ -351,8 +371,17 @@ export async function startExpoServer({
     // signalling that group takes the dev server with it and no orphan can
     // outlive us.
     detached: false,
-    // Colour only makes the log harder to read; it is stripped either way.
-    env: { ...process.env, FORCE_COLOR: '0', ...expoProxyEnv(process.env) },
+    env: {
+      ...process.env,
+      // Colour only makes the log harder to read; it is stripped either way.
+      FORCE_COLOR: '0',
+      ...expoProxyEnv(process.env),
+      // Without this, `--tunnel` uses the legacy ws-tunnel session, which is
+      // hardcoded to port 8081 -- fatal here, since rn-iso's whole premise is
+      // a collision-free port per workspace. With it, Expo signs a tunnel URL
+      // for the actual reserved port through the caller's Expo account.
+      ...(tunnel ? { EXPO_UNSTABLE_TUNNEL_V2: '1' } : {}),
+    },
   });
 
   // Expo prints some fatal lines to BOTH streams (the config PluginError in
@@ -362,6 +391,10 @@ export async function startExpoServer({
   // duplication, not information.
   let lastMsg: string | null = null;
   let lastAt = 0;
+  // Fires at most once: the first "Waiting on <url>" line is Expo reporting
+  // its OWN dev server address, tunnel or not, and later lines (a reload, a
+  // second bundler event) reprint the same one.
+  let tunnelUrlSeen = false;
   const emit = (stream: string) => (chunk: unknown) => {
     const record = recordFromLine(chunk, { stream });
     if (!record) return;
@@ -370,6 +403,13 @@ export async function startExpoServer({
     lastMsg = typeof record.msg === 'string' ? record.msg : null;
     lastAt = now;
     log.write(record);
+    if (tunnel && !tunnelUrlSeen && onTunnelUrl && typeof record.msg === 'string') {
+      const url = parseExpoWaitingOnUrl(record.msg);
+      if (url) {
+        tunnelUrlSeen = true;
+        onTunnelUrl(url);
+      }
+    }
   };
   const outReader = createLineReader(emit('stdout'));
   const errReader = createLineReader(emit('stderr'));

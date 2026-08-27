@@ -29,6 +29,8 @@ import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } f
 import { readWorkspaceState } from '../supervisor/state.ts';
 import { ensureWorkspaceIgnored } from '../engine/workspace.ts';
 import { spawnEntry } from '../spawn-entry.ts';
+import { publicUrlSetting, resolveSettings, tunnelModeSetting, unknownSettingKeys } from '../settings.ts';
+import { gitCommonDir, repoRoot } from '../worktree.ts';
 // The same stopwatch the build commands stamp their phase lines with, so the
 // OK line's total wait reads the same way ("4s", "1m4s").
 import { stepTimer } from './ios.ts';
@@ -45,6 +47,27 @@ export function supervisorEntry(): string {
 interface WaitResult {
   seconds?: number;
   error?: string;
+}
+
+// PURE. Whether THIS Expo dev server should tunnel itself.
+//
+// Matches engine/metro-reach.ts's own condition for its `{ expoTunnel: true }`
+// branch (mode is "expo", or "auto" on an Expo project) and its precedence
+// (a named metro.publicUrl wins over starting anything). Not routed through
+// planMetroReach itself: that function also decides between a managed
+// provider and a refusal, neither of which `start` can act on -- there is no
+// device here yet to hand a tunnel to, and no `available` providers worth
+// probing for a decision this narrow.
+export function wantsExpoOwnTunnel({
+  isExpo,
+  mode,
+  publicUrl,
+}: {
+  isExpo: boolean;
+  mode: string;
+  publicUrl?: string | null;
+}): boolean {
+  return isExpo && !publicUrl && (mode === 'expo' || mode === 'auto');
 }
 
 export function parseWait(value: unknown): WaitResult {
@@ -259,11 +282,29 @@ export function registerStart(program: Command): void {
       if (ignored.added) note(chalk.dim('note   added .rn-iso/ to .gitignore'));
       else if (ignored.error) note(chalk.yellow(`note   could not update ${ignored.path}: ${ignored.error}`));
 
+      const isExpo = detectIsExpo(root);
       upsertProject(root, {
         bundleId: detectBundleId(root) ?? undefined,
         androidPackage: detectAndroidPackage(root) ?? undefined,
-        isExpo: detectIsExpo(root),
+        isExpo,
       });
+
+      const settings = resolveSettings({
+        projectPath: root,
+        gitCommonDir: gitCommonDir(root),
+        repoRoot: repoRoot(root),
+      });
+      for (const key of unknownSettingKeys(settings)) {
+        note(chalk.yellow(`Warning: setting "${key}" is not read by rn-iso and will be ignored.`));
+      }
+      // Decided here, not at `ios`/`android --remote` time: a later run
+      // cannot retroactively add `--tunnel` to an already-running dev server.
+      const tunnel = wantsExpoOwnTunnel({
+        isExpo,
+        mode: tunnelModeSetting(settings) ?? 'auto',
+        publicUrl: publicUrlSetting(settings),
+      });
+      if (tunnel) note(chalk.dim("note   requesting an Expo tunnel for this workspace's dev server"));
 
       const logsDir = workspaceLogsDir(root);
       const logFile = supervisorLogFile(root);
@@ -315,7 +356,15 @@ export function registerStart(program: Command): void {
       // one, which is why the failure path below quotes it.
       const fd = openSync(logFile, 'a');
       const spawnedTs = Date.now();
-      const child = getExecutor().spawn(process.execPath, [supervisorEntry(), '--root', root, '--port', String(port)], {
+      const supervisorArgs = [
+        supervisorEntry(),
+        '--root',
+        root,
+        '--port',
+        String(port),
+        ...(tunnel ? ['--tunnel'] : []),
+      ];
+      const child = getExecutor().spawn(process.execPath, supervisorArgs, {
         cwd: root,
         // detached: the supervisor leads its own process group, so it
         // survives this command exiting and `stop` can signal that group

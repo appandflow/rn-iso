@@ -28,6 +28,7 @@ import {
   startFacts,
   supervisorEntry,
   tailLines,
+  wantsExpoOwnTunnel,
 } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
 
@@ -189,6 +190,28 @@ async function runAction(opts: Record<string, unknown>) {
   }
   return { logs, errs, exitCode };
 }
+
+describe('wantsExpoOwnTunnel', () => {
+  test('an Expo project with metro.tunnel unset (auto) or explicitly expo wants one', () => {
+    expect(wantsExpoOwnTunnel({ isExpo: true, mode: 'auto' })).toBe(true);
+    expect(wantsExpoOwnTunnel({ isExpo: true, mode: 'expo' })).toBe(true);
+  });
+
+  test('a bare RN workspace never does -- there is no dev server here to tunnel itself', () => {
+    expect(wantsExpoOwnTunnel({ isExpo: false, mode: 'auto' })).toBe(false);
+    expect(wantsExpoOwnTunnel({ isExpo: false, mode: 'expo' })).toBe(false);
+  });
+
+  test('an explicit managed provider defers to `ios`/`android --remote`, not `start`', () => {
+    expect(wantsExpoOwnTunnel({ isExpo: true, mode: 'cloudflared' })).toBe(false);
+    expect(wantsExpoOwnTunnel({ isExpo: true, mode: 'ngrok' })).toBe(false);
+    expect(wantsExpoOwnTunnel({ isExpo: true, mode: 'off' })).toBe(false);
+  });
+
+  test("an operator-supplied metro.publicUrl wins -- starting Expo's own tunnel too would be a second one", () => {
+    expect(wantsExpoOwnTunnel({ isExpo: true, mode: 'auto', publicUrl: 'https://abc.ngrok.app' })).toBe(false);
+  });
+});
 
 describe('option parsing', () => {
   test('--wait defaults to 60 seconds', () => {
@@ -477,6 +500,73 @@ describe('action: spawning the supervisor', () => {
     expect(facts.alreadyRunning).toBe(false);
     expect(facts.supervisorPid).toBe(process.pid);
     expect(facts.mode).toBe('bare-inproc');
+  });
+
+  test('passes --tunnel to the supervisor for an Expo workspace with metro.tunnel unset (auto)', async () => {
+    // `ios --remote` cannot retroactively add this to an already-running dev
+    // server, so `start` is the only place the decision can be made.
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    const port = 8156;
+    const exec = metroExecutor({ listeners: {} });
+    const held: { server: Server | null } = { server: null };
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
+      metroListener(port).then((s) => {
+        held.server = s;
+        exec.listening = true;
+      });
+      return { pid: process.pid, unref() {}, on() {} };
+    };
+    const base = exec.runQuiet.bind(exec);
+    exec.runQuiet = (cmd) => {
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
+      return base(cmd);
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+
+    try {
+      await runAction({ json: true, wait: '10' });
+    } finally {
+      held.server?.close();
+    }
+
+    const spawned = exec.calls.spawn[0];
+    assert(spawned);
+    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port), '--tunnel']);
+  });
+
+  test('does not pass --tunnel to a bare RN workspace', async () => {
+    const port = 8157;
+    const exec = metroExecutor({ listeners: {} });
+    const held: { server: Server | null } = { server: null };
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+      metroListener(port).then((s) => {
+        held.server = s;
+        exec.listening = true;
+      });
+      return { pid: process.pid, unref() {}, on() {} };
+    };
+    const base = exec.runQuiet.bind(exec);
+    exec.runQuiet = (cmd) => {
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
+      return base(cmd);
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+
+    try {
+      await runAction({ json: true, wait: '10' });
+    } finally {
+      held.server?.close();
+    }
+
+    const spawned = exec.calls.spawn[0];
+    assert(spawned);
+    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port)]);
   });
 
   test('a supervisor that never answers exits 1 with the log tail and the log path', async () => {

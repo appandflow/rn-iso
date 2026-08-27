@@ -17,6 +17,7 @@ import {
   expoBinPath,
   inferLevel,
   isBundleMarker,
+  parseExpoWaitingOnUrl,
   recordFromLine,
   startExpoServer,
   stripAnsi,
@@ -446,4 +447,90 @@ test('an explicit EXPO_PACKAGER_PROXY_URL is never overridden', () => {
       RN_ISO_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com',
     }),
   ).toEqual({});
+});
+
+describe('parseExpoWaitingOnUrl', () => {
+  test('reads the URL off the plain, non-interactive line Expo prints', () => {
+    expect(parseExpoWaitingOnUrl('Waiting on exp://abc123.exp.direct')).toBe('exp://abc123.exp.direct');
+    expect(parseExpoWaitingOnUrl('Waiting on http://localhost:8081')).toBe('http://localhost:8081');
+  });
+
+  test('a line that is not the waiting-on banner is not a match', () => {
+    expect(parseExpoWaitingOnUrl('Starting project at /app')).toBeNull();
+    expect(parseExpoWaitingOnUrl('')).toBeNull();
+  });
+});
+
+describe('starting a tunnel', () => {
+  test('--tunnel and EXPO_UNSTABLE_TUNNEL_V2 are only added when requested', async () => {
+    fakeBin();
+    const calls: { args: string[]; opts: SpawnOptions }[] = [];
+    await startExpoServer({
+      root,
+      port: 8120,
+      logsDir: join(root, 'logs'),
+      tunnel: true,
+      spawnFn: (_cmd, args, opts) => {
+        calls.push({ args, opts });
+        return fakeChild();
+      },
+    });
+    const seen = calls[0];
+    assert(seen);
+    expect(seen.args).toEqual(['start', '--port', '8120', '--tunnel']);
+    const env = seen.opts.env as Record<string, string>;
+    expect(env.EXPO_UNSTABLE_TUNNEL_V2).toBe('1');
+  });
+
+  test('without tunnel, neither the flag nor the env var is set', async () => {
+    fakeBin();
+    const calls: { args: string[]; opts: SpawnOptions }[] = [];
+    await startExpoServer({
+      root,
+      port: 8121,
+      logsDir: join(root, 'logs'),
+      spawnFn: (_cmd, args, opts) => {
+        calls.push({ args, opts });
+        return fakeChild();
+      },
+    });
+    const seen = calls[0];
+    assert(seen);
+    expect(seen.args).toEqual(['start', '--port', '8121']);
+    const env = seen.opts.env as Record<string, string>;
+    expect(env.EXPO_UNSTABLE_TUNNEL_V2).toBeUndefined();
+  });
+
+  test('the printed tunnel URL is reported exactly once, through onTunnelUrl', async () => {
+    fakeBin();
+    const child = fakeChild();
+    const urls: string[] = [];
+    await startExpoServer({
+      root,
+      port: 8122,
+      logsDir: join(root, 'logs'),
+      tunnel: true,
+      spawnFn: () => child,
+      onTunnelUrl: (url) => urls.push(url),
+    });
+    child.stdout!.emit('data', 'Waiting on exp://abc123.exp.direct\n');
+    // A reload reprints the same banner; only the first report matters.
+    child.stdout!.emit('data', 'Waiting on exp://abc123.exp.direct\n');
+    expect(urls).toEqual(['exp://abc123.exp.direct']);
+  });
+
+  test('with no tunnel requested, a "Waiting on" line is logged but never reported as a tunnel', async () => {
+    fakeBin();
+    const child = fakeChild();
+    const urls: string[] = [];
+    await startExpoServer({
+      root,
+      port: 8123,
+      logsDir: join(root, 'logs'),
+      spawnFn: () => child,
+      onTunnelUrl: (url) => urls.push(url),
+    });
+    child.stdout!.emit('data', 'Waiting on http://localhost:8123\n');
+    expect(urls).toEqual([]);
+  });
 });

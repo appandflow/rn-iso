@@ -199,6 +199,14 @@ WHAT THE SUPERVISOR IS
                  a child and its stdout is parsed into records. Levels are
                  INFERRED from each line, so those records carry raw: true.
 
+  In expo-child mode, when metro.tunnel resolves to "expo" (or "auto" on an
+  Expo project and no metro.publicUrl is set), \`start\` also passes
+  \`--tunnel\` and EXPO_UNSTABLE_TUNNEL_V2=1 (the legacy ws-tunnel path is
+  locked to port 8081, which every reserved port but the first collides with)
+  and records the URL Expo reports under state.json's metroTunnel. This has to
+  happen here: \`ios --remote\` / \`android --remote\` cannot add \`--tunnel\` to
+  an already-running dev server. See \`guide settings\` for metro.tunnel.
+
   \`rn-iso status\` reports the pid, the mode, and whether it is answering.
   \`rn-iso stop\` is the inverse of \`start\`: it halts the supervisor, reaps
   the device-log collectors, shuts the owned device down (never deletes it)
