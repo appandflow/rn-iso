@@ -78,7 +78,7 @@ export function supervisorLogFile(projectRoot: string): string {
 // the anchor that makes a relocated cache visible to processes that never
 // inherited the env override. Unreadable or malformed answers null -- a cache
 // override must never be the reason a build cannot run.
-export function cachePathSetting(key: 'buildCache' | 'metroCache'): string | null {
+function cachePathSetting(key: 'buildCache' | 'metroCache'): string | null {
   try {
     const parsed = JSON.parse(readFileSync(join(getConfigDir(), 'config.json'), 'utf-8')) as {
       caches?: Record<string, unknown>;
