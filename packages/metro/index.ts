@@ -97,8 +97,26 @@ function cacheNameSegment(name: string): string {
   );
 }
 
+// The machine config's override (`caches.metroCache` in <configDir>/config.json):
+// the same three-step resolution as the CLI's paths module -- env, config file,
+// default -- duplicated here because this package must work with no rn-iso
+// installed. Unreadable or malformed answers null; a cache override must never
+// be the reason a bundler config fails to load.
+function cachePathSetting(key: string): string | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8')) as {
+      caches?: Record<string, unknown>;
+    };
+    const value = parsed?.caches?.[key];
+    return typeof value === 'string' && value.startsWith('/') ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export function cacheRoot(name?: string | null): string {
-  if (process.env.RN_ISO_METRO_CACHE) return process.env.RN_ISO_METRO_CACHE;
+  const setting = process.env.RN_ISO_METRO_CACHE || cachePathSetting('metroCache');
+  if (setting) return setting;
   const root = path.join(configDir(), 'metro-cache');
   return name === undefined || name === null || name === '' ? root : path.join(root, cacheNameSegment(name));
 }

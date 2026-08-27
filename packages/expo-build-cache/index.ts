@@ -66,8 +66,25 @@ function configDir(): string {
 // A function rather than a constant: resolving it at load time froze whatever
 // the environment was when a metro.config.js or an Expo config first required
 // this file, which is not necessarily what it is when a build runs.
+// The machine config's override (`caches.buildCache` in <configDir>/config.json):
+// the same three-step resolution as the CLI's paths module -- env, config file,
+// default -- duplicated here because this package must work with no rn-iso
+// installed. Unreadable or malformed answers null; a cache override must never
+// be the reason a build fails.
+function cachePathSetting(key: string): string | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8')) as {
+      caches?: Record<string, unknown>;
+    };
+    const value = parsed?.caches?.[key];
+    return typeof value === 'string' && value.startsWith('/') ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export function cacheRoot(): string {
-  return process.env.RN_ISO_BUILD_CACHE || path.join(configDir(), 'build-cache');
+  return process.env.RN_ISO_BUILD_CACHE || cachePathSetting('buildCache') || path.join(configDir(), 'build-cache');
 }
 
 function entryDir(platform: string, key: string): string {

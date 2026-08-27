@@ -867,6 +867,20 @@ or via the environment, which overrides the file:
 Unset, 0, or any non-positive value means NO enforcement -- the default, where
 rn-iso limits nothing. See \`guide lifecycle\` for what each cap does.
 
+CACHE LOCATIONS ARE MACHINE-LEVEL TOO
+The shared build cache and Metro transform cache default to living under
+~/.rn-iso. To relocate them (say, to an external disk), set a top-level
+\`caches\` key in ~/.rn-iso/config.json, edited by hand -- absolute paths:
+
+  {
+    "caches": { "buildCache": "/Volumes/SSD/rn-iso/build-cache",
+                "metroCache": "/Volumes/SSD/rn-iso/metro-cache" }
+  }
+
+RN_ISO_BUILD_CACHE / RN_ISO_METRO_CACHE in the environment override the file.
+The CLI and both cache packages resolve these identically, so every process
+finds the same store regardless of shell profile. A relative path is ignored.
+
 PREFER SELF-REGISTRATION OVER THE 'caches' SETTING
 There is no 'cache' command. A cache registers itself from code instead, once,
 and every 'gc' report shows it from then on, tagged (registered):

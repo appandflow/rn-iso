@@ -44,4 +44,4 @@ npx rn-iso gc --delete --older-than 30   # drop entries unused for 30 days
 rn-iso is an optional peer. Without it the cache works exactly the same; it is
 just invisible to housekeeping.
 
-`RN_ISO_BUILD_CACHE` overrides the location.
+The location can be overridden by `RN_ISO_BUILD_CACHE`, or machine-wide by `caches.buildCache` in `~/.rn-iso/config.json` (an absolute path; the env var wins). The CLI and this package resolve both identically, so they always share one store.

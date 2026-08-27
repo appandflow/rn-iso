@@ -39,7 +39,7 @@ only the entries nothing has touched, not the whole cache.
 rn-iso is an optional peer. Without it the cache works exactly the same; it is
 just invisible to housekeeping.
 
-`RN_ISO_METRO_CACHE` overrides the location.
+The location can be overridden by `RN_ISO_METRO_CACHE`, or machine-wide by `caches.metroCache` in `~/.rn-iso/config.json` (an absolute path; the env var wins). The CLI and this package resolve both identically, so they always share one store.
 
 ## The NDJSON log reporter
 
