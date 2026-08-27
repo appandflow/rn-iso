@@ -468,6 +468,23 @@ bills until its max duration, so `stop` ENDS it. A failed stop keeps the
 record and exits non-zero, for the same reason a failed local teardown does:
 the record is the only handle left to retry with.
 
+That stop sits OUTSIDE the `stillHolding` guard, unlike the local shutdown
+beside it. The guard exists so a supervisor still driving a simulator does not
+get the device pulled out from under it -- a reason about a local device. A
+session in a datacenter is not what that supervisor holds, and it charges by
+the minute whether or not a local process ignored SIGTERM.
+
+**A re-run reuses its own session rather than orphaning it.** `eas sim`
+defaults to `--force`, so `ios --remote` would otherwise mint a new session
+every run while the previous one stayed live, unrecorded (state.json's id is
+overwritten) and billing to its cap -- on every native edit in the documented
+loop. `ensureBooted` now re-reads the recorded id first and reuses the session
+when it is still live, which also removes a 60-90s creation from the common
+case. A recorded session that is NOT live is stopped before a new one is
+created; checking the status matters because eas still reports a
+`remoteConfig` for a STOPPED session, so reusing on config alone would connect
+to a daemon that is gone.
+
 `gc` and `worktree remove` end it too, through `reclaim.js`. The timing is the
 constraint and is why it lives there rather than in either caller: the session
 id is in the workspace's state.json and `eas simulator:stop` needs a project

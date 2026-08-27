@@ -522,23 +522,31 @@ export async function runStop({
   } else {
     outcomes.device = shutDownDevices(proj, { teardownIos, teardownAvd, report });
     if (outcomes.device.ios?.status === 'failed' || outcomes.device.android?.status === 'failed') ok = false;
+  }
 
-    // A remote session is the ONE device rn-iso stops by DESTROYING. Locally
-    // `stop` never deletes, because a shut-down simulator costs nothing to
-    // keep. A cloud session bills until its max duration, so leaving one up
-    // is the worse failure -- and `ios --remote` creates a fresh one anyway.
-    const remote = remoteDevice === undefined ? readRemoteDeviceState(root) : remoteDevice;
-    const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
-    if (sessionId) {
-      const result = teardownRemoteSession(root, sessionId);
-      outcomes.device.remote = { status: result.status, label: sessionId, reason: result.reason };
-      if (result.status === 'failed') {
-        ok = false;
-        report(chalk.red(`remote: ${result.reason ?? `could not stop session ${sessionId}`}`));
-      } else {
-        report(chalk.dim(`remote: stopped session ${sessionId}`));
-        dropStateKeys(root, ['remoteDevice']);
-      }
+  // A remote session is the ONE device rn-iso stops by DESTROYING. Locally
+  // `stop` never deletes, because a shut-down simulator costs nothing to
+  // keep. A cloud session bills until its max duration, so leaving one up is
+  // the worse failure -- and `ios --remote` creates a fresh one anyway.
+  //
+  // OUTSIDE the stillHolding guard, unlike the local shutdown above. That
+  // guard exists so a supervisor still driving a simulator does not get the
+  // device yanked out from under it -- a reason about a LOCAL device. A
+  // session in a datacenter is not what that supervisor is holding, and it
+  // charges by the minute whether or not a local process ignored SIGTERM.
+  // Leaving it up because something else refused to die is the one outcome
+  // that costs money.
+  const remote = remoteDevice === undefined ? readRemoteDeviceState(root) : remoteDevice;
+  const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
+  if (sessionId) {
+    const result = teardownRemoteSession(root, sessionId);
+    outcomes.device.remote = { status: result.status, label: sessionId, reason: result.reason };
+    if (result.status === 'failed') {
+      ok = false;
+      report(chalk.red(`remote: ${result.reason ?? `could not stop session ${sessionId}`}`));
+    } else {
+      report(chalk.dim(`remote: stopped session ${sessionId}`));
+      dropStateKeys(root, ['remoteDevice']);
     }
   }
 

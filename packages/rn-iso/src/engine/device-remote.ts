@@ -22,6 +22,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { getExecutor } from '../exec.ts';
+import { readRemoteSessionId } from '../supervisor/state.ts';
 import {
   closeArgs,
   connectArgs,
@@ -232,6 +233,38 @@ export function remoteIosDeps(ctx: RemoteContext) {
     ensureBooted: async ({ out = () => {} }: { out?: (msg: string) => void } = {}): Promise<BootResult> => {
       let daemon = ctx.existingDaemon ?? null;
       let id: string | null = null;
+
+      // A session this workspace already recorded is REUSED when it is still
+      // live, and STOPPED when it is not usable. Neither is optional.
+      //
+      // `eas sim` defaults to --force, so every run would otherwise mint a
+      // fresh session while the previous one stayed live, unrecorded (the id
+      // in state.json is overwritten) and billing to its cap. The documented
+      // loop re-runs `ios` after every native change, so that fired
+      // constantly. Reuse also removes a 60-90s session creation from the
+      // common case, which is the difference between `ios --remote` being
+      // idempotent and being expensive.
+      if (!daemon) {
+        const recorded = readRemoteSessionId(ctx.root);
+        if (recorded) {
+          const existing = readLiveDaemon(ctx, recorded);
+          if (existing) {
+            out(`Reusing EAS Simulator session ${recorded}.`);
+            daemon = existing;
+            id = recorded;
+          } else {
+            // Not reachable any more (stopped, errored, or a type this cannot
+            // drive). Ending it is cheap and is the only way to be sure the
+            // one about to be created is the only live one.
+            out(`Recorded session ${recorded} is not usable; stopping it before creating another.`);
+            try {
+              exec().runFile(ctx.easBin, stopSessionArgs(recorded), easEnv);
+            } catch {
+              /* already gone, or unreachable: the create below still proceeds */
+            }
+          }
+        }
+      }
 
       if (!daemon) {
         out('Creating an EAS Simulator session (this takes a moment).');
@@ -553,6 +586,31 @@ function notConnected(code: string): OpFailure {
 // Re-reads the session so the token is fetched, never stored. Returns null on
 // any failure: the caller turns that into a refusal with the session id in it,
 // which is more useful than a parse error from here.
+// The statuses eas-cli reports for a session that still exists and can still
+// be driven. Anything else (STOPPED, ERRORED) is a session to replace.
+const LIVE_STATUSES = new Set(['NEW', 'IN_PROGRESS']);
+
+// Like readDaemon, but ALSO requires the session to still be live.
+//
+// Reuse needs both facts and readDaemon only proves one: a STOPPED session
+// can still report a remoteConfig, so reusing on config alone would connect
+// to a daemon that is gone and fail at install instead of creating a session.
+function readLiveDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null {
+  let stdout: string;
+  try {
+    stdout = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), { cwd: ctx.root });
+  } catch {
+    return null;
+  }
+  try {
+    const data = JSON.parse(stdout) as { status?: unknown; remoteConfig?: unknown };
+    if (typeof data.status !== 'string' || !LIVE_STATUSES.has(data.status)) return null;
+    return remoteDaemonFrom(data.remoteConfig);
+  } catch {
+    return null;
+  }
+}
+
 function readDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null {
   let stdout: string;
   try {

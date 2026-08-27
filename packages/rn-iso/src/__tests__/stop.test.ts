@@ -750,3 +750,27 @@ test('a workspace with no remote session never calls the remote teardown', async
   expect(called).toBe(false);
   expect(r.outcomes.device.remote).toBeUndefined();
 });
+
+test('a remote session is stopped even when something still holds the port', async () => {
+  // The stillHolding guard spares a LOCAL device from being yanked out from
+  // under a supervisor that ignored SIGTERM. A session in a datacenter is not
+  // what that supervisor is holding, and it bills by the minute regardless --
+  // so leaving it up because something else refused to die is the one outcome
+  // that costs money.
+  const stopped: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    // A supervisor that will not die is what sets stillHolding.
+    isAlive: () => true,
+    killGroup: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    remoteDevice: { platform: 'ios', sessionId: 'drs_42' },
+    teardownRemoteSession: (_root: string, id: string) => {
+      stopped.push(id);
+      return { status: 'torn-down' as const };
+    },
+    report: () => {},
+  });
+  expect(stopped).toEqual(['drs_42']);
+  expect(r.outcomes.device?.remote?.status).toBe('torn-down');
+});

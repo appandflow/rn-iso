@@ -10,7 +10,7 @@
 // inverts which step is expensive, so the session must be created in
 // ensureBooted, after the gate, and never in ensureOwnedDevice.
 import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -434,5 +434,73 @@ describe('a session rn-iso created is never abandoned', () => {
     const booted = await remoteIosDeps(ctx({ existingDaemon: LOOPBACK })).ensureBooted({});
     expect(booted.failed).toBe(true);
     expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+  });
+});
+
+describe('a re-run does not orphan the session it already has', () => {
+  // `eas sim` defaults to --force, so without this every run minted a fresh
+  // session while the previous one stayed live, unrecorded (state.json's id is
+  // overwritten) and billing to its cap. The documented loop re-runs `ios`
+  // after every native change, so it fired constantly.
+  function recordSession(id: string): void {
+    mkdirSync(join(root, '.rn-iso'), { recursive: true });
+    writeFileSync(join(root, '.rn-iso', 'state.json'), JSON.stringify({ remoteDevice: { sessionId: id } }));
+  }
+
+  const LIVE = JSON.stringify({
+    id: 'drs_old',
+    status: 'IN_PROGRESS',
+    remoteConfig: {
+      agentDeviceRemoteSessionUrl: 'https://old.eas.dev/daemon',
+      agentDeviceRemoteSessionToken: 'tok_old',
+    },
+  });
+
+  test('a live recorded session is reused, and no new one is created', async () => {
+    recordSession('drs_old');
+    const exec = mockExec({ outputs: { 'simulator:get': LIVE, sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    const booted = await deps.ensureBooted({});
+    expect(booted.ok).toBe(true);
+    expect(deps.createdSessionId()).toBe('drs_old');
+    // The whole point: `eas sim` never ran.
+    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
+  });
+
+  test('a STOPPED session is not reused, even though it still reports a config', async () => {
+    // eas still returns remoteConfig for a stopped session, so reusing on
+    // config alone would connect to a daemon that is gone.
+    recordSession('drs_dead');
+    const dead = JSON.stringify({
+      id: 'drs_dead',
+      status: 'STOPPED',
+      remoteConfig: {
+        agentDeviceRemoteSessionUrl: 'https://dead.eas.dev/daemon',
+        agentDeviceRemoteSessionToken: 'tok_dead',
+      },
+    });
+    const exec = mockExec({ outputs: { 'simulator:get': dead, sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    expect(deps.createdSessionId()).toBe('drs_42');
+    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(true);
+  });
+
+  test('an unusable recorded session is STOPPED before another is created', async () => {
+    // Otherwise it keeps billing with nothing left pointing at it.
+    recordSession('drs_dead');
+    const exec = mockExec({ outputs: { 'simulator:get': '{"status":"ERRORED"}', sim: CREATED } });
+    await remoteIosDeps(ctx()).ensureBooted({});
+    const stop = exec.calls.find((c) => c.args[0] === 'simulator:stop');
+    expect(stop?.args).toContain('drs_dead');
+  });
+
+  test('an operator-supplied daemon touches no recorded session at all', async () => {
+    // rn-iso is a guest there: it did not create that device and must not
+    // stop anything on the way in.
+    recordSession('drs_old');
+    const exec = mockExec();
+    await remoteIosDeps(ctx({ existingDaemon: LOOPBACK })).ensureBooted({});
+    expect(exec.calls.some((c) => c.file === '/bin/eas')).toBe(false);
   });
 });
