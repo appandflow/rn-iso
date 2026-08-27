@@ -25,6 +25,9 @@ import { stopSessionArgs } from '../engine/eas-simulator.ts';
 
 // The same-machine proxy: the simulator shares this host's loopback, so
 // localhost in the deep link reaches rn-iso's own Metro. Live-verified.
+// A same-machine `agent-device proxy`. The device sharing this host is now
+// ASSERTED with tunnelMode 'off' rather than inferred from the loopback URL --
+// `ssh -L` makes that inference false. See engine/metro-reach.ts.
 const LOOPBACK = { baseUrl: 'http://127.0.0.1:4310', token: 'tok_proxy' };
 
 const CREATED = JSON.stringify({
@@ -192,7 +195,7 @@ describe('the token never reaches disk', () => {
 
   test('it travels as an env var on every agent-device call instead', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
     deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/My App.app' });
     deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
@@ -226,7 +229,7 @@ describe('install and launch match their local counterparts', () => {
     // agent-device#1245: its hint writes bare-RN RCT_jsLocation, which a
     // dev-client ignores. open <app> <url> runs simctl openurl verbatim.
     const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
     const result = deps.launchIosApp({
       udid: 'drs_42',
@@ -241,7 +244,7 @@ describe('install and launch match their local counterparts', () => {
 
   test('a bare RN launch has no url positional', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
     expect(deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 }).mode).toBe('launch');
     const open = exec.calls.find((c) => c.args[0] === 'open');
@@ -308,31 +311,30 @@ describe('Metro reachability', () => {
   // The hard part of a remote device, and the one agent-device does NOT solve
   // for a self-hosted proxy: verified against 0.20.10, `agent-device proxy`
   // serves no /api/metro route at all, so there is no bridge to lean on.
-  test('a loopback daemon shares this host, so localhost is correct', () => {
-    expect(resolveMetroOrigin({ daemonBaseUrl: 'http://127.0.0.1:4310', metroPort: 8082 })).toEqual({
+  //
+  // Which address to use is now DECLARED (engine/metro-reach.ts), not inferred
+  // from the daemon's URL -- `ssh -L` made that inference false. These cover
+  // the wiring; the policy itself is pinned in metro-reach.test.ts.
+  test('an asserted-local device uses localhost and needs no gate', () => {
+    expect(resolveMetroOrigin({ metroPort: 8082, mode: 'off' })).toEqual({
       origin: 'http://localhost:8082',
+      gate: false,
     });
   });
 
-  test('a daemon on another machine is refused, never guessed', () => {
-    // Sending `localhost` to a remote device resolves on THAT machine, so the
-    // app would load nothing and the run would look merely unverified.
-    const r = resolveMetroOrigin({ daemonBaseUrl: 'https://sim-42.eas.dev/daemon', metroPort: 8082 });
-    expect('failed' in r).toBe(true);
-    if ('failed' in r) {
-      expect(r.failed).toContain('cannot reach Metro on localhost:8082');
-      expect(r.remedy).toContain(PUBLIC_METRO_ENV);
-    }
+  test('a named public url is used, and IS gated', () => {
+    expect(resolveMetroOrigin({ metroPort: 8082, publicUrl: 'https://abc.trycloudflare.com/' })).toEqual({
+      origin: 'https://abc.trycloudflare.com',
+      gate: true,
+    });
   });
 
-  test('an operator-named public url wins, and its trailing slash is dropped', () => {
-    expect(
-      resolveMetroOrigin({
-        daemonBaseUrl: 'https://sim-42.eas.dev/daemon',
-        metroPort: 8082,
-        publicUrl: 'https://abc.trycloudflare.com/',
-      }),
-    ).toEqual({ origin: 'https://abc.trycloudflare.com' });
+  test('no address and nothing to build one with is a refusal, never localhost', () => {
+    // The bug this replaced: `localhost` sent to a device on another machine
+    // resolves there, and the run reads as merely unverified.
+    const r = resolveMetroOrigin({ metroPort: 8082, mode: 'auto', isExpo: false, available: [] });
+    expect('failed' in r).toBe(true);
+    if ('failed' in r) expect(r.remedy).toContain('"off"');
   });
 
   test('launching against an unreachable Metro refuses instead of opening the app', async () => {
@@ -365,18 +367,34 @@ describe('the Metro refusal comes before anything billable', () => {
   test('an EAS session is refused up front when Metro is not reachable', () => {
     // The failure this prevents: create a billable session, compile for
     // minutes, install, THEN refuse. Everything needed to answer is known
-    // here -- an EAS session is cloud-hosted and never loopback.
+    // here, before any of it.
     const r = resolveRemoteContext({ ...base, env: {} });
     expect('failed' in r).toBe(true);
-    if ('failed' in r) expect(r.failed).toContain('An EAS Simulator session is not on this machine');
+    if ('failed' in r) {
+      expect(r.failed).toContain('cannot reach');
+      // Actionable: install a tunnel, name an existing one, or declare local.
+      expect(r.remedy).toContain('metro.publicUrl');
+    }
   });
 
-  test('a loopback daemon needs no public url', () => {
+  test('an asserted-local device needs no public url', () => {
+    // A loopback daemon URL no longer earns this by itself: it is declared.
+    const r = resolveRemoteContext({
+      ...base,
+      tunnelMode: 'off',
+      env: { AGENT_DEVICE_DAEMON_BASE_URL: 'http://127.0.0.1:4310', AGENT_DEVICE_DAEMON_AUTH_TOKEN: 't' },
+    });
+    expect('ctx' in r).toBe(true);
+  });
+
+  test('a loopback daemon is NOT taken as proof the device is local', () => {
+    // `ssh -L 4310:localhost:4310 macmini` is exactly this shape, and the
+    // device is on the other machine. Refusing is the safe direction.
     const r = resolveRemoteContext({
       ...base,
       env: { AGENT_DEVICE_DAEMON_BASE_URL: 'http://127.0.0.1:4310', AGENT_DEVICE_DAEMON_AUTH_TOKEN: 't' },
     });
-    expect('ctx' in r).toBe(true);
+    expect('failed' in r).toBe(true);
   });
 
   test('a routable daemon without a public url is refused up front', () => {
@@ -385,7 +403,7 @@ describe('the Metro refusal comes before anything billable', () => {
       env: { AGENT_DEVICE_DAEMON_BASE_URL: 'https://x.ngrok.app/agent-device', AGENT_DEVICE_DAEMON_AUTH_TOKEN: 't' },
     });
     expect('failed' in r).toBe(true);
-    if ('failed' in r) expect(r.remedy).toContain(PUBLIC_METRO_ENV);
+    if ('failed' in r) expect(r.remedy).toContain('"off"');
   });
 
   test('naming a public url is what unblocks an EAS session', () => {
@@ -432,7 +450,7 @@ describe('a session rn-iso created is never abandoned', () => {
     // rn-iso created no session here, so it has none to end -- and ending
     // someone else's would be destroying a device it does not own.
     const exec = mockExec({ existingDaemonMode: true, fail: 'connect' });
-    const booted = await remoteIosDeps(ctx({ existingDaemon: LOOPBACK })).ensureBooted({});
+    const booted = await remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' })).ensureBooted({});
     expect(booted.failed).toBe(true);
     expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
   });
@@ -501,7 +519,7 @@ describe('a re-run does not orphan the session it already has', () => {
     // stop anything on the way in.
     recordSession('drs_old');
     const exec = mockExec();
-    await remoteIosDeps(ctx({ existingDaemon: LOOPBACK })).ensureBooted({});
+    await remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' })).ensureBooted({});
     expect(exec.calls.some((c) => c.file === '/bin/eas')).toBe(false);
   });
 });
@@ -513,7 +531,7 @@ describe("the alert rn-iso's own url open raises", () => {
   // fine. Observed on a real EAS Simulator.
   test('a dev-client launch accepts it, so the bundle can actually load', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
     deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
     const after = exec.calls.map((c) => c.args.slice(0, 2).join(' '));
@@ -524,7 +542,7 @@ describe("the alert rn-iso's own url open raises", () => {
 
   test('a bare RN launch opens no url, so it does not reach for an alert', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
     deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
     expect(exec.calls.some((c) => c.args[0] === 'alert')).toBe(false);
@@ -534,7 +552,7 @@ describe("the alert rn-iso's own url open raises", () => {
     // The ordinary case once a device has seen one. `alert accept` exits
     // non-zero with nothing showing, and that must not fail a good launch.
     const exec = mockExec({ outputs: { sim: CREATED }, fail: 'alert accept' });
-    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
     const result = deps.launchIosApp({
       udid: 'drs_42',

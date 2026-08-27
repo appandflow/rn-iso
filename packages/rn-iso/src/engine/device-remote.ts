@@ -30,12 +30,12 @@ import {
   daemonEnv,
   disconnectArgs,
   installArgs,
-  isLoopbackDaemon,
   metroHintFrom,
   openArgs,
   remoteProfile,
   remoteProfilePath,
 } from './agent-device.ts';
+import { planMetroReach, type ManagedProvider, type TunnelMode } from './metro-reach.ts';
 import { INSTALL_ERROR, LAUNCH_ERROR } from './app-install.ts';
 import {
   createSessionArgs,
@@ -77,20 +77,27 @@ export const PUBLIC_METRO_ENV = 'RN_ISO_METRO_PUBLIC_URL';
  * to verify.
  */
 export function resolveMetroOrigin({
-  daemonBaseUrl,
   metroPort,
   publicUrl = null,
+  mode = 'auto',
+  isExpo = false,
+  available = [],
 }: {
-  daemonBaseUrl: string;
   metroPort: number | string;
   publicUrl?: string | null;
-}): { origin: string } | { failed: string; remedy: string } {
-  const named = publicUrl?.trim();
-  if (named) return { origin: named.replace(/\/+$/, '') };
-  if (isLoopbackDaemon(daemonBaseUrl)) return { origin: `http://localhost:${metroPort}` };
+  mode?: TunnelMode;
+  isExpo?: boolean;
+  available?: readonly ManagedProvider[];
+}): { origin: string; gate: boolean } | { failed: string; remedy: string } {
+  const plan = planMetroReach({ mode, metroPort, publicUrl, isExpo, available });
+  if ('origin' in plan) return plan;
+  if ('failed' in plan) return plan;
+  // expoTunnel / start are decisions the COMMAND layer acts on before a launch
+  // ever happens; by the time an origin is needed one of them has produced a
+  // publicUrl. Reaching here means that step was skipped.
   return {
-    failed: `The remote device is not on this machine (${daemonBaseUrl}), so it cannot reach Metro on localhost:${metroPort}.`,
-    remedy: `Expose this workspace's Metro port and name it: tunnel port ${metroPort} (for example \`cloudflared tunnel --url http://127.0.0.1:${metroPort}\`), then export ${PUBLIC_METRO_ENV}=<that url> and run again.`,
+    failed: 'Metro has no address the device can reach yet.',
+    remedy: 'This is an rn-iso bug: the tunnel step did not run before the launch.',
   };
 }
 
@@ -171,6 +178,10 @@ export interface RemoteContext {
   // A URL that reaches THIS workspace's Metro from the device's network.
   // Only consulted when the daemon is not on this machine.
   publicMetroUrl?: string | null;
+  // Carried so the launch resolves the origin the same way resolveRemoteContext
+  // already did, rather than second-guessing it.
+  tunnelMode?: TunnelMode;
+  isExpo?: boolean;
   // The readiness poll's wait, injectable so a test does not sleep for real.
   sleep?: (ms: number) => Promise<void>;
   // Set when the operator already has a daemon (an `agent-device proxy`, or
@@ -397,9 +408,10 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       // cannot reach this workspace's dev server is a refusal rather than a
       // launch that will never load a bundle.
       const origin = resolveMetroOrigin({
-        daemonBaseUrl: session.daemon.baseUrl,
         metroPort,
         publicUrl: ctx.publicMetroUrl ?? null,
+        mode: ctx.tunnelMode ?? 'auto',
+        isExpo: ctx.isExpo ?? false,
       });
       if ('failed' in origin) {
         return { failed: true, code: REMOTE_METRO_ERROR, reason: `${origin.failed} ${origin.remedy}` };
@@ -473,6 +485,11 @@ export function resolveRemoteContext({
   label,
   platform = 'ios',
   easBin,
+  tunnelMode = 'auto',
+  publicUrl = null,
+  isExpo = false,
+  metroPort = 8081,
+  available = [],
   env = process.env,
   lookupAgentDevice = defaultLookupAgentDevice,
   maxDurationMinutes = null,
@@ -481,6 +498,13 @@ export function resolveRemoteContext({
   label: string;
   platform?: 'ios' | 'android';
   easBin: string | null;
+  // How this workspace expects the device to reach Metro, and what it has to
+  // work with. See engine/metro-reach.ts.
+  tunnelMode?: TunnelMode;
+  publicUrl?: string | null;
+  isExpo?: boolean;
+  metroPort?: number | string;
+  available?: readonly ManagedProvider[];
   env?: NodeJS.ProcessEnv;
   lookupAgentDevice?: () => string | null;
   maxDurationMinutes?: number | null;
@@ -522,14 +546,15 @@ export function resolveRemoteContext({
   // minutes, install, and only then refuse. Everything needed to answer the
   // question is already known at this point -- an EAS session is cloud-hosted
   // and therefore never loopback, and an operator daemon carries its URL.
-  const publicMetroUrl = env[PUBLIC_METRO_ENV]?.trim() || null;
-  if (!publicMetroUrl && !(existingDaemon && isLoopbackDaemon(existingDaemon.baseUrl))) {
-    const where = existingDaemon ? `The daemon at ${existingDaemon.baseUrl} is` : 'An EAS Simulator session is';
-    return {
-      failed: `${where} not on this machine, so the app it launches cannot reach Metro on localhost.`,
-      remedy: `Expose this workspace's Metro port through a tunnel (for example \`cloudflared tunnel --url http://127.0.0.1:<port>\`), export ${PUBLIC_METRO_ENV}=<that url>, and run again. \`rn-iso start\` prints the port.`,
-    };
-  }
+  //
+  // NOTHING IS INFERRED. This used to accept a loopback daemon URL as proof
+  // that the device shares this machine, which `ssh -L 4310:localhost:4310
+  // macmini` makes false -- and the app was then pointed at a localhost that
+  // resolved on the Mac mini. `metro.tunnel: "off"` is how that case is
+  // DECLARED instead; see engine/metro-reach.ts.
+  const publicMetroUrl = env[PUBLIC_METRO_ENV]?.trim() || publicUrl || null;
+  const plan = planMetroReach({ mode: tunnelMode, metroPort, publicUrl: publicMetroUrl, isExpo, available });
+  if ('failed' in plan) return plan;
 
   return {
     ctx: {
@@ -539,7 +564,9 @@ export function resolveRemoteContext({
       easBin: easBin ?? '',
       agentDeviceBin,
       maxDurationMinutes,
-      publicMetroUrl,
+      publicMetroUrl: 'origin' in plan ? plan.origin : publicMetroUrl,
+      tunnelMode,
+      isExpo,
       existingDaemon,
     },
   };
