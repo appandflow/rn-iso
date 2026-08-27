@@ -1,6 +1,6 @@
 {
   "name": "@rn-iso/core",
-  "version": "1.3.3",
+  "version": "1.4.0",
   "description": "Shared primitives for rn-iso and its cache packages: config-dir and cache-root resolution, the build cache key, and cache self-registration. Not a user-facing API.",
   "license": "MIT",
   "files": [

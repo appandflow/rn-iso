@@ -134,4 +134,4 @@ That is all of it. There is no `init` -- repo setup is the `rn-iso-init` skill a
 
 ---
 
-Skill synced with rn-iso **1.3.3**. If `npx rn-iso --version` disagrees, refresh whichever half is older: `npx skills add appandflow/rn-iso` for this file, `npx rn-iso@latest` for the CLI.
+Skill synced with rn-iso **1.4.0**. If `npx rn-iso --version` disagrees, refresh whichever half is older: `npx skills add appandflow/rn-iso` for this file, `npx rn-iso@latest` for the CLI.

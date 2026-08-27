@@ -1,6 +1,6 @@
 {
   "name": "rn-iso",
-  "version": "1.3.3",
+  "version": "1.4.0",
   "description": "Isolated React Native dev environments per project/worktree",
   "keywords": [
     "agent",
@@ -42,7 +42,7 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@rn-iso/core": "^1.3.3",
+    "@rn-iso/core": "^1.4.0",
     "@rn-iso/metro": "^1.2.0",
     "chalk": "^5.4.1",
     "commander": "^13.1.0"

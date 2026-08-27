@@ -35,13 +35,13 @@ importers:
   packages/expo-build-cache:
     dependencies:
       '@rn-iso/core':
-        specifier: ^1.3.3
+        specifier: ^1.4.0
         version: link:../core
 
   packages/metro:
     dependencies:
       '@rn-iso/core':
-        specifier: ^1.3.3
+        specifier: ^1.4.0
         version: link:../core
       metro-cache:
         specifier: '*'
@@ -50,7 +50,7 @@ importers:
   packages/rn-iso:
     dependencies:
       '@rn-iso/core':
-        specifier: ^1.3.3
+        specifier: ^1.4.0
         version: link:../core
       '@rn-iso/metro':
         specifier: ^1.2.0
