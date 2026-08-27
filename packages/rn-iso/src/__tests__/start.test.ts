@@ -117,6 +117,14 @@ interface MetroExecutorMock {
 // resolveProjectMetro asks lsof who listens, probes /status for real, then
 // reads that pid's cwd and process group. This mock answers the three shell
 // calls; the /status half is a real listener started by the test.
+// The mocked listener's pid must be one that CANNOT exist: metro.ts resolves a
+// listener's identity through processCwd, which on Linux reads /proc/<pid>/cwd
+// FIRST and only falls back to the lsof this mock intercepts. A plausible pid
+// (4242) sometimes exists on a CI runner, whose real cwd is not this project --
+// the dev server then reads as someone else's and `start` fails, which is
+// exactly how this suite flaked twice on ubuntu and never once on macOS.
+const DEAD_LISTENER_PID = 999999901;
+
 function metroExecutor({
   listeners = {},
   cwd = root,
@@ -360,7 +368,7 @@ describe('action: already running', () => {
   test('a healthy dev server with a live supervisor record is a no-op exit 0', async () => {
     const port = 8151;
     const server = await metroListener(port);
-    setExecutor(metroExecutor({ listeners: { [port]: 4242 } }));
+    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
     // A pid that is definitely alive: this test process.
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
@@ -387,7 +395,7 @@ describe('action: already running', () => {
   test('a healthy dev server the agent started itself is reported, not fought', async () => {
     const port = 8152;
     const server = await metroListener(port);
-    const exec = metroExecutor({ listeners: { [port]: 4242 } });
+    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
 
@@ -409,7 +417,7 @@ describe('action: already running', () => {
   test('two starts in a row leave one supervisor', async () => {
     const port = 8153;
     const server = await metroListener(port);
-    const exec = metroExecutor({ listeners: { [port]: 4242 } });
+    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
     upsertProject(root, { metroPort: port });
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
@@ -590,7 +598,7 @@ describe('the workspace gitignore', () => {
   test('adds the entry on a repo that has none, and says so once on stderr', async () => {
     const port = 8161;
     const server = await metroListener(port);
-    setExecutor(metroExecutor({ listeners: { [port]: 4242 } }));
+    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
     try {
       const result = await runAction({ json: true, wait: '5' });
@@ -611,7 +619,7 @@ describe('the workspace gitignore', () => {
   test('a repo that already ignores it is left alone and says nothing', async () => {
     const port = 8162;
     const server = await metroListener(port);
-    setExecutor(metroExecutor({ listeners: { [port]: 4242 } }));
+    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
     writeFileSync(join(root, '.gitignore'), 'node_modules\n/.rn-iso\n');
     try {
@@ -630,7 +638,7 @@ describe('action: the reserved port', () => {
     const port = 8157;
     const server = await metroListener(port);
     // Answers /status, but runs from somewhere else: not this project's.
-    const exec = metroExecutor({ listeners: { [port]: 4242 }, cwd: '/somewhere/else' });
+    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, cwd: '/somewhere/else' });
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
       return { pid: 1, unref() {}, on() {} };
@@ -737,7 +745,7 @@ describe('output contract', () => {
   test('without --json every line is human and nothing is JSON', async () => {
     const port = 8160;
     const server = await metroListener(port);
-    setExecutor(metroExecutor({ listeners: { [port]: 4242 } }));
+    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
 
