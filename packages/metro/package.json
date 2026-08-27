@@ -3,6 +3,11 @@
   "version": "1.4.0",
   "description": "Metro integration for rn-iso: one transform cache shared by every worktree, plus an NDJSON reporter for structured logs.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appandflow/rn-iso.git",
+    "directory": "packages/metro"
+  },
   "files": [
     "dist",
     "README.md",

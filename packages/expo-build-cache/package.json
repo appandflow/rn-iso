@@ -3,6 +3,11 @@
   "version": "1.4.0",
   "description": "Local Expo build cache provider: installs a cached .app/.apk instead of compiling when no native input changed.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appandflow/rn-iso.git",
+    "directory": "packages/expo-build-cache"
+  },
   "files": [
     "dist",
     "README.md",

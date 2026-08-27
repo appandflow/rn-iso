@@ -19,7 +19,8 @@
   "author": "Janic Duplessis",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/janicduplessis/rn-iso.git"
+    "url": "git+https://github.com/appandflow/rn-iso.git",
+    "directory": "packages/rn-iso"
   },
   "bin": {
     "rn-iso": "dist/cli.js"
