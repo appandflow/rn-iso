@@ -1,6 +1,6 @@
-import { existsSync, readdirSync } from 'fs';
+import { existsSync, mkdirSync, openSync, readdirSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
 
 export interface SystemImage {
@@ -34,6 +34,10 @@ export interface AdbDevices {
 
 export interface BootResult {
   ok: boolean;
+  // The wait ended because the emulator process is GONE, not because the
+  // timeout ran out. A definite answer, and the difference between failing in
+  // seconds and failing in four minutes -- see the `aborted` seam below.
+  exited?: true;
   diagnostic?: {
     devices: string;
     sysBoot: string;
@@ -351,14 +355,149 @@ export function headlessEmulatorArgs(
   return [];
 }
 
-export function bootAndroidEmulator(avdName: string, consolePort: number): void {
+// Starts the emulator detached and hands back its pid, which is what makes
+// the boot wait abortable (see waitForBoot's `aborted` seam): a process that
+// is gone is never going to register with adb.
+//
+// `logFile` is the CALLER's -- engine/device.js passes paths.js's
+// emulatorLogFile(root) -- because this module has no idea which workspace it
+// is booting for, and a location invented here would be one more path rn-iso
+// writes that paths.js does not know about. With no logFile the stdio is
+// dropped exactly as before.
+//
+// WHY THE LOG MATTERS ENOUGH TO EXIST (issue #64): the emulator prints its
+// refusal immediately and then exits -- `FATAL | Not enough space to create
+// userdata partition. Available: 6341.54 MB at ~/.android/avd, need 7372.80
+// MB`. With `stdio: 'ignore'` that line went nowhere, adb was polled for the
+// whole boot timeout, and the failure was reported as a generic
+// RN_ISO_NO_DEVICE guessing at JAVA_HOME / ANDROID_HOME / system images.
+//
+// AND WHY THERE IS NO FREE-SPACE PRECHECK HERE, which is the other thing a
+// reader would reach for: the emulator's own message is strictly better than
+// anything we could compute. It knows the AVD's configured
+// disk.dataPartition.size, the QCOW2 overhead and the directory it actually
+// writes to; a precheck would have to read that config to say anything
+// meaningful, and would then be a second, worse implementation of a check the
+// emulator already performs correctly on every boot. Capture its answer
+// instead of duplicating its arithmetic.
+export function bootAndroidEmulator(
+  avdName: string,
+  consolePort: number,
+  { logFile }: { logFile?: string | null } = {},
+): number | null {
   const exec = getExecutor();
-  exec
-    .spawn(androidToolPath('emulator'), ['-avd', avdName, '-port', String(consolePort), ...headlessEmulatorArgs()], {
+  const child = exec.spawn(
+    androidToolPath('emulator'),
+    ['-avd', avdName, '-port', String(consolePort), ...headlessEmulatorArgs()],
+    {
       detached: true,
-      stdio: 'ignore',
-    })
-    .unref();
+      stdio: emulatorStdio(logFile),
+    },
+  );
+  child?.unref?.();
+  return child?.pid ?? null;
+}
+
+// 'w', not 'a': one boot's log describes that boot, the same doctrine as the
+// per-run build transcript. An unwritable log is survivable -- a silent
+// emulator is what we had before -- so it falls back to dropping the stdio
+// rather than refusing to boot.
+function emulatorStdio(logFile?: string | null): 'ignore' | (number | 'ignore')[] {
+  if (!logFile) return 'ignore';
+  try {
+    mkdirSync(dirname(logFile), { recursive: true });
+    const fd = openSync(logFile, 'w');
+    return ['ignore', fd, fd];
+  } catch {
+    return 'ignore';
+  }
+}
+
+// --- what the emulator itself said ---------------------------------------
+//
+// PURE, and the whole of it: text in, lines out. The emulator's log is the
+// only place a refused boot is explained, and this is what lifts the
+// explanation into the RN_ISO_NO_DEVICE diagnostic an agent reads. Same
+// doctrine as engine/errors-gradle.js: a handful of extracted lines, never
+// the transcript.
+//
+// The markers are the emulator's OWN severity prefixes, and nothing else --
+// an unrecognized log yields [] and today's generic diagnostic stands, which
+// is the right failure: a wrong cause costs more than no cause.
+//
+//   FATAL | Not enough space to create userdata partition. Available: ...
+//   ERROR | Unknown AVD name [foo], use -list-avds to see valid list.
+//   PANIC: Missing emulator engine program for 'arm64' CPU.
+//
+// (The severity column is space-padded in some builds, and a wrapper may
+// prefix the line with `emulator: `, so both are tolerated.)
+export const MAX_EMULATOR_FAILURE_LINES = 3;
+
+const EMULATOR_PIPE_SEVERITY = /^(?:\S+:\s+)?(FATAL|ERROR)\s*\|\s*\S/;
+const EMULATOR_PANIC = /^(?:\S+:\s+)?PANIC:\s*\S/;
+
+// Deduped, capped, and selected newest-relevant-GROUP first -- then printed in
+// the emulator's own order. Three rules, and the third is the one live
+// verification corrected:
+//
+//   1. FATAL and PANIC EXCLUDE ERROR when any are present. A fatal is the
+//      cause; an ERROR beside it is the symptom that led there.
+//   2. The newest lines win the cap -- the tail of the log is what killed this
+//      boot, and the emulator chats all the way up.
+//   3. WITHIN what is kept, LOG ORDER, not newest-first. Verified against the
+//      real binary: `emulator -avd <nonexistent>` prints
+//        ERROR | Unknown AVD name [x], use -list-avds to see valid list.
+//        ERROR | HOME is defined but there is no file x.ini in $HOME/.android/avd
+//        ERROR | (Note: Directories are searched in the order ...)
+//      -- the cause FIRST and the elaborations after. Reversing that put the
+//      parenthetical note at the top and the actual answer at the bottom,
+//      which is the opposite of useful.
+//
+// Dedupe is on the whitespace-normalized line, because the emulator repeats
+// the same refusal on each internal retry; the LAST occurrence is the one
+// kept, so a repeat still reads as recent.
+export function extractEmulatorFailure(text: unknown): string[] {
+  if (typeof text !== 'string' || text.trim() === '') return [];
+  const matched: Array<{ line: string; fatal: boolean; index: number }> = [];
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = String(lines[i] ?? '')
+      .replace(/\r/g, '')
+      .trim();
+    if (!line) continue;
+    const pipe = EMULATOR_PIPE_SEVERITY.exec(line);
+    if (pipe) {
+      matched.push({ line, fatal: pipe[1] !== 'ERROR', index: i });
+      continue;
+    }
+    if (EMULATOR_PANIC.test(line)) matched.push({ line, fatal: true, index: i });
+  }
+  const fatal = matched.filter((m) => m.fatal);
+  const pool = fatal.length > 0 ? fatal : matched;
+  // Last occurrence wins the dedupe, so the surviving indices are the newest
+  // ones and the tail slice below is genuinely the newest group.
+  const byText = new Map<string, { line: string; index: number }>();
+  for (const entry of pool) byText.set(entry.line.replace(/\s+/g, ' ').toLowerCase(), entry);
+  return [...byText.values()]
+    .toSorted((a, b) => a.index - b.index)
+    .slice(-MAX_EMULATOR_FAILURE_LINES)
+    .map((entry) => entry.line);
+}
+
+// PURE. What to DO about what the emulator said. Only the disk case gets a
+// specific remedy: it is the one whose fix is environmental and completely
+// outside the project, and it is the case that sent an agent chasing
+// JAVA_HOME for ten minutes (issue #64). Everything else defers to the
+// emulator's own words, which are printed directly above it.
+export function emulatorFailureRemedy(lines: string[]): string {
+  const text = (Array.isArray(lines) ? lines : []).join('\n');
+  if (/not enough space|no space left|disk (?:is )?full/i.test(text)) {
+    return (
+      'Free disk space at the AVD directory named above (the emulator says how much it needs), ' +
+      'then run `rn-iso android` again.'
+    );
+  }
+  return 'Fix what the emulator reported above, then run `rn-iso android` again.';
 }
 
 // runQuiet returns null whenever the command fails, which is the normal state
@@ -370,21 +509,37 @@ function getprop(exec: Executor, serial: string, prop: string): string {
   return typeof out === 'string' ? out.trim() : '';
 }
 
-export async function waitForBoot(serial: string, timeoutMs = 60000): Promise<BootResult> {
+// `aborted` is the same seam waitForMetro uses in commands/start.js, for the
+// same reason: a spawned process that has already exited is never going to
+// answer, so the wait ends at second one instead of at four minutes. It is
+// checked AFTER the boot probes, so a device that came up in the same tick
+// the launcher exited still counts as booted -- positive evidence wins.
+// Injectable so a test can drive liveness without a real emulator.
+export async function waitForBoot(
+  serial: string,
+  timeoutMs = 60000,
+  { aborted = () => false, pollMs = 1000 }: { aborted?: () => boolean; pollMs?: number } = {},
+): Promise<BootResult> {
   const exec = getExecutor();
   const start = Date.now();
+  let exited = false;
   while (Date.now() - start < timeoutMs) {
     // sys.boot_completed is the canonical "system fully up" signal; some
     // older AVD images set dev.bootcomplete sooner. Either is fine.
     if (getprop(exec, serial, 'sys.boot_completed') === '1') return { ok: true };
     if (getprop(exec, serial, 'dev.bootcomplete') === '1') return { ok: true };
-    await new Promise((r) => setTimeout(r, 1000));
+    if (aborted()) {
+      exited = true;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
   }
-  // Diagnostic snapshot for the timeout error: shows the user exactly
-  // what adb sees and why the polling never resolved.
+  // Diagnostic snapshot for the failure: shows the user exactly what adb
+  // sees and why the polling never resolved.
   const devicesOut = exec.runQuiet(`${androidTool('adb')} devices`);
   return {
     ok: false,
+    ...(exited ? { exited: true as const } : {}),
     diagnostic: {
       devices: typeof devicesOut === 'string' ? devicesOut.trim() : '',
       sysBoot: getprop(exec, serial, 'sys.boot_completed'),

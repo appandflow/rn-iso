@@ -518,6 +518,14 @@ RN_ISO_NO_DEVICE
   state. \`rn-iso doctor\` checks the toolchain; \`rn-iso status\` says what
   rn-iso thinks it owns. Re-running the command creates a fresh owned device
   when the recorded one is gone.
+  On Android the emulator's own stdio is captured to
+  \`.rn-iso/logs/emulator.log\` (truncated per boot), and when it printed a
+  \`FATAL |\` / \`ERROR |\` / \`PANIC:\` line THAT is the message and the remedy
+  you get -- the disk-space refusal ("Not enough space to create userdata
+  partition") is the case this exists for. The generic toolchain remedy above
+  is only what you see when that log says nothing recognizable. A boot whose
+  emulator process exited is also reported at once rather than after the full
+  cold-boot timeout.
 
 RN_ISO_AT_CAPACITY
   Only when concurrency.maxDevices is set (it is UNSET by default, so this never

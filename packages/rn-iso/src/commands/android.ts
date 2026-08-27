@@ -26,7 +26,7 @@
 // `adb reverse tcp:8081 tcp:<reserved>` applies it at launch instead.
 import chalk from 'chalk';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, openSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
 import type { Command } from 'commander';
@@ -58,7 +58,7 @@ import {
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
-import { workspaceLogsDir } from '../paths.ts';
+import { emulatorLogFile, workspaceLogsDir } from '../paths.ts';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../project.ts';
 import {
   // devClientScheme is the app.json half of the iOS reader and is not
@@ -94,7 +94,7 @@ import {
   verifyAndroidReleaseLaunch,
   verifyLaunch,
 } from '../engine/app-install.ts';
-import { androidHome, findBuildTool } from '../sim/android.ts';
+import { androidHome, emulatorFailureRemedy, extractEmulatorFailure, findBuildTool } from '../sim/android.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import type { OwnedDeviceRecord } from '../engine/device.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
@@ -486,6 +486,58 @@ export function collectorEntry(): string {
 // the k-way merge in logs-query never tries to parse it.
 export function collectorLogFile(root: string): string {
   return join(workspaceLogsDir(root), `collector-${PLATFORM}.log`);
+}
+
+// How many trailing lines of emulator.log the extractor is shown. A boot log
+// is small enough to read whole, but bounding it keeps a pathological one (a
+// verbose emulator retrying for minutes) from being read into memory just to
+// print three lines from it.
+const EMULATOR_LOG_TAIL_LINES = 400;
+
+// The evidence an RN_ISO_NO_DEVICE failure carries, composed the way `start`
+// composes a supervisor failure from supervisor.log: the emulator's OWN fatal
+// lines first, then the path to the rest of them.
+//
+// When the log says nothing recognizable, today's diagnostic stands unchanged
+// -- the caller's message and its generic JAVA_HOME / ANDROID_HOME remedy --
+// because a wrong cause costs an agent more than no cause. When it does say
+// something, that becomes what the user sees INSTEAD of the guesses, which is
+// the whole of issue #64: an AVD that could not be created for lack of disk
+// was reported as a possible JDK misconfiguration and cost ~10 minutes.
+export function noDeviceDiagnostic({
+  reason,
+  logFile,
+  remedy,
+  readLog = readEmulatorLogTail,
+}: {
+  reason: string;
+  logFile: string;
+  remedy: string;
+  readLog?: (file: string) => string;
+}): { message: string; remedy: string; lines: string[]; logPath: string | null } {
+  const text = readLog(logFile);
+  // An absent or empty log is not worth pointing at: it names a file the user
+  // would open to find nothing.
+  const logPath = text.trim() ? logFile : null;
+  const found = extractEmulatorFailure(text);
+  if (found.length === 0) return { message: reason, remedy, lines: [], logPath };
+  return {
+    // The emulator's own top line goes into the MESSAGE, not only into the
+    // printed lines: the --json payload carries {code, message, remedy} and
+    // nothing else, so an agent reading that has to get the real cause too.
+    message: `${reason} The emulator reported: ${found[0]}`,
+    remedy: emulatorFailureRemedy(found),
+    lines: found.slice(1),
+    logPath,
+  };
+}
+
+function readEmulatorLogTail(file: string): string {
+  try {
+    return readFileSync(file, 'utf-8').split('\n').slice(-EMULATOR_LOG_TAIL_LINES).join('\n');
+  } catch {
+    return '';
+  }
 }
 
 // PURE. `  fingerprint a3f9b1.. hit`
@@ -1010,6 +1062,11 @@ export async function runAndroid(
   if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
 
   // ---- device --------------------------------------------------------
+  // The emulator's stdout/stderr. THIS command owns the path (sim/android.js
+  // boots an AVD without knowing whose workspace it is for), so it is threaded
+  // down through ensureDevice / ensureDeviceBooted and read back here when a
+  // boot fails.
+  const emuLog = emulatorLogFile(root);
   let device: OwnedDeviceRecord;
   try {
     device = await ensureDevice({
@@ -1021,13 +1078,19 @@ export async function runAndroid(
       flags: {},
       note: out,
       out,
+      logFile: emuLog,
     });
   } catch (err) {
-    return fail(
-      NO_DEVICE,
-      `Could not ensure an owned Android emulator: ${(err as Error)?.message || err}`,
-      'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
-    );
+    const diag = noDeviceDiagnostic({
+      reason: `Could not ensure an owned Android emulator: ${(err as Error)?.message || err}`,
+      logFile: emuLog,
+      remedy:
+        'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
+    });
+    return fail(NO_DEVICE, diag.message, diag.remedy, {
+      lines: diag.lines,
+      logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
+    });
   }
 
   // ---- metro (fail fast, before the boot and before any build work) ----
@@ -1093,7 +1156,7 @@ export async function runAndroid(
   // would report the build's time, not the boot's.
   const bootTimer = stepTimer(now);
   let bootDuration = '';
-  const bootPromise = Promise.resolve(ensureDeviceBooted({ platform: PLATFORM, device, out }))
+  const bootPromise = Promise.resolve(ensureDeviceBooted({ platform: PLATFORM, device, out, logFile: emuLog }))
     .catch((e) => ({
       failed: true as const,
       reason: String((e as Error)?.message || e),
@@ -1642,11 +1705,16 @@ export async function runAndroid(
   // the emulator live.
   const booted = await bootPromise;
   if (booted.failed) {
-    return fail(
-      NO_DEVICE,
-      booted.reason,
-      'Run `rn-iso status` to see what rn-iso thinks it owns; re-running `rn-iso android` creates a fresh owned AVD.',
-    );
+    const diag = noDeviceDiagnostic({
+      reason: booted.reason ?? 'The emulator did not boot.',
+      logFile: emuLog,
+      remedy:
+        'Run `rn-iso status` to see what rn-iso thinks it owns; re-running `rn-iso android` creates a fresh owned AVD.',
+    });
+    return fail(NO_DEVICE, diag.message, diag.remedy, {
+      lines: diag.lines,
+      logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
+    });
   }
   const serial = booted.serial;
   phase('device', `${device.avdName || serial} (${serial}) booted ${bootDuration}`);

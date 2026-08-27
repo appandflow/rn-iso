@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
+  emulatorLogFile,
   workspaceDir,
   workspaceLogsDir,
   workspaceDerivedData,
@@ -23,6 +24,9 @@ describe('workspace paths', () => {
     expect(workspaceGradleBuild('/repo/wt')).toBe('/repo/wt/.rn-iso/gradle-build');
     expect(supervisorPidFile('/repo/wt')).toBe('/repo/wt/.rn-iso/supervisor.pid');
     expect(workspaceStateFile('/repo/wt')).toBe('/repo/wt/.rn-iso/state.json');
+    // NOT .ndjson: the k-way merge in logs-query must never try to parse the
+    // emulator's raw stdio.
+    expect(emulatorLogFile('/repo/wt')).toBe('/repo/wt/.rn-iso/logs/emulator.log');
   });
 
   test('paths are pure: no directory is created as a side effect', () => {
@@ -33,6 +37,7 @@ describe('workspace paths', () => {
     workspaceGradleBuild(root);
     supervisorPidFile(root);
     workspaceStateFile(root);
+    emulatorLogFile(root);
     expect(existsSync(join(root, '.rn-iso'))).toBe(false);
   });
 });
