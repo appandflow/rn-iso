@@ -30,7 +30,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
 import type { Command } from 'commander';
-import type { AndroidFacts, WaitedForBuild } from '../types.ts';
+import type { AndroidFacts, SettingsObject, WaitedForBuild } from '../types.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import {
@@ -105,6 +105,18 @@ import { formatDiagnostic, type Diagnostic } from '../engine/errors-gradle.ts';
 
 export const PLATFORM = 'android';
 
+// PURE. The android.variant setting (see resolveSettings): the gradle variant
+// to assemble and install, e.g. "productionDebug" on a flavored project.
+// Unset means plain assembleDebug, unchanged. A setting rather than a flag:
+// the option surface is closed, and which flavor a repo builds is a property
+// of the repo, exactly like android.systemImage.
+export function androidVariantSetting(settings: SettingsObject | null | undefined): string | null {
+  const android = settings?.['android'];
+  if (!android || typeof android !== 'object' || Array.isArray(android)) return null;
+  const raw = (android as Record<string, unknown>)['variant'];
+  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+}
+
 // --- local, flat shapes for engine results ---------------------------------
 //
 // These interfaces describe only the shape THIS file reads off the engine and
@@ -142,6 +154,7 @@ interface BuildAndroidResultLike {
   lastLines?: string[];
   durationMs?: number;
   apkPath?: string;
+  apkNote?: string | null;
 }
 
 interface InstallResultLike {
@@ -173,6 +186,7 @@ interface AndroidCommandOptions {
   json?: boolean;
   metroCheck?: boolean;
   buildCache?: boolean;
+  variant?: string;
 }
 
 interface FailExtra {
@@ -491,6 +505,7 @@ export function androidFacts({
   avdName = null,
   deviceName = null,
   fingerprint,
+  variant = null,
   cacheHit,
   cacheSkipped = false,
   waitedForBuild = null,
@@ -506,6 +521,7 @@ export function androidFacts({
   avdName?: string | null;
   deviceName?: string | null;
   fingerprint?: string | null;
+  variant?: string | null;
   cacheHit?: boolean | string;
   cacheSkipped?: boolean;
   waitedForBuild?: WaitedForBuild | null;
@@ -528,6 +544,9 @@ export function androidFacts({
     avdName: avdName ?? null,
     deviceName: deviceName ?? avdName ?? null,
     fingerprint: fingerprint ?? null,
+    // The gradle variant this run built (--variant flag beats the
+    // android.variant setting); null is the default assembleDebug.
+    variant: variant ?? null,
     // 'local' | 'remote' | false. Which LEVEL answered, not merely whether one
     // did: an agent reading `true` cannot tell a free install from one that
     // cost a download (see cacheLevel in engine/remote-cache.js).
@@ -662,6 +681,13 @@ export function registerAndroid(program: Command): void {
       '--no-build-cache',
       "Build fresh, ignoring cached artifacts (local and the project's build-cache provider); the fresh build still replaces the cache entry",
     )
+    // Deliberate option-surface growth (issue #52, 2026-08-27): which flavored
+    // variant to build is per-invocation judgment, so it belongs on the
+    // command; the android.variant SETTING stays as the repo-level default.
+    .option(
+      '--variant <name>',
+      'Gradle variant to assemble and install (e.g. productionDebug on a flavored project); overrides the android.variant setting. Default: debug',
+    )
     .action(async (opts: AndroidCommandOptions) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
@@ -674,6 +700,7 @@ export function registerAndroid(program: Command): void {
         json: Boolean(opts.json),
         metroCheck: opts.metroCheck !== false,
         useBuildCache: opts.buildCache !== false,
+        variant: opts.variant ?? null,
       });
       if (!result.ok) process.exit(1);
     });
@@ -689,6 +716,8 @@ interface RunAndroidOptions {
   json?: boolean;
   metroCheck?: boolean;
   useBuildCache?: boolean;
+  variant?: string | null;
+  readApkPackage?: (apkPath: string | null) => string | null;
   getLimits?: typeof getConcurrencyLimits;
   checkCapacity?: typeof checkDeviceCapacity;
   acquireSlot?: typeof acquireBuildSlot;
@@ -747,6 +776,11 @@ export async function runAndroid(
     // project's provider both -- and nothing else: the fresh build is still
     // stored (over the entry it was told not to trust) and still uploaded.
     useBuildCache = true,
+    // The --variant flag; null falls through to the android.variant setting.
+    variant: variantFlag = null,
+    // Reading the applicationId out of the built APK shells out to aapt, so it
+    // is a seam like resolveDevClientScheme (which reads the same dump).
+    readApkPackage = (apkPath: string | null) => apkPackage(dumpApkManifest(apkPath)),
     getLimits = getConcurrencyLimits,
     checkCapacity = checkDeviceCapacity,
     acquireSlot = acquireBuildSlot,
@@ -880,6 +914,11 @@ export async function runAndroid(
     gitCommonDir: gitCommonDir(root),
     repoRoot: repoRoot(root),
   });
+  // The flavored variant drives the gradle task, the APK location and the
+  // cache key below. Precedence: the --variant flag (per-invocation judgment)
+  // over the android.variant setting (the repo-level default) over nothing --
+  // the plain assembleDebug flow, unchanged.
+  const variant = variantFlag || androidVariantSetting(settings);
   const isExpo = detectIsExpo(root);
   let androidPackage = detectAndroidPackage(root);
   // Recorded as soon as it is known, so a failure before the launch step
@@ -1024,7 +1063,11 @@ export async function runAndroid(
     );
   }
   record.fingerprint = hash;
-  const cacheKey = buildCacheKey(PLATFORM, hash, {});
+  // The variant is part of the key: a productionDebug APK and a plain debug
+  // one are different binaries with different applicationIds, and sharing an
+  // entry would install one as the other (@rn-iso/core's buildVariant reads
+  // options.variant for android; unset still keys as "debug").
+  const cacheKey = buildCacheKey(PLATFORM, hash, variant ? { variant } : {});
   record.cacheKey = cacheKey;
 
   // ---- level one: this machine's shared cache --------------------------
@@ -1107,6 +1150,9 @@ export async function runAndroid(
       platform: PLATFORM,
       projectRoot: root,
       fingerprintHash: hash,
+      // The provider must not answer a flavored resolve with a plain-debug
+      // artifact; null keeps the provider's own default ({variant: 'debug'}).
+      runOptions: variant ? { variant } : null,
     });
     if (hit?.appPath) {
       // INTO the local cache on the way past: the download is paid once per
@@ -1256,7 +1302,7 @@ export async function runAndroid(
       // engine/gradle.ts); read through the flat, all-optional local interface
       // rather than the discriminated union so `built.failed` narrows the way
       // the rest of this file's defensive checks expect.
-      const built: BuildAndroidResultLike = await build({ root, logWriter: writer });
+      const built: BuildAndroidResultLike = await build({ root, logWriter: writer, variant });
       if (built.failed) {
         const diagnostics = built.diagnostics || [];
         // Contract 1: the raw transcript went to the log as debug; the
@@ -1288,6 +1334,11 @@ export async function runAndroid(
       // did not report `failed`, and buildAndroid's success shape always carries one.
       apkPath = built.apkPath ?? null;
       phase('build', `${basename(apkPath!)} (${formatDuration(built.durationMs)})`);
+      // The recursive-discovery note: the APK was found OUTSIDE apk/debug (a
+      // flavored project with no variant configured), and the line names the
+      // directory it came from and the android.variant value that makes the
+      // choice explicit.
+      if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
 
       // `overwrite` only when --no-build-cache asked for a fresh build: the entry
       // that is there is the one this run was told not to trust, and leaving it
@@ -1310,6 +1361,7 @@ export async function runAndroid(
           projectRoot: root,
           fingerprintHash: hash,
           buildPath: apkPath!,
+          runOptions: variant ? { variant } : null,
         });
       }
     } finally {
@@ -1349,10 +1401,18 @@ export async function runAndroid(
   phase('install', `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} ${installTimer()}`);
 
   // ---- launch (Contract 6) ---------------------------------------------
-  // Project files first, then the APK itself: on a cache hit no prebuild ran,
-  // so a managed app can have no android/ dir and no android.package in its
-  // config -- but the installed artifact always knows its own package.
-  androidPackage = androidPackage || detectAndroidPackage(root) || apkPackage(dumpApkManifest(apkPath));
+  // THE APK ITSELF IS AUTHORITATIVE, project files the fallback -- the same
+  // doctrine as iOS reading the built app's Info.plist. On a flavored project
+  // the installed package is the flavor's applicationId (io.tlon.groups)
+  // while the project files say the base one (io.tlon.landscape); launching,
+  // the run-as debug_http_host write and the monkey remedy all target the
+  // package that is actually on the device, so they must read the artifact in
+  // hand. The fallback still matters: aapt can be missing.
+  const packageFromApk = readApkPackage(apkPath);
+  if (packageFromApk && androidPackage && packageFromApk !== androidPackage) {
+    phase('launch', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
+  }
+  androidPackage = packageFromApk || androidPackage || detectAndroidPackage(root);
   // Persist the resolved package like ios persists bundleId: the config
   // detect at command start is empty on a managed app with no android/ dir,
   // which left `status` showing `app: ?` after a successful build.
@@ -1527,6 +1587,7 @@ export async function runAndroid(
     debugHttpHostNote: launched.debugHttpHostNote ?? null,
     devClientUrl: launched.devClientUrl ?? null,
     fingerprint: hash,
+    variant,
     cacheHit: record.cacheHit,
     cacheSkipped: !useBuildCache,
     waitedForBuild,

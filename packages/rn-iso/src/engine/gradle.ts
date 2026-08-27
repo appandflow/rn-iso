@@ -22,8 +22,8 @@
 // and the SHARED artifact is the build cache entry, keyed on the fingerprint.
 // Revisit if AGP grows a supported way to relocate it.
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { androidHome } from '../sim/android.ts';
@@ -56,7 +56,20 @@ interface AndroidProjectResult {
 
 // Debug only, per the spec's out-of-scope list: no release path ships, which
 // is what removes Android signing configuration from rn-iso entirely.
+// A project with PRODUCT FLAVORS still needs a flavored debug build though
+// (`assembleProductionDebug`), selected by the `--variant` flag (deliberate
+// surface growth, issue #52) or its repo-level default, the `android.variant`
+// setting.
 export const ASSEMBLE_TASK = 'assembleDebug';
+
+// PURE. The gradle task a variant selects. Gradle capitalizes the variant
+// name after `assemble` (`productionDebug` -> `assembleProductionDebug`);
+// unset means the default task, unchanged from before variants existed.
+export function assembleTaskFor(variant?: string | null): string {
+  const name = typeof variant === 'string' ? variant.trim() : '';
+  if (!name) return ASSEMBLE_TASK;
+  return `assemble${name[0]!.toUpperCase()}${name.slice(1)}`;
+}
 
 // How many transcript lines a failure carries back for the caller to print
 // when nothing could be extracted from them.
@@ -78,8 +91,12 @@ function gradlewPath(root: string) {
   return join(androidDir(root), 'gradlew');
 }
 
+export function apkOutputsDir(root: string): string {
+  return join(androidDir(root), 'app', 'build', 'outputs', 'apk');
+}
+
 export function debugApkDir(root: string): string {
-  return join(androidDir(root), 'app', 'build', 'outputs', 'apk', 'debug');
+  return join(apkOutputsDir(root), 'debug');
 }
 
 // Is there something to build here? Two failures, and the remedy for both
@@ -198,19 +215,21 @@ export function parseApkFromTranscript(text: unknown): string | null | undefined
   return null;
 }
 
-// Thin: the three sources above against the disk, in order of authority for
-// THIS build. A transcript path is what the build itself said it produced; the
-// metadata file is what AGP recorded; the directory listing is the fallback
-// for a build that reported neither.
-export function locateDebugApk(root: string, transcript = ''): string | null {
-  const dir = debugApkDir(root);
+// PURE. The gradle variant name a directory path under outputs/apk spells:
+// AGP writes `apk/<flavor>/<buildType>` (the flavor-combination directory
+// keeps its camelCase, the build type is lowercased), and the variant is the
+// camelCase join -- ['production', 'debug'] is `productionDebug`, ['debug']
+// alone is `debug`.
+export function variantNameOf(segments: unknown): string {
+  return (Array.isArray(segments) ? segments : [])
+    .filter((s) => typeof s === 'string' && s.trim())
+    .map((s: string, i: number) => (i === 0 ? s : `${s[0]!.toUpperCase()}${s.slice(1)}`))
+    .join('');
+}
 
-  const fromTranscript = parseApkFromTranscript(transcript);
-  if (fromTranscript) {
-    const abs = fromTranscript.startsWith('/') ? fromTranscript : join(androidDir(root), fromTranscript);
-    if (existsSync(abs)) return abs;
-  }
-
+// The APK a single output directory holds: the metadata file AGP wrote there
+// if it names one that exists, the listing otherwise.
+function apkInDir(dir: string): string | null {
   const metadata = readOrNull(join(dir, 'output-metadata.json'));
   if (metadata) {
     const named = parseOutputMetadata(metadata);
@@ -219,9 +238,135 @@ export function locateDebugApk(root: string, transcript = ''): string | null {
       if (existsSync(abs)) return abs;
     }
   }
-
   const listed = pickDebugApk(safeList(dir));
   return listed ? join(dir, listed) : null;
+}
+
+// Every directory under outputs/apk, depth-first, as segments relative to it.
+// Depth-capped because outputs/apk is at most <flavor>/<buildType> deep and a
+// symlink cycle must not hang a build that already succeeded.
+function listApkSubdirs(base: string, prefix: string[] = [], depth = 0): string[][] {
+  if (depth > 3) return [];
+  const dirs: string[][] = [];
+  for (const name of safeList(base)) {
+    const path = join(base, name);
+    let isDir = false;
+    try {
+      isDir = statSync(path).isDirectory();
+    } catch {
+      continue;
+    }
+    if (!isDir) continue;
+    const rel = [...prefix, name];
+    dirs.push(rel);
+    dirs.push(...listApkSubdirs(path, rel, depth + 1));
+  }
+  return dirs;
+}
+
+// The output directory of a configured variant: the subdirectory of
+// outputs/apk whose camelCase join names it. Matching the DIRECTORIES rather
+// than composing `<flavor>/<buildType>` from the variant string means a
+// multi-dimension flavor combination (`demoMinApi24Debug` ->
+// apk/demoMinApi24/debug) needs no guess about where the flavor part ends.
+function findVariantApkDir(root: string, variant: string): string | null {
+  const base = apkOutputsDir(root);
+  const wanted = variant.trim().toLowerCase();
+  for (const segments of listApkSubdirs(base)) {
+    if (variantNameOf(segments).toLowerCase() === wanted) return join(base, ...segments);
+  }
+  return null;
+}
+
+// Every installable `*-debug.apk` under outputs/apk, recursively. Intermediate
+// outputs and androidTest APKs fall out of the name filter the same way they
+// do in pickDebugApk.
+function findDebugApksUnder(base: string): string[] {
+  const found: string[] = [];
+  for (const segments of [[], ...listApkSubdirs(base)]) {
+    const dir = join(base, ...segments);
+    for (const name of safeList(dir)) {
+      if (!name.endsWith('-debug.apk')) continue;
+      if (/-(?:unsigned|unaligned)\.apk$/.test(name)) continue;
+      found.push(join(dir, name));
+    }
+  }
+  return found.sort();
+}
+
+// What locateApk answers: the APK when exactly one candidate was found (with
+// a note when it took the recursive fallback to find it), the candidate list
+// when a flavored project left several and no variant setting picks one.
+export interface LocateApkResult {
+  apkPath?: string | null;
+  note?: string | null;
+  candidates?: string[];
+}
+
+// Thin: the sources against the disk, in order of authority for THIS build. A
+// transcript path is what the build itself said it produced; with a variant
+// configured, the variant's own output directory (`apk/<flavor>/<buildType>`)
+// is the place AGP puts it; without one, the default `apk/debug` -- and when
+// THAT is empty, a recursive search, because a flavored project's
+// `assembleDebug` succeeds into `apk/<flavor>/debug/` and reporting that
+// successful build as failed is exactly the bug this fallback removes.
+export function locateApk(root: string, transcript = '', variant: string | null = null): LocateApkResult {
+  const fromTranscript = parseApkFromTranscript(transcript);
+  if (fromTranscript) {
+    const abs = fromTranscript.startsWith('/') ? fromTranscript : join(androidDir(root), fromTranscript);
+    if (existsSync(abs)) return { apkPath: abs };
+  }
+
+  if (variant) {
+    const dir = findVariantApkDir(root, variant);
+    const apk = dir ? apkInDir(dir) : null;
+    return { apkPath: apk };
+  }
+
+  const direct = apkInDir(debugApkDir(root));
+  if (direct) return { apkPath: direct };
+
+  const found = findDebugApksUnder(apkOutputsDir(root));
+  if (found.length === 1) {
+    const apk = found[0]!;
+    const rel = relative(apkOutputsDir(root), apk).split('/').slice(0, -1);
+    const suggested = variantNameOf(rel);
+    return {
+      apkPath: apk,
+      note:
+        `no APK in ${relative(androidDir(root), debugApkDir(root))}; using ${relative(androidDir(root), apk)}` +
+        `${suggested ? ` -- set the android.variant setting to "${suggested}" to build this variant explicitly` : ''}`,
+    };
+  }
+  if (found.length > 1) return { apkPath: null, candidates: found };
+  return { apkPath: null };
+}
+
+// PURE. Whether an APK a just-finished build "produced" actually predates the
+// build -- a stale artifact carried into the workspace (a copied build/
+// directory, a worktree carry-over), which installs and then runs code that is
+// not this checkout's. The slop absorbs filesystem timestamp granularity.
+export function staleApkRefusal({
+  task,
+  apkPath,
+  mtimeMs,
+  buildStartMs,
+  slopMs = 2000,
+}: {
+  task: string;
+  apkPath: string;
+  mtimeMs: number;
+  buildStartMs: number;
+  slopMs?: number;
+}): { code: string; reason: string; remedy: string } | null {
+  if (!Number.isFinite(mtimeMs) || !Number.isFinite(buildStartMs)) return null;
+  if (mtimeMs >= buildStartMs - slopMs) return null;
+  return {
+    code: BUILD_ERROR,
+    reason: `\`./gradlew ${task}\` succeeded, but the APK at ${apkPath} predates the build that just ran, so it is a stale artifact this run did not produce.`,
+    remedy:
+      'Delete android/app/build/outputs/apk and run again so gradle repackages the APK. If the build was UP-TO-DATE because a flavor redirects its output elsewhere, set the android.variant setting.',
+  };
 }
 
 // The all-optional view of buildAndroid's outcomes: { ok, apkPath } on
@@ -229,6 +374,7 @@ export function locateDebugApk(root: string, transcript = ''): string | null {
 export type BuildAndroidResult = {
   ok?: boolean;
   apkPath?: string;
+  apkNote?: string | null;
   failed?: boolean;
   code?: string;
   reason?: string;
@@ -241,7 +387,8 @@ export type BuildAndroidResult = {
   durationMs: number;
 };
 
-// `./gradlew assembleDebug` with cwd android/.
+// `./gradlew assembleDebug` (or `assemble<Variant>` when the android.variant
+// setting names a flavored variant) with cwd android/.
 //
 // Every line of the transcript reaches the writer as it arrives (Contract 1,
 // src "build", level debug, raw) rather than at the end: a four-minute build
@@ -253,7 +400,7 @@ export type BuildAndroidResult = {
 // to this line is one more thing that can differ from what the project's own
 // `./gradlew assembleDebug` does.
 export async function buildAndroid(
-  { root, logWriter }: { root: string; logWriter?: NdjsonWriter | null },
+  { root, logWriter, variant = null }: { root: string; logWriter?: NdjsonWriter | null; variant?: string | null },
   {
     spawnFn = null,
     now = Date.now,
@@ -281,6 +428,7 @@ export async function buildAndroid(
     return { failed: true, ...refusal, diagnostics: [], truncated: 0, lastLines: [] as string[], durationMs: 0 };
 
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
+  const task = assembleTaskFor(variant);
   const startedAt = now();
   const tail: string[] = [];
   const window: string[] = [];
@@ -299,7 +447,7 @@ export async function buildAndroid(
 
   let child: ChildProcess;
   try {
-    child = spawn(project.gradlew as string, [ASSEMBLE_TASK], {
+    child = spawn(project.gradlew as string, [task], {
       cwd: project.androidDir,
       // stdin ignored: nothing in an assembleDebug should prompt, and a
       // prompt in a detached agent loop is indistinguishable from a hang.
@@ -345,7 +493,7 @@ export async function buildAndroid(
     return {
       failed: true,
       code: BUILD_ERROR,
-      reason: `\`./gradlew ${ASSEMBLE_TASK}\` failed (${how}).`,
+      reason: `\`./gradlew ${task}\` failed (${how}).`,
       diagnostics: shown,
       truncated,
       lastLines: tail.slice(),
@@ -353,26 +501,60 @@ export async function buildAndroid(
     };
   }
 
-  const apkPath = locateDebugApk(root, transcript);
-  if (!apkPath) {
-    // Exit 0 with no artifact is a build that did nothing -- an `assembleDebug`
-    // wired to a flavour that produces its output elsewhere, or a task that was
-    // skipped entirely. Reporting success here would install a stale APK from
-    // a previous run, or nothing at all.
+  const located = locateApk(root, transcript, variant);
+  if (!located.apkPath && located.candidates?.length) {
+    // More than one debug APK and nothing configured to pick one: choosing by
+    // recency or by name here installs SOME flavor, silently, and the wrong
+    // one runs against the wrong applicationId. Refuse with the list instead.
     return {
       failed: true,
       code: BUILD_ERROR,
-      reason: `\`./gradlew ${ASSEMBLE_TASK}\` succeeded but produced no APK in ${debugApkDir(root)}.`,
-      remedy:
-        'Check that assembleDebug builds the app module (`./gradlew :app:assembleDebug` in android/) and that no flavour redirects the output.',
+      reason: `\`./gradlew ${task}\` left ${located.candidates.length} debug APKs under ${apkOutputsDir(root)}, and nothing says which flavor to install.`,
+      remedy: `Set the android.variant setting to the variant to install -- e.g. {"android": {"variant": "${variantNameOf(relative(apkOutputsDir(root), located.candidates[0]!).split('/').slice(0, -1))}"}} in .rn-iso.json.`,
+      diagnostics: [],
+      truncated: 0,
+      lastLines: located.candidates.map((c) => relative(androidDir(root), c)),
+      durationMs,
+    };
+  }
+  if (!located.apkPath) {
+    // Exit 0 with no artifact is a build that did nothing -- a task wired to
+    // a flavour that produces its output elsewhere, or one that was skipped
+    // entirely. Reporting success here would install a stale APK from a
+    // previous run, or nothing at all.
+    return {
+      failed: true,
+      code: BUILD_ERROR,
+      reason: variant
+        ? `\`./gradlew ${task}\` succeeded but produced no APK under ${apkOutputsDir(root)} for variant "${variant}".`
+        : `\`./gradlew ${task}\` succeeded but produced no APK in ${debugApkDir(root)}.`,
+      remedy: variant
+        ? `Check that the android.variant setting ("${variant}") names a real variant (\`./gradlew :app:tasks\` lists the assemble tasks).`
+        : `Check that ${task} builds the app module (\`./gradlew :app:${task}\` in android/) and that no flavour redirects the output.`,
       diagnostics: [],
       truncated: 0,
       lastLines: tail.slice(),
       durationMs,
     };
   }
+  const apkPath = located.apkPath;
 
-  return { ok: true, apkPath, durationMs, lastLines: tail.slice() };
+  // The freshness guard: a build that just ran must hand back an APK that
+  // build wrote. An older one is a carried artifact -- the manual `cp` that
+  // papered over the flavored-output bug produced exactly this, and installing
+  // it reports success for code that never compiled.
+  let mtimeMs = Number.NaN;
+  try {
+    mtimeMs = statSync(apkPath).mtimeMs;
+  } catch {
+    // Unstattable is unreadable; let the install step report it.
+  }
+  const stale = staleApkRefusal({ task, apkPath, mtimeMs, buildStartMs: startedAt });
+  if (stale) {
+    return { failed: true, ...stale, diagnostics: [], truncated: 0, lastLines: tail.slice(), durationMs };
+  }
+
+  return { ok: true, apkPath, apkNote: located.note ?? null, durationMs, lastLines: tail.slice() };
 }
 
 // A gradlew that will not execute is almost always the permission bit -- git

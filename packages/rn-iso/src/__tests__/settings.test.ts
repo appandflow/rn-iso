@@ -95,7 +95,7 @@ test('unknownSettingKeys accepts every key that is still honoured', () => {
   expect(
     unknownSettingKeys({
       ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' },
-      android: { systemImage: 'pkg' },
+      android: { systemImage: 'pkg', variant: 'productionDebug' },
       worktree: { baseRef: 'fresh', include: ['.env'] },
       worktreeDir: '/tmp/wt',
     }),

@@ -11,7 +11,7 @@ import assert from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { upsertProject } from '../config.ts';
+import { setProjectSetting, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { writeWorkspaceState } from '../supervisor/run.ts';
@@ -99,6 +99,7 @@ interface AcquireLockArgs {
 interface BuildArgs {
   root?: string;
   logWriter?: unknown;
+  variant?: string | null;
 }
 interface InstallArgs {
   apkPath?: string | null;
@@ -106,15 +107,18 @@ interface InstallArgs {
 interface LaunchArgs {
   metroPort?: string | number;
   devClientScheme?: string | null;
+  packageName?: string;
 }
 interface RemoteBuildArgs {
   platform?: string | null;
   fingerprintHash?: string | null;
   projectRoot?: string | null;
+  runOptions?: Record<string, unknown> | null;
 }
 interface UploadArgs {
   buildPath?: string | null;
   fingerprintHash?: string | null;
+  runOptions?: Record<string, unknown> | null;
 }
 interface EasAuthArgs {
   owner?: string | null;
@@ -148,6 +152,7 @@ interface Calls {
   waitForBuild: unknown[];
   verify: VerifyArgs[];
   ensureIgnored: unknown[];
+  readApkPackage: unknown[];
   order: string[];
 }
 
@@ -175,6 +180,7 @@ function harness(overrides = {}) {
     waitForBuild: [],
     verify: [],
     ensureIgnored: [],
+    readApkPackage: [],
     // The sequence of the steps that decide who compiles, which is what the
     // single-flight tests below are actually about.
     order: [],
@@ -289,6 +295,12 @@ function harness(overrides = {}) {
       calls.scheme.push([projectRoot, apkPath]);
       return undefined;
     },
+    // Same reason: apkPackage(dumpApkManifest(..)) shells out to aapt. Null is
+    // "the APK could not be read", which falls back to project detection.
+    readApkPackage: (apkPath: string | null) => {
+      calls.readApkPackage.push(apkPath);
+      return null;
+    },
     spawn: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => {
       calls.spawn.push({ cmd, args, opts });
       return makeChildProcess({
@@ -387,6 +399,7 @@ describe('a cache hit', () => {
       avdName: 'rn-iso-app-412',
       deviceName: 'rn-iso-app-412',
       fingerprint: FINGERPRINT,
+      variant: null,
       cacheHit: 'local',
       cacheSkipped: false,
       waitedForBuild: null,
@@ -459,6 +472,105 @@ describe('a cache miss', () => {
   test('a bare project that already has android/ never prebuilds', async () => {
     const h = harness({ prebuild: never('prebuild') });
     expect((await h.run()).ok).toBe(true);
+  });
+});
+
+describe('product flavors (--variant / android.variant)', () => {
+  const FLAVORED_KEY = `${FINGERPRINT}-productiondebug-sim`;
+
+  function flavoredApk() {
+    const dir = join(root, 'android', 'app', 'build', 'outputs', 'apk', 'production', 'debug');
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, 'app-production-debug.apk');
+    writeFileSync(path, 'apk');
+    return path;
+  }
+
+  test('the android.variant setting drives the build variant, the flavored APK and a variant-scoped cache key', async () => {
+    setProjectSetting(root, 'android.variant', 'productionDebug');
+    const h = harness({
+      build: async (args: BuildArgs = {}) => {
+        h.calls.build.push(args);
+        return { ok: true, apkPath: flavoredApk(), durationMs: 494000, lastLines: [] };
+      },
+    });
+    const result = await h.run();
+
+    expect(result.ok).toBe(true);
+    // The variant reaches the gradle engine (which turns it into
+    // assembleProductionDebug -- engine-gradle.test.ts pins that), and the APK
+    // installed is the flavor's.
+    expect(h.calls.build[0]?.variant).toBe('productionDebug');
+    expect(h.calls.install[0]?.apkPath).toMatch(/apk\/production\/debug\/app-production-debug\.apk$/);
+    // The cache key carries the variant, so productionDebug and plain debug
+    // never share an entry.
+    expect(h.calls.resolveCached[0]).toEqual(['android', FLAVORED_KEY]);
+    expect(h.calls.storeCached[0]?.slice(0, 2)).toEqual(['android', FLAVORED_KEY]);
+    expect(FLAVORED_KEY).not.toBe(CACHE_KEY);
+    assert(result.facts);
+    expect(result.facts.variant).toBe('productionDebug');
+  });
+
+  test('the --variant flag beats the android.variant setting', async () => {
+    setProjectSetting(root, 'android.variant', 'previewDebug');
+    const h = harness({ variant: 'productionDebug' });
+    const result = await h.run();
+    expect(h.calls.build[0]?.variant).toBe('productionDebug');
+    expect(h.calls.resolveCached[0]).toEqual(['android', FLAVORED_KEY]);
+    assert(result.facts);
+    expect(result.facts.variant).toBe('productionDebug');
+  });
+
+  test('unset, the key and the payload are exactly the old defaults', async () => {
+    const h = harness();
+    const result = await h.run();
+    expect(h.calls.build[0]?.variant).toBe(null);
+    expect(h.calls.resolveCached[0]).toEqual(['android', CACHE_KEY]);
+    assert(result.facts);
+    expect(result.facts.variant).toBe(null);
+  });
+
+  test("a variant reaches the provider's runOptions, so a flavored resolve is never answered with plain debug", async () => {
+    setProjectSetting(root, 'android.variant', 'productionDebug');
+    const h = harness({
+      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      resolveRemoteBuild: async (args: RemoteBuildArgs = {}) => {
+        h.calls.resolveRemoteBuild.push(args);
+        return null;
+      },
+    });
+    await h.run();
+    expect(h.calls.resolveRemoteBuild[0]?.runOptions).toEqual({ variant: 'productionDebug' });
+    expect(h.calls.uploadRemoteBuild[0]?.runOptions).toEqual({ variant: 'productionDebug' });
+  });
+});
+
+describe('the applicationId comes from the built APK', () => {
+  test('the APK is authoritative when it answers, even when project detection disagrees', async () => {
+    // build.gradle says com.example.app (the base applicationId); the flavor
+    // that was actually built and installed is io.tlon.groups.
+    const h = harness({ readApkPackage: () => 'io.tlon.groups' });
+    const result = await h.run();
+
+    expect(result.ok).toBe(true);
+    // The launch (and through it the run-as debug_http_host write and the
+    // monkey remedy, which engine/app-install derives from packageName) all
+    // target the package that is actually on the device.
+    expect(h.calls.launch[0]?.packageName).toBe('io.tlon.groups');
+    assert(result.facts);
+    expect(result.facts.bundleId).toBe('io.tlon.groups');
+    expect(h.stdout[0]).toMatch(/io\.tlon\.groups/);
+    // The disagreement is said out loud, once.
+    expect(h.stderr.join('\n')).toMatch(/io\.tlon\.groups \(from the APK; project files say com\.example\.app\)/);
+  });
+
+  test('an unreadable APK falls back to project detection', async () => {
+    const h = harness();
+    const result = await h.run();
+    expect(h.calls.readApkPackage.length).toBe(1);
+    expect(h.calls.launch[0]?.packageName).toBe('com.example.app');
+    assert(result.facts);
+    expect(result.facts.bundleId).toBe('com.example.app');
   });
 });
 
@@ -1297,6 +1409,7 @@ describe('the pure parts', () => {
       avdName: null,
       deviceName: null,
       fingerprint: null,
+      variant: null,
       cacheHit: false,
       cacheSkipped: false,
       waitedForBuild: null,
@@ -1308,6 +1421,7 @@ describe('the pure parts', () => {
       devClientUrl: null,
       logs: null,
     });
+    expect(androidFacts({ variant: 'productionDebug' }).variant).toBe('productionDebug');
     // A device tool is addressed by AVD name, not by console-port slot, and
     // deviceName falls back to it rather than being separately null.
     expect({

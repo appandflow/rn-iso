@@ -177,7 +177,8 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
       deps.js             # podsAreStale (pure: Podfile.lock vs Pods/Manifest.lock) + runPodInstall
       xcode.js            # discoverXcodeProject / listSchemes / buildIos: xcodebuild into
                           # <ws>/.rn-iso/derived-data, transcript streamed to the build log
-      gradle.js           # buildAndroid: ./gradlew assembleDebug, apk located by output listing
+      gradle.js           # buildAndroid: ./gradlew assemble<Variant> (default assembleDebug),
+                          # apk located by output listing, flavor-aware, mtime freshness guard
       errors-xcode.js     # PURE: transcript -> {file, line, message} diagnostics, deduped, capped
       errors-gradle.js    # the same for gradle/kotlin/aapt failures
       build-lock.js       # SINGLE-FLIGHT builds: when both cache levels miss, one workspace
@@ -346,16 +347,26 @@ composes, never one it inferred from a package.json script. Nothing reads
 fixed and it does not grow:
 
     start           --json --wait
-    ios / android   --json --no-metro-check
+    ios             --json --no-metro-check --no-build-cache
+    android         --json --no-metro-check --no-build-cache --variant <name>
     logs            --source --level --since --grep --tail --follow --errors --json
     stop            --json --force
 
 `--client-logs` is the archetype of what is deleted rather than ported: capture
 is unconditional, and a queryable file has no terminal noise to manage. Release
-builds, variants, device targets and `--serial` are all out of scope for the
+builds, device targets and `--serial` are all out of scope for the
 same reason. A project needing something outside this set wraps rn-iso in a
 script of its own — one the repo writes and owns, since rn-iso no longer
 generates one.
+
+`android --variant <name>` is deliberate surface growth, decided 2026-08-27
+for issue #52 (tlon-mobile's product flavors: `assembleDebug` built into
+`apk/production/debug/` and rn-iso declared the successful build failed).
+Which flavored DEBUG variant to build is per-invocation agent judgment, so it
+belongs on the command; the `android.variant` SETTING (precedent:
+`android.systemImage`) is the repo-level default the flag overrides. Release
+variants remain out of scope — the value still selects a debug build of a
+flavor, not a release path.
 
 `--base` is the counter-example worth remembering: it accepted only the two
 sentinels `fresh` and `head`, and widening it to any ref `git rev-parse`

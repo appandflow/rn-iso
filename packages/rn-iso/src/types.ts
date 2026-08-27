@@ -171,6 +171,9 @@ export interface AndroidFacts {
   avdName: string | null;
   deviceName: string | null;
   fingerprint: string | null;
+  // The gradle variant that was built (--variant flag or android.variant
+  // setting); null for the default assembleDebug.
+  variant: string | null;
   cacheHit: CacheHitLevel;
   cacheSkipped: boolean;
   waitedForBuild: { pid: number | null; ms: number } | null;
