@@ -171,7 +171,13 @@ export async function uploadBuildCache({
   const staging = `${dest}.staging-${process.pid}`;
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true });
-  execFileSync('cp', ['-R', buildPath, path.join(staging, path.basename(buildPath))]);
+  // APFS clone first (milliseconds for a big .app on the same volume), plain
+  // copy where cloning cannot work -- the same trade the CLI-side twin makes.
+  try {
+    execFileSync('cp', ['-c', '-R', buildPath, path.join(staging, path.basename(buildPath))]);
+  } catch {
+    execFileSync('cp', ['-R', buildPath, path.join(staging, path.basename(buildPath))]);
+  }
 
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.rmSync(dest, { recursive: true, force: true });

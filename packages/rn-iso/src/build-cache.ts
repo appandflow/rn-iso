@@ -209,7 +209,15 @@ export function storeBuild(
   const staging = `${dest}.staging-${process.pid}`;
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(staging, { recursive: true });
-  getExecutor().runFile('cp', ['-R', buildPath, join(staging, basename(buildPath))]);
+  // -c asks APFS for a copy-on-write clone: storing a several-hundred-MB
+  // .app costs milliseconds instead of seconds when the cache shares the
+  // artifact's volume. It errors on non-APFS or across volumes, where the
+  // plain copy is the correct price.
+  try {
+    getExecutor().runFile('cp', ['-c', '-R', buildPath, join(staging, basename(buildPath))]);
+  } catch {
+    getExecutor().runFile('cp', ['-R', buildPath, join(staging, basename(buildPath))]);
+  }
 
   mkdirSync(dirname(dest), { recursive: true });
   rmSync(dest, { recursive: true, force: true });
