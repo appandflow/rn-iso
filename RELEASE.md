@@ -134,10 +134,16 @@ If `git status` isn't clean, commit / discard before tagging.
    ```
    Sections: `New`, `Removed (breaking)`, `Fixes`, `Docs`, `Migration notes` (if any). Skip empty sections. Link prior commits with `[<short-sha>](https://github.com/janicduplessis/rn-iso/commit/<sha>)`. Say which package a line is about when it is not the CLI.
 7. **Publish to npm.** Pushing the tag (previous step) triggers the
-   `Release` workflow, which publishes all three packages via OIDC trusted
+   `Release` workflow, which publishes all FOUR packages via OIDC trusted
    publishing (no token, `--provenance`) once you APPROVE the run in the
-   `release` environment on GitHub -- that approval replaces the OTP. Manual
-   fallback, `rn-iso` first: The two cache packages name it as a peer
+   `release` environment on GitHub (Actions -> the waiting run -> Review
+   deployments -> check `release` -> Approve and deploy) -- that approval
+   replaces the OTP. Two learned-the-hard-way requirements: every
+   package.json must carry a `repository` field matching this repo (a
+   provenance publish is REJECTED without it, E422), and a NEW package must
+   be published once by hand first -- npm's trusted-publisher settings live
+   on the package page, which does not exist until then. Manual fallback,
+   `@rn-iso/core` first: The two cache packages name it as a peer
    and their READMEs link to it, so a registry that has a cache package but not
    the CLI version it points at is the wrong order to be interrupted in:
 
