@@ -26,6 +26,7 @@ import {
   VERIFY_TIMEOUT_MS,
   devClientUrl,
   isBundleProof,
+  isBundleRequestProof,
   unverifiedLaunchLines,
   verifyLaunch,
   amStartError,
@@ -1135,5 +1136,115 @@ describe('the android release process proof', () => {
     expect(result.verified).toBe(false);
     expect(result.reason).toBe('exited');
     expect(result.pid).toBe(null);
+  });
+});
+
+// --- issue #53: a bundle in flight is not the same as no request at all -----
+//
+// The window is ~20s and a cold bundle of a large graph is not: the field case
+// was 37.8s for 9948 modules, reported as launched: "unverified" while
+// everything was fine. Metro says nothing about a build until it FINISHES
+// (Expo's child prints its progress with carriage returns, so no whole line
+// reaches the timeline either) -- but the app's own device log names the URL it
+// asked for, and that URL carries this workspace's port.
+
+describe('isBundleRequestProof', () => {
+  test("a device log line naming a bundle URL on THIS workspace's port is proof of the request", () => {
+    expect(
+      isBundleRequestProof(
+        { ts: 150, src: 'device', msg: 'Loading app from http://10.0.2.2:8082/index.bundle?platform=android' },
+        100,
+        8082,
+      ),
+    ).toBe(true);
+    expect(
+      isBundleRequestProof(
+        { ts: 150, src: 'device', msg: 'RCTJavaScriptLoader http://localhost:8082/.expo/.virtual-metro-entry.bundle' },
+        100,
+        8082,
+      ),
+    ).toBe(true);
+  });
+
+  test("another workspace's port is never proof -- that is the failure this check exists for", () => {
+    expect(
+      isBundleRequestProof({ ts: 150, src: 'device', msg: 'Loading http://10.0.2.2:8081/index.bundle' }, 100, 8082),
+    ).toBe(false);
+  });
+
+  test('an error-level line naming the same URL is a request that FAILED, not one in flight', () => {
+    expect(
+      isBundleRequestProof(
+        { ts: 150, src: 'device', level: 'error', msg: 'Could not load http://10.0.2.2:8082/index.bundle' },
+        100,
+        8082,
+      ),
+    ).toBe(false);
+  });
+
+  test('a URL with no bundle path, a record from before the launch, and a missing port are all not proof', () => {
+    expect(
+      isBundleRequestProof({ ts: 150, src: 'device', msg: 'connected to http://localhost:8082/' }, 100, 8082),
+    ).toBe(false);
+    expect(isBundleRequestProof({ ts: 99, src: 'device', msg: 'http://localhost:8082/index.bundle' }, 100, 8082)).toBe(
+      false,
+    );
+    expect(isBundleRequestProof({ ts: 150, msg: 'http://localhost:8082/index.bundle' }, 100, null)).toBe(false);
+    expect(isBundleRequestProof(null, 100, 8082)).toBe(false);
+  });
+});
+
+describe('verifyLaunch: still bundling', () => {
+  test('a timeout with a device-log request reports requested, not a bare unverified', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      metroPort: 8082,
+      now: clock.now,
+      sleep: clock.sleep,
+      // Metro has nothing to say yet: the bundle is still building.
+      readRecords: () => [],
+      readDeviceRecords: () => [
+        { ts: since + 10, src: 'device', msg: 'Loading app from http://10.0.2.2:8082/index.bundle?platform=android' },
+      ],
+    });
+    expect(result.verified).toBe(false);
+    expect(result.timedOut).toBe(true);
+    expect(result.requested).toBe(true);
+    assert(result.record);
+    expect(result.record.msg).toMatch(/index\.bundle/);
+  });
+
+  test('a timeout with nothing in the device log stays plain unverified', async () => {
+    const clock = fakeClock();
+    const result = await verifyLaunch({
+      since: clock.at(),
+      metroPort: 8082,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [],
+      readDeviceRecords: () => [{ ts: clock.at(), src: 'device', msg: 'nw_socket_handle_socket_event' }],
+    });
+    expect(result.requested).toBeUndefined();
+    expect(result.timedOut).toBe(true);
+  });
+
+  test('a bundle that actually built still verifies: the device log is only consulted on a timeout', async () => {
+    const clock = fakeClock();
+    let deviceReads = 0;
+    const result = await verifyLaunch({
+      since: clock.at(),
+      metroPort: 8082,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: clock.at(), event: 'bundle_build_started' }],
+      readDeviceRecords: () => {
+        deviceReads += 1;
+        return [];
+      },
+    });
+    expect(result.verified).toBe(true);
+    expect(deviceReads).toBe(0);
   });
 });

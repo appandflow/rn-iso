@@ -61,6 +61,15 @@ const FILE_LINE_ERROR = /^([^\s:]+):(\d+):(?:(\d+):)?\s*(?:AAPT:\s*)?error:\s*(.
 const AAPT_PREFIXED = /^ERROR:\s*([^\s:]+):(\d+):(?:(\d+):)?\s*(.*)$/;
 // A bare `error: resource string/foo not found.` with no file to blame.
 const BARE_ERROR = /^error:\s*(.*)$/i;
+// CMake's own fatal line, which is where a native build says what to DO about
+// it. AGP folds a failed C/C++ configure into gradle's "* What went wrong:"
+// section as one long [CXX1429] block; that section is joined into a single
+// message and then clipped at MAX_MESSAGE_LENGTH, and the line naming the fix
+// (`message(FATAL_ERROR "... run npx install-skia")`) sits at the END of the
+// block -- so the clip removed the only actionable line in it. Every
+// FATAL_ERROR line is therefore ALSO kept as a diagnostic of its own, both
+// inside that block and standalone in the transcript.
+const FATAL_ERROR = /FATAL_ERROR/;
 const TASK_FAILED = /^>\s*Task\s+(:[A-Za-z0-9_.:-]+)\s+FAILED\b/;
 const FAILURE_HEADER = /^FAILURE:\s*Build (?:failed|completed with)/;
 const WHAT_WENT_WRONG = /^\*\s*What went wrong:/;
@@ -152,6 +161,7 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
       const block = readWhatWentWrong(lines, i);
       if (block) {
         add({ message: block.message });
+        for (const fatal of block.fatal) add({ message: fatal });
         i = block.endIndex;
       }
       continue;
@@ -162,8 +172,16 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
       const block = readWhatWentWrong(lines, i - 1);
       if (block) {
         add({ message: block.message });
+        for (const fatal of block.fatal) add({ message: fatal });
         i = block.endIndex;
       }
+      continue;
+    }
+
+    // Before every other form: a CMake fatal is the fix, and it must survive
+    // whatever else the line also looks like.
+    if (FATAL_ERROR.test(line)) {
+      add({ message: line });
       continue;
     }
 
@@ -282,7 +300,10 @@ export function formatDiagnostic(diag?: Diagnostic | null): string {
 // under it, then moves on to "* Try:". The nested causes carry the useful
 // half ("Compilation failed", "Could not resolve X"), so they are joined
 // into the message rather than dropped.
-function readWhatWentWrong(lines: string[], start: number): { message: string; endIndex: number } | null {
+function readWhatWentWrong(
+  lines: string[],
+  start: number,
+): { message: string; fatal: string[]; endIndex: number } | null {
   let i = start + 1;
   while (i < lines.length && !WHAT_WENT_WRONG.test(stripCarriage(lines[i]).trim())) {
     const probe = stripCarriage(lines[i]).trim();
@@ -307,7 +328,9 @@ function readWhatWentWrong(lines: string[], start: number): { message: string; e
     parts.push(line.replace(/^>\s*/, ''));
   }
   if (parts.length === 0) return null;
-  return { message: parts.join(' '), endIndex: j - 1 };
+  // The fatal lines are returned SEPARATELY as well as inside the joined
+  // message: the join is clipped, and these are the lines that must not be.
+  return { message: parts.join(' '), fatal: parts.filter((part) => FATAL_ERROR.test(part)), endIndex: j - 1 };
 }
 
 function stripAaptPrefix(message: string): string {

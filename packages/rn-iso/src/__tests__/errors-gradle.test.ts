@@ -265,3 +265,60 @@ describe('against transcripts captured from a real gradle run', () => {
     expect(extractGradleDiagnostics(fixture('gradle-success.txt'))).toEqual([]);
   });
 });
+
+// --- issue #54: the CMake block that named the fix, and was clipped ---------
+//
+// AGP folds a failed C/C++ configure into gradle's "* What went wrong:"
+// section as one long [CXX1429] block. That section is joined into ONE message
+// and clipped at 300 characters -- and the `message(FATAL_ERROR ...)` line,
+// which is the only line in it that says what to do, sits at the end. It was
+// the repo's own fix (`npx install-skia`) and an agent never saw it.
+describe('CMake FATAL_ERROR lines survive the What-went-wrong clip', () => {
+  const filler = 'x'.repeat(120);
+  const transcript = [
+    '> Task :app:configureCMakeDebug[arm64-v8a] FAILED',
+    'FAILURE: Build failed with an exception.',
+    '',
+    '* What went wrong:',
+    "Execution failed for task ':app:configureCMakeDebug[arm64-v8a]'.",
+    `> com.android.ide.common.process.ProcessException: ${filler}`,
+    `  [CXX1429] error when building with cmake using /w/app/android/app/src/main/jni/CMakeLists.txt: ${filler}`,
+    '  CMake Error at /w/app/node_modules/@shopify/react-native-skia/cpp/CMakeLists.txt:12 (message):',
+    '  FATAL_ERROR: Skia binaries are missing. Run `npx install-skia` from the repo root.',
+    '',
+    '* Try:',
+    '> Run with --stacktrace',
+  ].join('\n');
+
+  test('the fatal line is its own diagnostic, whole, not the tail of a clipped one', () => {
+    const diagnostics = extractGradleDiagnostics(transcript);
+    const fatal = diagnostics.find((d) => /FATAL_ERROR/.test(d.message));
+    assert(fatal, 'expected the FATAL_ERROR line to survive as its own diagnostic');
+    expect(fatal.message).toMatch(/npx install-skia/);
+    // The joined block is still there, and still clipped -- that is what makes
+    // the separate line necessary rather than redundant.
+    const joined = diagnostics.find((d) => /CXX1429/.test(d.message));
+    assert(joined);
+    expect(joined.message.endsWith('...')).toBe(true);
+  });
+
+  test('a fatal line outside any FAILURE block is kept too', () => {
+    const diagnostics = extractGradleDiagnostics(
+      [
+        'C/C++: CMake Error at CMakeLists.txt:9 (message):',
+        'C/C++: FATAL_ERROR react-native-skia: run npx install-skia',
+      ].join('\n'),
+    );
+    expect(diagnostics.some((d) => /npx install-skia/.test(d.message))).toBe(true);
+  });
+
+  test('a transcript with no fatal line extracts exactly what it always did', () => {
+    const diagnostics = extractGradleDiagnostics(
+      ['> Task :app:compileDebugKotlin FAILED', "e: file:///w/Main.kt:10:5 Unresolved reference 'foo'."].join('\n'),
+    );
+    expect(diagnostics.map((d) => d.message)).toEqual([
+      'Task :app:compileDebugKotlin FAILED',
+      "Unresolved reference 'foo'.",
+    ]);
+  });
+});

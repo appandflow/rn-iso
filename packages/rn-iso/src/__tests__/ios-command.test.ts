@@ -146,7 +146,7 @@ interface RecordedArgs {
   swapJsBundle: { cachedAppPath?: unknown; isExpo?: unknown; root?: unknown };
   verifyReleaseLaunch: { pid?: unknown };
   readBundleId: unknown;
-  storeBuild: { options?: unknown; platform?: unknown; path?: unknown };
+  storeBuild: { options?: unknown; platform?: unknown; path?: unknown; key?: unknown };
   resolveBuild: { key?: unknown };
   verifyLaunch: { since?: unknown; logsDir?: unknown };
   uploadRemote: { fingerprintHash?: unknown; buildPath?: unknown };
@@ -154,6 +154,7 @@ interface RecordedArgs {
   replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown };
   loadProjectProvider: { isExpo?: unknown };
   acquireBuildLock: { root?: unknown; platform?: unknown; logFile?: unknown; key?: unknown };
+  untrackedNativeFiles: { projectRoot?: unknown };
   ensureWorkspaceIgnored: unknown;
 }
 
@@ -188,6 +189,12 @@ function harness(overrides: LooseDeps = {}) {
     fingerprintProject: async (path) => {
       record('fingerprintProject', path);
       return { hash: FINGERPRINT, sources: [] };
+    },
+    // Issue #60's miss diagnostic shells out to git; the default is a project
+    // with nothing untracked, so only the tests that are about it pay for it.
+    untrackedNativeFiles: (args) => {
+      record('untrackedNativeFiles', args);
+      return [];
     },
     resolveBuild: (platform, key) => {
       record('resolveBuild', { platform, key });
@@ -632,7 +639,7 @@ describe('the cache', () => {
     expect(calls.args.launchIosApp.bundleId).toBe('com.example.fromplist');
   });
 
-  test('a miss runs prebuild, then pods, then the build, then stores it', async () => {
+  test('a miss runs prebuild, then pods, then a RE-fingerprint, then the build, then stores it', async () => {
     reserve();
     const { exitCode, calls, appPath } = await run(
       {},
@@ -658,6 +665,10 @@ describe('the cache', () => {
       'fingerprintProject',
       'runPrebuild',
       'runPodInstall',
+      // The second fingerprint is issue #59: prebuild and pod install rewrite
+      // fingerprinted inputs, so what the artifact is STORED under is computed
+      // after them, never before.
+      'fingerprintProject',
       'buildIos',
       'storeBuild',
       'installIosApp',
@@ -2379,5 +2390,325 @@ describe('the release cache key and the JS swap', () => {
     expect(calls.args.installIosApp.appPath).toBe(appPath);
     // The payload reports what actually happened: not a cache hit.
     expect(parseFirst(logs).cacheHit).toBe(false);
+  });
+});
+
+// --- issue #59: the artifact is stored under the POST-mutation key ----------
+//
+// `expo prebuild` generates ios/ and rewrites package.json's scripts and the
+// app config; `pod install` writes ios/Podfile.lock. All of them are
+// fingerprint SOURCES, so the hash a cold run looked up is not the hash its
+// tree has by the time there is an artifact. Storing under the lookup key
+// produced an entry no later run in that tree could ever hit -- field-measured
+// as 104 MB of cache nothing would ever look up.
+describe('re-fingerprint after the steps that rewrite fingerprinted files', () => {
+  const COLD = 'aaaaaa1111';
+  const WARM = 'bbbbbb2222';
+
+  // Two hashes, in the order the run computes them: the cold tree's, then the
+  // one the same tree has once prebuild and pod install have run.
+  function shifting() {
+    let call = 0;
+    return async () => ({ hash: call++ === 0 ? COLD : WARM, sources: [{ type: 'dir', filePath: 'ios' }] });
+  }
+
+  test('the store key is the key the NEXT run looks up across a prebuild boundary', async () => {
+    reserve();
+    const lookedUp: string[] = [];
+    const cold = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        needsPrebuild: () => true,
+        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+        fingerprintProject: shifting(),
+        resolveBuild: (_platform, key) => {
+          lookedUp.push(key);
+          return null;
+        },
+      },
+    );
+    expect(cold.exitCode).toBe(null);
+    const storedKey = cold.calls.args.storeBuild.key;
+    // The FIRST lookup was the cold hash (the second is the post-shift one
+    // below); the store is the warm one.
+    expect(lookedUp[0]).toMatch(new RegExp(`^${COLD}`));
+    expect(String(storedKey)).toMatch(new RegExp(`^${WARM}`));
+
+    // The next run in this tree: prebuild is done, pods are current, so it
+    // computes the warm hash and looks THAT up. Same key, so it is a hit.
+    const warm = await run({}, { fingerprintProject: async () => ({ hash: WARM, sources: [] }) });
+    expect(warm.calls.args.resolveBuild.key).toBe(storedKey);
+  });
+
+  test('the shift is one dim line naming both short hashes, and the payload reports what was stored', async () => {
+    reserve();
+    const { logs, errs, calls } = await run(
+      { json: true },
+      {
+        detectIsExpo: () => true,
+        needsPrebuild: () => true,
+        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+        fingerprintProject: shifting(),
+      },
+    );
+    const shift = errs.find((line) => /^fingerprint\s+\S+ -> /.test(line));
+    assert(shift, 'expected a fingerprint shift line on stderr');
+    expect(shift).toMatch(/aaaaaa\.\. -> bbbbbb\.\./);
+    expect(shift).toMatch(/prebuild \+ pod install/);
+
+    const facts = parseFirst(logs);
+    expect(facts.fingerprint).toBe(WARM);
+    expect(facts.cacheKey).toBe(calls.args.storeBuild.key);
+
+    // Contract 4 records the same thing, because the next run's miss diff
+    // reads the entry by that key.
+    const state = readWorkspaceState(root) as WorkspaceState;
+    expect((state.lastBuild as Record<string, unknown>).fingerprint).toBe(WARM);
+    expect((state.lastBuild as Record<string, unknown>).cacheKey).toBe(calls.args.storeBuild.key);
+  });
+
+  // The point of the whole feature: a fresh worktree or clone of a CNG app is
+  // COLD, so its first lookup uses a hash that predates ios/. The entry another
+  // workspace stored is keyed on the hash this run only learns after prebuild
+  // -- and asking again is the difference between an install and a full
+  // xcodebuild.
+  test('a post-shift hit installs the cached app and compiles nothing', async () => {
+    reserve();
+    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-debug-sim`, 'Fixture.app');
+    const { logs, errs, calls } = await run(
+      { json: true },
+      {
+        detectIsExpo: () => true,
+        needsPrebuild: () => true,
+        fingerprintProject: shifting(),
+        // Cold key: nothing. Post-shift key: the entry a warm tree left.
+        resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
+      },
+    );
+    // prebuild still runs -- it is what produces the tree the new hash
+    // describes -- but nothing after it does.
+    expect(calls.order.includes('runPrebuild')).toBe(true);
+    expect(calls.order.includes('buildIos')).toBe(false);
+    expect(calls.order.includes('storeBuild')).toBe(false);
+    expect(calls.args.installIosApp.appPath).toBe(cachedApp);
+    expect(errs.join('\n')).toMatch(/hit under the post-prebuild key \(this tree was cold/);
+
+    const facts = parseFirst(logs);
+    expect(facts.cacheHit).toBe('local');
+    expect(facts.fingerprint).toBe(WARM);
+    expect(facts.cacheKey).toBe(`${WARM}-debug-sim`);
+  });
+
+  // Release is not a special case: the post-shift hit goes through the SAME
+  // step a first-pass hit does, so the cached app's JS is replaced with this
+  // tree's before it is installed.
+  test('a post-shift hit on a Release build swaps the JS in, exactly as a first-pass hit does', async () => {
+    reserve();
+    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-release-sim`, 'Fixture.app');
+    const { calls } = await run(
+      { configuration: 'Release' },
+      {
+        detectIsExpo: () => true,
+        needsPrebuild: () => true,
+        fingerprintProject: shifting(),
+        resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
+      },
+    );
+    expect(calls.args.swapJsBundle.cachedAppPath).toBe(cachedApp);
+    expect(calls.order.includes('buildIos')).toBe(false);
+    // The SWAPPED copy is what reaches the device, never the cache entry.
+    expect(calls.args.installIosApp.appPath).toBe(join(root, 'js-swap', 'Fixture.app'));
+  });
+
+  test('a post-shift hit whose swap fails falls back to a build, as a first-pass failure does', async () => {
+    reserve();
+    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-release-sim`, 'Fixture.app');
+    const { calls } = await run(
+      { configuration: 'Release' },
+      {
+        detectIsExpo: () => true,
+        needsPrebuild: () => true,
+        fingerprintProject: shifting(),
+        resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
+        swapJsBundle: async () => ({ ok: false, step: 'bundle', reason: 'hermesc not found' }),
+      },
+    );
+    expect(calls.order.includes('buildIos')).toBe(true);
+    expect(String(calls.args.storeBuild.key)).toBe(`${WARM}-release-sim`);
+  });
+
+  test('a post-shift MISS builds and stores under the new key', async () => {
+    reserve();
+    const lookedUp: string[] = [];
+    const { calls } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        needsPrebuild: () => true,
+        fingerprintProject: shifting(),
+        resolveBuild: (_platform, key) => {
+          lookedUp.push(key);
+          return null;
+        },
+      },
+    );
+    expect(lookedUp.length).toBe(2);
+    expect(lookedUp[1]).toBe(`${WARM}-debug-sim`);
+    expect(calls.order.includes('buildIos')).toBe(true);
+    expect(calls.args.storeBuild.key).toBe(`${WARM}-debug-sim`);
+  });
+
+  test('a hash that does not move costs no line and stores under the key it looked up', async () => {
+    reserve();
+    const { errs, calls } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        needsPrebuild: () => true,
+        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+      },
+    );
+    expect(errs.some((line) => /^fingerprint\s+\S+ -> /.test(line))).toBe(false);
+    expect(calls.args.storeBuild.key).toBe(calls.args.resolveBuild.key);
+    // And NO second lookup: there is no new key to ask about.
+    expect(calls.order.filter((c) => c === 'resolveBuild').length).toBe(1);
+  });
+
+  test('a warm tree runs no mutating step, so the fingerprint is computed exactly once', async () => {
+    reserve();
+    const { calls } = await run();
+    expect(calls.order.filter((c) => c === 'fingerprintProject').length).toBe(1);
+  });
+});
+
+// --- issue #60: a miss with no prior entry names the untracked native files -
+test('a first miss lists untracked files under the native dirs and points at .fingerprintignore', async () => {
+  reserve();
+  const asked: unknown[] = [];
+  const { errs } = await run(
+    {},
+    {
+      untrackedNativeFiles: (args) => {
+        asked.push(args);
+        return ['ios/scratch.txt', 'android/local.properties'];
+      },
+    },
+  );
+  expect(asked).toEqual([{ projectRoot: root }]);
+  const line = errs.find((e) => e.includes('untracked'));
+  assert(line, 'expected the untracked-files note on stderr');
+  expect(line).toMatch(/ios\/scratch\.txt, android\/local\.properties/);
+  expect(line).toMatch(/\.fingerprintignore/);
+});
+
+test('a miss that CAN be diffed says what changed instead of guessing at untracked files', async () => {
+  reserve();
+  writeWorkspaceState(root, { lastBuild: { platform: 'ios', fingerprint: 'oldhash', cacheKey: 'old-key' } });
+  const entry = join(tmpHome, 'build-cache', 'ios', 'old-key');
+  mkdirSync(entry, { recursive: true });
+  writeFileSync(join(entry, 'fingerprint-sources.json'), JSON.stringify([{ type: 'contents', id: 'expoConfig' }]));
+  const asked: unknown[] = [];
+  const { errs } = await run(
+    {},
+    {
+      untrackedNativeFiles: (args) => {
+        asked.push(args);
+        return ['ios/scratch.txt'];
+      },
+      fingerprintProject: async () => ({ hash: FINGERPRINT, sources: [{ type: 'contents', id: 'other' }] }),
+    },
+  );
+  expect(asked.length).toBe(0);
+  expect(errs.some((e) => e.includes('untracked'))).toBe(false);
+});
+
+// --- issue #53: a bundle that is still building is its own state ------------
+describe('launch verification: bundling vs unverified', () => {
+  test('a request that arrived reports launched: "bundling" and prints no remedy list', async () => {
+    reserve();
+    const { logs, errs, exitCode } = await run(
+      { json: true },
+      { verifyLaunch: async () => ({ verified: false, timedOut: true, requested: true, waitedMs: 20000 }) },
+    );
+    expect(exitCode).toBe(null);
+    expect(parseFirst(logs).launched).toBe('bundling');
+    const text = errs.join('\n');
+    expect(text).toMatch(/BUNDLING: the app asked port 8082 for its bundle/);
+    // The alert/picker list is for a launch that did NOT work. Printing it
+    // over one that demonstrably did is what sent an agent chasing a fault.
+    expect(text).not.toMatch(/DEVELOPMENT SERVERS picker/);
+    expect(text).not.toMatch(/Open in <app>\?/);
+
+    const record = buildRecords().find((r) => r.event === 'launch_bundling');
+    assert(record, 'expected a launch_bundling record in the build log');
+    expect(record.level).toBe('info');
+    expect(record.msg).toMatch(/still being built/);
+  });
+
+  test('no request at all is still "unverified", with the remedy list', async () => {
+    reserve();
+    const { logs, errs } = await run(
+      { json: true },
+      { verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) },
+    );
+    expect(parseFirst(logs).launched).toBe('unverified');
+    expect(errs.join('\n')).toMatch(/DEVELOPMENT SERVERS picker/);
+    expect(buildRecords().some((r) => r.event === 'launch_unverified')).toBe(true);
+  });
+
+  test("verifyLaunch is told this workspace's port, which is what the device log is matched on", async () => {
+    reserve(8099);
+    const { calls } = await run();
+    expect((calls.args.verifyLaunch as { metroPort?: unknown }).metroPort).toBe(8099);
+  });
+});
+
+// --- issue #54: a takeover after a builder that FAILED ----------------------
+describe('single-flight takeover says the previous build failed', () => {
+  test('taking the lock over from a dead holder names it and says the inputs are the same', async () => {
+    reserve();
+    const { errs } = await run(
+      {},
+      {
+        acquireBuildLock: () => ({
+          acquired: true,
+          path: join(tmpHome, 'build-locks', 'ios-k.lock'),
+          lock: { pid: process.pid },
+          tookOver: {
+            pid: 4242,
+            projectRoot: '/w/other',
+            startedAt: new Date(Date.now() - 120000).toISOString(),
+            logFile: '/w/other/.rn-iso/logs/build-ios.ndjson',
+          },
+        }),
+      },
+    );
+    const line = errs.find((e) => e.includes('RETRY:'));
+    assert(line, 'expected the takeover retry line on stderr');
+    expect(line).toMatch(/\/w\/other/);
+    expect(line).toMatch(/pid 4242/);
+    expect(line).toMatch(/SAME inputs/);
+    expect(line).toMatch(/build-ios\.ndjson/);
+  });
+
+  test('a builder that died mid-wait produces the same line before this run rebuilds', async () => {
+    reserve();
+    let attempt = 0;
+    const { errs, calls } = await run(
+      {},
+      {
+        acquireBuildLock: () =>
+          attempt++ === 0
+            ? { held: { pid: 999, projectRoot: '/w/other', startedAt: null, logFile: '/w/other/build.ndjson' } }
+            : { acquired: true, path: join(tmpHome, 'build-locks', 'ios-k.lock'), lock: { pid: process.pid } },
+        waitForBuild: async () => ({ builderFailed: 'the builder (pid 999) is gone', waitedMs: 1200 }),
+      },
+    );
+    expect(calls.order.includes('buildIos')).toBe(true);
+    const line = errs.find((e) => e.includes('RETRY:'));
+    assert(line, 'expected the takeover retry line on stderr');
+    expect(line).toMatch(/pid 999/);
+    expect(line).toMatch(/build\.ndjson/);
   });
 });

@@ -69,6 +69,11 @@ export interface BuildLockHandle {
   path?: string;
   lock?: BuildLockRecord;
   held?: BuildLockRecord;
+  // The record of the builder this acquisition TOOK OVER from: set only when
+  // the lock was acquired by reaping a dead holder's lock. A builder that dies
+  // without storing an artifact failed, and the run that inherits its lock is
+  // about to compile the same inputs -- which is worth one line (issue #54).
+  tookOver?: BuildLockRecord;
   // Only ever set by a caller building a handle by hand rather than one this
   // module returned; releaseBuildLock's fallback path reads these when `path`
   // itself is not already on the handle.
@@ -239,6 +244,10 @@ export function acquireBuildLock({
 }: AcquireBuildLockOptions): BuildLockHandle {
   const path = buildLockPath(platform, key);
   const deadline = now() + ACQUIRE_DEADLINE_MS;
+  // The dead holder this acquisition reaped, if any. Reported on the handle so
+  // the caller can say that the build it is about to run is a RETRY of one
+  // that just failed, rather than starting the same doomed compile in silence.
+  let reaped: BuildLockRecord | null = null;
 
   for (;;) {
     try {
@@ -254,7 +263,7 @@ export function acquireBuildLock({
       // record only describes it. A reader that arrives between the two sees a
       // lock it cannot identify, which is the RECORD_GRACE_MS case below.
       writeFileSync(join(path, LOCK_FILE_NAME), JSON.stringify(lock));
-      return { acquired: true, path, lock };
+      return reaped ? { acquired: true, path, lock, tookOver: reaped } : { acquired: true, path, lock };
     } catch (err) {
       if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') throw err;
     }
@@ -268,6 +277,7 @@ export function acquireBuildLock({
     if (info) {
       // A dead pid is the only kind of stale lock. Take it over atomically so
       // two racing waiters cannot both win.
+      reaped = info;
       reapStaleLock(path);
       continue;
     }
@@ -377,6 +387,40 @@ export function waitingLine({ projectRoot, pid, elapsedMs, logFile }: WaitingLin
   const where = projectRoot || 'another workspace';
   const tail = logFile ? ` -- tail ${logFile}` : '';
   return `${'build'.padEnd(11)} waiting on ${where} (pid ${pid ?? '?'}, ${formatWaited(elapsedMs)} elapsed)${tail}`;
+}
+
+// PURE. The ONE line a takeover prints, WITHOUT the phase prefix (unlike
+// waitingLine, which this module prints itself): both callers are commands
+// with their own phase-line column. Both shapes of takeover reach it: a
+// run that waited on a builder which then died without an artifact, and a run
+// whose first acquisition reaped a dead holder's lock.
+//
+// It exists because the silence was a LOOP: a build that fails leaves the next
+// workspace on the same fingerprint to compile the same inputs and fail the
+// same way, and an agent reading only "building here" has no reason to look at
+// the failure that already happened. Naming the previous builder's log is what
+// turns a repeat into a lookup.
+export function takeoverLine({
+  projectRoot,
+  pid,
+  logFile,
+  startedAt = null,
+  now = Date.now,
+}: {
+  projectRoot: string | null;
+  pid: number | null;
+  logFile: string | null;
+  startedAt?: string | null;
+  now?: () => number;
+}): string {
+  const where = projectRoot || 'another workspace';
+  const started = startedAt ? Date.parse(startedAt) : Number.NaN;
+  const ago = Number.isFinite(started) ? ` (it started ${formatWaited(now() - started)} ago)` : '';
+  const tail = logFile ? ` -- read ${logFile} before this one finishes` : '';
+  return (
+    `RETRY: ${where}'s build of this fingerprint (pid ${pid ?? '?'}) FAILED without an artifact${ago}, ` +
+    `and this run rebuilds the SAME inputs, so expect the same failure unless something changed${tail}`
+  );
 }
 
 /**

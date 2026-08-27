@@ -623,6 +623,78 @@ tools; anything a launchd-run daemon owns must live on the internal disk.
 Always wrap `simctl` in `timeout` regardless, so a future regression cannot
 wedge a session.
 
+### 10. The key an artifact is STORED under is not always the key that was looked up
+
+`expo prebuild` and `pod install` REWRITE fingerprinted inputs while a run is
+working — prebuild generates `ios/`/`android/` and rewrites `package.json`'s
+scripts and the app config; `pod install` writes `ios/Podfile.lock`. So the
+hash a cold tree computed at second zero is not the hash that tree has by the
+time there is an artifact to store, and storing under the lookup key writes an
+entry nothing in that tree will ever look up again (issue #59; field-measured
+as a 104 MB entry under a key no later run computes, with every run after it
+stable on a different one). Rock's `buildApp.ts` does the same re-keying after
+pods, for the same reason.
+
+The rule, and each half of it is deliberate:
+
+- **The LOOKUP stays pre-mutation.** It is what the tree honestly hashes when
+  the run starts, and on a warm tree — every run after the first — it is
+  already the post-mutation hash, so nothing changes there at all.
+- **The STORE moves** (`refingerprintAfterMutation` in `src/build-cache.js`,
+  called only when a mutating step actually ran). `fingerprint`, `cacheKey`,
+  `lastBuild` and the remote upload's hash all describe **what was stored**, and
+  the shift is reported as ONE dim stderr line naming both short hashes. No
+  mutating step means no second fingerprint and no line.
+- **A shift is followed by a SECOND resolve, under the new key**, before any
+  compile — the lookup the first one could not have made. Without it a fresh
+  worktree or clone of a CNG app (no native dir, so always cold) would compile
+  from scratch beside an entry that already matches it, which is the exact case
+  this tool exists for. A hit there is an ordinary local hit and goes through
+  the ORDINARY hit step: `installableCachedApp` / `installableCachedApk`, one
+  local function per command called from BOTH lookups, so the Release JS swap
+  and Android's asset gate (keyed on the entry that answered, never on the key
+  the run asked first) are not duplicated and not skipped. A refused or failed
+  swap falls back to a build exactly as a first-pass one does.
+- **We never double-store.** Storing under both keys would recreate the very
+  waste this fixes, in artifacts that are 100 MB and up. One artifact, one key,
+  and the second resolve is what makes the pre-mutation key unnecessary.
+- **The single-flight lock keeps the PRE-mutation key.** It is the key the
+  waiters took, and it cannot be re-keyed underneath them. A waiter on a cold
+  tree therefore finds nothing under it and builds — one redundant compile in
+  the rare case where two COLD trees race, which is the same "a redundant build
+  is the cheaper failure" call `build-lock.js`'s takeover path already makes.
+
+### 11. `launched` is FOUR-valued, and only one of the four is a problem
+
+The `--json` payload's `launched` (`iosFacts` / `androidFacts`, type
+`LaunchStatus` in `src/types.ts`) is a fact an agent branches on, which is why
+it was never allowed to be an unconditional `true`. It has four values:
+
+- **`true`** — a bundle request from this workspace's Metro was observed after
+  the launch (or, on a release build, the app PROCESS was still alive a moment
+  after it).
+- **`'bundling'`** — the app DID ask this workspace's port for its bundle and
+  Metro had not finished building it when the ~20s window closed. The wiring is
+  proven; the JS has simply not run yet. A cold bundle on a large graph outlives
+  the window (the field case: 37.8s for 9948 modules, reported as unverified
+  while everything was fine). **This state suppresses the alert/picker remedy
+  list** — printing "confirm the alert, tap the picker, re-send the deep link"
+  over a launch that demonstrably worked is what sent an agent chasing a fault
+  that did not exist. It prints one line saying Metro is still building, and
+  the timeline gets a `launch_bundling` record at info.
+- **`'unverified'`** — nothing was observed at all. This is the ambiguous one
+  and it keeps the numbered remedy list, in the order that clears it.
+- **`false`** — reserved by the type; nothing produces it today.
+
+The evidence for `'bundling'` is `isBundleRequestProof` in
+`engine/app-install.js`: a NON-error device-log record naming **this
+workspace's port** plus a bundle URL. Positive evidence only — a false answer
+means "cannot say" and leaves the old answer standing, another workspace's port
+is never proof, and an error-level line naming the same URL is a request that
+FAILED rather than one in flight. Keep any future evidence source to those
+rules: this value's whole worth is that it cannot be reached by a launch that
+did not work.
+
 ## Local development
 
 The repo root is a pnpm workspace. Install and test from there:

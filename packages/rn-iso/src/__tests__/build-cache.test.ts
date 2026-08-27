@@ -13,10 +13,13 @@ import {
   fingerprintDiffRecord,
   fingerprintDiffSuffix,
   fingerprintProject,
+  refingerprintAfterMutation,
   resolveBuild,
   storeBuild,
   storedAssetManifest,
   storedSources,
+  untrackedMissLine,
+  untrackedNativeFiles,
 } from '../build-cache.ts';
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
 import { buildCacheKey as providerKey } from '../../../expo-build-cache/index.js';
@@ -535,4 +538,97 @@ test('describeFingerprintMiss only speaks for the same platform, a different has
       load,
     }),
   ).toBe(null);
+});
+
+// --- issue #59: the key an artifact is STORED under -------------------------
+//
+// prebuild and pod install rewrite fingerprinted files WHILE the run works, so
+// the hash a run looked up is not the hash its tree has by the time there is an
+// artifact to store. Storing under the lookup key writes an entry nothing in
+// that tree ever looks up again.
+
+describe('refingerprintAfterMutation', () => {
+  test('reports the shift when the mutating steps moved the hash', async () => {
+    const shifted = await refingerprintAfterMutation({
+      projectRoot: root,
+      platform: 'android',
+      previousHash: '3c64263',
+      fingerprint: async () => ({ hash: '7ea8b7c', sources: [{ type: 'dir', filePath: 'android' }] }),
+    });
+    expect(shifted).toEqual({ hash: '7ea8b7c', sources: [{ type: 'dir', filePath: 'android' }], moved: true });
+  });
+
+  test('a hash that did not move is reported as not moved, so nothing is re-keyed', async () => {
+    const same = await refingerprintAfterMutation({
+      projectRoot: root,
+      platform: 'ios',
+      previousHash: 'abc123',
+      fingerprint: async () => ({ hash: 'abc123', sources: [] }),
+    });
+    expect(same?.moved).toBe(false);
+    expect(same?.hash).toBe('abc123');
+  });
+
+  test('a recompute that throws or answers nothing is null: the caller keeps the key it has', async () => {
+    const threw = await refingerprintAfterMutation({
+      projectRoot: root,
+      platform: 'ios',
+      previousHash: 'abc123',
+      fingerprint: async () => {
+        throw new Error('@expo/fingerprint went away mid-run');
+      },
+    });
+    expect(threw).toBe(null);
+    const nothing = await refingerprintAfterMutation({
+      projectRoot: root,
+      platform: 'ios',
+      previousHash: 'abc123',
+      fingerprint: async () => null,
+    });
+    expect(nothing).toBe(null);
+  });
+});
+
+// --- issue #60: a miss with nothing to diff against -------------------------
+
+describe('untracked native files on a first miss', () => {
+  test('runs git without a shell and returns one name per line', () => {
+    const calls: { file: string; args: string[] }[] = [];
+    setExecutor({
+      run: () => {
+        throw new Error("the path is the user's; it must not reach a shell");
+      },
+      runFile: (file: string, args: string[]) => {
+        calls.push({ file, args });
+        return 'ios/Podfile.lock\nandroid/local.properties\n';
+      },
+      runQuiet: () => '',
+      spawn: () => {},
+    });
+    expect(untrackedNativeFiles({ projectRoot: root })).toEqual(['ios/Podfile.lock', 'android/local.properties']);
+    expect(calls[0]?.file).toBe('git');
+    expect(calls[0]?.args).toEqual(['-C', root, 'ls-files', '--others', '--exclude-standard', '--', 'ios', 'android']);
+  });
+
+  test('no git, or not a repo, is silence rather than a failure', () => {
+    setExecutor({
+      run: () => '',
+      runFile: () => {
+        throw new Error('fatal: not a git repository');
+      },
+      runQuiet: () => '',
+      spawn: () => {},
+    });
+    expect(untrackedNativeFiles({ projectRoot: root })).toEqual([]);
+    expect(untrackedMissLine([])).toBe(null);
+  });
+
+  test('the line names at most three files, counts the rest, and points at .fingerprintignore', () => {
+    const line = untrackedMissLine(['ios/a', 'ios/b', 'android/c', 'android/d', 'android/e']);
+    assert(line);
+    expect(line).toMatch(/5 untracked files/);
+    expect(line).toMatch(/ios\/a, ios\/b, android\/c, and 2 more/);
+    expect(line).toMatch(/\.fingerprintignore/);
+    expect(line).not.toMatch(/android\/d/);
+  });
 });

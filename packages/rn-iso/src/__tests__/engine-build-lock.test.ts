@@ -30,6 +30,7 @@ import {
   listBuildLocks,
   readBuildLock,
   releaseBuildLock,
+  takeoverLine,
   waitForBuild,
   waitingLine,
 } from '../engine/build-lock.ts';
@@ -155,6 +156,18 @@ describe('acquireBuildLock', () => {
     const taken = readBuildLock(path);
     assert(taken);
     expect(taken.pid).toBe(process.pid);
+    // Issue #54: the holder DIED without storing an artifact, so this run is
+    // about to compile the same inputs. The handle carries who it took over
+    // from, which is what lets the command say so in one line instead of
+    // repeating a doomed build in silence.
+    assert(got.tookOver);
+    expect(got.tookOver.pid).toBe(999999);
+    expect(got.tookOver.projectRoot).toBe('/gone/worktree');
+    expect(got.tookOver.logFile).toBe('/gone/build.ndjson');
+  });
+
+  test('an ordinary acquisition took nothing over, so nothing is reported', () => {
+    expect(acquireBuildLock(spec()).tookOver).toBe(undefined);
   });
 
   // A process killed between the mkdir and the write leaves a lock nothing can
@@ -605,4 +618,35 @@ test('a stray file with a .lock name is not reported as a lock', () => {
   mkdirSync(buildLocksDir(), { recursive: true });
   writeFileSync(join(buildLocksDir(), 'ios-not-a-lock.lock'), 'a file, not a directory');
   expect(listBuildLocks()).toEqual([]);
+});
+
+// --- issue #54: what a takeover says ---------------------------------------
+describe('takeoverLine', () => {
+  test('names the builder, its log, and that the inputs are unchanged', () => {
+    const line = takeoverLine({
+      projectRoot: '/w/other',
+      pid: 4242,
+      logFile: '/w/other/.rn-iso/logs/build-android.ndjson',
+      startedAt: new Date(1_000_000).toISOString(),
+      now: () => 1_000_000 + 120_000,
+    });
+    expect(line).toMatch(/RETRY: \/w\/other's build of this fingerprint \(pid 4242\) FAILED without an artifact/);
+    expect(line).toMatch(/it started 2m ago/);
+    expect(line).toMatch(/SAME inputs/);
+    expect(line).toMatch(/read \/w\/other\/\.rn-iso\/logs\/build-android\.ndjson/);
+  });
+
+  test('an unidentifiable holder still produces one usable line', () => {
+    const line = takeoverLine({ projectRoot: null, pid: null, logFile: null });
+    expect(line).toMatch(/another workspace's build of this fingerprint \(pid \?\)/);
+    expect(line).not.toMatch(/it started/);
+    expect(line).not.toMatch(/read /);
+  });
+
+  // The line is prefix-free on purpose: both callers are commands with their
+  // own phase-line column (waitingLine, which this module prints itself, keeps
+  // its prefix).
+  test('carries no phase prefix of its own', () => {
+    expect(takeoverLine({ projectRoot: null, pid: 1, logFile: null }).startsWith('RETRY:')).toBe(true);
+  });
 });
