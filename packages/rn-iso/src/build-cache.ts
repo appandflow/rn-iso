@@ -462,6 +462,105 @@ export function describeFingerprintMiss({
   return changed.length ? { changed, previousHash } : null;
 }
 
+/**
+ * Recompute the fingerprint AFTER the steps that rewrite fingerprinted inputs.
+ *
+ * `expo prebuild` generates ios/ or android/ and rewrites package.json's
+ * scripts and the app config; `pod install` writes ios/Podfile.lock. All three
+ * are fingerprint SOURCES, so the hash computed before them is not the hash the
+ * tree has afterwards -- and a build stored under the pre-mutation key is an
+ * entry no later run in that tree will ever look up. Rock's buildApp.ts does
+ * the same thing for the same reason ("After installing pods the fingerprint
+ * likely changes... update the artifact name to reflect the new fingerprint").
+ *
+ * The PRE-mutation hash stays the lookup key -- it is what the tree computed
+ * when the run started -- and this is only ever used to decide what the
+ * artifact is STORED as. Null when the recompute could not be made (the
+ * fingerprinter went away mid-run, or threw): the caller keeps the key it has,
+ * which is exactly the old behaviour.
+ */
+export async function refingerprintAfterMutation({
+  projectRoot,
+  platform,
+  previousHash,
+  fingerprint = fingerprintProject,
+}: {
+  projectRoot: string;
+  platform: string;
+  previousHash: string;
+  fingerprint?: typeof fingerprintProject;
+}): Promise<(ProjectFingerprint & { moved: boolean }) | null> {
+  let computed: ProjectFingerprint | null = null;
+  try {
+    computed = await fingerprint(projectRoot, { platform });
+  } catch {
+    return null;
+  }
+  if (!computed?.hash) return null;
+  return { hash: computed.hash, sources: computed.sources, moved: computed.hash !== previousHash };
+}
+
+// --- a MISS with nothing to diff against ----------------------------------
+//
+// describeFingerprintMiss needs a PREVIOUS entry; the first miss in a
+// workspace has none, and that is exactly the miss an agent cannot explain.
+// What can still be said is which files under the native directories git does
+// not know about: an untracked file there is hashed like any other source, so
+// a leftover build script, a copied Podfile.lock or an editor scratch file
+// under ios/ moves the key on this machine and nowhere else. Read-only, and
+// silent whenever it cannot answer (no git, not a repo, nothing untracked).
+
+// Three names, the same cap fingerprintDiffSuffix uses: the line has to stay a
+// line.
+export const UNTRACKED_MISS_CAP = 3;
+
+export function untrackedNativeFiles({
+  projectRoot,
+  exec = getExecutor(),
+}: {
+  projectRoot: string;
+  exec?: { runFile: (file: string, args?: string[]) => string };
+}): string[] {
+  let out: string;
+  try {
+    // runFile, not run: projectRoot is a path the user chose, and a space in
+    // it must reach git as one argument. `--exclude-standard` is what makes
+    // this "untracked and NOT gitignored" -- a build directory git already
+    // ignores is not news.
+    out = exec.runFile('git', [
+      '-C',
+      projectRoot,
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '--',
+      'ios',
+      'android',
+    ]);
+  } catch {
+    // Not a repo, no git on PATH, an unreadable index: all of them mean this
+    // diagnostic has nothing to say, and none of them is worth a word.
+    return [];
+  }
+  return String(out || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+}
+
+// PURE. The one line the miss reports when there was nothing to diff. Null
+// when there is nothing to say.
+export function untrackedMissLine(files: string[], cap: number = UNTRACKED_MISS_CAP): string | null {
+  if (!Array.isArray(files) || files.length === 0) return null;
+  const shown = files.slice(0, cap);
+  const more = files.length > shown.length ? `, and ${files.length - shown.length} more` : '';
+  return (
+    `no previous entry to diff against; ${files.length} untracked file${files.length === 1 ? '' : 's'} ` +
+    `under ios/ or android/ are hashed like any other source: ${shown.join(', ')}${more}` +
+    ' -- list the build-irrelevant ones in .fingerprintignore'
+  );
+}
+
 // How many changed-source names the build-log record carries. The stored
 // sources file in the entry dir is the full-depth record; the log line is a
 // summary, and an unbounded list would make one edit to a vendored SDK write

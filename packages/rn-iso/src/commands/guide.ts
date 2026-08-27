@@ -46,7 +46,21 @@ other line goes to stderr, so it is always safe to pipe.
   platform        "ios"
   udid            the owned simulator this workspace installed onto
   deviceName      its name, or null
-  fingerprint     the @expo/fingerprint hash of the native inputs
+  fingerprint     the @expo/fingerprint hash of the native inputs, AS STORED.
+                  A run that had to \`expo prebuild\` or \`pod install\`
+                  rewrote fingerprinted files while it worked (the generated
+                  native directory, package.json's scripts, the app config,
+                  Podfile.lock), so the hash it looked up is not the hash the
+                  tree has afterwards. The artifact is stored under the hash
+                  computed AFTER those steps -- the one the next run in this
+                  tree computes -- and this field reports that one. The shift
+                  is printed on stderr as one dim line naming both short
+                  hashes; no shift, no line, and no second fingerprint.
+                  A shift is RE-LOOKED-UP before anything compiles (\`cache
+                  hit under the post-prebuild key\`), so a cold tree -- a
+                  fresh worktree or clone of a CNG app -- installs an entry
+                  another workspace already built instead of compiling
+                  beside it
   configuration   the Xcode configuration that was built ("Release" from
                   --configuration or the ios.configuration setting); null for
                   the default Debug
@@ -70,18 +84,30 @@ other line goes to stderr, so it is always safe to pipe.
                   cheaper than a second build). Both commands carry it
   appPath         the .app that was installed
   bundleId        the iOS bundle id that was launched
-  launched        true, or "unverified" when no bundle request from this app
-                  reached this workspace's Metro within ~20s of the launch
-                  (an iOS 26 confirmation alert gating simctl openurl -- it
-                  appears on EVERY first launch on a fresh sim -- or a
-                  dev-client server picker awaiting a tap). The warning on
-                  stderr is a numbered list in the order that clears it:
-                  confirm the alert first, then the picker, and only with no
-                  alert showing, the openurl retry it prints. On ANDROID
-                  there is no alert, so the list leads with the dev-client
-                  deep link (\`am start -a android.intent.action.VIEW -d
-                  '<devClientUrl>'\`), which is the whole answer when the app
-                  has a scheme.
+  launched        true, "bundling", or "unverified". THE THREE ARE DIFFERENT
+                  FACTS and only the last one is a problem.
+                    true         a bundle request from this app reached this
+                                 workspace's Metro within ~20s of the launch
+                    "bundling"   the request DID arrive and Metro was still
+                                 building the bundle when the window closed.
+                                 The wiring is proven; the JS has simply not
+                                 run yet (a cold bundle of ~10k modules takes
+                                 longer than the window). Nothing to do --
+                                 no remedy list is printed for it -- and
+                                 \`logs --source metro\` shows the build
+                                 finishing
+                    "unverified" nothing was observed at all: an iOS 26
+                                 confirmation alert gating simctl openurl (it
+                                 appears on EVERY first launch on a fresh
+                                 sim), or a dev-client server picker awaiting
+                                 a tap
+                  The unverified warning on stderr is a numbered list in the
+                  order that clears it: confirm the alert first, then the
+                  picker, and only with no alert showing, the openurl retry it
+                  prints. On ANDROID there is no alert, so the list leads with
+                  the dev-client deep link (\`am start -a
+                  android.intent.action.VIEW -d '<devClientUrl>'\`), which is
+                  the whole answer when the app has a scheme.
   metroPort       the port the app was wired to; NULL on a non-Debug
                   configuration, whose JS is embedded and which is launched
                   with no dev server at all. There, \`launched\` is verified
@@ -251,9 +277,12 @@ Reads every *.ndjson file in <root>/.rn-iso/logs, merges them into one timeline
 ordered by timestamp, prints what matches, and EXITS. The file set is
 discovered, not enumerated.
 
-NOTHING MATCHING IS EXIT 0. \`rn-iso logs --errors\` printing nothing is the
+NOTHING MATCHING IS EXIT 0. \`rn-iso logs --errors\` finding nothing is the
 pass condition of a build loop, so an empty result must never read as a
-failure. The only exit-1 paths are a malformed query and no project.
+failure. Precisely what that looks like: STDOUT IS EMPTY, exit code 0, and
+one dim note on STDERR reading \`No matching log records in <logs dir>\`
+(human mode only -- \`--json\` prints nothing at all, on either stream).
+The only exit-1 paths are a malformed query and no project.
 
 FLAGS
   --source <s...>  metro, client, device, build (one or more), or all. An

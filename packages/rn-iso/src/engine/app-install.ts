@@ -707,6 +707,11 @@ export type VerifyLaunchResult = {
   verified: boolean;
   record?: NdjsonRecord;
   timedOut?: boolean;
+  // Set on a TIMEOUT that still found evidence the app asked this workspace's
+  // Metro for its bundle -- the request arrived and the bundle was not built
+  // yet. A different fact from "nothing ever asked", and the caller reports it
+  // differently. See isBundleRequestProof.
+  requested?: boolean;
   mode: string | null;
   waitedMs: number;
 };
@@ -835,6 +840,12 @@ function isProcessAlive(pid: number): boolean {
 
 export const LAUNCH_UNVERIFIED = 'unverified';
 
+// The third value of the launch fact: the app DID ask this workspace's Metro
+// for its bundle, and Metro had not finished building it when the window
+// closed. Not `true` -- nothing has run yet -- but not the ambiguous
+// 'unverified' either, because the wiring demonstrably worked.
+export const LAUNCH_BUNDLING = 'bundling';
+
 // ~20s: a cold dev-client fetches the manifest, then requests the bundle. On
 // the repos this was measured against the first bundle_build_started lands
 // 3-8s after launch; 20 is generous without being a wait anybody notices when
@@ -872,6 +883,44 @@ export function isBundleProof(record: unknown, since: number | string = 0): bool
   return false;
 }
 
+// The bundle URL a client asks for, as it appears in a DEVICE log line. This
+// is the evidence that separates "still bundling" from "nothing ever asked":
+// a cold bundle of a big graph takes longer than the verify window (37.8s for
+// 9948 modules in the field case that opened issue #53), and Metro says
+// nothing about a build until it FINISHES -- Expo's child prints its progress
+// with carriage returns, so no whole line reaches the timeline either. What
+// does exist by then is the app's own log line naming the URL it is loading,
+// and that line carries this workspace's port.
+const BUNDLE_URL_PATH = /\.bundle\b|\/_expo\/|expo-development-client/i;
+
+// PURE. Does this record prove the app REQUESTED a bundle from `port` at or
+// after `since`? Positive evidence only: a false answer never means "the
+// launch failed", it means this cannot say, and the caller keeps the answer it
+// already had.
+export function isBundleRequestProof(
+  record: unknown,
+  since: number | string = 0,
+  port: number | string | null = null,
+): boolean {
+  if (!record || typeof record !== 'object' || !port) return false;
+  const rec = record as NdjsonRecord;
+  const ts = Number(rec.ts);
+  if (!Number.isFinite(ts) || ts < Number(since || 0)) return false;
+  if (typeof rec.msg !== 'string') return false;
+  // An error-level line naming the same URL is a request that FAILED (a
+  // refused connection, a bundle that would not load), and "Metro is still
+  // building it" would be the wrong thing to say about it. `logs --errors`
+  // surfaces those on their own; this claim stays positive.
+  if (rec.level === 'error' || rec.level === 'fatal') return false;
+  // The port has to be THIS workspace's, and it has to be a bundle URL: an
+  // app talking to another agent's Metro is exactly what this check exists to
+  // catch, and it must never be read as a pass.
+  const digits = String(port).replace(/[^0-9]/g, '');
+  if (!digits) return false;
+  if (!new RegExp(`:${digits}\\b`).test(rec.msg)) return false;
+  return BUNDLE_URL_PATH.test(rec.msg);
+}
+
 // Kept as a local copy of the ONE regex rather than an import, so this module
 // (which every install path loads) does not pull in the supervisor. The
 // predicate is exported from server-expo.js as isBundleActivityLine and a test
@@ -890,6 +939,10 @@ function expoBundleLine(msg: string) {
 export async function verifyLaunch({
   logsDir,
   since,
+  // This workspace's Metro port. Only used AFTER the window closes, to tell a
+  // bundle that is still building from a request that never arrived (issue
+  // #53). Null keeps the old two-valued answer.
+  metroPort = null,
   // Which dev server produced the timeline. Carried through to the result
   // (and into the warning) rather than used to choose a predicate: a bare
   // workspace never writes expo stdout records and an expo one never writes
@@ -898,19 +951,23 @@ export async function verifyLaunch({
   timeoutMs = VERIFY_TIMEOUT_MS,
   pollMs = VERIFY_POLL_MS,
   readRecords = null,
+  readDeviceRecords = null,
   now = Date.now,
   sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
 }: {
   logsDir?: string;
   since?: number | string;
+  metroPort?: number | string | null;
   mode?: string | null;
   timeoutMs?: number;
   pollMs?: number;
   readRecords?: (() => NdjsonRecord[]) | null;
+  readDeviceRecords?: (() => NdjsonRecord[]) | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
 } = {}): Promise<VerifyLaunchResult> {
   const read = readRecords || (() => readMetroRecords(logsDir));
+  const readDevice = readDeviceRecords || (() => readNdjson(logsDir, 'device.ndjson'));
   const startedAt = now();
   const deadline = startedAt + Math.max(0, timeoutMs);
   while (true) {
@@ -920,16 +977,40 @@ export async function verifyLaunch({
       }
     }
     if (now() >= deadline) {
-      return { verified: false, timedOut: true, mode, waitedMs: now() - startedAt };
+      // The window closed with no BUILD to point at. Before reporting the
+      // ambiguous "nothing fetched a bundle", ask the device log whether the
+      // app asked for one: a cold bundle on a large graph outlives this
+      // window, and "the request arrived, Metro is still building it" is a
+      // different fact for an agent than "the wiring did not work".
+      const requested = findBundleRequest(readDevice(), since, metroPort);
+      const waitedMs = now() - startedAt;
+      if (requested) return { verified: false, timedOut: true, requested: true, record: requested, mode, waitedMs };
+      return { verified: false, timedOut: true, mode, waitedMs };
     }
     await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
   }
 }
 
+// PURE. The first record proving a bundle request for `port`, or null.
+function findBundleRequest(
+  records: NdjsonRecord[],
+  since: number | string | undefined,
+  port: number | string | null,
+): NdjsonRecord | null {
+  for (const record of records) {
+    if (isBundleRequestProof(record, since ?? 0, port)) return record;
+  }
+  return null;
+}
+
 function readMetroRecords(logsDir: string | undefined): NdjsonRecord[] {
+  return readNdjson(logsDir, 'metro.ndjson');
+}
+
+function readNdjson(logsDir: string | undefined, name: string): NdjsonRecord[] {
   if (!logsDir) return [];
   try {
-    return parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
+    return parseNdjsonText(readFileSync(join(logsDir, name), 'utf-8'));
   } catch {
     // No dev-server log yet is the ordinary case in the first second of a
     // poll, and an unreadable one is not worth failing a launched app over.
