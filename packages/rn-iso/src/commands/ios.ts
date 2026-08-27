@@ -25,7 +25,16 @@ import { mkdirSync, openSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
 import type { Command } from 'commander';
-import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.ts';
+import {
+  buildCacheKey,
+  describeFingerprintMiss,
+  fingerprintDiffRecord,
+  fingerprintDiffSuffix,
+  fingerprintProject,
+  resolveBuild,
+  storeBuild,
+  type FingerprintSourceLike,
+} from '../build-cache.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import {
   DEFAULT_METRO_PORT,
@@ -1110,12 +1119,15 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // Covers the fingerprint compute plus the LOCAL cache resolve; a remote
   // consult reports its own time on its own cache line below.
   const fingerprintTimer = stepTimer(d.now);
-  let fingerprint;
+  let fingerprint: string | null;
+  let fingerprintSources: FingerprintSourceLike[] = [];
   try {
     // Scoped to iOS: an unscoped hash folds android/ into the iOS key (and
     // vice versa), which is what kept `android` from ever hitting the shared
     // cache across worktrees. See src/build-cache.js.
-    fingerprint = await d.fingerprintProject(root, { platform: PLATFORM });
+    const computed = await d.fingerprintProject(root, { platform: PLATFORM });
+    fingerprint = computed?.hash ?? null;
+    fingerprintSources = computed?.sources ?? [];
   } catch (e) {
     fingerprint = null;
     note(chalk.dim(`Fingerprinting failed: ${(e as Error)?.message || e}`));
@@ -1137,9 +1149,29 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // asked first, and the only thing asked at all on a bare RN project.
   const cached = useBuildCache ? d.resolveBuild(PLATFORM, cacheKey) : null;
   let cacheHit: CacheHitLevel = cached ? 'local' : false;
+  // On a miss, say WHAT moved when it can be known: the previous build's entry
+  // (state.json.lastBuild) stored its fingerprint sources, so the two source
+  // lists can be diffed. Three names on the line; the full list (capped) in
+  // the build log as a fingerprint_diff record.
+  let missDiff = '';
+  if (!cached) {
+    const lastBuild = (d.readWorkspaceState(root)?.lastBuild ?? null) as Record<string, unknown> | null;
+    const miss = describeFingerprintMiss({
+      projectRoot: root,
+      platform: PLATFORM,
+      current: { hash: fingerprint, sources: fingerprintSources },
+      lastBuild,
+    });
+    if (miss) {
+      missDiff = fingerprintDiffSuffix(miss.changed);
+      logWriter().write(
+        fingerprintDiffRecord({ changed: miss.changed, previousHash: miss.previousHash, hash: fingerprint }),
+      );
+    }
+  }
   phase(
     'fingerprint',
-    `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}`,
+    `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}${missDiff}`,
   );
 
   let appPath: string | null = cached;
@@ -1208,7 +1240,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       // fingerprint this commit hits level one.
       let stored = null;
       try {
-        stored = d.storeBuild(PLATFORM, cacheKey, hit.appPath);
+        stored = d.storeBuild(PLATFORM, cacheKey, hit.appPath, { sources: fingerprintSources });
       } catch (e) {
         note(chalk.yellow(phaseLine('cache', `remote hit could not be stored locally: ${(e as Error)?.message || e}`)));
       }
@@ -1448,7 +1480,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       try {
         // appPath is provably set here: this branch only runs after a build that
         // did not report `failed`, and buildIos's success shape always carries one.
-        d.storeBuild(PLATFORM, cacheKey, appPath!, { overwrite: !useBuildCache });
+        d.storeBuild(PLATFORM, cacheKey, appPath!, { overwrite: !useBuildCache, sources: fingerprintSources });
       } catch (e) {
         note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
       }

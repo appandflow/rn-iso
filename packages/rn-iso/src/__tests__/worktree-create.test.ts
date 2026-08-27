@@ -1,9 +1,9 @@
 import { execSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, realpathSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { Command } from 'commander';
-import { registerCreate } from '../commands/worktree.ts';
+import { carriedChangesLine, carryConflictWarning, registerCreate } from '../commands/worktree.ts';
 import { resetExecutor } from '../exec.ts';
 import { defaultWorktreeDir } from '../worktree.ts';
 import { upsertProject, findEnclosingWorktreeRoot } from '../config.ts';
@@ -336,6 +336,117 @@ test('create action: with no --base a leftover branch is still attached to', asy
 
     expect(logs).toEqual([join(defaultWorktreeDir(repo), 'feat-quiet')]);
     expect(process.exitCode).not.toBe(1);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// --- --carry-ignored carries the source's uncommitted tracked changes -------
+//
+// Real git throughout (CLAUDE.md item 9): the carry is `git diff HEAD
+// --binary` piped through `git apply --check` / `git apply`, and a mocked
+// executor can only prove those commands were composed, not that git accepts
+// them. The mocked-decision tests live in worktree.test.ts.
+
+test('carriedChangesLine and carryConflictWarning cap at three files and count the rest', () => {
+  expect(carriedChangesLine(['app.json'])).toBe(
+    'Carried 1 uncommitted change(s) from the source (app.json) -- uncommitted here too; commit deliberately.',
+  );
+  expect(carriedChangesLine(['a', 'b', 'c', 'd', 'e'])).toContain('(a, b, c, +2)');
+  const warning = carryConflictWarning(['a', 'b', 'c', 'd']);
+  expect(warning).toContain('(a, b, c, +1)');
+  expect(warning).toMatch(/base diverges from the source HEAD/);
+  expect(warning).toMatch(/nothing was changed here/);
+  expect(warning).toMatch(/fingerprints and cache keys/);
+});
+
+test('create action: --carry-ignored applies the source uncommitted changes when they fit the base', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-carrydiff-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    writeFileSync(join(repo, 'app.json'), '{"expo":{"name":"app"}}\n');
+    writeFileSync(join(repo, '.gitignore'), 'node_modules/\n');
+    git('git add app.json .gitignore');
+    git('git commit -q -m app');
+    // The gitignored half of the working state (what --carry-ignored always carried)...
+    mkdirSync(join(repo, 'node_modules', 'left-pad'), { recursive: true });
+    writeFileSync(join(repo, 'node_modules', 'left-pad', 'index.js'), 'module.exports = () => {};\n');
+    // ...and the uncommitted tracked half (what it carries now).
+    writeFileSync(join(repo, 'app.json'), '{"expo":{"name":"app","scheme":"dirty-scheme"}}\n');
+
+    const { logs, errs } = await runCreateInRepo(repo, 'feat-carry', { carryIgnored: true, base: 'head' });
+
+    const wt = join(defaultWorktreeDir(repo), 'feat-carry');
+    expect(logs).toEqual([wt]);
+    // The dirty content is THERE...
+    expect(readFileSync(join(wt, 'app.json'), 'utf-8')).toContain('dirty-scheme');
+    // ...and still UNCOMMITTED: committing a half-done edit is the author's call.
+    const status = execSync('git status --porcelain -- app.json', { cwd: wt, encoding: 'utf-8' }).trim();
+    expect(status).toBe('M app.json');
+    // The carry line, on stderr, quoting what moved.
+    expect(errs.some((e) => /Carried 1 uncommitted change\(s\) from the source \(app\.json\)/.test(e))).toBeTruthy();
+    expect(errs.some((e) => /uncommitted here too; commit deliberately/.test(e))).toBeTruthy();
+    expect(process.exitCode).not.toBe(1);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: --carry-ignored warns and applies NOTHING when the base diverges from the source HEAD', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-carryconflict-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    writeFileSync(join(repo, 'app.json'), 'first version\n');
+    git('git add app.json');
+    git('git commit -q -m one');
+    const oldSha = git('git rev-parse HEAD').trim();
+    writeFileSync(join(repo, 'app.json'), 'completely rewritten\n');
+    git('git add app.json');
+    git('git commit -q -m two');
+    // Dirty on top of commit two: this patch cannot apply onto commit one.
+    writeFileSync(join(repo, 'app.json'), 'completely rewritten, plus dirty\n');
+
+    const { logs, errs } = await runCreateInRepo(repo, 'feat-conflict', { carryIgnored: true, base: oldSha });
+
+    const wt = join(defaultWorktreeDir(repo), 'feat-conflict');
+    expect(logs).toEqual([wt]);
+    // The worktree is untouched: its base's content, and a clean status.
+    expect(readFileSync(join(wt, 'app.json'), 'utf-8')).toBe('first version\n');
+    expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe('');
+    // The warning names the file, the divergence, and the consequence.
+    expect(errs.some((e) => /Could not carry the source's uncommitted changes \(app\.json\)/.test(e))).toBeTruthy();
+    expect(errs.some((e) => /base diverges from the source HEAD/.test(e))).toBeTruthy();
+    expect(errs.some((e) => /fingerprints and cache keys/.test(e))).toBeTruthy();
+    expect(process.exitCode).not.toBe(1);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: a plain create (no --carry-ignored) is pure HEAD -- no diff carry, no warning', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-nocarry-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    writeFileSync(join(repo, 'app.json'), '{"expo":{}}\n');
+    git('git add app.json');
+    git('git commit -q -m app');
+    writeFileSync(join(repo, 'app.json'), '{"expo":{"scheme":"dirty"}}\n');
+
+    const { errs } = await runCreateInRepo(repo, 'feat-plain', { base: 'head' });
+
+    const wt = join(defaultWorktreeDir(repo), 'feat-plain');
+    expect(readFileSync(join(wt, 'app.json'), 'utf-8')).toBe('{"expo":{}}\n');
+    expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe('');
+    expect(errs.some((e) => /Carried .* uncommitted|Could not carry/.test(e))).toBe(false);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });

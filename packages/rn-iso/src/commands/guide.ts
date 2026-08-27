@@ -529,6 +529,20 @@ but --base <ref> resolves to <sha>"  (worktree create)
   node_modules. The path count above that line is not evidence of a usable
   worktree. Install dependencies before building.
 
+"Carried N uncommitted change(s) from the source (...) -- uncommitted here
+too; commit deliberately."  (worktree create --carry-ignored)
+  The source tree had uncommitted tracked changes, and the cloned artifacts
+  were installed against that working tree -- so the same changes were applied
+  to the new worktree as a patch, still uncommitted. Whether they belong in a
+  commit is your call; the tool never commits for you.
+
+"Could not carry the source's uncommitted changes (...)"  (worktree create
+--carry-ignored)
+  The worktree's --base diverges from the source HEAD, so that patch does not
+  apply and NOTHING was changed here. Until those changes are reconciled, this
+  worktree fingerprints differently from the source and misses the cache
+  entries the source fills.
+
 "Could not tear down the <platform> device: ..."
   The delete failed, so the ASSIGNMENT was kept and the command exited 1. That
   is deliberate: dropping the record would leave a device on the machine that
@@ -620,7 +634,13 @@ THE BUILD CACHE HAS TWO LEVELS
      the result is stored locally AND handed to the provider.
 
   rn-iso never configures a provider and never suggests changing one: a
-  project without one is a perfectly ordinary local-only project.
+  project without one is a perfectly ordinary local-only project (doctor does
+  not ask for one either -- a provider only serves builds run OUTSIDE rn-iso).
+
+  A MISS explains itself when it can. When this workspace's previous build
+  stored its fingerprint sources beside the cache entry, the fingerprint line
+  gains " -- N sources changed: <up to three paths>", and the full list
+  (capped at 20 names) lands in the build log as a fingerprint_diff record.
 
 ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   The cache makes the SECOND workspace on a commit free -- but only once the

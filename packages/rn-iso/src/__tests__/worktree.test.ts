@@ -14,7 +14,9 @@ import {
   hasUncommittedWork,
   listWorktrees,
   carryOverFiles,
+  carryUncommittedChanges,
   cloneIgnoredEntries,
+  dirtyFingerprintFiles,
   podsOutOfSync,
   depsOutOfSync,
   isPodInstallChurn,
@@ -1279,4 +1281,121 @@ test('carryOverFiles against a real git repo skips a .DerivedData file but copie
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+// --- carrying the source's uncommitted tracked changes ----------------------
+//
+// `--carry-ignored` clones artifacts built against the source's WORKING TREE;
+// these tests pin the machinery that carries the uncommitted tracked diff the
+// artifacts were installed for. Mocked executor here (the decision logic); the
+// against-a-real-repo halves live in worktree-create.test.ts, driving real git.
+
+const TEXT_PATCH = [
+  'diff --git a/app.json b/app.json',
+  'index 000000..111111 100644',
+  '--- a/app.json',
+  '+++ b/app.json',
+  '@@ -1 +1 @@',
+  '-{}',
+  '+{"dirty":true}',
+].join('\n');
+
+test('carryUncommittedChanges does nothing on a clean source tree, and when git cannot answer', () => {
+  setExecutor({
+    runQuiet: () => '',
+    runFile: () => {
+      throw new Error('nothing may be applied for an empty diff');
+    },
+    spawn: () => {},
+  });
+  expect(carryUncommittedChanges({ root: '/src', target: '/wt' })).toBe(null);
+
+  setExecutor({ runQuiet: () => null, spawn: () => {} });
+  expect(carryUncommittedChanges({ root: '/src', target: '/wt' })).toBe(null);
+});
+
+test('carryUncommittedChanges checks first, applies second, through one temp patch file it removes', () => {
+  const runFileCalls: string[][] = [];
+  setExecutor({
+    runQuiet: (cmd: string) => (/--binary/.test(cmd) ? TEXT_PATCH : /--name-only/.test(cmd) ? 'app.json' : ''),
+    runFile: (file: string, args: string[]) => {
+      runFileCalls.push([file, ...args]);
+      return '';
+    },
+    spawn: () => {},
+  });
+
+  const result = carryUncommittedChanges({ root: '/src', target: '/wt' });
+  assert(result);
+  expect(result.applied).toBe(true);
+  expect(result.conflicted).toBe(false);
+  expect(result.files).toEqual(['app.json']);
+
+  expect(runFileCalls.length).toBe(2);
+  expect(runFileCalls[0]?.slice(0, 5)).toEqual(['git', '-C', '/wt', 'apply', '--check']);
+  expect(runFileCalls[1]?.slice(0, 4)).toEqual(['git', '-C', '/wt', 'apply']);
+  const checkedFile = runFileCalls[0]?.[5];
+  expect(runFileCalls[1]?.[4]).toBe(checkedFile);
+  // The temp file does not outlive the call.
+  expect(existsSync(String(checkedFile))).toBe(false);
+});
+
+test('carryUncommittedChanges reports a conflict and applies NOTHING when --check refuses', () => {
+  const runFileCalls: string[][] = [];
+  setExecutor({
+    runQuiet: (cmd: string) =>
+      /--binary/.test(cmd) ? TEXT_PATCH : /--name-only/.test(cmd) ? 'app.json\nios/Podfile.lock' : '',
+    runFile: (file: string, args: string[]) => {
+      runFileCalls.push([file, ...args]);
+      if (args.includes('--check')) throw new Error('error: patch does not apply');
+      throw new Error('apply must not run after a failed check');
+    },
+    spawn: () => {},
+  });
+
+  const result = carryUncommittedChanges({ root: '/src', target: '/wt' });
+  assert(result);
+  expect(result.conflicted).toBe(true);
+  expect(result.applied).toBe(false);
+  expect(result.files).toEqual(['app.json', 'ios/Podfile.lock']);
+  expect(runFileCalls.length).toBe(1);
+});
+
+test('a check that passes but an apply that fails is reported as the conflict case, not as carried', () => {
+  setExecutor({
+    runQuiet: (cmd: string) => (/--binary/.test(cmd) ? TEXT_PATCH : /--name-only/.test(cmd) ? 'app.json' : ''),
+    runFile: (_file: string, args: string[]) => {
+      if (args.includes('--check')) return '';
+      throw new Error('error: app.json: No such file or directory');
+    },
+    spawn: () => {},
+  });
+  const result = carryUncommittedChanges({ root: '/src', target: '/wt' });
+  assert(result);
+  expect(result.applied).toBe(false);
+  expect(result.conflicted).toBe(true);
+});
+
+// --- the dirty-fingerprint-inputs status helper (doctor's parity note) ------
+
+test('dirtyFingerprintFiles asks git about exactly the fingerprint inputs and parses the paths', () => {
+  const cmds: string[] = [];
+  setExecutor({
+    runQuiet: (cmd: string) => {
+      cmds.push(cmd);
+      // The executor trims the WHOLE output, so the first line arrives one
+      // column short -- the exact damage normalizePorcelainLine repairs.
+      return 'M app.json\nM  package.json';
+    },
+    spawn: () => {},
+  });
+  expect(dirtyFingerprintFiles('/p')).toEqual(['app.json', 'package.json']);
+  expect(cmds[0]).toContain('status --porcelain -- app.json app.config.ts app.config.js app.config.mjs package.json');
+});
+
+test('dirtyFingerprintFiles is empty on a clean tree and when git cannot answer', () => {
+  setExecutor({ runQuiet: () => '', spawn: () => {} });
+  expect(dirtyFingerprintFiles('/p')).toEqual([]);
+  setExecutor({ runQuiet: () => null, spawn: () => {} });
+  expect(dirtyFingerprintFiles('/p')).toEqual([]);
 });

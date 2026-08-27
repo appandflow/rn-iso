@@ -189,9 +189,20 @@ describe('detectIsExpo is the single source', () => {
     expect(JSON.parse(readState()).supervisor.mode).toBe(MODE_EXPO);
 
     // doctor reads the same detector: its Expo-only findings apply here.
-    // (`expo-dev-client` IS in this fixture's deps, so the finding that fires
-    // is the build-cache one; what matters is that doctor did not take the
-    // bare branch, which suppresses them all.)
+    // (`expo-dev-client` IS in this fixture's deps, and a MISSING provider is
+    // deliberately not a finding any more -- so the Expo-only finding this
+    // fixture is given to fire is the still-under-experiments note, which the
+    // bare branch suppresses along with the rest.)
+    write(
+      join(app, 'app.json'),
+      JSON.stringify({
+        name: 'app',
+        platforms: ['ios', 'android'],
+        plugins: ['expo-dev-client'],
+        experiments: { buildCacheProvider: { plugin: '@rn-iso/expo-build-cache' } },
+        extra: { eas: { projectId: '439cfc57-af9a-461c-9d3c-89b985233942' } },
+      }),
+    );
     const titles = runDoctor(app).map((f) => f.title);
     expect(titles.some((t) => /build.?cache.?provider/i.test(t))).toBeTruthy();
   });

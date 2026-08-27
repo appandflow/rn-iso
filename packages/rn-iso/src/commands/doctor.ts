@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { findProjectRoot } from '../project.ts';
-import { detectXcodeMajor, runDoctor } from '../doctor.ts';
+import { detectFingerprintParity, detectXcodeMajor, runDoctor } from '../doctor.ts';
 import type { Finding } from '../doctor.ts';
 
 interface DoctorOptions {
@@ -27,6 +27,13 @@ export default function doctorCommand(program: Command): void {
         xcodeMajor: detectXcodeMajor(),
       });
 
+      // LAST, because it is the expensive one: it computes a real fingerprint
+      // twice (once in a temporary clean worktree of HEAD, removed on every
+      // exit path). Every failure mode inside it is a silent skip -- doctor
+      // always exits 0.
+      const parity = await detectFingerprintParity(root);
+      if (parity) findings.push(parity);
+
       if (opts.json) {
         console.log(JSON.stringify({ project: root, findings }, null, 2));
         return;
@@ -36,7 +43,7 @@ export default function doctorCommand(program: Command): void {
         console.log(chalk.green('Nothing to flag.'));
         console.log(
           chalk.dim(
-            'Checked: dev client, Metro cache, compilation cache, ccache conflict, .gitignore entry, build cache provider, EAS session.',
+            'Checked: dev client, Metro cache, compilation cache, Gradle build cache, ccache conflict, .gitignore entry, build cache provider key, EAS session, fingerprint parity.',
           ),
         );
         return;

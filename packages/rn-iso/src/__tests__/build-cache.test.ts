@@ -3,7 +3,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { artifactIn, buildCacheKey, entryDir, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.ts';
+import {
+  artifactIn,
+  buildCacheKey,
+  compareSourceLists,
+  describeFingerprintMiss,
+  diffFingerprintSources,
+  entryDir,
+  fingerprintDiffRecord,
+  fingerprintDiffSuffix,
+  fingerprintProject,
+  resolveBuild,
+  storeBuild,
+  storedSources,
+} from '../build-cache.ts';
 import { buildCacheKey as providerKey } from '../../../expo-build-cache/index.js';
 
 let root: string;
@@ -279,8 +292,8 @@ test('fingerprintProject scopes the hash to the platform being built', async () 
       return { hash: `hash-${options?.platforms?.join('+')}` };
     },
   });
-  expect(await fingerprintProject(root, { platform: 'ios', load })).toBe('hash-ios');
-  expect(await fingerprintProject(root, { platform: 'android', load })).toBe('hash-android');
+  expect((await fingerprintProject(root, { platform: 'ios', load }))?.hash).toBe('hash-ios');
+  expect((await fingerprintProject(root, { platform: 'android', load }))?.hash).toBe('hash-android');
   expect(seen.map((s) => s.options?.platforms)).toEqual([['ios'], ['android']]);
 });
 
@@ -295,7 +308,7 @@ test('fingerprintProject without a platform passes no platforms option', async (
       return { hash: 'h' };
     },
   });
-  expect(await fingerprintProject(root, { load })).toBe('h');
+  expect((await fingerprintProject(root, { load }))?.hash).toBe('h');
   const seen = options as { platforms?: string[] } | undefined | 'unset';
   expect(typeof seen === 'object' ? seen?.platforms : undefined).toBe(undefined);
 });
@@ -313,4 +326,142 @@ test('fingerprintProject ignores a platform it does not know', async () => {
   await fingerprintProject(root, { platform: 'web', load });
   const seen = options as { platforms?: string[] } | undefined | 'unset';
   expect(typeof seen === 'object' ? seen?.platforms : undefined).toBe(undefined);
+});
+
+// --- fingerprint sources: stored on store, read back, diffed on a miss ------
+
+test('storeBuild writes fingerprint-sources.json beside the artifact, and storedSources reads it back', () => {
+  resetExecutor();
+  const build = join(root, 'build', 'MyApp.app');
+  mkdirSync(build, { recursive: true });
+  writeFileSync(join(build, 'bin'), 'x');
+
+  const sources = [{ type: 'file', filePath: 'ios/Podfile.lock', hash: 'aa' }];
+  storeBuild('ios', 'k1', build, { root, sources });
+
+  expect(storedSources('ios', 'k1', root)).toEqual(sources);
+  // The artifact lookup is unaffected: the JSON is never mistaken for the app.
+  expect(artifactIn(entryDir('ios', 'k1', root))).toBe(join(entryDir('ios', 'k1', root), 'MyApp.app'));
+});
+
+test('storedSources is null for an entry stored without sources, or with unreadable JSON', () => {
+  resetExecutor();
+  const build = join(root, 'build', 'MyApp.app');
+  mkdirSync(build, { recursive: true });
+  writeFileSync(join(build, 'bin'), 'x');
+  storeBuild('ios', 'k2', build, { root });
+  expect(storedSources('ios', 'k2', root)).toBe(null);
+
+  writeFileSync(join(entryDir('ios', 'k2', root), 'fingerprint-sources.json'), 'not json');
+  expect(storedSources('ios', 'k2', root)).toBe(null);
+  // An object where an array belongs is a shape this refuses, not a crash.
+  writeFileSync(join(entryDir('ios', 'k2', root), 'fingerprint-sources.json'), '{"hash":"x"}');
+  expect(storedSources('ios', 'k2', root)).toBe(null);
+});
+
+test('compareSourceLists reports changed, added and removed names, current order first', () => {
+  const previous = [
+    { type: 'file', filePath: 'ios/Podfile.lock', hash: 'aa' },
+    { type: 'contents', id: 'expoConfig', hash: 'bb' },
+    { type: 'dir', filePath: 'ios/App', hash: 'cc' },
+  ];
+  const current = [
+    { type: 'file', filePath: 'ios/Podfile.lock', hash: 'a2' }, // changed
+    { type: 'contents', id: 'expoConfig', hash: 'bb' }, // same
+    { type: 'file', filePath: 'ios/New.swift', hash: 'dd' }, // added
+  ];
+  expect(compareSourceLists(previous, current)).toEqual(['ios/Podfile.lock', 'ios/New.swift', 'ios/App']);
+});
+
+test('compareSourceLists is empty when nothing moved, and ignores unnamed sources', () => {
+  const sources = [{ filePath: 'a', hash: '1' }, { hash: 'anonymous' }];
+  expect(compareSourceLists(sources, sources)).toEqual([]);
+});
+
+test('diffFingerprintSources prefers the project differ and falls back when it throws or misbehaves', () => {
+  const previous = [{ filePath: 'a', hash: '1' }];
+  const current = { hash: 'h2', sources: [{ filePath: 'a', hash: '2' }] };
+
+  // The project's own diffFingerprints answers, in the new item shape.
+  const seen: unknown[] = [];
+  const differ = (fp1: unknown, fp2: unknown) => {
+    seen.push([fp1, fp2]);
+    return [{ op: 'changed', beforeSource: { filePath: 'a' }, afterSource: { filePath: 'a' } }];
+  };
+  expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ })).toEqual(['a']);
+  expect(seen.length).toBe(1);
+
+  // A differ that throws (or returns garbage) falls back to the comparison.
+  const throwing = () => {
+    throw new Error('old @expo/fingerprint');
+  };
+  expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ: throwing })).toEqual(['a']);
+  expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ: null })).toEqual(['a']);
+});
+
+test('fingerprintDiffSuffix caps the line at three names and counts the rest', () => {
+  expect(fingerprintDiffSuffix([])).toBe('');
+  expect(fingerprintDiffSuffix(['a'])).toBe(' -- 1 source changed: a');
+  expect(fingerprintDiffSuffix(['a', 'b', 'c', 'd', 'e'])).toBe(' -- 5 sources changed: a, b, c');
+});
+
+test('fingerprintDiffRecord caps the logged list at 20 names and carries the total count', () => {
+  const changed = Array.from({ length: 25 }, (_, i) => `src/file-${i}`);
+  const record = fingerprintDiffRecord({ changed, previousHash: 'aaa', hash: 'bbb' });
+  expect(record.src).toBe('build');
+  expect(record.level).toBe('info');
+  expect(record.event).toBe('fingerprint_diff');
+  expect(record.changed).toBe(25);
+  expect((record.sources as string[]).length).toBe(20);
+  expect(record.msg).toMatch(/25 sources changed/);
+  expect(record.msg).toMatch(/and 5 more/);
+  expect(String(record.msg)).not.toContain('src/file-20');
+});
+
+test('describeFingerprintMiss only speaks for the same platform, a different hash, and a stored entry', () => {
+  resetExecutor();
+  const build = join(root, 'build', 'MyApp.app');
+  mkdirSync(build, { recursive: true });
+  writeFileSync(join(build, 'bin'), 'x');
+  storeBuild('ios', 'old-key', build, {
+    root,
+    sources: [{ type: 'file', filePath: 'ios/Podfile.lock', hash: 'aa' }],
+  });
+
+  const current = { hash: 'new-hash', sources: [{ type: 'file', filePath: 'ios/Podfile.lock', hash: 'a2' }] };
+  const lastBuild = { platform: 'ios', fingerprint: 'old-hash', cacheKey: 'old-key' };
+  const load = () => null; // no project @expo/fingerprint: the fallback diff decides
+
+  const miss = describeFingerprintMiss({ projectRoot: root, platform: 'ios', current, lastBuild, root, load });
+  assert(miss);
+  expect(miss.previousHash).toBe('old-hash');
+  expect(miss.changed).toEqual(['ios/Podfile.lock']);
+
+  // Wrong platform, same hash, no record, no stored sources: all null.
+  expect(describeFingerprintMiss({ projectRoot: root, platform: 'android', current, lastBuild, root, load })).toBe(
+    null,
+  );
+  expect(
+    describeFingerprintMiss({
+      projectRoot: root,
+      platform: 'ios',
+      current: { ...current, hash: 'old-hash' },
+      lastBuild,
+      root,
+      load,
+    }),
+  ).toBe(null);
+  expect(describeFingerprintMiss({ projectRoot: root, platform: 'ios', current, lastBuild: null, root, load })).toBe(
+    null,
+  );
+  expect(
+    describeFingerprintMiss({
+      projectRoot: root,
+      platform: 'ios',
+      current,
+      lastBuild: { ...lastBuild, cacheKey: 'never-stored' },
+      root,
+      load,
+    }),
+  ).toBe(null);
 });

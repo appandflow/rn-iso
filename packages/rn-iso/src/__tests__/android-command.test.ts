@@ -197,7 +197,7 @@ function harness(overrides = {}) {
     },
     fingerprint: async (path: string) => {
       calls.fingerprint.push(path);
-      return FINGERPRINT;
+      return { hash: FINGERPRINT, sources: [] };
     },
     resolveCached: (platform: string, key: string) => {
       calls.order.push('resolveCached');
@@ -956,14 +956,14 @@ describe('--no-build-cache', () => {
       loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
     });
     await h.run();
-    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: true });
+    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: true, sources: [] });
     expect(h.calls.uploadRemoteBuild.length).toBe(1);
   });
 
   test('a default run stores without overwriting: two worktrees at the same fingerprint agree', async () => {
     const h = harness();
     await h.run();
-    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: false });
+    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: false, sources: [] });
   });
 });
 
@@ -1722,7 +1722,7 @@ test('android fingerprints with platforms scoped to android', async () => {
   const h = harness({
     fingerprint: async (path: string, options?: Record<string, unknown>) => {
       seen.push({ path, options });
-      return FINGERPRINT;
+      return { hash: FINGERPRINT, sources: [] };
     },
   });
   await h.run();
