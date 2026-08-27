@@ -23,6 +23,23 @@ import {
 } from '../engine/js-swap.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
 
+describe('hermescPath', () => {
+  const root = '/proj';
+  const modern = '/proj/node_modules/hermes-compiler/hermesc/osx-bin/hermesc';
+  const pods = '/proj/ios/Pods/hermes-engine/destroot/bin/hermesc';
+  const legacy = '/proj/node_modules/react-native/sdks/hermesc/osx-bin/hermesc';
+
+  test('prefers the hermes-compiler package (RN 0.8x), then Pods, then the legacy sdks path', () => {
+    expect(hermescPath(root, { exists: (p) => p === modern || p === legacy })).toBe(modern);
+    expect(hermescPath(root, { exists: (p) => p === pods })).toBe(pods);
+    expect(hermescPath(root, { exists: (p) => p === legacy })).toBe(legacy);
+  });
+
+  test('nothing found answers the legacy path, whose absence the caller already guards', () => {
+    expect(hermescPath(root, { exists: () => false })).toBe(legacy);
+  });
+});
+
 describe('hermesEnabledFromProperties', () => {
   test('default is enabled: no file, no key, unparseable JSON', () => {
     expect(hermesEnabledFromProperties(null)).toBe(true);

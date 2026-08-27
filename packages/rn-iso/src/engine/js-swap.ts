@@ -149,8 +149,16 @@ export function bundleCommand({
 // is by construction the version the app's Hermes runtime expects. A bundle
 // compiled by a different hermesc version aborts at load with a bytecode
 // version mismatch, which is why this is never resolved from anywhere else.
-export function hermescPath(root: string): string {
-  return join(root, 'node_modules', 'react-native', 'sdks', 'hermesc', 'osx-bin', 'hermesc');
+// hermesc moved twice across RN's history; probe newest-first. Live-verified
+// on RN 0.86: the compiler ships in the hermes-compiler package (and a copy
+// lands in Pods); the react-native/sdks path is the pre-0.8x legacy location.
+export function hermescPath(root: string, { exists = existsSync }: { exists?: (p: string) => boolean } = {}): string {
+  const candidates = [
+    join(root, 'node_modules', 'hermes-compiler', 'hermesc', 'osx-bin', 'hermesc'),
+    join(root, 'ios', 'Pods', 'hermes-engine', 'destroot', 'bin', 'hermesc'),
+    join(root, 'node_modules', 'react-native', 'sdks', 'hermesc', 'osx-bin', 'hermesc'),
+  ];
+  return candidates.find(exists) ?? candidates[candidates.length - 1]!;
 }
 
 // PURE. hermesc's argv: bytecode out, JS in. The output replaces the JS
