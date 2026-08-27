@@ -22,6 +22,7 @@ import {
   buildAndroid,
   debugApkDir,
   discoverAndroidProject,
+  gradleArgs,
   locateApk,
   parseApkFromTranscript,
   parseOutputMetadata,
@@ -388,6 +389,21 @@ type BuildAndroidResultLike = {
   durationMs?: number;
 };
 
+// The gradle build cache, supplied on rn-iso's OWN argv so that a repo needs
+// no `org.gradle.caching=true` in a committed gradle.properties. The cache
+// directory is under the Gradle user home, which every worktree already
+// shares, so the flag is the whole of it.
+describe('gradleArgs', () => {
+  test('is the assemble task plus --build-cache', () => {
+    expect(gradleArgs('assembleDebug')).toEqual(['assembleDebug', '--build-cache']);
+    expect(gradleArgs('assembleProductionRelease')).toEqual(['assembleProductionRelease', '--build-cache']);
+  });
+
+  test('a caller can turn it off, and then the argv is exactly the task', () => {
+    expect(gradleArgs('assembleDebug', { buildCache: false })).toEqual(['assembleDebug']);
+  });
+});
+
 describe('buildAndroid', () => {
   test('runs ./gradlew assembleDebug in android/ and streams every line as it arrives', async () => {
     makeAndroidProject();
@@ -415,8 +431,11 @@ describe('buildAndroid', () => {
     assert(call);
     expect(call.cmd).toBe(join(root, 'android', 'gradlew'));
     // The literal, not the constant: a test that reads the task name out of
-    // the module under test cannot notice the module changing it.
-    expect(call.args).toEqual(['assembleDebug']);
+    // the module under test cannot notice the module changing it. --build-cache
+    // is rn-iso's own, on rn-iso's own argv: it is what makes a second worktree
+    // reuse the first one's task outputs without org.gradle.caching=true in a
+    // committed gradle.properties.
+    expect(call.args).toEqual(['assembleDebug', '--build-cache']);
     expect(ASSEMBLE_TASK).toBe('assembleDebug');
     expect(call.opts.cwd).toBe(join(root, 'android'));
     const { stdio } = call.opts;
@@ -490,6 +509,41 @@ describe('buildAndroid', () => {
     expect((result as BuildAndroidResultLike).remedy).toMatch(/assembleDebug/);
   });
 
+  test('the build cache is announced once, and buildCache: false drops the flag and the note', async () => {
+    makeAndroidProject();
+    const notes: string[] = [];
+    const calls: string[][] = [];
+    const on = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: (_cmd, args) => {
+          calls.push(args);
+          return fakeChild({ lines: ['BUILD SUCCESSFUL in 3s'], onExit: () => writeApk() });
+        },
+        onNote: (line) => notes.push(line),
+      },
+    );
+    expect((on as BuildAndroidResultLike).ok).toBe(true);
+    expect(notes.length).toBe(1);
+    expect(notes[0]).toMatch(/gradle build cache on for this build: --build-cache/);
+
+    notes.length = 0;
+    calls.length = 0;
+    await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        buildCache: false,
+        spawnFn: (_cmd, args) => {
+          calls.push(args);
+          return fakeChild({ lines: ['BUILD SUCCESSFUL in 3s'], onExit: () => writeApk() });
+        },
+        onNote: (line) => notes.push(line),
+      },
+    );
+    expect(calls).toEqual([['assembleDebug']]);
+    expect(notes).toEqual([]);
+  });
+
   test('a variant drives assemble<Variant> and the APK is read from the flavor directory', async () => {
     makeAndroidProject();
     const calls: string[][] = [];
@@ -505,7 +559,7 @@ describe('buildAndroid', () => {
         },
       },
     );
-    expect(calls).toEqual([['assembleProductionDebug']]);
+    expect(calls).toEqual([['assembleProductionDebug', '--build-cache']]);
     expect((result as BuildAndroidResultLike).ok).toBe(true);
     expect((result as BuildAndroidResultLike).apkPath).toBe(
       join(apkOutputsDir(root), 'production', 'debug', 'app-production-debug.apk'),

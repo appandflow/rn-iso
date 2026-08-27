@@ -66,11 +66,16 @@ test('compilation cache is not flagged at all on an Xcode that does not have it'
   expect(checkCompilationCache('post_install do |installer|\nend\n', 15)).toBe(null);
 });
 
-test('compilation cache enabled without a CAS path is a cost, because the default is per-workspace', () => {
+// It is a NOTE and not a cost now: rn-iso overrides COMPILATION_CACHE_CAS_PATH
+// on its own xcodebuild command line, so a Podfile left at the default costs
+// only the builds that are not rn-iso's.
+test('compilation cache enabled without a CAS path is a note about builds outside rn-iso', () => {
   const f = checkCompilationCache("config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES'", 26);
   assert(f);
-  expect(f.level).toBe('cost');
+  expect(f.level).toBe('note');
   expect(f.detail).toMatch(/per-workspace/);
+  expect(f.detail).toMatch(/outside rn-iso/);
+  expect(f.fix).toMatch(/Nothing to do for rn-iso/);
 });
 
 test('compilation cache with an explicit CAS path is reported as nothing', () => {
@@ -85,8 +90,25 @@ test('ccache alongside compilation caching is flagged as mutually defeating', ()
   expect(f.detail).toMatch(/explicitly built modules/);
 });
 
-test('ccache alone is not flagged -- it is a legitimate choice without the other', () => {
-  expect(checkCcacheConflict('post_install', { 'apple.ccacheEnabled': 'true' })).toBe(null);
+// It USED to take both halves, because the project was the only thing that
+// could turn compilation caching on. rn-iso turns it on itself now, on every
+// `rn-iso ios` -- except when ccache is configured, which is the one condition
+// that makes it skip. So ccache alone is exactly the silent "neither cache" the
+// finding exists to name.
+test('ccache alone is now flagged, because it is what stops rn-iso supplying the other', () => {
+  const f = checkCcacheConflict('post_install', { 'apple.ccacheEnabled': 'true' });
+  assert(f);
+  expect(f.level).toBe('cost');
+  expect(f.title).toMatch(/rn-iso leaves Xcode compilation caching off/);
+});
+
+test('a project with no ccache is reported as nothing, with or without caching in the Podfile', () => {
+  expect(checkCcacheConflict("COMPILATION_CACHE_ENABLE_CACHING = 'YES'", { 'apple.ccacheEnabled': 'false' })).toBe(
+    null,
+  );
+  expect(checkCcacheConflict('post_install', null)).toBe(null);
+  // No Podfile at all means no iOS project to say anything about.
+  expect(checkCcacheConflict(null, { 'apple.ccacheEnabled': 'true' })).toBe(null);
 });
 
 // The dev client advice is Expo-specific: a bare RN app has no dev client to
@@ -102,14 +124,20 @@ test('an Expo project without the dev client is flagged, because a reserved port
   expect(f.detail).toMatch(/8081/);
 });
 
-test('metro config with a cacheStore is reported as nothing; without one it is a cost', () => {
+// Every branch is a NOTE now. `rn-iso start` appends its own FileStore to the
+// config it hosts (bare) or injects one into the Expo child, so a project with
+// no cacheStores is not paying anything under rn-iso -- only outside it.
+test('metro config with a cacheStore is reported as nothing; without one it is a note about runs outside rn-iso', () => {
   expect(checkMetroCache('config.cacheStores = [new FileStore({})]')).toBe(null);
-  const cost = checkMetroCache('module.exports = config;');
-  assert(cost);
-  expect(cost.level).toBe('cost');
+  const missing = checkMetroCache('module.exports = config;');
+  assert(missing);
+  expect(missing.level).toBe('note');
+  expect(missing.detail).toMatch(/rn-iso start/);
+  expect(missing.fix).toMatch(/Nothing to do for rn-iso/);
   const note = checkMetroCache(null);
   assert(note);
   expect(note.level).toBe('note');
+  expect(note.fix).toMatch(/Nothing to do for rn-iso/);
 });
 
 // A config that is code cannot be read without executing it, and executing
@@ -327,7 +355,8 @@ test('an ordinary config that BUILDS on a metro package is not a delegation', ()
   ).toBe(null);
   const f = checkMetroCache("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);");
   assert(f);
-  expect(f.level).toBe('cost');
+  expect(f.level).toBe('note');
+  expect(f.title).toMatch(/sets no cacheStores/);
 });
 
 test('a delegating config that DOES mention cacheStores is read normally', () => {

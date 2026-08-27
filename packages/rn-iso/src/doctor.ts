@@ -21,6 +21,12 @@ import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig }
 import { liveOwnedDeviceCount } from './engine/device.ts';
 import { listBuildSlots } from './engine/build-slots.ts';
 import { type IosSimRecord, listAllIosSims } from './sim/ios.ts';
+// parseXcodeMajor / detectXcodeMajor / ccacheEnabled live in the BUILD engine
+// now, because the build is what consumes them: rn-iso puts the compilation
+// cache on its own xcodebuild argv, and both the version floor and the ccache
+// veto are that decision's. doctor reports on the same two facts, so it reads
+// the one implementation rather than keeping a second.
+import { ccacheEnabled, COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from './engine/xcode.ts';
 import { type AdbDevices, listAdbDevices } from './sim/android.ts';
 // The engine owns the eas-cli half (resolution, whoami, the parse); this file
 // owns what to SAY about it. Imported under a second name because the pure
@@ -39,6 +45,8 @@ import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.ts';
 // modelled as closed interfaces.
 type AnyJson = Record<string, unknown>;
 
+export { detectXcodeMajor, parseXcodeMajor };
+
 // 'cost'  -- measurably slower, silently
 // 'note'  -- worth knowing, not necessarily wrong
 export interface Finding {
@@ -46,26 +54,6 @@ export interface Finding {
   title: string;
   detail: string;
   fix: string | null;
-}
-
-// `xcodebuild -version` prints "Xcode 26.1" on its first line. Anything else --
-// no Xcode, command line tools only, a localized or future format -- is null,
-// which every caller treats as "version unknown" rather than as a number.
-export function parseXcodeMajor(output: unknown): number | null {
-  const m = /^Xcode\s+(\d+)/m.exec(String(output || ''));
-  if (!m) return null;
-  const digits = m[1];
-  if (digits === undefined) return null;
-  const major = parseInt(digits, 10);
-  return Number.isFinite(major) ? major : null;
-}
-
-// The thin I/O half. Returns null on any failure: this is a hint that shapes
-// advice, and a machine without Xcode must still be able to run doctor.
-export function detectXcodeMajor(): number | null {
-  // Bounded: doctor is read-only advice, and a wedged Xcode install must not
-  // hang it.
-  return parseXcodeMajor(getExecutor().runQuiet('xcodebuild -version', { timeoutMs: 10000 }));
 }
 
 // 'cost'  -- measurably slower, silently
@@ -109,7 +97,17 @@ export function checkDevClient(pkg: AnyJson | null, isExpo: boolean = true): Fin
 }
 
 // Metro's default cache is per-project, so every worktree re-transforms the
-// whole module graph. One FileStore outside any project fixes it.
+// whole module graph. One FileStore outside any project fixes it -- and rn-iso
+// now installs that store ITSELF, on its own dev server, so none of what
+// follows is a setup step any more.
+//
+// THESE FINDINGS ARE ABOUT BUILDS RN-ISO DOES NOT DRIVE. `rn-iso start` hosts
+// a bare project's Metro in-process and appends rn-iso's own FileStore to
+// whatever cacheStores the project configured; on Expo it injects the same
+// store into the child through NODE_OPTIONS. So a project with no cacheStores
+// at all still gets a shared transform cache under `rn-iso start`. What a
+// committed store buys is the runs rn-iso is not in: `npx expo start` by hand,
+// a teammate's editor task, CI.
 //
 // This reads the file and never evaluates it -- a metro.config.js runs project
 // code, and a diagnostic may not. That is why a mention of `cacheStores` is not
@@ -122,9 +120,9 @@ export function checkMetroCache(metroConfigSource: string | null): Finding | nul
   if (metroConfigSource == null) {
     return finding(
       'note',
-      'No metro.config.js found',
-      "Metro's default transform cache lives under $TMPDIR/metro-cache -- outside the project, but in a location the OS periodically purges and rn-iso's gc cannot see.",
-      'Add a metro.config.js with a FileStore cacheStore at a stable shared path.',
+      'No metro.config.js found (rn-iso supplies the shared store anyway)',
+      "Metro's default transform cache lives under $TMPDIR/metro-cache -- outside the project, but in a location the OS periodically purges and rn-iso's gc cannot see. `rn-iso start` appends its own FileStore under ~/.rn-iso/metro-cache regardless, so the dev server rn-iso runs is already sharing transforms between worktrees.",
+      'Nothing to do for rn-iso. Add a metro.config.js with a FileStore cacheStore only if you also run Metro outside it.',
     );
   }
   // A config that is nothing but a re-export cannot be read here at all: the
@@ -136,8 +134,8 @@ export function checkMetroCache(metroConfigSource: string | null): Finding | nul
     return finding(
       'note',
       `metro config delegates to ${delegate}; rn-iso cannot inspect it`,
-      `metro.config.js is a re-export of ${delegate} and doctor reads this file rather than executing it, so whether a shared cacheStore is configured is decided somewhere rn-iso cannot see. This is a note, not a cost: the store may well be there.`,
-      `Check ${delegate} for a cacheStores/FileStore rooted outside every project (rn-iso's own is @rn-iso/metro's sharedCacheStores()).`,
+      `metro.config.js is a re-export of ${delegate} and doctor reads this file rather than executing it, so whether a shared cacheStore is configured is decided somewhere rn-iso cannot see. This is a note, not a cost: the store may well be there, and \`rn-iso start\` appends its own to whatever that file resolves to either way.`,
+      `Nothing to do for rn-iso. If you also run Metro outside it, check ${delegate} for a cacheStores/FileStore rooted outside every project (@rn-iso/metro's sharedCacheStores() is the packaged one).`,
     );
   }
   const lines = String(metroConfigSource).split('\n');
@@ -148,15 +146,15 @@ export function checkMetroCache(metroConfigSource: string | null): Finding | nul
     return finding(
       'note',
       'metro.config.js mentions cacheStores, but not unconditionally',
-      `Every line naming it is inside a conditional, and doctor reads this file rather than executing it, so it cannot tell whether the store is installed on a plain \`rn-iso start\`. A cacheStores that is off by default costs exactly what having none costs: ${mentions.map((l) => l.trim()).join(' / ')}`,
-      'Confirm it applies without env vars -- a store behind an opt-in flag is not shared until every workspace sets the flag.',
+      `Every line naming it is inside a conditional, and doctor reads this file rather than executing it, so it cannot tell whether the store is installed. Under \`rn-iso start\` this costs nothing -- rn-iso appends its own store whether the project's is on or off -- but outside rn-iso a cacheStores that is off by default costs exactly what having none costs: ${mentions.map((l) => l.trim()).join(' / ')}`,
+      'Only for Metro runs rn-iso does not host: confirm it applies without env vars -- a store behind an opt-in flag is not shared until every workspace sets the flag.',
     );
   }
   return finding(
-    'cost',
-    'Metro cache is per-project',
-    'Without a shared cacheStore each worktree transforms the whole module graph from cold -- thousands of modules, every time.',
-    "config.cacheStores = [new FileStore({ root: path.join(os.homedir(), '.<app>-metro-cache') })]",
+    'note',
+    'metro.config.js sets no cacheStores (rn-iso supplies one on its own dev server)',
+    'Without a shared cacheStore each worktree transforms the whole module graph from cold -- thousands of modules, every time. `rn-iso start` appends its own FileStore under ~/.rn-iso/metro-cache, so the dev server rn-iso hosts does not pay that; a Metro started any other way still does.',
+    "Nothing to do for rn-iso. For runs outside it: config.cacheStores = [new FileStore({ root: path.join(os.homedir(), '.<app>-metro-cache') })]",
   );
 }
 
@@ -230,6 +228,13 @@ function isConditionalLine(line: string): boolean {
 // Xcode's compilation cache defaults to the DerivedData root. DerivedData is
 // derived from the workspace path, so the default is per-workspace -- which is
 // exactly the sharing it looks like it is providing.
+//
+// NOT A SETUP STEP ANY MORE. `rn-iso ios` passes the caching settings, the
+// shared CAS path and the clang prefix mapping on its own xcodebuild argv
+// (compilationCacheSettings in engine/xcode.ts), where a `SETTING=value`
+// override reaches every target including the Pods. So the Podfile edit buys
+// nothing for a build rn-iso drives; it buys the builds rn-iso does not drive.
+// Both findings below say that, and both are notes for that reason.
 export function checkCompilationCache(podfileSource: string | null, xcodeMajor: number | null): Finding | null {
   if (podfileSource == null) return null;
   // The content-addressed compilation cache is Xcode 26+. On anything older
@@ -237,7 +242,9 @@ export function checkCompilationCache(podfileSource: string | null, xcodeMajor: 
   // "upgrade Xcode" is a bigger decision than this command should be making.
   // A null major means the version could not be read, which is not the same as
   // "old": the advice still goes out, hedged, rather than being withheld.
-  if (xcodeMajor != null && xcodeMajor < 26) return null;
+  // (rn-iso's OWN argv is stricter -- it needs a version it actually read; see
+  // compilationCacheSettings.)
+  if (xcodeMajor != null && xcodeMajor < COMPILATION_CACHE_MIN_XCODE) return null;
   const enabled = /COMPILATION_CACHE_ENABLE_CACHING/.test(podfileSource);
   const path = /COMPILATION_CACHE_CAS_PATH/.test(podfileSource);
   if (!enabled) {
@@ -249,17 +256,17 @@ export function checkCompilationCache(podfileSource: string | null, xcodeMajor: 
         : "On Xcode 26 or newer (this machine's Xcode version could not be read, so check yours first)";
     return finding(
       'note',
-      'Xcode compilation caching is not enabled',
-      `${version} a content-addressed cache can carry compiled output between workspaces, which is the difference between a full build and a partial one in a fresh worktree.`,
-      "In the Podfile's post_install, inside an `installer.pods_project.targets.each { |t| t.build_configurations.each { |config| ... } }` loop -- adding one if post_install has none, or has only a loop over resource bundles -- set config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES' and COMPILATION_CACHE_CAS_PATH to a path outside DerivedData.",
+      'The Podfile does not enable Xcode compilation caching (rn-iso supplies it on its own builds)',
+      `${version} a content-addressed cache can carry compiled output between workspaces, which is the difference between a full build and a partial one in a fresh worktree. \`rn-iso ios\` already passes COMPILATION_CACHE_ENABLE_CACHING, a shared COMPILATION_CACHE_CAS_PATH and the clang prefix mapping on its own xcodebuild command line, so this repo needs no change to get it. The Podfile only matters if you ALSO build outside rn-iso -- Xcode itself, \`npx expo run:ios\`, CI -- where those runs fall back to the per-workspace default.`,
+      "Nothing to do for rn-iso. For builds outside it: in the Podfile's post_install, inside an `installer.pods_project.targets.each { |t| t.build_configurations.each { |config| ... } }` loop -- adding one if post_install has none, or has only a loop over resource bundles -- set config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES' and COMPILATION_CACHE_CAS_PATH to a path outside DerivedData.",
     );
   }
   if (!path) {
     return finding(
-      'cost',
-      'Compilation cache is enabled but left at its default path',
-      'The default CAS lives at the DerivedData root, and DerivedData is per-workspace -- so nothing is actually shared between worktrees, which is the only reason to turn it on.',
-      'Set COMPILATION_CACHE_CAS_PATH to a fixed path outside DerivedData.',
+      'note',
+      'The Podfile enables compilation caching but leaves the CAS at its default path',
+      'The default CAS lives at the DerivedData root, and DerivedData is per-workspace -- so nothing is actually shared between worktrees, which is the only reason to turn it on. Builds rn-iso drives are unaffected: they override COMPILATION_CACHE_CAS_PATH to a shared path on the xcodebuild command line, which wins over the project setting. This costs only the builds you run outside rn-iso.',
+      'Nothing to do for rn-iso. For builds outside it: set COMPILATION_CACHE_CAS_PATH to a fixed path outside DerivedData.',
     );
   }
   return null;
@@ -310,16 +317,22 @@ export function checkArtifactLayout({
 
 // ccache and compilation caching are mutually exclusive in practice: the ccache
 // launcher is what disables explicitly built modules, which caching requires.
+//
+// THIS ONE STAYS A REAL WARNING, and it now fires on ccache ALONE. It used to
+// need both halves enabled in the project, because the project was the only
+// thing that could turn compilation caching on. rn-iso turns it on itself now,
+// on every `rn-iso ios` -- except here: `apple.ccacheEnabled=true` is the one
+// condition that makes it skip (ccacheEnabled, engine/xcode.ts). So a project
+// that has ccache on is a project silently getting neither cache, and saying so
+// is the point.
 export function checkCcacheConflict(podfileSource: string | null, podfileProperties: AnyJson | null): Finding | null {
   if (podfileSource == null) return null;
-  const cachingOn = /COMPILATION_CACHE_ENABLE_CACHING/.test(podfileSource);
-  const ccacheOn = podfileProperties?.['apple.ccacheEnabled'] === 'true';
-  if (!cachingOn || !ccacheOn) return null;
+  if (!ccacheEnabled(podfileProperties)) return null;
   return finding(
     'cost',
-    'ccache and Xcode compilation caching are both enabled',
-    'The ccache launcher script is what disables explicitly built modules, which compilation caching requires -- so enabling both tends to mean neither works. ccache also keys on absolute paths, so it misses across worktrees.',
-    'Pick one. On Xcode 26 the compilation cache is the one that survives a different workspace path.',
+    'ccache is enabled, so rn-iso leaves Xcode compilation caching off',
+    'The ccache launcher script is what disables explicitly built modules, which compilation caching requires -- so enabling both tends to mean neither works. rn-iso will not add its compilation-cache settings to a build whose project has apple.ccacheEnabled=true, and ccache itself keys on absolute paths, so it misses across worktrees anyway.',
+    'Pick one. On Xcode 26 the compilation cache is the one that survives a different workspace path, and rn-iso supplies it on its own builds as soon as apple.ccacheEnabled is off.',
   );
 }
 
@@ -475,9 +488,13 @@ export function checkEasAuth({
 
 // Gradle's task-output cache (`org.gradle.caching`) is OFF by default, and a
 // second worktree then recompiles every task from scratch even when nothing
-// changed -- the exact cost this command exists to name. The cache lives under
-// the Gradle user home (~/.gradle by default), which every worktree on the
-// machine already shares, so one property is the whole fix.
+// changed. The cache lives under the Gradle user home (~/.gradle by default),
+// which every worktree on the machine already shares.
+//
+// NOT A SETUP STEP ANY MORE, for the same reason as the compilation cache:
+// `rn-iso android` puts `--build-cache` on its own gradlew argv, which turns
+// the cache on for that invocation regardless of what the properties file
+// says. The finding is about the gradle runs rn-iso does not make.
 //
 // `source` is android/gradle.properties, read and never evaluated. Null means
 // the file is absent -- a CNG project has no android/ until prebuild generates
@@ -500,9 +517,9 @@ export function checkGradleBuildCache(gradlePropertiesSource: string | null): Fi
   if (enabled) return null;
   return finding(
     'note',
-    "Gradle's build cache is off",
-    "org.gradle.caching=true is not set in android/gradle.properties, so Gradle re-runs every task from scratch in a fresh worktree -- the task-output cache that would let a second workspace reuse the first one's compiled classes is simply off. It lives under the Gradle user home, which every worktree on this machine already shares.",
-    'Add org.gradle.caching=true to android/gradle.properties.',
+    "Gradle's build cache is off in gradle.properties (rn-iso passes --build-cache anyway)",
+    "org.gradle.caching=true is not set in android/gradle.properties. `rn-iso android` passes --build-cache on its own ./gradlew invocation, so a second worktree already reuses the first one's compiled classes -- the task-output cache lives under the Gradle user home, which every worktree on this machine shares. The property only matters for gradle runs made OUTSIDE rn-iso (Android Studio, a plain ./gradlew, CI), which re-run every task from scratch.",
+    'Nothing to do for rn-iso. Add org.gradle.caching=true to android/gradle.properties only if you also build outside it.',
   );
 }
 

@@ -24,6 +24,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import chalk from 'chalk';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { androidHome } from '../sim/android.ts';
@@ -387,32 +388,55 @@ export type BuildAndroidResult = {
   durationMs: number;
 };
 
-// `./gradlew assembleDebug` (or `assemble<Variant>` when the android.variant
-// setting names a flavored variant) with cwd android/.
+// PURE. The gradlew argv: the assemble task, plus `--build-cache`.
+//
+// THE POINT: rn-iso needs no project changes to run. Gradle's task-output
+// cache is off by default and used to require `org.gradle.caching=true` in
+// android/gradle.properties -- a committed file, so asking for it is asking
+// for a PR. `--build-cache` is the same switch on the command line rn-iso
+// already composes, and the cache directory it fills lives under the Gradle
+// user home (~/.gradle unless something overrides it), which every worktree
+// on the machine already shares. So it is cross-worktree by construction and
+// there is nothing else to configure.
+//
+// Nothing else is added here. The file header's rule still holds: every
+// argument on this line is one more thing that can differ from what the
+// project's own `./gradlew assembleDebug` does, so this one is deliberate and
+// it is the only one.
+export function gradleArgs(task: string, { buildCache = true }: { buildCache?: boolean } = {}): string[] {
+  return buildCache ? [task, '--build-cache'] : [task];
+}
+
+// `./gradlew assembleDebug --build-cache` (or `assemble<Variant>` when the
+// android.variant setting names a flavored variant) with cwd android/.
 //
 // Every line of the transcript reaches the writer as it arrives (Contract 1,
 // src "build", level debug, raw) rather than at the end: a four-minute build
 // that is followed with `rn-iso logs --follow` has to show progress while it
 // is happening, and a build killed halfway must still leave what it printed.
 //
-// No --console flag and no extra arguments: gradle already drops its rich
-// console when stdout is a pipe, which it is here, and every argument added
-// to this line is one more thing that can differ from what the project's own
-// `./gradlew assembleDebug` does.
+// No --console flag: gradle already drops its rich console when stdout is a
+// pipe, which it is here. The one argument beyond the task is `--build-cache`
+// (see gradleArgs), and `buildCache: false` turns it off.
 export async function buildAndroid(
   { root, logWriter, variant = null }: { root: string; logWriter?: NdjsonWriter | null; variant?: string | null },
   {
     spawnFn = null,
     now = Date.now,
     env = process.env,
+    buildCache = true,
     heartbeatMs = HEARTBEAT_INTERVAL_MS,
     onHeartbeat = (line: string) => console.error(line),
+    onNote = (line: string) => console.error(line),
   }: {
     spawnFn?: SpawnFn | null;
     now?: () => number;
     env?: NodeJS.ProcessEnv;
+    // Injectable so tests drive it and a caller can turn it off.
+    buildCache?: boolean;
     heartbeatMs?: number;
     onHeartbeat?: (line: string) => void;
+    onNote?: (line: string) => void;
   } = {},
 ): Promise<BuildAndroidResult> {
   const project = discoverAndroidProject(root);
@@ -429,6 +453,16 @@ export async function buildAndroid(
 
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const task = assembleTaskFor(variant);
+  const args = gradleArgs(task, { buildCache });
+  if (buildCache) {
+    // One dim line, so a flag rn-iso adds to somebody else's build tool is
+    // never invisible.
+    onNote(
+      chalk.dim(
+        'gradle build cache on for this build: --build-cache (shared under the Gradle user home; gradle.properties is not touched)',
+      ),
+    );
+  }
   const startedAt = now();
   const tail: string[] = [];
   const window: string[] = [];
@@ -447,7 +481,7 @@ export async function buildAndroid(
 
   let child: ChildProcess;
   try {
-    child = spawn(project.gradlew as string, [task], {
+    child = spawn(project.gradlew as string, args, {
       cwd: project.androidDir,
       // stdin ignored: nothing in an assembleDebug should prompt, and a
       // prompt in a detached agent loop is indistinguishable from a hang.

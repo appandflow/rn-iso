@@ -9,6 +9,7 @@ import assert from 'node:assert';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { appendCacheStore, hasStoreAt, metroStoreName, metroStoreRoot } from '../supervisor/metro-store.ts';
 import {
   BARE_PACKAGES,
   checkBareApi,
@@ -19,6 +20,7 @@ import {
   resolveBareDeps,
   startBareServer,
 } from '../supervisor/server-bare.ts';
+import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { asRequire, makeError, makeWriter } from './_factories.ts';
 
 // assert.throws does not hand back the error, and every assertion below is
@@ -35,12 +37,21 @@ function caught(fn: () => unknown): Error & Record<string, unknown> {
 }
 
 let root: string;
+// RN_ISO_HOME is redirected for every case: startBareServer reads the machine
+// config (the injectMetroStore kill switch) and registers the store it adds,
+// so an unredirected run would touch the caches.json of whatever machine is
+// running the suite (CLAUDE.md item 5).
+let tmpHome: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'rn-iso-bare-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'bare' }));
+  tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
+  process.env.RN_ISO_HOME = tmpHome;
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
+  rmSync(tmpHome, { recursive: true, force: true });
+  delete process.env.RN_ISO_HOME;
 });
 
 // A require() that resolves only the modules it is given, so a project's
@@ -382,5 +393,189 @@ describe('startBareServer wiring', () => {
     await handle.close();
     httpServer.handlers.close?.();
     expect(seen).toEqual([]);
+  });
+});
+
+// --- the shared transform store, appended to the config rn-iso hosts --------
+//
+// THE POINT: a bare project gets a cross-worktree Metro transform cache with
+// no metro.config.js at all. The rule that matters is that it APPENDS: a
+// project that configured its own stores keeps every one of them, in order.
+describe('the shared Metro cache store', () => {
+  class FakeStore {
+    _root: string;
+    constructor(options: { root: string }) {
+      this._root = options.root;
+    }
+  }
+
+  test('appends to the stores the project configured, keeping them and their order', () => {
+    const projectStore = { name: 'the project own store' };
+    const config: { cacheStores?: unknown } = { cacheStores: [projectStore] };
+    const result = appendCacheStore(config, { storeRoot: '/cache/app', FileStore: FakeStore });
+    expect(result.added).toBe(true);
+    const stores = config.cacheStores as unknown[];
+    expect(stores.length).toBe(2);
+    expect(stores[0]).toBe(projectStore);
+    expect((stores[1] as FakeStore)._root).toBe('/cache/app');
+  });
+
+  test('a config with no stores at all gets exactly ours', () => {
+    const config: { cacheStores?: unknown } = {};
+    expect(appendCacheStore(config, { storeRoot: '/cache/app', FileStore: FakeStore }).added).toBe(true);
+    expect((config.cacheStores as FakeStore[]).map((s) => s._root)).toEqual(['/cache/app']);
+  });
+
+  test('a store already pointing at our root is not added a second time', () => {
+    const config: { cacheStores?: unknown } = { cacheStores: [new FakeStore({ root: '/cache/app' })] };
+    const result = appendCacheStore(config, { storeRoot: '/cache/app', FileStore: FakeStore });
+    expect(result.added).toBe(false);
+    expect(result.reason).toMatch(/already/);
+    expect((config.cacheStores as unknown[]).length).toBe(1);
+    // Which is the predicate that decides it.
+    expect(hasStoreAt(config.cacheStores, '/cache/app')).toBe(true);
+    expect(hasStoreAt(config.cacheStores, '/cache/other')).toBe(false);
+    expect(hasStoreAt(undefined, '/cache/app')).toBe(false);
+  });
+
+  // Metro also accepts cacheStores as a function of its cache module. Calling
+  // it here would evaluate it at the wrong time, so it is wrapped instead.
+  test('a function-shaped cacheStores is wrapped, not evaluated', () => {
+    let calledWith: unknown = null;
+    const config: { cacheStores?: unknown } = {
+      cacheStores: (cache: unknown) => {
+        calledWith = cache;
+        return [{ name: 'lazy' }];
+      },
+    };
+    expect(appendCacheStore(config, { storeRoot: '/cache/app', FileStore: FakeStore }).added).toBe(true);
+    expect(calledWith).toBe(null);
+    const resolved = (config.cacheStores as (c: unknown) => unknown[])({ marker: 1 });
+    expect(calledWith).toEqual({ marker: 1 });
+    expect(resolved.length).toBe(2);
+    expect((resolved[1] as FakeStore)._root).toBe('/cache/app');
+  });
+
+  test('the store root is the shared Metro cache root, partitioned by the package name', () => {
+    expect(metroStoreName(root)).toBe('bare');
+    expect(metroStoreRoot(root)).toBe(join(tmpHome, 'metro-cache', 'bare'));
+    // A package.json with no name still gets a store, under the same default
+    // segment @rn-iso/metro uses.
+    const nameless = mkdtempSync(join(tmpdir(), 'rn-iso-bare-nameless-'));
+    try {
+      writeFileSync(join(nameless, 'package.json'), '{}');
+      expect(metroStoreName(nameless)).toBe('app');
+    } finally {
+      rmSync(nameless, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('startBareServer and the shared store', () => {
+  function recordingWriter(): NdjsonWriter & { records: NdjsonRecord[] } {
+    const records: NdjsonRecord[] = [];
+    const writer = makeWriter({
+      write(record) {
+        records.push(record as NdjsonRecord);
+        return true;
+      },
+    });
+    return Object.assign(writer, { records });
+  }
+
+  class FakeStore {
+    _root: string;
+    constructor(options: { root: string }) {
+      this._root = options.root;
+    }
+  }
+
+  function configuringDeps(initialStores: unknown) {
+    const seen: { config?: { cacheStores?: unknown } } = {};
+    return {
+      seen,
+      deps: {
+        metro: {
+          async loadConfig() {
+            return { resolver: { platforms: ['ios'] }, watchFolders: [], cacheStores: initialStores };
+          },
+          async runServer(config: { cacheStores?: unknown }) {
+            seen.config = config;
+            return {
+              on() {},
+              close(cb?: () => void) {
+                cb?.();
+              },
+            };
+          },
+        },
+        devMiddleware: { createDevMiddleware: () => ({ middleware: 'm', websocketEndpoints: {} }) },
+        serverApi: { createDevServerMiddleware: () => ({ middleware: 'c', websocketEndpoints: {} }) },
+      },
+    };
+  }
+
+  test('the hosted config reaches runServer with the project stores plus ours, and says so once', async () => {
+    const projectStore = { name: 'project store' };
+    const { deps, seen } = configuringDeps([projectStore]);
+    const writer = recordingWriter();
+    await startBareServer({
+      root,
+      port: 8200,
+      logsDir: join(root, 'logs'),
+      deps,
+      writer,
+      reporterFactory: () => ({ update() {} }),
+      fileStore: FakeStore,
+    });
+    const stores = seen.config?.cacheStores as unknown[];
+    expect(stores[0]).toBe(projectStore);
+    expect((stores[1] as FakeStore)._root).toBe(metroStoreRoot(root));
+    const added = writer.records.filter((r) => r.event === 'cache_store_added');
+    expect(added.length).toBe(1);
+    expect(added[0]?.msg).toContain(metroStoreRoot(root));
+  });
+
+  test('the machine-level kill switch leaves the project config exactly as loaded', async () => {
+    writeFileSync(
+      join(tmpHome, 'config.json'),
+      JSON.stringify({ projects: {}, repos: {}, caches: { injectMetroStore: false } }),
+    );
+    const projectStore = { name: 'project store' };
+    const { deps, seen } = configuringDeps([projectStore]);
+    const writer = recordingWriter();
+    await startBareServer({
+      root,
+      port: 8201,
+      logsDir: join(root, 'logs'),
+      deps,
+      writer,
+      reporterFactory: () => ({ update() {} }),
+      fileStore: FakeStore,
+    });
+    expect(seen.config?.cacheStores).toEqual([projectStore]);
+    expect(writer.records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
+  });
+
+  // A transform cache is an optimisation. A project whose metro-cache cannot
+  // be resolved still gets a dev server, and the log says why it is uncached.
+  test('an unresolvable metro-cache is a warn record, not a failure to serve', async () => {
+    const projectStore = { name: 'project store' };
+    const { deps, seen } = configuringDeps([projectStore]);
+    const writer = recordingWriter();
+    const handle = await startBareServer({
+      root,
+      port: 8202,
+      logsDir: join(root, 'logs'),
+      deps,
+      writer,
+      reporterFactory: () => ({ update() {} }),
+      fileStore: null,
+    });
+    expect(handle.mode).toBe('bare-inproc');
+    expect(seen.config?.cacheStores).toEqual([projectStore]);
+    const skipped = writer.records.filter((r) => r.event === 'cache_store_skipped');
+    expect(skipped.length).toBe(1);
+    expect(skipped[0]?.level).toBe('warn');
   });
 });

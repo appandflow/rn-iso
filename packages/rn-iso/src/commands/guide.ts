@@ -737,6 +737,28 @@ and produces an app that cannot load a bundle.
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for.
 
+NOTHING ABOVE NEEDS A CHANGE TO THE REPO
+rn-iso runs on a clean checkout. \`.rn-iso/\` is added to .gitignore by
+start/ios/android themselves, and the performance caches ride on the command
+lines rn-iso composes rather than on files the project owns:
+
+  ios      xcodebuild carries COMPILATION_CACHE_ENABLE_CACHING, a shared
+           COMPILATION_CACHE_CAS_PATH and a clang prefix mapping of this
+           workspace's root, so compiled output crosses worktrees with no
+           Podfile post_install block. Xcode 26+ only, and skipped entirely
+           when the project configured ccache (the two defeat each other).
+  android  gradlew carries --build-cache, so task outputs cross worktrees with
+           no org.gradle.caching=true in gradle.properties.
+  start    the dev server gets a shared Metro FileStore APPENDED to whatever
+           the project configured -- in-process on a bare project, and through
+           NODE_OPTIONS=--require <shim> on an Expo child. Turn it off machine
+           -wide with { "caches": { "injectMetroStore": false } } in
+           ~/.rn-iso/config.json; see \`guide settings\`.
+
+Each says so in one dim line. \`rn-iso doctor\` still reports the project-side
+equivalents -- as things worth committing only if you ALSO build outside
+rn-iso, never as setup rn-iso is waiting on.
+
 THE BUILD CACHE HAS TWO LEVELS
   1. rn-iso's own, on this machine: a directory under ~/.rn-iso shared by
      every worktree, keyed on the @expo/fingerprint hash of the native inputs.
@@ -1131,6 +1153,42 @@ or via the environment, which overrides the file:
 
 Unset, 0, or any non-positive value means NO enforcement -- the default, where
 rn-iso limits nothing. See \`guide lifecycle\` for what each cap does.
+
+RN-ISO NEEDS NO PROJECT CHANGES TO RUN
+Nothing above is required to use rn-iso. The performance caches that used to
+be setup steps are supplied by rn-iso on the command lines it composes itself:
+
+  xcodebuild   COMPILATION_CACHE_ENABLE_CACHING / COMPILATION_CACHE_CAS_PATH /
+               SWIFT_ENABLE_COMPILE_CACHE / CLANG_ENABLE_PREFIX_MAPPING /
+               CLANG_OTHER_PREFIX_MAPPINGS -- so no Podfile post_install block
+               (Xcode 26+ only, and skipped when the project configured ccache,
+               which defeats it)
+  gradlew      --build-cache -- so no org.gradle.caching=true in a committed
+               gradle.properties
+  start        a shared Metro FileStore, APPENDED to whatever the project
+               configured -- so no metro.config.js. On a bare project rn-iso
+               hosts Metro itself and adds it to the config it loaded; on Expo
+               the child is spawned with NODE_OPTIONS extended by a --require
+               shim that does the same inside it.
+
+Each of those prints one dim line saying it happened. \`rn-iso doctor\` still
+reports the project-side settings, as things you need only if you ALSO build
+outside rn-iso.
+
+TURNING THE METRO STORE OFF (MACHINE-LEVEL)
+The Expo injection is the invasive one, so it has a switch -- and the switch is
+machine-level, because a committed file would be exactly the repo change this
+feature exists to avoid:
+
+  {
+    "caches": { "injectMetroStore": false }
+  }
+
+in ~/.rn-iso/config.json. It turns the store off on BOTH dev servers. Only the
+literal false does; anything else leaves it on. The shim also fails soft on its
+own: if it cannot resolve or patch metro-config it writes one line to stderr
+(which lands in the timeline) and the dev server runs with whatever cache it
+would have had.
 
 CACHE LOCATIONS ARE MACHINE-LEVEL TOO
 The shared build cache and Metro transform cache default to living under

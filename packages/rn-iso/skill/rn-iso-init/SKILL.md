@@ -12,7 +12,24 @@ user_invocable: true
 npx rn-iso doctor    # read-only: what is silently costing this repo build time
 ```
 
-**This page is a playbook you apply by hand.** There is no `rn-iso init`. It was
+**rn-iso needs no project changes to run.** Point it at a clean checkout of
+somebody else's repo and the whole loop works: `start`, `ios`, `android`,
+`logs`, `worktree`, `stop`, `gc`, the fingerprint build cache, and the three
+performance caches that used to be setup steps -- Xcode's compilation cache,
+Gradle's build cache and a shared Metro transform cache. rn-iso puts each of
+those on the command line it composes itself (`xcodebuild SETTING=value`,
+`gradlew --build-cache`, a cacheStore appended to the dev server it hosts), so
+none of them is a file you have to edit or a PR you have to open. Evaluating
+rn-iso costs nothing but running it.
+
+**So this page is about the OTHER half:** what a repo commits so that the same
+caches also serve the builds rn-iso does not drive -- Xcode, `npx expo
+run:ios`, Android Studio, CI -- plus the handful of things that genuinely do
+block or silently defeat rn-iso itself (a missing dev client, ccache, a
+fingerprint that differs per workspace). Nothing here is a prerequisite. Every
+section says which kind it is.
+
+**It is a playbook you apply by hand.** There is no `rn-iso init`. It was
 removed, along with the `scripts/dev` it generated, because almost nothing here
 can be generated safely: every fix lands in a file the project already owns -- a
 `metro.config.js` with its own transformer, a `Podfile` with existing
@@ -77,19 +94,22 @@ to .gitignore`). It was the one edit safe to generate, so it stopped being a
 `doctor` reads a fixed handful of things and nothing else. Every one of them is
 a file it can read statically:
 
-| Finding                                                                      | Read from                                                                  |
-| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `expo-dev-client` is not installed                                           | `package.json`                                                             |
-| Metro cache is per-project, or its `cacheStores` is only wired conditionally | `metro.config.js`, read and never evaluated                                |
-| Compilation caching off, or left at its default CAS path                     | `ios/Podfile`                                                              |
-| Gradle's build cache is off (`org.gradle.caching=true` not set)              | `android/gradle.properties` (absent on CNG -> skipped)                     |
-| ccache and compilation caching both enabled                                  | `ios/Podfile` + `ios/Podfile.properties.json`                              |
-| A configured `buildCacheProvider` on the key this SDK ignores                | `app.json` (an `app.config.ts` is code, so it says so instead of guessing) |
-| `.rn-iso/` missing from `.gitignore`                                         | the project's `.gitignore`                                                 |
-| This checkout does not fingerprint like a fresh worktree of HEAD             | a real fingerprint, twice (see "Fingerprint hygiene" below)                |
+| Finding                                                                  | Read from                                                                  | Blocks rn-iso?                       |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------- | ------------------------------------ |
+| `expo-dev-client` is not installed                                       | `package.json`                                                             | yes, on Expo -- the port cannot land |
+| ccache is on, so rn-iso will not add compilation caching                 | `ios/Podfile` + `ios/Podfile.properties.json`                              | yes -- it costs rn-iso the cache     |
+| This checkout does not fingerprint like a fresh worktree of HEAD         | a real fingerprint, twice (see "Fingerprint hygiene" below)                | yes -- every worktree misses         |
+| `metro.config.js` sets no `cacheStores`, or only wires one conditionally | `metro.config.js`, read and never evaluated                                | no -- rn-iso supplies its own        |
+| Compilation caching off in the Podfile, or left at its default CAS path  | `ios/Podfile`                                                              | no -- rn-iso supplies its own        |
+| Gradle's build cache off (`org.gradle.caching=true` not set)             | `android/gradle.properties` (absent on CNG -> skipped)                     | no -- rn-iso passes --build-cache    |
+| A configured `buildCacheProvider` on the key this SDK ignores            | `app.json` (an `app.config.ts` is code, so it says so instead of guessing) | no -- rn-iso has its own cache       |
+| `.rn-iso/` missing from `.gitignore`                                     | the project's `.gitignore`                                                 | no -- start/ios/android add it       |
 
-A provider that is MISSING is deliberately not on that list any more -- see
-"The build cache needs no setup" below.
+**The bottom five are not setup steps.** They report a repo-side setting that
+rn-iso already supplies on its own invocations, and are worth acting on only if
+you ALSO build outside rn-iso. Each one's `fix` line now says so. A provider
+that is MISSING is not on the list at all -- see "The build cache needs no
+setup" below.
 
 **Everything else on this page is yours to check by hand.** doctor does not read
 `.fingerprintignore`, does not look at `CLANG_OTHER_PREFIX_MAPPINGS` or
@@ -273,104 +293,99 @@ resolves from.
 
 ## Share compiled output between workspaces
 
-_doctor reports whether compilation caching is on and whether its CAS path is
-outside DerivedData, and whether ccache conflicts with it. It does not check the
-prefix mappings or the Swift setting below._
+_rn-iso already does this on its own builds. doctor reports the Podfile side as
+a note about builds you make outside rn-iso._
 
-On Xcode 26+, compilation caching is content-addressed, so it survives a
-different DerivedData — but **the default CAS path is inside DerivedData**,
-which is per-workspace. Left at the default it shares nothing, which is the only
-reason to turn it on. Set it somewhere fixed, in the Podfile's `post_install` --
-**inside a loop over every target's build configurations**, adding one if
-`post_install` does not already have it:
+**There is nothing to do here for `rn-iso ios`.** It passes the compilation
+cache on its own `xcodebuild` command line, where a `SETTING=value` override
+reaches every target including the Pods:
+
+```
+COMPILATION_CACHE_ENABLE_CACHING=YES
+COMPILATION_CACHE_CAS_PATH=~/.rn-iso/compilation-cache
+SWIFT_ENABLE_COMPILE_CACHE=NO
+CLANG_ENABLE_PREFIX_MAPPING=YES
+CLANG_OTHER_PREFIX_MAPPINGS=<this workspace's root>=/^src
+```
+
+The prefix mapping is what makes it worth having: cache keys otherwise contain
+absolute source paths, so a fresh worktree misses everything. rn-iso maps the
+workspace root it already knows, so every worktree of the same commit computes
+the same keys. It prints one dim line naming the CAS path when it applies, and
+it skips entirely on two conditions: an Xcode older than 26 (or one it could
+not read -- the settings do nothing there), and a project with
+`apple.ccacheEnabled=true` in `ios/Podfile.properties.json`.
+
+### Commit it only for builds rn-iso does not drive
+
+Xcode itself, `npx expo run:ios`, CI. Those fall back to the per-workspace
+default, and this is the Podfile block that fixes them -- **inside a loop over
+every target's build configurations**, adding one if `post_install` does not
+already have it:
 
 ```ruby
 post_install do |installer|
   # ... whatever is already here ...
 
-  # rn-iso: share compiled output between workspaces (Xcode 26+).
-  # The default CAS path is inside DerivedData, which is per-workspace, so
-  # leaving it there shares nothing. Pin it outside instead.
   installer.pods_project.targets.each do |target|
     target.build_configurations.each do |config|
       config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES'
       config.build_settings['COMPILATION_CACHE_CAS_PATH'] = File.expand_path('~/.rn-iso/compilation-cache')
+      # Cache keys contain absolute source paths, so canonicalise them.
+      # Count YOUR OWN depth: PODS_ROOT is <app>/ios/Pods, so '../..' reaches
+      # the app dir; a monorepo's apps/<app>/ios/Pods needs '../../../..'.
+      config.build_settings['REPO_ROOT'] = '$(PODS_ROOT)/../..'
+      config.build_settings['CLANG_ENABLE_PREFIX_MAPPING'] = 'YES'
+      config.build_settings['CLANG_OTHER_PREFIX_MAPPINGS'] =
+        '$(REPO_ROOT:standardizepath)=/^src $(DERIVED_DATA_DIR)=/^build'
+      # SWIFT_OTHER_PREFIX_MAPPINGS crashes swift-frontend whenever a compile
+      # batch mixes mapped and unmapped sources (swiftlang/swift#90698, fixed
+      # upstream, not yet released), and Swift caching cannot hit across
+      # workspaces without it -- so turn it off explicitly.
+      config.build_settings['SWIFT_ENABLE_COMPILE_CACHE'] = 'NO'
     end
   end
 end
 ```
 
-Note `installer.pods_project.targets` is the **Pods** project only -- it does
-NOT reach your app's own target (e.g. `MyApp.xcodeproj`). For most RN/Expo apps
-the app target is a thin shell over the pods and this is fine; if your app
-target compiles significant native code you want cached, add the same two
-settings to it as well (via a second loop over the app project's targets, or in
-the app target's build settings directly).
+Three things that get missed, and doctor cannot see any of them:
 
-Paste the whole block **inside** the existing `post_install do |installer|`,
-adding a `post_install` if the Podfile has none. It brings its own loop on
-purpose (see below). Write the path relative to `$HOME` and expand it at
-`pod install` time, as above: a Podfile is committed, and every machine's home
-directory is a different absolute path.
+- **The loop.** A `post_install` whose only iteration is over resource bundles
+  (the Xcode 14 code-signing workaround many Expo Podfiles carry) accepts two
+  bare `config.build_settings` lines and applies them to nothing. It compiles,
+  it builds, and it caches nothing.
+- **`installer.pods_project.targets` is the Pods project only** -- it does not
+  reach your app's own target. Fine for most RN/Expo apps; add a second loop if
+  your app target compiles significant native code.
+- **The mapped root must be normalised.** `$(PODS_ROOT)/../..` expands but is
+  not normalised and matches nothing; `:standardizepath` is what fixes it.
 
-`~/.rn-iso/compilation-cache` is a suggestion, not a requirement -- anywhere
-fixed and outside DerivedData works. It is the useful default because it sits
-beside rn-iso's other caches; a relocated CAS is not one of the two locations
-`gc` knows how to detect, so tell it where this one went (see "Keep it from
-growing forever" below) or `gc` will report every cache on the machine except
-the one this repo just created.
+Use `~/.rn-iso/compilation-cache` unless you have a reason not to: it is where
+rn-iso's own builds put it, so the two share entries instead of filling two
+caches, and `gc` detects it without being told.
 
-The loop is the part that gets skipped. A `post_install` whose only iteration is
-over resource bundles (the Xcode 14 code-signing workaround, which many Expo
-Podfiles carry) accepts two bare `config.build_settings` lines pasted into it and
-applies them to nothing -- it compiles, it builds, and it caches nothing. doctor
-sees `COMPILATION_CACHE_ENABLE_CACHING` in the file either way, so this one is
-on you to read.
-
-Cache keys still contain absolute source paths, so a fresh worktree misses
-everything until those are canonicalised. **doctor does not check this** — read
-the Podfile. `CLANG_OTHER_PREFIX_MAPPINGS` maps them, and the root must be
-**normalised**: `$(PODS_ROOT)/../..` expands but is not normalised and matches
-nothing:
-
-```ruby
-# Count YOUR OWN depth: PODS_ROOT is <app>/ios/Pods, so '../..' reaches the app
-# dir. In a monorepo the repo root is deeper -- e.g. apps/<app>/ios/Pods needs
-# '../../../..'. Set REPO_ROOT to wherever your source actually starts.
-config.build_settings['REPO_ROOT'] = '$(PODS_ROOT)/../..'
-config.build_settings['CLANG_ENABLE_PREFIX_MAPPING'] = 'YES'
-config.build_settings['CLANG_OTHER_PREFIX_MAPPINGS'] =
-  '$(REPO_ROOT:standardizepath)=/^src $(DERIVED_DATA_DIR)=/^build'
-```
-
-Leave **Swift** unmapped, and again check by hand.
-`SWIFT_OTHER_PREFIX_MAPPINGS` crashes swift-frontend whenever a compile batch
-mixes mapped and unmapped sources
-([swiftlang/swift#90698](https://github.com/swiftlang/swift/pull/90698) — fixed
-upstream, not yet in a released Xcode). Swift caching cannot hit across
-workspaces without it anyway, so turn it off explicitly and silence the
-per-target warning it emits:
-
-```ruby
-config.build_settings['SWIFT_ENABLE_COMPILE_CACHE'] = 'NO'
-```
-
-**Do not enable ccache alongside this.** The ccache launcher is what disables
-explicitly built modules, which compilation caching requires, so enabling both
-tends to mean neither works. ccache also keys on absolute paths — including
-paths _inside_ generated files like header maps and VFS overlays, which no
-`base_dir` setting can rewrite — so it misses across worktrees regardless.
+**Do not enable ccache alongside this** -- and note that ccache is now the one
+thing that makes rn-iso skip its own compilation cache too, so a repo with
+`apple.ccacheEnabled=true` gets neither. The ccache launcher is what disables
+explicitly built modules, which compilation caching requires; ccache also keys
+on absolute paths -- including paths _inside_ generated header maps and VFS
+overlays, which no `base_dir` setting can rewrite -- so it misses across
+worktrees regardless. doctor reports this one as a real cost.
 
 ## Turn on Gradle's build cache
 
-_doctor reports this, from `android/gradle.properties`. On CNG (no `android/`
-checked in) there is no file to set it in and doctor skips the check._
+_rn-iso already does this on its own builds. doctor reports the
+`gradle.properties` side as a note about builds you make outside rn-iso._
 
-Gradle's task-output cache is **off by default** (`org.gradle.caching`), so a
-second worktree re-runs every compile task from scratch even when nothing
-changed. The cache lives under the Gradle user home (`~/.gradle` unless
-something overrides it), which every rn-iso worktree on the machine already
-shares -- so this one line is the whole fix:
+**There is nothing to do here for `rn-iso android`.** It passes `--build-cache`
+on its own `./gradlew` invocation, which turns the task-output cache on for
+that build whatever the properties file says. The cache lives under the Gradle
+user home (`~/.gradle` unless something overrides it), which every worktree on
+the machine already shares, so it is cross-worktree by construction.
+
+Commit the property only for gradle runs rn-iso does not make -- Android
+Studio, a plain `./gradlew`, CI -- which otherwise re-run every task from
+scratch:
 
 ```properties
 # android/gradle.properties
@@ -379,23 +394,41 @@ org.gradle.caching=true
 
 Note the difference from the caches Gradle has anyway: the dependency and
 wrapper caches under `~/.gradle` are always shared, but they only spare the
-downloads. `org.gradle.caching=true` is what lets worktree B reuse worktree A's
-**task outputs** (compiled classes, processed resources) instead of rebuilding
-them.
+downloads. The build cache is what lets worktree B reuse worktree A's **task
+outputs** (compiled classes, processed resources).
 
 ## Share Metro's transform cache
 
-_doctor reports whether `metro.config.js` sets any `cacheStores` at all, and
-downgrades to a note when every mention of it sits behind a conditional. It does
-not check where they point, and it never evaluates the file._
+_rn-iso already does this on the dev server it runs. doctor reports the
+`metro.config.js` side as a note about Metro runs made outside rn-iso._
 
-Metro's default transform cache is NOT under the project -- Expo/RN put it at
-`$TMPDIR/metro-cache`, which is already machine-global but is a location the OS
-periodically wipes and that nothing versions or reclaims. A shared `FileStore`
-gives you a stable, gc-registered, SDK-version-partitioned cache instead of a
-volatile temp dir, so it is not the OS's to clear and `rn-iso gc` can see and
-trim it. (Do not benchmark "cold" by deleting the project's `node_modules` --
-`$TMPDIR` stays warm; the real cold number only shows after the store moves.)
+**There is nothing to do here for `rn-iso start`.** It installs a shared
+`FileStore` under `~/.rn-iso/metro-cache/<package name>` itself, and it
+**appends** -- whatever `cacheStores` the project configured stay exactly where
+they are, in order. How it gets there depends on which dev server this is:
+
+- **bare React Native**: rn-iso hosts Metro in-process, so it adds the store to
+  the config it loaded.
+- **Expo**: the dev server is the project's own `expo start`, so rn-iso spawns
+  it with `NODE_OPTIONS` extended by `--require <shim>` (appended to any
+  `NODE_OPTIONS` you set, never replacing it). The shim appends the same store
+  inside that process. It **fails soft**: anything it cannot resolve or patch
+  becomes one line on stderr -- which lands in `rn-iso logs` -- and the dev
+  server runs with whatever cache it would have had.
+
+Turn it off machine-wide, without touching the repo, in `~/.rn-iso/config.json`:
+
+```json
+{ "caches": { "injectMetroStore": false } }
+```
+
+### Commit a store only for Metro runs rn-iso does not host
+
+`npx expo start` by hand, a teammate's editor task, CI. Metro's default
+transform cache is `$TMPDIR/metro-cache` -- machine-global, but a location the
+OS periodically wipes and that nothing versions or reclaims. (Do not benchmark
+"cold" by deleting `node_modules`: `$TMPDIR` stays warm, and the real cold
+number only shows after the store moves.)
 
 ```bash
 npm i -D @rn-iso/metro
@@ -407,7 +440,9 @@ const { sharedCacheStores } = require('@rn-iso/metro');
 config.cacheStores = sharedCacheStores('myapp');
 ```
 
-The `FileStore` itself is the easy part — that call is equivalent to:
+That resolves the same root rn-iso does, so the two share entries rather than
+filling two caches. The `FileStore` itself is the easy part -- the call is
+equivalent to:
 
 ```js
 const { FileStore } = require('metro-cache');
@@ -415,8 +450,8 @@ config.cacheStores = [new FileStore({ root: path.join(os.homedir(), '.myapp-metr
 ```
 
 What the package adds is registering the store with rn-iso, at the right entry
-depth, so the next section actually works on it. Hand-roll the `FileStore` if
-you prefer, then register it yourself.
+depth, so the next section works on it. Hand-roll the `FileStore` if you
+prefer, then register it yourself.
 
 **Wire it unconditionally.** A store built behind an opt-in flag --
 
@@ -426,9 +461,8 @@ const config = { ...(stores ? { cacheStores: stores } : {}), /* ... */ };
 ```
 
 -- is off for every workspace that does not set the flag, which is all of them
-by default, and costs exactly what having no store costs. doctor cannot tell
-(it reads the file, it does not run it) so it reports a note rather than a pass;
-either drop the flag or make sure every agent's environment sets it.
+by default. doctor cannot tell (it reads the file, it does not run it) so it
+reports a note rather than a pass.
 
 ## Keep it from growing forever
 
