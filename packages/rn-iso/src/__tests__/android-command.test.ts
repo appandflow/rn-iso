@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setProjectSetting, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
-import { workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { writeWorkspaceState } from '../supervisor/run.ts';
 import { resolveMetroWithRetry } from '../commands/ios.ts';
 import {
@@ -35,6 +35,7 @@ import {
   formatDuration,
   killPreviousCollector,
   lastBuildRecord,
+  noDeviceDiagnostic,
   startCollector,
   phaseLine,
   runAndroid,
@@ -796,6 +797,88 @@ describe('the other refusals', () => {
     expect(result.error.message).toMatch(/no longer exists/);
   });
 
+  // --- issue #64: the emulator's own words, not a guess -------------------
+  //
+  // The field case: an AVD that could not be created because the disk was
+  // nearly full. rn-iso reported RN_ISO_NO_DEVICE with an empty adb
+  // diagnostic and a remedy about JAVA_HOME / ANDROID_HOME / system images --
+  // none of which was the cause -- while the emulator had printed the actual
+  // reason one second in. It now goes into the message and the remedy.
+  const DISK_FATAL =
+    'FATAL | Not enough space to create userdata partition. Available: 6341.54 MB at /Users/j/.android/avd, need 7372.80 MB';
+
+  function writeEmulatorLog(lines: string[]) {
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
+    writeFileSync(emulatorLogFile(root), `${lines.join('\n')}\n`);
+  }
+
+  test("a boot failure lifts the emulator's own FATAL line into the diagnostic", async () => {
+    writeEmulatorLog(['INFO    | Android emulator version 35.2.10.0', DISK_FATAL]);
+    const h = harness({
+      ensureDeviceBooted: async () => ({
+        failed: true,
+        reason: 'The emulator process for emulator-5584 exited before the device finished booting.',
+      }),
+      install: never('the install'),
+    });
+    const result = await h.run();
+    assert(result.error);
+    expect(result.error.code).toBe(NO_DEVICE);
+    // The --json payload carries only {code, message, remedy}, so the real
+    // cause has to be in one of them.
+    expect(result.error.message).toMatch(/Not enough space to create userdata partition/);
+    expect(result.error.remedy).toMatch(/Free disk space at the AVD directory/);
+    // ... and the generic guesses are GONE from the remedy.
+    expect(result.error.remedy).not.toMatch(/JAVA_HOME|rn-iso status/);
+    // The log that holds the rest is named, as `start` names supervisor.log.
+    expect(h.stderr.some((l) => /\.rn-iso\/logs\/emulator\.log/.test(l))).toBeTruthy();
+  });
+
+  // The same lift on the OTHER failure path: a create-or-boot that throws out
+  // of ensureOwnedDevice, which is where the field report actually landed.
+  test('an ensureDevice throw is diagnosed from emulator.log too', async () => {
+    writeEmulatorLog(["PANIC: Missing emulator engine program for 'arm64' CPU."]);
+    const h = harness({
+      ensureDevice: async () => {
+        throw new Error('Emulator emulator-5554 did not finish booting within 120s.');
+      },
+      build: never('the build'),
+    });
+    const result = await h.run();
+    assert(result.error);
+    expect(result.error.code).toBe(NO_DEVICE);
+    expect(result.error.message).toMatch(/Missing emulator engine program/);
+    expect(result.error.remedy).not.toMatch(/JAVA_HOME/);
+  });
+
+  // And when the log says nothing recognizable, today's diagnostic stands
+  // exactly as it was -- a wrong cause is worse than no cause. Only the log
+  // path is added.
+  test('the generic remedy stands when emulator.log has no severity markers', async () => {
+    writeEmulatorLog(['INFO    | Android emulator version 35.2.10.0', 'WARNING | System image is out of date']);
+    const h = harness({
+      ensureDeviceBooted: async () => ({ failed: true, reason: 'AVD rn-iso-app-412 no longer exists.' }),
+      install: never('the install'),
+    });
+    const result = await h.run();
+    assert(result.error);
+    expect(result.error.message).toBe('AVD rn-iso-app-412 no longer exists.');
+    expect(result.error.remedy).toMatch(/rn-iso status/);
+    expect(h.stderr.some((l) => /\.rn-iso\/logs\/emulator\.log/.test(l))).toBeTruthy();
+  });
+
+  // The emulator log is where the boot's stdio goes, so `android` has to be
+  // the one that names it: it owns the workspace path sim/android.js is told
+  // to write to.
+  test('the emulator log path is threaded into both device seams', async () => {
+    const h = harness({});
+    await h.run();
+    const ensured = h.calls.ensureDevice[0] as { logFile?: string };
+    const booted = h.calls.booted[0] as { logFile?: string };
+    expect(ensured.logFile).toBe(emulatorLogFile(root));
+    expect(booted.logFile).toBe(emulatorLogFile(root));
+  });
+
   test('a prebuild failure carries its own code and transcript tail', async () => {
     const h = harness({
       needsPrebuildFor: () => true,
@@ -1468,6 +1551,46 @@ describe('Contract 1: the launch marker', () => {
 // --- the pure parts --------------------------------------------------------
 
 describe('the pure parts', () => {
+  // The composer, driven through its readLog seam so the three branches are
+  // pinned without a file on disk.
+  test('noDeviceDiagnostic prefers the emulator over the generic remedy, and names the log either way', () => {
+    const fatal = 'FATAL | Not enough space to create userdata partition. Available: 1 MB, need 2 MB';
+    const lifted = noDeviceDiagnostic({
+      reason: 'The emulator exited.',
+      logFile: '/ws/.rn-iso/logs/emulator.log',
+      remedy: 'Check JAVA_HOME.',
+      readLog: () => `INFO | starting\n${fatal}\nFATAL | giving up`,
+    });
+    expect(lifted.message).toBe(`The emulator exited. The emulator reported: ${fatal}`);
+    expect(lifted.remedy).toMatch(/Free disk space/);
+    // The first extracted line is folded into the message; the rest are the
+    // dim lines under it.
+    expect(lifted.lines).toEqual(['FATAL | giving up']);
+    expect(lifted.logPath).toBe('/ws/.rn-iso/logs/emulator.log');
+
+    const unrecognized = noDeviceDiagnostic({
+      reason: 'The emulator exited.',
+      logFile: '/ws/.rn-iso/logs/emulator.log',
+      remedy: 'Check JAVA_HOME.',
+      readLog: () => 'INFO | nothing to see',
+    });
+    expect(unrecognized.message).toBe('The emulator exited.');
+    expect(unrecognized.remedy).toBe('Check JAVA_HOME.');
+    expect(unrecognized.lines).toEqual([]);
+    expect(unrecognized.logPath).toBe('/ws/.rn-iso/logs/emulator.log');
+
+    // A missing or empty log names nothing: it would send the reader to a
+    // file with nothing in it.
+    const noLog = noDeviceDiagnostic({
+      reason: 'The emulator exited.',
+      logFile: '/ws/.rn-iso/logs/emulator.log',
+      remedy: 'Check JAVA_HOME.',
+      readLog: () => '',
+    });
+    expect(noLog.logPath).toBe(null);
+    expect(noLog.remedy).toBe('Check JAVA_HOME.');
+  });
+
   test('phaseLine lines the values up in one column', () => {
     expect(phaseLine('device', 'x')).toBe('  device      x');
     expect(phaseLine('fingerprint', 'x')).toBe('  fingerprint x');
