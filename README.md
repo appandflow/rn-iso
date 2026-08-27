@@ -49,8 +49,8 @@ cache housekeeping — is documented on the
 ## Working in this repo
 
 ```bash
-npm install                       # one-time, from the workspace root
-npm test                          # runs the rn-iso suite
+pnpm install                      # one-time, from the workspace root
+pnpm test                         # runs the rn-iso suite
 cd packages/rn-iso && npm link    # put the dev CLI on your PATH
 ```
 

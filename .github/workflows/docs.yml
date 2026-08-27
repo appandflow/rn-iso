@@ -23,17 +23,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: website/package-lock.json
+          cache: pnpm
       - name: Install
-        working-directory: website
-        run: npm ci
+        run: pnpm install --frozen-lockfile --filter website
       - name: Build
         working-directory: website
-        run: npm run build
+        run: pnpm run build
       - uses: actions/upload-pages-artifact@v3
         with:
           path: website/build

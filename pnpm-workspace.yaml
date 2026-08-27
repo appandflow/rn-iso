@@ -1,0 +1,17 @@
+packages:
+  - packages/*
+  - website
+
+# Internal deps declared by semver resolve to the workspace copies.
+linkWorkspacePackages: true
+
+# Security posture (pnpm 10 defaults + explicit choices):
+# - dependency lifecycle scripts are BLOCKED unless allowlisted here
+# - freshly published versions are held back a day before pnpm will resolve
+#   them (the window supply-chain attacks live in); our own packages are
+#   exempt so a release does not lock the repo out of itself
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - rn-iso
+  - '@rn-iso/*'
+onlyBuiltDependencies: []
