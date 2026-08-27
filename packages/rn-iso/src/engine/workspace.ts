@@ -34,7 +34,7 @@ ${WORKSPACE_DIR}/
 // already carries any of them needs nothing added -- appending a second form
 // would be noise that survives forever. `src/doctor.js` reads the same file the
 // same way; keep the two in step.
-export function listsWorkspaceDir(source: unknown) {
+export function listsWorkspaceDir(source: unknown): boolean {
   return String(source || '')
     .split('\n')
     .map((line) => line.trim())
@@ -49,7 +49,7 @@ export function listsWorkspaceDir(source: unknown) {
 // calling this are starting a dev server or a build, and neither has any
 // business dying because a repo is checked out read-only. The error comes back
 // on the result instead.
-export function ensureWorkspaceIgnored(projectRoot: string) {
+export function ensureWorkspaceIgnored(projectRoot: string): { path: string; added: boolean; error: string | null } {
   const path = join(projectRoot, '.gitignore');
   let existing = '';
   try {

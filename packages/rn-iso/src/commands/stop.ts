@@ -800,7 +800,7 @@ interface StopOptions {
   json?: boolean;
 }
 
-export default function stopCommand(program: Command) {
+export default function stopCommand(program: Command): void {
   program
     .command('stop')
     .description(

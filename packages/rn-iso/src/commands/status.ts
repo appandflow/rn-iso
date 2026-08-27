@@ -30,7 +30,7 @@ interface StatusOptions {
   json?: boolean;
 }
 
-export default function statusCommand(program: Command) {
+export default function statusCommand(program: Command): void {
   program
     .command('status')
     .description(

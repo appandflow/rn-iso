@@ -169,7 +169,10 @@ function extractRubyHead(lines: string[]): PodDiagnostics | null {
 //                                   Podfile.
 //   { stale: true, reason }         the sandbox does not match the lock.
 //   { stale: false }                it matches.
-export function podsAreStale(lockText: unknown, manifestText: unknown) {
+export function podsAreStale(
+  lockText: unknown,
+  manifestText: unknown,
+): { noPods?: boolean; stale: boolean; reason?: string } {
   const lock = normalize(lockText);
   const manifest = normalize(manifestText);
   if (lock === null && manifest === null) return { noPods: true, stale: false };
@@ -202,7 +205,11 @@ function podfilePath(root: string) {
 
 // Thin. Reads the two files podsAreStale compares; an unreadable one is null,
 // which is the same as absent for this decision.
-export function readPodState(root: string) {
+export function readPodState(root: string): {
+  hasPodfile: boolean;
+  lockText: string | null;
+  manifestText: string | null;
+} {
   return {
     hasPodfile: existsSync(podfilePath(root)),
     lockText: readOrNull(join(root, 'ios', 'Podfile.lock')),
@@ -293,6 +300,20 @@ export function readRubyVersion(
   }
 }
 
+// The all-optional view of runPodInstall's outcomes: { ok, durationMs } on
+// success, { failed, reason, ... } otherwise.
+export type PodInstallResult = {
+  ok?: boolean;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+  remedy?: string;
+  diagnosticSource?: string;
+  diagnosticLines?: string[];
+  lastLines?: string[];
+  durationMs?: number;
+};
+
 export async function runPodInstall(
   root: string,
   logWriter: NdjsonWriter | null | undefined,
@@ -307,7 +328,7 @@ export async function runPodInstall(
     heartbeatMs?: number;
     onHeartbeat?: (line: string) => void;
   } = {},
-) {
+): Promise<PodInstallResult> {
   const iosDir = join(root, 'ios');
   if (!existsSync(iosDir)) {
     return {

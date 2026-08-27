@@ -176,7 +176,7 @@ export function collectorLogFile(root: string): string {
   return join(workspaceLogsDir(root), `collector-${PLATFORM}.log`);
 }
 
-export function collectorEntry() {
+export function collectorEntry(): string {
   return spawnEntry('collector-run');
 }
 
@@ -403,7 +403,7 @@ function readJson(file: string): unknown {
 //
 // So the resolve is retried. The backoff spans the crawl without adding a
 // pause to the ordinary case, where the first attempt answers immediately.
-export const GATE_RETRY_DELAYS_MS = [3000, 7000];
+export const GATE_RETRY_DELAYS_MS: number[] = [3000, 7000];
 
 // PURE. Whether waiting could change this answer. A port held by a bundler
 // running OUTSIDE this project will not become ours; anything else (nothing
@@ -730,7 +730,55 @@ export async function replaceCollector({
 
 // --- the command ----------------------------------------------------------
 
-const DEFAULT_DEPS = {
+interface IosDeps {
+  findProjectRoot: typeof findProjectRoot;
+  resolveSettings: typeof resolveSettings;
+  gitCommonDir: typeof gitCommonDir;
+  repoRoot: typeof repoRoot;
+  detectBundleId: typeof detectBundleId;
+  detectIsExpo: typeof detectIsExpo;
+  devClientScheme: typeof devClientScheme;
+  getProject: typeof getProject;
+  upsertProject: typeof upsertProject;
+  projectShortcut: typeof projectShortcut;
+  checkDeviceCapacity: typeof checkDeviceCapacity;
+  ensureOwnedDevice: typeof ensureOwnedDevice;
+  ensureBooted: typeof ensureBooted;
+  resolveProjectMetro: typeof resolveProjectMetro;
+  resolveMetroWithRetry: typeof resolveMetroWithRetry;
+  readWorkspaceState: typeof readWorkspaceState;
+  isPidAlive: typeof isPidAlive;
+  getConcurrencyLimits: typeof getConcurrencyLimits;
+  fingerprintProject: typeof fingerprintProject;
+  resolveBuild: typeof resolveBuild;
+  storeBuild: typeof storeBuild;
+  acquireBuildLock: typeof acquireBuildLock;
+  releaseBuildLock: typeof releaseBuildLock;
+  waitForBuild: typeof waitForBuild;
+  acquireBuildSlot: typeof acquireBuildSlot;
+  releaseBuildSlot: typeof releaseBuildSlot;
+  loadProjectProvider: typeof loadProjectProvider;
+  checkEasAuth: typeof checkEasAuth;
+  resolveRemote: typeof resolveRemote;
+  uploadRemote: typeof uploadRemote;
+  needsPrebuild: typeof needsPrebuild;
+  runPrebuild: typeof runPrebuild;
+  readPodState: typeof readPodState;
+  podsAreStale: typeof podsAreStale;
+  runPodInstall: typeof runPodInstall;
+  buildIos: typeof buildIos;
+  readBundleId: typeof readBundleId;
+  installIosApp: typeof installIosApp;
+  launchIosApp: typeof launchIosApp;
+  verifyLaunch: typeof verifyLaunch;
+  ensureWorkspaceIgnored: typeof ensureWorkspaceIgnoredSafely;
+  replaceCollector: typeof replaceCollector;
+  writeWorkspaceState: typeof writeWorkspaceState;
+  createWriter: typeof createNdjsonWriter;
+  now: () => number;
+}
+
+const DEFAULT_DEPS: IosDeps = {
   findProjectRoot,
   resolveSettings,
   gitCommonDir,
@@ -785,7 +833,7 @@ export default function iosCommand(program: Command): void {
 // `deps` is the test seam. Every engine call goes through it, so the tests
 // below assert the ORDER of a build (metro gate, then fingerprint, then
 // prebuild, pods, build, store) without a simulator or an xcodebuild.
-export function registerIos(program: Command, deps: Partial<typeof DEFAULT_DEPS> = {}): void {
+export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void {
   program
     .command('ios')
     .description(
@@ -803,10 +851,7 @@ export function registerIos(program: Command, deps: Partial<typeof DEFAULT_DEPS>
     });
 }
 
-export async function runIos(
-  opts: IosCommandOptions = {},
-  overrides: Partial<typeof DEFAULT_DEPS> = {},
-): Promise<IosFacts | null> {
+export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> = {}): Promise<IosFacts | null> {
   // Annotated explicitly: spreading a Partial<> over the full DEFAULT_DEPS
   // would otherwise let TS infer some properties as possibly-undefined, even
   // though every key is always present (DEFAULT_DEPS supplies every one).
@@ -1623,7 +1668,7 @@ export async function runIos(
 }
 
 // PURE. How the outcome line describes where the app came from.
-export function cacheDescription(cacheHit: CacheHitLevel, providerName: string | null = null) {
+export function cacheDescription(cacheHit: CacheHitLevel, providerName: string | null = null): string {
   if (cacheHit === 'remote') return `from ${providerName || 'the remote cache'}`;
   if (cacheHit === 'local') return 'from cache';
   return 'built';
@@ -1642,7 +1687,7 @@ export function cacheDescription(cacheHit: CacheHitLevel, providerName: string |
 // would be noise. What a --json consumer gets is a sentence it can report
 // verbatim plus a next step, which is what it had for every other failure code
 // and did not have for this one.
-export function xcodeFailureReport(result: BuildIosResultLike, logPath: string) {
+export function xcodeFailureReport(result: BuildIosResultLike, logPath: string): { message: string; remedy: string } {
   const diagnostics = (Array.isArray(result?.diagnostics) ? result.diagnostics : []) as Diagnostic[];
   const code = result?.exitCode;
   const how = code === null || code === undefined ? '' : ` (exit code ${code})`;

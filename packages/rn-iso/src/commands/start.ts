@@ -35,7 +35,7 @@ const POLL_MS = 500;
 const LOG_TAIL_LINES = 5;
 const ERROR_EVIDENCE_RECORDS = 8;
 
-export function supervisorEntry() {
+export function supervisorEntry(): string {
   return spawnEntry('supervisor-run');
 }
 
@@ -158,14 +158,14 @@ export function startError({
   return { code, message, remedy: remedy ?? null };
 }
 
-export function tailLines(text: unknown, n = LOG_TAIL_LINES): string[] {
+export function tailLines(text: unknown, n: number = LOG_TAIL_LINES): string[] {
   const lines = String(text || '')
     .split('\n')
     .filter((l) => l.trim() !== '');
   return lines.slice(-n);
 }
 
-export function readLogTail(file: string, n = LOG_TAIL_LINES): string[] {
+export function readLogTail(file: string, n: number = LOG_TAIL_LINES): string[] {
   try {
     return tailLines(readFileSync(file, 'utf-8'), n);
   } catch {
@@ -175,7 +175,7 @@ export function readLogTail(file: string, n = LOG_TAIL_LINES): string[] {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-export default function startCommand(program: Command) {
+export default function startCommand(program: Command): void {
   registerStart(program);
 }
 
@@ -184,7 +184,7 @@ interface StartOptions {
   wait?: string;
 }
 
-export function registerStart(program: Command) {
+export function registerStart(program: Command): void {
   program
     .command('start')
     .description(

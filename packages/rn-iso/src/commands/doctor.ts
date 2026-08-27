@@ -8,7 +8,7 @@ interface DoctorOptions {
   json?: boolean;
 }
 
-export default function doctorCommand(program: Command) {
+export default function doctorCommand(program: Command): void {
   program
     .command('doctor')
     .description(

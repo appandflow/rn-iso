@@ -31,9 +31,54 @@ interface ExecOpt {
   exec?: Executor | null;
 }
 
+// The all-optional result views this module's contract promises: { ok, ... }
+// on success, { failed, code, reason } on failure.
+export type IosInstallResult = {
+  ok?: boolean;
+  appPath?: string;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+};
+
+export type IosLaunchResult = {
+  ok?: boolean;
+  mode?: string;
+  url?: string;
+  jsLocation?: string;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+};
+
+export type AndroidInstallResult = {
+  ok?: boolean;
+  apkPath?: string;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+};
+
+export type AndroidLaunchResult = {
+  ok?: boolean;
+  mode?: string;
+  component?: string;
+  devClientUrl?: string;
+  devClientNote?: string | null;
+  reversed?: string[];
+  debugHttpHost?: string | null;
+  debugHttpHostNote?: string | null;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+};
+
 // --- iOS ------------------------------------------------------------------
 
-export function installIosApp({ udid, appPath }: { udid: string; appPath: string }, { exec = null }: ExecOpt = {}) {
+export function installIosApp(
+  { udid, appPath }: { udid: string; appPath: string },
+  { exec = null }: ExecOpt = {},
+): IosInstallResult {
   const e = exec || getExecutor();
   try {
     e.runFile('xcrun', ['simctl', 'install', udid, appPath]);
@@ -67,7 +112,7 @@ export function installIosApp({ udid, appPath }: { udid: string; appPath: string
 // dead port therefore degrades to 8081 rather than failing loudly -- which is
 // exactly why `ios` refuses to run at all without a healthy Metro on the
 // reserved port (RN_ISO_NO_METRO).
-export function jsLocationValue(metroPort: number | string) {
+export function jsLocationValue(metroPort: number | string): string {
   return `localhost:${metroPort}`;
 }
 
@@ -97,7 +142,7 @@ export function jsLocationValue(metroPort: number | string) {
 // modules/devlauncher/helpers/DevLauncherURLHelper.kt line 7 is
 // `fun isDevLauncherUrl(uri: Uri) = uri.host == "expo-development-client"`,
 // the same host-segment match EXDevLauncherURLHelper.swift line 34 makes.
-export function devClientUrl(scheme: string, metroPort: number | string, host = 'localhost') {
+export function devClientUrl(scheme: string, metroPort: number | string, host = 'localhost'): string {
   return `${scheme}://expo-development-client/?url=${encodeURIComponent(`http://${host}:${metroPort}`)}`;
 }
 
@@ -114,7 +159,7 @@ export function launchIosApp(
     devClientScheme = null,
   }: { udid: string; bundleId: string; metroPort: number | string; devClientScheme?: string | null },
   { exec = null }: ExecOpt = {},
-) {
+): IosLaunchResult {
   const e = exec || getExecutor();
   try {
     e.runFile('xcrun', [
@@ -158,7 +203,7 @@ export function launchIosApp(
 export function installAndroidApp(
   { serial, apkPath }: { serial: string; apkPath: string },
   { exec = null }: ExecOpt = {},
-) {
+): AndroidInstallResult {
   const e = exec || getExecutor();
   try {
     // -r reinstalls over an existing copy, keeping data. Without it every
@@ -179,7 +224,7 @@ export function installAndroidApp(
 // (captured verbatim from a live emulator-5554, Android 16). When nothing
 // matches, the whole output is "No activity found". Returns the component or
 // null; the caller falls back to monkey.
-export function parseResolvedActivity(text: unknown) {
+export function parseResolvedActivity(text: unknown): string | null {
   if (typeof text !== 'string') return null;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -232,7 +277,7 @@ function resolveLaunchActivity(serial: string, packageName: string, { exec = nul
 export function reverseMetroPorts(
   { serial, metroPort }: { serial: string; metroPort: number | string },
   { exec = null }: ExecOpt = {},
-) {
+): { ok?: boolean; reversed?: string[]; failed?: boolean; code?: string; reason?: string } {
   const e = exec || getExecutor();
   const pairs = [[DEFAULT_METRO_PORT, metroPort]];
   if (Number(metroPort) !== DEFAULT_METRO_PORT) pairs.push([metroPort, metroPort]);
@@ -294,7 +339,7 @@ const EMULATOR_HOST_LOOPBACK = '10.0.2.2';
 // while the same argv with the script quoted wrote the file correctly. Single
 // quotes, because they quote everything (the prefs XML is full of double
 // quotes), and `'\''` for the one character they cannot carry.
-export function deviceShellArg(text: unknown) {
+export function deviceShellArg(text: unknown): string {
   return `'${String(text).replace(/'/g, "'\\''")}'`;
 }
 
@@ -322,7 +367,7 @@ export function debugHttpHostScript({
   packageName: string;
   host: string;
   dataDir?: string | null;
-}) {
+}): string {
   const dir = dataDir || `/data/data/${packageName}`;
   const prefs = `shared_prefs/${packageName}_preferences.xml`;
   const tmp = `${prefs}.rn-iso.tmp`;
@@ -346,7 +391,7 @@ export function debugHttpHostScript({
 export function writeDebugHttpHost(
   { serial, packageName, metroPort }: { serial: string; packageName: string; metroPort: number | string },
   { exec = null }: ExecOpt = {},
-) {
+): { ok: boolean; host?: string; reason?: string } {
   const e = exec || getExecutor();
   const host = `${EMULATOR_HOST_LOOPBACK}:${metroPort}`;
   const script = debugHttpHostScript({ packageName, host });
@@ -361,7 +406,7 @@ export function writeDebugHttpHost(
 // PURE. The dev-client deep link for an emulator: the same shape iOS opens
 // with `simctl openurl`, pointed at 10.0.2.2 rather than localhost (see
 // EMULATOR_HOST_LOOPBACK).
-export function androidDevClientUrl(scheme: string, metroPort: number | string) {
+export function androidDevClientUrl(scheme: string, metroPort: number | string): string {
   return devClientUrl(scheme, metroPort, EMULATOR_HOST_LOOPBACK);
 }
 
@@ -372,7 +417,7 @@ export function androidDevClientUrl(scheme: string, metroPort: number | string) 
 // platforms/android/adb.ts, openAsync: it matches on the text, not the
 // status). Returns the error line, or null when the output looks like a
 // start.
-export function amStartError(text: unknown) {
+export function amStartError(text: unknown): string | null {
   const out = String(text ?? '');
   for (const raw of out.split('\n')) {
     const line = raw.trim();
@@ -395,7 +440,7 @@ export function amStartError(text: unknown) {
 export function openAndroidDevClientUrl(
   { serial, url }: { serial: string; url: string },
   { exec = null }: ExecOpt = {},
-) {
+): { ok?: boolean; url?: string; failed?: boolean; reason?: string } {
   const e = exec || getExecutor();
   let out;
   try {
@@ -436,7 +481,7 @@ export function launchAndroidApp(
     devClientScheme = null,
   }: { serial: string; packageName: string; metroPort: number | string; devClientScheme?: string | null },
   { exec = null }: ExecOpt = {},
-) {
+): AndroidLaunchResult {
   const e = exec || getExecutor();
   const reversed = reverseMetroPorts({ serial, metroPort }, { exec: e });
   if (reversed.failed) return reversed;
@@ -523,6 +568,14 @@ function describe(err: unknown) {
 // check. Saying "launched" when we did not see a bundle request is the thing
 // that must not happen.
 
+export type VerifyLaunchResult = {
+  verified: boolean;
+  record?: NdjsonRecord;
+  timedOut?: boolean;
+  mode: string | null;
+  waitedMs: number;
+};
+
 export const LAUNCH_UNVERIFIED = 'unverified';
 
 // ~20s: a cold dev-client fetches the manifest, then requests the bundle. On
@@ -550,7 +603,7 @@ const BUNDLE_EVENTS = new Set([
 // whether the fetch happened after THIS launch, and a previous run's bundle
 // build sitting in the same file would otherwise verify a launch that never
 // loaded anything.
-export function isBundleProof(record: unknown, since: number | string = 0) {
+export function isBundleProof(record: unknown, since: number | string = 0): boolean {
   if (!record || typeof record !== 'object') return false;
   const rec = record as NdjsonRecord;
   const ts = Number(rec.ts);
@@ -599,7 +652,7 @@ export async function verifyLaunch({
   readRecords?: (() => NdjsonRecord[]) | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
-} = {}) {
+} = {}): Promise<VerifyLaunchResult> {
   const read = readRecords || (() => readMetroRecords(logsDir));
   const startedAt = now();
   const deadline = startedAt + Math.max(0, timeoutMs);
@@ -657,7 +710,7 @@ export function unverifiedLaunchLines({
   serial?: string | null;
   devClientUrl?: string | null;
   mode?: string | null;
-}) {
+}): string[] {
   const seconds = Math.round(Number(waitedMs || 0) / 1000);
   const lines = [
     `The app was started, but nothing fetched a bundle from this workspace's Metro (port ${metroPort}) within ${seconds}s.`,

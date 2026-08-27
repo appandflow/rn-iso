@@ -45,7 +45,7 @@ import {
   watchAppPid,
 } from './android.ts';
 
-export const PLATFORMS = ['ios', 'android'];
+export const PLATFORMS: string[] = ['ios', 'android'];
 
 // The seam's return, and parseArgs' return, are both a flat all-optional bag
 // rather than a discriminated union: every field a platform might need is

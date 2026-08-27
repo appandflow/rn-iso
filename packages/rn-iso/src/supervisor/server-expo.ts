@@ -277,6 +277,15 @@ interface ExpoExitInfo {
   error?: Error;
 }
 
+// The ServerHandle runSupervisor drives, plus the pieces a test reaches for.
+export interface ExpoServerHandle {
+  mode: string;
+  serverPid: number | null;
+  child: ChildProcess;
+  onExit(cb: (info: ExpoExitInfo | null) => void): void;
+  close(): Promise<void>;
+}
+
 export async function startExpoServer({
   root,
   port,
@@ -291,7 +300,7 @@ export async function startExpoServer({
   writer?: NdjsonWriter | null;
   spawnFn?: ((cmd: string, args: string[], opts: SpawnOptions) => ChildProcess) | null;
   killTimeoutMs?: number;
-}) {
+}): Promise<ExpoServerHandle> {
   const bin = expoBinPath(root);
   if (!bin) {
     const refusal = expoBinRefusal(root);

@@ -48,7 +48,7 @@ export function levelFromLogcatLetter(letter: string): string {
 //
 // Only E is demoted, never F. A fatal line inside an app process is libc
 // reporting a signal or ART aborting, and there is no benign version of that.
-export const NOISE_TAGS = new Set([
+export const NOISE_TAGS: Set<string> = new Set([
   // Emulator graphics: the goldfish/ranchu GLES and Vulkan bridge logs at E
   // for unimplemented entry points and for buffer metadata it does not know.
   'libEGL',

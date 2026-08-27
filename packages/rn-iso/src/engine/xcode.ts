@@ -164,7 +164,7 @@ const TEST_SCHEME = /(?:UI)?Tests$/;
 //      would silently build the tvOS target or a staging variant, and four
 //      minutes later install something the agent did not ask for. A structured
 //      RN_ISO_NO_SCHEME the agent can answer is worth more than a coin flip.
-export function pickScheme(schemes: unknown, containerName: unknown) {
+export function pickScheme(schemes: unknown, containerName: unknown): string | null | undefined {
   const list: string[] = (Array.isArray(schemes) ? schemes : []).filter(
     (s: unknown) => typeof s === 'string' && s.trim() !== '',
   );
@@ -190,7 +190,10 @@ const LIST_TIMEOUT_MS = 180000;
 // contained no schemes, which is `{name, schemes: []}`. Both end in
 // RN_ISO_NO_SCHEME, but only one of them is worth telling the user to run
 // `xcodebuild -list` by hand about.
-export function listSchemes(project: XcodeProject, { exec = null }: { exec?: Executor | null } = {}) {
+export function listSchemes(
+  project: XcodeProject,
+  { exec = null }: { exec?: Executor | null } = {},
+): { name: string | null; schemes: string[] } | null {
   const executor = exec || getExecutor();
   try {
     const out = executor.runFile('xcodebuild', [project.flag as string, project.path as string, '-list', '-json'], {
@@ -272,7 +275,10 @@ export function xcodebuildArgs({
   ];
 }
 
-export function productsDir(derivedDataPath: string, { configuration = 'Debug', sdk = 'iphonesimulator' } = {}) {
+export function productsDir(
+  derivedDataPath: string,
+  { configuration = 'Debug', sdk = 'iphonesimulator' }: { configuration?: string; sdk?: string } = {},
+): string {
   return join(derivedDataPath, 'Build', 'Products', `${configuration}-${sdk}`);
 }
 
@@ -281,7 +287,7 @@ export function productsDir(derivedDataPath: string, { configuration = 'Debug', 
 // the scheme -- the others are nested inside it as well, but a flat listing
 // cannot tell which. Preferring the scheme name, then falling back to a sorted
 // pick, keeps the choice deterministic either way.
-export function pickAppBundle(entries: unknown, preferredName: string | null = null) {
+export function pickAppBundle(entries: unknown, preferredName: string | null = null): string | null | undefined {
   const apps = (Array.isArray(entries) ? entries : [])
     .filter((e) => typeof e === 'string' && e.endsWith('.app'))
     .sort();
@@ -294,7 +300,7 @@ export function pickAppBundle(entries: unknown, preferredName: string | null = n
   return apps[0];
 }
 
-export function findAppBundle(dir: string, preferredName: string | null = null) {
+export function findAppBundle(dir: string, preferredName: string | null = null): string | null {
   let entries;
   try {
     entries = readdirSync(dir);
@@ -308,7 +314,7 @@ export function findAppBundle(dir: string, preferredName: string | null = null) 
 // Pure: the JSON `plutil -convert json` produces, in. A missing or non-string
 // identifier is null rather than an exception -- the caller turns it into a
 // build failure with a remedy, which is more use than a stack trace.
-export function parseBundleId(plistJson: unknown) {
+export function parseBundleId(plistJson: unknown): string | null {
   if (typeof plistJson !== 'string') return null;
   // Genuinely dynamic: this is Info.plist converted to JSON by `plutil`, an
   // Apple-defined shape this module has no reason to model beyond one field.
@@ -332,7 +338,7 @@ export function parseBundleId(plistJson: unknown) {
 // runFile, not run: the .app path comes from a derived-data directory under a
 // project path the user chose, and a space in it must reach the tool as one
 // argument (CLAUDE.md, "Single exec wrapper").
-export function readBundleId(appPath: string, { exec = null }: { exec?: Executor | null } = {}) {
+export function readBundleId(appPath: string, { exec = null }: { exec?: Executor | null } = {}): string | null {
   const executor = exec || getExecutor();
   try {
     const json = executor.runFile('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')]);
@@ -354,7 +360,7 @@ export function readBundleId(appPath: string, { exec = null }: { exec?: Executor
 // found nothing recognizable. Kept here because buildIos already holds the
 // transcript in memory and re-reading the log file to get it back would be
 // absurd.
-export function tailLines(lines: unknown, count = 5) {
+export function tailLines(lines: unknown, count = 5): string[] {
   const nonEmpty = (Array.isArray(lines) ? lines : []).filter((l) => typeof l === 'string' && l.trim() !== '');
   return nonEmpty.slice(-count);
 }
@@ -451,6 +457,25 @@ function failedResult({
   };
 }
 
+// The all-optional view of buildIos's two outcomes: the success shape and the
+// failedResult shape, per the doc comment below.
+export type BuildIosResult = {
+  failed?: boolean;
+  code?: string;
+  diagnostics?: Diagnostic[];
+  truncated?: number;
+  exitCode?: number | null;
+  tail?: string[];
+  appPath?: string;
+  bundleId?: string;
+  scheme?: string;
+  project?: XcodeProject;
+  derivedDataPath?: string;
+  productsDir?: string;
+  durationMs: number;
+  transcriptLines: number;
+};
+
 /**
  * Run xcodebuild for the simulator, streaming the transcript into logWriter.
  *
@@ -494,7 +519,7 @@ export async function buildIos({
   exec?: Executor | null;
   heartbeatMs?: number;
   onHeartbeat?: (line: string) => void;
-}) {
+}): Promise<BuildIosResult> {
   if (!root || typeof root !== 'string') throw new TypeError('buildIos requires {root}');
   if (!logWriter || typeof logWriter.write !== 'function')
     throw new TypeError('buildIos requires {logWriter} with a write() method');

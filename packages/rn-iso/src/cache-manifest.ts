@@ -86,7 +86,7 @@ function writeManifest(path: string, caches: CacheEntry[]): void {
 // of grouping directories -- <root>/<platform>/<fingerprint> for a build cache,
 // <root>/<shard>/<key> for a Metro FileStore -- registers 2, so gc trims one
 // build or one transform rather than an entire platform or shard.
-export function register(entry: CacheEntry, path: string = manifestPath()) {
+export function register(entry: CacheEntry, path: string = manifestPath()): CacheEntry {
   if (!entry?.dir) throw new Error('a cache registration needs a `dir`');
   const dir = expand(entry.dir);
   const manifest = readManifest(path);
@@ -129,7 +129,13 @@ export function unregister(dir: string, path: string = manifestPath()): boolean 
 // hand is dropped from the report rather than shown as 0 bytes -- but it is
 // left in the manifest, because it will come back the next time that project
 // builds, and re-registering it should not be the user's job.
-export function registeredCaches(path: string = manifestPath()) {
+export function registeredCaches(path: string = manifestPath()): {
+  name: string | undefined;
+  dir: string;
+  prune: 'atomic' | 'entries';
+  entriesDepth: number;
+  note: string | undefined;
+}[] {
   return readManifest(path)
     .caches.filter((c) => c.dir && existsSync(c.dir))
     .map((c) => ({

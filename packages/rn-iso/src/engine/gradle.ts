@@ -29,7 +29,7 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { androidHome } from '../sim/android.ts';
 import { createLineReader, stripAnsi } from '../supervisor/server-expo.ts';
 import { waitForChild } from './deps.ts';
-import { capDiagnostics, extractGradleDiagnostics } from './errors-gradle.ts';
+import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './errors-gradle.ts';
 // Borrowed rather than copied (the same reasoning as the line reader above):
 // the heartbeat is generic build-child plumbing that lives beside the iOS
 // build because that is what needed it first, and a second copy would drift.
@@ -78,7 +78,7 @@ function gradlewPath(root: string) {
   return join(androidDir(root), 'gradlew');
 }
 
-export function debugApkDir(root: string) {
+export function debugApkDir(root: string): string {
   return join(androidDir(root), 'app', 'build', 'outputs', 'apk', 'debug');
 }
 
@@ -124,7 +124,7 @@ export function androidSdkRefusal({
   sdkPath: string;
   sdkExists: boolean;
   hasLocalProperties: boolean;
-}) {
+}): { code: string; reason: string; remedy: string } | null {
   if (sdkExists || hasLocalProperties) return null;
   return {
     code: BUILD_ERROR,
@@ -140,7 +140,7 @@ export function androidSdkRefusal({
 // module name and the flavour, so it is a preference and not an assumption:
 // a project with flavours produces app-staging-debug.apk and nothing else.
 // Intermediate outputs (-unsigned, -unaligned) are never the installable one.
-export function pickDebugApk(files: unknown) {
+export function pickDebugApk(files: unknown): string | null | undefined {
   const list = (Array.isArray(files) ? files : [])
     .filter((f) => typeof f === 'string' && f.endsWith('.apk'))
     .filter((f) => !/-(?:unsigned|unaligned)\.apk$/.test(f));
@@ -161,7 +161,7 @@ export function pickDebugApk(files: unknown) {
 // This is the listing the plan asks the APK be verified against rather than
 // hardcoded -- it is written by the build that just ran, so it is right about
 // flavours, splits and renames in a way a hardcoded name is not.
-export function parseOutputMetadata(text: unknown) {
+export function parseOutputMetadata(text: unknown): string | null | undefined {
   let parsed;
   try {
     parsed = JSON.parse(String(text));
@@ -186,7 +186,7 @@ const TRANSCRIPT_APK = [
   /Installing APK '([^']+\.apk)'/i,
 ];
 
-export function parseApkFromTranscript(text: unknown) {
+export function parseApkFromTranscript(text: unknown): string | null | undefined {
   if (typeof text !== 'string') return null;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -202,7 +202,7 @@ export function parseApkFromTranscript(text: unknown) {
 // THIS build. A transcript path is what the build itself said it produced; the
 // metadata file is what AGP recorded; the directory listing is the fallback
 // for a build that reported neither.
-export function locateDebugApk(root: string, transcript = '') {
+export function locateDebugApk(root: string, transcript = ''): string | null {
   const dir = debugApkDir(root);
 
   const fromTranscript = parseApkFromTranscript(transcript);
@@ -223,6 +223,23 @@ export function locateDebugApk(root: string, transcript = '') {
   const listed = pickDebugApk(safeList(dir));
   return listed ? join(dir, listed) : null;
 }
+
+// The all-optional view of buildAndroid's outcomes: { ok, apkPath } on
+// success, the failure shape (with the diagnostics extract) otherwise.
+export type BuildAndroidResult = {
+  ok?: boolean;
+  apkPath?: string;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+  remedy?: string;
+  androidDir?: string;
+  gradlew?: string;
+  diagnostics?: Diagnostic[];
+  truncated?: number;
+  lastLines: string[];
+  durationMs: number;
+};
 
 // `./gradlew assembleDebug` with cwd android/.
 //
@@ -250,7 +267,7 @@ export async function buildAndroid(
     heartbeatMs?: number;
     onHeartbeat?: (line: string) => void;
   } = {},
-) {
+): Promise<BuildAndroidResult> {
   const project = discoverAndroidProject(root);
   if (project.failed) return { ...project, diagnostics: [], truncated: 0, lastLines: [] as string[], durationMs: 0 };
 

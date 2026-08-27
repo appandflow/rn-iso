@@ -143,7 +143,7 @@ export const WAIT_PROGRESS_MS = 30000;
 // noticed within one poll however long it took to die. This is the ceiling for
 // a builder that is ALIVE and wedged -- the one case liveness cannot see --
 // and it is deliberately longer than any build this tool has ever measured.
-export const WAIT_CEILING_MS = 90 * 60 * 1000;
+export const WAIT_CEILING_MS: number = 90 * 60 * 1000;
 
 function sleepAsync(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

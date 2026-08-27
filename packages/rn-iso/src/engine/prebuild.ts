@@ -33,7 +33,7 @@ const LAST_LINES = 20;
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
 // PURE. The directory a platform's native project lives in.
-export function nativeDirName(platform: string) {
+export function nativeDirName(platform: string): string {
   return platform === 'android' ? 'android' : 'ios';
 }
 
@@ -42,12 +42,12 @@ function nativeDir(root: string, platform: string) {
 }
 
 // PURE. The decision, with the disk already read.
-export function shouldPrebuild({ isExpo, nativeDirExists }: { isExpo?: unknown; nativeDirExists?: unknown }) {
+export function shouldPrebuild({ isExpo, nativeDirExists }: { isExpo?: unknown; nativeDirExists?: unknown }): boolean {
   return Boolean(isExpo) && !nativeDirExists;
 }
 
 // Thin: the same decision with the one existsSync it needs.
-export function needsPrebuild(root: string, platform: string, isExpo: unknown) {
+export function needsPrebuild(root: string, platform: string, isExpo: unknown): boolean {
   return shouldPrebuild({ isExpo, nativeDirExists: existsSync(nativeDir(root, platform)) });
 }
 
@@ -65,7 +65,7 @@ export function prebuildRefusal({
   isExpo?: unknown;
   platform: string;
   nativeDirExists?: unknown;
-}) {
+}): { code: string; message: string; remedy: string } | null {
   if (nativeDirExists || isExpo) return null;
   const dir = nativeDirName(platform);
   return {
@@ -74,6 +74,20 @@ export function prebuildRefusal({
     remedy: `Check out or generate the native project (\`npx @react-native-community/cli init\` produced one originally), or add \`expo\` to the project so \`expo prebuild\` can create ${dir}/.`,
   };
 }
+
+// The all-optional view of runPrebuild's outcomes: { ok, nativeDir } on
+// success, { failed, reason, lastLines } otherwise.
+export type RunPrebuildResult = {
+  ok?: boolean;
+  nativeDir?: string;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+  remedy?: string;
+  error?: { code: string; message: string; remedy: string };
+  lastLines?: string[];
+  durationMs?: number;
+};
 
 // `<the project's own expo binary> prebuild -p <platform> --no-install`.
 //
@@ -98,7 +112,7 @@ export async function runPrebuild(
     now = Date.now,
     isExpo = null,
   }: { spawnFn?: SpawnFn | null; now?: () => number; isExpo?: boolean | null } = {},
-) {
+): Promise<RunPrebuildResult> {
   const dirExists = existsSync(nativeDir(root, platform));
   const refusal = prebuildRefusal({
     isExpo: isExpo === null ? detectIsExpo(root) : isExpo,
