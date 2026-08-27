@@ -33,7 +33,7 @@ import {
   resolveEasCliBin,
 } from './engine/remote-cache.ts';
 import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.ts';
-import { remoteIosSetting, resolveSettings } from './settings.ts';
+import { remoteAndroidSetting, remoteIosSetting, resolveSettings } from './settings.ts';
 
 // Loosely-typed views of the JSON config files this module parses
 // defensively (package.json, app.json, Podfile.properties.json): the shapes
@@ -584,7 +584,7 @@ export function checkRemoteDevice({
   return finding(
     'note',
     'This project uses a remote device',
-    '`rn-iso ios --remote` creates an EAS Simulator session named rn-iso-<label>, bounded to two hours, and ends it on `stop` and `worktree remove`. The build still runs on this machine; only the device is elsewhere. Native device logs are not captured on a remote device -- the Metro half of the timeline is unaffected.',
+    '`ios --remote` / `android --remote` create an EAS Simulator session named rn-iso-<label>, bounded to two hours, and ends it on `stop` and `worktree remove`. The build still runs on this machine; only the device is elsewhere. Native device logs are not captured on a remote device -- the Metro half of the timeline is unaffected.',
     null,
   );
 }
@@ -685,7 +685,8 @@ export function runDoctor(
   // The remote device. Both facts are cheap, and the check returns null unless
   // one of them says this project actually uses one, so an ordinary project
   // pays a settings read and nothing else.
-  const remoteConfigured = remoteIosSetting(resolveSettings({ projectPath: projectRoot, repoRoot: projectRoot }));
+  const projectSettings = resolveSettings({ projectPath: projectRoot, repoRoot: projectRoot });
+  const remoteConfigured = remoteIosSetting(projectSettings) || remoteAndroidSetting(projectSettings);
   const daemonInEnv = Boolean(remoteEnv.AGENT_DEVICE_DAEMON_BASE_URL && remoteEnv.AGENT_DEVICE_DAEMON_AUTH_TOKEN);
   const remoteFinding =
     remoteConfigured || daemonInEnv

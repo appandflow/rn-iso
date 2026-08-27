@@ -41,6 +41,7 @@ const KNOWN_SETTINGS = new Set([
   'android.variant',
   'android.keystore',
   'android.keystorePassword',
+  'android.remote',
   'worktreeDir',
   'worktree.baseRef',
   'worktree.include',
@@ -107,7 +108,18 @@ export function resolveSettings({
 // literal `true` is false: a setting that means "use a billable cloud device"
 // must not be switched on by a stray string.
 export function remoteIosSetting(settings: SettingsObject): boolean {
-  const ios = settings.ios;
-  if (typeof ios !== 'object' || ios === null) return false;
-  return (ios as { remote?: unknown }).remote === true;
+  return remoteSetting(settings, 'ios');
+}
+
+// The android half. Same rule, same reason: anything other than a literal
+// `true` is false, because a setting meaning "use a billable cloud device"
+// must not be switched on by a stray string.
+export function remoteAndroidSetting(settings: SettingsObject): boolean {
+  return remoteSetting(settings, 'android');
+}
+
+function remoteSetting(settings: SettingsObject, platform: 'ios' | 'android'): boolean {
+  const block = settings[platform];
+  if (typeof block !== 'object' || block === null) return false;
+  return (block as { remote?: unknown }).remote === true;
 }

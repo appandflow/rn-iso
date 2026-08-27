@@ -248,31 +248,30 @@ What unit tests cannot cover is the two live integrations. Those go through
 the existing `docs/field-test-protocol.md`, once against a real
 `agent-device proxy` and once against a real EAS session.
 
-## Why Android is not in this
+## Android, and why it is an adapter
 
-Android is not a mechanical copy of the iOS path, and the reason is worth
-recording so nobody attempts it as one.
+An earlier draft of this spec argued Android could not work, because its two
+Metro mechanisms are host-relative: `adb reverse` maps a device port to the
+host running adb, and the dev-client link uses `10.0.2.2`, the emulator's
+route to **its own** host. Both name the wrong machine on a remote emulator.
 
-iOS works because `simctl openurl` carries a URL verbatim, so rn-iso composes
-its own dev-client deep link and agent-device's companion tunnel gives the
-simulator a route to this machine's Metro.
+That was the wrong conclusion. Neither mechanism is USED on the remote path.
+The single public origin replaces both, exactly as it replaces `localhost` on
+iOS -- which means the remote launch is the same operation on both platforms,
+and the only real differences are what the two command files call their
+fields (udid/serial, bundleId/packageName, appPath/apkPath).
 
-Android's two mechanisms are both **host-relative** and neither survives a
-remote daemon:
+So `engine/device-remote.ts` holds one platform-neutral core and two thin
+adapters. The Metro hint still reaches the app: agent-device writes
+`debug_http_host`, and `dev_server_https` which a tunnel on 443 needs, from
+`--metro-host`/`--metro-port`, running adb against ITS OWN emulator where a
+reverse issued from here would be meaningless.
 
-- `adb reverse tcp:8081 tcp:<port>` maps a device port back to the host
-  running adb. Against a remote daemon that host is the remote machine, not
-  this laptop.
-- The dev-client deep link uses `10.0.2.2`, which is the emulator's route to
-  **its own** host loopback. On a remote emulator it points at the wrong
-  machine.
-
-agent-device has an Android answer already ("Android keeps using
-bridge-provided runtime routes such as `/api/metro/runtimes/<runtimeId>/...`"),
-which means the correct design is for rn-iso to stop composing the URL and
-stop running `adb reverse`, and let agent-device's hint carry reachability.
-That is a different division of responsibility from iOS, not the same code
-with a different binary name.
+What is NOT yet proven for Android is the live loop: an EAS Android session
+driving a dev-client emulator over a tunnel. iOS has been exercised end to
+end; Android is the same code path with different field names, and the unit
+tests pin the argv, but CLAUDE.md item 9 is explicit that this is not the
+same as having run it.
 
 ## Phasing
 

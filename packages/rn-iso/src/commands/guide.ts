@@ -797,7 +797,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds>
   ios             --json --no-metro-check --no-build-cache --configuration <name> --remote
-  android         --json --no-metro-check --no-build-cache --variant <name>
+  android         --json --no-metro-check --no-build-cache --variant <name> --remote
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide; there is no --all)
@@ -1083,6 +1083,7 @@ KEYS RN-ISO READS
                         committed .rn-iso.json avoids carrying a secret; a
                         bare string is used as the literal password. Unset
                         means the debug keystore's fixed "android".
+  android.remote        the android half of ios.remote, same rule
   worktreeDir           where worktrees are created
   worktree.baseRef      "fresh" (origin/HEAD) or "head"
   worktree.include      carry-over patterns, same role as .worktreeinclude

@@ -360,7 +360,7 @@ fixed and it does not grow:
 
     start           --json --wait
     ios             --json --no-metro-check --no-build-cache --configuration <name> --remote
-    android         --json --no-metro-check --no-build-cache --variant <name>
+    android         --json --no-metro-check --no-build-cache --variant <name> --remote
     logs            --source --level --since --grep --tail --follow --errors --json
     stop            --json --force
 
@@ -459,8 +459,20 @@ cache are identical, and the flag moves ONLY the device (see
 `docs/specs/2026-08-26-remote-device-backend-design.md`). It earns its place
 because the resource it relieves -- how many simulators one machine can host
 -- is the same class of contended resource as the Metro port, which rn-iso
-already brokers. Note the asymmetry with `android`, which does not have it
-yet.
+already brokers. Both platforms carry it.
+
+**Android's remote path is an ADAPTER, not a second implementation**, and the
+reason is worth keeping. Locally the two platforms wire Metro differently: iOS
+points the app at `localhost`, Android at `10.0.2.2` (the emulator's route to
+its OWN host) plus an `adb reverse`. Both of those are host-relative, so on a
+remote emulator they name the wrong machine -- and the one public origin
+replaces both, which is exactly what makes the remote launch identical across
+platforms. `engine/device-remote.js` therefore holds one platform-neutral core
+and two thin adapters that differ only in field names (udid/serial,
+bundleId/packageName, appPath/apkPath). The Metro hint still lands: agent-device
+writes `debug_http_host` -- and `dev_server_https`, which a tunnel on 443 needs
+-- from `--metro-host`/`--metro-port`, running adb against ITS OWN emulator,
+where a reverse issued from here would be meaningless.
 
 **Remote is also the one exception to "`stop` never deletes."** A local device
 is shut down and kept, because keeping it costs nothing. A remote session

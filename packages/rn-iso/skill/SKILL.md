@@ -124,9 +124,9 @@ Ten commands: `doctor` (what is silently costing build time) · `worktree create
 
 That is all of it. There is no `init` -- repo setup is the `rn-iso-init` skill applying `doctor`'s findings by hand, and the one safe generated edit (`.rn-iso/` in `.gitignore`) is self-ensured by `start`/`ios`/`android`. There is also no `up`, no `release`, no `shutdown`, no `config`, no `build-cache`, no `worktree list` -- `status` covers the last one, `ios`/`android` absorbed the build cache, settings are files (`guide settings`), and destruction consolidated into `worktree remove` and `gc --delete`. Run `npx rn-iso <command> --help` for flags, or `npx rn-iso guide` for the reference.
 
-## A remote simulator (`--remote`)
+## A remote device (`--remote`)
 
-`ios --remote` installs and launches on a simulator that is not on this machine. **The build still runs here** -- the fingerprint, the shared cache and single-flight builds are unchanged, and only the device moves. Reach for it when the machine runs out of simulators before it runs out of work, not as a default: a cloud session is billable, and a local device is faster.
+`ios --remote` and `android --remote` install and launch on a simulator or emulator that is not on this machine. **The build still runs here** -- the fingerprint, the shared cache and single-flight builds are unchanged, and only the device moves. Reach for it when the machine runs out of simulators before it runs out of work, not as a default: a cloud session is billable, and a local device is faster.
 
 **A device on another machine needs Metro to be reachable from ITS network**, so expose the reserved port through a tunnel and name it:
 

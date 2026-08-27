@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   PUBLIC_METRO_ENV,
+  remoteAndroidDeps,
   remoteIosDeps,
   resolveMetroOrigin,
   resolveRemoteContext,
@@ -543,5 +544,74 @@ describe("the alert rn-iso's own url open raises", () => {
     });
     expect(result.ok).toBe(true);
     expect(exec.calls.some((c) => c.args.slice(0, 2).join(' ') === 'alert accept')).toBe(true);
+  });
+});
+
+describe('the android adapter', () => {
+  // On a REMOTE device the launch is the same operation as iOS: locally
+  // Android points the app at 10.0.2.2 (the emulator's route to its OWN host)
+  // and iOS at localhost, and the one public origin replaces both. So this is
+  // an adapter over the same core, not a second implementation.
+  test('android creates its session with --platform android', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteAndroidDeps(ctx());
+    await deps.ensureDeviceBooted({});
+    const args = exec.calls[0]?.args ?? [];
+    expect(args[args.indexOf('--platform') + 1]).toBe('android');
+  });
+
+  test('the boot result names a serial, which is what android.ts reads', async () => {
+    mockExec({ outputs: { sim: CREATED } });
+    const booted = await remoteAndroidDeps(ctx()).ensureDeviceBooted({});
+    expect(booted.ok).toBe(true);
+    expect(booted.serial).toBe('drs_42');
+  });
+
+  test('a failed boot keeps its reason rather than reporting a serial', async () => {
+    mockExec({ fail: 'sim' });
+    const booted = await remoteAndroidDeps(ctx()).ensureDeviceBooted({});
+    expect(booted.failed).toBe(true);
+    expect(booted.serial).toBeUndefined();
+  });
+
+  test('install takes the apk path', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteAndroidDeps(ctx());
+    await deps.ensureDeviceBooted({});
+    deps.install({ serial: 'drs_42', apkPath: '/tmp/My App.apk' });
+    const call = exec.calls.find((c) => c.args[0] === 'install');
+    expect(call?.args[1]).toBe('/tmp/My App.apk');
+  });
+
+  test('the launch points at the public origin, never 10.0.2.2 or a reverse', async () => {
+    // Both local mechanisms are host-relative: a reverse maps to the host
+    // running adb, and 10.0.2.2 is the emulator's own host. On a remote
+    // emulator both name the wrong machine.
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteAndroidDeps(ctx({ publicMetroUrl: 'https://abc.trycloudflare.com' }));
+    await deps.ensureDeviceBooted({});
+    deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
+    const open = exec.calls.find((c) => c.args[0] === 'open');
+    expect(open?.args[1]).toBe('com.example.app');
+    expect(open?.args[2]).toBe('myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com');
+    const flat = (open?.args ?? []).join(' ');
+    expect(flat).not.toContain('10.0.2.2');
+    expect(flat).not.toContain('reverse');
+    // The hint agent-device turns into debug_http_host on the device.
+    expect(open?.args[open.args.indexOf('--metro-host') + 1]).toBe('abc.trycloudflare.com');
+    expect(open?.args[open.args.indexOf('--metro-port') + 1]).toBe('443');
+  });
+
+  test('android refuses an unreachable Metro for the same reason iOS does', async () => {
+    mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteAndroidDeps(ctx());
+    await deps.ensureDeviceBooted({});
+    const r = deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: 8082 });
+    expect(r.failed).toBe(true);
+    expect(r.code).toBe('RN_ISO_REMOTE_METRO_UNREACHABLE');
+  });
+
+  test('the local device cap does not apply to a remote emulator either', () => {
+    expect(remoteAndroidDeps(ctx()).checkCapacity()).toBeNull();
   });
 });

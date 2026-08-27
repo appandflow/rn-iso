@@ -164,6 +164,9 @@ export interface RemoteContext {
   label: string;
   easBin: string;
   agentDeviceBin: string;
+  // Which device this run wants. Reaches `eas sim --platform` and the
+  // connection profile; nothing else in a remote run differs by platform.
+  platform?: 'ios' | 'android';
   maxDurationMinutes?: number | null;
   // A URL that reaches THIS workspace's Metro from the device's network.
   // Only consulted when the daemon is not on this machine.
@@ -188,7 +191,7 @@ interface RemoteSession {
 function writeProfile(ctx: RemoteContext, daemon: RemoteDaemon): string {
   const path = remoteProfilePath(ctx.root);
   mkdirSync(dirname(path), { recursive: true });
-  const profile = remoteProfile({ daemon, platform: 'ios', label: ctx.label });
+  const profile = remoteProfile({ daemon, platform: ctx.platform ?? 'ios', label: ctx.label });
   writeFileSync(path, `${JSON.stringify(profile, null, 2)}\n`);
   return path;
 }
@@ -201,7 +204,17 @@ function writeProfile(ctx: RemoteContext, daemon: RemoteDaemon): string {
  * That is the whole design: ios.ts calls `d.installIosApp({udid, appPath})`
  * whether the device is a simulator on this Mac or one in a datacenter.
  */
-export function remoteIosDeps(ctx: RemoteContext) {
+/**
+ * The device operations remote mode performs, in platform-NEUTRAL names.
+ *
+ * The two platform adapters below are thin because on a remote device the
+ * launch is genuinely the same operation: locally iOS points the app at
+ * `localhost` and Android at `10.0.2.2` (its own host's loopback), and BOTH
+ * are replaced by the one public origin the tunnel serves. What is left
+ * differing is only what the two command files call their fields --
+ * udid/serial, bundleId/packageName, appPath/apkPath.
+ */
+function remoteDeviceDeps(ctx: RemoteContext) {
   let session: RemoteSession | null = null;
 
   const exec = () => getExecutor();
@@ -211,7 +224,7 @@ export function remoteIosDeps(ctx: RemoteContext) {
     // Remote has no local device to count. maxDevices caps booted simulators
     // on THIS machine, and escaping that ceiling is the entire reason to run
     // remote, so enforcing it here would refuse the thing it was asked for.
-    checkDeviceCapacity: () => null,
+    checkCapacity: () => null,
 
     // Records intent only. The session is created in ensureBooted so the
     // Metro gate still runs before the expensive, billable step.
@@ -220,7 +233,7 @@ export function remoteIosDeps(ctx: RemoteContext) {
     // behave differently in ways an operator needs to see in one line: an EAS
     // session is rn-iso's to create and destroy, a daemon from the
     // environment is somebody else's and is never stopped here.
-    ensureOwnedDevice: async (): Promise<RemoteDeviceRecord> => ({
+    ensureDevice: async (): Promise<RemoteDeviceRecord> => ({
       deviceName: ctx.existingDaemon ? 'remote device (your daemon)' : 'EAS Simulator',
       owned: true,
       remote: true,
@@ -275,7 +288,7 @@ export function remoteIosDeps(ctx: RemoteContext) {
             ctx.easBin,
             createSessionArgs({
               label: ctx.label,
-              platform: 'ios',
+              platform: ctx.platform ?? 'ios',
               maxDurationMinutes: ctx.maxDurationMinutes ?? null,
             }),
             easEnv,
@@ -338,30 +351,29 @@ export function remoteIosDeps(ctx: RemoteContext) {
       return { ok: true, udid: id ?? daemonHostLabel(daemon.baseUrl) };
     },
 
-    installIosApp: ({ appPath }: { udid: string; appPath: string }): InstallResult => {
+    installArtifact: (artifactPath: string): InstallResult => {
       if (!session) return notConnected(INSTALL_ERROR);
       try {
-        exec().runFile(ctx.agentDeviceBin, installArgs(session.profilePath, appPath), {
+        exec().runFile(ctx.agentDeviceBin, installArgs(session.profilePath, artifactPath), {
           cwd: ctx.root,
           env: daemonEnv(session.daemon),
         });
-        return { ok: true, appPath };
+        return { ok: true, appPath: artifactPath };
       } catch (err) {
         return {
           failed: true,
           code: INSTALL_ERROR,
-          reason: `agent-device install failed for ${appPath}: ${describe(err)}`,
+          reason: `agent-device install failed for ${artifactPath}: ${describe(err)}`,
         };
       }
     },
 
-    launchIosApp: ({
-      bundleId,
+    launchApp: ({
+      appId,
       metroPort,
       devClientScheme = null,
     }: {
-      udid: string;
-      bundleId: string;
+      appId: string;
       metroPort: number | string;
       devClientScheme?: string | null;
     }): LaunchResult => {
@@ -387,7 +399,7 @@ export function remoteIosDeps(ctx: RemoteContext) {
         ? `${devClientScheme}://expo-development-client/?url=${encodeURIComponent(origin.origin)}`
         : null;
       try {
-        exec().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, bundleId, url, metroHintFrom(origin.origin)), {
+        exec().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, appId, url, metroHintFrom(origin.origin)), {
           cwd: ctx.root,
           env: daemonEnv(session.daemon),
         });
@@ -413,7 +425,7 @@ export function remoteIosDeps(ctx: RemoteContext) {
         return {
           failed: true,
           code: LAUNCH_ERROR,
-          reason: `agent-device open ${bundleId} failed: ${describe(err)}`,
+          reason: `agent-device open ${appId} failed: ${describe(err)}`,
         };
       }
     },
@@ -444,6 +456,7 @@ export function remoteIosDeps(ctx: RemoteContext) {
 export function resolveRemoteContext({
   root,
   label,
+  platform = 'ios',
   easBin,
   env = process.env,
   lookupAgentDevice = defaultLookupAgentDevice,
@@ -451,6 +464,7 @@ export function resolveRemoteContext({
 }: {
   root: string;
   label: string;
+  platform?: 'ios' | 'android';
   easBin: string | null;
   env?: NodeJS.ProcessEnv;
   lookupAgentDevice?: () => string | null;
@@ -506,6 +520,7 @@ export function resolveRemoteContext({
     ctx: {
       root,
       label,
+      platform,
       easBin: easBin ?? '',
       agentDeviceBin,
       maxDurationMinutes,
@@ -640,6 +655,91 @@ function readDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null 
   } catch {
     return null;
   }
+}
+
+/**
+ * The dep overrides `ios --remote` installs over DEFAULT_DEPS.
+ *
+ * Names match commands/ios.ts's seam exactly, so every call site, phase line
+ * and existing test is untouched.
+ */
+export function remoteIosDeps(ctx: RemoteContext): {
+  checkDeviceCapacity: () => null;
+  ensureOwnedDevice: () => Promise<RemoteDeviceRecord>;
+  ensureBooted: (opts?: { out?: (msg: string) => void }) => Promise<BootResult>;
+  installIosApp: (a: { udid: string; appPath: string }) => InstallResult;
+  launchIosApp: (a: {
+    udid: string;
+    bundleId: string;
+    metroPort: number | string;
+    devClientScheme?: string | null;
+  }) => LaunchResult;
+  createdSessionId: () => string | null;
+  webPreviewUrl: () => string | null;
+} {
+  const core = remoteDeviceDeps({ ...ctx, platform: 'ios' });
+  return {
+    checkDeviceCapacity: core.checkCapacity,
+    ensureOwnedDevice: core.ensureDevice,
+    ensureBooted: core.ensureBooted,
+    installIosApp: ({ appPath }) => core.installArtifact(appPath),
+    launchIosApp: ({ bundleId, metroPort, devClientScheme }) =>
+      core.launchApp({ appId: bundleId, metroPort, devClientScheme }),
+    createdSessionId: core.createdSessionId,
+    webPreviewUrl: core.webPreviewUrl,
+  };
+}
+
+/**
+ * The same, for `android --remote`, against commands/android.ts's own names.
+ *
+ * `adb reverse` and `10.0.2.2` do NOT appear here, and their absence is the
+ * whole point. Both are host-relative -- a reverse maps a device port to the
+ * host running adb, and 10.0.2.2 is the emulator's route to ITS OWN host --
+ * so on a remote emulator both name the wrong machine. The public origin
+ * replaces them, exactly as it replaces `localhost` on iOS, which is why this
+ * adapter is thin rather than a second implementation.
+ *
+ * The Metro hint still lands: agent-device writes `debug_http_host` (and
+ * `dev_server_https`, which a tunnel on 443 needs) into the app's shared
+ * prefs from `--metro-host`/`--metro-port`, running adb against ITS OWN
+ * emulator where a reverse would be meaningless from here.
+ */
+export function remoteAndroidDeps(ctx: RemoteContext): {
+  checkCapacity: () => null;
+  ensureDevice: () => Promise<RemoteDeviceRecord>;
+  ensureDeviceBooted: (opts?: { out?: (msg: string) => void }) => Promise<{
+    ok?: boolean;
+    serial?: string;
+    failed?: boolean;
+    reason?: string;
+  }>;
+  install: (a: { serial: string; apkPath: string }) => InstallResult;
+  launch: (a: {
+    serial: string;
+    packageName: string;
+    metroPort: number | string;
+    devClientScheme?: string | null;
+  }) => LaunchResult;
+  createdSessionId: () => string | null;
+  webPreviewUrl: () => string | null;
+} {
+  const core = remoteDeviceDeps({ ...ctx, platform: 'android' });
+  return {
+    checkCapacity: core.checkCapacity,
+    ensureDevice: core.ensureDevice,
+    // Same identity, different field name: android.ts reads `serial` where
+    // ios.ts reads `udid`.
+    ensureDeviceBooted: async (opts) => {
+      const booted = await core.ensureBooted(opts);
+      return booted.ok ? { ok: true, serial: booted.udid } : booted;
+    },
+    install: ({ apkPath }) => core.installArtifact(apkPath),
+    launch: ({ packageName, metroPort, devClientScheme }) =>
+      core.launchApp({ appId: packageName, metroPort, devClientScheme }),
+    createdSessionId: core.createdSessionId,
+    webPreviewUrl: core.webPreviewUrl,
+  };
 }
 
 /**

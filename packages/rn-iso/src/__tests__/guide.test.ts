@@ -77,7 +77,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
   const advertised = {
     'start.ts': ['--json', '--wait'],
     'ios.ts': ['--json', '--no-metro-check', '--no-build-cache', '--configuration', '--remote'],
-    'android.ts': ['--json', '--no-metro-check', '--no-build-cache', '--variant'],
+    'android.ts': ['--json', '--no-metro-check', '--no-build-cache', '--variant', '--remote'],
     'stop.ts': ['--json', '--force'],
     'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],
     'gc.ts': ['--delete', '--older-than', '--all'],

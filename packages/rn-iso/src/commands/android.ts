@@ -71,7 +71,7 @@ import {
   // duration reads the same ("4s", "1m4s") whichever platform printed it.
   stepTimer,
 } from './ios.ts';
-import { resolveSettings } from '../settings.ts';
+import { remoteAndroidSetting, resolveSettings } from '../settings.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 import { readCollectors } from '../collector/state.ts';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
@@ -88,6 +88,7 @@ import {
 } from '../engine/app-install.ts';
 import { androidHome, findBuildTool } from '../sim/android.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
+import { REMOTE_SESSION_ERROR, remoteAndroidDeps, resolveRemoteContext } from '../engine/device-remote.ts';
 import type { OwnedDeviceRecord } from '../engine/device.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid } from '../engine/gradle.ts';
@@ -99,6 +100,7 @@ import {
   cacheLevel,
   exitAfterFlush,
   checkEasAuth,
+  resolveEasCliBin,
   easAuthNote,
   isEasAuthFailureText,
   loadProjectProvider,
@@ -219,6 +221,7 @@ interface AndroidCommandOptions {
   metroCheck?: boolean;
   buildCache?: boolean;
   variant?: string;
+  remote?: boolean;
 }
 
 interface FailExtra {
@@ -706,6 +709,10 @@ export function registerAndroid(program: Command): void {
       '--variant <name>',
       'Gradle variant to assemble and install (e.g. productionDebug on a flavored project); overrides the android.variant setting. A variant ending in Release embeds the JS bundle and skips Metro entirely. Default: debug',
     )
+    .option(
+      '--remote',
+      'Install and launch on a remote emulator (EAS Simulator, or an agent-device proxy named by AGENT_DEVICE_DAEMON_BASE_URL) instead of a local one. The build still happens here.',
+    )
     .action(async (opts: AndroidCommandOptions) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
@@ -719,6 +726,7 @@ export function registerAndroid(program: Command): void {
         metroCheck: opts.metroCheck !== false,
         useBuildCache: opts.buildCache !== false,
         variant: opts.variant ?? null,
+        remoteDevice: Boolean(opts.remote),
       });
       if (!result.ok) process.exit(1);
     });
@@ -736,6 +744,9 @@ interface RunAndroidOptions {
   useBuildCache?: boolean;
   variant?: string | null;
   readApkPackage?: (apkPath: string | null) => string | null;
+  // `--remote`. Named for the device rather than the flag because `remote`
+  // already means the build-cache provider in this file.
+  remoteDevice?: boolean;
   getLimits?: typeof getConcurrencyLimits;
   checkCapacity?: typeof checkDeviceCapacity;
   acquireSlot?: typeof acquireBuildSlot;
@@ -794,6 +805,7 @@ export async function runAndroid(
   {
     root,
     json = false,
+    remoteDevice: useRemoteDevice = false,
     metroCheck = true,
     // --no-build-cache turns off every LOOKUP -- the local cache and the
     // project's provider both -- and nothing else: the fresh build is still
@@ -964,6 +976,29 @@ export async function runAndroid(
   });
   const project = getProject(root);
   const label = projectShortcut(root, project);
+
+  // ---- remote device: five dep overrides, or none ----
+  //
+  // `--remote` swaps the device out and NOTHING else. The build, the
+  // fingerprint and the cache are identical; only where the app is installed
+  // and launched changes.
+  const wantRemote = useRemoteDevice || remoteAndroidSetting(settings);
+  let remoteDevice: ReturnType<typeof remoteAndroidDeps> | null = null;
+  if (wantRemote) {
+    const resolved = resolveRemoteContext({
+      root,
+      label,
+      platform: PLATFORM,
+      easBin: resolveEasCliBin(root)?.file ?? null,
+    });
+    if ('failed' in resolved) return fail(REMOTE_SESSION_ERROR, resolved.failed, resolved.remedy);
+    remoteDevice = remoteAndroidDeps(resolved.ctx);
+    checkCapacity = remoteDevice.checkCapacity;
+    ensureDevice = remoteDevice.ensureDevice;
+    ensureDeviceBooted = remoteDevice.ensureDeviceBooted;
+    install = remoteDevice.install;
+    launch = remoteDevice.launch;
+  }
 
   // ---- concurrency: opt-in, unlimited by default ----
   const limits = getLimits();
