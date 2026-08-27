@@ -7,6 +7,7 @@ real workflow at the same time.
 ## 0. The three packages
 
 ```
+packages/core                @rn-iso/core                shared primitives (cache roots, cache key, registration)
 packages/rn-iso              rn-iso                      the CLI
 packages/expo-build-cache    @rn-iso/expo-build-cache    Expo build cache provider
 packages/metro               @rn-iso/metro               shared Metro transform cache + log reporter
@@ -106,7 +107,7 @@ If `git status` isn't clean, commit / discard before tagging.
    carries its own README (a package with no `README.md` in its own directory
    publishes with "No README data found" on npm):
    ```bash
-   for p in rn-iso expo-build-cache metro; do
+   for p in core rn-iso expo-build-cache metro; do
      echo "== $p"; (cd "packages/$p" && npm pack --dry-run 2>&1 | grep -E 'README|Tarball|total files')
    done
    ```
@@ -142,6 +143,7 @@ If `git status` isn't clean, commit / discard before tagging.
 
    ```bash
    npm whoami                                          # confirm login; if 401, `npm login` first
+   pnpm --filter @rn-iso/core publish --otp <code>       # first: the others depend on it
    pnpm --filter rn-iso publish --otp <code>
    pnpm --filter @rn-iso/expo-build-cache publish --otp <code>
    pnpm --filter @rn-iso/metro publish --otp <code>

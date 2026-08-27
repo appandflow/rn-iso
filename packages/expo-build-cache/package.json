@@ -21,6 +21,9 @@
     "test": "node --test test/*.test.js",
     "build": "tsdown"
   },
+  "dependencies": {
+    "@rn-iso/core": "^1.3.3"
+  },
   "engines": {
     "node": ">=22"
   }

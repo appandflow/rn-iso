@@ -235,9 +235,13 @@ packages/metro/             # @rn-iso/metro. CJS (see conventions above).
   test/reporter.test.js     # `node --test`, CommonJS like the package it tests
 ```
 
-The two cache packages duplicate a little of `src/build-cache.js` and
-`src/paths.js` on purpose: they must work with no rn-iso installed, so neither
-may import either module. Two pieces matter, and both fail the same silent way.
+What rn-iso and the two cache packages must AGREE on lives in
+`packages/core` (`@rn-iso/core`), a tiny CJS HARD dependency of all three:
+the config-dir and cache-root resolution (env > machine config > default),
+`buildCacheKey`, and the caches.json self-registration. This replaced three
+deliberate copies -- the packages still may not import RN-ISO ITSELF (optional
+ESM peer, usually absent under `npx rn-iso`), but a plain always-installed CJS
+dep has neither of the failure modes that forced the duplication. Two pieces matter, and both fail the same silent way.
 
 - **`buildCacheKey`** — both entry points build the key the same way, so they
   address the same entries.

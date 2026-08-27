@@ -19,6 +19,7 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, utimesSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { createRequire } from 'module';
+import { buildCacheKey as coreBuildCacheKey } from '@rn-iso/core';
 import { getExecutor } from './exec.ts';
 import { register } from './cache-manifest.ts';
 import { sharedBuildCache } from './paths.ts';
@@ -46,49 +47,6 @@ export function entryDir(platform: string, key: string, root: string = cacheRoot
   return join(root, platform, key);
 }
 
-// A simulator udid is a canonical UUID. Apple's hardware identifiers are not:
-// they are 40 hex characters, or the 8-digits-dash-16-hex form newer devices
-// use.
-const SIMULATOR_UDID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// adb's name for a running emulator.
-const EMULATOR_SERIAL = /^emulator-\d+$/;
-
-function slug(value: unknown): string {
-  return String(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-// The Xcode configuration on iOS, the gradle variant on Android. Both CLIs
-// default to Debug/debug, so an absent value is that and not "unknown".
-function buildVariant(platform: string, options: BuildRunOptions): string {
-  const raw = platform === 'android' ? options.variant : (options.configuration ?? options.buildConfiguration);
-  return (typeof raw === 'string' ? slug(raw) : '') || 'debug';
-}
-
-// A binary built for real hardware cannot run on a simulator, and the reverse is
-// equally true, so the target class is part of the key. The device selector is
-// the only signal available, and it is ambiguous by nature:
-//   absent            -- the CLI targets a simulator or emulator. The default.
-//   "generic"         -- a build-only simulator build.
-//   a udid or serial  -- classifiable when it has the shape of a simulator id.
-//   a bare flag       -- the CLI prompts, and the answer can be hardware.
-//   a name            -- unclassifiable.
-// The last two get a bucket of their own rather than sharing the simulator one:
-// a wasted rebuild is cheap, and a binary that cannot launch is not. Two
-// workspaces naming the same device still share their entries.
-function buildTarget(options: BuildRunOptions): string {
-  if (typeof options.isSimulator === 'boolean') return options.isSimulator ? 'sim' : 'device';
-  const device = options.device;
-  if (device === undefined || device === null || device === false) return 'sim';
-  if (typeof device !== 'string') return 'prompted';
-  const name = device.trim();
-  if (name === '' || name === 'generic') return 'sim';
-  if (SIMULATOR_UDID.test(name) || EMULATOR_SERIAL.test(name)) return 'sim';
-  return `on-${slug(name)}`;
-}
-
 // The fingerprint covers what the project IS, never how it was built. Keying on
 // it alone means a Release build answers a Debug resolve, and a device build
 // answers a simulator one -- both silently, both producing a binary that cannot
@@ -96,8 +54,7 @@ function buildTarget(options: BuildRunOptions): string {
 // only the keys named here are read, so an unfamiliar CLI version cannot change
 // the key by adding one.
 export function buildCacheKey(platform: string, fingerprintHash: string, options: unknown = {}): string {
-  const opts = (options && typeof options === 'object' ? options : {}) as BuildRunOptions;
-  return `${fingerprintHash}-${buildVariant(platform, opts)}-${buildTarget(opts)}`;
+  return coreBuildCacheKey(platform, fingerprintHash, options);
 }
 
 // The artifact is the single .app / .apk inside an entry directory.
