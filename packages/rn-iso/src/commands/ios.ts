@@ -1028,17 +1028,19 @@ export async function runIos(
     note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${metroPort}.`));
   }
 
-  const booted = await d.ensureBooted({ platform: PLATFORM, device, out: note });
-  if (!booted?.ok) {
-    return fail({
-      code: 'RN_ISO_NO_DEVICE',
-      message: booted?.reason || 'The owned simulator could not be booted.',
-      remedy: 'Run `rn-iso ios` again to re-establish an owned simulator for this workspace.',
-    });
-  }
-  // booted.ok just verified true, so ensureBooted's success shape always carries a udid.
-  const udid = booted.udid!;
-  phase('device', `${deviceLabel(device, udid)} booted`);
+  // Boot is KICKED OFF here and awaited only at install: nothing in between
+  // -- the fingerprint, the cache resolution, even xcodebuild (a Shutdown sim
+  // is a valid -destination) -- needs a live device, and awaiting up front
+  // added the whole boot ahead of a multi-minute compile for no reason. The
+  // catch holds a rare boot failure until the await, where it fails with the
+  // same code it always did.
+  const bootPromise: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined> = Promise.resolve(
+    d.ensureBooted({ platform: PLATFORM, device, out: note }),
+  ).catch((e) => ({ ok: false, reason: String((e as Error)?.message || e) }));
+  // The build destination: the udid exists as soon as the device record does.
+  // The rare record without one (legacy shapes) waits for the boot to resolve
+  // it, which is exactly the old ordering.
+  const udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
 
   // ---- fingerprint and cache ----
   let fingerprint;
@@ -1407,6 +1409,18 @@ export async function runIos(
   // for a workspace that had just built successfully. The resolved id (from
   // the built or cached app's own Info.plist) is the truth; persist it.
   if (bundleId) d.upsertProject(root, { bundleId });
+
+  // The boot the top of the command started: everything from here on needs
+  // the device live.
+  const booted = await bootPromise;
+  if (!booted?.ok) {
+    return fail({
+      code: 'RN_ISO_NO_DEVICE',
+      message: booted?.reason || 'The owned simulator could not be booted.',
+      remedy: 'Run `rn-iso ios` again to re-establish an owned simulator for this workspace.',
+    });
+  }
+  phase('device', `${deviceLabel(device, udid)} booted`);
 
   // ---- install ----
   // appPath and bundleId are provably set by this point: the cache branch above
