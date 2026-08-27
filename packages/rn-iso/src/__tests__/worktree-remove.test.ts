@@ -239,6 +239,11 @@ interface MakeExecutorOptions {
   simctlList?: string;
   occupied?: Record<string, boolean>;
   diffs?: Record<string, string>;
+  // Paths isMainWorkingTree should report as the MAIN working tree: the
+  // `rev-parse --git-dir --git-common-dir` probe answers with two equal lines
+  // for them, and fails (null) for everything else -- which is also what real
+  // git does for a directory that is not a repo at all.
+  mainTrees?: string[];
 }
 
 function makeExecutor({
@@ -249,6 +254,7 @@ function makeExecutor({
   simctlList = '{"devices":{}}',
   occupied = {},
   diffs = {},
+  mainTrees = [],
 }: MakeExecutorOptions = {}) {
   const runCalls: string[] = [];
   const runQuietCalls: string[] = [];
@@ -273,6 +279,11 @@ function makeExecutor({
     },
     runQuiet(cmd: string) {
       runQuietCalls.push(cmd);
+      const revMatch = cmd.match(/^git -C "(.+)" rev-parse --path-format=absolute --git-dir --git-common-dir$/);
+      if (revMatch) {
+        const p = revMatch[1] ?? '';
+        return mainTrees.includes(p) ? `${p}/.git\n${p}/.git` : null;
+      }
       if (/status --porcelain/.test(cmd)) return dirty;
       const diffMatch = cmd.match(/ diff -- "(.+)"$/);
       if (diffMatch) return diffs[diffMatch[1] ?? ''] ?? '';
@@ -316,32 +327,182 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-test('action: refuses on the main checkout, leaving config untouched and never calling git worktree remove', async () => {
-  upsertProject(mainDir, { metroPort: 8081 });
-  const before = getProject(mainDir);
-  const exec = makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) });
+// --- the main checkout: reclaim the environment, never touch the tree -------
+//
+// `git worktree remove` cannot remove the main working tree, and deleting the
+// source tree is not what anyone meant. So on the main checkout (detected by
+// `rev-parse --git-dir --git-common-dir` resolving to the same place) `remove`
+// does everything the normal removal does to rn-iso's own state -- devices
+// deleted, port freed, registry entries dropped, `.rn-iso/` deleted -- and
+// leaves every file in the tree alone. This replaced a flat refusal.
+
+test('action: on the main checkout, reclaims the environment with the owned device deleted and the tree untouched', async () => {
+  upsertProject(mainDir, {
+    metroPort: 8081,
+    platforms: { ios: { deviceUdid: 'U9', owned: true, deviceName: 'rn-iso-main' } },
+  });
+  writeFileSync(join(mainDir, 'keep.txt'), 'source file');
+  mkdirSync(join(mainDir, '.rn-iso', 'logs'), { recursive: true });
+  writeFileSync(join(mainDir, '.rn-iso', 'state.json'), '{}');
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+    simctlList: simctlJson([{ udid: 'U9', name: 'rn-iso-main', state: 'Shutdown', isAvailable: true }]),
+    mainTrees: [mainDir],
+  });
   setExecutor(exec);
 
-  const run = captureAction(registerRemove);
-  await run(mainDir, {});
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
 
-  expect(process.exitCode).toBe(1);
-  expect(getProject(mainDir)).toEqual(before);
-  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
+  expect(process.exitCode).not.toBe(1);
+  // The reclaim ran with deleteOwnedDevices: the owned sim is actually gone.
+  expect(exec.calls.run.some((c) => /xcrun simctl delete U9/.test(c))).toBeTruthy();
+  // The registry entry is dropped and the state dir deleted...
+  expect(getProject(mainDir)).toBe(null);
+  expect(existsSync(join(mainDir, '.rn-iso'))).toBe(false);
+  // ...while the tree itself is untouched: the marker survives and no
+  // `git worktree remove` was ever issued.
+  expect(readFileSync(join(mainDir, 'keep.txt'), 'utf-8')).toBe('source file');
+  expect(![...exec.calls.run, ...exec.calls.runQuiet].some((c) => /worktree remove/.test(c))).toBeTruthy();
+  expect(errs.join('\n')).toMatch(/working tree stays \(it is the main checkout\)/);
 });
 
-test('action: --force does not bypass the main-checkout refusal', async () => {
+// The dirty-tree/unpushed guards protect work in a tree about to be deleted.
+// Nothing is deleted here, so they do not apply -- and dirt is not mentioned.
+test('action: a dirty main checkout still reclaims, without a refusal and without mentioning the dirt', async () => {
   upsertProject(mainDir, { metroPort: 8084 });
-  const before = getProject(mainDir);
-  const exec = makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) });
+  writeFileSync(join(mainDir, 'uncommitted.txt'), 'not yet committed');
+  const exec = makeExecutor({
+    dirty: ' M src/app.js\n?? uncommitted.txt\n',
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+    mainTrees: [mainDir],
+  });
   setExecutor(exec);
 
-  const run = captureAction(registerRemove);
-  await run(mainDir, { force: true });
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(mainDir)).toBe(null);
+  expect(readFileSync(join(mainDir, 'uncommitted.txt'), 'utf-8')).toBe('not yet committed');
+  const text = errs.join('\n');
+  expect(text).not.toMatch(/Refusing/);
+  expect(text).not.toMatch(/uncommitted/);
+  // The guards were never even consulted: nothing asked git for status.
+  expect(!exec.calls.runQuiet.some((c) => /status --porcelain/.test(c))).toBeTruthy();
+  expect(text).toMatch(/working tree stays/);
+});
+
+test('action: --force changes nothing on the main checkout -- reclaim only, tree stays', async () => {
+  upsertProject(mainDir, { metroPort: 8085 });
+  writeFileSync(join(mainDir, 'keep.txt'), 'source file');
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+    mainTrees: [mainDir],
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, { force: true });
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(mainDir)).toBe(null);
+  expect(readFileSync(join(mainDir, 'keep.txt'), 'utf-8')).toBe('source file');
+  expect(![...exec.calls.run, ...exec.calls.runQuiet].some((c) => /worktree remove/.test(c))).toBeTruthy();
+  expect(errs.join('\n')).toMatch(/working tree stays/);
+});
+
+// The exit-code rule is the normal removal's: a failed device teardown keeps
+// the record (dropping it is what turns a failed teardown into a simulator
+// nothing references) and exits 1.
+test('action: a failed device teardown on the main checkout keeps the record and exits 1', async () => {
+  upsertProject(mainDir, {
+    metroPort: 8086,
+    platforms: { ios: { deviceUdid: 'U7', owned: true, deviceName: 'rn-iso-held' } },
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+    simctlList: simctlJson([{ udid: 'U7', name: 'rn-iso-held', state: 'Shutdown', isAvailable: true }]),
+    mainTrees: [mainDir],
+  });
+  const originalRun = exec.run.bind(exec);
+  exec.run = (cmd: string) => {
+    if (/simctl delete U7/.test(cmd)) throw new Error('Unable to delete');
+    return originalRun(cmd);
+  };
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
 
   expect(process.exitCode).toBe(1);
-  expect(getProject(mainDir)).toEqual(before);
-  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
+  expect(getProject(mainDir)).not.toBe(null);
+  expect(errs.join('\n')).toMatch(/still tracks/);
+});
+
+// A registered directory that is not a git repo at all: there is no worktree
+// to hand to git and no git status to guard, so environment reclaim is the
+// only thing `remove` can mean there -- and it gets exactly that.
+test('action: a registered project directory that is not a git repo gets the same environment reclaim', async () => {
+  upsertProject(wtDir, {
+    metroPort: 8087,
+    platforms: { ios: { deviceUdid: 'U8', owned: true, deviceName: 'rn-iso-plain' } },
+  });
+  writeFileSync(join(wtDir, 'keep.txt'), 'source file');
+  mkdirSync(join(wtDir, '.rn-iso'), { recursive: true });
+  writeFileSync(join(wtDir, '.rn-iso', 'state.json'), '{}');
+  // Every git probe fails: `worktrees: null` is `git worktree list` failing
+  // outright, and the mock answers no rev-parse for wtDir.
+  const exec = makeExecutor({
+    worktrees: null,
+    simctlList: simctlJson([{ udid: 'U8', name: 'rn-iso-plain', state: 'Shutdown', isAvailable: true }]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(exec.calls.run.some((c) => /xcrun simctl delete U8/.test(c))).toBeTruthy();
+  expect(getProject(wtDir)).toBe(null);
+  expect(existsSync(join(wtDir, '.rn-iso'))).toBe(false);
+  expect(readFileSync(join(wtDir, 'keep.txt'), 'utf-8')).toBe('source file');
+  expect(errs.join('\n')).toMatch(/working tree stays \(it is not a git repository\)/);
 });
 
 test('action: refuses when git cannot answer the status check, leaving config untouched', async () => {
@@ -1150,6 +1311,57 @@ test('against a real repo: removal from a monorepo app dir, dirty only with rn-i
     console.error = originalError;
     console.log = originalLog;
     process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// The main-checkout branch turns on a rev-parse comparison only real git can
+// settle (`--git-dir` == `--git-common-dir` in the main tree, and only there).
+// A real repo, registered, with uncommitted work: remove must reclaim the
+// environment and leave every file -- committed or not -- exactly where it was.
+test('against a real repo: remove on the main checkout reclaims the environment and leaves the repo intact', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-main-')));
+  const repo = join(base, 'repo');
+  const errs: string[] = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  try {
+    mkdirSync(repo, { recursive: true });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    writeFileSync(join(repo, 'package.json'), '{}');
+    git('git add -A');
+    git('git commit -q -m init');
+    // Uncommitted work on purpose: the dirty guard must not apply here.
+    writeFileSync(join(repo, 'marker.txt'), 'still here');
+
+    upsertProject(repo, { metroPort: null });
+    mkdirSync(join(repo, '.rn-iso', 'logs'), { recursive: true });
+    writeFileSync(join(repo, '.rn-iso', 'state.json'), '{}');
+
+    console.error = (m) => errs.push(String(m));
+    console.log = () => {};
+    const run = captureAction(registerRemove);
+    await run(repo, {});
+    console.error = originalError;
+    console.log = originalLog;
+
+    expect(process.exitCode).not.toBe(1);
+    // The repo survives, files and git registration both...
+    expect(readFileSync(join(repo, 'package.json'), 'utf-8')).toBe('{}');
+    expect(readFileSync(join(repo, 'marker.txt'), 'utf-8')).toBe('still here');
+    expect(execSync('git rev-parse --is-inside-work-tree', { cwd: repo, encoding: 'utf-8' }).trim()).toBe('true');
+    // ...while the rn-iso state is gone whole.
+    expect(existsSync(join(repo, '.rn-iso'))).toBe(false);
+    expect(getProject(repo)).toBe(null);
+    expect(errs.join('\n')).toMatch(/working tree stays \(it is the main checkout\)/);
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
   }

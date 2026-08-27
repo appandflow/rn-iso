@@ -731,6 +731,18 @@ Those are the only two commands that delete. \`rn-iso stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 
+ON THE MAIN CHECKOUT
+  git cannot remove the main working tree, and deleting the source tree is not
+  what anyone meant -- so there, and only there, \`worktree remove\` reclaims
+  the ENVIRONMENT and nothing else: the owned devices are deleted, the Metro
+  port freed, the registry entries (including nested monorepo app dirs)
+  dropped, and <root>/.rn-iso deleted. The tree itself is never touched, which
+  is also why the dirty-tree and unpushed guards do not apply on that path.
+  It ends with:
+    Reclaimed the environment; the working tree stays (it is the main checkout).
+  A registered project directory that is not a git repo at all gets the same
+  environment reclaim -- there is nothing else remove could mean there.
+
 Neither delete path checks occupancy: a device being deleted goes away even if
 something is still driving it, because it is one rn-iso created for a project
 that is going away. \`stop\` DOES spare an occupied sim, because there the

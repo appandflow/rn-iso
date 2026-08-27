@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import { resolveSettings, unknownSettingKeys } from '../settings.ts';
 import { isPathPrefix, loadConfig, upsertProject } from '../config.ts';
+import { workspaceDir } from '../paths.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { listsWorkspaceDir, renderWorkspaceIgnoreBlock } from '../engine/workspace.ts';
 import {
@@ -17,6 +18,7 @@ import {
   gitCommonDir,
   hasRemote,
   hasUncommittedWork,
+  isMainWorkingTree,
   isPodInstallChurn,
   isWorkspaceArtifact,
   listWorktrees,
@@ -547,9 +549,10 @@ export function excludePodChurn(lines: string[] | null | undefined): PodChurnRes
 // directory an agent is standing in is the APP dir (`<worktree>/apps/mobile`),
 // which matches no worktree root and was refused outright -- from a command
 // whose whole point is that you do not have to name what you are inside of.
-// Returns the entry INDEX as well, because entry zero is the main checkout and
-// that refusal has to survive the walk up (standing in `<repo>/apps/mobile`
-// must still refuse, not remove the repo).
+// Returns the entry INDEX as well (entry zero is the main checkout); the
+// action itself detects the main checkout with isMainWorkingTree on the
+// matched root, so standing in `<repo>/apps/mobile` reclaims the environment
+// rather than removing the repo.
 //
 // Longest match wins, so a worktree nested inside another resolves to the
 // nearest enclosing one rather than the outermost.
@@ -704,6 +707,10 @@ interface ReclaimAllResult {
   deletedDevices: string[];
   skippedDevices: SkippedDevice[];
   keptEntries: string[];
+  // Every key that was reclaimed (the root plus the nested registered ones),
+  // for the caller that deletes each key's own `.rn-iso/` rather than the
+  // whole tree -- see reclaimEnvironment.
+  reclaimedKeys: string[];
 }
 
 async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
@@ -727,7 +734,63 @@ async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
     skippedDevices.push(...r.skippedDevices);
     if (r.keptEntry) keptEntries.push(key);
   }
-  return { dereferenced, killedPids, deletedDevices, skippedDevices, keptEntries };
+  return { dereferenced, killedPids, deletedDevices, skippedDevices, keptEntries, reclaimedKeys: [...keys] };
+}
+
+// Whether rn-iso registered anything at or under `rootPath`. This is what
+// makes `worktree remove` meaningful on a directory that is not a git repo at
+// all: there is no worktree to remove there, but there can still be an
+// environment (a port, an owned device, a `.rn-iso/`) to reclaim.
+function hasRegisteredProjectUnder(rootPath: string): boolean {
+  const cfg = loadConfig();
+  return Object.keys(cfg?.projects ?? {}).some((key) => isPathPrefix(rootPath, key));
+}
+
+// `worktree remove` on the MAIN working tree (or on a registered directory
+// that is not a git repo at all): everything the normal removal does to
+// rn-iso's own state -- reclaim every registered key under the root with the
+// owned devices deleted, drop the registry entries, delete each key's
+// `.rn-iso/` -- with the source tree itself left completely alone. There is
+// no `git worktree remove` here (git cannot remove the main tree) and no
+// dirty/unpushed guard: those protect work in a tree about to be deleted,
+// and nothing here is deleted but rn-iso's own state dir, so dirt is not
+// this command's business and is not mentioned. Every line goes to stderr,
+// mirroring the normal removal's reporting.
+//
+// The exit code follows the normal removal's rule for a failed device
+// teardown: the record is kept (dropping it is what turns a failed teardown
+// into a simulator nothing references) and the command exits 1.
+async function reclaimEnvironment(root: string, why: string): Promise<void> {
+  const result = await reclaimAll(root);
+  for (const key of result.reclaimedKeys) {
+    // Contained by construction: every key is `root` itself or a registered
+    // path-segment-prefix child of it (see reclaimAll), and only the key's
+    // own `.rn-iso/` is touched -- never anything else in the tree.
+    const dir = workspaceDir(key);
+    if (!existsSync(dir)) continue;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      console.error(chalk.dim(`  removed ${relative(root, dir) || dir} (this workspace's own output)`));
+    } catch {
+      console.error(chalk.yellow(`  could not remove ${dir}`));
+    }
+  }
+  if (result.dereferenced.length) console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
+  for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
+  if (result.deletedDevices.length)
+    console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+  for (const s of result.skippedDevices) {
+    console.error(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
+  }
+  for (const kept of result.keptEntries) {
+    console.error(
+      chalk.yellow(
+        `  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
+      ),
+    );
+  }
+  console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
+  if (result.keptEntries.length) process.exitCode = 1;
 }
 
 // Deletes the workspace directories `git status` reported inside `root`, and
@@ -794,16 +857,16 @@ export function registerRemove(worktree: Command): void {
   worktree
     .command('remove [target]')
     .description(
-      'Remove a worktree and reclaim its build artifacts, owned devices, and Metro port. Defaults to the current workspace.',
+      'Remove a worktree and reclaim its build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the main checkout it reclaims the environment only and leaves the tree in place.',
     )
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work')
     .action(async (target, opts) => {
       // Defaults to the current workspace, like every other command: an
       // agent finishing a ticket is already standing in the worktree it is
       // done with, and making it name a path it is inside of is the kind of
-      // ceremony the surface exists to remove. It is still refused on the main
-      // checkout (git reports that as worktree zero), so the default cannot
-      // become "delete the repo you are in".
+      // ceremony the surface exists to remove. On the main checkout it only
+      // reclaims the environment and never touches the tree, so the default
+      // cannot become "delete the repo you are in".
       target = target ?? process.cwd();
       // Canonicalize with realpath, matching how config keys are
       // canonicalized (CLAUDE.md item 7). A plain resolve() misses a
@@ -834,11 +897,20 @@ export function registerRemove(worktree: Command): void {
       // -- the directory `rn-iso ios` runs in -- and that matched no worktree
       // root, so the command that defaults to "where you are" refused to run
       // where you are. It is still a refusal when the path is inside no linked
-      // worktree at all, and entry zero (the main checkout) is still refused
-      // however deep inside it you were standing.
+      // worktree at all and rn-iso registered nothing there; the main checkout
+      // takes the environment-reclaim branch below, however deep inside it you
+      // were standing.
       const entries = listWorktrees(path);
       const entry = matchWorktreeEntry(entries, path);
       if (!entry) {
+        // Inside no worktree git knows about. When the directory is not a git
+        // repo AT ALL but rn-iso registered a project there, reclaiming the
+        // environment is the only thing `remove` can mean: there is no
+        // worktree to hand to git, and no git status to guard.
+        if (gitCommonDir(path) === null && hasRegisteredProjectUnder(path)) {
+          await reclaimEnvironment(path, 'it is not a git repository');
+          return;
+        }
         console.error(chalk.red(`Refusing to remove ${path}: it is not inside any worktree known to git.`));
         console.error(
           chalk.dim(
@@ -848,9 +920,18 @@ export function registerRemove(worktree: Command): void {
         process.exitCode = 1;
         return;
       }
-      if (entry.index === 0) {
-        console.error(chalk.red(`Refusing to remove ${entry.path}: it is the main checkout, not a linked worktree.`));
-        process.exitCode = 1;
+      // The MAIN working tree is the one whose `--git-dir` IS its
+      // `--git-common-dir` (the repository lives inside it). git cannot
+      // remove it, and deleting the source tree is not what anyone meant --
+      // so on it, and only on it, `remove` reclaims the ENVIRONMENT
+      // (devices, port, registry entries, `.rn-iso/`) and leaves every file
+      // in the tree untouched. This used to be a flat refusal; reclaiming is
+      // strictly what the refusal sent you off to do by hand.
+      if (isMainWorkingTree(entry.path)) {
+        if (entry.path !== path) {
+          console.error(chalk.dim(`${path} is inside the main checkout ${entry.path}; reclaiming its environment.`));
+        }
+        await reclaimEnvironment(entry.path, 'it is the main checkout');
         return;
       }
       if (entry.path !== path) {
@@ -945,11 +1026,10 @@ export function registerRemove(worktree: Command): void {
       }
 
       // (The target was confirmed to be a linked worktree of this repo, and not
-      // the main checkout, before any of the above ran -- see matchWorktreeEntry
-      // at the top of the action. Doing it there rather than here is what keeps
-      // `worktree remove` on the main checkout from SIGTERMing its Metro and
-      // dropping its sim claim via reclaimProject, only to fail at `git worktree
-      // remove` with "is a main working tree".)
+      // the main checkout, before any of the above ran -- see isMainWorkingTree
+      // at the top of the action. The main checkout took the environment-reclaim
+      // branch there, so nothing on this path can reach `git worktree remove`
+      // with a tree git would refuse as "a main working tree".)
 
       // Release rn-iso's own state before the directory disappears. Reclaims
       // the worktree root AND every nested registered project under it (see

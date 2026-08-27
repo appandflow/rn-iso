@@ -75,6 +75,23 @@ export function gitCommonDir(cwd: string): string | null {
   return out ? out.trim() : null;
 }
 
+// Whether `path` is inside the MAIN working tree -- the one `git worktree
+// remove` cannot remove. The main tree is the one whose repository lives
+// inside it: `--git-dir` and `--git-common-dir` both resolve to `<root>/.git`
+// there, while a linked worktree's `--git-dir` is a `worktrees/<name>`
+// subdirectory of the MAIN tree's common dir. Asked in one rev-parse so the
+// two answers cannot come from different repos. A path that is not a git
+// repo at all is not a main tree: rev-parse fails and runQuiet reports null.
+export function isMainWorkingTree(path: string): boolean {
+  const out = getExecutor().runQuiet(`git -C "${path}" rev-parse --path-format=absolute --git-dir --git-common-dir`);
+  if (!out) return false;
+  const [gitDir, commonDir] = out
+    .trim()
+    .split('\n')
+    .map((line) => line.trim());
+  return Boolean(gitDir) && gitDir === commonDir;
+}
+
 export function repoRoot(cwd: string): string | null {
   const out = getExecutor().runQuiet(`git -C "${cwd}" rev-parse --show-toplevel`);
   return out ? out.trim() : null;
