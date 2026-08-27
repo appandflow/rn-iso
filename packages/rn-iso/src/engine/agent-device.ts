@@ -218,6 +218,22 @@ export function metroHintFrom(origin: string): { host: string; port: string } | 
   return port ? { host: url.hostname, port } : null;
 }
 
+// PURE. Accept the alert that OUR OWN url open just raised.
+//
+// iOS asks "Open in <app>?" the first time a URL is opened into an app on a
+// simulator, and a cloud simulator is always a fresh one -- so a remote
+// dev-client launch lands behind that alert every single time. The bundle is
+// never requested until someone answers it, which made `verify` report
+// UNVERIFIED on a launch that was in fact fine, on every remote run.
+//
+// Safe to accept without reading it: this runs immediately after rn-iso's own
+// `open <app> <url>`, so the alert in front of us is the one that open just
+// caused. Best-effort at the call site -- no alert is the normal case on a
+// bare-RN launch, and on a device that never shows one this is a no-op.
+export function acceptAlertArgs(profilePath: string): string[] {
+  return withProfile(profilePath, ['alert', 'accept']);
+}
+
 // PURE. Release the lease and stop the Metro companion this workspace owns.
 export function disconnectArgs(profilePath: string): string[] {
   return withProfile(profilePath, ['disconnect']);

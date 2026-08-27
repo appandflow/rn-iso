@@ -504,3 +504,44 @@ describe('a re-run does not orphan the session it already has', () => {
     expect(exec.calls.some((c) => c.file === '/bin/eas')).toBe(false);
   });
 });
+
+describe("the alert rn-iso's own url open raises", () => {
+  // A cloud simulator is always fresh, so iOS asks "Open in <app>?" in front
+  // of the deep link on EVERY remote run. Nothing requests a bundle until it
+  // is answered, which made `verify` report UNVERIFIED on launches that were
+  // fine. Observed on a real EAS Simulator.
+  test('a dev-client launch accepts it, so the bundle can actually load', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
+    await deps.ensureBooted({});
+    deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
+    const after = exec.calls.map((c) => c.args.slice(0, 2).join(' '));
+    expect(after).toContain('alert accept');
+    // Order matters: the alert exists only because `open` raised it.
+    expect(after.indexOf('alert accept')).toBeGreaterThan(after.indexOf('open com.example.app'));
+  });
+
+  test('a bare RN launch opens no url, so it does not reach for an alert', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
+    await deps.ensureBooted({});
+    deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
+    expect(exec.calls.some((c) => c.args[0] === 'alert')).toBe(false);
+  });
+
+  test('no alert to accept still leaves the launch successful', async () => {
+    // The ordinary case once a device has seen one. `alert accept` exits
+    // non-zero with nothing showing, and that must not fail a good launch.
+    const exec = mockExec({ outputs: { sim: CREATED }, fail: 'alert accept' });
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK }));
+    await deps.ensureBooted({});
+    const result = deps.launchIosApp({
+      udid: 'drs_42',
+      bundleId: 'com.example.app',
+      metroPort: 8082,
+      devClientScheme: 'myapp',
+    });
+    expect(result.ok).toBe(true);
+    expect(exec.calls.some((c) => c.args.slice(0, 2).join(' ') === 'alert accept')).toBe(true);
+  });
+});

@@ -24,6 +24,7 @@ import { dirname } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { readRemoteSessionId } from '../supervisor/state.ts';
 import {
+  acceptAlertArgs,
   closeArgs,
   connectArgs,
   daemonEnv,
@@ -392,6 +393,21 @@ export function remoteIosDeps(ctx: RemoteContext) {
         });
         // Reports the origin the app was actually pointed at, not a
         // jsLocation this path never wrote.
+        // The alert only exists because the line above opened a URL, and it
+        // holds the deep link until it is answered -- which is why a remote
+        // dev-client launch used to report UNVERIFIED every time. Best-effort:
+        // a bare-RN launch opens no URL and raises no alert, and this is then
+        // a no-op that must not fail the run.
+        if (url) {
+          try {
+            exec().runFile(ctx.agentDeviceBin, acceptAlertArgs(session.profilePath), {
+              cwd: ctx.root,
+              env: daemonEnv(session.daemon),
+            });
+          } catch {
+            /* no alert to accept: the ordinary case once a device has seen one */
+          }
+        }
         return { ok: true, mode: url ? 'openurl' : 'launch', url: url ?? undefined, jsLocation: origin.origin };
       } catch (err) {
         return {
