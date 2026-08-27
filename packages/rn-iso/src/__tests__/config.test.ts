@@ -24,6 +24,7 @@ import {
   setRepoSetting,
   unsetRepoSetting,
   getConcurrencyLimits,
+  metroStoreInjectionEnabled,
 } from '../config.ts';
 import { makeConfig } from './_factories.ts';
 import assert from 'node:assert';
@@ -408,4 +409,28 @@ test('a negative or garbage value reads as unlimited', () => {
     maxBuilds: 0,
     maxDevices: 0,
   });
+});
+
+// --- the machine-level Metro-store kill switch ------------------------------
+//
+// It is machine-level for the same reason the concurrency caps are, and for
+// one more: the feature it turns off exists so that evaluating rn-iso needs no
+// change to the repo, so opting out of it must not need one either.
+
+test('the Metro store injection is ON by default, with no config at all', () => {
+  expect(metroStoreInjectionEnabled()).toBe(true);
+});
+
+test('only the literal false turns it off', () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, caches: { injectMetroStore: false } });
+  expect(metroStoreInjectionEnabled()).toBe(false);
+});
+
+// A broken value must not silently disable a cache: the direction this fails
+// is "behave as documented".
+test('a malformed or unrelated caches value leaves it on', () => {
+  for (const caches of [{}, { metroCache: '/x' }, { injectMetroStore: 'false' }, { injectMetroStore: 0 }, ['/x']]) {
+    saveConfig({ version: 2, projects: {}, repos: {}, caches } as never);
+    expect(metroStoreInjectionEnabled()).toBe(true);
+  }
 });

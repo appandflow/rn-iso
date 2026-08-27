@@ -111,6 +111,11 @@ export interface RnIsoConfig {
   projects: Record<string, ProjectRecord>;
   repos: Record<string, RepoRecord>;
   concurrency?: { maxBuilds?: unknown; maxDevices?: unknown };
+  // Machine-level cache keys. buildCache / metroCache relocate the shared
+  // roots and are read by @rn-iso/core (so the cache packages agree with the
+  // CLI); injectMetroStore is the kill switch for the Metro transform store
+  // rn-iso installs on the dev servers it hosts.
+  caches?: { buildCache?: unknown; metroCache?: unknown; injectMetroStore?: unknown };
   [key: string]: unknown;
 }
 export type Config = RnIsoConfig;

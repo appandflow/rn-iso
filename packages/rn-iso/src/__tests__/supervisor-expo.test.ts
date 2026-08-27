@@ -6,7 +6,7 @@
 // query an agent loop branches on -- report a healthy build as broken.
 import assert from 'node:assert';
 import type { SpawnOptions } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseNdjsonText } from '../ndjson.ts';
@@ -20,6 +20,7 @@ import {
   startExpoServer,
   stripAnsi,
 } from '../supervisor/server-expo.ts';
+import { composeNodeOptions, metroShimPath, metroStoreEnv, metroStoreRoot } from '../supervisor/metro-store.ts';
 import { makeChildProcess } from './_factories.ts';
 
 const ESC = '\u001B';
@@ -28,12 +29,22 @@ const ESC = '\u001B';
 type ExpoExitInfo = { code: number | null; signal: NodeJS.Signals | null; error?: Error };
 
 let root: string;
+// RN_ISO_HOME is redirected for every case here, not just the config-touching
+// ones: startExpoServer now REGISTERS the Metro store it injects, and an
+// unredirected run would rewrite the caches.json on the machine running the
+// suite (CLAUDE.md item 5).
+let tmpHome: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'rn-iso-expo-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+  tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
+  process.env.RN_ISO_HOME = tmpHome;
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
+  rmSync(tmpHome, { recursive: true, force: true });
+  delete process.env.RN_ISO_HOME;
+  delete process.env.NODE_OPTIONS;
 });
 
 // The .bin shim, where a NON-hoisted install puts it. expoBinPath has to find
@@ -230,7 +241,11 @@ describe('startExpoServer', () => {
     child.stdout!.emit('data', 'PluginError: Failed to resolve plugin\n');
     child.stderr!.emit('data', 'PluginError: Failed to resolve plugin\n');
     child.stdout!.emit('data', 'a different line\n');
-    const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
+    // The injection record start writes is dropped here: this case is about
+    // the two child streams, and the cache note is not one of them.
+    const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8')).filter(
+      (r) => !String(r.event).startsWith('cache_store_'),
+    );
     expect(records.map((r) => r.msg)).toEqual(['PluginError: Failed to resolve plugin', 'a different line']);
   });
 
@@ -269,7 +284,9 @@ describe('startExpoServer', () => {
     child.stdout!.emit('data', 'Starting project at /app\niOS Bundled 812ms index.js (1150 modules)\n');
     child.stderr!.emit('data', 'ERROR  Unable to resolve module ./nope\n');
 
-    const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
+    const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8')).filter(
+      (r) => !String(r.event).startsWith('cache_store_'),
+    );
     expect(records.length).toBe(3);
     expect(records.map((r) => r.level)).toEqual(['info', 'info', 'error']);
     expect(records.every((r) => r.src === 'metro' && r.raw === true)).toBeTruthy();
@@ -407,4 +424,107 @@ test('inferLevel classifies Expo bundling failures as errors', () => {
   expect(inferLevel('Failed to load app from http://localhost:8084')).toBe('error');
   expect(inferLevel('iOS Bundled 812ms index.js (1150 modules)')).toBe('info');
   expect(inferLevel('Bundling 100%')).toBe('info');
+});
+
+// --- the shared transform store, injected into the Expo child --------------
+//
+// The bare path appends a store to the config it hosts. Here the dev server is
+// the project's own `expo start`, so the only seam is the environment -- and
+// the rule that matters is that NODE_OPTIONS is APPENDED to, never replaced:
+// the caller may have set it for reasons rn-iso knows nothing about.
+describe('the Metro store injected into an Expo child', () => {
+  const shim = '/pkg/rn-iso/shim/metro-cache-store.cjs';
+
+  test('an unset NODE_OPTIONS becomes exactly our --require', () => {
+    expect(composeNodeOptions(undefined, shim)).toBe(`--require ${shim}`);
+    expect(composeNodeOptions('', shim)).toBe(`--require ${shim}`);
+    expect(composeNodeOptions(null, shim)).toBe(`--require ${shim}`);
+  });
+
+  test("the caller's own NODE_OPTIONS is kept and ours is APPENDED to it", () => {
+    expect(composeNodeOptions('--max-old-space-size=8192', shim)).toBe(`--max-old-space-size=8192 --require ${shim}`);
+    expect(composeNodeOptions('--require /other/hook.js --enable-source-maps', shim)).toBe(
+      `--require /other/hook.js --enable-source-maps --require ${shim}`,
+    );
+  });
+
+  test('a shim already on the line is not added twice', () => {
+    expect(composeNodeOptions(`--require ${shim}`, shim)).toBe(null);
+  });
+
+  // Node parses NODE_OPTIONS shell-like and understands double quotes, so a
+  // path with spaces works when it is quoted -- and a path with a quote in it
+  // is refused rather than mis-parsed into arguments that break the child.
+  test('a path with spaces is quoted, and a path with a quote is refused', () => {
+    expect(composeNodeOptions('', '/My Apps/rn-iso/shim.cjs')).toBe('--require "/My Apps/rn-iso/shim.cjs"');
+    expect(composeNodeOptions('', '/we"ird/shim.cjs')).toBe(null);
+  });
+
+  test('the env additions name the store and the project beside the require', () => {
+    const env = metroStoreEnv({ root: '/w/app', storeRoot: '/cache/app', shimPath: shim, nodeOptions: '--x' });
+    assert(env);
+    expect(env.NODE_OPTIONS).toBe(`--x --require ${shim}`);
+    expect(env.RN_ISO_METRO_STORE).toBe('/cache/app');
+    expect(env.RN_ISO_PROJECT_ROOT).toBe('/w/app');
+    expect(metroStoreEnv({ root: '/w/app', storeRoot: '/c', shimPath: shim, nodeOptions: `--require ${shim}` })).toBe(
+      null,
+    );
+  });
+
+  // The shim is a real file shipped in the package, not a string written to a
+  // temp directory: it has to be require()-able by somebody else's process.
+  test('the shim ships in this package and is found from here', () => {
+    const found = metroShimPath();
+    assert(found);
+    expect(found.endsWith(join('shim', 'metro-cache-store.cjs'))).toBe(true);
+    expect(existsSync(found)).toBe(true);
+    expect(metroShimPath('file:///nowhere/at/all/x.js')).toBe(null);
+  });
+
+  test('the spawned child carries the require, the store and the environment it was given', async () => {
+    fakeBin();
+    process.env.NODE_OPTIONS = '--max-old-space-size=8192';
+    const calls: { opts: SpawnOptions }[] = [];
+    await startExpoServer({
+      root,
+      port: 8120,
+      logsDir: join(root, '.rn-iso', 'logs'),
+      spawnFn: (_cmd, _args, opts) => {
+        calls.push({ opts });
+        return fakeChild();
+      },
+    });
+    const env = calls[0]?.opts.env as Record<string, string>;
+    expect(env.NODE_OPTIONS?.startsWith('--max-old-space-size=8192 --require ')).toBe(true);
+    expect(env.NODE_OPTIONS).toContain('metro-cache-store.cjs');
+    expect(env.RN_ISO_METRO_STORE).toBe(metroStoreRoot(root));
+    expect(env.RN_ISO_PROJECT_ROOT).toBe(root);
+    // Still the project's own `expo start --port N`, unchanged.
+    expect(env.FORCE_COLOR).toBe('0');
+  });
+
+  test('the machine-level kill switch leaves NODE_OPTIONS exactly as the caller set it', async () => {
+    writeFileSync(
+      join(tmpHome, 'config.json'),
+      JSON.stringify({ projects: {}, repos: {}, caches: { injectMetroStore: false } }),
+    );
+    fakeBin();
+    process.env.NODE_OPTIONS = '--enable-source-maps';
+    const logsDir = join(root, '.rn-iso', 'logs');
+    const calls: { opts: SpawnOptions }[] = [];
+    await startExpoServer({
+      root,
+      port: 8121,
+      logsDir,
+      spawnFn: (_cmd, _args, opts) => {
+        calls.push({ opts });
+        return fakeChild();
+      },
+    });
+    const env = calls[0]?.opts.env as Record<string, string>;
+    expect(env.NODE_OPTIONS).toBe('--enable-source-maps');
+    expect(env.RN_ISO_METRO_STORE).toBe(undefined);
+    const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
+    expect(records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
+  });
 });

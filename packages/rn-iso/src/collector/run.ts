@@ -198,16 +198,6 @@ export async function runCollector({
   const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'device.ndjson'));
   const startedAt = new Date(now()).toISOString();
 
-  // ---- the record, first (rule 1) ----
-  try {
-    registerCollector(root, platform, { pid: process.pid, startedAt });
-  } catch (err) {
-    // Losing the registration degrades `stop` (it cannot kill us by pid) but
-    // does not make the capture wrong, and refusing to collect over it would
-    // trade a small problem for a total one.
-    stderr(`rn-iso collector: could not record the collector in ${root}: ${describe(err)}`);
-  }
-
   let finished = false;
   let watcher: PidWatcher | null = null;
   const finish = (code: number, level: string, msg: string, event: string) => {
@@ -229,11 +219,15 @@ export async function runCollector({
     onExit(code);
   };
 
-  // Signals are handled from HERE, not after the stream starts. The android
-  // path can sit in the pid wait for half a minute, and a `stop` that arrived
-  // during it would otherwise kill this process at the default disposition --
-  // leaving behind exactly the registration rule 1 wrote to make us findable,
-  // pointing at a pid that no longer exists.
+  // Signals are handled BEFORE the registration, not after the stream starts.
+  // The android path can sit in the pid wait for half a minute, and a `stop`
+  // that arrived during it would otherwise kill this process at the default
+  // disposition -- leaving behind exactly the registration that was written to
+  // make us findable, pointing at a pid that no longer exists.
+  //
+  // The ordering is the invariant: once a collector is REGISTERED it can
+  // always clean up after itself. Registering first left a window -- small,
+  // but a `stop` racing a just-spawned collector lands in it, and CI found it.
   let child: ChildProcess | null = null;
   let flushReaders = () => {};
   if (attachSignals) {
@@ -244,6 +238,16 @@ export async function runCollector({
         finish(0, 'info', `device log collector received ${signal}; detaching`, 'collector_stopped');
       });
     }
+  }
+
+  // ---- the record, once we can survive being told to stop (rule 1) ----
+  try {
+    registerCollector(root, platform, { pid: process.pid, startedAt });
+  } catch (err) {
+    // Losing the registration degrades `stop` (it cannot kill us by pid) but
+    // does not make the capture wrong, and refusing to collect over it would
+    // trade a small problem for a total one.
+    stderr(`rn-iso collector: could not record the collector in ${root}: ${describe(err)}`);
   }
 
   // ---- android: the pid has to exist before logcat can filter on it ----
