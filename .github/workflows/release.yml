@@ -1,0 +1,62 @@
+# Publishes the three packages to npm via OIDC trusted publishing when a
+# version tag is pushed. There is NO token: npm trusts a short-lived OIDC
+# credential minted for exactly this repo + workflow + environment, and the
+# `release` environment requires a manual approval, which replaces the OTP.
+#
+# Third-party actions are pinned by commit SHA and the job is deliberately
+# minimal -- nothing here may run code that could tamper with the tarballs.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          # Node 24 bundles an npm new enough for OIDC trusted publishing.
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - name: Install (lifecycle scripts stay blocked)
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm run build
+      - name: Tag matches the package versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for p in rn-iso expo-build-cache metro; do
+            v=$(node -p "require('./packages/$p/package.json').version")
+            if [ "$v" != "$tag" ]; then
+              echo "packages/$p is $v but the tag is $tag"; exit 1
+            fi
+          done
+      - name: Publish rn-iso
+        run: npm publish --provenance --access public
+        working-directory: packages/rn-iso
+      - name: Publish @rn-iso/expo-build-cache
+        run: npm publish --provenance --access public
+        working-directory: packages/expo-build-cache
+      - name: Publish @rn-iso/metro
+        run: npm publish --provenance --access public
+        working-directory: packages/metro
+      - name: Smoke-test the registry
+        run: |
+          sleep 10
+          for p in rn-iso @rn-iso/expo-build-cache @rn-iso/metro; do
+            v=$(npm view "$p" version)
+            echo "$p -> $v"
+            [ "$v" = "${GITHUB_REF_NAME#v}" ] || exit 1
+          done
