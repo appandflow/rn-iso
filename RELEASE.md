@@ -132,7 +132,11 @@ If `git status` isn't clean, commit / discard before tagging.
    gh release create vX.Y.Z --title "vX.Y.Z" --notes-file /tmp/notes.md
    ```
    Sections: `New`, `Removed (breaking)`, `Fixes`, `Docs`, `Migration notes` (if any). Skip empty sections. Link prior commits with `[<short-sha>](https://github.com/janicduplessis/rn-iso/commit/<sha>)`. Say which package a line is about when it is not the CLI.
-7. **Publish to npm, `rn-iso` first.** The two cache packages name it as a peer
+7. **Publish to npm.** Pushing the tag (previous step) triggers the
+   `Release` workflow, which publishes all three packages via OIDC trusted
+   publishing (no token, `--provenance`) once you APPROVE the run in the
+   `release` environment on GitHub -- that approval replaces the OTP. Manual
+   fallback, `rn-iso` first: The two cache packages name it as a peer
    and their READMEs link to it, so a registry that has a cache package but not
    the CLI version it points at is the wrong order to be interrupted in:
 
