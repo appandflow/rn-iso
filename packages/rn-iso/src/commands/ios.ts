@@ -1096,13 +1096,13 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const wantRemote = Boolean(opts.remote) || remoteIosSetting(settings);
   let remoteDevice: ReturnType<typeof d.remoteIosDeps> | null = null;
   if (wantRemote) {
-    const resolved = d.resolveRemoteContext({
+    const resolved = await d.resolveRemoteContext({
       root,
       label,
       easBin: d.resolveEasCliBin(root)?.file ?? null,
     });
     if ('failed' in resolved) {
-      return fail({ code: REMOTE_SESSION_ERROR, message: resolved.failed, remedy: resolved.remedy });
+      return fail({ code: resolved.code ?? REMOTE_SESSION_ERROR, message: resolved.failed, remedy: resolved.remedy });
     }
     remoteDevice = d.remoteIosDeps(resolved.ctx);
     d = {

@@ -985,13 +985,13 @@ export async function runAndroid(
   const wantRemote = useRemoteDevice || remoteAndroidSetting(settings);
   let remoteDevice: ReturnType<typeof remoteAndroidDeps> | null = null;
   if (wantRemote) {
-    const resolved = resolveRemoteContext({
+    const resolved = await resolveRemoteContext({
       root,
       label,
       platform: PLATFORM,
       easBin: resolveEasCliBin(root)?.file ?? null,
     });
-    if ('failed' in resolved) return fail(REMOTE_SESSION_ERROR, resolved.failed, resolved.remedy);
+    if ('failed' in resolved) return fail(resolved.code ?? REMOTE_SESSION_ERROR, resolved.failed, resolved.remedy);
     remoteDevice = remoteAndroidDeps(resolved.ctx);
     checkCapacity = remoteDevice.checkCapacity;
     ensureDevice = remoteDevice.ensureDevice;

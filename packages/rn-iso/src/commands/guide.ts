@@ -507,6 +507,30 @@ RN_ISO_AT_CAPACITY
   behaves differently: a compile WAITS for a free slot rather than refusing.
   See \`guide lifecycle\`, "opt-in concurrency limits".)
 
+--- REMOTE-DEVICE CODES (\`ios --remote\` / \`android --remote\`) ---
+
+RN_ISO_NO_REMOTE_SESSION
+  \`--remote\` could not even be set up: agent-device is not on PATH, no eas-cli
+  and no AGENT_DEVICE_DAEMON_BASE_URL/_AUTH_TOKEN daemon, or metro.tunnel names
+  a provider or mode this workspace cannot use (e.g. "expo" on a bare RN
+  project). The remedy line says which. Nothing was created yet.
+
+RN_ISO_REMOTE_METRO_WRONG
+  The gate that proves a tunnel still reaches THIS workspace's Metro failed --
+  before a session or a build, whether the tunnel is Expo's own, one rn-iso
+  started (metro.tunnel: cloudflared/ngrok/auto), or a named metro.publicUrl.
+  The usual cause: the tunnel was built for a port this workspace no longer
+  holds (a stale one survived a \`stop\`/\`start\` that reserved a different
+  port), and it now serves ANOTHER workspace's dev server -- healthy, and
+  wrong. Re-run \`rn-iso start\` (it prints the port it reserved) and, for a
+  manual tunnel, rebuild it against that port.
+
+RN_ISO_REMOTE_METRO_UNREACHABLE
+  Same proof, at LAUNCH time rather than at the gate: the device could not be
+  told where Metro is at all (no origin resolved). Follows the same remedy as
+  RN_ISO_NO_REMOTE_SESSION's tunnel guidance -- set metro.tunnel, or
+  metro.publicUrl if you already have one.
+
 --- DEV-SERVER CODES (\`rn-iso start\`) ---
 
 RN_ISO_BARE_DEPS / RN_ISO_BARE_LOAD / RN_ISO_BARE_API  (bare RN)

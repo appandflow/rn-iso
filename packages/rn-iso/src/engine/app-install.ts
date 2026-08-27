@@ -926,7 +926,10 @@ export async function verifyLaunch({
   }
 }
 
-function readMetroRecords(logsDir: string | undefined): NdjsonRecord[] {
+// Exported so the remote Metro gate (engine/device-remote.ts) reads this
+// workspace's timeline the exact same way the launch verification below does
+// -- the gate and verifyLaunch must never disagree about what counts as proof.
+export function readMetroRecords(logsDir: string | undefined): NdjsonRecord[] {
   if (!logsDir) return [];
   try {
     return parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));

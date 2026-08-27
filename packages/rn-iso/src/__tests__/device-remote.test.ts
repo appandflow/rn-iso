@@ -362,13 +362,23 @@ describe('Metro reachability', () => {
 });
 
 describe('the Metro refusal comes before anything billable', () => {
-  const base = { root: '/w', label: 'wt', easBin: '/bin/eas', lookupAgentDevice: () => '/bin/agent-device' };
+  const base = {
+    root: '/w',
+    label: 'wt',
+    easBin: '/bin/eas',
+    lookupAgentDevice: () => '/bin/agent-device',
+    // A named/asserted-local origin's gate would otherwise reach a real
+    // network address; these tests are about the reach-planning refusal, not
+    // the gate, which metro-gate.test.ts and the "the gate runs" describe
+    // block below cover on their own.
+    gateOrigin: async () => ({ ok: true as const }),
+  };
 
-  test('an EAS session is refused up front when Metro is not reachable', () => {
+  test('an EAS session is refused up front when Metro is not reachable', async () => {
     // The failure this prevents: create a billable session, compile for
     // minutes, install, THEN refuse. Everything needed to answer is known
     // here, before any of it.
-    const r = resolveRemoteContext({ ...base, env: {} });
+    const r = await resolveRemoteContext({ ...base, env: {} });
     expect('failed' in r).toBe(true);
     if ('failed' in r) {
       expect(r.failed).toContain('cannot reach');
@@ -377,9 +387,9 @@ describe('the Metro refusal comes before anything billable', () => {
     }
   });
 
-  test('an asserted-local device needs no public url', () => {
+  test('an asserted-local device needs no public url', async () => {
     // A loopback daemon URL no longer earns this by itself: it is declared.
-    const r = resolveRemoteContext({
+    const r = await resolveRemoteContext({
       ...base,
       tunnelMode: 'off',
       env: { AGENT_DEVICE_DAEMON_BASE_URL: 'http://127.0.0.1:4310', AGENT_DEVICE_DAEMON_AUTH_TOKEN: 't' },
@@ -387,18 +397,18 @@ describe('the Metro refusal comes before anything billable', () => {
     expect('ctx' in r).toBe(true);
   });
 
-  test('a loopback daemon is NOT taken as proof the device is local', () => {
+  test('a loopback daemon is NOT taken as proof the device is local', async () => {
     // `ssh -L 4310:localhost:4310 macmini` is exactly this shape, and the
     // device is on the other machine. Refusing is the safe direction.
-    const r = resolveRemoteContext({
+    const r = await resolveRemoteContext({
       ...base,
       env: { AGENT_DEVICE_DAEMON_BASE_URL: 'http://127.0.0.1:4310', AGENT_DEVICE_DAEMON_AUTH_TOKEN: 't' },
     });
     expect('failed' in r).toBe(true);
   });
 
-  test('a routable daemon without a public url is refused up front', () => {
-    const r = resolveRemoteContext({
+  test('a routable daemon without a public url is refused up front', async () => {
+    const r = await resolveRemoteContext({
       ...base,
       env: { AGENT_DEVICE_DAEMON_BASE_URL: 'https://x.ngrok.app/agent-device', AGENT_DEVICE_DAEMON_AUTH_TOKEN: 't' },
     });
@@ -406,10 +416,173 @@ describe('the Metro refusal comes before anything billable', () => {
     if ('failed' in r) expect(r.remedy).toContain('"off"');
   });
 
-  test('naming a public url is what unblocks an EAS session', () => {
-    const r = resolveRemoteContext({ ...base, env: { [PUBLIC_METRO_ENV]: 'https://abc.ngrok.app' } });
+  test('naming a public url is what unblocks an EAS session', async () => {
+    const r = await resolveRemoteContext({ ...base, env: { [PUBLIC_METRO_ENV]: 'https://abc.ngrok.app' } });
     expect('ctx' in r).toBe(true);
     if ('ctx' in r) expect(r.ctx.publicMetroUrl).toBe('https://abc.ngrok.app');
+  });
+});
+
+describe('a tunnel rn-iso starts for itself is started, recorded and gated before ctx is returned', () => {
+  const base = { root: '/w', label: 'wt', easBin: '/bin/eas', lookupAgentDevice: () => '/bin/agent-device', env: {} };
+
+  test('a managed provider is started, its record written, then the gate runs -- in that order', async () => {
+    const order: string[] = [];
+    let written: unknown = null;
+    const r = await resolveRemoteContext({
+      ...base,
+      tunnelMode: 'ngrok',
+      available: ['ngrok'],
+      metroPort: 8082,
+      startManagedTunnel: async () => {
+        order.push('start');
+        return { pid: 555, url: 'https://abc.ngrok.app' };
+      },
+      readTunnelRecord: () => null,
+      writeTunnelRecord: (_root, patch) => {
+        order.push('write');
+        written = patch;
+        return patch as never;
+      },
+      isTunnelAlive: () => false,
+      gateOrigin: async () => {
+        order.push('gate');
+        return { ok: true };
+      },
+    });
+    expect(order).toEqual(['start', 'write', 'gate']);
+    expect('ctx' in r).toBe(true);
+    if ('ctx' in r) expect(r.ctx.publicMetroUrl).toBe('https://abc.ngrok.app');
+    expect(written).toEqual({
+      metroTunnel: {
+        kind: 'managed',
+        provider: 'ngrok',
+        pid: 555,
+        url: 'https://abc.ngrok.app',
+        port: 8082,
+        startedAt: expect.any(String),
+      },
+    });
+  });
+
+  test("a gate failure refuses with the gate's stable code, and creates no session", async () => {
+    // resolveRemoteContext never calls ensureBooted -- the EAS/agent-device
+    // session-creating step -- itself, so a refusal here structurally means
+    // the command layer's remoteIosDeps(ctx) is never produced and ensureBooted
+    // is never reached. See ios.ts / android.ts's `if ('failed' in resolved)`.
+    const r = await resolveRemoteContext({
+      ...base,
+      tunnelMode: 'ngrok',
+      available: ['ngrok'],
+      metroPort: 8082,
+      startManagedTunnel: async () => ({ pid: 555, url: 'https://abc.ngrok.app' }),
+      writeTunnelRecord: (_root, patch) => patch as never,
+      gateOrigin: async () => ({
+        failed: true,
+        code: 'RN_ISO_REMOTE_METRO_WRONG',
+        reason: 'https://abc.ngrok.app answered, but not from this workspace.',
+        remedy: 'check the tunnel',
+      }),
+    });
+    expect('failed' in r).toBe(true);
+    if ('failed' in r) {
+      expect(r.code).toBe('RN_ISO_REMOTE_METRO_WRONG');
+      expect(r.failed).toContain('not from this workspace');
+    }
+  });
+
+  test('a live managed tunnel already recorded for this port is reused, not restarted', async () => {
+    let started = 0;
+    const r = await resolveRemoteContext({
+      ...base,
+      tunnelMode: 'ngrok',
+      available: ['ngrok'],
+      metroPort: 8082,
+      startManagedTunnel: async () => {
+        started++;
+        return { pid: 999, url: 'https://new.ngrok.app' };
+      },
+      readTunnelRecord: () => ({
+        kind: 'managed',
+        provider: 'ngrok',
+        pid: 777,
+        url: 'https://old.ngrok.app',
+        port: 8082,
+        startedAt: 'x',
+      }),
+      isTunnelAlive: (pid) => pid === 777,
+      gateOrigin: async () => ({ ok: true }),
+    });
+    expect(started).toBe(0);
+    expect('ctx' in r).toBe(true);
+    if ('ctx' in r) expect(r.ctx.publicMetroUrl).toBe('https://old.ngrok.app');
+  });
+
+  test('a recorded tunnel for a DIFFERENT port is not reused', async () => {
+    let started = 0;
+    const r = await resolveRemoteContext({
+      ...base,
+      tunnelMode: 'ngrok',
+      available: ['ngrok'],
+      metroPort: 9999,
+      startManagedTunnel: async () => {
+        started++;
+        return { pid: 999, url: 'https://new.ngrok.app' };
+      },
+      readTunnelRecord: () => ({
+        kind: 'managed',
+        provider: 'ngrok',
+        pid: 777,
+        url: 'https://old.ngrok.app',
+        port: 8082,
+        startedAt: 'x',
+      }),
+      isTunnelAlive: () => true,
+      writeTunnelRecord: (_root, patch) => patch as never,
+      gateOrigin: async () => ({ ok: true }),
+    });
+    expect(started).toBe(1);
+    if ('ctx' in r) expect(r.ctx.publicMetroUrl).toBe('https://new.ngrok.app');
+  });
+
+  test('a tunnel that fails to start is a refusal, not a silent fallback', async () => {
+    const r = await resolveRemoteContext({
+      ...base,
+      tunnelMode: 'ngrok',
+      available: ['ngrok'],
+      metroPort: 8082,
+      startManagedTunnel: async () => ({ failed: true, reason: 'ngrok exited before printing a tunnel URL.' }),
+      readTunnelRecord: () => null,
+    });
+    expect('failed' in r).toBe(true);
+    if ('failed' in r) expect(r.failed).toContain('ngrok exited before printing');
+  });
+
+  test('an Expo tunnel URL recorded by `start` is used and gated', async () => {
+    const r = await resolveRemoteContext({
+      ...base,
+      tunnelMode: 'expo',
+      isExpo: true,
+      metroPort: 8082,
+      readTunnelRecord: () => ({ kind: 'expo', url: 'exp://xyz.exp.direct' }),
+      gateOrigin: async () => ({ ok: true }),
+    });
+    expect('ctx' in r).toBe(true);
+    if ('ctx' in r) expect(r.ctx.publicMetroUrl).toBe('exp://xyz.exp.direct');
+  });
+
+  test('no recorded Expo tunnel URL refuses and points at `rn-iso start`', async () => {
+    // `ios --remote` cannot retroactively add `--tunnel` to an already-running
+    // dev server -- `start` is the only place that can establish it.
+    const r = await resolveRemoteContext({
+      ...base,
+      tunnelMode: 'expo',
+      isExpo: true,
+      metroPort: 8082,
+      readTunnelRecord: () => null,
+    });
+    expect('failed' in r).toBe(true);
+    if ('failed' in r) expect(r.remedy).toContain('rn-iso start');
   });
 });
 

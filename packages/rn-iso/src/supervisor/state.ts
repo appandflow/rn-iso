@@ -10,6 +10,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { dirname } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
 import { supervisorPidFile, workspaceStateFile, workspaceStateLock } from '../paths.ts';
+import type { ManagedProvider } from '../engine/metro-reach.ts';
 
 export const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';
@@ -25,7 +26,60 @@ export interface WorkspaceState {
   // Written by `ios --remote` the moment the session exists. The session id
   // ONLY: the daemon token is never persisted anywhere.
   remoteDevice?: Record<string, unknown>;
+  // The address a remote device reaches this workspace's Metro through, when
+  // rn-iso set one up itself: an Expo-hosted tunnel (`start`, kind 'expo') or
+  // a managed provider (`ios`/`android` --remote, kind 'managed'). Never
+  // written for an operator-supplied metro.publicUrl -- rn-iso only records
+  // what it can also reap.
+  metroTunnel?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+// The Expo dev server tunnelling itself (`expo start --tunnel`). Nothing to
+// reap: the tunnel dies with the expo child, which `stop` already kills.
+// Not exported on its own: nothing names it directly, only through the
+// MetroTunnelRecord union readMetroTunnel returns.
+interface ExpoTunnelRecord {
+  kind: 'expo';
+  url: string;
+}
+
+// A tunnel rn-iso started and owns the process of (engine/tunnel.ts's
+// TunnelRecord, plus the discriminant). `stop`, `gc` and `worktree remove`
+// reap this one by pid.
+export interface ManagedTunnelRecord {
+  kind: 'managed';
+  provider: ManagedProvider;
+  pid: number;
+  url: string;
+  port: number;
+  startedAt: string;
+}
+
+export type MetroTunnelRecord = ExpoTunnelRecord | ManagedTunnelRecord;
+
+// The tunnel this workspace's Metro is reachable through, if rn-iso set one
+// up. A narrow reader for the same reason readRemoteSessionId is one: every
+// site that reads or reaps this record must agree on its shape and on what a
+// malformed one means.
+export function readMetroTunnel(root: string): MetroTunnelRecord | null {
+  const record = readWorkspaceState(root)?.metroTunnel;
+  if (!record || typeof record !== 'object') return null;
+  const kind = (record as { kind?: unknown }).kind;
+  const url = (record as { url?: unknown }).url;
+  if (typeof url !== 'string' || url.length === 0) return null;
+  if (kind === 'expo') return { kind: 'expo', url };
+  if (kind === 'managed') {
+    const provider = (record as { provider?: unknown }).provider;
+    const pid = (record as { pid?: unknown }).pid;
+    const port = (record as { port?: unknown }).port;
+    const startedAt = (record as { startedAt?: unknown }).startedAt;
+    if ((provider !== 'ngrok' && provider !== 'cloudflared') || typeof pid !== 'number' || typeof port !== 'number') {
+      return null;
+    }
+    return { kind: 'managed', provider, pid, url, port, startedAt: typeof startedAt === 'string' ? startedAt : '' };
+  }
+  return null;
 }
 
 // --- Contract 2: the workspace state file --------------------------------
