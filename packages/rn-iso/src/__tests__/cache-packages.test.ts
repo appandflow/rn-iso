@@ -10,7 +10,7 @@
 // the module), but its cache root is resolved per call rather than at load
 // time -- which is what lets a test set the environment after importing, and
 // what keeps an override from being frozen into a long-lived Metro process.
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -120,6 +120,20 @@ test('both packages resolve the same cache roots the CLI does', async () => {
     expect(metro.cacheRoot()).toBe(sharedMetroCache());
     expect(metro.cacheRoot('demo')).toBe(sharedMetroCache('demo'));
     expect(metro.cacheRoot('demo')).toBe(join(home, 'metro-cache', 'demo'));
+
+    // The machine-config override has to move all three together, and the
+    // env override has to beat it.
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({ caches: { buildCache: join(home, 'cfg-build'), metroCache: join(home, 'cfg-metro') } }),
+    );
+    expect(provider.cacheRoot()).toBe(sharedBuildCache());
+    expect(provider.cacheRoot()).toBe(join(home, 'cfg-build'));
+    expect(metro.cacheRoot('demo')).toBe(sharedMetroCache('demo'));
+    expect(metro.cacheRoot('demo')).toBe(join(home, 'cfg-metro'));
+    // A relative path in the config is ignored, never joined into nonsense.
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ caches: { buildCache: 'relative/nope' } }));
+    expect(provider.cacheRoot()).toBe(join(home, 'build-cache'));
 
     // The env overrides have to move all three together too.
     process.env.RN_ISO_BUILD_CACHE = join(home, 'elsewhere-build');
