@@ -285,8 +285,8 @@ checklist:
   "no `up`").
 - New / changed flag? Update "The flow" if it changes the order, and
   `guide lifecycle`'s option-surface block, which is pinned against the
-  command sources the same way. Growing the surface at all is a decision the
-  spec argues against; make it deliberately.
+  command sources the same way. A new flag is allowed when it is the best
+  answer (item 3 sets the bar); record why alongside it.
 - Behavior change (e.g., a new `--json` field, a new destructive side effect)?
   Update both the relevant section and "When things go wrong".
 
@@ -336,7 +336,7 @@ device-selection or device-teardown logic, preserve this rule: create only
 `rn-iso-<label>`-named devices, verify that prefix before any destructive
 command, and never touch a device rn-iso didn't create.
 
-### 3. Reimplementation, not reconstruction — and the option surface does not grow
+### 3. Reimplementation, not reconstruction — and the option surface grows only when it is the best answer
 
 **The rule that is load-bearing:** rn-iso must never RECONSTRUCT a command
 line that already exists in the project. Inferring and rebuilding a build
@@ -355,8 +355,7 @@ composes, never one it inferred from a package.json script. Nothing reads
 `runCommandFor` / `detectPackageManager` — repo setup is judgement (the
 `rn-iso-init` skill applying `doctor`'s findings by hand), not templating.
 
-**What replaces the broker rule as the guard is the OPTION SURFACE.** It is
-fixed and it does not grow:
+**The OPTION SURFACE is the second guard, and it is deliberately small:**
 
     start           --json --wait
     ios             --json --no-metro-check --no-build-cache --configuration <name> --remote
@@ -364,6 +363,7 @@ fixed and it does not grow:
     logs            --source --level --since --grep --tail --follow --errors --json
     stop            --json --force
 
+<<<<<<< HEAD
 `--client-logs` is the archetype of what is deleted rather than ported: capture
 is unconditional, and a queryable file has no terminal noise to manage. Device
 targets and `--serial` are out of scope for the
@@ -454,6 +454,40 @@ out of scope.
 
 `--remote` is the one deliberate addition since this list was written, and it
 is recorded here rather than left to drift. It does not reconstruct anything
+=======
+It MAY grow. A new option needs a justification, not permission, and the bar
+is that a flag is the best available answer rather than merely a workable one.
+Ask three things: does it change what rn-iso RECONSTRUCTS (if yes, refuse —
+that is the load-bearing rule above, and it does not bend); is the thing it
+configures a contended resource rn-iso already brokers, or project-specific
+knowledge the repo owns (the second belongs in the project's own script); and
+is a flag genuinely better than the alternatives — a setting, a sensible
+default, or leaving it out. Record the reasoning here when you add one, the
+way `--remote` is recorded below, so the next reader inherits the argument
+instead of just the outcome.
+
+`--client-logs` is still the archetype of what is deleted rather than ported:
+capture is unconditional, and a queryable file has no terminal noise to
+manage. Release builds, variants, device targets and `--serial` remain out of
+scope — not because the surface is frozen, but because each is project-specific
+knowledge the repo owns, and a project needing one wraps rn-iso in a script of
+its own.
+
+**Do NOT dodge this rule with an environment variable.** An env var reads as a
+smaller change than a flag and is usually a worse one: it is ungoverned (no
+`KNOWN_SETTINGS` entry, so a typo is silent), invisible in `--help`, and — the
+part that actually bites — UNREAPABLE. A child process cannot unset a variable
+in its parent shell, so every other resource rn-iso brokers it can free, and
+that one it cannot. `RN_ISO_METRO_PUBLIC_URL` was introduced exactly this way,
+to avoid growing this list, and it is the only WORKSPACE-scoped env var in the
+codebase; every other `RN_ISO_*` is machine-scoped on purpose (see
+`getConcurrencyLimits`: those caps are the machine's, "not any one checkout's").
+It went stale against a reallocated port and silently pointed a device at
+another project's Metro. A flag or a setting would have been the honest choice.
+
+`--remote` is the worked example of the bar above, recorded here rather than
+left to drift. It does not reconstruct anything
+>>>>>>> 2d7bd61 (docs: the option surface may grow when a flag is the best answer)
 and it does not widen what rn-iso builds: the build, the fingerprint and the
 cache are identical, and the flag moves ONLY the device (see
 `docs/specs/2026-08-26-remote-device-backend-design.md`). It earns its place

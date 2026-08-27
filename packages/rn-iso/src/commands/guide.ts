@@ -804,8 +804,10 @@ THE OPTION SURFACE, IN FULL
   gc              --delete --older-than <days> --all
   worktree create <name> --carry-ignored --base <ref>; remove [path] --force
 
-  That is the whole surface, deliberately. A project needing more wraps rn-iso
-  in an npm script rather than rn-iso growing a flag for it.
+  That is the whole surface today, and it is deliberately small. It can grow
+  when a flag is genuinely the best answer -- but project-specific knowledge
+  (release builds, variants, device targets) belongs in a script the repo owns,
+  not in a flag here.
 
   \`android --variant <name>\` selects the gradle variant to assemble and
   install on a project with product flavors -- \`--variant productionDebug\`
