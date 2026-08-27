@@ -21,6 +21,23 @@ against state an earlier build wrote is not guaranteed. Old cache dirs
 stale device records should surface in `gc`, not crash anything. Anything
 odd here is a HIGH-severity finding.
 
+## Use a fixture that looks like a real repo
+
+A fresh `create-expo-app` has never been prebuilt, so its `app.json` carries no
+`ios.bundleIdentifier` / `android.package` and its `package.json` still has the
+`expo start` scripts. The first prebuild writes all three -- TRACKED files --
+which moves the fingerprint and makes a cold worktree miss a cache entry it
+would otherwise hit. A real CNG repo has those values committed (Expo
+recommends setting them explicitly), so prebuild writes nothing tracked and a
+cold worktree hits on its first lookup; a bare repo commits `ios/` and
+`android/` outright and never prebuilds at all.
+
+So before testing anything about caching across worktrees: **prebuild once and
+commit on the main tree** (or set those keys by hand). Otherwise the fixture
+manufactures a transition that few users ever see, and the result reads as a
+product bug. Test the cold/warm split deliberately, when it IS the thing under
+test.
+
 ## Safety rules (non-negotiable)
 
 - NEVER modify the target repo's main checkout. Worktrees only.
