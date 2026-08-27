@@ -71,9 +71,10 @@ test('storeBuild stages elsewhere and renames, so a partial copy is never visibl
     },
     runFile: (file, args) => {
       calls.push({ file, args });
-      // Stand in for `cp -R`: create the destination the real command would.
-      mkdirSync(args[2], { recursive: true });
-      writeFileSync(join(args[2], 'bin'), 'x');
+      // Stand in for `cp -c -R`: create the destination the real command would.
+      const dest = args[args.length - 1];
+      mkdirSync(dest, { recursive: true });
+      writeFileSync(join(dest, 'bin'), 'x');
       return '';
     },
     runQuiet: () => '',
@@ -87,8 +88,9 @@ test('storeBuild stages elsewhere and renames, so a partial copy is never visibl
   const call = calls[0];
   assert(call);
   expect(call.file).toBe('cp');
-  expect(call.args.slice(0, 2)).toEqual(['-R', build]);
-  expect(call.args[2]).toMatch(/\.staging-\d+/);
+  // -c first (APFS clone; the mock accepts it, standing in for same-volume APFS).
+  expect(call.args.slice(0, 3)).toEqual(['-c', '-R', build]);
+  expect(call.args[3]).toMatch(/\.staging-\d+/);
   expect(existsSync(`${entryDir('ios', 'fp1', root)}.staging-${process.pid}`)).toBe(false);
 });
 
@@ -166,8 +168,8 @@ test('storeBuild passes the build path as one argument, never through a shell', 
     },
     runFile: (_file, args) => {
       seen = args;
-      mkdirSync(args[2], { recursive: true });
-      writeFileSync(join(args[2], 'bin'), 'x');
+      mkdirSync(args[3], { recursive: true });
+      writeFileSync(join(args[3], 'bin'), 'x');
       return '';
     },
     runQuiet: () => '',
@@ -176,7 +178,7 @@ test('storeBuild passes the build path as one argument, never through a shell', 
 
   storeBuild('ios', 'fp4', build, root);
   assert(seen);
-  expect(seen[1]).toBe(build);
+  expect(seen[2]).toBe(build);
 });
 
 // Against the real `cp`, not a mock: a mock proves the argument list was built,
