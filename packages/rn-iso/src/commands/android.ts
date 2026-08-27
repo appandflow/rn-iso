@@ -961,18 +961,18 @@ export async function runAndroid(
   }
   const metroPort = reservedPort ?? DEFAULT_METRO_PORT;
 
-  const booted = await ensureDeviceBooted({ platform: PLATFORM, device, out });
-  if (booted.failed) {
-    return fail(
-      NO_DEVICE,
-      booted.reason,
-      'Run `rn-iso status` to see what rn-iso thinks it owns; re-running `rn-iso android` creates a fresh owned AVD.',
-    );
-  }
-  const serial = booted.serial;
+  // Boot is KICKED OFF here and awaited only at install: gradle needs no
+  // device, and a cold AVD boot (up to minutes under software rendering) used
+  // to sit whole in front of the build. The catch holds a rare boot failure
+  // until the await, where it fails with the same code it always did -- and
+  // the build that ran anyway is in the shared cache for the retry.
+  const bootPromise = Promise.resolve(ensureDeviceBooted({ platform: PLATFORM, device, out })).catch((e) => ({
+    failed: true as const,
+    reason: String((e as Error)?.message || e),
+    serial: null,
+  }));
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
-  phase('device', `${device.avdName || serial} (${serial}) booted`);
 
   // ---- fingerprint ----------------------------------------------------
   let hash;
@@ -1270,6 +1270,19 @@ export async function runAndroid(
   record.appPath = apkPath;
 
   // ---- install --------------------------------------------------------
+  // The boot the top of the command started: everything from here on needs
+  // the emulator live.
+  const booted = await bootPromise;
+  if (booted.failed) {
+    return fail(
+      NO_DEVICE,
+      booted.reason,
+      'Run `rn-iso status` to see what rn-iso thinks it owns; re-running `rn-iso android` creates a fresh owned AVD.',
+    );
+  }
+  const serial = booted.serial;
+  phase('device', `${device.avdName || serial} (${serial}) booted`);
+
   // serial and apkPath are provably set by this point: booted.failed already
   // returned, and apkPath is set by either the cache branch or a build that
   // did not report `failed`.

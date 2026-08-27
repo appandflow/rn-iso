@@ -1497,7 +1497,13 @@ describe('failure output', () => {
     expect(lastBuild.startedAt).toBeTruthy();
   });
 
-  test('a device that will not boot is refused before anything is fingerprinted or built', async () => {
+  test('a device that will not boot is refused at install, after the build has been stored', async () => {
+    // Boot runs BESIDE the fingerprint/cache/build work, not ahead of it: a
+    // cold boot used to add its whole duration in front of a multi-minute
+    // compile, and install is the first step that needs a live device. The
+    // trade on this rare failure is deliberate -- the build that ran anyway
+    // went into the shared cache, so the retry after fixing the device
+    // installs it instead of compiling again.
     reserve();
     const { errs, exitCode, calls } = await run(
       {},
@@ -1506,9 +1512,10 @@ describe('failure output', () => {
       },
     );
     expect(exitCode).toBe(1);
-    expect(!calls.order.includes('fingerprintProject')).toBeTruthy();
-    expect(!calls.order.includes('buildIos')).toBeTruthy();
+    expect(calls.order.includes('buildIos')).toBeTruthy();
+    expect(!calls.order.includes('installIosApp')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/no longer exists/);
+    expect(errs.join('\n')).toMatch(/RN_ISO_NO_DEVICE/);
   });
 
   test('a failed install is reported with its own code and a failed record', async () => {

@@ -579,13 +579,13 @@ describe('the other refusals', () => {
     expect(result.error.message).toMatch(/bad app\.json/);
   });
 
-  // The boot now happens AFTER the Metro gate, so the gate has already passed
-  // by the time this fires -- the point is only that no build work follows.
-  test('a device that cannot be booted refuses with RN_ISO_NO_DEVICE', async () => {
+  // Boot runs BESIDE the fingerprint/cache/build work now (gradle needs no
+  // device), so the refusal surfaces at install -- after the build has run
+  // and been stored for the retry -- not ahead of it.
+  test('a device that cannot be booted refuses with RN_ISO_NO_DEVICE, after the build', async () => {
     const h = harness({
       ensureDeviceBooted: async () => ({ failed: true, reason: 'AVD rn-iso-app-412 no longer exists.' }),
-      fingerprint: never('the fingerprint'),
-      build: never('the build'),
+      install: never('the install'),
     });
     const result = await h.run();
     assert(result.error);
