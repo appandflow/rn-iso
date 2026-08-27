@@ -752,6 +752,8 @@ interface ReclaimAllResult {
   reclaimedKeys: string[];
   // The remote sessions this reclaim ended. Each one was billing.
   stoppedSessions: string[];
+  // The managed tunnels (ngrok/cloudflared) this reclaim ended.
+  stoppedTunnels: string[];
 }
 
 async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
@@ -768,6 +770,7 @@ async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
   const skippedDevices: SkippedDevice[] = [];
   const keptEntries: string[] = [];
   const stoppedSessions: string[] = [];
+  const stoppedTunnels: string[] = [];
   for (const key of keys) {
     const r = await reclaimProject(key, { deleteOwnedDevices: true });
     dereferenced.push(...r.dereferenced);
@@ -775,6 +778,7 @@ async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
     deletedDevices.push(...r.deletedDevices);
     skippedDevices.push(...r.skippedDevices);
     if (r.stoppedSession) stoppedSessions.push(r.stoppedSession);
+    if (r.stoppedTunnel) stoppedTunnels.push(r.stoppedTunnel);
     if (r.keptEntry) keptEntries.push(key);
   }
   return {
@@ -785,6 +789,7 @@ async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
     keptEntries,
     reclaimedKeys: [...keys],
     stoppedSessions,
+    stoppedTunnels,
   };
 }
 
@@ -1176,6 +1181,8 @@ export function registerRemove(worktree: Command): void {
           console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
         if (result.stoppedSessions.length)
           console.error(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
+        if (result.stoppedTunnels.length)
+          console.error(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
         for (const s of result.skippedDevices) console.error(chalk.dim(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
         for (const kept of result.keptEntries) {
           console.error(
@@ -1195,6 +1202,8 @@ export function registerRemove(worktree: Command): void {
         console.log(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
       if (result.stoppedSessions.length)
         console.log(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
+      if (result.stoppedTunnels.length)
+        console.log(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
       for (const s of result.skippedDevices) {
         console.log(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
       }

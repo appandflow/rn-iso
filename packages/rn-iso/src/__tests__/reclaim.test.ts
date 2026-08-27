@@ -234,3 +234,138 @@ test('a workspace with no session never reaches for eas', async () => {
   expect(r.stoppedSession).toBeNull();
   rmSync(root, { recursive: true, force: true });
 });
+
+// --- a tunnel `ios`/`android --remote` started for itself -------------------
+//
+// The same timing constraint as the remote session: engine/tunnel.ts's pid
+// lives in the workspace's state.json, gone the moment the caller removes the
+// tree, so it has to be reaped inside reclaim, before that happens.
+
+function workspaceWithManagedTunnel(pid: number): string {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-ws-'));
+  mkdirSync(join(root, '.rn-iso'), { recursive: true });
+  writeFileSync(
+    join(root, '.rn-iso', 'state.json'),
+    JSON.stringify({
+      metroTunnel: {
+        kind: 'managed',
+        provider: 'ngrok',
+        pid,
+        url: 'https://abc.ngrok.app',
+        port: 8082,
+        startedAt: 'T',
+      },
+    }),
+  );
+  upsertProject(root, { label: 'agent-1' });
+  return root;
+}
+
+test('reclaim ends the managed tunnel recorded for the workspace', async () => {
+  const root = workspaceWithManagedTunnel(4242);
+  const stopped: number[] = [];
+  const r = await reclaimProject(root, {
+    stopMetroTunnel: async (record) => {
+      stopped.push(record.pid);
+      return { status: 'stopped' };
+    },
+  });
+  expect(stopped).toEqual([4242]);
+  expect(r.stoppedTunnel).toBe('ngrok');
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('the tunnel is stopped even without deleteOwnedDevices', async () => {
+  // deleteOwnedDevices guards DESTROYING a local sim; a tunnel process is not
+  // a device it could hand back later, it is simply leaked once its
+  // workspace is gone, so this is unconditional.
+  const root = workspaceWithManagedTunnel(4242);
+  let called = false;
+  await reclaimProject(root, {
+    deleteOwnedDevices: false,
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+  });
+  expect(called).toBe(true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('a tunnel that could not be stopped keeps the entry and names the manual fix', async () => {
+  const root = workspaceWithManagedTunnel(4242);
+  const r = await reclaimProject(root, {
+    stopMetroTunnel: async () => ({ status: 'failed', reason: 'pid 4242 did not exit within 5000ms.' }),
+  });
+  expect(r.stoppedTunnel).toBeNull();
+  expect(r.keptEntry).toBe(true);
+  expect(getProject(root)).toBeTruthy();
+  const reported = r.failedDevices[0]?.reason ?? '';
+  expect(reported).toContain('kill 4242');
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('a throwing tunnel stop is contained, so the caller still removes the tree', async () => {
+  const root = workspaceWithManagedTunnel(4242);
+  const r = await reclaimProject(root, {
+    stopMetroTunnel: async () => {
+      throw new Error('kill exploded');
+    },
+  });
+  expect(r.stoppedTunnel).toBeNull();
+  expect(r.failedDevices[0]?.reason).toContain('kill exploded');
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('a workspace with no recorded tunnel never calls stopMetroTunnel', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-ws-'));
+  upsertProject(root, { label: 'agent-1' });
+  let called = false;
+  const r = await reclaimProject(root, {
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+  });
+  expect(called).toBe(false);
+  expect(r.stoppedTunnel).toBeNull();
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('an Expo-hosted tunnel has no process of its own -- reclaim never calls stopMetroTunnel for it', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-ws-'));
+  mkdirSync(join(root, '.rn-iso'), { recursive: true });
+  writeFileSync(
+    join(root, '.rn-iso', 'state.json'),
+    JSON.stringify({ metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' } }),
+  );
+  upsertProject(root, { label: 'agent-1' });
+  let called = false;
+  const r = await reclaimProject(root, {
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+  });
+  expect(called).toBe(false);
+  expect(r.stoppedTunnel).toBeNull();
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('an operator-supplied tunnel (metro.publicUrl) is never recorded, so reclaim never touches it', async () => {
+  // rn-iso only reaps what it created: an operator's own tunnel is never
+  // written to state.json's metroTunnel key, so there is nothing here to
+  // find, let alone kill.
+  const root = mkdtempSync(join(tmpdir(), 'rn-iso-ws-'));
+  upsertProject(root, { label: 'agent-1' });
+  let called = false;
+  const r = await reclaimProject(root, {
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+  });
+  expect(called).toBe(false);
+  expect(r.stoppedTunnel).toBeNull();
+  rmSync(root, { recursive: true, force: true });
+});

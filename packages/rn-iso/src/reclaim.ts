@@ -2,9 +2,10 @@ import { type ProjectRecord, getProject, removeProject } from './config.ts';
 import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.ts';
 import { readCollectors } from './collector/state.ts';
-import { readRemoteSessionId } from './supervisor/state.ts';
+import { readMetroTunnel, readRemoteSessionId, type ManagedTunnelRecord } from './supervisor/state.ts';
 import { endRecordedSession } from './engine/device-remote.ts';
 import { resolveEasCliBin } from './engine/remote-cache.ts';
+import { stopTunnel, type StopTunnelResult } from './engine/tunnel.ts';
 
 // Stop this workspace's device-log collectors. Their record in state.json is
 // the only thing that names them, so they must be reaped before the entry (and,
@@ -71,6 +72,51 @@ type StopSession = (root: string, sessionId: string) => { status: 'torn-down' | 
 
 function defaultStopSession(root: string, sessionId: string) {
   return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null });
+}
+
+// End a tunnel `ios`/`android --remote` started for itself (a managed
+// provider; engine/tunnel.ts), for the same timing reason reclaimRemoteSession
+// runs here rather than in the caller: the record lives in
+// `<root>/.rn-iso/state.json`, which `worktree remove` deletes.
+//
+// Unconditional, like the remote session -- not gated by deleteOwnedDevices.
+// That flag guards DESTROYING a local device, a real choice because a
+// shut-down simulator can be booted again; a tunnel process left running here
+// is simply leaked, since nothing else will ever reap it once its workspace
+// is gone. An Expo-hosted tunnel (kind 'expo') has no process of its own: it
+// dies with the expo child, which stopping the supervisor already ends.
+type StopMetroTunnelFn = (record: ManagedTunnelRecord) => Promise<StopTunnelResult>;
+
+function defaultStopMetroTunnel(record: ManagedTunnelRecord): Promise<StopTunnelResult> {
+  return stopTunnel(record);
+}
+
+async function reclaimMetroTunnel(
+  root: string,
+  { stopMetroTunnel = defaultStopMetroTunnel }: { stopMetroTunnel?: StopMetroTunnelFn } = {},
+): Promise<{ stopped: string | null; failed: SkippedDevice | null }> {
+  const record = readMetroTunnel(root);
+  if (record?.kind !== 'managed') return { stopped: null, failed: null };
+  let result: StopTunnelResult;
+  try {
+    result = await stopMetroTunnel(record);
+  } catch (err) {
+    // Contained for the same reason every teardown here is: a throw would
+    // abort the reclaim before the caller's removal step, and re-running
+    // would hit it forever.
+    result = { status: 'failed', reason: String((err as Error)?.message ?? err) };
+  }
+  if (result.status === 'failed') {
+    return {
+      stopped: null,
+      failed: {
+        platform: 'ios',
+        name: `${record.provider} tunnel (pid ${record.pid})`,
+        reason: `${result.reason ?? 'stop failed'} -- it may still be running: kill ${record.pid} by hand.`,
+      },
+    };
+  }
+  return { stopped: record.provider, failed: null };
 }
 
 // A device this function skipped or failed to tear down: reported alongside
@@ -186,6 +232,10 @@ export interface ReclaimResult {
   keptEntry: boolean;
   // The remote session this reclaim ended, if there was one.
   stoppedSession: string | null;
+  // The managed tunnel (ngrok/cloudflared) this reclaim ended, if there was
+  // one -- the provider name. null when there was none, or it was an
+  // Expo-hosted tunnel with no process of its own.
+  stoppedTunnel: string | null;
 }
 
 export async function reclaimProject(
@@ -193,7 +243,8 @@ export async function reclaimProject(
   {
     deleteOwnedDevices = false,
     stopSession = defaultStopSession,
-  }: { deleteOwnedDevices?: boolean; stopSession?: StopSession } = {},
+    stopMetroTunnel = defaultStopMetroTunnel,
+  }: { deleteOwnedDevices?: boolean; stopSession?: StopSession; stopMetroTunnel?: StopMetroTunnelFn } = {},
 ): Promise<ReclaimResult> {
   const project = getProject(path);
   const dereferenced = describeDereferenced(project);
@@ -221,6 +272,15 @@ export async function reclaimProject(
   if (remote.failed) {
     skippedDevices.push(remote.failed);
     failedDevices.push(remote.failed);
+  }
+
+  // Same unconditional treatment for a tunnel this workspace started for
+  // itself: it is not a local device deleteOwnedDevices guards, just a
+  // process nothing else will ever reap once the workspace is gone.
+  const tunnel = await reclaimMetroTunnel(path, { stopMetroTunnel });
+  if (tunnel.failed) {
+    skippedDevices.push(tunnel.failed);
+    failedDevices.push(tunnel.failed);
   }
 
   // A Metro started from a deleted directory can outlive it and squat on the
@@ -257,5 +317,6 @@ export async function reclaimProject(
     failedDevices,
     keptEntry,
     stoppedSession: remote.stopped,
+    stoppedTunnel: tunnel.stopped,
   };
 }

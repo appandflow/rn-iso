@@ -774,3 +774,198 @@ test('a remote session is stopped even when something still holds the port', asy
   expect(stopped).toEqual(['drs_42']);
   expect(r.outcomes.device?.remote?.status).toBe('torn-down');
 });
+
+// --- a tunnel `ios`/`android --remote` started for itself -------------------
+//
+// engine/tunnel.ts's own process (a managed provider), unrelated to the
+// supervisor or to any local device -- reaped unconditionally, the same
+// reasoning as the remote session above.
+
+function withManagedTunnel() {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({
+      metroTunnel: {
+        kind: 'managed',
+        provider: 'ngrok',
+        pid: 4242,
+        url: 'https://abc.ngrok.app',
+        port: 8083,
+        startedAt: 'T',
+      },
+      lastBuild: { hash: 'keepme' },
+    }),
+  );
+}
+
+test('stopping reaps a managed tunnel this workspace started', async () => {
+  withManagedTunnel();
+  const stopped: unknown[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async (record) => {
+      stopped.push(record);
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(true);
+  expect(stopped).toEqual([
+    { kind: 'managed', provider: 'ngrok', pid: 4242, url: 'https://abc.ngrok.app', port: 8083, startedAt: 'T' },
+  ]);
+  expect(r.outcomes.metroTunnel).toEqual({ status: 'stopped', provider: 'ngrok', reason: undefined });
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.metroTunnel).toBeUndefined();
+  // Taking the fingerprint away would make the next build a guaranteed miss.
+  expect(state.lastBuild.hash).toBe('keepme');
+});
+
+test('a tunnel that fails to stop fails the command and keeps its record', async () => {
+  withManagedTunnel();
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async () => ({ status: 'failed', reason: 'pid 4242 did not exit within 5000ms.' }),
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(false);
+  expect(r.outcomes.metroTunnel.status).toBe('failed');
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.metroTunnel.pid).toBe(4242);
+});
+
+test('a workspace with no recorded tunnel never calls stopMetroTunnel', async () => {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  let called = false;
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+  expect(called).toBe(false);
+  expect(r.outcomes.metroTunnel.status).toBe('none');
+});
+
+test('the tunnel is stopped even when something still holds the port', async () => {
+  // Same stillHolding setup as "a supervisor that outlives the wait is
+  // reported, never SIGKILLed" above: a recorded supervisor that ignores
+  // SIGTERM. The guard that spares a LOCAL device from being yanked out from
+  // under it does not apply here -- a tunnel is engine/tunnel.ts's own
+  // detached process, independent of the supervisor.
+  const stopped: number[] = [];
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083 },
+    isAlive: (pid: number) => pid === 4242,
+    waitForDeath: async () => false,
+    metroTunnel: {
+      kind: 'managed',
+      provider: 'cloudflared',
+      pid: 999,
+      url: 'https://x.trycloudflare.com',
+      port: 8083,
+      startedAt: 'T',
+    },
+    stopMetroTunnel: async (record: { pid: number }) => {
+      stopped.push(record.pid);
+      return { status: 'stopped' };
+    },
+  });
+  const r = await runStop(opts);
+  expect(r.outcomes.port.status).toBe('kept');
+  expect(calls.stateCleared).toBe(0);
+  expect(stopped).toEqual([999]);
+  expect(r.outcomes.metroTunnel.status).toBe('stopped');
+});
+
+test('an Expo-hosted tunnel has no process of its own -- stopMetroTunnel is never called for it', async () => {
+  let called = false;
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' },
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+  expect(called).toBe(false);
+  expect(r.outcomes.metroTunnel.status).toBe('not-managed');
+});
+
+test('an Expo tunnel record is dropped once the port is freed, not left stale for the next run', async () => {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({ metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' } }),
+  );
+  await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    report: () => {},
+  });
+  // Nothing else was in the file, so clearing the last key removes it.
+  expect(existsSync(workspaceStateFile(tmpRoot))).toBe(false);
+});
+
+test('an Expo tunnel record survives while something still holds the port', async () => {
+  // The expo child that fronts it is very likely still running -- the same
+  // reason the local device shutdown step is skipped in this case. Proven by
+  // the bookkeeping step (the only place that drops the record) never
+  // running at all: a supervisor that outlives the wait is what sets
+  // stillHolding, the same setup as the "outlives the wait" test above.
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083 },
+    isAlive: (pid: number) => pid === 4242,
+    waitForDeath: async () => false,
+    metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' },
+  });
+  const r = await runStop(opts);
+  expect(r.outcomes.port.status).toBe('kept');
+  expect(calls.stateCleared).toBe(0);
+  // 'not-managed': there is a recorded tunnel, but no process of its own to
+  // stop, and the record was left alone rather than dropped.
+  expect(r.outcomes.metroTunnel.status).toBe('not-managed');
+});
+
+test('an operator-supplied tunnel (metro.publicUrl) is never recorded, so `stop` never touches it', async () => {
+  // rn-iso only reaps what it created (CLAUDE.md item 2's ownership rule,
+  // applied to tunnels): an operator's own tunnel is used through
+  // metro.publicUrl and is never written to state.json's metroTunnel key,
+  // so there is nothing here for `stop` to find, let alone kill.
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  let called = false;
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+  expect(called).toBe(false);
+  expect(r.outcomes.metroTunnel.status).toBe('none');
+});

@@ -930,6 +930,9 @@ export async function runGc(opts: RunGcOptions = {}): Promise<void> {
     if (result.stoppedSession) {
       console.log(chalk.dim(`  stopped remote session ${result.stoppedSession}`));
     }
+    if (result.stoppedTunnel) {
+      console.log(chalk.dim(`  stopped ${result.stoppedTunnel} tunnel`));
+    }
     // A session whose stop failed is money still being spent, so it is a
     // warning with the manual command in it, not a dim note.
     for (const s of result.skippedDevices) {
