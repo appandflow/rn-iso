@@ -15,8 +15,10 @@ import {
   fingerprintProject,
   resolveBuild,
   storeBuild,
+  storedAssetManifest,
   storedSources,
 } from '../build-cache.ts';
+import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
 import { buildCacheKey as providerKey } from '../../../expo-build-cache/index.js';
 
 let root: string;
@@ -357,6 +359,75 @@ test('storedSources is null for an entry stored without sources, or with unreada
   // An object where an array belongs is a shape this refuses, not a crash.
   writeFileSync(join(entryDir('ios', 'k2', root), 'fingerprint-sources.json'), '{"hash":"x"}');
   expect(storedSources('ios', 'k2', root)).toBe(null);
+});
+
+// --- the asset manifest: the RELEASE gate's stored side ---------------------
+
+test('storeBuild writes assets-manifest.json beside the artifact, and storedAssetManifest reads it back', () => {
+  resetExecutor();
+  const build = join(root, 'build', 'App.apk');
+  mkdirSync(join(root, 'build'), { recursive: true });
+  writeFileSync(build, 'apk');
+
+  const assetManifest: AssetManifest = {
+    version: ASSET_MANIFEST_VERSION,
+    assets: [{ path: 'drawable-mdpi/logo.png', sha256: 'a'.repeat(64) }],
+  };
+  storeBuild('android', 'ak1', build, { root, assetManifest });
+
+  expect(storedAssetManifest('android', 'ak1', root)).toEqual(assetManifest);
+  // One mechanism, two files: both land in the same entry, and neither is
+  // ever mistaken for the artifact.
+  expect(artifactIn(entryDir('android', 'ak1', root))).toBe(join(entryDir('android', 'ak1', root), 'App.apk'));
+});
+
+test('storeBuild carries the sources AND the asset manifest in the same store', () => {
+  resetExecutor();
+  const build = join(root, 'build2', 'App.apk');
+  mkdirSync(join(root, 'build2'), { recursive: true });
+  writeFileSync(build, 'apk');
+
+  const sources = [{ type: 'file', filePath: 'android/app/build.gradle', hash: 'aa' }];
+  const assetManifest: AssetManifest = { version: ASSET_MANIFEST_VERSION, assets: [] };
+  storeBuild('android', 'ak2', build, { root, sources, assetManifest });
+
+  expect(storedSources('android', 'ak2', root)).toEqual(sources);
+  expect(storedAssetManifest('android', 'ak2', root)).toEqual(assetManifest);
+});
+
+test('storedAssetManifest is null for an entry stored without one, or with unreadable JSON', () => {
+  resetExecutor();
+  const build = join(root, 'build3', 'App.apk');
+  mkdirSync(join(root, 'build3'), { recursive: true });
+  writeFileSync(build, 'apk');
+  // The pre-#62 entry: stored before asset tracking existed. Null here is
+  // what makes the release gate refuse to swap it.
+  storeBuild('android', 'ak3', build, { root });
+  expect(storedAssetManifest('android', 'ak3', root)).toBe(null);
+
+  writeFileSync(join(entryDir('android', 'ak3', root), 'assets-manifest.json'), 'not json');
+  expect(storedAssetManifest('android', 'ak3', root)).toBe(null);
+  // A version this build does not understand reads as no manifest, never as
+  // an empty asset set.
+  writeFileSync(join(entryDir('android', 'ak3', root), 'assets-manifest.json'), '{"version":99,"assets":[]}');
+  expect(storedAssetManifest('android', 'ak3', root)).toBe(null);
+});
+
+test('{ overwrite } REPLACES the manifest too, so a refusing entry stops refusing', () => {
+  resetExecutor();
+  const build = join(root, 'build4', 'App.apk');
+  mkdirSync(join(root, 'build4'), { recursive: true });
+  writeFileSync(build, 'apk');
+  // The entry that caused a swap refusal: no manifest at all.
+  storeBuild('android', 'ak4', build, { root });
+  expect(storedAssetManifest('android', 'ak4', root)).toBe(null);
+
+  const assetManifest: AssetManifest = {
+    version: ASSET_MANIFEST_VERSION,
+    assets: [{ path: 'raw/sound.mp3', sha256: 'b'.repeat(64) }],
+  };
+  storeBuild('android', 'ak4', build, { root, overwrite: true, assetManifest });
+  expect(storedAssetManifest('android', 'ak4', root)).toEqual(assetManifest);
 });
 
 test('compareSourceLists reports changed, added and removed names, current order first', () => {

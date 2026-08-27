@@ -49,7 +49,9 @@ test('the facts topic documents the fields each --json payload actually carries'
     android: [
       'serial',
       'fingerprint',
+      'cacheKey',
       'variant',
+      'metroPort',
       'cacheHit',
       'cacheSkipped',
       'waitedForBuild',

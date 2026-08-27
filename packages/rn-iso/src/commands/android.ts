@@ -26,7 +26,7 @@
 // `adb reverse tcp:8081 tcp:<reserved>` applies it at launch instead.
 import chalk from 'chalk';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
 import type { Command } from 'commander';
@@ -41,6 +41,7 @@ import {
   fingerprintProject,
   resolveBuild,
   storeBuild,
+  storedAssetManifest,
   type FingerprintSourceLike,
 } from '../build-cache.ts';
 import {
@@ -80,14 +81,18 @@ import {
   androidDevClientUrl,
   installAndroidApp,
   launchAndroidApp,
+  launchAndroidReleaseApp,
   unverifiedLaunchLines,
+  verifyAndroidReleaseLaunch,
   verifyLaunch,
 } from '../engine/app-install.ts';
-import { androidHome } from '../sim/android.ts';
+import { androidHome, findBuildTool } from '../sim/android.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import type { OwnedDeviceRecord } from '../engine/device.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid } from '../engine/gradle.ts';
+import { resolveKeystore, swapApkBundle } from '../engine/apk-swap.ts';
+import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import {
   RESOLVE_TIMEOUT_MS,
   UPLOAD_TIMEOUT_MS,
@@ -115,6 +120,32 @@ export function androidVariantSetting(settings: SettingsObject | null | undefine
   if (!android || typeof android !== 'object' || Array.isArray(android)) return null;
   const raw = (android as Record<string, unknown>)['variant'];
   return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+}
+
+// PURE. Which variant this run builds: the --variant flag (per-invocation
+// judgment) over the android.variant setting (the repo default) over null,
+// which is the unchanged assembleDebug flow. The iOS twin is
+// resolveConfiguration in commands/ios.js.
+export function resolveVariant(
+  flag: string | null | undefined,
+  settings: SettingsObject | null | undefined,
+): string | null {
+  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
+  return fromFlag || androidVariantSetting(settings);
+}
+
+// PURE. Whether a variant means "the JS is embedded in the APK".
+//
+// The Android twin of isReleaseConfiguration, and it reads the other way
+// round for a good reason: an Xcode configuration IS the build type
+// ("Release"), while a gradle variant is <flavor><BuildType> -- `debug`,
+// `productionDebug`, `release`, `productionRelease`. So the BUILD TYPE is the
+// suffix, and a variant is release-shaped exactly when its name ends in
+// "release" (case-insensitive, because gradle capitalizes the build type only
+// when a flavor precedes it). Only a debug build type fetches its bundle from
+// Metro; a release one runs AGP's bundle task and bakes it in.
+export function isReleaseVariant(variant: string | null | undefined): boolean {
+  return typeof variant === 'string' && /release$/i.test(variant.trim());
 }
 
 // --- local, flat shapes for engine results ---------------------------------
@@ -161,6 +192,7 @@ interface InstallResultLike {
   failed?: boolean;
   code?: string;
   reason?: string;
+  note?: string;
 }
 
 interface LaunchResultLike {
@@ -261,28 +293,12 @@ interface AaptTool {
   version: string;
 }
 
-// Build-tools directory names are versions: "36.0.0", "35.0.0", "34.0.0".
-// PURE, so the ordering is testable without an SDK.
-export function newestBuildTools(names: unknown): string | null {
-  return (
-    [...(Array.isArray(names) ? names : [])]
-      .filter((n) => /^\d+(\.\d+)*(-\w+)?$/.test(String(n)))
-      .sort((a, b) => {
-        const pa = String(a).split(/[.-]/).map(Number);
-        const pb = String(b).split(/[.-]/).map(Number);
-        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-          const d = (pb[i] || 0) - (pa[i] || 0);
-          if (d) return d;
-        }
-        return 0;
-      })[0] ?? null
-  );
-}
-
 // aapt / aapt2, newest build-tools first. Neither is on PATH on a normal
 // machine (verified: `which aapt` finds nothing with a fully installed SDK),
 // so they are addressed through ANDROID_HOME the way sim/android.js addresses
-// avdmanager.
+// avdmanager. The newest-version walk itself lives in sim/android.js
+// (findBuildTool), because zipalign and apksigner are resolved exactly the
+// same way by engine/apk-swap.js and two copies of that walk would drift.
 export function findAapt(
   home: string = androidHome(),
   {
@@ -290,23 +306,8 @@ export function findAapt(
     exists = existsSync,
   }: { readDir?: (path: string) => string[]; exists?: (path: string) => boolean } = {},
 ): AaptTool | null {
-  const root = join(home, 'build-tools');
-  let versions: string[] = [];
-  try {
-    versions = readDir(root);
-  } catch {
-    return null;
-  }
-  while (versions.length) {
-    const version = newestBuildTools(versions);
-    if (!version) return null;
-    for (const tool of ['aapt', 'aapt2']) {
-      const path = join(root, version, tool);
-      if (exists(path)) return { path, tool, version };
-    }
-    versions = versions.filter((v) => v !== version);
-  }
-  return null;
+  const found = findBuildTool(['aapt', 'aapt2'], { home, readDir, exists });
+  return found ? { path: found.path, tool: found.tool, version: found.version } : null;
 }
 
 // The manifest tree, as text. Null on anything at all going wrong: a missing
@@ -505,7 +506,9 @@ export function androidFacts({
   avdName = null,
   deviceName = null,
   fingerprint,
+  cacheKey = null,
   variant = null,
+  metroPort = null,
   cacheHit,
   cacheSkipped = false,
   waitedForBuild = null,
@@ -521,7 +524,9 @@ export function androidFacts({
   avdName?: string | null;
   deviceName?: string | null;
   fingerprint?: string | null;
+  cacheKey?: string | null;
   variant?: string | null;
+  metroPort?: number | null;
   cacheHit?: boolean | string;
   cacheSkipped?: boolean;
   waitedForBuild?: WaitedForBuild | null;
@@ -544,9 +549,20 @@ export function androidFacts({
     avdName: avdName ?? null,
     deviceName: deviceName ?? avdName ?? null,
     fingerprint: fingerprint ?? null,
+    // The shared-build-cache key the fingerprint and the variant derive, which
+    // is what addresses the entry this run hit or stored. Present on the iOS
+    // payload since it shipped; this is the Android half catching up, and it
+    // is what lets an agent point `gc` or a manual inspection at the exact
+    // entry directory.
+    cacheKey: cacheKey ?? null,
     // The gradle variant this run built (--variant flag beats the
     // android.variant setting); null is the default assembleDebug.
     variant: variant ?? null,
+    // The port the app was wired to, and NULL on a release-shaped variant --
+    // which is a fact, not a missing value: a release APK embeds its JS and
+    // this run never touched a dev server. Same field, same meaning, as the
+    // iOS payload's.
+    metroPort: metroPort ?? null,
     // 'local' | 'remote' | false. Which LEVEL answered, not merely whether one
     // did: an agent reading `true` cannot tell a free install from one that
     // cost a download (see cacheLevel in engine/remote-cache.js).
@@ -684,9 +700,11 @@ export function registerAndroid(program: Command): void {
     // Deliberate option-surface growth (issue #52, 2026-08-27): which flavored
     // variant to build is per-invocation judgment, so it belongs on the
     // command; the android.variant SETTING stays as the repo-level default.
+    // Issue #57 phase 2 added no flag: a variant whose name ends in Release
+    // already selects a release build, and that is what makes it one.
     .option(
       '--variant <name>',
-      'Gradle variant to assemble and install (e.g. productionDebug on a flavored project); overrides the android.variant setting. Default: debug',
+      'Gradle variant to assemble and install (e.g. productionDebug on a flavored project); overrides the android.variant setting. A variant ending in Release embeds the JS bundle and skips Metro entirely. Default: debug',
     )
     .action(async (opts: AndroidCommandOptions) => {
       const root = findProjectRoot(process.cwd());
@@ -733,6 +751,8 @@ interface RunAndroidOptions {
   fingerprint?: typeof fingerprintProject;
   resolveCached?: typeof resolveBuild;
   storeCached?: typeof storeBuild;
+  storedAssets?: typeof storedAssetManifest;
+  captureAssets?: typeof captureAssetManifest;
   acquireLock?: typeof acquireBuildLock;
   releaseLock?: typeof releaseBuildLock;
   waitForBuild?: typeof waitForOtherBuild;
@@ -745,6 +765,9 @@ interface RunAndroidOptions {
   build?: typeof buildAndroid;
   install?: typeof installAndroidApp;
   launch?: typeof launchAndroidApp;
+  launchRelease?: typeof launchAndroidReleaseApp;
+  verifyReleaseLaunched?: typeof verifyAndroidReleaseLaunch;
+  swapApk?: typeof swapApkBundle;
   resolveDevClientScheme?: typeof androidDevClientScheme;
   spawn?: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
   kill?: (pid: number, signal: NodeJS.Signals) => boolean;
@@ -796,6 +819,8 @@ export async function runAndroid(
     fingerprint = fingerprintProject,
     resolveCached = resolveBuild,
     storeCached = storeBuild,
+    storedAssets = storedAssetManifest,
+    captureAssets = captureAssetManifest,
     acquireLock = acquireBuildLock,
     releaseLock = releaseBuildLock,
     waitForBuild = waitForOtherBuild,
@@ -808,6 +833,9 @@ export async function runAndroid(
     build = buildAndroid,
     install = installAndroidApp,
     launch = launchAndroidApp,
+    launchRelease = launchAndroidReleaseApp,
+    verifyReleaseLaunched = verifyAndroidReleaseLaunch,
+    swapApk = swapApkBundle,
     resolveDevClientScheme = androidDevClientScheme,
     spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
     kill = (pid, signal) => process.kill(pid, signal),
@@ -918,7 +946,12 @@ export async function runAndroid(
   // cache key below. Precedence: the --variant flag (per-invocation judgment)
   // over the android.variant setting (the repo-level default) over nothing --
   // the plain assembleDebug flow, unchanged.
-  const variant = variantFlag || androidVariantSetting(settings);
+  const variant = resolveVariant(variantFlag, settings);
+  // A release-shaped variant is a DIFFERENT PRODUCT: AGP's bundle task
+  // embeds the JS, so there is no dev server in this run at all, and a
+  // native-keyed cache hit is an APK carrying its BUILDER's JS (see the APK
+  // swap below).
+  const release = isReleaseVariant(variant);
   const isExpo = detectIsExpo(root);
   let androidPackage = detectAndroidPackage(root);
   // Recorded as soon as it is known, so a failure before the launch step
@@ -974,7 +1007,13 @@ export async function runAndroid(
   // boot completion is the first expensive thing here and there is no reason
   // to pay it only to refuse afterwards.
   const reservedPort = project?.metroPort ?? null;
-  if (metroCheck) {
+  if (release) {
+    // A release build embeds its JS, so there is no dev server in this run:
+    // no gate, no `adb reverse`, no debug_http_host, no dev-client deep link,
+    // and no 8081 default. The payload says metroPort: null for the same
+    // reason. Mirrors commands/ios.js's release branch exactly.
+    phase('metro', `skipped (${variant}: the JS bundle is embedded, no dev server is used)`);
+  } else if (metroCheck) {
     if (!reservedPort) {
       return fail(
         NO_METRO,
@@ -1010,7 +1049,9 @@ export async function runAndroid(
       reservedPort ? `port ${reservedPort} (not checked)` : `no reservation; using ${DEFAULT_METRO_PORT} (not checked)`,
     );
   }
-  const metroPort = reservedPort ?? DEFAULT_METRO_PORT;
+  // null on a release run: nothing is wired, and the payload reports it as
+  // the fact it is rather than as a port nobody used.
+  const metroPort: number | null = release ? null : (reservedPort ?? DEFAULT_METRO_PORT);
 
   // Boot is KICKED OFF here and awaited only at install: gradle needs no
   // device, and a cold AVD boot (up to minutes under software rendering) used
@@ -1260,6 +1301,77 @@ export async function runAndroid(
     }
   }
 
+  // ---- Release: fresh JS into the cached native shell ----
+  //
+  // A native-keyed cache hit on a RELEASE variant is an APK whose baked-in JS
+  // is whatever the workspace that BUILT it had -- installing it as-is
+  // silently runs someone else's (or last week's) code. So the artifact is
+  // copied aside, this tree's bundle is regenerated with the project's own
+  // tools (hermes-compiled when the project enables it), swapped into the
+  // copy, and the copy is re-aligned, re-signed and installed. The cache
+  // entry itself is never touched. Applies to every locally-resolved artifact
+  // -- a plain hit, a remote hit stored on the way past, a single-flight wait
+  // -- because all three carry their builder's JS.
+  //
+  // TWO ways out, and both fall back to a FULL gradle build: any swap step
+  // failing, and the ASSET GATE refusing because this tree's asset set is not
+  // the one the cached APK was packaged with. A drawable is not just a file
+  // in the zip -- it has a row in resources.arsc that only AAPT can write --
+  // so an APK cannot be made to carry an asset it was not built with, and
+  // installing one whose JS references an asset it lacks is exactly what this
+  // refuses to do. Stale JS is never installed silently either way.
+  let swapDir: string | null = null;
+  // Set when a swap refusal or failure sent this run to gradle, which is what
+  // makes the fresh artifact REPLACE the entry rather than leave the one that
+  // caused the fallback in place to cause it again on the next run, forever.
+  let swapFellBack = false;
+  if (release && apkPath && record.cacheHit) {
+    phase('apk swap', `regenerating this workspace's JS for the cached ${variant} APK`);
+    const swap = await swapApk({
+      root,
+      isExpo,
+      cachedApkPath: apkPath,
+      keystore: resolveKeystore(root, settings),
+      logWriter: writer,
+      // THE ASSET GATE's other side: what the build behind this entry emitted.
+      // Null (an entry stored before asset tracking, or by the Expo provider)
+      // refuses the swap -- see engine/asset-manifest.ts.
+      storedAssets: storedAssets(PLATFORM, cacheKey),
+    });
+    if (swap?.ok && swap.apkPath) {
+      if (swap.note) phase('apk swap', chalk.yellow(swap.note));
+      swapDir = swap.tmpDir ?? null;
+      apkPath = swap.apkPath;
+      phase(
+        'apk swap',
+        `${swap.hermes ? 'hermes bytecode' : 'plain JS'} repacked (store), zipaligned and re-signed (${formatDuration(swap.durationMs)})`,
+      );
+    } else {
+      if (swap?.assetMismatch) {
+        phase(
+          'apk swap',
+          chalk.yellow(
+            `${swap.reason} -- building fresh instead` +
+              (swap.assetDiff ? ' (an APK cannot be made to carry an asset AAPT did not package)' : ''),
+          ),
+        );
+      } else {
+        phase(
+          'apk swap',
+          chalk.yellow(
+            `failed at ${swap?.step || 'unknown step'}: ${swap?.reason || 'unknown reason'} -- ` +
+              `building fresh instead (a cached ${variant} APK carries its builder's JS; it is never installed after a failed swap)`,
+          ),
+        );
+      }
+      for (const line of swap?.lastLines ?? []) phase('', chalk.dim(line));
+      apkPath = null;
+      record.cacheHit = false;
+      waitedForBuild = null;
+      swapFellBack = true;
+    }
+  }
+
   // ---- build (only when neither level answered) ------------------------
   if (!apkPath) {
     // The `finally` is the point of the try: a build that fails, or one that
@@ -1340,11 +1452,26 @@ export async function runAndroid(
       // choice explicit.
       if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
 
-      // `overwrite` only when --no-build-cache asked for a fresh build: the entry
-      // that is there is the one this run was told not to trust, and leaving it
-      // would mean the next run trusts it again.
+      // `overwrite` when --no-build-cache asked for a fresh build (the entry
+      // that is there is the one this run was told not to trust, and leaving
+      // it would mean the next run trusts it again) -- and equally when a swap
+      // refusal or failure is what sent this run to gradle. storeBuild is
+      // idempotent by default, so without this the entry that caused the
+      // fallback SURVIVES the build that replaced it and refuses the next run
+      // the same way, forever. The replacement also carries a manifest, which
+      // is what lets the next hit swap at all.
+      //
+      // The asset manifest is captured from the bundle task's own generated
+      // resource directory, and only on a release build: a debug assemble
+      // never runs that task, and a stale release directory in the tree must
+      // not be recorded as a debug entry's asset set.
+      const assetManifest = release ? captureAssets(root, { variant }) : null;
       try {
-        storeCached(PLATFORM, cacheKey, apkPath!, { overwrite: !useBuildCache, sources: fingerprintSources });
+        storeCached(PLATFORM, cacheKey, apkPath!, {
+          overwrite: !useBuildCache || swapFellBack,
+          sources: fingerprintSources,
+          assetManifest,
+        });
       } catch (err) {
         // A cache that cannot be written still builds; it just costs the next
         // workspace a rebuild. Never a reason to fail a run that succeeded.
@@ -1389,7 +1516,19 @@ export async function runAndroid(
   // returned, and apkPath is set by either the cache branch or a build that
   // did not report `failed`.
   const installTimer = stepTimer(now);
-  const installed: InstallResultLike = install({ serial: serial!, apkPath: apkPath! });
+  // allowUninstall only on a release run, and that is deliberate: a
+  // locally re-packed APK is signed with THIS machine's debug keystore, so
+  // the moment it meets a copy a CI job signed with the real key the install
+  // fails with INSTALL_FAILED_UPDATE_INCOMPATIBLE and nothing but removing
+  // the package can resolve it. Uninstalling COSTS THE APP'S DATA, which is
+  // why the debug flow -- where every artifact is debug-keystore-signed and
+  // the conflict cannot arise -- never opts in.
+  const installed: InstallResultLike = install({
+    serial: serial!,
+    apkPath: apkPath!,
+    packageName: androidPackage,
+    allowUninstall: release,
+  });
   if (installed.failed) {
     return fail(
       installed.code || INSTALL_FAILED,
@@ -1399,6 +1538,19 @@ export async function runAndroid(
     );
   }
   phase('install', `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} ${installTimer()}`);
+  if (installed.note) {
+    phase('install', chalk.yellow(installed.note));
+    writer.write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
+  }
+  // The swapped copy is on the device now (`adb install` reads the file
+  // through), so its temp dir has done its job.
+  if (swapDir) {
+    try {
+      rmSync(swapDir, { recursive: true, force: true });
+    } catch {
+      // A leftover temp dir is not worth a failed run; the OS reaps /tmp.
+    }
+  }
 
   // ---- launch (Contract 6) ---------------------------------------------
   // THE APK ITSELF IS AUTHORITATIVE, project files the fallback -- the same
@@ -1429,17 +1581,21 @@ export async function runAndroid(
   // The scheme comes from the APK that was just installed, for the reason the
   // iOS command gives: an app.json is not the truth on a project with a
   // dynamic config, and the artifact is in hand.
-  const scheme = resolveDevClientScheme(root, apkPath);
+  // A release launch reads none of this: no dev server to point at, and a
+  // release APK is not a dev client, so the scheme is not even looked up.
+  const scheme = release ? undefined : resolveDevClientScheme(root, apkPath);
   const launchTimer = stepTimer(now);
   const launchedAt = now();
   // launchAndroidApp returns one of four flat shapes (see engine/app-install.ts);
   // read through the local, all-optional interface rather than the union.
-  const launched: LaunchResultLike = launch({
-    serial: serial!,
-    packageName: androidPackage,
-    metroPort,
-    devClientScheme: scheme,
-  });
+  const launched: LaunchResultLike = release
+    ? launchRelease({ serial: serial!, packageName: androidPackage })
+    : launch({
+        serial: serial!,
+        packageName: androidPackage,
+        metroPort: metroPort ?? DEFAULT_METRO_PORT,
+        devClientScheme: scheme,
+      });
   if (launched.failed) {
     return fail(
       launched.code || LAUNCH_FAILED,
@@ -1455,7 +1611,9 @@ export async function runAndroid(
     // Contract 1's marker: `logs --errors` reports what happened since the
     // most recent launch, so this record is what closes the previous window.
     marker: true,
-    msg: `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`,
+    msg: release
+      ? `launched ${androidPackage} on ${serial} (${variant}, embedded JS bundle, no Metro)`
+      : `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`,
   });
   // HOW it was launched, because on Android that is the difference between
   // the app and the dev-launcher's server screen: `deep-link` lands on this
@@ -1469,7 +1627,10 @@ export async function runAndroid(
   // debugHttpHost / debugHttpHostNote and every caller dropped them, so the
   // months in which the prefs write could not have worked (it emitted an
   // invalid script) looked exactly like the months in which it did.
-  if (launched.debugHttpHost) {
+  if (release) {
+    // Nothing to report: Contract 6 exists to hand a DEBUG app this
+    // workspace's port, and a release APK reads none of the three mechanisms.
+  } else if (launched.debugHttpHost) {
     phase(
       'wired',
       `debug_http_host ${launched.debugHttpHost} + adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}`,
@@ -1544,28 +1705,58 @@ export async function runAndroid(
   // Read through a flat, all-optional local interface rather than
   // verifyLaunch's return union -- this file branches only on
   // `verified` / `skipped` / `waitedMs`.
-  const verification: VerifyLaunchResultLike = metroCheck
-    ? await verifyLaunched({ logsDir, since: launchedAt, mode: isExpo ? MODE_EXPO : MODE_BARE })
-    : { verified: false, skipped: true };
   let launchState: boolean | string = true;
-  if (verification?.verified) {
-    phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
-  } else if (verification?.skipped) {
-    launchState = LAUNCH_UNVERIFIED;
-    phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
+  if (release) {
+    // A release app fetches nothing from Metro -- its bundle is embedded --
+    // so the bundle-request proof does not exist. What CAN be proven is that
+    // the app's PROCESS is still alive a moment later: a bad embedded bundle
+    // takes it down within a second or two of launch. iOS checks the pid
+    // `simctl launch` printed; on Android the app runs inside the emulator,
+    // so the device is asked (`pidof`, then `ps -A`).
+    const processCheck = await verifyReleaseLaunched({ serial: serial!, packageName: androidPackage });
+    if (processCheck?.verified) {
+      phase(
+        'verify',
+        `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${variant}: no bundle fetch to observe)`,
+      );
+    } else {
+      launchState = LAUNCH_UNVERIFIED;
+      phase(
+        'verify',
+        chalk.yellow(
+          `UNVERIFIED: no ${androidPackage} process on ${serial} ${formatDuration(processCheck?.waitedMs ?? 0)} after launch`,
+        ),
+      );
+      phase(
+        '',
+        chalk.yellow(
+          'A release app that dies at startup usually crashed loading its embedded bundle; `rn-iso logs --errors` has the device log that says why.',
+        ),
+      );
+    }
   } else {
-    launchState = LAUNCH_UNVERIFIED;
-    phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
-    for (const line of unverifiedLaunchLines({
-      platform: PLATFORM,
-      metroPort,
-      waitedMs: verification?.waitedMs,
-      bundleId: androidPackage,
-      serial,
-      devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort) : null,
-      mode: isExpo ? MODE_EXPO : MODE_BARE,
-    }))
-      phase('', chalk.yellow(line));
+    const verification: VerifyLaunchResultLike = metroCheck
+      ? await verifyLaunched({ logsDir, since: launchedAt, mode: isExpo ? MODE_EXPO : MODE_BARE })
+      : { verified: false, skipped: true };
+    if (verification?.verified) {
+      phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
+    } else if (verification?.skipped) {
+      launchState = LAUNCH_UNVERIFIED;
+      phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
+    } else {
+      launchState = LAUNCH_UNVERIFIED;
+      phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
+      for (const line of unverifiedLaunchLines({
+        platform: PLATFORM,
+        metroPort: metroPort ?? DEFAULT_METRO_PORT,
+        waitedMs: verification?.waitedMs,
+        bundleId: androidPackage,
+        serial,
+        devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null,
+        mode: isExpo ? MODE_EXPO : MODE_BARE,
+      }))
+        phase('', chalk.yellow(line));
+    }
   }
 
   // The outcome in the timeline too, where `rn-iso logs` will find it.
@@ -1573,8 +1764,11 @@ export async function runAndroid(
     src: 'build',
     level: launchState === LAUNCH_UNVERIFIED ? 'warn' : 'info',
     event: launchState === LAUNCH_UNVERIFIED ? 'launch_unverified' : 'launch_verified',
-    msg:
-      launchState === LAUNCH_UNVERIFIED
+    msg: release
+      ? launchState === LAUNCH_UNVERIFIED
+        ? `${androidPackage} could not be verified as running after its ${variant} launch`
+        : `${androidPackage} is running its embedded ${variant} bundle`
+      : launchState === LAUNCH_UNVERIFIED
         ? `no bundle request from ${androidPackage} reached this workspace's Metro on port ${metroPort}`
         : `${androidPackage} fetched a bundle from this workspace's Metro on port ${metroPort}`,
   });
@@ -1587,7 +1781,9 @@ export async function runAndroid(
     debugHttpHostNote: launched.debugHttpHostNote ?? null,
     devClientUrl: launched.devClientUrl ?? null,
     fingerprint: hash,
+    cacheKey,
     variant,
+    metroPort,
     cacheHit: record.cacheHit,
     cacheSkipped: !useBuildCache,
     waitedForBuild,
@@ -1601,7 +1797,10 @@ export async function runAndroid(
   if (json) {
     emit(JSON.stringify(facts));
   } else {
-    const summary = `OK: ${androidPackage} launched on ${serial}, Metro port ${metroPort} (${cacheOutcome(record.cacheHit, remote?.name)})`;
+    const summary =
+      `OK: ${androidPackage} launched on ${serial}, ` +
+      `${release ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
+      `(${cacheOutcome(record.cacheHit, remote?.name)})`;
     emit(launchState === LAUNCH_UNVERIFIED ? chalk.yellow(`${summary} -- launch UNVERIFIED`) : chalk.green(summary));
   }
 

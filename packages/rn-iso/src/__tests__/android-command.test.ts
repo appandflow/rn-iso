@@ -22,11 +22,13 @@ import {
   NO_METRO,
   androidDevClientScheme,
   androidFacts,
+  androidVariantSetting,
+  isReleaseVariant,
+  resolveVariant,
   apkPackage,
   apkDevClientFacts,
   dumpApkManifest,
   findAapt,
-  newestBuildTools,
   parseXmltree,
   displayPath,
   formatDuration,
@@ -36,12 +38,24 @@ import {
   runAndroid,
   shortHash,
 } from '../commands/android.ts';
+import { newestBuildTools } from '../sim/android.ts';
 import { BUILD_ERROR } from '../engine/gradle.ts';
+import type { AssetManifest } from '../engine/asset-manifest.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_factories.ts';
 
 const FINGERPRINT = 'a3f9b1c2d3e4f5a6b7c8d9e0f1a2b3c4';
 const CACHE_KEY = `${FINGERPRINT}-debug-sim`;
+// What a cache entry's stored asset manifest and a fresh build's captured one
+// look like; the gate itself is tested in engine-asset-manifest.test.ts.
+const STORED_ASSETS: AssetManifest = {
+  version: 1,
+  assets: [{ path: 'drawable-mdpi/logo.png', sha256: 'a'.repeat(64) }],
+};
+const CAPTURED_ASSETS: AssetManifest = {
+  version: 1,
+  assets: [{ path: 'drawable-mdpi/logo.png', sha256: 'e'.repeat(64) }],
+};
 
 let home: string;
 let root: string;
@@ -103,6 +117,15 @@ interface BuildArgs {
 }
 interface InstallArgs {
   apkPath?: string | null;
+  packageName?: string | null;
+  allowUninstall?: boolean;
+}
+interface SwapArgs {
+  root?: string;
+  isExpo?: boolean;
+  cachedApkPath?: string;
+  keystore?: { path?: string; pass?: string };
+  storedAssets?: AssetManifest | null;
 }
 interface LaunchArgs {
   metroPort?: string | number;
@@ -136,10 +159,15 @@ interface Calls {
   fingerprint: unknown[];
   resolveCached: unknown[][];
   storeCached: unknown[][];
+  storedAssets: unknown[][];
+  captureAssets: unknown[][];
   prebuild: unknown[][];
   build: BuildArgs[];
   install: InstallArgs[];
   launch: LaunchArgs[];
+  launchRelease: LaunchArgs[];
+  verifyRelease: unknown[];
+  swapApk: SwapArgs[];
   scheme: unknown[][];
   spawn: SpawnCall[];
   kill: unknown[][];
@@ -164,10 +192,15 @@ function harness(overrides = {}) {
     fingerprint: [],
     resolveCached: [],
     storeCached: [],
+    storedAssets: [],
+    captureAssets: [],
     prebuild: [],
     build: [],
     install: [],
     launch: [],
+    launchRelease: [],
+    verifyRelease: [],
+    swapApk: [],
     scheme: [],
     spawn: [],
     kill: [],
@@ -209,6 +242,19 @@ function harness(overrides = {}) {
       calls.order.push('resolveCached');
       calls.resolveCached.push([platform, key]);
       return null;
+    },
+    // THE ASSET GATE's stored side. The default is a real manifest, which is
+    // what makes the default release cache hit swap; a test that wants the
+    // manifest-less entry overrides it with () => null.
+    storedAssets: (platform: string, key: string) => {
+      calls.order.push('storedAssets');
+      calls.storedAssets.push([platform, key]);
+      return STORED_ASSETS;
+    },
+    captureAssets: (projectRoot: string, opts: unknown = {}) => {
+      calls.order.push('captureAssets');
+      calls.captureAssets.push([projectRoot, opts]);
+      return CAPTURED_ASSETS;
     },
     storeCached: (platform: string, key: string, path: string, opts: unknown = {}) => {
       calls.order.push('storeCached');
@@ -287,6 +333,30 @@ function harness(overrides = {}) {
         reversed: ['tcp:8081->tcp:8082', 'tcp:8082->tcp:8082'],
         debugHttpHost: '10.0.2.2:8082',
         debugHttpHostNote: null,
+      };
+    },
+    // Release-only seams; a debug run must never reach any of them. The
+    // defaults are the ordinary release case: the swap succeeded, the app
+    // started, its process is alive.
+    launchRelease: (args: LaunchArgs = {}) => {
+      calls.order.push('launchRelease');
+      calls.launchRelease.push(args);
+      return { ok: true, mode: 'am-start', component: 'com.example.app/.MainActivity' };
+    },
+    verifyReleaseLaunched: async (args: unknown = {}) => {
+      calls.order.push('verifyReleaseLaunched');
+      calls.verifyRelease.push(args);
+      return { verified: true, waitedMs: 3000, pid: 4242 };
+    },
+    swapApk: async (args: SwapArgs = {}) => {
+      calls.order.push('swapApk');
+      calls.swapApk.push(args);
+      return {
+        ok: true,
+        apkPath: join(root, 'apk-swap', 'app-production-release.apk'),
+        tmpDir: join(root, 'apk-swap'),
+        hermes: true,
+        durationMs: 4100,
       };
     },
     // Reading the scheme out of the APK shells out to aapt; the resolver has
@@ -399,7 +469,11 @@ describe('a cache hit', () => {
       avdName: 'rn-iso-app-412',
       deviceName: 'rn-iso-app-412',
       fingerprint: FINGERPRINT,
+      // Payload parity with the iOS one, which has carried the key since it
+      // shipped: this is what addresses the entry the run hit or stored.
+      cacheKey: CACHE_KEY,
       variant: null,
+      metroPort: 8082,
       cacheHit: 'local',
       cacheSkipped: false,
       waitedForBuild: null,
@@ -1068,14 +1142,15 @@ describe('--no-build-cache', () => {
       loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
     });
     await h.run();
-    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: true, sources: [] });
+    // A debug build emits no asset tree, so there is no manifest to record.
+    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: true, sources: [], assetManifest: null });
     expect(h.calls.uploadRemoteBuild.length).toBe(1);
   });
 
   test('a default run stores without overwriting: two worktrees at the same fingerprint agree', async () => {
     const h = harness();
     await h.run();
-    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: false, sources: [] });
+    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: false, sources: [], assetManifest: null });
   });
 });
 
@@ -1409,7 +1484,9 @@ describe('the pure parts', () => {
       avdName: null,
       deviceName: null,
       fingerprint: null,
+      cacheKey: null,
       variant: null,
+      metroPort: null,
       cacheHit: false,
       cacheSkipped: false,
       waitedForBuild: null,
@@ -1422,6 +1499,10 @@ describe('the pure parts', () => {
       logs: null,
     });
     expect(androidFacts({ variant: 'productionDebug' }).variant).toBe('productionDebug');
+    // Payload parity with iOS: the key that addresses the cache entry.
+    expect(androidFacts({ cacheKey: `${FINGERPRINT}-productionrelease-sim` }).cacheKey).toBe(
+      `${FINGERPRINT}-productionrelease-sim`,
+    );
     // A device tool is addressed by AVD name, not by console-port slot, and
     // deviceName falls back to it rather than being separately null.
     expect({
@@ -1939,4 +2020,363 @@ test('apkPackage reads the manifest root package and null on garbage', () => {
   expect(apkPackage(dump)).toBe('com.example.blank');
   expect(apkPackage('')).toBe(null);
   expect(apkPackage(null)).toBe(null);
+});
+
+// --- release builds (--variant ...Release, issue #57 phase 2) --------------
+//
+// A release-shaped variant is a different product: AGP's bundle task embeds
+// the JS, so Metro is not part of the run at all -- and a native-keyed cache
+// hit is an APK carrying its BUILDER's JS, which is why the hit path re-packs
+// a fresh bundle into a COPY rather than installing the artifact as-is. What
+// is pinned here is the command's side of that: the gate that does not run,
+// the launch that is a plain am start, the swap-then-install order, the ASSET
+// GATE's fallback, and the uninstall the re-signing makes inevitable.
+
+describe('variant resolution', () => {
+  test('flag > setting > default', () => {
+    expect(resolveVariant('productionRelease', { android: { variant: 'productionDebug' } })).toBe('productionRelease');
+    expect(resolveVariant(null, { android: { variant: 'productionRelease' } })).toBe('productionRelease');
+    expect(resolveVariant('  ', { android: { variant: 'productionRelease' } })).toBe('productionRelease');
+    expect(resolveVariant(null, {})).toBe(null);
+    expect(resolveVariant(null, null)).toBe(null);
+  });
+
+  test('androidVariantSetting reads android.variant and nothing shaped differently', () => {
+    expect(androidVariantSetting({ android: { variant: ' productionRelease ' } })).toBe('productionRelease');
+    expect(androidVariantSetting({ android: { variant: '' } })).toBe(null);
+    expect(androidVariantSetting({ android: [] })).toBe(null);
+    expect(androidVariantSetting(null)).toBe(null);
+  });
+
+  test('a variant is release-shaped exactly when its BUILD TYPE suffix is release', () => {
+    // A gradle variant is <flavor><BuildType>, so the build type is the
+    // SUFFIX -- the mirror image of an Xcode configuration, which IS the
+    // build type.
+    expect(isReleaseVariant('release')).toBe(true);
+    expect(isReleaseVariant('Release')).toBe(true);
+    expect(isReleaseVariant('productionRelease')).toBe(true);
+    expect(isReleaseVariant(' previewRelease ')).toBe(true);
+    expect(isReleaseVariant('debug')).toBe(false);
+    expect(isReleaseVariant('productionDebug')).toBe(false);
+    // Not a suffix: a flavor that merely CONTAINS the word.
+    expect(isReleaseVariant('releaseCandidateDebug')).toBe(false);
+    expect(isReleaseVariant(null)).toBe(false);
+    expect(isReleaseVariant('')).toBe(false);
+  });
+});
+
+describe('release skips Metro entirely', () => {
+  test('no gate, no reservation needed, no port wiring, plain am start', async () => {
+    const h = harness({ variant: 'productionRelease', resolveMetro: never('the metro probe') });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.metro.length).toBe(0);
+    expect(h.stderr.join('\n')).not.toMatch(/RN_ISO_NO_METRO/);
+    expect(labelled(h.stderr, 'metro')[0]).toMatch(/skipped \(productionRelease: the JS bundle is embedded/);
+    // The release launch, and NOT the wired one.
+    expect(h.calls.launch.length).toBe(0);
+    expect(h.calls.launchRelease[0]?.packageName).toBe('com.example.app');
+    // No `wired` line at all: nothing was reversed and no preference written.
+    expect(labelled(h.stderr, 'wired').length).toBe(0);
+    // Verification is process-alive, not bundle-fetch.
+    expect(h.calls.verify.length).toBe(0);
+    expect(h.calls.verifyRelease.length).toBe(1);
+    expect(labelled(h.stderr, 'verify')[0]).toMatch(/process alive/);
+    // The collector still attaches, so `logs --errors` works in release.
+    expect(h.calls.spawn.length).toBe(1);
+  });
+
+  test('a workspace with NO Metro reservation still runs a release build', async () => {
+    upsertProject(root, { metroPort: undefined });
+    const h = harness({ variant: 'productionRelease', resolveMetro: never('the metro probe') });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+  });
+
+  test('the payload says metroPort null, variant productionRelease, launched true', async () => {
+    const h = harness({ json: true, variant: 'productionRelease' });
+    const result = await h.run();
+    assert(result.facts);
+    expect(result.facts.variant).toBe('productionRelease');
+    expect(result.facts.metroPort).toBe(null);
+    expect(result.facts.launched).toBe(true);
+    expect(result.facts.debugHttpHost).toBe(null);
+    expect(result.facts.devClientUrl).toBe(null);
+    // And the cache key carries the variant, so a release APK and a debug one
+    // are never the same entry.
+    expect(h.calls.resolveCached[0]?.[1]).toBe(`${FINGERPRINT}-productionrelease-sim`);
+  });
+
+  test('the outcome line names the variant instead of a port nothing used', async () => {
+    const h = harness({ variant: 'productionRelease' });
+    await h.run();
+    expect(h.stdout[0]).toMatch(/productionRelease \(embedded JS, no Metro\)/);
+  });
+
+  test('a dead app process is launched: "unverified", with the device-log pointer', async () => {
+    const h = harness({
+      variant: 'productionRelease',
+      verifyReleaseLaunched: async () => ({ verified: false, reason: 'exited', waitedMs: 3000, pid: null }),
+    });
+    const result = await h.run();
+    assert(result.facts);
+    expect(result.facts.launched).toBe('unverified');
+    expect(h.stderr.join('\n')).toMatch(/UNVERIFIED: no com\.example\.app process/);
+    expect(h.stderr.join('\n')).toMatch(/rn-iso logs --errors/);
+  });
+
+  test('the android.variant setting is the repo default, and the flag overrides it back to debug', async () => {
+    setProjectSetting(root, 'android.variant', 'productionRelease');
+    const fromSetting = harness({ resolveMetro: never('the metro probe') });
+    expect((await fromSetting.run()).ok).toBe(true);
+    expect(fromSetting.calls.launchRelease.length).toBe(1);
+    // The flag beats the setting: the ordinary gated debug flow.
+    const overridden = harness({ variant: 'productionDebug' });
+    expect((await overridden.run()).ok).toBe(true);
+    expect(overridden.calls.launch.length).toBe(1);
+    expect(overridden.calls.launchRelease.length).toBe(0);
+  });
+
+  test('a debug run never touches any release seam', async () => {
+    const h = harness({
+      swapApk: never('the APK swap'),
+      launchRelease: never('the release launch'),
+      verifyReleaseLaunched: never('the release process check'),
+    });
+    expect((await h.run()).ok).toBe(true);
+  });
+});
+
+describe('the release APK swap', () => {
+  const cached = '/cache/android/entry/app-production-release.apk';
+
+  test('a release cache hit re-packs: cached APK in, temp copy out, THAT copy installed', async () => {
+    const h = harness({
+      variant: 'productionRelease',
+      resolveCached: (_platform: string, _key: string) => cached,
+      build: never('the build'),
+      prebuild: never('prebuild'),
+      storeCached: never('storeBuild'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    // Order: resolve the cache, swap, then install -- never a build.
+    expect(h.calls.order.indexOf('swapApk')).toBeGreaterThan(h.calls.order.indexOf('resolveCached'));
+    expect(h.calls.order.includes('build')).toBe(false);
+    // The swap starts from the cached artifact, with the resolved keystore.
+    expect(h.calls.swapApk[0]?.cachedApkPath).toBe(cached);
+    expect(h.calls.swapApk[0]?.keystore).toEqual({
+      path: join(root, 'android', 'app', 'debug.keystore'),
+      pass: 'pass:android',
+    });
+    // The INSTALL gets the re-packed temp copy, never the cache entry itself.
+    expect(h.calls.install[0]?.apkPath).toBe(join(root, 'apk-swap', 'app-production-release.apk'));
+    assert(result.facts);
+    expect(result.facts.appPath).toBe(join(root, 'apk-swap', 'app-production-release.apk'));
+    expect(result.facts.cacheHit).toBe('local');
+    expect(labelled(h.stderr, 'apk swap')[1]).toMatch(/hermes bytecode repacked \(store\), zipaligned and re-signed/);
+    // And the temp dir is reaped once the APK is on the device.
+    expect(existsSync(join(root, 'apk-swap'))).toBe(false);
+  });
+
+  test('android.keystore / android.keystorePassword reach the swap', async () => {
+    setProjectSetting(root, 'android.keystore', 'android/app/release.jks');
+    setProjectSetting(root, 'android.keystorePassword', 'env:MY_KS');
+    const h = harness({ variant: 'productionRelease', resolveCached: () => cached, build: never('the build') });
+    await h.run();
+    expect(h.calls.swapApk[0]?.keystore).toEqual({
+      path: join(root, 'android', 'app', 'release.jks'),
+      pass: 'env:MY_KS',
+    });
+  });
+
+  test('a debug cache hit never swaps', async () => {
+    const h = harness({
+      resolveCached: () => '/cache/app-debug.apk',
+      build: never('the build'),
+      swapApk: never('the APK swap'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.install[0]?.apkPath).toBe('/cache/app-debug.apk');
+  });
+
+  test('a fresh release build needs no swap: it embedded THIS workspace JS already', async () => {
+    const h = harness({ variant: 'productionRelease', swapApk: never('the APK swap') });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.build[0]?.variant).toBe('productionRelease');
+  });
+
+  test("the gate's stored side is the ENTRY's manifest, read at the cache key this run hit", async () => {
+    const h = harness({ variant: 'productionRelease', resolveCached: () => cached, build: never('the build') });
+    await h.run();
+    expect(h.calls.storedAssets[0]).toEqual(['android', `${FINGERPRINT}-productionrelease-sim`]);
+    expect(h.calls.swapApk[0]?.storedAssets).toEqual(STORED_ASSETS);
+    // Read BEFORE the swap runs, and only for a release hit.
+    expect(h.calls.order.indexOf('storedAssets')).toBeLessThan(h.calls.order.indexOf('swapApk'));
+  });
+
+  test('a debug cache hit never reads an asset manifest', async () => {
+    const h = harness({ resolveCached: () => '/cache/app-debug.apk', build: never('the build') });
+    await h.run();
+    expect(h.calls.storedAssets.length).toBe(0);
+  });
+
+  test('THE ASSET GATE: an asset difference falls back to a FULL build with a note naming it', async () => {
+    const h = harness({
+      variant: 'productionRelease',
+      resolveCached: () => cached,
+      swapApk: async () => ({
+        assetMismatch: true,
+        reason:
+          'this workspace emits a different asset set than the cached build did (0 added, 1 changed, 0 removed; e.g. changed drawable-mdpi/logo.png)',
+        assetDiff: {
+          same: false,
+          added: [],
+          removed: [],
+          changed: ['drawable-mdpi/logo.png'],
+          example: 'drawable-mdpi/logo.png',
+        },
+      }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    const errs = h.stderr.join('\n');
+    expect(errs).toMatch(/apk swap/);
+    expect(errs).toMatch(/changed drawable-mdpi\/logo\.png/);
+    expect(errs).toMatch(/building fresh instead/);
+    expect(errs).toMatch(/an APK cannot be made to carry an asset AAPT did not package/);
+    // The fallback compiled, stored, and installed ITS artifact.
+    expect(h.calls.build.length).toBe(1);
+    expect(h.calls.install[0]?.apkPath).toBe(
+      join(root, 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk'),
+    );
+    assert(result.facts);
+    // The payload reports what actually happened: not a cache hit.
+    expect(result.facts.cacheHit).toBe(false);
+  });
+
+  test('an entry with NO manifest never swaps, and the note says so without blaming AAPT', async () => {
+    const h = harness({
+      variant: 'productionRelease',
+      resolveCached: () => cached,
+      storedAssets: () => null,
+      // What swapApkBundle answers for a null stored manifest: a refusal with
+      // no assetDiff, because there was nothing to diff against.
+      swapApk: async (args: SwapArgs = {}) => {
+        expect(args.storedAssets).toBe(null);
+        return {
+          assetMismatch: true,
+          reason:
+            'this cache entry predates asset tracking (no assets-manifest.json beside the artifact), ' +
+            'so its asset set cannot be proven to match this one',
+        };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    const errs = h.stderr.join('\n');
+    expect(errs).toMatch(/predates asset tracking/);
+    expect(errs).toMatch(/building fresh instead/);
+    // That suffix belongs to a real asset DIFFERENCE; there was none to name.
+    expect(errs).not.toMatch(/an APK cannot be made to carry an asset AAPT did not package/);
+    expect(h.calls.build.length).toBe(1);
+  });
+
+  test('the fallback build REPLACES the entry that caused it -- otherwise the refusal repeats forever', async () => {
+    const h = harness({
+      variant: 'productionRelease',
+      resolveCached: () => cached,
+      swapApk: async () => ({ assetMismatch: true, reason: 'the sets differ', assetDiff: undefined }),
+    });
+    await h.run();
+    // overwrite: true even though --no-build-cache was NOT passed. storeBuild
+    // is idempotent by default, so without this the poisoned entry survives
+    // the build that replaced it and refuses the next run identically.
+    expect(h.calls.storeCached[0]?.[3]).toEqual({
+      overwrite: true,
+      sources: [],
+      assetManifest: CAPTURED_ASSETS,
+    });
+  });
+
+  test('a swap FAILURE replaces the entry the same way a refusal does', async () => {
+    const h = harness({
+      variant: 'productionRelease',
+      resolveCached: () => cached,
+      swapApk: async () => ({ failed: true, step: 'zipalign', reason: 'zipalign blew up', lastLines: [] }),
+    });
+    await h.run();
+    expect((h.calls.storeCached[0]?.[3] as { overwrite?: boolean })?.overwrite).toBe(true);
+  });
+
+  test('a release build with no fallback stores WITHOUT overwriting, and carries its captured manifest', async () => {
+    const h = harness({ variant: 'productionRelease', swapApk: never('the APK swap') });
+    await h.run();
+    // The capture reads THIS variant's generated asset directory.
+    expect(h.calls.captureAssets[0]).toEqual([root, { variant: 'productionRelease' }]);
+    expect(h.calls.storeCached[0]?.[3]).toEqual({
+      overwrite: false,
+      sources: [],
+      assetManifest: CAPTURED_ASSETS,
+    });
+  });
+
+  test('a DEBUG build captures no manifest: it never ran the bundle task', async () => {
+    const h = harness({ captureAssets: never('the asset capture') });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: false, sources: [], assetManifest: null });
+  });
+
+  test('a swap failure falls back to a full build too -- stale JS is never installed', async () => {
+    const h = harness({
+      variant: 'productionRelease',
+      resolveCached: () => cached,
+      swapApk: async () => ({
+        failed: true,
+        step: 'apksigner',
+        reason: 'apksigner sign failed: keystore password was incorrect',
+        lastLines: [],
+      }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.stderr.join('\n')).toMatch(/failed at apksigner/);
+    expect(h.stderr.join('\n')).toMatch(/carries its builder's JS; it is never installed after a failed swap/);
+    expect(h.calls.build.length).toBe(1);
+    assert(result.facts);
+    expect(result.facts.cacheHit).toBe(false);
+  });
+});
+
+describe('installing a re-signed release APK', () => {
+  test('a release run opts into the uninstall-and-retry; a debug run never does', async () => {
+    const release = harness({ variant: 'productionRelease' });
+    await release.run();
+    expect(release.calls.install[0]?.allowUninstall).toBe(true);
+    expect(release.calls.install[0]?.packageName).toBe('com.example.app');
+
+    const debug = harness({});
+    await debug.run();
+    expect(debug.calls.install[0]?.allowUninstall).toBe(false);
+  });
+
+  test('the uninstall note reaches stderr and the build log, so the lost data is never silent', async () => {
+    const h = harness({
+      variant: 'productionRelease',
+      install: (args: InstallArgs = {}) => ({
+        ok: true,
+        apkPath: args.apkPath ?? '',
+        uninstalled: true,
+        note: 'com.example.app was already installed with a different signer, so it was uninstalled (its data went with it) before this APK could be installed',
+      }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(labelled(h.stderr, 'install').some((l) => /different signer/.test(l))).toBe(true);
+    const log = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
+    expect(log.some((r) => r.event === 'install_uninstalled_first')).toBe(true);
+  });
 });

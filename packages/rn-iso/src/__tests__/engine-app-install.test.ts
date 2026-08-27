@@ -33,7 +33,12 @@ import {
   debugHttpHostScript,
   deviceShellArg,
   installAndroidApp,
+  installConflictKind,
   installIosApp,
+  launchAndroidReleaseApp,
+  parsePidof,
+  parsePsPid,
+  verifyAndroidReleaseLaunch,
   openAndroidDevClientUrl,
   jsLocationValue,
   launchAndroidApp,
@@ -917,5 +922,218 @@ describe('the Android dev-client deep link', () => {
     for (const raw of ['a b', "it's", 'x\ny', '?url=a&b=c', '$HOME `id`', '<map>']) {
       expect(execFileSync('/bin/sh', ['-c', `printf %s ${deviceShellArg(raw)}`], { encoding: 'utf-8' })).toBe(raw);
     }
+  });
+});
+
+// --- android release: install robustness, plain launch, process proof ------
+//
+// A release run installs an APK this machine re-packed and re-signed with its
+// own debug keystore. The moment that meets a copy signed by CI, the install
+// is refused and only removing the package can resolve it -- so the refusal
+// is recognised by name and answered exactly once.
+
+describe('installConflictKind', () => {
+  test('the signer conflict, which a locally re-signed APK guarantees', () => {
+    expect(installConflictKind('adb: failed to install app.apk: Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]')).toBe(
+      'signature',
+    );
+    expect(installConflictKind('Failure [INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES]')).toBe('signature');
+    expect(installConflictKind('Package com.x signatures do not match previously installed version')).toBe('signature');
+  });
+
+  test('the downgrade conflict, answered the same way', () => {
+    expect(installConflictKind('Failure [INSTALL_FAILED_VERSION_DOWNGRADE]')).toBe('downgrade');
+  });
+
+  test('everything else is a plain install failure, and must NOT trigger an uninstall', () => {
+    expect(installConflictKind('Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]')).toBe(null);
+    expect(installConflictKind('device offline')).toBe(null);
+    expect(installConflictKind(null)).toBe(null);
+  });
+});
+
+describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
+  const apkPath = '/tmp/rn-iso-apk-swap-1/app-production-release.apk';
+
+  // An executor whose first `install` fails with `text` and whose later ones
+  // succeed, so the retry is the thing under test rather than the mock.
+  function conflictingExec(text: string, { alsoFailRetry = false } = {}) {
+    const calls: string[][] = [];
+    let installs = 0;
+    const exec: Executor = {
+      runFile(file: string, args: string[] = []) {
+        calls.push([file, ...args]);
+        if (args.includes('install')) {
+          installs += 1;
+          if (installs === 1 || alsoFailRetry) {
+            const err = new Error(`Command failed: adb install`);
+            (err as Error & { stderr?: string }).stderr = text;
+            throw err;
+          }
+        }
+        return '';
+      },
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {
+        throw new Error('not used');
+      },
+    };
+    return { exec, calls };
+  }
+
+  test('a signer conflict uninstalls the package and installs once more, with a note saying why', () => {
+    const { exec, calls } = conflictingExec('Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]');
+    const result = installAndroidApp(
+      { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
+      { exec },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.uninstalled).toBe(true);
+    expect(result.note).toMatch(/different signer/);
+    expect(result.note).toMatch(/data went with it/);
+    expect(calls).toEqual([
+      ['adb', '-s', 'emulator-5584', 'install', '-r', apkPath],
+      ['adb', '-s', 'emulator-5584', 'uninstall', 'com.example.app'],
+      ['adb', '-s', 'emulator-5584', 'install', '-r', apkPath],
+    ]);
+  });
+
+  test('a version downgrade is the same answer with its own note', () => {
+    const { exec } = conflictingExec('Failure [INSTALL_FAILED_VERSION_DOWNGRADE]');
+    const result = installAndroidApp(
+      { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
+      { exec },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.note).toMatch(/higher versionCode/);
+  });
+
+  test('ONCE: a conflict that survives the uninstall is a plain failure, not a loop', () => {
+    const { exec, calls } = conflictingExec('Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]', { alsoFailRetry: true });
+    const result = installAndroidApp(
+      { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
+      { exec },
+    );
+    expect(result.failed).toBe(true);
+    expect(result.code).toBe(INSTALL_ERROR);
+    expect(result.reason).toMatch(/even after uninstalling com\.example\.app/);
+    expect(calls.filter((c) => c.includes('install')).length).toBe(2);
+  });
+
+  test('without allowUninstall nothing is ever removed -- the DEBUG flow keeps its app data', () => {
+    const { exec, calls } = conflictingExec('Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]');
+    const result = installAndroidApp({ serial: 'emulator-5584', apkPath, packageName: 'com.example.app' }, { exec });
+    expect(result.failed).toBe(true);
+    expect(calls.some((c) => c.includes('uninstall'))).toBe(false);
+  });
+
+  test('a non-conflict failure never uninstalls, even with allowUninstall', () => {
+    const { exec, calls } = conflictingExec('Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]');
+    const result = installAndroidApp(
+      { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
+      { exec },
+    );
+    expect(result.failed).toBe(true);
+    expect(calls.some((c) => c.includes('uninstall'))).toBe(false);
+  });
+});
+
+describe('launchAndroidReleaseApp', () => {
+  test('a plain am start of the launcher activity: no reverse, no prefs write, no deep link', () => {
+    const exec = recordingExec({ outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' } });
+    const result = launchAndroidReleaseApp({ serial: 'emulator-5584', packageName: 'com.example.app' }, { exec });
+    expect(result).toEqual({ ok: true, mode: 'am-start', component: 'com.example.app/.MainActivity' });
+    expect(exec.calls.some((c) => c.includes('reverse'))).toBe(false);
+    expect(exec.calls.some((c) => c.includes('am') && c.includes('-d'))).toBe(false);
+    expect(exec.calls.at(-1)).toEqual([
+      'adb',
+      '-s',
+      'emulator-5584',
+      'shell',
+      'am',
+      'start',
+      '-n',
+      'com.example.app/.MainActivity',
+    ]);
+  });
+
+  test('an unresolvable launcher activity falls through to monkey, as the debug launch does', () => {
+    const exec = recordingExec({ outputs: { 'resolve-activity': 'No activity found\n' } });
+    const result = launchAndroidReleaseApp({ serial: 'emulator-5584', packageName: 'com.example.app' }, { exec });
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('monkey');
+  });
+
+  test('an am start that fails is a return value naming the component', () => {
+    const exec = recordingExec({
+      outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' },
+      fail: 'am start',
+    });
+    const result = launchAndroidReleaseApp({ serial: 'emulator-5584', packageName: 'com.example.app' }, { exec });
+    expect(result.failed).toBe(true);
+    expect(result.code).toBe(LAUNCH_ERROR);
+  });
+});
+
+describe('the android release process proof', () => {
+  test('parsePidof takes the first pid, and an empty answer is not a process', () => {
+    expect(parsePidof('4242\n')).toBe(4242);
+    expect(parsePidof('4242 4310\n')).toBe(4242);
+    expect(parsePidof('')).toBe(null);
+    expect(parsePidof(null)).toBe(null);
+    expect(parsePidof('0')).toBe(null);
+  });
+
+  test('parsePsPid matches the MAIN process, not a :remote one', () => {
+    const ps = [
+      'USER           PID  PPID     VSZ    RSS WCHAN            ADDR S NAME',
+      'u0_a123       4242   310 1502444 123456 0                   0 S com.example.app',
+      'u0_a123       4310   310 1402444  23456 0                   0 S com.example.app:remote',
+    ].join('\n');
+    expect(parsePsPid(ps, 'com.example.app')).toBe(4242);
+    expect(parsePsPid(ps, 'com.other.app')).toBe(null);
+    expect(parsePsPid('', 'com.example.app')).toBe(null);
+  });
+
+  test('pidof answers, and the ps fallback is not paid for', async () => {
+    const exec = recordingExec({ outputs: { pidof: '4242\n' } });
+    const result = await verifyAndroidReleaseLaunch({
+      serial: 'emulator-5584',
+      packageName: 'com.example.app',
+      exec,
+      sleep: async () => {},
+    });
+    expect(result.verified).toBe(true);
+    expect(result.pid).toBe(4242);
+    expect(exec.calls.some((c) => c.includes('ps'))).toBe(false);
+  });
+
+  test('a device with no pidof falls through to ps -A', async () => {
+    const exec = recordingExec({
+      fail: 'pidof',
+      outputs: { 'ps -A': 'USER PID\nu0_a1 4242 310 1 1 0 0 S com.example.app\n' },
+    });
+    const result = await verifyAndroidReleaseLaunch({
+      serial: 'emulator-5584',
+      packageName: 'com.example.app',
+      exec,
+      sleep: async () => {},
+    });
+    expect(result.verified).toBe(true);
+    expect(result.pid).toBe(4242);
+  });
+
+  test('no process at all is unverified with reason exited -- a crashed embedded bundle', async () => {
+    const exec = recordingExec({ outputs: { pidof: '', 'ps -A': 'USER PID\n' } });
+    const result = await verifyAndroidReleaseLaunch({
+      serial: 'emulator-5584',
+      packageName: 'com.example.app',
+      exec,
+      sleep: async () => {},
+    });
+    expect(result.verified).toBe(false);
+    expect(result.reason).toBe('exited');
+    expect(result.pid).toBe(null);
   });
 });

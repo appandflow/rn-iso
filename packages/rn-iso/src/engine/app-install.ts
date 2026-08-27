@@ -58,6 +58,10 @@ export type IosLaunchResult = {
 export type AndroidInstallResult = {
   ok?: boolean;
   apkPath?: string;
+  // Set when the install only succeeded after the existing copy was removed
+  // (see installConflictKind); `note` says why, and the caller prints it.
+  uninstalled?: boolean;
+  note?: string;
   failed?: boolean;
   code?: string;
   reason?: string;
@@ -224,18 +228,86 @@ export function launchIosApp(
 
 // --- Android --------------------------------------------------------------
 
+// PURE. The two install refusals that mean "this APK cannot REPLACE what is
+// on the device, but it could replace nothing".
+//
+//   INSTALL_FAILED_UPDATE_INCOMPATIBLE   the signers differ. GUARANTEED the
+//     moment a locally re-packed, debug-keystore-signed release APK meets one
+//     a CI job signed with the real key -- which is exactly what the release
+//     cache-hit path produces, so it is the normal case, not an exotic one.
+//   INSTALL_FAILED_VERSION_DOWNGRADE     the installed versionCode is higher.
+//     Same shape: the package has to go before this one can land.
+//
+// Both are answered the same way (uninstall, then install once more) and both
+// COST THE APP'S DATA, which is why the caller opts in and why the note says
+// what happened.
+export function installConflictKind(text: unknown): 'signature' | 'downgrade' | null {
+  const out = String(text ?? '');
+  if (
+    /INSTALL_FAILED_UPDATE_INCOMPATIBLE|INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES|signatures do not match/i.test(
+      out,
+    )
+  ) {
+    return 'signature';
+  }
+  if (/INSTALL_FAILED_VERSION_DOWNGRADE/i.test(out)) return 'downgrade';
+  return null;
+}
+
 export function installAndroidApp(
-  { serial, apkPath }: { serial: string; apkPath: string },
+  {
+    serial,
+    apkPath,
+    packageName = null,
+    allowUninstall = false,
+  }: { serial: string; apkPath: string; packageName?: string | null; allowUninstall?: boolean },
   { exec = null }: ExecOpt = {},
 ): AndroidInstallResult {
   const e = exec || getExecutor();
-  try {
+  const install = () => {
     // -r reinstalls over an existing copy, keeping data. Without it every
     // second run fails with INSTALL_FAILED_ALREADY_EXISTS.
     e.runFile('adb', ['-s', serial, 'install', '-r', apkPath]);
+  };
+  try {
+    install();
     return { ok: true, apkPath };
   } catch (err) {
-    return { failed: true, code: INSTALL_ERROR, reason: `adb install failed for ${apkPath}: ${describe(err)}` };
+    const conflict = installConflictKind(describe(err));
+    if (!conflict || !allowUninstall || !packageName) {
+      return { failed: true, code: INSTALL_ERROR, reason: `adb install failed for ${apkPath}: ${describe(err)}` };
+    }
+    // ONCE. A second conflict after the package is gone is a real failure,
+    // and a retry loop here would only hide it.
+    try {
+      e.runFile('adb', ['-s', serial, 'uninstall', packageName]);
+    } catch (uninstallErr) {
+      return {
+        failed: true,
+        code: INSTALL_ERROR,
+        reason:
+          `adb install failed for ${apkPath} (${conflict}) and ${packageName} could not be uninstalled: ` +
+          describe(uninstallErr),
+      };
+    }
+    try {
+      install();
+    } catch (retryErr) {
+      return {
+        failed: true,
+        code: INSTALL_ERROR,
+        reason: `adb install failed for ${apkPath} even after uninstalling ${packageName}: ${describe(retryErr)}`,
+      };
+    }
+    return {
+      ok: true,
+      apkPath,
+      uninstalled: true,
+      note:
+        conflict === 'signature'
+          ? `${packageName} was already installed with a different signer, so it was uninstalled (its data went with it) before this APK could be installed`
+          : `${packageName} was already installed at a higher versionCode, so it was uninstalled (its data went with it) before this APK could be installed`,
+    };
   }
 }
 
@@ -553,6 +625,45 @@ export function launchAndroidApp(
   }
 }
 
+// The RELEASE launch: a plain `am start` of the launcher activity, and
+// nothing else.
+//
+// Everything launchAndroidApp does BEFORE the start exists to point the app at
+// a dev server -- the two `adb reverse`s, the debug_http_host preference, the
+// expo-dev-client deep link. A release APK has its JS bundle inside it, reads
+// none of those, and is not a dev client at all, so wiring them would be three
+// commands issued at an app that ignores them and one deep link that cannot
+// resolve. The launcher activity is the whole launch.
+export function launchAndroidReleaseApp(
+  { serial, packageName }: { serial: string; packageName: string },
+  { exec = null }: ExecOpt = {},
+): AndroidLaunchResult {
+  const e = exec || getExecutor();
+  const component = resolveLaunchActivity(serial, packageName, { exec: e });
+  if (component) {
+    try {
+      e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component]);
+      return { ok: true, mode: 'am-start', component };
+    } catch (err) {
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `am start -n ${component} failed on ${serial}: ${describe(err)}`,
+      };
+    }
+  }
+  try {
+    e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1']);
+    return { ok: true, mode: 'monkey' };
+  } catch (err) {
+    return {
+      failed: true,
+      code: LAUNCH_ERROR,
+      reason: `Could not launch ${packageName} on ${serial}: no launcher activity resolved and monkey failed: ${describe(err)}`,
+    };
+  }
+}
+
 // execFileSync attaches the child's stderr to the thrown error; that text is
 // the actual diagnostic ("No such file or directory", "device offline"),
 // while err.message alone is just the command line.
@@ -638,6 +749,77 @@ export async function verifyReleaseLaunch({
   await sleep(Math.max(0, waitMs));
   const waitedMs = now() - startedAt;
   return alive(pid) ? { verified: true, waitedMs } : { verified: false, reason: 'exited', waitedMs };
+}
+
+// PURE. `pidof <package>` prints the pids of every process with that name,
+// space-separated, on one line -- and prints NOTHING (exit 1) when there are
+// none. An Android app's main process is named after its package, so this is
+// the cheapest "is it running" there is.
+export function parsePidof(text: unknown): number | null {
+  const first = String(text ?? '')
+    .trim()
+    .split(/\s+/)[0];
+  const pid = Number(first);
+  return Number.isFinite(pid) && pid > 0 ? pid : null;
+}
+
+// PURE. The fallback, for a device whose toybox has no `pidof`: `ps -A`
+// prints a header and then one row per process, with the pid in column 2 and
+// the process NAME last. A package's own processes are `<package>` and
+// `<package>:<something>`; only the main one is proof the app launched.
+export function parsePsPid(text: unknown, packageName: string): number | null {
+  for (const raw of String(text ?? '').split('\n')) {
+    const cols = raw.trim().split(/\s+/);
+    if (cols.length < 2) continue;
+    if (cols[cols.length - 1] !== packageName) continue;
+    const pid = Number(cols[1]);
+    if (Number.isFinite(pid) && pid > 0) return pid;
+  }
+  return null;
+}
+
+// The Android counterpart of verifyReleaseLaunch. iOS can check the pid
+// `simctl launch` printed because a simulator app is a host process; on
+// Android the app runs INSIDE the emulator, so the question has to be asked
+// of the device. Same weaker-proof contract, same short wait first: a bad
+// embedded bundle takes the app down within a second or two of launch, so
+// checking instantly would verify a process that is one frame from dying.
+export async function verifyAndroidReleaseLaunch({
+  serial,
+  packageName,
+  waitMs = RELEASE_VERIFY_WAIT_MS,
+  exec = null,
+  now = Date.now,
+  sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
+}: {
+  serial: string;
+  packageName: string;
+  waitMs?: number;
+  exec?: Executor | null;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<unknown>;
+}): Promise<ReleaseVerifyResult & { pid?: number | null }> {
+  const e = exec || getExecutor();
+  const startedAt = now();
+  await sleep(Math.max(0, waitMs));
+  let pid: number | null = null;
+  try {
+    pid = parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', packageName]));
+  } catch {
+    // `pidof` exits 1 when nothing matches, which execFileSync throws on --
+    // indistinguishable from a device that has no pidof at all, so the ps
+    // fallback runs either way.
+    pid = null;
+  }
+  if (pid === null) {
+    try {
+      pid = parsePsPid(e.runFile('adb', ['-s', serial, 'shell', 'ps', '-A']), packageName);
+    } catch {
+      pid = null;
+    }
+  }
+  const waitedMs = now() - startedAt;
+  return pid === null ? { verified: false, reason: 'exited', waitedMs, pid: null } : { verified: true, waitedMs, pid };
 }
 
 function isProcessAlive(pid: number): boolean {

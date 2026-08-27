@@ -179,6 +179,18 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # <ws>/.rn-iso/derived-data, transcript streamed to the build log
       gradle.js           # buildAndroid: ./gradlew assemble<Variant> (default assembleDebug),
                           # apk located by output listing, flavor-aware, mtime freshness guard
+      js-swap.js          # RELEASE iOS cache hits: the cached .app copied aside, this tree's
+                          # JS re-bundled + hermes-compiled into the copy, re-signed. Never
+                          # the cache entry; every failure is a return value, and the caller's
+                          # answer to all of them is a full build
+      apk-swap.js         # the Android half: zip surgery (`zip -d` then `zip -0 -r`, STORE is
+                          # mandatory), zipalign THEN apksigner, and THE ASSET GATE -- an APK
+                          # cannot be made to carry an asset AAPT did not package, so any
+                          # asset difference refuses the swap rather than installing a bundle
+                          # whose assets are missing
+      asset-manifest.js   # the gate's two sides: hashing an emitted --assets-dest tree, finding
+                          # the RN gradle plugin's generated one after a build, and comparing
+                          # two manifests. Records why the APK's own res/ table is unreadable
       errors-xcode.js     # PURE: transcript -> {file, line, message} diagnostics, deduped, capped
       errors-gradle.js    # the same for gradle/kotlin/aapt failures
       build-lock.js       # SINGLE-FLIGHT builds: when both cache levels miss, one workspace
@@ -362,11 +374,66 @@ generates one.
 `android --variant <name>` is deliberate surface growth, decided 2026-08-27
 for issue #52 (tlon-mobile's product flavors: `assembleDebug` built into
 `apk/production/debug/` and rn-iso declared the successful build failed).
-Which flavored DEBUG variant to build is per-invocation agent judgment, so it
+Which flavored variant to build is per-invocation agent judgment, so it
 belongs on the command; the `android.variant` SETTING (precedent:
-`android.systemImage`) is the repo-level default the flag overrides. On
-Android the value still selects a debug build of a flavor — Android release
-paths stay out of scope until issue #57's phase 2.
+`android.systemImage`) is the repo-level default the flag overrides.
+
+Issue #57 phase 2 (2026-08-27) added NO flag to `android`: a variant whose
+name ENDS IN `Release` is release-shaped, and that name is the whole opt-in.
+It behaves exactly as `ios --configuration Release` does — Metro skipped
+entirely (no gate, no `adb reverse`, no debug_http_host, no dev-client deep
+link, a plain `am start`; payload `metroPort: null`), the variant already part
+of the cache key, device logs still collected, and `launched` proven by the
+app PROCESS being alive on the device (`pidof`, then `ps -A`) rather than by a
+bundle fetch. A release cache hit re-packs the cached APK
+(`src/engine/apk-swap.ts`) instead of installing it, and TWO things there are
+Android-specific doctrine.
+
+1. **The ASSET GATE.** ANY added / removed / changed asset refuses the swap
+   and falls back to a full gradle build. A drawable has a row in
+   `resources.arsc` that only AAPT can write, so an APK cannot be made to
+   carry an asset it was not built with — Rock (which re-injects only the
+   bundle and discards the emitted assets) ships exactly that 404, and this is
+   the deliberate divergence from it.
+
+   **The APK's `res/` table is NOT a side of the comparison, and must never
+   become one again.** It was, and live verification on a real Expo release
+   APK killed it twice over: AGP's `optimizeReleaseResources` (default ON for
+   release) applies AAPT2 resource-path shortening, so the packaged entries
+   read `res/-B.png` and the old `res/(drawable-*|raw)/…` predicate matched
+   ZERO of 972 — every emitted asset scored as "added" and the swap refused on
+   every JS-only change, forever. With shortening off, `res/drawable-*` is
+   mostly the 177 AppCompat/AndroidX drawables `--assets-dest` never emits, so
+   everything scored as "removed" instead.
+
+   What it compares now is emitted-vs-emitted (`src/engine/asset-manifest.ts`,
+   issue #62): a successful release build hashes the RN gradle plugin's own
+   generated asset directory
+   (`android/<module>/build/generated/res/createBundle<Variant>JsAndAssets/`,
+   or the older `react/<variant>/`) into `assets-manifest.json`, stored beside
+   the artifact by `storeBuild` exactly as `fingerprint-sources.json` is; a
+   later hit hashes what IT emitted and requires an identical path set and an
+   identical sha256 per path. Content hashes, so a REPLACED image under an
+   unchanged filename is caught. **An entry with no manifest is never
+   swapped** — conservative on purpose. And a run that falls back after a
+   refusal or a failure stores with `{ overwrite: true }`, because `storeBuild`
+   is idempotent by default and the entry that caused the fallback would
+   otherwise survive the build meant to replace it and refuse identically on
+   the next run, forever.
+
+2. **`zipalign` BEFORE `apksigner`, always**, because a v2/v3 signature covers
+   the whole file; and `zip -0` (STORE) for the bundle, because AGP packages
+   it uncompressed so Hermes can mmap it. Signing is `apksigner`, NEVER
+   `jarsigner`, with `android/app/debug.keystore` + `pass:android` by default
+   (`android.keystore` / `android.keystorePassword` override, and the password
+   accepts apksigner's schemed forms so a committed file need not hold a
+   secret).
+
+Because a locally re-signed APK cannot update a CI-signed one, a RELEASE
+install answers `INSTALL_FAILED_UPDATE_INCOMPATIBLE` /
+`INSTALL_FAILED_VERSION_DOWNGRADE` by uninstalling ONCE and retrying, with a
+note saying why. That costs the app's data, so the debug flow never opts in.
+Store signing, physical devices and distribution remain out of scope.
 
 `ios --configuration <name>` is the same deliberate move, decided 2026-08-27
 for issue #57 phase 1 (release SIMULATOR builds: "does it repro in

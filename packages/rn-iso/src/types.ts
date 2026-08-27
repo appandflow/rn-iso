@@ -174,9 +174,15 @@ export interface AndroidFacts {
   avdName: string | null;
   deviceName: string | null;
   fingerprint: string | null;
+  // The shared-build-cache key derived from the fingerprint and the variant.
+  // The iOS payload has carried it since it shipped; this is the Android half.
+  cacheKey: string | null;
   // The gradle variant that was built (--variant flag or android.variant
   // setting); null for the default assembleDebug.
   variant: string | null;
+  // The Metro port the app was wired to; null on a release-shaped variant,
+  // which embeds its JS and uses no dev server at all.
+  metroPort: number | null;
   cacheHit: CacheHitLevel;
   cacheSkipped: boolean;
   waitedForBuild: { pid: number | null; ms: number } | null;
