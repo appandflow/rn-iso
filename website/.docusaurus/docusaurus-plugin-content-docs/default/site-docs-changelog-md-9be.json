@@ -1,7 +1,7 @@
 {
   "id": "changelog",
   "title": "Changelog",
-  "description": "Release notes",
+  "description": "Release notes, generated from docs/releases/ -- the single source of truth",
   "source": "@site/docs/changelog.md",
   "sourceDirName": ".",
   "slug": "/changelog",
@@ -15,7 +15,7 @@
   "frontMatter": {
     "title": "Changelog",
     "sidebar_position": 99,
-    "description": "Release notes"
+    "description": "Release notes, generated from docs/releases/ -- the single source of truth"
   },
   "sidebar": "docs",
   "previous": {

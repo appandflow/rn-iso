@@ -122,9 +122,14 @@ If `git status` isn't clean, commit / discard before tagging.
    ```
    One tag for the repo, not one per package: the packages share a version, so
    a per-package tag would only say the same thing three times.
-6. **Write the GitHub release notes.** Drop them into a temp file (so multi-line markdown survives the shell), then:
+6. **Write the release notes in `docs/releases/X.Y.Z.md`** -- the single
+   source of truth: the website's changelog page is GENERATED from these files
+   at site build (`website/scripts/gen-changelog.mjs`, triggered by the Docs
+   deploy on any push touching `docs/releases/`), and the GitHub release is
+   created from the same file:
    ```bash
-   gh release create vX.Y.Z --title "vX.Y.Z" --notes-file /tmp/rn-iso-X.Y.Z-notes.md
+   tail -n +2 docs/releases/X.Y.Z.md > /tmp/notes.md
+   gh release create vX.Y.Z --title "vX.Y.Z" --notes-file /tmp/notes.md
    ```
    Sections: `New`, `Removed (breaking)`, `Fixes`, `Docs`, `Migration notes` (if any). Skip empty sections. Link prior commits with `[<short-sha>](https://github.com/janicduplessis/rn-iso/commit/<sha>)`. Say which package a line is about when it is not the CLI.
 7. **Publish to npm, `rn-iso` first.** The two cache packages name it as a peer
