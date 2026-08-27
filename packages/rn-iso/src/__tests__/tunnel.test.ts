@@ -283,3 +283,31 @@ describe('stopTunnel: idempotent, never throws', () => {
     expect(result.reason).toContain('did not exit');
   });
 });
+
+describe('against output cloudflared really printed', () => {
+  // CLAUDE.md item 9: a hand-written sample proves the regex matches what the
+  // test author imagined. These lines are copied verbatim from a cloudflared
+  // 2026.8.2 run captured while building this feature.
+  const BANNER =
+    '2026-08-26T19:50:27Z INF |  https://priest-contribute-mysql-leslie.trycloudflare.com                                  |';
+  const REQUEST_ERROR =
+    '2026-08-26T20:26:19Z ERR Request failed error="Unable to reach the origin service." connIndex=0 ' +
+    'dest=https://priest-contribute-mysql-leslie.trycloudflare.com/status event=0 ip=198.41.192.37 type=http';
+  const PRECHECK = '2026-08-26T19:50:22Z INF Requesting new quick Tunnel on trycloudflare.com...';
+
+  test('the banner line yields the bare origin, boxed in pipes and padding', () => {
+    expect(parseCloudflaredLine(BANNER)).toBe('https://priest-contribute-mysql-leslie.trycloudflare.com');
+  });
+
+  test('a url carrying a PATH still yields only the origin', () => {
+    // cloudflared logs `dest=<url>/status` on every failed request. Returning
+    // the path too would be handed to the device as a bundle host.
+    expect(parseCloudflaredLine(REQUEST_ERROR)).toBe('https://priest-contribute-mysql-leslie.trycloudflare.com');
+  });
+
+  test('the pre-banner line naming the domain is NOT a url', () => {
+    // It appears seconds before the real one. Matching it would hand out
+    // "trycloudflare.com" as the tunnel.
+    expect(parseCloudflaredLine(PRECHECK)).toBeNull();
+  });
+});
