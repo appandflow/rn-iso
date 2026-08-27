@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { getProjectSettings, getRepoSettings } from './config.ts';
+import { TUNNEL_MODES, type TunnelMode } from './engine/metro-reach.ts';
 import type { Settings, SettingsObject } from './types.ts';
 export type { Settings, SettingsObject };
 
@@ -42,6 +43,8 @@ const KNOWN_SETTINGS = new Set([
   'android.keystore',
   'android.keystorePassword',
   'android.remote',
+  'metro.tunnel',
+  'metro.publicUrl',
   'worktreeDir',
   'worktree.baseRef',
   'worktree.include',
@@ -122,4 +125,25 @@ function remoteSetting(settings: SettingsObject, platform: 'ios' | 'android'): b
   const block = settings[platform];
   if (typeof block !== 'object' || block === null) return false;
   return (block as { remote?: unknown }).remote === true;
+}
+
+// engine/metro-reach.ts's TunnelMode, committed once for the whole repo
+// rather than passed per invocation -- there is no `--tunnel` flag. Anything
+// other than one of the five known modes is treated as unset rather than
+// trusted, the same rule remoteIosSetting applies to a non-`true` value: a
+// typo here must fall back to `auto`, not silently disable tunnelling.
+export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
+  const block = settings.metro;
+  if (typeof block !== 'object' || block === null) return null;
+  const mode = (block as { tunnel?: unknown }).tunnel;
+  return typeof mode === 'string' && (TUNNEL_MODES as readonly string[]).includes(mode) ? (mode as TunnelMode) : null;
+}
+
+// An operator-supplied tunnel URL that already exists. planMetroReach uses
+// this in place of starting one of its own, whatever metro.tunnel says.
+export function publicUrlSetting(settings: SettingsObject): string | null {
+  const block = settings.metro;
+  if (typeof block !== 'object' || block === null) return null;
+  const url = (block as { publicUrl?: unknown }).publicUrl;
+  return typeof url === 'string' && url.trim() ? url : null;
 }

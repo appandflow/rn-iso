@@ -2,7 +2,14 @@ import assert from 'node:assert';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { mergeSettingsLayers, readCommittedSettings, resolveSettings, unknownSettingKeys } from '../settings.ts';
+import {
+  mergeSettingsLayers,
+  publicUrlSetting,
+  readCommittedSettings,
+  resolveSettings,
+  tunnelModeSetting,
+  unknownSettingKeys,
+} from '../settings.ts';
 import { setProjectSetting, setRepoSetting, upsertProject } from '../config.ts';
 
 // SettingsObject is Record<string, unknown> by design; this structural view
@@ -141,4 +148,40 @@ test('a repo-layer array setting survives resolution as an array', () => {
   setRepoSetting('/repo/.git', 'caches', ['~/.myapp-metro-cache', '/tmp/build-cache']);
   const resolved = resolveSettings({ gitCommonDir: '/repo/.git' });
   expect(resolved.caches).toEqual(['~/.myapp-metro-cache', '/tmp/build-cache']);
+});
+
+test('unknownSettingKeys accepts metro.tunnel and metro.publicUrl', () => {
+  expect(unknownSettingKeys({ metro: { tunnel: 'cloudflared', publicUrl: 'https://x.example.com' } })).toEqual([]);
+});
+
+describe('tunnelModeSetting', () => {
+  test('reads one of the known modes', () => {
+    expect(tunnelModeSetting({ metro: { tunnel: 'cloudflared' } })).toBe('cloudflared');
+    expect(tunnelModeSetting({ metro: { tunnel: 'off' } })).toBe('off');
+  });
+
+  test('anything not a known mode -- a typo, an old value -- is unset, not trusted', () => {
+    expect(tunnelModeSetting({ metro: { tunnel: 'ngrok-please' } })).toBeNull();
+    expect(tunnelModeSetting({ metro: { tunnel: true } })).toBeNull();
+  });
+
+  test('a missing metro block, or no tunnel key, is unset', () => {
+    expect(tunnelModeSetting({})).toBeNull();
+    expect(tunnelModeSetting({ metro: {} })).toBeNull();
+    expect(tunnelModeSetting({ metro: 'nope' })).toBeNull();
+  });
+});
+
+describe('publicUrlSetting', () => {
+  test('reads a committed tunnel URL', () => {
+    expect(publicUrlSetting({ metro: { publicUrl: 'https://abc.trycloudflare.com' } })).toBe(
+      'https://abc.trycloudflare.com',
+    );
+  });
+
+  test('a non-string or blank value is unset', () => {
+    expect(publicUrlSetting({ metro: { publicUrl: '' } })).toBeNull();
+    expect(publicUrlSetting({ metro: { publicUrl: 42 } })).toBeNull();
+    expect(publicUrlSetting({})).toBeNull();
+  });
 });

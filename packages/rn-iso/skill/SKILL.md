@@ -138,6 +138,8 @@ export RN_ISO_METRO_PUBLIC_URL=https://<that-url>
 
 Set it BEFORE `rn-iso start`, not just before `ios`. `start` turns it into Expo's `EXPO_PACKAGER_PROXY_URL`, which is what makes the manifest advertise the tunnel. Without it Expo builds the manifest from its own port, the device is told to fetch `https://<tunnel-host>:8085/...`, and the launch dies at "Could not connect to development server" -- the manifest wins over the deep link, so it cannot be fixed from the device side. A loopback proxy needs none of this.
 
+**`metro.tunnel` and `metro.publicUrl` are the settings form of the same decision** (`guide settings`), a repo-level policy instead of a manual cloudflared-plus-export each time: `auto` (default) assumes the device is elsewhere and arranges a tunnel; `off` asserts the device shares this machine (a local `agent-device proxy`) and is the only mode that needs no tunnel; `expo` lets the Expo dev server tunnel itself; `cloudflared` / `ngrok` name a provider explicitly. `metro.publicUrl` names an existing tunnel's URL -- the setting equivalent of the manual export above -- and takes precedence over rn-iso starting one, whatever `metro.tunnel` says.
+
 It needs `agent-device` on PATH, plus one of:
 
 - **`AGENT_DEVICE_DAEMON_BASE_URL` + `AGENT_DEVICE_DAEMON_AUTH_TOKEN` in the environment.** rn-iso uses that daemon and creates no session of its own. This is the `agent-device proxy` case, and it is also how you attach to a session someone else started.

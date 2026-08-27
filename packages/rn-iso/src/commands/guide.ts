@@ -1086,6 +1086,19 @@ KEYS RN-ISO READS
                         bare string is used as the literal password. Unset
                         means the debug keystore's fixed "android".
   android.remote        the android half of ios.remote, same rule
+  metro.tunnel          how a remote device reaches this workspace's Metro:
+                        "auto" (default) assumes the device is elsewhere
+                        and arranges a tunnel, preferring ngrok then
+                        cloudflared; "off" asserts the device shares this
+                        machine (a local \`agent-device proxy\`) and is the
+                        only mode that needs no tunnel; "expo" lets the
+                        Expo dev server tunnel itself; "cloudflared" /
+                        "ngrok" name a managed provider explicitly. Any
+                        other value is treated as unset.
+  metro.publicUrl       an existing tunnel's URL. Takes precedence over
+                        starting one, whatever metro.tunnel says -- rn-iso
+                        did not create it, so a Metro request through it is
+                        still gated the same way a managed tunnel's is.
   worktreeDir           where worktrees are created
   worktree.baseRef      "fresh" (origin/HEAD) or "head"
   worktree.include      carry-over patterns, same role as .worktreeinclude
