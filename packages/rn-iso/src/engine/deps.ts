@@ -407,14 +407,11 @@ export async function runPodInstall(
       failed: true,
       code: DEPS_ERROR,
       reason: `\`pod install\` failed (${how}).`,
-      ...(pinned
-        ? {
-            remedy:
-              `This repo pins ruby ${pinned} (.ruby-version) and its Gemfile's cocoapods was installed under it; ` +
-              `the shell's ruby is likely a different version, so bundler looks in the wrong gem home. ` +
-              `Put ruby ${pinned} on PATH (rbenv/rvm/asdf/mise) -- \`bundle install\` will NOT fix this.`,
-          }
-        : {}),
+      remedy: pinned
+        ? `This repo pins ruby ${pinned} (.ruby-version) and its Gemfile's cocoapods was installed under it; ` +
+          `the shell's ruby is likely a different version, so bundler looks in the wrong gem home. ` +
+          `Put ruby ${pinned} on PATH (rbenv/rvm/asdf/mise) -- \`bundle install\` will NOT fix this.`
+        : undefined,
       diagnosticSource: extracted ? extracted.source : ('tail' as const),
       diagnosticLines: extracted ? extracted.lines : ([] as string[]),
       lastLines: transcript.slice(-LAST_LINES),
