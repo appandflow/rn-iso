@@ -47,7 +47,11 @@ other line goes to stderr, so it is always safe to pipe.
   udid            the owned simulator this workspace installed onto
   deviceName      its name, or null
   fingerprint     the @expo/fingerprint hash of the native inputs
-  cacheKey        the shared-build-cache key derived from it
+  configuration   the Xcode configuration that was built ("Release" from
+                  --configuration or the ios.configuration setting); null for
+                  the default Debug
+  cacheKey        the shared-build-cache key derived from it (the
+                  configuration is part of it: -release-sim vs -debug-sim)
   cacheHit        WHICH LEVEL answered, not a boolean:
                     "local"   this machine's shared cache (free, instant)
                     "remote"  the project's own Expo buildCacheProvider (a
@@ -78,7 +82,14 @@ other line goes to stderr, so it is always safe to pipe.
                   deep link (\`am start -a android.intent.action.VIEW -d
                   '<devClientUrl>'\`), which is the whole answer when the app
                   has a scheme.
-  metroPort       the port the app was wired to
+  metroPort       the port the app was wired to; NULL on a non-Debug
+                  configuration, whose JS is embedded and which is launched
+                  with no dev server at all. There, \`launched\` is verified
+                  by the app process staying alive after launch (a bad
+                  embedded bundle crashes within seconds), not by a bundle
+                  request -- "unverified" means the process died or could not
+                  be checked, and \`rn-iso logs --errors\` has the device
+                  log that says why
   logs            { dir }
   durationMs      wall time for the whole run
 
@@ -355,7 +366,8 @@ RN_ISO_NO_METRO
   second, before the device is even booted, rather than after four minutes of
   compiling an app that could not load a bundle. Run \`rn-iso start\` first.
   \`--no-metro-check\` overrides it and wires the app to the reservation (or to
-  8081 when there is none).
+  8081 when there is none). A non-Debug \`ios --configuration\` never emits
+  this: a release-shaped build embeds its JS, so the gate does not run at all.
   A port held by SOMETHING ELSE reports what: usually a bundler started from
   the wrong directory (the repo root instead of the app dir in a monorepo), or
   another repo's Metro. Restart it from inside the project, or free the port
@@ -394,6 +406,18 @@ RN_ISO_BUILD_FAILED
     that just ran, so it is an artifact this run did not produce (a copied
     build/ directory, a carried worktree). Delete
     android/app/build/outputs/apk and run again.
+
+ONE FALLBACK NOTE THAT IS NOT A CODE (\`ios --configuration Release\`)
+  On a Release cache hit rn-iso regenerates this workspace's JS bundle into a
+  copy of the cached .app before installing it. When any step of that swap
+  fails (the bundle command, hermesc, the re-sign), the run does NOT install
+  the cached artifact -- its baked-in JS is the builder's, not yours -- and
+  does NOT fail: it prints a \`js swap  failed at <step>: ... -- building
+  fresh instead\` note on stderr and falls back to a full build. If the run
+  then fails, the code is the build's own (RN_ISO_BUILD_FAILED etc.); the
+  swap note above it says why the cache hit was not used. A swap that merely
+  finds no hermesc notes it and embeds the plain JS bundle instead -- that is
+  a note, not a fallback.
 
 RN_ISO_BUILD_WAIT_TIMEOUT
   This run was waiting for ANOTHER workspace's build of the same fingerprint
@@ -723,7 +747,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
 THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds>
-  ios             --json --no-metro-check --no-build-cache
+  ios             --json --no-metro-check --no-build-cache --configuration <name>
   android         --json --no-metro-check --no-build-cache --variant <name>
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
@@ -740,8 +764,26 @@ THE OPTION SURFACE, IN FULL
   keys the build cache on the variant. It overrides the android.variant
   setting (see \`guide settings\`), which is the repo-level default; unset,
   the plain \`assembleDebug\` flow is unchanged. Debug variants of flavors
-  only -- release builds stay out of scope. The --json payload's \`variant\`
-  field reports what was built (null for the default).
+  only -- release builds stay out of scope on Android for now. The --json
+  payload's \`variant\` field reports what was built (null for the default).
+
+  \`ios --configuration <name>\` selects the Xcode configuration --
+  \`--configuration Release\` builds a SIMULATOR Release app with the JS
+  bundle embedded. It overrides the ios.configuration setting (the repo-level
+  default); unset, the Debug flow is unchanged. A non-Debug configuration
+  skips Metro ENTIRELY: no gate, no port wiring, no dev-client deep link (a
+  plain \`simctl launch\`), and the payload says \`metroPort: null\` --
+  \`launched\` is verified by the app PROCESS staying alive, not by a bundle
+  fetch. The build cache keys on the configuration
+  (\`<fingerprint>-release-sim\`), and because a cached Release .app carries
+  its builder's baked-in JS, a cache hit regenerates THIS workspace's bundle
+  (the project's own \`expo export:embed\` / \`react-native bundle\`, plus
+  its own hermesc when Hermes is enabled) into a copy of the artifact,
+  re-signs it and installs that; any swap failure falls back to a full build
+  rather than ever installing stale JS. Device logs are still collected, so
+  \`logs --errors\` answers "does it repro in release/Hermes bytecode".
+  Simulator only -- device builds, signing and distribution stay out of
+  scope.
 
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned rn-iso-* devices, tens of GB
@@ -900,6 +942,13 @@ belongs there:
 KEYS RN-ISO READS
   ios.deviceType        e.g. "iPhone 17 Pro"
   ios.runtime           e.g. "26.2"
+  ios.configuration     e.g. "Release" -- the Xcode configuration to build
+                        (simulator only). Committing
+                        { "ios": { "configuration": "Release" } } makes every
+                        \`rn-iso ios\` in the repo a release-shaped build:
+                        embedded JS, no Metro, cache keyed -release-sim, and
+                        a JS-bundle swap on cache hits. The \`--configuration\`
+                        flag overrides this per invocation. Unset means Debug.
   android.systemImage   e.g. "system-images;android-36;google_apis;arm64-v8a"
   android.variant       e.g. "productionDebug" -- the gradle variant to
                         assemble and install on a project with product

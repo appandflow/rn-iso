@@ -347,14 +347,14 @@ composes, never one it inferred from a package.json script. Nothing reads
 fixed and it does not grow:
 
     start           --json --wait
-    ios             --json --no-metro-check --no-build-cache
+    ios             --json --no-metro-check --no-build-cache --configuration <name>
     android         --json --no-metro-check --no-build-cache --variant <name>
     logs            --source --level --since --grep --tail --follow --errors --json
     stop            --json --force
 
 `--client-logs` is the archetype of what is deleted rather than ported: capture
-is unconditional, and a queryable file has no terminal noise to manage. Release
-builds, device targets and `--serial` are all out of scope for the
+is unconditional, and a queryable file has no terminal noise to manage. Device
+targets and `--serial` are out of scope for the
 same reason. A project needing something outside this set wraps rn-iso in a
 script of its own — one the repo writes and owns, since rn-iso no longer
 generates one.
@@ -364,9 +364,26 @@ for issue #52 (tlon-mobile's product flavors: `assembleDebug` built into
 `apk/production/debug/` and rn-iso declared the successful build failed).
 Which flavored DEBUG variant to build is per-invocation agent judgment, so it
 belongs on the command; the `android.variant` SETTING (precedent:
-`android.systemImage`) is the repo-level default the flag overrides. Release
-variants remain out of scope — the value still selects a debug build of a
-flavor, not a release path.
+`android.systemImage`) is the repo-level default the flag overrides. On
+Android the value still selects a debug build of a flavor — Android release
+paths stay out of scope until issue #57's phase 2.
+
+`ios --configuration <name>` is the same deliberate move, decided 2026-08-27
+for issue #57 phase 1 (release SIMULATOR builds: "does it repro in
+release/Hermes bytecode" is an agent question Debug cannot answer). Which
+configuration to build is per-invocation judgment, so it belongs on the
+command; the `ios.configuration` SETTING is the repo-level default the flag
+overrides, and unset stays exactly the Debug flow. A non-Debug configuration
+skips Metro ENTIRELY (no gate, no port wiring, no dev-client deep link; the
+payload says `metroPort: null` and `launched` is process-alive-based), keys
+the build cache on the configuration (`-release-sim`), and — because a
+native-keyed cached Release .app carries its BUILDER's baked-in JS — a cache
+hit regenerates this workspace's JS with the project's own tools
+(`expo export:embed` / `react-native bundle`, hermesc from the project's
+react-native) into a COPY of the artifact, re-signs it ad hoc and installs
+that (`src/engine/js-swap.ts`); any swap failure falls back to a full build,
+never to installing stale JS. Store signing, devices and distribution remain
+out of scope.
 
 `--base` is the counter-example worth remembering: it accepted only the two
 sentinels `fresh` and `head`, and widening it to any ref `git rev-parse`

@@ -35,6 +35,7 @@ export function mergeSettingsLayers(layers: Array<SettingsObject | null | undefi
 const KNOWN_SETTINGS = new Set([
   'ios.deviceType',
   'ios.runtime',
+  'ios.configuration',
   'android.systemImage',
   'android.variant',
   'worktreeDir',

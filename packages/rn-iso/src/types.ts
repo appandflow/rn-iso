@@ -152,6 +152,9 @@ export interface IosFacts {
   udid: string;
   deviceName: string | null;
   fingerprint?: string | null;
+  // The Xcode configuration that was built (--configuration flag or the
+  // ios.configuration setting); null for the default Debug.
+  configuration: string | null;
   cacheKey?: string | null;
   cacheHit: CacheHitLevel;
   cacheSkipped: boolean;
