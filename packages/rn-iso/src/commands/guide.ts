@@ -106,7 +106,16 @@ other line goes to stderr, so it is always safe to pipe.
                   as above
   variant         the gradle variant that was built ("productionDebug" from
                   --variant or the android.variant setting); null for the
-                  default assembleDebug
+                  default assembleDebug. A variant whose name ENDS IN Release
+                  is a release build: its JS is embedded and no dev server is
+                  used
+  metroPort       the port the app was wired to; NULL on a release-shaped
+                  variant, exactly as on a non-Debug iOS configuration.
+                  There, \`launched\` is verified by the app PROCESS being
+                  alive on the device a moment after launch (\`pidof\`, then
+                  \`ps -A\`), not by a bundle request -- "unverified" means
+                  no process was found, and \`rn-iso logs --errors\` has the
+                  device log that says why
   bundleId        the ANDROID PACKAGE NAME the launch, the port wiring and
                   the remedies all target -- read from the BUILT APK's
                   manifest, which on a flavored project is the flavor's
@@ -407,17 +416,49 @@ RN_ISO_BUILD_FAILED
     build/ directory, a carried worktree). Delete
     android/app/build/outputs/apk and run again.
 
-ONE FALLBACK NOTE THAT IS NOT A CODE (\`ios --configuration Release\`)
-  On a Release cache hit rn-iso regenerates this workspace's JS bundle into a
-  copy of the cached .app before installing it. When any step of that swap
-  fails (the bundle command, hermesc, the re-sign), the run does NOT install
-  the cached artifact -- its baked-in JS is the builder's, not yours -- and
-  does NOT fail: it prints a \`js swap  failed at <step>: ... -- building
-  fresh instead\` note on stderr and falls back to a full build. If the run
-  then fails, the code is the build's own (RN_ISO_BUILD_FAILED etc.); the
-  swap note above it says why the cache hit was not used. A swap that merely
-  finds no hermesc notes it and embeds the plain JS bundle instead -- that is
-  a note, not a fallback.
+FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
+  On a release cache hit rn-iso regenerates this workspace's JS bundle into a
+  COPY of the cached artifact before installing it -- \`ios --configuration
+  Release\` into a copy of the .app, \`android --variant ...Release\` into a
+  copy of the APK. When any step of that swap fails (the bundle command,
+  hermesc, the re-sign, zipalign, apksigner), the run does NOT install the
+  cached artifact -- its baked-in JS is the builder's, not yours -- and does
+  NOT fail: it prints a \`js swap\` / \`apk swap  failed at <step>: ... --
+  building fresh instead\` note on stderr and falls back to a full build. If
+  the run then fails, the code is the build's own (RN_ISO_BUILD_FAILED etc.);
+  the swap note above it says why the cache hit was not used. A swap that
+  merely finds no hermesc notes it and embeds the plain JS bundle instead --
+  that is a note, not a fallback.
+
+  ANDROID'S ASSET GATE is the second, and it is not a failure at all. Before
+  re-packing, rn-iso compares this workspace's freshly emitted asset tree
+  against the assets the cached APK carries. Any added, removed or changed
+  asset prints
+
+    apk swap    this workspace's asset set differs from the cached APK's
+                (1 added, 0 changed, 0 removed; e.g. added
+                res/drawable-mdpi/new_logo.png) -- building fresh instead
+
+  and the run does a full gradle build. There is nothing to fix: a drawable
+  has a row in resources.arsc that only AAPT can write, so an APK cannot be
+  made to carry an asset it was not built with, and installing one whose JS
+  references a missing asset would 404 at runtime. Add an image, pay for one
+  full build; the APK it produces becomes the new cache entry.
+
+  THE UNINSTALL NOTE is the third, and it COSTS THE APP'S DATA. A re-packed
+  APK is signed with this machine's debug keystore, so the moment it meets a
+  copy signed by CI the install is refused with
+  INSTALL_FAILED_UPDATE_INCOMPATIBLE (or INSTALL_FAILED_VERSION_DOWNGRADE) and
+  nothing but removing the package resolves it. A RELEASE run therefore
+  uninstalls the package once, retries the install once, and prints
+
+    install     com.example.app was already installed with a different signer,
+                so it was uninstalled (its data went with it) before this APK
+                could be installed
+
+  Debug runs never do this: every debug artifact is debug-keystore-signed, the
+  conflict cannot arise, and losing a dev app's data to a silent uninstall
+  would be a worse bug than the one it fixes.
 
 RN_ISO_BUILD_WAIT_TIMEOUT
   This run was waiting for ANOTHER workspace's build of the same fingerprint
@@ -763,9 +804,58 @@ THE OPTION SURFACE, IN FULL
   runs \`assembleProductionDebug\`, finds the APK in apk/production/debug/ and
   keys the build cache on the variant. It overrides the android.variant
   setting (see \`guide settings\`), which is the repo-level default; unset,
-  the plain \`assembleDebug\` flow is unchanged. Debug variants of flavors
-  only -- release builds stay out of scope on Android for now. The --json
-  payload's \`variant\` field reports what was built (null for the default).
+  the plain \`assembleDebug\` flow is unchanged. The --json payload's
+  \`variant\` field reports what was built (null for the default).
+
+  A VARIANT WHOSE NAME ENDS IN "Release" IS A RELEASE BUILD (\`release\`,
+  \`productionRelease\`), and that is the whole opt-in -- there is no second
+  flag. It is the Android half of \`ios --configuration Release\` and behaves
+  the same way: AGP's bundle task embeds the JS, so Metro is skipped ENTIRELY
+  (no gate, no \`adb reverse\`, no debug_http_host, no dev-client deep link --
+  a plain \`am start\` of the launcher activity), the payload says
+  \`metroPort: null\`, and \`launched\` is proven by the app PROCESS being
+  alive on the device rather than by a bundle fetch. Device logs are still
+  collected, so \`logs --errors\` answers "does it repro in release/Hermes
+  bytecode".
+
+  On a release CACHE HIT the cached APK carries its BUILDER's baked-in JS, so
+  it is never installed as-is. rn-iso copies it aside, regenerates this
+  workspace's bundle with the project's own tools (\`expo export:embed\` /
+  \`react-native bundle\`, then the project's own hermesc when
+  \`hermesEnabled\` is not false in android/gradle.properties), re-packs it
+  into the copy with plain zip surgery (stored, not deflated -- the runtime
+  mmaps it), then zipaligns and re-signs with apksigner. The keystore defaults
+  to android/app/debug.keystore with the standard password; android.keystore /
+  android.keystorePassword override it (see \`guide settings\`). The cache
+  entry itself is never modified.
+
+  Before re-packing, THE ASSET GATE compares this workspace's freshly emitted
+  asset tree against the ones the cached APK already carries. Any added,
+  removed or changed asset means NO SWAP: the run falls back to a full gradle
+  build with a note naming an example. An Android drawable is not just a file
+  in the zip -- it has a row in resources.arsc only AAPT can write -- so an
+  APK cannot be made to carry an asset it was not built with, and rn-iso will
+  not install one whose JS references an asset it lacks.
+
+  THE GATE'S ONE BLIND SPOT, stated plainly: it compares asset NAMES, plus
+  sizes only where AAPT stores a file verbatim (res/raw). A release build
+  re-encodes every drawable, so a packaged drawable's length is the length of
+  a different file than the one just emitted -- comparing it would call every
+  drawable changed and refuse every hit. The consequence is that REPLACING an
+  image with a different one under the SAME filename is not detected: the
+  fingerprint covers native inputs only, so that run is a cache hit and the
+  swapped app shows the OLD image. Adding, removing or renaming an image is
+  caught. Touch a native input (or pass --no-build-cache) to force the build
+  that picks the new image up.
+
+  Local re-signing also
+  means an APK signed by CI cannot be updated over: on
+  INSTALL_FAILED_UPDATE_INCOMPATIBLE (or a version downgrade) a release run
+  uninstalls the package once and retries, printing a note -- the app's data
+  goes with it, which is why only release runs do this.
+
+  Local emulator installs only. Store signing, physical devices and
+  distribution stay out of scope.
 
   \`ios --configuration <name>\` selects the Xcode configuration --
   \`--configuration Release\` builds a SIMULATOR Release app with the JS
@@ -960,8 +1050,25 @@ KEYS RN-ISO READS
                         finds the APK in apk/production/debug/ and keys the
                         build cache on the variant. The \`--variant\` flag
                         overrides this per invocation. Unset means plain
-                        assembleDebug. Debug variants only; release is out
-                        of scope.
+                        assembleDebug. A variant whose name ENDS IN Release
+                        (\`release\`, \`productionRelease\`) is a release
+                        build: embedded JS, no Metro, cache keyed on the
+                        variant, and an APK re-pack on cache hits. See
+                        \`guide lifecycle\`.
+  android.keystore      the keystore a RE-PACKED release APK is signed with,
+                        absolute or relative to the project root. Unset means
+                        android/app/debug.keystore, which every RN and Expo
+                        android project carries -- the right default, because
+                        what this signs is a local emulator install and never
+                        anything distributed. Set it only when the release
+                        variant must be signed with the repo's own key.
+  android.keystorePassword
+                        the password for it. apksigner's SCHEMED form is
+                        passed through unchanged (\`env:MY_KS_PASS\`,
+                        \`file:/keys/pw.txt\`, \`stdin\`), which is how a
+                        committed .rn-iso.json avoids carrying a secret; a
+                        bare string is used as the literal password. Unset
+                        means the debug keystore's fixed "android".
   worktreeDir           where worktrees are created
   worktree.baseRef      "fresh" (origin/HEAD) or "head"
   worktree.include      carry-over patterns, same role as .worktreeinclude

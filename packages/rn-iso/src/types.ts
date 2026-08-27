@@ -177,6 +177,9 @@ export interface AndroidFacts {
   // The gradle variant that was built (--variant flag or android.variant
   // setting); null for the default assembleDebug.
   variant: string | null;
+  // The Metro port the app was wired to; null on a release-shaped variant,
+  // which embeds its JS and uses no dev server at all.
+  metroPort: number | null;
   cacheHit: CacheHitLevel;
   cacheSkipped: boolean;
   waitedForBuild: { pid: number | null; ms: number } | null;

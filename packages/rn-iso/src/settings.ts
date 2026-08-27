@@ -38,6 +38,8 @@ const KNOWN_SETTINGS = new Set([
   'ios.configuration',
   'android.systemImage',
   'android.variant',
+  'android.keystore',
+  'android.keystorePassword',
   'worktreeDir',
   'worktree.baseRef',
   'worktree.include',

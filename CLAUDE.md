@@ -179,6 +179,15 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # <ws>/.rn-iso/derived-data, transcript streamed to the build log
       gradle.js           # buildAndroid: ./gradlew assemble<Variant> (default assembleDebug),
                           # apk located by output listing, flavor-aware, mtime freshness guard
+      js-swap.js          # RELEASE iOS cache hits: the cached .app copied aside, this tree's
+                          # JS re-bundled + hermes-compiled into the copy, re-signed. Never
+                          # the cache entry; every failure is a return value, and the caller's
+                          # answer to all of them is a full build
+      apk-swap.js         # the Android half: zip surgery (`zip -d` then `zip -0 -r`, STORE is
+                          # mandatory), zipalign THEN apksigner, and THE ASSET GATE -- an APK
+                          # cannot be made to carry an asset AAPT did not package, so any
+                          # asset difference refuses the swap rather than installing a bundle
+                          # whose assets are missing
       errors-xcode.js     # PURE: transcript -> {file, line, message} diagnostics, deduped, capped
       errors-gradle.js    # the same for gradle/kotlin/aapt failures
       build-lock.js       # SINGLE-FLIGHT builds: when both cache levels miss, one workspace
@@ -362,11 +371,45 @@ generates one.
 `android --variant <name>` is deliberate surface growth, decided 2026-08-27
 for issue #52 (tlon-mobile's product flavors: `assembleDebug` built into
 `apk/production/debug/` and rn-iso declared the successful build failed).
-Which flavored DEBUG variant to build is per-invocation agent judgment, so it
+Which flavored variant to build is per-invocation agent judgment, so it
 belongs on the command; the `android.variant` SETTING (precedent:
-`android.systemImage`) is the repo-level default the flag overrides. On
-Android the value still selects a debug build of a flavor — Android release
-paths stay out of scope until issue #57's phase 2.
+`android.systemImage`) is the repo-level default the flag overrides.
+
+Issue #57 phase 2 (2026-08-27) added NO flag to `android`: a variant whose
+name ENDS IN `Release` is release-shaped, and that name is the whole opt-in.
+It behaves exactly as `ios --configuration Release` does — Metro skipped
+entirely (no gate, no `adb reverse`, no debug_http_host, no dev-client deep
+link, a plain `am start`; payload `metroPort: null`), the variant already part
+of the cache key, device logs still collected, and `launched` proven by the
+app PROCESS being alive on the device (`pidof`, then `ps -A`) rather than by a
+bundle fetch. A release cache hit re-packs the cached APK
+(`src/engine/apk-swap.ts`) instead of installing it, and TWO things there are
+Android-specific doctrine.
+
+1. **The ASSET GATE.** The freshly emitted `--assets-dest` tree is compared
+   against the APK's `res/` entries, and ANY added / removed / changed asset
+   refuses the swap and falls back to a full gradle build. A drawable has a
+   row in `resources.arsc` that only AAPT can write, so an APK cannot be made
+   to carry an asset it was not built with — Rock (which re-injects only the
+   bundle and discards the emitted assets) ships exactly that 404, and this is
+   the deliberate divergence from it. NAMES are the load-bearing comparison;
+   sizes are compared only where AAPT stores the file verbatim (`res/raw/`),
+   because the release PNG cruncher re-encodes every drawable and comparing
+   those lengths would reject 100% of hits, including ones where nothing
+   changed.
+2. **`zipalign` BEFORE `apksigner`, always**, because a v2/v3 signature covers
+   the whole file; and `zip -0` (STORE) for the bundle, because AGP packages
+   it uncompressed so Hermes can mmap it. Signing is `apksigner`, NEVER
+   `jarsigner`, with `android/app/debug.keystore` + `pass:android` by default
+   (`android.keystore` / `android.keystorePassword` override, and the password
+   accepts apksigner's schemed forms so a committed file need not hold a
+   secret).
+
+Because a locally re-signed APK cannot update a CI-signed one, a RELEASE
+install answers `INSTALL_FAILED_UPDATE_INCOMPATIBLE` /
+`INSTALL_FAILED_VERSION_DOWNGRADE` by uninstalling ONCE and retrying, with a
+note saying why. That costs the app's data, so the debug flow never opts in.
+Store signing, physical devices and distribution remain out of scope.
 
 `ios --configuration <name>` is the same deliberate move, decided 2026-08-27
 for issue #57 phase 1 (release SIMULATOR builds: "does it repro in

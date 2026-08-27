@@ -50,6 +50,7 @@ test('the facts topic documents the fields each --json payload actually carries'
       'serial',
       'fingerprint',
       'variant',
+      'metroPort',
       'cacheHit',
       'cacheSkipped',
       'waitedForBuild',

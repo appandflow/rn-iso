@@ -5,6 +5,8 @@ import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
   androidToolPath,
+  buildToolsMajor,
+  findBuildTool,
   headlessEmulatorArgs,
   bootAndroidEmulator,
   listAvds,
@@ -425,4 +427,58 @@ test('listAvds keeps the bare command when resolution falls back to PATH', () =>
   });
   listAvds();
   expect(calls).toEqual(['emulator -list-avds']);
+});
+
+// --- build-tools ----------------------------------------------------------
+//
+// aapt, aapt2, zipalign and apksigner live under build-tools/<version>/ --
+// one copy per installed version, none of them on PATH -- so the newest
+// installed version that actually carries the tool is what gets used. The
+// walk lives here rather than beside either caller because commands/android
+// (aapt) and engine/apk-swap (zipalign, apksigner) both need exactly it.
+
+describe('findBuildTool', () => {
+  test('takes the newest build-tools that actually has the tool', () => {
+    const found = findBuildTool(['zipalign'], {
+      home: '/sdk',
+      readDir: () => ['34.0.0', '36.0.0', '35.0.0'],
+      exists: (path) => path === join('/sdk', 'build-tools', '35.0.0', 'zipalign'),
+    });
+    expect(found).toEqual({
+      path: join('/sdk', 'build-tools', '35.0.0', 'zipalign'),
+      tool: 'zipalign',
+      version: '35.0.0',
+      major: 35,
+    });
+  });
+
+  test('the tool ORDER within a version is the caller preference', () => {
+    const found = findBuildTool(['aapt', 'aapt2'], {
+      home: '/sdk',
+      readDir: () => ['36.0.0'],
+      exists: () => true,
+    });
+    expect(found?.tool).toBe('aapt');
+  });
+
+  test('no SDK, no build-tools, or no copy of the tool anywhere is null', () => {
+    expect(
+      findBuildTool(['zipalign'], {
+        home: '/sdk',
+        readDir: () => {
+          throw new Error('ENOENT');
+        },
+        exists: () => false,
+      }),
+    ).toBe(null);
+    expect(findBuildTool(['zipalign'], { home: '/sdk', readDir: () => ['36.0.0'], exists: () => false })).toBe(null);
+    expect(findBuildTool(['zipalign'], { home: '/sdk', readDir: () => ['NOTICE.txt'], exists: () => true })).toBe(null);
+  });
+
+  test('the major is what a version-gated flag reads, and an unparseable one is 0', () => {
+    expect(buildToolsMajor('36.0.0')).toBe(36);
+    expect(buildToolsMajor('35.0.0-rc1')).toBe(35);
+    expect(buildToolsMajor('nonsense')).toBe(0);
+    expect(buildToolsMajor(undefined)).toBe(0);
+  });
 });

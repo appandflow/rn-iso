@@ -78,6 +78,80 @@ export function androidToolPath(tool: AndroidTool): string {
   return existsSync(abs) ? abs : tool;
 }
 
+// --- build-tools --------------------------------------------------------
+//
+// aapt, aapt2, zipalign and apksigner do NOT live under a fixed path the way
+// adb and emulator do: they live under build-tools/<version>/, one copy per
+// installed version, and none of them is on PATH on a normal machine
+// (verified: `which zipalign` finds nothing with a fully installed SDK). So
+// they are resolved through androidHome() the way avdmanager is, taking the
+// NEWEST installed version that actually carries the tool.
+
+// A resolved build-tools binary. `major` is what a version-gated flag reads
+// (zipalign's -P landed in build-tools 35).
+export interface BuildToolsEntry {
+  path: string;
+  tool: string;
+  version: string;
+  major: number;
+}
+
+// Build-tools directory names are versions: "36.0.0", "35.0.0", "34.0.0".
+// PURE, so the ordering is testable without an SDK.
+export function newestBuildTools(names: unknown): string | null {
+  return (
+    [...(Array.isArray(names) ? names : [])]
+      .filter((n) => /^\d+(\.\d+)*(-\w+)?$/.test(String(n)))
+      .sort((a, b) => {
+        const pa = String(a).split(/[.-]/).map(Number);
+        const pb = String(b).split(/[.-]/).map(Number);
+        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+          const d = (pb[i] || 0) - (pa[i] || 0);
+          if (d) return d;
+        }
+        return 0;
+      })[0] ?? null
+  );
+}
+
+// PURE. The major of a build-tools directory name, or 0 when it does not
+// parse -- 0 is the safe answer, because every version gate here is
+// `>= N` and an unparseable version must take the older branch.
+export function buildToolsMajor(version: unknown): number {
+  const major = Number(String(version ?? '').split(/[.-]/)[0]);
+  return Number.isFinite(major) ? major : 0;
+}
+
+// The newest installed build-tools version that carries one of `tools`, in
+// the order given (so a caller preferring aapt over aapt2 says so). Null when
+// the SDK has no build-tools at all, or none of them has any of the tools.
+export function findBuildTool(
+  tools: readonly string[],
+  {
+    home = androidHome(),
+    readDir = readdirSync,
+    exists = existsSync,
+  }: { home?: string; readDir?: (path: string) => string[]; exists?: (path: string) => boolean } = {},
+): BuildToolsEntry | null {
+  const root = join(home, 'build-tools');
+  let versions: string[] = [];
+  try {
+    versions = readDir(root);
+  } catch {
+    return null;
+  }
+  while (versions.length) {
+    const version = newestBuildTools(versions);
+    if (!version) return null;
+    for (const tool of tools) {
+      const path = join(root, version, tool);
+      if (exists(path)) return { path, tool, version, major: buildToolsMajor(version) };
+    }
+    versions = versions.filter((v) => v !== version);
+  }
+  return null;
+}
+
 // The shell-embedded form of androidToolPath: quoted when resolved (an SDK
 // path can carry a space), bare otherwise so the shell still does the PATH
 // lookup. Every shell invocation of an Android tool in this module goes
