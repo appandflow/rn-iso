@@ -45,7 +45,17 @@ test('the facts topic documents the fields each --json payload actually carries'
       'launched',
       'metroPort',
     ],
-    android: ['serial', 'fingerprint', 'cacheHit', 'cacheSkipped', 'waitedForBuild', 'appPath', 'bundleId', 'launched'],
+    android: [
+      'serial',
+      'fingerprint',
+      'variant',
+      'cacheHit',
+      'cacheSkipped',
+      'waitedForBuild',
+      'appPath',
+      'bundleId',
+      'launched',
+    ],
   };
   for (const [command, names] of Object.entries(fields)) {
     for (const f of names) {
@@ -64,7 +74,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
   const advertised = {
     'start.ts': ['--json', '--wait'],
     'ios.ts': ['--json', '--no-metro-check', '--no-build-cache'],
-    'android.ts': ['--json', '--no-metro-check', '--no-build-cache'],
+    'android.ts': ['--json', '--no-metro-check', '--no-build-cache', '--variant'],
     'stop.ts': ['--json', '--force'],
     'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],
     'gc.ts': ['--delete', '--older-than', '--all'],

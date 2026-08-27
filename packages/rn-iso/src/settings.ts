@@ -36,6 +36,7 @@ const KNOWN_SETTINGS = new Set([
   'ios.deviceType',
   'ios.runtime',
   'android.systemImage',
+  'android.variant',
   'worktreeDir',
   'worktree.baseRef',
   'worktree.include',

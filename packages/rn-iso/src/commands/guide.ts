@@ -93,7 +93,13 @@ other line goes to stderr, so it is always safe to pipe.
   deviceName      the same name, matching the iOS payload's field
   fingerprint / cacheHit / cacheSkipped / waitedForBuild / appPath / launched
                   as above
-  bundleId        the ANDROID PACKAGE NAME, not the iOS bundle id
+  variant         the gradle variant that was built ("productionDebug" from
+                  --variant or the android.variant setting); null for the
+                  default assembleDebug
+  bundleId        the ANDROID PACKAGE NAME the launch, the port wiring and
+                  the remedies all target -- read from the BUILT APK's
+                  manifest, which on a flavored project is the flavor's
+                  applicationId, not what the project files say
   debugHttpHost   "10.0.2.2:<port>" when the app's SharedPreferences were
                   pointed at this workspace's Metro, null when they were not
                   (Contract 6's Android half; the adb reverse still covers
@@ -375,6 +381,19 @@ RN_ISO_DEPS_FAILED
 RN_ISO_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),
   not the transcript. Read the log path on the next line for the rest.
+  Three Android refusals share this code without gradle itself failing:
+  - MORE THAN ONE debug APK under android/app/build/outputs/apk and nothing
+    configured to pick one (a project with product flavors, several flavors
+    already built). rn-iso will not guess which flavor to install: the
+    refusal lists the candidates -- pass \`--variant <name>\` or set the
+    android.variant setting (e.g. "productionDebug") to the one you want.
+  - NO APK for the configured variant: the android.variant / --variant value
+    does not name a real variant (\`./gradlew :app:tasks\` in android/ lists
+    the assemble tasks).
+  - A STALE APK: the build succeeded but the APK's mtime predates the build
+    that just ran, so it is an artifact this run did not produce (a copied
+    build/ directory, a carried worktree). Delete
+    android/app/build/outputs/apk and run again.
 
 RN_ISO_BUILD_WAIT_TIMEOUT
   This run was waiting for ANOTHER workspace's build of the same fingerprint
@@ -704,7 +723,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
 THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds>
-  ios / android   --json --no-metro-check --no-build-cache
+  ios             --json --no-metro-check --no-build-cache
+  android         --json --no-metro-check --no-build-cache --variant <name>
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide; there is no --all)
@@ -713,6 +733,15 @@ THE OPTION SURFACE, IN FULL
 
   That is the whole surface, deliberately. A project needing more wraps rn-iso
   in an npm script rather than rn-iso growing a flag for it.
+
+  \`android --variant <name>\` selects the gradle variant to assemble and
+  install on a project with product flavors -- \`--variant productionDebug\`
+  runs \`assembleProductionDebug\`, finds the APK in apk/production/debug/ and
+  keys the build cache on the variant. It overrides the android.variant
+  setting (see \`guide settings\`), which is the repo-level default; unset,
+  the plain \`assembleDebug\` flow is unchanged. Debug variants of flavors
+  only -- release builds stay out of scope. The --json payload's \`variant\`
+  field reports what was built (null for the default).
 
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned rn-iso-* devices, tens of GB
@@ -863,6 +892,7 @@ belongs there:
 
   {
     "ios": { "deviceType": "iPhone 17 Pro", "runtime": "26.2" },
+    "android": { "variant": "productionDebug" },
     "worktree": { "baseRef": "fresh" },
     "caches": ["~/.myapp-metro-cache"]
   }
@@ -871,6 +901,18 @@ KEYS RN-ISO READS
   ios.deviceType        e.g. "iPhone 17 Pro"
   ios.runtime           e.g. "26.2"
   android.systemImage   e.g. "system-images;android-36;google_apis;arm64-v8a"
+  android.variant       e.g. "productionDebug" -- the gradle variant to
+                        assemble and install on a project with product
+                        flavors. A repo like tlon-mobile with
+                        flavorDimensions "profile" and production/preview
+                        flavors has NO plain assembleDebug output: commit
+                        { "android": { "variant": "productionDebug" } } and
+                        \`rn-iso android\` runs assembleProductionDebug,
+                        finds the APK in apk/production/debug/ and keys the
+                        build cache on the variant. The \`--variant\` flag
+                        overrides this per invocation. Unset means plain
+                        assembleDebug. Debug variants only; release is out
+                        of scope.
   worktreeDir           where worktrees are created
   worktree.baseRef      "fresh" (origin/HEAD) or "head"
   worktree.include      carry-over patterns, same role as .worktreeinclude

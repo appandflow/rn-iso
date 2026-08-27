@@ -9,7 +9,7 @@
 import assert from 'node:assert';
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
@@ -17,13 +17,17 @@ import {
   ASSEMBLE_TASK,
   BUILD_ERROR,
   androidSdkRefusal,
+  apkOutputsDir,
+  assembleTaskFor,
   buildAndroid,
   debugApkDir,
   discoverAndroidProject,
-  locateDebugApk,
+  locateApk,
   parseApkFromTranscript,
   parseOutputMetadata,
   pickDebugApk,
+  staleApkRefusal,
+  variantNameOf,
 } from '../engine/gradle.ts';
 import { makeWriter } from './_factories.ts';
 
@@ -56,6 +60,16 @@ function makeAndroidProject({ gradlew = true } = {}) {
 
 function writeApk(name = 'app-debug.apk', contents = 'apk') {
   const dir = debugApkDir(root);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, name), contents);
+  return join(dir, name);
+}
+
+// A flavored output: outputs/apk/<flavor>/<buildType>/<name>, the layout AGP
+// writes for a project with product flavors (tlon-mobile's is
+// apk/production/debug/app-production-debug.apk).
+function writeFlavoredApk(flavor: string, buildType: string, name: string, contents = 'apk') {
+  const dir = join(apkOutputsDir(root), flavor, buildType);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, name), contents);
   return join(dir, name);
@@ -158,10 +172,36 @@ describe('the output listing', () => {
   });
 });
 
-describe('locateDebugApk', () => {
+describe('assembleTaskFor', () => {
+  test('unset means the default task, exactly the old constant', () => {
+    expect(assembleTaskFor(null)).toBe(ASSEMBLE_TASK);
+    expect(assembleTaskFor(undefined)).toBe('assembleDebug');
+    expect(assembleTaskFor('')).toBe('assembleDebug');
+    expect(assembleTaskFor('  ')).toBe('assembleDebug');
+  });
+
+  test('capitalizes the variant the way gradle names its task', () => {
+    expect(assembleTaskFor('productionDebug')).toBe('assembleProductionDebug');
+    expect(assembleTaskFor('debug')).toBe('assembleDebug');
+    expect(assembleTaskFor('ProductionDebug')).toBe('assembleProductionDebug');
+    expect(assembleTaskFor('demoMinApi24Debug')).toBe('assembleDemoMinApi24Debug');
+  });
+});
+
+describe('variantNameOf', () => {
+  test('camel-joins the output directory segments into the variant name', () => {
+    expect(variantNameOf(['production', 'debug'])).toBe('productionDebug');
+    expect(variantNameOf(['demoMinApi24', 'debug'])).toBe('demoMinApi24Debug');
+    expect(variantNameOf(['debug'])).toBe('debug');
+    expect(variantNameOf([])).toBe('');
+    expect(variantNameOf(null)).toBe('');
+  });
+});
+
+describe('locateApk', () => {
   test('an absolute path from the transcript wins when it exists', () => {
     const apk = writeApk('app-debug.apk');
-    expect(locateDebugApk(root, `Wrote APK to ${apk}`)).toBe(apk);
+    expect(locateApk(root, `Wrote APK to ${apk}`).apkPath).toBe(apk);
   });
 
   test('the output listing is used when the transcript says nothing', () => {
@@ -173,21 +213,116 @@ describe('locateDebugApk', () => {
     );
     // The listing names the flavoured APK this build actually produced, so
     // the AGP-default name on disk (left by an earlier run) does not win.
-    expect(locateDebugApk(root, 'BUILD SUCCESSFUL in 3s')).toBe(flavoured);
+    expect(locateApk(root, 'BUILD SUCCESSFUL in 3s').apkPath).toBe(flavoured);
   });
 
   test('a directory listing is the last resort', () => {
     const apk = writeApk('app-debug.apk');
-    expect(locateDebugApk(root, '')).toBe(apk);
+    expect(locateApk(root, '').apkPath).toBe(apk);
   });
 
   test('a transcript path that does not exist does not win', () => {
     const apk = writeApk('app-debug.apk');
-    expect(locateDebugApk(root, 'Wrote APK to /nope/gone.apk')).toBe(apk);
+    expect(locateApk(root, 'Wrote APK to /nope/gone.apk').apkPath).toBe(apk);
   });
 
   test('no APK at all is null, not a throw', () => {
-    expect(locateDebugApk(root, '')).toBe(null);
+    expect(locateApk(root, '')).toEqual({ apkPath: null });
+  });
+
+  // --- with a variant configured -------------------------------------------
+
+  test("a variant resolves to the flavor's own output directory", () => {
+    const apk = writeFlavoredApk('production', 'debug', 'app-production-debug.apk');
+    writeFlavoredApk('preview', 'debug', 'app-preview-debug.apk');
+    expect(locateApk(root, '', 'productionDebug').apkPath).toBe(apk);
+  });
+
+  test('a multi-dimension flavor combination resolves the same way', () => {
+    const apk = writeFlavoredApk('demoMinApi24', 'debug', 'app-demo-minApi24-debug.apk');
+    expect(locateApk(root, '', 'demoMinApi24Debug').apkPath).toBe(apk);
+  });
+
+  test("a variant's own output-metadata.json is honoured inside its directory", () => {
+    writeFlavoredApk('production', 'debug', 'renamed.apk');
+    writeFlavoredApk('production', 'debug', 'other.apk');
+    writeFileSync(
+      join(apkOutputsDir(root), 'production', 'debug', 'output-metadata.json'),
+      JSON.stringify({ elements: [{ outputFile: 'renamed.apk' }] }),
+    );
+    expect(locateApk(root, '', 'productionDebug').apkPath).toBe(
+      join(apkOutputsDir(root), 'production', 'debug', 'renamed.apk'),
+    );
+  });
+
+  test('a variant that matches no output directory is null, and never falls back to another flavor', () => {
+    writeFlavoredApk('preview', 'debug', 'app-preview-debug.apk');
+    expect(locateApk(root, '', 'productionDebug').apkPath).toBe(null);
+  });
+
+  // --- the recursive fallback (no variant configured) -----------------------
+
+  test('exactly one flavored debug APK is used, with a note naming the directory and the variant to set', () => {
+    const apk = writeFlavoredApk('production', 'debug', 'app-production-debug.apk');
+    const result = locateApk(root, '');
+    expect(result.apkPath).toBe(apk);
+    expect(result.note).toMatch(/apk\/production\/debug/);
+    expect(result.note).toMatch(/android\.variant/);
+    expect(result.note).toMatch(/"productionDebug"/);
+  });
+
+  test('several flavored debug APKs are candidates, not a guess', () => {
+    const production = writeFlavoredApk('production', 'debug', 'app-production-debug.apk');
+    const preview = writeFlavoredApk('preview', 'debug', 'app-preview-debug.apk');
+    const result = locateApk(root, '');
+    expect(result.apkPath).toBe(null);
+    expect(result.candidates).toEqual([preview, production].sort());
+  });
+
+  test('the recursive fallback never picks an intermediate or an androidTest APK', () => {
+    writeFlavoredApk('production', 'debug', 'app-production-debug-unsigned.apk');
+    mkdirSync(join(apkOutputsDir(root), 'androidTest', 'production', 'debug'), { recursive: true });
+    writeFileSync(
+      join(apkOutputsDir(root), 'androidTest', 'production', 'debug', 'app-production-debug-androidTest.apk'),
+      'apk',
+    );
+    expect(locateApk(root, '')).toEqual({ apkPath: null });
+  });
+
+  test('the default apk/debug directory wins over the recursive fallback when it has the APK', () => {
+    const apk = writeApk('app-debug.apk');
+    writeFlavoredApk('production', 'debug', 'app-production-debug.apk');
+    const result = locateApk(root, '');
+    expect(result.apkPath).toBe(apk);
+    expect(result.note).toBeUndefined();
+  });
+});
+
+describe('staleApkRefusal', () => {
+  const task = 'assembleDebug';
+  const apkPath = '/w/android/app/build/outputs/apk/debug/app-debug.apk';
+
+  test('an APK older than the build that just ran is refused, naming the file', () => {
+    const refusal = staleApkRefusal({ task, apkPath, mtimeMs: 1_000_000, buildStartMs: 2_000_000 });
+    assert(refusal);
+    expect(refusal.code).toBe(BUILD_ERROR);
+    expect(refusal.reason).toMatch(/predates the build/);
+    expect(refusal.reason).toContain(apkPath);
+    expect(refusal.remedy).toMatch(/android\.variant/);
+  });
+
+  test('an APK written during or after the build is fresh', () => {
+    expect(staleApkRefusal({ task, apkPath, mtimeMs: 2_000_500, buildStartMs: 2_000_000 })).toBe(null);
+    expect(staleApkRefusal({ task, apkPath, mtimeMs: 5_000_000, buildStartMs: 2_000_000 })).toBe(null);
+  });
+
+  test('the slop absorbs filesystem timestamp granularity', () => {
+    expect(staleApkRefusal({ task, apkPath, mtimeMs: 1_999_000, buildStartMs: 2_000_000 })).toBe(null);
+    expect(staleApkRefusal({ task, apkPath, mtimeMs: 1_997_000, buildStartMs: 2_000_000 })).not.toBe(null);
+  });
+
+  test('an unreadable mtime never refuses', () => {
+    expect(staleApkRefusal({ task, apkPath, mtimeMs: Number.NaN, buildStartMs: 2_000_000 })).toBe(null);
   });
 });
 
@@ -353,6 +488,81 @@ describe('buildAndroid', () => {
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/produced no APK/);
     expect((result as BuildAndroidResultLike).remedy).toMatch(/assembleDebug/);
+  });
+
+  test('a variant drives assemble<Variant> and the APK is read from the flavor directory', async () => {
+    makeAndroidProject();
+    const calls: string[][] = [];
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter(), variant: 'productionDebug' },
+      {
+        spawnFn: (_cmd, args) => {
+          calls.push(args);
+          return fakeChild({
+            lines: ['BUILD SUCCESSFUL in 8m14s'],
+            onExit: () => writeFlavoredApk('production', 'debug', 'app-production-debug.apk'),
+          });
+        },
+      },
+    );
+    expect(calls).toEqual([['assembleProductionDebug']]);
+    expect((result as BuildAndroidResultLike).ok).toBe(true);
+    expect((result as BuildAndroidResultLike).apkPath).toBe(
+      join(apkOutputsDir(root), 'production', 'debug', 'app-production-debug.apk'),
+    );
+  });
+
+  test('a flavored build with NO variant configured still succeeds, with the note on the result', async () => {
+    makeAndroidProject();
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: () =>
+          fakeChild({
+            lines: ['BUILD SUCCESSFUL in 8m14s'],
+            onExit: () => writeFlavoredApk('production', 'debug', 'app-production-debug.apk'),
+          }),
+      },
+    );
+    expect((result as BuildAndroidResultLike & { apkNote?: string }).ok).toBe(true);
+    expect((result as BuildAndroidResultLike & { apkNote?: string }).apkNote).toMatch(/android\.variant/);
+  });
+
+  test('two flavored debug APKs and no variant is a refusal listing them, never a guess', async () => {
+    makeAndroidProject();
+    writeFlavoredApk('preview', 'debug', 'app-preview-debug.apk');
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: () =>
+          fakeChild({
+            lines: ['BUILD SUCCESSFUL in 8m14s'],
+            onExit: () => writeFlavoredApk('production', 'debug', 'app-production-debug.apk'),
+          }),
+      },
+    );
+    expect(result.failed).toBe(true);
+    expect(result.code).toBe(BUILD_ERROR);
+    expect(result.reason).toMatch(/2 debug APKs/);
+    expect((result as BuildAndroidResultLike).remedy).toMatch(/android\.variant/);
+    expect(result.lastLines.some((l) => l.includes('app-preview-debug.apk'))).toBeTruthy();
+    expect(result.lastLines.some((l) => l.includes('app-production-debug.apk'))).toBeTruthy();
+  });
+
+  test('an APK whose mtime predates the build is refused as a stale carried artifact', async () => {
+    makeAndroidProject();
+    const apk = writeApk('app-debug.apk');
+    const old = (Date.now() - 3_600_000) / 1000;
+    utimesSync(apk, old, old);
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      // Exit 0 without writing anything: the "successful" build left only the
+      // hour-old APK that was carried in.
+      { spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'] }) },
+    );
+    expect(result.failed).toBe(true);
+    expect(result.code).toBe(BUILD_ERROR);
+    expect(result.reason).toMatch(/predates the build/);
   });
 
   test('a wrapper that will not execute names the permission bit', async () => {
