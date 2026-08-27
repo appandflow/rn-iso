@@ -138,7 +138,15 @@ If `git status` isn't clean, commit / discard before tagging.
    publishing (no token, `--provenance`) once you APPROVE the run in the
    `release` environment on GitHub (Actions -> the waiting run -> Review
    deployments -> check `release` -> Approve and deploy) -- that approval
-   replaces the OTP. Two learned-the-hard-way requirements: every
+   replaces the OTP. ALWAYS hand the approver the direct link to the waiting
+   run -- do not make them hunt for it:
+
+   ```bash
+   gh run list --workflow Release --limit 1 --json databaseId,url,status
+   ```
+
+   Send the `url` (the run page has Review deployments -> `release` ->
+   Approve and deploy). Two learned-the-hard-way requirements: every
    package.json must carry a `repository` field matching this repo (a
    provenance publish is REJECTED without it, E422), and a NEW package must
    be published once by hand first -- npm's trusted-publisher settings live
