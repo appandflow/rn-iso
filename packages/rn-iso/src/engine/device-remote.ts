@@ -119,6 +119,37 @@ interface OpFailure {
   reason: string;
 }
 
+// The exact shapes the local counterparts in engine/app-install.ts return.
+// Named because isolatedDeclarations requires it, and useful anyway: this IS
+// the contract the dep seam swaps on.
+// FLAT and all-optional, matching engine/device.ts's BootResult and the
+// app-install results these stand in for. A discriminated union would be
+// tidier in isolation, but every caller and every test in this codebase reads
+// these shapes field-by-field, and the seam's whole point is that the remote
+// half is indistinguishable from the local one.
+interface BootResult {
+  ok?: boolean;
+  udid?: string;
+  failed?: boolean;
+  reason?: string;
+}
+interface InstallResult {
+  ok?: boolean;
+  appPath?: string;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+}
+interface LaunchResult {
+  ok?: boolean;
+  mode?: string;
+  url?: string;
+  jsLocation?: string;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+}
+
 function describe(err: unknown): string {
   const e = err as { stderr?: unknown; message?: unknown };
   const stderr = typeof e?.stderr === 'string' ? e.stderr.trim() : '';
@@ -198,7 +229,7 @@ export function remoteIosDeps(ctx: RemoteContext) {
     // Metro: it registers rn-iso's local dev server with the daemon through
     // agent-device's companion tunnel, which is how a cloud simulator reaches
     // a bundler on this laptop.
-    ensureBooted: async ({ out = () => {} }: { out?: (msg: string) => void } = {}) => {
+    ensureBooted: async ({ out = () => {} }: { out?: (msg: string) => void } = {}): Promise<BootResult> => {
       let daemon = ctx.existingDaemon ?? null;
       let id: string | null = null;
 
@@ -273,7 +304,7 @@ export function remoteIosDeps(ctx: RemoteContext) {
       return { ok: true, udid: id ?? daemonHostLabel(daemon.baseUrl) };
     },
 
-    installIosApp: ({ appPath }: { udid: string; appPath: string }) => {
+    installIosApp: ({ appPath }: { udid: string; appPath: string }): InstallResult => {
       if (!session) return notConnected(INSTALL_ERROR);
       try {
         exec().runFile(ctx.agentDeviceBin, installArgs(session.profilePath, appPath), {
@@ -299,7 +330,7 @@ export function remoteIosDeps(ctx: RemoteContext) {
       bundleId: string;
       metroPort: number | string;
       devClientScheme?: string | null;
-    }) => {
+    }): LaunchResult => {
       if (!session) return notConnected(LAUNCH_ERROR);
       // WHERE the app looks for Metro is decided first, and a device that
       // cannot reach this workspace's dev server is a refusal rather than a

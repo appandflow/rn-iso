@@ -802,6 +802,11 @@ export async function replaceCollector({
 // --- the command ----------------------------------------------------------
 
 interface IosDeps {
+  // Remote mode's two entries. Everything else in this seam is a local
+  // engine call; these are what let `--remote` swap the device out.
+  resolveRemoteContext: typeof resolveRemoteContext;
+  remoteIosDeps: typeof remoteIosDeps;
+  resolveEasCliBin: typeof resolveEasCliBin;
   findProjectRoot: typeof findProjectRoot;
   resolveSettings: typeof resolveSettings;
   gitCommonDir: typeof gitCommonDir;

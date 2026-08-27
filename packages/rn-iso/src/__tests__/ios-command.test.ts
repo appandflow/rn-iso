@@ -13,7 +13,7 @@
 //   - the collector is REPLACED, never duplicated, and the state file is
 //     MERGED, never overwritten, so `stop` can still find the supervisor.
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { upsertProject } from '../config.ts';

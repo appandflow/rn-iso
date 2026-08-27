@@ -34,7 +34,6 @@ import type { MetroResolution } from '../metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
-import { getExecutor } from '../exec.ts';
 
 const DEFAULT_WAIT_MS = 10_000;
 const POLL_MS = 100;
