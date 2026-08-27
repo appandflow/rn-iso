@@ -374,10 +374,25 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       devClientScheme = null,
     }: {
       appId: string;
-      metroPort: number | string;
+      metroPort: number | string | null;
       devClientScheme?: string | null;
     }): LaunchResult => {
       if (!session) return notConnected(LAUNCH_ERROR);
+      // A null port is a RELEASE-shaped launch: the JS is embedded, Metro is
+      // not part of the run, and there is nothing to point the app at. The
+      // reachability question below only exists for a dev build, so skip it
+      // rather than refusing a launch that needs no dev server.
+      if (metroPort === null) {
+        try {
+          exec().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, appId, null, null), {
+            cwd: ctx.root,
+            env: daemonEnv(session.daemon),
+          });
+          return { ok: true, mode: 'launch' };
+        } catch (err) {
+          return { failed: true, code: LAUNCH_ERROR, reason: `agent-device open ${appId} failed: ${describe(err)}` };
+        }
+      }
       // WHERE the app looks for Metro is decided first, and a device that
       // cannot reach this workspace's dev server is a refusal rather than a
       // launch that will never load a bundle.
@@ -671,7 +686,7 @@ export function remoteIosDeps(ctx: RemoteContext): {
   launchIosApp: (a: {
     udid: string;
     bundleId: string;
-    metroPort: number | string;
+    metroPort: number | string | null;
     devClientScheme?: string | null;
   }) => LaunchResult;
   createdSessionId: () => string | null;
@@ -718,7 +733,7 @@ export function remoteAndroidDeps(ctx: RemoteContext): {
   launch: (a: {
     serial: string;
     packageName: string;
-    metroPort: number | string;
+    metroPort: number | string | null;
     devClientScheme?: string | null;
   }) => LaunchResult;
   createdSessionId: () => string | null;

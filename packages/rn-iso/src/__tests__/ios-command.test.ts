@@ -2497,6 +2497,9 @@ describe('the release cache key and the JS swap', () => {
     expect(calls.args.installIosApp.appPath).toBe(appPath);
     // The payload reports what actually happened: not a cache hit.
     expect(parseFirst(logs).cacheHit).toBe(false);
+  });
+});
+
 describe('the remote browser preview', () => {
   function previewStub(url: string | null) {
     return {

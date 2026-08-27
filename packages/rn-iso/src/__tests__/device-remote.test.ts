@@ -615,3 +615,41 @@ describe('the android adapter', () => {
     expect(remoteAndroidDeps(ctx()).checkCapacity()).toBeNull();
   });
 });
+
+describe('a release-shaped remote launch', () => {
+  // Upstream's release flow passes metroPort: null -- the JS is embedded and
+  // Metro is not part of the run. The reachability refusal below exists only
+  // for a dev build, so it must not fire here and turn a launch that needs no
+  // dev server into a failure.
+  test('a null port launches without asking where Metro is', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    const result = deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: null });
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('launch');
+    const open = exec.calls.find((c) => c.args[0] === 'open');
+    // No url, and no Metro hint: there is no dev server to point at.
+    expect(open?.args[1]).toBe('com.example.app');
+    expect(open?.args).not.toContain('--metro-host');
+  });
+
+  test('a dev launch on an unreachable device still refuses', async () => {
+    // The guard is not simply removed -- it still fires when a port IS given.
+    mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    const r = deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
+    expect(r.failed).toBe(true);
+    expect(r.code).toBe('RN_ISO_REMOTE_METRO_UNREACHABLE');
+  });
+
+  test('android release launches the same way', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteAndroidDeps(ctx());
+    await deps.ensureDeviceBooted({});
+    const r = deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: null });
+    expect(r.ok).toBe(true);
+    expect(exec.calls.find((c) => c.args[0] === 'open')?.args).not.toContain('--metro-host');
+  });
+});

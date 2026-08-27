@@ -363,13 +363,23 @@ composes, never one it inferred from a package.json script. Nothing reads
     logs            --source --level --since --grep --tail --follow --errors --json
     stop            --json --force
 
-<<<<<<< HEAD
-`--client-logs` is the archetype of what is deleted rather than ported: capture
-is unconditional, and a queryable file has no terminal noise to manage. Device
-targets and `--serial` are out of scope for the
-same reason. A project needing something outside this set wraps rn-iso in a
-script of its own — one the repo writes and owns, since rn-iso no longer
-generates one.
+It MAY grow. A new option needs a justification, not permission, and the bar
+is that a flag is the best available answer rather than merely a workable one.
+Ask three things: does it change what rn-iso RECONSTRUCTS (if yes, refuse —
+that is the load-bearing rule above, and it does not bend); is the thing it
+configures a contended resource rn-iso already brokers, or project-specific
+knowledge the repo owns (the second belongs in the project's own script); and
+is a flag genuinely better than the alternatives — a setting, a sensible
+default, or leaving it out. Record the reasoning here when you add one, the
+way `--variant`, `--configuration` and `--remote` are recorded below, so the next reader inherits the argument
+instead of just the outcome.
+
+`--client-logs` is still the archetype of what is deleted rather than ported:
+capture is unconditional, and a queryable file has no terminal noise to
+manage. Release builds, variants, device targets and `--serial` remain out of
+scope — not because the surface is frozen, but because each is project-specific
+knowledge the repo owns, and a project needing one wraps rn-iso in a script of
+its own.
 
 `android --variant <name>` is deliberate surface growth, decided 2026-08-27
 for issue #52 (tlon-mobile's product flavors: `assembleDebug` built into
@@ -452,27 +462,8 @@ that (`src/engine/js-swap.ts`); any swap failure falls back to a full build,
 never to installing stale JS. Store signing, devices and distribution remain
 out of scope.
 
-`--remote` is the one deliberate addition since this list was written, and it
-is recorded here rather than left to drift. It does not reconstruct anything
-=======
-It MAY grow. A new option needs a justification, not permission, and the bar
-is that a flag is the best available answer rather than merely a workable one.
-Ask three things: does it change what rn-iso RECONSTRUCTS (if yes, refuse —
-that is the load-bearing rule above, and it does not bend); is the thing it
-configures a contended resource rn-iso already brokers, or project-specific
-knowledge the repo owns (the second belongs in the project's own script); and
-is a flag genuinely better than the alternatives — a setting, a sensible
-default, or leaving it out. Record the reasoning here when you add one, the
-way `--remote` is recorded below, so the next reader inherits the argument
-instead of just the outcome.
-
-`--client-logs` is still the archetype of what is deleted rather than ported:
-capture is unconditional, and a queryable file has no terminal noise to
-manage. Release builds, variants, device targets and `--serial` remain out of
-scope — not because the surface is frozen, but because each is project-specific
-knowledge the repo owns, and a project needing one wraps rn-iso in a script of
-its own.
-
+`--remote` clears the same bar, and is recorded here for the same reason. It
+does not reconstruct anything
 **Do NOT dodge this rule with an environment variable.** An env var reads as a
 smaller change than a flag and is usually a worse one: it is ungoverned (no
 `KNOWN_SETTINGS` entry, so a typo is silent), invisible in `--help`, and — the
@@ -487,7 +478,6 @@ another project's Metro. A flag or a setting would have been the honest choice.
 
 `--remote` is the worked example of the bar above, recorded here rather than
 left to drift. It does not reconstruct anything
->>>>>>> 2d7bd61 (docs: the option surface may grow when a flag is the best answer)
 and it does not widen what rn-iso builds: the build, the fingerprint and the
 cache are identical, and the flag moves ONLY the device (see
 `docs/specs/2026-08-26-remote-device-backend-design.md`). It earns its place
