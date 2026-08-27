@@ -14,9 +14,10 @@
     "format:check": "oxfmt --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "npm run build --workspaces --if-present",
+    "build": "pnpm -r --filter \"./packages/*\" run build",
     "test:e2e": "node --test test/e2e/*.e2e.js",
-    "knip": "knip"
+    "knip": "knip",
+    "preinstall": "npx only-allow pnpm"
   },
   "devDependencies": {
     "@types/node": "26.3.0",
@@ -32,5 +33,6 @@
   },
   "engines": {
     "node": ">=22"
-  }
+  },
+  "packageManager": "pnpm@10.33.0"
 }

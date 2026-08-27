@@ -60,7 +60,7 @@ If anything in the list is breaking, plan to call it out under "Removed
 From `main`, fully up to date with `origin/main`:
 
 ```bash
-npm test                                          # all tests pass
+pnpm test                                          # all tests pass
 node packages/rn-iso/bin/cli.js --help            # CLI loads cleanly
 node packages/rn-iso/bin/cli.js --version         # matches package.json (0.2.0 shipped with 0.1.0 once)
 git status --short                                # working tree clean
@@ -75,13 +75,13 @@ If `git status` isn't clean, commit / discard before tagging.
    source file needs editing:
 
    ```bash
-   npm version X.Y.Z --workspaces --no-git-tag-version
-   npm install --package-lock-only
+   pnpm -r --filter './packages/*' exec npm version X.Y.Z --no-git-tag-version
+   pnpm install --lockfile-only
    ```
 
-   `--workspaces` bumps all three; `--no-git-tag-version` keeps the commit and
-   the tag as step 3 and step 4 below, where the ordering is deliberate. The
-   `npm install` refreshes `package-lock.json`, which duplicates every
+   The filtered `exec` bumps all three; `--no-git-tag-version` keeps the commit and
+   the tag as their own later steps, where the ordering is deliberate. The
+   `pnpm install` refreshes `pnpm-lock.yaml`, which duplicates every
    workspace's version -- a stale lockfile breaks nothing functionally, but is
    confusing to publish alongside a bumped manifest.
 
@@ -138,9 +138,9 @@ If `git status` isn't clean, commit / discard before tagging.
 
    ```bash
    npm whoami                                          # confirm login; if 401, `npm login` first
-   npm publish --workspace rn-iso                      # add --otp <code> if 2FA prompts
-   npm publish --workspace @rn-iso/expo-build-cache
-   npm publish --workspace @rn-iso/metro
+   pnpm --filter rn-iso publish --otp <code>
+   pnpm --filter @rn-iso/expo-build-cache publish --otp <code>
+   pnpm --filter @rn-iso/metro publish --otp <code>
    ```
 
    2FA is on for this account, so each `npm publish` will prompt for an OTP.

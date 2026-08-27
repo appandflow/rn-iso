@@ -526,11 +526,11 @@ wedge a session.
 
 ## Local development
 
-The repo root is the npm workspace. Install and test from there:
+The repo root is a pnpm workspace. Install and test from there:
 
 ```bash
-npm install         # one-time, from the repo root; installs every package
-npm test            # from the repo root: runs the rn-iso suite
+pnpm install        # one-time, from the repo root; installs every package
+pnpm test           # from the repo root: runs the rn-iso suite
 ```
 
 Root `npm test` runs every workspace suite in turn — `rn-iso`, then
