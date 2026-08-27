@@ -1,15 +1,18 @@
 // engine/apk-swap: fresh JS into a cached release APK.
 //
 // The pure pieces (the hermes decision, the hermesc probe order, the bundle
-// argv, the zip listing parse, the ASSET GATE, zipalign's version-gated argv,
-// keystore resolution) are asserted as data. swapApkBundle itself is asserted
-// for ORDER through injected seams -- copy aside, bundle, hermesc, asset
-// gate, zip -d, zip -0, zipalign, apksigner -- and for the guarantee every
-// non-ok shape shares: a return value naming what happened, never a throw,
-// because the caller's answer to all of them is the same safe fallback
-// (build fresh).
+// argv, zipalign's version-gated argv, keystore resolution) are asserted as
+// data. swapApkBundle itself is asserted for ORDER through injected seams --
+// copy aside, bundle, hermesc, asset gate, zip -d, zip -0, zipalign,
+// apksigner -- and for the guarantee every non-ok shape shares: a return
+// value naming what happened, never a throw, because the caller's answer to
+// all of them is the same safe fallback (build fresh).
+//
+// THE ASSET GATE's own comparison lives in engine/asset-manifest.ts and is
+// tested there; what is asserted here is the gate's POSITION in the flow and
+// its two refusals (no stored manifest, a manifest that does not match).
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -19,24 +22,17 @@ import {
   androidHermescArgs,
   androidHermescPath,
   apksignerArgs,
-  compareAssetSets,
   hermesEnabledFromGradleProperties,
   hermescBinDir,
   hermescCandidates,
-  isBundledAssetEntry,
   isNothingToDelete,
   keystorePassArg,
-  listApkEntries,
-  listStagedAssets,
-  normalizeResEntryName,
-  parseZipListing,
   readAndroidHermesEnabled,
   resolveKeystore,
-  sizeIsComparable,
   swapApkBundle,
   zipalignArgs,
-  type AssetEntry,
 } from '../engine/apk-swap.ts';
+import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
 import type { BuildToolsEntry } from '../sim/android.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
 
@@ -181,142 +177,6 @@ describe('androidBundleCommand', () => {
   });
 });
 
-// --- the archive listing ---------------------------------------------------
-
-describe('parseZipListing', () => {
-  const verbose = [
-    'Archive:  app-release.apk',
-    ' Length   Method    Size  Cmpr    Date    Time   CRC-32   Name',
-    '--------  ------  ------- ---- ---------- ----- --------  ----',
-    '    4108  Defl:N     1234  70% 2026-08-27 10:11 1a2b3c4d  res/drawable-mdpi-v4/node_modules_logo.png',
-    '  912344  Stored   912344   0% 2026-08-27 10:11 aabbccdd  assets/index.android.bundle',
-    '       0  Stored        0   0% 2026-08-27 10:11 00000000  res/raw/',
-    '--------          ------- ---                            -------',
-    '  916452           913578   0%                            3 files',
-  ].join('\n');
-
-  test('unzip -v gives the name, the uncompressed length and the CRC', () => {
-    expect(parseZipListing(verbose)).toEqual([
-      { name: 'res/drawable-mdpi-v4/node_modules_logo.png', size: 4108, crc: '1a2b3c4d' },
-      { name: 'assets/index.android.bundle', size: 912344, crc: 'aabbccdd' },
-    ]);
-  });
-
-  test('unzip -l is parsed too, with no CRC to report', () => {
-    const short = [
-      'Archive:  app-release.apk',
-      '  Length      Date    Time    Name',
-      '---------  ---------- -----   ----',
-      '     4108  2026-08-27 10:11   res/drawable-mdpi-v4/my logo.png',
-      '---------                     -------',
-      '     4108                     1 file',
-    ].join('\n');
-    expect(parseZipListing(short)).toEqual([{ name: 'res/drawable-mdpi-v4/my logo.png', size: 4108, crc: null }]);
-  });
-
-  test('a listing that cannot be taken at all is null, not an empty archive', () => {
-    const exec = makeExecutor({
-      runFile: () => {
-        throw new Error('unzip: cannot find or open /nope.apk');
-      },
-    });
-    expect(listApkEntries('/nope.apk', { exec })).toBe(null);
-    expect(parseZipListing(null)).toEqual([]);
-  });
-});
-
-// --- THE ASSET GATE --------------------------------------------------------
-
-describe('the asset gate', () => {
-  test("AAPT's API-level qualifier on a resource directory is normalized away, not counted as a change", () => {
-    expect(normalizeResEntryName('res/drawable-mdpi-v4/logo.png')).toBe('res/drawable-mdpi/logo.png');
-    expect(normalizeResEntryName('res/drawable-xxhdpi-v4/logo.png')).toBe('res/drawable-xxhdpi/logo.png');
-    expect(normalizeResEntryName('res/raw/sound.mp3')).toBe('res/raw/sound.mp3');
-    // Not a resource directory qualifier: a file that merely ends in -v4.
-    expect(normalizeResEntryName('res/raw/clip-v4.mp3')).toBe('res/raw/clip-v4.mp3');
-  });
-
-  test('the APK side is scoped to the directories --assets-dest writes into', () => {
-    expect(isBundledAssetEntry('res/drawable-mdpi-v4/logo.png')).toBe(true);
-    expect(isBundledAssetEntry('res/raw/sound.mp3')).toBe(true);
-    // The app's OWN resources, which the emitted tree never produces: counting
-    // them would report every launcher icon and layout as "removed".
-    expect(isBundledAssetEntry('res/mipmap-hdpi-v4/ic_launcher.png')).toBe(false);
-    expect(isBundledAssetEntry('res/layout/main.xml')).toBe(false);
-    expect(isBundledAssetEntry('res/drawable/rn_edit_text_material.xml')).toBe(false);
-    expect(isBundledAssetEntry('assets/index.android.bundle')).toBe(false);
-  });
-
-  test('sizes are comparable only where AAPT stores the file verbatim', () => {
-    // res/raw is stored byte for byte; a drawable is re-encoded by AAPT's PNG
-    // cruncher on a release build, so its packaged length is the length of a
-    // different file and comparing it would reject every cache hit.
-    expect(sizeIsComparable('res/raw/sound.mp3')).toBe(true);
-    expect(sizeIsComparable('res/drawable-mdpi-v4/logo.png')).toBe(false);
-  });
-
-  const emitted: AssetEntry[] = [
-    { name: 'res/drawable-mdpi/logo.png', size: 100 },
-    { name: 'res/raw/sound.mp3', size: 200 },
-  ];
-  const packaged: AssetEntry[] = [
-    { name: 'res/drawable-mdpi-v4/logo.png', size: 88 },
-    { name: 'res/raw/sound.mp3', size: 200 },
-  ];
-
-  test('the unchanged case: the same set, modulo the AAPT qualifier and the PNG cruncher', () => {
-    const diff = compareAssetSets(emitted, packaged);
-    expect(diff).toEqual({ same: true, added: [], removed: [], changed: [], example: null });
-  });
-
-  test('ADDED -- a fresh require() the cached APK cannot serve. THE case this gate exists for', () => {
-    const diff = compareAssetSets([...emitted, { name: 'res/drawable-mdpi/new.png', size: 50 }], packaged);
-    expect(diff.same).toBe(false);
-    expect(diff.added).toEqual(['res/drawable-mdpi/new.png']);
-    expect(diff.example).toBe('res/drawable-mdpi/new.png');
-  });
-
-  test('REMOVED -- an asset the cached APK carries and this bundle no longer emits', () => {
-    const diff = compareAssetSets([emitted[0]!], packaged);
-    expect(diff.same).toBe(false);
-    expect(diff.removed).toEqual(['res/raw/sound.mp3']);
-    expect(diff.added).toEqual([]);
-    expect(diff.example).toBe('res/raw/sound.mp3');
-  });
-
-  test('CHANGED -- same name, different bytes, where the size is comparable', () => {
-    const diff = compareAssetSets([emitted[0]!, { name: 'res/raw/sound.mp3', size: 999 }], packaged);
-    expect(diff.same).toBe(false);
-    expect(diff.changed).toEqual(['res/raw/sound.mp3']);
-    expect(diff.example).toBe('res/raw/sound.mp3');
-  });
-
-  test('a size difference on a drawable is NOT a change: AAPT re-encoded it', () => {
-    expect(compareAssetSets(emitted, packaged).same).toBe(true);
-    // ... and the comparability rule is injectable, so a caller that knows the
-    // packaging kept the bytes can compare everything.
-    const strict = compareAssetSets(emitted, packaged, { comparableSize: () => true });
-    expect(strict.changed).toEqual(['res/drawable-mdpi/logo.png']);
-  });
-
-  test('listStagedAssets walks the emitted tree into archive-relative entries', () => {
-    const stage = mkdtempSync(join(tmpdir(), 'rn-iso-apk-stage-'));
-    try {
-      mkdirSync(join(stage, 'res', 'drawable-mdpi'), { recursive: true });
-      mkdirSync(join(stage, 'res', 'raw'), { recursive: true });
-      writeFileSync(join(stage, 'res', 'drawable-mdpi', 'logo.png'), 'png');
-      writeFileSync(join(stage, 'res', 'raw', 'sound.mp3'), 'mp3!!');
-      expect(listStagedAssets(join(stage, 'res'))).toEqual([
-        { name: 'res/drawable-mdpi/logo.png', size: 3 },
-        { name: 'res/raw/sound.mp3', size: 5 },
-      ]);
-    } finally {
-      rmSync(stage, { recursive: true, force: true });
-    }
-    expect(listStagedAssets('/nope/never/here')).toEqual([]);
-  });
-});
-
 // --- zip, align, sign ------------------------------------------------------
 
 describe('zip surgery, alignment and signing', () => {
@@ -430,24 +290,30 @@ interface Call {
   opts?: Record<string, unknown>;
 }
 
-// The APK's own listing, as `unzip -v` prints it. The drawable carries the
-// AAPT `-v4` qualifier and a crunched length, which is exactly the pair the
-// gate has to see through.
-const APK_LISTING = [
-  ' Length   Method    Size  Cmpr    Date    Time   CRC-32   Name',
-  '--------  ------  ------- ---- ---------- ----- --------  ----',
-  '      88  Defl:N       40  55% 2026-08-27 10:11 1a2b3c4d  res/drawable-mdpi-v4/logo.png',
-  '  912344  Stored   912344   0% 2026-08-27 10:11 aabbccdd  assets/index.android.bundle',
-  '   12000  Defl:N     6000  50% 2026-08-27 10:11 99887766  res/mipmap-hdpi-v4/ic_launcher.png',
-].join('\n');
+// A manifest, as both sides of the gate carry it: the paths React Native
+// emitted under --assets-dest, and the sha256 of each file AS EMITTED.
+function manifest(assets: Record<string, string>): AssetManifest {
+  return {
+    version: ASSET_MANIFEST_VERSION,
+    assets: Object.entries(assets)
+      .map(([path, sha256]) => ({ path, sha256 }))
+      .toSorted((a, b) => a.path.localeCompare(b.path)),
+  };
+}
+
+const LOGO = 'a'.repeat(64);
+const SOUND = 'b'.repeat(64);
+// What the build behind the cache entry recorded, and what this workspace
+// emits now -- identical, which is the case that swaps.
+const STORED = manifest({ 'drawable-mdpi/logo.png': LOGO, 'raw/sound.mp3': SOUND });
 
 function harness({
   bundleExit = 0,
   failOn = null as string | null,
   hermescExists = true,
   bundleWritten = true,
-  listing = APK_LISTING,
-  staged = [{ name: 'res/drawable-mdpi/logo.png', size: 100 }] as AssetEntry[],
+  fresh = STORED as AssetManifest | null,
+  stored = STORED as AssetManifest | null,
 } = {}) {
   const calls: Call[] = [];
   const base = 'app-production-release.apk';
@@ -460,7 +326,6 @@ function harness({
     runFile: (file: string, args: string[] = [], opts: Record<string, unknown> = {}) => {
       calls.push({ op: 'runFile', file, args, opts });
       if (failOn && (file === failOn || args[0] === failOn)) throw new Error(`${failOn} blew up`);
-      if (file === 'unzip') return listing;
       return '';
     },
   });
@@ -486,7 +351,8 @@ function harness({
       mkdtemp: () => tmp,
       exists,
       buildTools,
-      listAssets: () => staged,
+      storedAssets: stored,
+      readManifest: () => fresh,
       heartbeatMs: 0,
       ...overrides,
     });
@@ -502,17 +368,7 @@ describe('swapApkBundle', () => {
     expect(result.tmpDir).toBe(tmp);
     expect(result.hermes).toBe(true);
 
-    expect(calls.map((c) => c.file)).toEqual([
-      'cp',
-      'npx',
-      hermesc,
-      'mv',
-      'unzip',
-      'zip',
-      'zip',
-      buildTools.path,
-      apksigner,
-    ]);
+    expect(calls.map((c) => c.file)).toEqual(['cp', 'npx', hermesc, 'mv', 'zip', 'zip', buildTools.path, apksigner]);
 
     // The copy aside clones first, and it is the ONLY call that names the
     // cache entry: everything after it works on the temp copy.
@@ -526,17 +382,18 @@ describe('swapApkBundle', () => {
     expect(bundle?.args).toContain(join(stage, 'assets', ANDROID_BUNDLE_NAME));
     expect(bundle?.args).toContain(join(stage, 'res'));
 
-    // The gate reads the copy, not the cache entry.
-    expect(calls[4]?.args).toEqual(['-v', work]);
+    // The gate reads no archive at all any more: it compares this run's
+    // emitted assets against the manifest the cached build recorded.
+    expect(calls.some((c) => c.file === 'unzip')).toBe(false);
 
     // zip -d out, then zip -0 (STORE, mandatory) in from the staging dir.
-    expect(calls[5]?.args).toEqual(['-d', work, ANDROID_BUNDLE_ENTRY]);
-    expect(calls[6]?.args).toEqual(['-0', '-r', work, 'assets']);
-    expect(calls[6]?.opts).toEqual({ cwd: stage });
+    expect(calls[4]?.args).toEqual(['-d', work, ANDROID_BUNDLE_ENTRY]);
+    expect(calls[5]?.args).toEqual(['-0', '-r', work, 'assets']);
+    expect(calls[5]?.opts).toEqual({ cwd: stage });
 
     // Align BEFORE sign, and the signature covers the aligned file.
-    expect(calls[7]?.args).toEqual(['-P', '16', '-f', '-v', '4', work, final]);
-    expect(calls[8]?.args).toEqual(['sign', '--ks', keystore.path, '--ks-pass', 'pass:android', final]);
+    expect(calls[6]?.args).toEqual(['-P', '16', '-f', '-v', '4', work, final]);
+    expect(calls[7]?.args).toEqual(['sign', '--ks', keystore.path, '--ks-pass', 'pass:android', final]);
   });
 
   test('bare project: the bundle step is `react-native bundle` with the detected entry file', async () => {
@@ -567,38 +424,61 @@ describe('swapApkBundle', () => {
     expect(calls.at(-1)?.file).toBe(apksigner);
   });
 
-  test('THE ASSET GATE: a fresh asset the APK lacks refuses the swap and names it -- nothing is repacked', async () => {
+  test('THE ASSET GATE: an asset this run emits and the cached build did not refuses the swap and names it -- nothing is repacked', async () => {
     const { calls, run } = harness({
-      staged: [
-        { name: 'res/drawable-mdpi/logo.png', size: 100 },
-        { name: 'res/drawable-mdpi/brand_new.png', size: 40 },
-      ],
+      fresh: manifest({
+        'drawable-mdpi/logo.png': LOGO,
+        'raw/sound.mp3': SOUND,
+        'drawable-mdpi/brand_new.png': 'c'.repeat(64),
+      }),
     });
     const result = await run();
     expect(result.ok).toBeUndefined();
     expect(result.failed).toBeUndefined();
     expect(result.assetMismatch).toBe(true);
-    expect(result.assetDiff?.added).toEqual(['res/drawable-mdpi/brand_new.png']);
-    expect(result.reason).toMatch(/added res\/drawable-mdpi\/brand_new\.png/);
+    expect(result.assetDiff?.added).toEqual(['drawable-mdpi/brand_new.png']);
+    expect(result.reason).toMatch(/added drawable-mdpi\/brand_new\.png/);
     // Not one byte was written into the archive.
     expect(calls.some((c) => c.file === 'zip')).toBe(false);
     expect(calls.some((c) => c.file === buildTools.path)).toBe(false);
     expect(calls.some((c) => c.file === apksigner)).toBe(false);
   });
 
-  test('an asset the APK carries and this bundle no longer emits refuses the swap too', async () => {
-    const { run } = harness({ staged: [] });
+  test('an asset the cached build emitted and this one no longer does refuses the swap too', async () => {
+    const { run } = harness({ fresh: manifest({ 'drawable-mdpi/logo.png': LOGO }) });
     const result = await run();
     expect(result.assetMismatch).toBe(true);
-    expect(result.assetDiff?.removed).toEqual(['res/drawable-mdpi/logo.png']);
-    // The app's own launcher icon is NOT counted: it is outside the
-    // directories --assets-dest writes into.
-    expect(result.assetDiff?.removed).not.toContain('res/mipmap-hdpi/ic_launcher.png');
+    expect(result.assetDiff?.removed).toEqual(['raw/sound.mp3']);
   });
 
-  test('an APK whose entries cannot be listed fails the gate rather than swapping blind', async () => {
-    const { run } = harness();
-    const result = await run({ listEntries: () => null });
+  test('CONTENT: a REPLACED image under an unchanged filename refuses the swap -- the old blind spot', async () => {
+    const { calls, run } = harness({
+      fresh: manifest({ 'drawable-mdpi/logo.png': 'd'.repeat(64), 'raw/sound.mp3': SOUND }),
+    });
+    const result = await run();
+    expect(result.assetMismatch).toBe(true);
+    expect(result.assetDiff?.added).toEqual([]);
+    expect(result.assetDiff?.removed).toEqual([]);
+    expect(result.assetDiff?.changed).toEqual(['drawable-mdpi/logo.png']);
+    expect(result.reason).toMatch(/changed drawable-mdpi\/logo\.png/);
+    expect(calls.some((c) => c.file === apksigner)).toBe(false);
+  });
+
+  test('an entry with NO manifest is never swapped, and says so distinctly', async () => {
+    const { calls, run } = harness({ stored: null });
+    const result = await run();
+    expect(result.assetMismatch).toBe(true);
+    // No diff: there was nothing to diff against, which is a different fact
+    // from "the sets differ" and the note says so.
+    expect(result.assetDiff).toBeUndefined();
+    expect(result.reason).toMatch(/predates asset tracking/);
+    expect(calls.some((c) => c.file === 'zip')).toBe(false);
+    expect(calls.some((c) => c.file === apksigner)).toBe(false);
+  });
+
+  test('emitted assets that cannot be hashed fail the gate rather than swapping blind', async () => {
+    const { run } = harness({ fresh: null });
+    const result = await run();
     expect(result.failed).toBe(true);
     expect(result.step).toBe('assets');
   });
@@ -633,7 +513,6 @@ describe('swapApkBundle', () => {
     const exec = makeExecutor({
       runFile: (file: string, args: string[] = []) => {
         calls.push({ op: 'runFile', file, args });
-        if (file === 'unzip') return APK_LISTING;
         if (file === 'zip' && args[0] === '-d') throw new Error('zip error: Nothing to do! (app.apk)');
         return '';
       },
@@ -649,7 +528,6 @@ describe('swapApkBundle', () => {
     const exec = makeExecutor({
       runFile: (file: string, args: string[] = []) => {
         calls.push({ op: 'runFile', file, args });
-        if (file === 'unzip') return APK_LISTING;
         if (file === 'zip' && args[0] === '-0') throw new Error('zip I/O error: No space left on device');
         return '';
       },
@@ -694,7 +572,6 @@ describe('swapApkBundle', () => {
           first = false;
           throw new Error('cp: -c not supported');
         }
-        if (file === 'unzip') return APK_LISTING;
         return '';
       },
     });

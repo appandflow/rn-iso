@@ -102,8 +102,11 @@ other line goes to stderr, so it is always safe to pipe.
                   first -- so this is what addresses the emulator in
                   \`emulator -avd\`, avdmanager, or a device tool
   deviceName      the same name, matching the iOS payload's field
-  fingerprint / cacheHit / cacheSkipped / waitedForBuild / appPath / launched
-                  as above
+  fingerprint / cacheKey / cacheHit / cacheSkipped / waitedForBuild /
+  appPath / launched
+                  as above -- cacheKey keys on the VARIANT here
+                  (<fingerprint>-productionrelease-sim) the way the iOS one
+                  keys on the configuration
   variant         the gradle variant that was built ("productionDebug" from
                   --variant or the android.variant setting); null for the
                   default assembleDebug. A variant whose name ENDS IN Release
@@ -829,24 +832,27 @@ THE OPTION SURFACE, IN FULL
   android.keystorePassword override it (see \`guide settings\`). The cache
   entry itself is never modified.
 
-  Before re-packing, THE ASSET GATE compares this workspace's freshly emitted
-  asset tree against the ones the cached APK already carries. Any added,
-  removed or changed asset means NO SWAP: the run falls back to a full gradle
-  build with a note naming an example. An Android drawable is not just a file
-  in the zip -- it has a row in resources.arsc only AAPT can write -- so an
-  APK cannot be made to carry an asset it was not built with, and rn-iso will
-  not install one whose JS references an asset it lacks.
+  Before re-packing, THE ASSET GATE compares CONTENT HASHES of the assets
+  React Native emits: what this workspace just emitted under --assets-dest
+  against a manifest of what the cached build emitted, recorded as
+  assets-manifest.json inside the cache entry at build time. Same producer on
+  both sides, so the comparison is exact -- an added, a removed OR A REPLACED
+  asset (a different image under an unchanged filename) all mean NO SWAP, and
+  the run falls back to a full gradle build with a note naming an example. An
+  Android drawable is not just a file in the zip -- it has a row in
+  resources.arsc only AAPT can write -- so an APK cannot be made to carry an
+  asset it was not built with, and rn-iso will not install one whose JS
+  references an asset it lacks. The APK's own res/ table is never read: a
+  release build shortens every resource path (AGP's
+  optimizeReleaseResources), so those entries are \`res/-B.png\`, not the names
+  anything emitted.
 
-  THE GATE'S ONE BLIND SPOT, stated plainly: it compares asset NAMES, plus
-  sizes only where AAPT stores a file verbatim (res/raw). A release build
-  re-encodes every drawable, so a packaged drawable's length is the length of
-  a different file than the one just emitted -- comparing it would call every
-  drawable changed and refuse every hit. The consequence is that REPLACING an
-  image with a different one under the SAME filename is not detected: the
-  fingerprint covers native inputs only, so that run is a cache hit and the
-  swapped app shows the OLD image. Adding, removing or renaming an image is
-  caught. Touch a native input (or pass --no-build-cache) to force the build
-  that picks the new image up.
+  AN ENTRY WITH NO MANIFEST NEVER SWAPS. One stored before asset tracking, or
+  downloaded from an Expo build-cache provider, has nothing to compare
+  against, so the run says so and builds fresh -- and that build REPLACES the
+  entry, manifest included, so the next run on the same fingerprint swaps
+  normally. The same replacement happens after any gate refusal or swap
+  failure, which is what stops a bad entry from refusing every run forever.
 
   Local re-signing also
   means an APK signed by CI cannot be updated over: on

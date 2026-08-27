@@ -41,6 +41,7 @@ import {
   fingerprintProject,
   resolveBuild,
   storeBuild,
+  storedAssetManifest,
   type FingerprintSourceLike,
 } from '../build-cache.ts';
 import {
@@ -91,6 +92,7 @@ import type { OwnedDeviceRecord } from '../engine/device.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid } from '../engine/gradle.ts';
 import { resolveKeystore, swapApkBundle } from '../engine/apk-swap.ts';
+import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import {
   RESOLVE_TIMEOUT_MS,
   UPLOAD_TIMEOUT_MS,
@@ -504,6 +506,7 @@ export function androidFacts({
   avdName = null,
   deviceName = null,
   fingerprint,
+  cacheKey = null,
   variant = null,
   metroPort = null,
   cacheHit,
@@ -521,6 +524,7 @@ export function androidFacts({
   avdName?: string | null;
   deviceName?: string | null;
   fingerprint?: string | null;
+  cacheKey?: string | null;
   variant?: string | null;
   metroPort?: number | null;
   cacheHit?: boolean | string;
@@ -545,6 +549,12 @@ export function androidFacts({
     avdName: avdName ?? null,
     deviceName: deviceName ?? avdName ?? null,
     fingerprint: fingerprint ?? null,
+    // The shared-build-cache key the fingerprint and the variant derive, which
+    // is what addresses the entry this run hit or stored. Present on the iOS
+    // payload since it shipped; this is the Android half catching up, and it
+    // is what lets an agent point `gc` or a manual inspection at the exact
+    // entry directory.
+    cacheKey: cacheKey ?? null,
     // The gradle variant this run built (--variant flag beats the
     // android.variant setting); null is the default assembleDebug.
     variant: variant ?? null,
@@ -741,6 +751,8 @@ interface RunAndroidOptions {
   fingerprint?: typeof fingerprintProject;
   resolveCached?: typeof resolveBuild;
   storeCached?: typeof storeBuild;
+  storedAssets?: typeof storedAssetManifest;
+  captureAssets?: typeof captureAssetManifest;
   acquireLock?: typeof acquireBuildLock;
   releaseLock?: typeof releaseBuildLock;
   waitForBuild?: typeof waitForOtherBuild;
@@ -807,6 +819,8 @@ export async function runAndroid(
     fingerprint = fingerprintProject,
     resolveCached = resolveBuild,
     storeCached = storeBuild,
+    storedAssets = storedAssetManifest,
+    captureAssets = captureAssetManifest,
     acquireLock = acquireBuildLock,
     releaseLock = releaseBuildLock,
     waitForBuild = waitForOtherBuild,
@@ -1307,6 +1321,10 @@ export async function runAndroid(
   // installing one whose JS references an asset it lacks is exactly what this
   // refuses to do. Stale JS is never installed silently either way.
   let swapDir: string | null = null;
+  // Set when a swap refusal or failure sent this run to gradle, which is what
+  // makes the fresh artifact REPLACE the entry rather than leave the one that
+  // caused the fallback in place to cause it again on the next run, forever.
+  let swapFellBack = false;
   if (release && apkPath && record.cacheHit) {
     phase('apk swap', `regenerating this workspace's JS for the cached ${variant} APK`);
     const swap = await swapApk({
@@ -1315,6 +1333,10 @@ export async function runAndroid(
       cachedApkPath: apkPath,
       keystore: resolveKeystore(root, settings),
       logWriter: writer,
+      // THE ASSET GATE's other side: what the build behind this entry emitted.
+      // Null (an entry stored before asset tracking, or by the Expo provider)
+      // refuses the swap -- see engine/asset-manifest.ts.
+      storedAssets: storedAssets(PLATFORM, cacheKey),
     });
     if (swap?.ok && swap.apkPath) {
       if (swap.note) phase('apk swap', chalk.yellow(swap.note));
@@ -1329,7 +1351,8 @@ export async function runAndroid(
         phase(
           'apk swap',
           chalk.yellow(
-            `${swap.reason} -- building fresh instead (an APK cannot be made to carry an asset AAPT did not package)`,
+            `${swap.reason} -- building fresh instead` +
+              (swap.assetDiff ? ' (an APK cannot be made to carry an asset AAPT did not package)' : ''),
           ),
         );
       } else {
@@ -1345,6 +1368,7 @@ export async function runAndroid(
       apkPath = null;
       record.cacheHit = false;
       waitedForBuild = null;
+      swapFellBack = true;
     }
   }
 
@@ -1428,11 +1452,26 @@ export async function runAndroid(
       // choice explicit.
       if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
 
-      // `overwrite` only when --no-build-cache asked for a fresh build: the entry
-      // that is there is the one this run was told not to trust, and leaving it
-      // would mean the next run trusts it again.
+      // `overwrite` when --no-build-cache asked for a fresh build (the entry
+      // that is there is the one this run was told not to trust, and leaving
+      // it would mean the next run trusts it again) -- and equally when a swap
+      // refusal or failure is what sent this run to gradle. storeBuild is
+      // idempotent by default, so without this the entry that caused the
+      // fallback SURVIVES the build that replaced it and refuses the next run
+      // the same way, forever. The replacement also carries a manifest, which
+      // is what lets the next hit swap at all.
+      //
+      // The asset manifest is captured from the bundle task's own generated
+      // resource directory, and only on a release build: a debug assemble
+      // never runs that task, and a stale release directory in the tree must
+      // not be recorded as a debug entry's asset set.
+      const assetManifest = release ? captureAssets(root, { variant }) : null;
       try {
-        storeCached(PLATFORM, cacheKey, apkPath!, { overwrite: !useBuildCache, sources: fingerprintSources });
+        storeCached(PLATFORM, cacheKey, apkPath!, {
+          overwrite: !useBuildCache || swapFellBack,
+          sources: fingerprintSources,
+          assetManifest,
+        });
       } catch (err) {
         // A cache that cannot be written still builds; it just costs the next
         // workspace a rebuild. Never a reason to fail a run that succeeded.
@@ -1742,6 +1781,7 @@ export async function runAndroid(
     debugHttpHostNote: launched.debugHttpHostNote ?? null,
     devClientUrl: launched.devClientUrl ?? null,
     fingerprint: hash,
+    cacheKey,
     variant,
     metroPort,
     cacheHit: record.cacheHit,

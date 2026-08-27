@@ -22,6 +22,7 @@ import { createRequire } from 'module';
 import { buildCacheKey as coreBuildCacheKey } from '@rn-iso/core';
 import { getExecutor } from './exec.ts';
 import { register } from './cache-manifest.ts';
+import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from './engine/asset-manifest.ts';
 import { sharedBuildCache } from './paths.ts';
 
 // The run-options bag Expo hands a build cache provider. Only the fields this
@@ -219,11 +220,24 @@ export function resolveBuild(platform: string, key: string, root: string = cache
 // array is stored beside the artifact (SOURCES_FILE) so a later MISS can be
 // diffed against the entry the workspace last installed. Written into the
 // staging directory, so it lands atomically with the artifact or not at all.
+//
+// `assetManifest` rides along the same way and for the same kind of reason:
+// it is what the build EMITTED (engine/asset-manifest.ts), stored as
+// ASSET_MANIFEST_FILE so a later release cache HIT can prove its own emitted
+// assets are byte-identical before re-packing this artifact. One mechanism,
+// two files -- both staged, both optional, neither able to fail the store.
 export function storeBuild(
   platform: string,
   key: string,
   buildPath: string,
-  rootOrOptions: string | { root?: string; overwrite?: boolean; sources?: FingerprintSourceLike[] | null } = {},
+  rootOrOptions:
+    | string
+    | {
+        root?: string;
+        overwrite?: boolean;
+        sources?: FingerprintSourceLike[] | null;
+        assetManifest?: AssetManifest | null;
+      } = {},
 ): string | null {
   const options = typeof rootOrOptions === 'string' ? { root: rootOrOptions } : rootOrOptions || {};
   const root = options.root || cacheRoot();
@@ -266,6 +280,16 @@ export function storeBuild(
     }
   }
 
+  if (options.assetManifest) {
+    try {
+      writeFileSync(join(staging, ASSET_MANIFEST_FILE), JSON.stringify(options.assetManifest));
+    } catch {
+      // Contained like the sources file. An entry with no manifest simply
+      // never swaps -- the conservative outcome, and the same one a build
+      // that emitted no assets at all produces.
+    }
+  }
+
   mkdirSync(dirname(dest), { recursive: true });
   rmSync(dest, { recursive: true, force: true });
   renameSync(staging, dest);
@@ -295,6 +319,19 @@ export function storedSources(
   try {
     const parsed: unknown = JSON.parse(readFileSync(join(entryDir(platform, key, root), SOURCES_FILE), 'utf-8'));
     return Array.isArray(parsed) ? (parsed as FingerprintSourceLike[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The asset manifest stored beside the artifact, or null when the entry has
+// none (it predates asset tracking, was stored by the Expo provider, was
+// stored from a build that emitted no asset tree, or the JSON is unreadable).
+// The release asset gate refuses to swap on null -- see
+// engine/asset-manifest.ts.
+export function storedAssetManifest(platform: string, key: string, root: string = cacheRoot()): AssetManifest | null {
+  try {
+    return parseAssetManifest(readFileSync(join(entryDir(platform, key, root), ASSET_MANIFEST_FILE), 'utf-8'));
   } catch {
     return null;
   }

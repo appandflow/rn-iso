@@ -40,11 +40,22 @@ import {
 } from '../commands/android.ts';
 import { newestBuildTools } from '../sim/android.ts';
 import { BUILD_ERROR } from '../engine/gradle.ts';
+import type { AssetManifest } from '../engine/asset-manifest.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_factories.ts';
 
 const FINGERPRINT = 'a3f9b1c2d3e4f5a6b7c8d9e0f1a2b3c4';
 const CACHE_KEY = `${FINGERPRINT}-debug-sim`;
+// What a cache entry's stored asset manifest and a fresh build's captured one
+// look like; the gate itself is tested in engine-asset-manifest.test.ts.
+const STORED_ASSETS: AssetManifest = {
+  version: 1,
+  assets: [{ path: 'drawable-mdpi/logo.png', sha256: 'a'.repeat(64) }],
+};
+const CAPTURED_ASSETS: AssetManifest = {
+  version: 1,
+  assets: [{ path: 'drawable-mdpi/logo.png', sha256: 'e'.repeat(64) }],
+};
 
 let home: string;
 let root: string;
@@ -114,6 +125,7 @@ interface SwapArgs {
   isExpo?: boolean;
   cachedApkPath?: string;
   keystore?: { path?: string; pass?: string };
+  storedAssets?: AssetManifest | null;
 }
 interface LaunchArgs {
   metroPort?: string | number;
@@ -147,6 +159,8 @@ interface Calls {
   fingerprint: unknown[];
   resolveCached: unknown[][];
   storeCached: unknown[][];
+  storedAssets: unknown[][];
+  captureAssets: unknown[][];
   prebuild: unknown[][];
   build: BuildArgs[];
   install: InstallArgs[];
@@ -178,6 +192,8 @@ function harness(overrides = {}) {
     fingerprint: [],
     resolveCached: [],
     storeCached: [],
+    storedAssets: [],
+    captureAssets: [],
     prebuild: [],
     build: [],
     install: [],
@@ -226,6 +242,19 @@ function harness(overrides = {}) {
       calls.order.push('resolveCached');
       calls.resolveCached.push([platform, key]);
       return null;
+    },
+    // THE ASSET GATE's stored side. The default is a real manifest, which is
+    // what makes the default release cache hit swap; a test that wants the
+    // manifest-less entry overrides it with () => null.
+    storedAssets: (platform: string, key: string) => {
+      calls.order.push('storedAssets');
+      calls.storedAssets.push([platform, key]);
+      return STORED_ASSETS;
+    },
+    captureAssets: (projectRoot: string, opts: unknown = {}) => {
+      calls.order.push('captureAssets');
+      calls.captureAssets.push([projectRoot, opts]);
+      return CAPTURED_ASSETS;
     },
     storeCached: (platform: string, key: string, path: string, opts: unknown = {}) => {
       calls.order.push('storeCached');
@@ -440,6 +469,9 @@ describe('a cache hit', () => {
       avdName: 'rn-iso-app-412',
       deviceName: 'rn-iso-app-412',
       fingerprint: FINGERPRINT,
+      // Payload parity with the iOS one, which has carried the key since it
+      // shipped: this is what addresses the entry the run hit or stored.
+      cacheKey: CACHE_KEY,
       variant: null,
       metroPort: 8082,
       cacheHit: 'local',
@@ -1110,14 +1142,15 @@ describe('--no-build-cache', () => {
       loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
     });
     await h.run();
-    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: true, sources: [] });
+    // A debug build emits no asset tree, so there is no manifest to record.
+    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: true, sources: [], assetManifest: null });
     expect(h.calls.uploadRemoteBuild.length).toBe(1);
   });
 
   test('a default run stores without overwriting: two worktrees at the same fingerprint agree', async () => {
     const h = harness();
     await h.run();
-    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: false, sources: [] });
+    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: false, sources: [], assetManifest: null });
   });
 });
 
@@ -1451,6 +1484,7 @@ describe('the pure parts', () => {
       avdName: null,
       deviceName: null,
       fingerprint: null,
+      cacheKey: null,
       variant: null,
       metroPort: null,
       cacheHit: false,
@@ -1465,6 +1499,10 @@ describe('the pure parts', () => {
       logs: null,
     });
     expect(androidFacts({ variant: 'productionDebug' }).variant).toBe('productionDebug');
+    // Payload parity with iOS: the key that addresses the cache entry.
+    expect(androidFacts({ cacheKey: `${FINGERPRINT}-productionrelease-sim` }).cacheKey).toBe(
+      `${FINGERPRINT}-productionrelease-sim`,
+    );
     // A device tool is addressed by AVD name, not by console-port slot, and
     // deviceName falls back to it rather than being separately null.
     expect({
@@ -2170,6 +2208,21 @@ describe('the release APK swap', () => {
     expect(h.calls.build[0]?.variant).toBe('productionRelease');
   });
 
+  test("the gate's stored side is the ENTRY's manifest, read at the cache key this run hit", async () => {
+    const h = harness({ variant: 'productionRelease', resolveCached: () => cached, build: never('the build') });
+    await h.run();
+    expect(h.calls.storedAssets[0]).toEqual(['android', `${FINGERPRINT}-productionrelease-sim`]);
+    expect(h.calls.swapApk[0]?.storedAssets).toEqual(STORED_ASSETS);
+    // Read BEFORE the swap runs, and only for a release hit.
+    expect(h.calls.order.indexOf('storedAssets')).toBeLessThan(h.calls.order.indexOf('swapApk'));
+  });
+
+  test('a debug cache hit never reads an asset manifest', async () => {
+    const h = harness({ resolveCached: () => '/cache/app-debug.apk', build: never('the build') });
+    await h.run();
+    expect(h.calls.storedAssets.length).toBe(0);
+  });
+
   test('THE ASSET GATE: an asset difference falls back to a FULL build with a note naming it', async () => {
     const h = harness({
       variant: 'productionRelease',
@@ -2177,13 +2230,13 @@ describe('the release APK swap', () => {
       swapApk: async () => ({
         assetMismatch: true,
         reason:
-          "this workspace's asset set differs from the cached APK's (1 added, 0 changed, 0 removed; e.g. added res/drawable-mdpi/new_logo.png)",
+          'this workspace emits a different asset set than the cached build did (0 added, 1 changed, 0 removed; e.g. changed drawable-mdpi/logo.png)',
         assetDiff: {
           same: false,
-          added: ['res/drawable-mdpi/new_logo.png'],
+          added: [],
           removed: [],
-          changed: [],
-          example: 'res/drawable-mdpi/new_logo.png',
+          changed: ['drawable-mdpi/logo.png'],
+          example: 'drawable-mdpi/logo.png',
         },
       }),
     });
@@ -2191,7 +2244,7 @@ describe('the release APK swap', () => {
     expect(result.ok).toBe(true);
     const errs = h.stderr.join('\n');
     expect(errs).toMatch(/apk swap/);
-    expect(errs).toMatch(/res\/drawable-mdpi\/new_logo\.png/);
+    expect(errs).toMatch(/changed drawable-mdpi\/logo\.png/);
     expect(errs).toMatch(/building fresh instead/);
     expect(errs).toMatch(/an APK cannot be made to carry an asset AAPT did not package/);
     // The fallback compiled, stored, and installed ITS artifact.
@@ -2202,6 +2255,79 @@ describe('the release APK swap', () => {
     assert(result.facts);
     // The payload reports what actually happened: not a cache hit.
     expect(result.facts.cacheHit).toBe(false);
+  });
+
+  test('an entry with NO manifest never swaps, and the note says so without blaming AAPT', async () => {
+    const h = harness({
+      variant: 'productionRelease',
+      resolveCached: () => cached,
+      storedAssets: () => null,
+      // What swapApkBundle answers for a null stored manifest: a refusal with
+      // no assetDiff, because there was nothing to diff against.
+      swapApk: async (args: SwapArgs = {}) => {
+        expect(args.storedAssets).toBe(null);
+        return {
+          assetMismatch: true,
+          reason:
+            'this cache entry predates asset tracking (no assets-manifest.json beside the artifact), ' +
+            'so its asset set cannot be proven to match this one',
+        };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    const errs = h.stderr.join('\n');
+    expect(errs).toMatch(/predates asset tracking/);
+    expect(errs).toMatch(/building fresh instead/);
+    // That suffix belongs to a real asset DIFFERENCE; there was none to name.
+    expect(errs).not.toMatch(/an APK cannot be made to carry an asset AAPT did not package/);
+    expect(h.calls.build.length).toBe(1);
+  });
+
+  test('the fallback build REPLACES the entry that caused it -- otherwise the refusal repeats forever', async () => {
+    const h = harness({
+      variant: 'productionRelease',
+      resolveCached: () => cached,
+      swapApk: async () => ({ assetMismatch: true, reason: 'the sets differ', assetDiff: undefined }),
+    });
+    await h.run();
+    // overwrite: true even though --no-build-cache was NOT passed. storeBuild
+    // is idempotent by default, so without this the poisoned entry survives
+    // the build that replaced it and refuses the next run identically.
+    expect(h.calls.storeCached[0]?.[3]).toEqual({
+      overwrite: true,
+      sources: [],
+      assetManifest: CAPTURED_ASSETS,
+    });
+  });
+
+  test('a swap FAILURE replaces the entry the same way a refusal does', async () => {
+    const h = harness({
+      variant: 'productionRelease',
+      resolveCached: () => cached,
+      swapApk: async () => ({ failed: true, step: 'zipalign', reason: 'zipalign blew up', lastLines: [] }),
+    });
+    await h.run();
+    expect((h.calls.storeCached[0]?.[3] as { overwrite?: boolean })?.overwrite).toBe(true);
+  });
+
+  test('a release build with no fallback stores WITHOUT overwriting, and carries its captured manifest', async () => {
+    const h = harness({ variant: 'productionRelease', swapApk: never('the APK swap') });
+    await h.run();
+    // The capture reads THIS variant's generated asset directory.
+    expect(h.calls.captureAssets[0]).toEqual([root, { variant: 'productionRelease' }]);
+    expect(h.calls.storeCached[0]?.[3]).toEqual({
+      overwrite: false,
+      sources: [],
+      assetManifest: CAPTURED_ASSETS,
+    });
+  });
+
+  test('a DEBUG build captures no manifest: it never ran the bundle task', async () => {
+    const h = harness({ captureAssets: never('the asset capture') });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: false, sources: [], assetManifest: null });
   });
 
   test('a swap failure falls back to a full build too -- stale JS is never installed', async () => {

@@ -30,16 +30,21 @@
 //
 // THE ASSET GATE is the deliberate divergence from Rock (which re-injects
 // only the bundle and discards the freshly emitted assets, so a new
-// `require('./new.png')` 404s at runtime in its re-signed builds). See
-// compareAssetSets below: a fresh asset the cached APK does not carry means
-// this run does NOT swap at all, it tells the caller to build fresh.
+// `require('./new.png')` 404s at runtime in its re-signed builds). It does
+// NOT read the APK: engine/asset-manifest.ts explains why the res/ table is
+// unusable (AGP shortens every resource path on a release build, and the
+// drawables that survive are mostly AndroidX's). It compares what THIS
+// workspace just emitted against the manifest the build behind the cache
+// entry recorded of what IT emitted -- same producer, same layout, hashed --
+// so an added, removed OR REPLACED asset all refuse the swap, and an entry
+// with no manifest is never swapped at all.
 //
 // Nothing here throws on a tool failure. Every outcome is a return value --
 // { ok, apkPath }, { assetMismatch }, or { failed, step, reason } -- because
 // the caller's answer to all of them is the same and always safe: fall back
 // to a full gradle build. Stale JS is never installed.
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
@@ -47,6 +52,13 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import type { SettingsObject } from '../types.ts';
 import { findBuildTool, type BuildToolsEntry } from '../sim/android.ts';
 import { cleanLine, createLineReader } from '../supervisor/server-expo.ts';
+import {
+  assetDiffReason,
+  compareAssetManifests,
+  readAssetManifest,
+  type AssetManifest,
+  type AssetManifestDiff,
+} from './asset-manifest.ts';
 import { waitForChild } from './deps.ts';
 import { detectEntryFile } from './js-swap.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
@@ -199,180 +211,6 @@ export function androidBundleCommand({
   };
 }
 
-// --- the archive listing --------------------------------------------------
-
-// One entry of a zip listing. `size` is the UNCOMPRESSED length; `crc` is the
-// stored CRC-32 when the listing carries one (`unzip -v` does, `unzip -l`
-// does not).
-export interface ZipEntry {
-  name: string;
-  size: number | null;
-  crc: string | null;
-}
-
-// PURE. Both listing shapes `unzip` prints, because either may be what a
-// machine has:
-//
-//   unzip -v          (what this module asks for -- it carries the CRC)
-//    Length   Method    Size  Cmpr    Date    Time   CRC-32   Name
-//    --------  ------  ------- ---- ---------- ----- --------  ----
-//        1234  Defl:N      567  54% 2026-01-01 00:00 abcdef12  res/raw/x.mp3
-//
-//   unzip -l
-//     Length      Date    Time    Name
-//     ---------  ---------- -----   ----
-//          1234  2026-01-01 00:00   res/raw/x.mp3
-//
-// Names may contain spaces, so the name is everything after the last fixed
-// column rather than a whitespace split. The header, the `----` rules and the
-// totals line all fail both patterns and are skipped.
-const ZIP_VERBOSE_LINE = /^\s*(\d+)\s+\S+\s+\d+\s+\S+\s+\S+\s+\S+\s+([0-9a-f]{8})\s+(.+)$/i;
-const ZIP_SHORT_LINE = /^\s*(\d+)\s+\d{2,4}[-/]\d{2}[-/]\d{2,4}\s+\d{2}:\d{2}\s+(.+)$/;
-
-export function parseZipListing(text: unknown): ZipEntry[] {
-  const entries: ZipEntry[] = [];
-  for (const raw of String(text ?? '').split('\n')) {
-    const line = raw.replace(/\r$/, '');
-    const verbose = ZIP_VERBOSE_LINE.exec(line);
-    if (verbose) {
-      entries.push({ name: verbose[3]!.trim(), size: Number(verbose[1]), crc: verbose[2]!.toLowerCase() });
-      continue;
-    }
-    const short = ZIP_SHORT_LINE.exec(line);
-    if (short) entries.push({ name: short[2]!.trim(), size: Number(short[1]), crc: null });
-  }
-  // Directory entries carry a trailing slash and no content; they are not
-  // assets and comparing them would report a difference for a directory AAPT
-  // happens to record.
-  return entries.filter((e) => e.name !== '' && !e.name.endsWith('/'));
-}
-
-// Thin. The APK's own entry table. Null when the listing cannot be taken at
-// all, which the caller treats as "the gate cannot be proven" -- and an
-// unprovable gate falls back to a full build like any other failure.
-export function listApkEntries(apkPath: string, { exec = null }: { exec?: Executor | null } = {}): ZipEntry[] | null {
-  const e = exec || getExecutor();
-  try {
-    return parseZipListing(e.runFile('unzip', ['-v', apkPath]));
-  } catch {
-    return null;
-  }
-}
-
-// --- the asset gate -------------------------------------------------------
-
-// What the two sides of the gate are compared as.
-export interface AssetEntry {
-  name: string;
-  size: number | null;
-}
-
-export interface AssetDiff {
-  same: boolean;
-  // In the fresh bundle's asset tree, not in the APK. THE case this gate
-  // exists for: the JS references it and the APK cannot serve it.
-  added: string[];
-  // In the APK, no longer emitted.
-  removed: string[];
-  // Same name on both sides, different size where the size is comparable.
-  changed: string[];
-  // One name to print, so the fallback note says WHICH asset moved.
-  example: string | null;
-}
-
-// PURE. AAPT appends an API-level qualifier to a resource directory it
-// packages (`res/drawable-mdpi/x.png` is stored as
-// `res/drawable-mdpi-v4/x.png`). That suffix is an AAPT artifact and not an
-// asset change, so it is normalized away before the names are compared --
-// otherwise every single entry would read as both added and removed.
-export function normalizeResEntryName(name: string): string {
-  return name.replace(/^res\/([^/]+?)-v\d+\//, 'res/$1/');
-}
-
-// PURE. The res/ subdirectories `--assets-dest` writes into: drawable-<qualifier>
-// for images and raw/ for everything else. Scoping the APK side of the
-// comparison to these is what makes `removed` mean "an asset the cached
-// bundle shipped and this one does not" instead of "every layout, mipmap and
-// XML drawable the app has".
-export function isBundledAssetEntry(name: string): boolean {
-  return /^res\/(?:drawable-[^/]+|raw)\/[^/]+$/.test(normalizeResEntryName(name));
-}
-
-// PURE. Whether a size difference on this entry means the ASSET differs.
-//
-// This is the "where obtainable" half of the gate, and it is the one place
-// worth reading carefully. AAPT does not store a drawable verbatim: on a
-// release build `crunchPngs` is on, so the PNG in the APK is AAPT's
-// re-encoding of the source and its length is the length of a DIFFERENT file
-// than the one `--assets-dest` just emitted. Comparing those two lengths
-// would report every drawable as changed on every run, including runs where
-// nothing changed at all -- the gate would reject 100% of cache hits and the
-// feature would never engage. res/raw/ IS stored verbatim (that is what
-// `raw` means), so its lengths are comparable and are compared.
-//
-// The names are the load-bearing half either way: a fresh `require()`
-// produces a NEW entry name, which is exactly the failure Rock ships and this
-// gate exists to catch.
-export function sizeIsComparable(name: string): boolean {
-  return normalizeResEntryName(name).startsWith('res/raw/');
-}
-
-// PURE. The gate itself. `same` is what the caller branches on; the three
-// lists are what the note names.
-export function compareAssetSets(
-  emitted: AssetEntry[],
-  packaged: AssetEntry[],
-  { comparableSize = sizeIsComparable }: { comparableSize?: (name: string) => boolean } = {},
-): AssetDiff {
-  const left = new Map(emitted.map((a) => [normalizeResEntryName(a.name), a.size]));
-  const right = new Map(packaged.map((a) => [normalizeResEntryName(a.name), a.size]));
-  const added: string[] = [];
-  const removed: string[] = [];
-  const changed: string[] = [];
-  for (const [name, size] of left) {
-    if (!right.has(name)) {
-      added.push(name);
-      continue;
-    }
-    const other = right.get(name) ?? null;
-    if (comparableSize(name) && size !== null && other !== null && size !== other) changed.push(name);
-  }
-  for (const name of right.keys()) if (!left.has(name)) removed.push(name);
-  added.sort();
-  removed.sort();
-  changed.sort();
-  const example = added[0] ?? changed[0] ?? removed[0] ?? null;
-  return { same: added.length === 0 && removed.length === 0 && changed.length === 0, added, removed, changed, example };
-}
-
-// Thin. The freshly emitted asset tree, as archive-relative entries. `dir` is
-// the `--assets-dest` directory, whose contents land under `res/` in the APK.
-export function listStagedAssets(dir: string, prefix = 'res'): AssetEntry[] {
-  const entries: AssetEntry[] = [];
-  const walk = (abs: string, rel: string, depth: number) => {
-    if (depth > 4) return;
-    let names: string[];
-    try {
-      names = readdirSync(abs);
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      const child = join(abs, name);
-      let stat;
-      try {
-        stat = statSync(child);
-      } catch {
-        continue;
-      }
-      if (stat.isDirectory()) walk(child, `${rel}/${name}`, depth + 1);
-      else entries.push({ name: `${rel}/${name}`, size: stat.size });
-    }
-  };
-  walk(dir, prefix, 0);
-  return entries.sort((a, b) => a.name.localeCompare(b.name));
-}
-
 // --- zip surgery, alignment, signing --------------------------------------
 
 // PURE. `zip -d` on an archive that does not carry the entry exits non-zero
@@ -466,9 +304,11 @@ export type ApkSwapResult = {
   note?: string;
   durationMs?: number;
   // The ASSET GATE refused. NOT an error -- the caller builds fresh, which is
-  // the only way to get an APK whose res/ matches the fresh bundle.
+  // the only way to get an APK whose res/ matches the fresh bundle. assetDiff
+  // is absent when the refusal was "this entry has no manifest to compare
+  // against"; `reason` says which of the two it was either way.
   assetMismatch?: boolean;
-  assetDiff?: AssetDiff;
+  assetDiff?: AssetManifestDiff;
   failed?: boolean;
   // Which step died: 'copy' | 'bundle' | 'hermesc' | 'assets' | 'zip' |
   // 'zipalign' | 'apksigner'.
@@ -497,8 +337,8 @@ export async function swapApkBundle({
   hermesEnabled = null,
   buildTools = null,
   findTool = findBuildTool,
-  listEntries = listApkEntries,
-  listAssets = listStagedAssets,
+  storedAssets = null,
+  readManifest = readAssetManifest,
   now = Date.now,
   heartbeatMs = HEARTBEAT_INTERVAL_MS,
   onHeartbeat = (line: string) => console.error(line),
@@ -515,8 +355,11 @@ export async function swapApkBundle({
   hermesEnabled?: boolean | null;
   buildTools?: BuildToolsEntry | null;
   findTool?: typeof findBuildTool;
-  listEntries?: typeof listApkEntries;
-  listAssets?: typeof listStagedAssets;
+  // The manifest the build behind this cache entry recorded of the assets IT
+  // emitted (build-cache.ts's storedAssetManifest). Null means the entry
+  // predates asset tracking, and such an entry is never swapped.
+  storedAssets?: AssetManifest | null;
+  readManifest?: typeof readAssetManifest;
   now?: () => number;
   heartbeatMs?: number;
   onHeartbeat?: (line: string) => void;
@@ -660,27 +503,33 @@ export async function swapApkBundle({
   }
 
   // ---- THE ASSET GATE ----
-  // Before anything is written into the archive. A fresh asset the cached APK
-  // does not carry cannot be added by zip surgery -- an Android drawable is
-  // not just a file in the zip, it has a row in resources.arsc that only AAPT
-  // can write -- so the honest answer is not to swap at all.
-  const packaged = listEntries(work, { exec: e });
-  if (!packaged) {
-    return fail('assets', `could not list the entries of ${work}, so the asset set cannot be verified`);
-  }
-  const diff = compareAssetSets(
-    listAssets(assetsDest),
-    packaged.filter((entry) => isBundledAssetEntry(entry.name)),
-  );
-  if (!diff.same) {
-    const which = diff.added.length ? 'added' : diff.changed.length ? 'changed' : 'removed';
-    const reason =
-      `this workspace's asset set differs from the cached APK's ` +
-      `(${diff.added.length} added, ${diff.changed.length} changed, ${diff.removed.length} removed; ` +
-      `e.g. ${which} ${diff.example})`;
+  // Before anything is written into the archive. An Android drawable is not
+  // just a file in the zip -- it has a row in resources.arsc that only AAPT
+  // can write -- so an APK cannot be made to carry an asset it was not built
+  // with, and the honest answer to any asset difference is not to swap.
+  //
+  // The comparison is emitted-now against emitted-then, NOT against the APK's
+  // res/ table (engine/asset-manifest.ts records why that table cannot be
+  // read). Two refusals, and the caller's answer to both is a full build:
+  // no manifest to compare against, or a manifest that does not match.
+  const refuse = (reason: string, assetDiff?: AssetManifestDiff): ApkSwapResult => {
     logWriter?.write?.({ src: 'build', level: 'warn', msg: `APK swap refused: ${reason}`, event: 'apk_swap' });
-    return { assetMismatch: true, assetDiff: diff, reason, durationMs: elapsed() };
+    const result: ApkSwapResult = { assetMismatch: true, reason, durationMs: elapsed() };
+    if (assetDiff) result.assetDiff = assetDiff;
+    return result;
+  };
+  if (!storedAssets) {
+    return refuse(
+      'this cache entry predates asset tracking (no assets-manifest.json beside the artifact), ' +
+        'so its asset set cannot be proven to match this one',
+    );
   }
+  const fresh = readManifest(assetsDest);
+  if (!fresh) {
+    return fail('assets', `could not hash the assets emitted into ${assetsDest}, so the asset set cannot be verified`);
+  }
+  const diff = compareAssetManifests(fresh, storedAssets);
+  if (!diff.same) return refuse(assetDiffReason(diff), diff);
 
   // ---- zip surgery ----
   // Delete the old entry first: `zip -0` would otherwise REPLACE it in place
