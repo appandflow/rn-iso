@@ -9,8 +9,8 @@
 // build directory back to a workspace.
 //
 // Pure: nothing here creates a directory. Callers mkdir when they write.
-import { readFileSync } from 'fs';
 import { join } from 'path';
+import { buildCacheRoot, metroCacheRoot } from '@rn-iso/core';
 import { getConfigDir } from './config.ts';
 
 export const WORKSPACE_DIR_NAME = '.rn-iso';
@@ -74,44 +74,12 @@ export function supervisorLogFile(projectRoot: string): string {
 // concurrency limits), which every process finds regardless of shell profile;
 // the default layout under the config dir is last.
 
-// The one guarded read this otherwise-pure module does: the config file is
-// the anchor that makes a relocated cache visible to processes that never
-// inherited the env override. Unreadable or malformed answers null -- a cache
-// override must never be the reason a build cannot run.
-function cachePathSetting(key: 'buildCache' | 'metroCache'): string | null {
-  try {
-    const parsed = JSON.parse(readFileSync(join(getConfigDir(), 'config.json'), 'utf-8')) as {
-      caches?: Record<string, unknown>;
-    };
-    const value = parsed?.caches?.[key];
-    return typeof value === 'string' && value.startsWith('/') ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-// A name only distinguishes one app's Metro cache from another's. Metro keys
-// entries by content, so one store shared between unrelated projects would be
-// correct but pointlessly large. Anything that is not a plain path segment is
-// replaced, and leading dots go, so a scoped package name cannot climb out of
-// the cache root.
-function cacheNameSegment(name: string | null | undefined): string {
-  return (
-    String(name)
-      .replace(/[^A-Za-z0-9._-]+/g, '-')
-      .replace(/^\.+/, '') || 'app'
-  );
-}
-
 export function sharedMetroCache(name?: string | null): string {
-  const override = process.env.RN_ISO_METRO_CACHE || cachePathSetting('metroCache');
-  if (override) return override;
-  const root = join(getConfigDir(), 'metro-cache');
-  return name === undefined || name === null || name === '' ? root : join(root, cacheNameSegment(name));
+  return metroCacheRoot(name);
 }
 
 export function sharedBuildCache(): string {
-  return process.env.RN_ISO_BUILD_CACHE || cachePathSetting('buildCache') || join(getConfigDir(), 'build-cache');
+  return buildCacheRoot();
 }
 
 export function sharedCompilationCache(): string {

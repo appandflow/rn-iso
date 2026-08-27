@@ -1,7 +1,7 @@
 {
-  "name": "@rn-iso/metro",
+  "name": "@rn-iso/core",
   "version": "1.3.3",
-  "description": "Metro integration for rn-iso: one transform cache shared by every worktree, plus an NDJSON reporter for structured logs.",
+  "description": "Shared primitives for rn-iso and its cache packages: config-dir and cache-root resolution, the build cache key, and cache self-registration. Not a user-facing API.",
   "license": "MIT",
   "files": [
     "dist",
@@ -18,14 +18,7 @@
     }
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
     "build": "tsdown"
-  },
-  "dependencies": {
-    "@rn-iso/core": "^1.3.3"
-  },
-  "peerDependencies": {
-    "metro-cache": "*"
   },
   "engines": {
     "node": ">=22"

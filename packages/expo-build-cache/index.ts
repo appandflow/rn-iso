@@ -25,27 +25,20 @@
 // require().
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { buildCacheRoot, buildCacheKey, registerCache } from '@rn-iso/core';
+import type { BuildRunOptions as RunOptions } from '@rn-iso/core';
+
+export { buildCacheKey };
+
+// Register at most once per resolved root, not once per process: the root can
+// move if the env/config changes between calls in one process, and re-checking
+// is one string compare.
+let registeredDir: string | null = null;
 import { execFileSync } from 'node:child_process';
 
 // The run options Expo hands a provider. Only the keys named below are read; a
 // future CLI cannot change the cache key by adding one.
-interface RunOptions {
-  variant?: unknown;
-  configuration?: unknown;
-  buildConfiguration?: unknown;
-  isSimulator?: unknown;
-  device?: unknown;
-}
-
-interface RegisterOptions {
-  dir: string;
-  name?: string;
-  prune?: string;
-  note?: string;
-  entriesDepth?: number;
-}
 
 // THIS RESOLUTION EXISTS THREE TIMES: here, in packages/metro/index.ts,
 // and in rn-iso's own src/paths.ts (sharedBuildCache / sharedMetroCache). This
@@ -59,32 +52,8 @@ interface RegisterOptions {
 // RN_ISO_BUILD_CACHE comes first because it did before the layout existed, and
 // quietly ignoring an override someone already set reads as an empty cache
 // rather than as an error.
-function configDir(): string {
-  return process.env.RN_ISO_HOME || path.join(os.homedir(), '.rn-iso');
-}
-
-// A function rather than a constant: resolving it at load time froze whatever
-// the environment was when a metro.config.js or an Expo config first required
-// this file, which is not necessarily what it is when a build runs.
-// The machine config's override (`caches.buildCache` in <configDir>/config.json):
-// the same three-step resolution as the CLI's paths module -- env, config file,
-// default -- duplicated here because this package must work with no rn-iso
-// installed. Unreadable or malformed answers null; a cache override must never
-// be the reason a build fails.
-function cachePathSetting(key: string): string | null {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8')) as {
-      caches?: Record<string, unknown>;
-    };
-    const value = parsed?.caches?.[key];
-    return typeof value === 'string' && value.startsWith('/') ? value : null;
-  } catch {
-    return null;
-  }
-}
-
 export function cacheRoot(): string {
-  return process.env.RN_ISO_BUILD_CACHE || cachePathSetting('buildCache') || path.join(configDir(), 'build-cache');
+  return buildCacheRoot();
 }
 
 function entryDir(platform: string, key: string): string {
@@ -94,66 +63,6 @@ function entryDir(platform: string, key: string): string {
 // A simulator udid is a canonical UUID. Apple's hardware identifiers are not:
 // they are 40 hex characters, or the 8-digits-dash-16-hex form newer devices
 // use.
-const SIMULATOR_UDID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// adb's name for a running emulator.
-const EMULATOR_SERIAL = /^emulator-\d+$/;
-
-function slug(value: unknown): string {
-  return String(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-// The Xcode configuration on iOS, the gradle variant on Android. `expo run:ios`
-// defaults to Debug and `expo run:android` to debug, so an absent value is that
-// and not "unknown".
-function buildVariant(platform: string, options: RunOptions): string {
-  const raw =
-    platform === 'android'
-      ? options.variant
-      : options.configuration != null
-        ? options.configuration
-        : options.buildConfiguration;
-  return (typeof raw === 'string' ? slug(raw) : '') || 'debug';
-}
-
-// A binary built for real hardware cannot run on a simulator, and the reverse is
-// equally true, so the target class is part of the key. `runOptions.device` is
-// the only signal Expo passes, and it is ambiguous by nature:
-//   absent            -- the CLI targets a simulator or emulator. The default.
-//   "generic"         -- a build-only simulator build.
-//   a udid or serial  -- classifiable when it has the shape of a simulator id.
-//   a bare -d flag    -- the CLI prompts, and the answer can be hardware.
-//   a name            -- unclassifiable.
-// The last two get a bucket of their own rather than sharing the simulator one:
-// a wasted rebuild is cheap, and a binary that cannot launch is not. Two
-// workspaces naming the same device still share their entries.
-function buildTarget(options: RunOptions): string {
-  if (typeof options.isSimulator === 'boolean') return options.isSimulator ? 'sim' : 'device';
-  const device = options.device;
-  if (device === undefined || device === null || device === false) return 'sim';
-  if (typeof device !== 'string') return 'prompted';
-  const name = device.trim();
-  if (name === '' || name === 'generic') return 'sim';
-  if (SIMULATOR_UDID.test(name) || EMULATOR_SERIAL.test(name)) return 'sim';
-  return `on-${slug(name)}`;
-}
-
-// The fingerprint covers what the project IS, never how it was built. Keying on
-// it alone means a Release build answers a Debug resolve, and a device build
-// answers a simulator one -- both silently, both producing a binary that cannot
-// run. Only the run-option keys named above are read, so a future Expo CLI
-// cannot change the key by adding one.
-//
-// rn-iso's own build cache computes this key the same way (src/build-cache.ts),
-// so both entry points address the same entry. Changing one without the other
-// splits them onto separate sets of entries.
-export function buildCacheKey(platform: string, fingerprintHash: string, runOptions?: RunOptions): string {
-  const opts: RunOptions = runOptions && typeof runOptions === 'object' ? runOptions : {};
-  return `${fingerprintHash}-${buildVariant(platform, opts)}-${buildTarget(opts)}`;
-}
-
 // Log lines name the entry, so they have to carry what distinguishes it: the
 // fingerprint abbreviates fine, the variant and target do not -- a Debug miss
 // and a Release miss on the same commit read identically without them.
@@ -187,35 +96,6 @@ function artifactIn(dir: string): string | null {
 //     before 20.19
 // A dynamic import fixes the second and not the first. The format is a stable
 // contract, so writing it is the cheaper trade.
-function registerCache({ dir, name, prune, note, entriesDepth }: RegisterOptions): void {
-  try {
-    const home = configDir();
-    const file = path.join(home, 'caches.json');
-    let manifest: { version: number; caches: Array<Record<string, unknown>> } = { version: 1, caches: [] };
-    try {
-      const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
-      if (Array.isArray(parsed?.caches)) manifest = { version: 1, caches: parsed.caches };
-    } catch {
-      // No manifest yet, or an unreadable one: start clean rather than fail.
-    }
-    // Keyed on the directory so repeated calls update rather than accumulate --
-    // these run on every build.
-    const others = manifest.caches.filter((c) => c.dir !== dir);
-    const record: Record<string, unknown> = { dir, name, prune, note, registeredBy: process.cwd() };
-    // Only written when the caller sets it: an absent depth means the entries
-    // are the directory's immediate children, which is the common case.
-    if (entriesDepth) record.entriesDepth = entriesDepth;
-    others.push(record);
-    fs.mkdirSync(home, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ version: 1, caches: others }, null, 2));
-  } catch {
-    // A cache that cannot announce itself still works; it is just invisible.
-  }
-}
-
-// Keyed on the directory rather than a plain boolean, so a root that changes
-// under a long-lived process still reaches the manifest.
-let registeredDir: string | null = null;
 function registerOnce(): void {
   const root = cacheRoot();
   if (registeredDir === root) return;

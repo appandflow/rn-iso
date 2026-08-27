@@ -94,13 +94,18 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
 // way to use the CLI is `npx rn-iso`, so it is usually not a dependency of the
 // project and the specifier does not resolve on any Node version. Both packages
 // write the manifest themselves, so neither may name rn-iso as a module.
-test('neither package reaches rn-iso as a module', () => {
+test('neither package reaches rn-iso as a module; the shared primitives live in @rn-iso/core', () => {
   for (const pkg of ['expo-build-cache', 'metro']) {
     const source = readFileSync(join(PACKAGES, pkg, 'index.ts'), 'utf-8');
     expect(source).not.toMatch(/require\(\s*['"]rn-iso/);
     expect(source).not.toMatch(/import\(\s*['"]rn-iso/);
-    expect(source).toMatch(/caches\.json/);
+    expect(source).toMatch(/@rn-iso\/core/);
   }
+  // The direct manifest write moved to core with everything else the three
+  // packages must agree on; core itself must not import rn-iso either.
+  const core = readFileSync(join(PACKAGES, 'core', 'index.ts'), 'utf-8');
+  expect(core).toMatch(/caches\.json/);
+  expect(core).not.toMatch(/require\(\s*['"]rn-iso/);
 });
 
 // The three implementations of the cache-root resolution are duplicated on
