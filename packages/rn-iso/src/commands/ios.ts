@@ -21,7 +21,7 @@
 // leaves stdout empty.
 import chalk from 'chalk';
 import type { ChildProcess } from 'node:child_process';
-import { mkdirSync, openSync, readFileSync } from 'node:fs';
+import { mkdirSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
 import type { Command } from 'commander';
@@ -44,6 +44,7 @@ import {
   launchIosApp,
   unverifiedLaunchLines,
   verifyLaunch,
+  verifyReleaseLaunch,
 } from '../engine/app-install.ts';
 import {
   acquireBuildLock,
@@ -70,6 +71,7 @@ import {
   uploadRemote,
   type LoadProjectProviderResult,
 } from '../engine/remote-cache.ts';
+import { swapJsBundle } from '../engine/js-swap.ts';
 import { buildIos, readBundleId } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
 import type { CacheHitLevel, IosFacts } from '../types.ts';
@@ -77,7 +79,7 @@ import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../paths.ts';
 import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.ts';
-import { resolveSettings, unknownSettingKeys } from '../settings.ts';
+import { resolveSettings, unknownSettingKeys, type SettingsObject } from '../settings.ts';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 
@@ -147,6 +149,7 @@ interface IosCommandOptions {
   json?: boolean;
   metroCheck?: boolean;
   buildCache?: boolean;
+  configuration?: string;
 }
 
 interface WaitedForBuild {
@@ -261,6 +264,38 @@ export function appNameFromPath(appPath: unknown): string | null {
   if (typeof appPath !== 'string' || appPath.trim() === '') return null;
   const name = basename(appPath).replace(/\.app$/i, '');
   return name === '' ? null : name;
+}
+
+// PURE. The ios.configuration setting (see resolveSettings): the Xcode
+// configuration to build, e.g. "Release". Unset means Debug, unchanged. The
+// same shape as android's androidVariantSetting: the repo-level default the
+// --configuration flag overrides.
+export function iosConfigurationSetting(settings: SettingsObject | null | undefined): string | null {
+  const ios = settings?.['ios'];
+  if (!ios || typeof ios !== 'object' || Array.isArray(ios)) return null;
+  const raw = (ios as Record<string, unknown>)['configuration'];
+  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+}
+
+// PURE. Which configuration this run builds: the --configuration flag
+// (per-invocation judgment) over the ios.configuration setting (the repo
+// default) over null, which is the unchanged Debug flow.
+export function resolveConfiguration(
+  flag: string | null | undefined,
+  settings: SettingsObject | null | undefined,
+): string | null {
+  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
+  return fromFlag || iosConfigurationSetting(settings);
+}
+
+// PURE. Whether a configuration means "the JS is embedded in the app". Only
+// Debug builds fetch their bundle from Metro (RCT_DEV gates the whole dev
+// path); every other configuration -- Release above all, but also a custom
+// Staging -- runs the Xcode phase that bakes main.jsbundle in.
+export function isReleaseConfiguration(configuration: string | null | undefined): boolean {
+  return (
+    typeof configuration === 'string' && configuration.trim() !== '' && configuration.trim().toLowerCase() !== 'debug'
+  );
 }
 
 // PURE. Whether pods have to be installed before this build, given what
@@ -575,6 +610,7 @@ export function iosFacts({
   udid,
   deviceName,
   fingerprint,
+  configuration = null,
   cacheKey,
   cacheHit,
   cacheSkipped = false,
@@ -589,6 +625,7 @@ export function iosFacts({
   udid: string;
   deviceName?: string | null;
   fingerprint?: string | null;
+  configuration?: string | null;
   cacheKey?: string | null;
   cacheHit?: boolean | string;
   cacheSkipped?: boolean;
@@ -605,6 +642,9 @@ export function iosFacts({
     udid,
     deviceName: deviceName ?? null,
     fingerprint,
+    // The Xcode configuration this run built (--configuration flag beats the
+    // ios.configuration setting); null is the default Debug.
+    configuration: configuration ?? null,
     cacheKey,
     // 'local' | 'remote' | false -- see cacheLevel.
     cacheHit: cacheLevel(cacheHit),
@@ -786,9 +826,11 @@ interface IosDeps {
   runPodInstall: typeof runPodInstall;
   buildIos: typeof buildIos;
   readBundleId: typeof readBundleId;
+  swapJsBundle: typeof swapJsBundle;
   installIosApp: typeof installIosApp;
   launchIosApp: typeof launchIosApp;
   verifyLaunch: typeof verifyLaunch;
+  verifyReleaseLaunch: typeof verifyReleaseLaunch;
   ensureWorkspaceIgnored: typeof ensureWorkspaceIgnoredSafely;
   replaceCollector: typeof replaceCollector;
   writeWorkspaceState: typeof writeWorkspaceState;
@@ -834,9 +876,11 @@ const DEFAULT_DEPS: IosDeps = {
   runPodInstall,
   buildIos,
   readBundleId,
+  swapJsBundle,
   installIosApp,
   launchIosApp,
   verifyLaunch,
+  verifyReleaseLaunch,
   ensureWorkspaceIgnored: ensureWorkspaceIgnoredSafely,
   replaceCollector,
   writeWorkspaceState,
@@ -863,6 +907,14 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .option(
       '--no-build-cache',
       "Build fresh, ignoring cached artifacts (local and the project's build-cache provider); the fresh build still replaces the cache entry",
+    )
+    // Deliberate option-surface growth (issue #57, 2026-08-27), mirroring
+    // android's --variant: which configuration to build is per-invocation
+    // judgment, so it belongs on the command; the ios.configuration SETTING
+    // is the repo-level default.
+    .option(
+      '--configuration <name>',
+      'Xcode configuration to build (e.g. Release; simulator only). A non-Debug configuration embeds the JS bundle and skips Metro entirely. Overrides the ios.configuration setting. Default: Debug',
     )
     .action(async (opts: IosCommandOptions) => {
       await runIos(opts, deps);
@@ -998,6 +1050,14 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     note(chalk.yellow(`Warning: setting "${key}" is not read by rn-iso and will be ignored.`));
   }
 
+  // The Xcode configuration this run builds. Precedence: the --configuration
+  // flag (per-invocation judgment) over the ios.configuration setting (the
+  // repo-level default) over null, the unchanged Debug flow. A non-Debug
+  // configuration is a RELEASE-shaped build: the JS bundle is embedded by the
+  // xcodebuild phase, so Metro is not part of this run at all.
+  const configuration = resolveConfiguration(opts.configuration, settings);
+  const release = isReleaseConfiguration(configuration);
+
   const isExpo = d.detectIsExpo(root);
   d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
   const proj = d.getProject(root);
@@ -1052,7 +1112,13 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // reason to pay it to then refuse at second twelve. The whole point of the
   // gate is that the refusal is instant.
   let metroPort = proj?.metroPort ?? null;
-  if (metroCheck) {
+  if (release) {
+    // A release build embeds its JS, so there is no dev server in this run:
+    // no gate, no port wiring, no dev-client deep link, and no 8081 default.
+    // The payload says metroPort: null for the same reason.
+    metroPort = null;
+    phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
+  } else if (metroCheck) {
     if (!metroPort) {
       return fail({
         code: 'RN_ISO_NO_METRO',
@@ -1140,9 +1206,12 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         'Install it in the project (`npm i -D @expo/fingerprint`) so builds can be cached and shared between worktrees.',
     });
   }
-  // Debug / simulator defaults: the same key `build-cache` and the Expo
-  // provider derive, so an entry stored here answers either of them.
-  const cacheKey = buildCacheKey(PLATFORM, fingerprint, {});
+  // The same key the Expo provider derives. The configuration is part of it
+  // (core's buildVariant reads `configuration`): a Release .app and a Debug
+  // .app on the same native fingerprint are different artifacts, so they key
+  // as `<hash>-release-sim` vs `<hash>-debug-sim`. Unset still keys as
+  // "debug", unchanged.
+  const cacheKey = buildCacheKey(PLATFORM, fingerprint, configuration ? { configuration } : {});
 
   // ---- level one: this machine's shared cache ----
   // Instant, offline, and shared by every worktree on the machine. Always
@@ -1233,6 +1302,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       platform: PLATFORM,
       projectRoot: root,
       fingerprintHash: fingerprint,
+      // The configuration reaches the provider so a Release resolve cannot
+      // answer with a Debug artifact; null keeps the provider's own default
+      // ({configuration: 'Debug'}).
+      runOptions: configuration ? { configuration } : null,
     });
     if (hit?.appPath) {
       // INTO the local cache on the way past: the download is paid once per
@@ -1363,6 +1436,53 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     }
   }
 
+  // ---- Release: fresh JS into the cached native shell ----
+  //
+  // A native-keyed cache hit on a RELEASE build is an .app whose baked-in JS
+  // is whatever the workspace that BUILT it had at the time -- installing it
+  // as-is silently runs someone else's (or last week's) code. So the artifact
+  // is copied aside, this tree's JS bundle is regenerated with the project's
+  // own tools (hermes-compiled when the project enables it), swapped into the
+  // copy, and the copy is re-signed and installed. The cache entry itself is
+  // never touched: it stays the pristine native shell every workspace starts
+  // from. Applies to every locally-resolved artifact -- a plain hit, a remote
+  // hit stored on the way past, a single-flight wait -- because all three
+  // carry their builder's JS.
+  //
+  // On ANY swap failure the run falls back to a FULL build (which embeds this
+  // tree's JS the normal way, so the miss path needs no swap). Stale JS is
+  // never installed silently. The fallback compiles without the single-flight
+  // lock -- the lock section is behind us -- which is the same "a redundant
+  // build is the cheaper failure" call the takeover path already makes.
+  let swapDir: string | null = null;
+  if (release && appPath && cacheHit) {
+    phase('js swap', `regenerating this workspace's JS for the cached ${configuration} app`);
+    const swap = await d.swapJsBundle({ root, isExpo, cachedAppPath: appPath, logWriter: logWriter() });
+    if (swap?.ok && swap.appPath) {
+      if (swap.note) note(chalk.yellow(phaseLine('js swap', swap.note)));
+      swapDir = swap.tmpDir ?? null;
+      appPath = swap.appPath;
+      phase(
+        'js swap',
+        `${swap.hermes ? 'hermes bytecode' : 'plain JS'} + assets replaced, re-signed (${formatDuration(swap.durationMs ?? 0)})`,
+      );
+    } else {
+      note(
+        chalk.yellow(
+          phaseLine(
+            'js swap',
+            `failed at ${swap?.step || 'unknown step'}: ${swap?.reason || 'unknown reason'} -- ` +
+              `building fresh instead (a cached ${configuration} app carries its builder's JS; it is never installed after a failed swap)`,
+          ),
+        ),
+      );
+      for (const line of swap?.lastLines ?? []) note(chalk.dim(phaseLine('', line)));
+      appPath = null;
+      cacheHit = false;
+      waitedForBuild = null;
+    }
+  }
+
   const buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache };
 
   if (appPath) {
@@ -1453,7 +1573,15 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       // engine/xcode.ts); read through the flat, all-optional local interface
       // rather than the discriminated union so `result?.failed` narrows the way
       // the rest of this file's defensive checks expect.
-      const result: BuildIosResultLike = await d.buildIos({ root, udid, logWriter: logWriter() });
+      const result: BuildIosResultLike = await d.buildIos({
+        root,
+        udid,
+        logWriter: logWriter(),
+        // engine/xcode's own default is Debug; a fresh Release build embeds
+        // its JS via the normal xcodebuild phase, so the miss path needs no
+        // swap.
+        ...(configuration ? { configuration } : {}),
+      });
       if (result?.failed) {
         phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
         printDiagnostics(note, result);
@@ -1496,6 +1624,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           projectRoot: root,
           fingerprintHash: fingerprint,
           buildPath: appPath!,
+          runOptions: configuration ? { configuration } : null,
         });
       }
     } finally {
@@ -1538,12 +1667,24 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   }
   phase('install', `-> ${deviceLabel(device, udid)} ${installTimer()}`);
 
+  // The swapped copy is on the device now (`simctl install` copies the
+  // bundle), so its temp dir has done its job.
+  if (swapDir) {
+    try {
+      rmSync(swapDir, { recursive: true, force: true });
+    } catch {
+      // A leftover temp dir is not worth a failed run; the OS reaps /tmp.
+    }
+  }
+
   // ---- launch, wired to THIS workspace's port (Contract 6) ----
   //
   // The scheme comes from the BUILT app, which is why appPath is passed: a
   // dev-client app launched without its deep link opens the dev-launcher's
   // server picker, and the picker lists every workspace on the machine.
-  const scheme = d.devClientScheme(root, appPath);
+  // A release launch is a plain `simctl launch` -- no deep link (there is no
+  // dev server for it to point at), so the scheme is not even read.
+  const scheme = release ? undefined : d.devClientScheme(root, appPath);
   const launchTimer = stepTimer(d.now);
   const launchedAt = d.now();
   const launched = d.launchIosApp({
@@ -1569,9 +1710,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     level: 'info',
     marker: true,
     event: 'launch',
-    msg:
-      `launched ${bundleId} on ${udid} against Metro port ${metroPort}` +
-      (launched?.mode === 'openurl' ? ' (expo-dev-client)' : ''),
+    msg: release
+      ? `launched ${bundleId} on ${udid} (${configuration}, embedded JS bundle, no Metro)`
+      : `launched ${bundleId} on ${udid} against Metro port ${metroPort}` +
+        (launched?.mode === 'openurl' ? ' (expo-dev-client)' : ''),
   });
 
   // ---- collector (Contract 5) ----
@@ -1601,28 +1743,60 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // Read through a flat, all-optional local interface rather than
   // verifyLaunch's return union -- this file branches only on
   // `verified` / `skipped` / `waitedMs`.
-  const verification: VerifyLaunchResultLike = metroCheck
-    ? await d.verifyLaunch({ logsDir, since: launchedAt, mode: isExpo ? MODE_EXPO : MODE_BARE })
-    : { verified: false, skipped: true };
   let launchState: boolean | string = true;
-  if (verification?.verified) {
-    phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
-  } else if (verification?.skipped) {
-    launchState = LAUNCH_UNVERIFIED;
-    phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
+  if (release) {
+    // A release app fetches nothing from Metro -- its bundle is embedded --
+    // so the bundle-request proof does not exist. What can be proven is that
+    // the launched PROCESS is still alive a moment later: a bad embedded
+    // bundle takes the app down within a second or two of launch.
+    const processCheck = await d.verifyReleaseLaunch({ pid: launched?.pid ?? null });
+    if (processCheck?.verified) {
+      phase(
+        'verify',
+        `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${configuration}: no bundle fetch to observe)`,
+      );
+    } else {
+      launchState = LAUNCH_UNVERIFIED;
+      phase(
+        'verify',
+        chalk.yellow(
+          processCheck?.reason === 'exited'
+            ? `UNVERIFIED: the app process exited within ${formatDuration(processCheck.waitedMs ?? 0)} of launch`
+            : 'UNVERIFIED: simctl launch reported no process id to check',
+        ),
+      );
+      note(
+        chalk.yellow(
+          phaseLine(
+            '',
+            'A release app that dies at startup usually crashed loading its embedded bundle; `rn-iso logs --errors` has the device log that says why.',
+          ),
+        ),
+      );
+    }
   } else {
-    launchState = LAUNCH_UNVERIFIED;
-    const lines = unverifiedLaunchLines({
-      platform: PLATFORM,
-      metroPort,
-      waitedMs: verification?.waitedMs,
-      bundleId,
-      udid,
-      devClientUrl: scheme ? devClientUrl(scheme, metroPort) : null,
-      mode: isExpo ? MODE_EXPO : MODE_BARE,
-    });
-    phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
-    for (const line of lines) note(chalk.yellow(phaseLine('', line)));
+    const verification: VerifyLaunchResultLike = metroCheck
+      ? await d.verifyLaunch({ logsDir, since: launchedAt, mode: isExpo ? MODE_EXPO : MODE_BARE })
+      : { verified: false, skipped: true };
+    if (verification?.verified) {
+      phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
+    } else if (verification?.skipped) {
+      launchState = LAUNCH_UNVERIFIED;
+      phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
+    } else {
+      launchState = LAUNCH_UNVERIFIED;
+      const lines = unverifiedLaunchLines({
+        platform: PLATFORM,
+        metroPort: metroPort ?? DEFAULT_METRO_PORT,
+        waitedMs: verification?.waitedMs,
+        bundleId,
+        udid,
+        devClientUrl: scheme ? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null,
+        mode: isExpo ? MODE_EXPO : MODE_BARE,
+      });
+      phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
+      for (const line of lines) note(chalk.yellow(phaseLine('', line)));
+    }
   }
 
   // The outcome, in the timeline as well as on stderr: `rn-iso logs` is where
@@ -1632,8 +1806,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     src: 'build',
     level: launchState === LAUNCH_UNVERIFIED ? 'warn' : 'info',
     event: launchState === LAUNCH_UNVERIFIED ? 'launch_unverified' : 'launch_verified',
-    msg:
-      launchState === LAUNCH_UNVERIFIED
+    msg: release
+      ? launchState === LAUNCH_UNVERIFIED
+        ? `${bundleId} could not be verified as running after its ${configuration} launch`
+        : `${bundleId} is running its embedded ${configuration} bundle`
+      : launchState === LAUNCH_UNVERIFIED
         ? `no bundle request from ${bundleId} reached this workspace's Metro on port ${metroPort}`
         : `${bundleId} fetched a bundle from this workspace's Metro on port ${metroPort}`,
   });
@@ -1691,6 +1868,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     udid,
     deviceName: device?.deviceName ?? null,
     fingerprint,
+    configuration,
     cacheKey,
     cacheHit,
     cacheSkipped: !useBuildCache,
@@ -1707,7 +1885,8 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     console.log(JSON.stringify(facts));
   } else {
     const summary =
-      `OK: ${bundleId} on ${deviceLabel(device, udid)}, Metro port ${metroPort}` +
+      `OK: ${bundleId} on ${deviceLabel(device, udid)}, ` +
+      (release ? `${configuration} (embedded JS, no Metro)` : `Metro port ${metroPort}`) +
       ` (${cacheDescription(cacheHit, remote?.name)}, ${formatDuration(durationMs)})`;
     // The outcome line says which kind of OK this is. "OK" alone, over an app
     // that loaded nothing, is the claim this whole check exists to stop.

@@ -38,7 +38,9 @@ import {
   jsLocationValue,
   launchAndroidApp,
   launchIosApp,
+  parseLaunchedPid,
   parseResolvedActivity,
+  verifyReleaseLaunch,
   reverseMetroPorts,
   writeDebugHttpHost,
 } from '../engine/app-install.ts';
@@ -169,6 +171,68 @@ describe('ios', () => {
     expect(launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec }).reason).toMatch(
       /simctl launch/,
     );
+  });
+
+  // metroPort: null is the RELEASE contract: the bundle is embedded, so there
+  // is no port to wire -- no defaults write, no deep link, one plain launch.
+  test('launchIosApp with metroPort null is a plain launch: no RCT_jsLocation write, no openurl', () => {
+    const exec = recordingExec({ outputs: { 'simctl launch': 'com.example.app: 4242' } });
+    const result = launchIosApp(
+      { udid: 'U1', bundleId: 'com.example.app', metroPort: null, devClientScheme: 'myapp' },
+      { exec },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('launch');
+    expect(result.pid).toBe(4242);
+    expect(result.jsLocation).toBeUndefined();
+    expect(exec.calls).toEqual([['xcrun', 'simctl', 'launch', 'U1', 'com.example.app']]);
+  });
+
+  test('parseLaunchedPid reads `<bundleId>: <pid>` and nothing else', () => {
+    expect(parseLaunchedPid('com.example.app: 4242')).toBe(4242);
+    expect(parseLaunchedPid('com.example.app: 4242\n')).toBe(4242);
+    expect(parseLaunchedPid('')).toBe(null);
+    expect(parseLaunchedPid('something went wrong')).toBe(null);
+    expect(parseLaunchedPid(null)).toBe(null);
+    expect(parseLaunchedPid('com.example.app: 0')).toBe(null);
+  });
+});
+
+describe('verifyReleaseLaunch', () => {
+  const instantly = {
+    sleep: async () => {},
+    now: (() => {
+      let t = 0;
+      return () => (t += 1500);
+    })(),
+  };
+
+  test('verified when the process is still alive after the wait', async () => {
+    const result = await verifyReleaseLaunch({ pid: 4242, alive: () => true, ...instantly });
+    expect(result.verified).toBe(true);
+    expect(result.waitedMs).toBeGreaterThan(0);
+  });
+
+  test('a process that died within the window is unverified with reason exited', async () => {
+    const result = await verifyReleaseLaunch({ pid: 4242, alive: () => false, sleep: async () => {} });
+    expect(result.verified).toBe(false);
+    expect(result.reason).toBe('exited');
+  });
+
+  test('no pid means nothing can be checked: unverified, no wait at all', async () => {
+    let slept = false;
+    const result = await verifyReleaseLaunch({
+      pid: null,
+      alive: () => {
+        throw new Error('must not be called without a pid');
+      },
+      sleep: async () => {
+        slept = true;
+      },
+    });
+    expect(result.verified).toBe(false);
+    expect(result.reason).toBe('no-pid');
+    expect(slept).toBe(false);
   });
 });
 

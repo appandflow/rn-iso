@@ -29,8 +29,11 @@ import {
   deviceLabel,
   devClientScheme,
   formatDuration,
+  iosConfigurationSetting,
   iosFacts,
+  isReleaseConfiguration,
   lastBuildRecord,
+  resolveConfiguration,
   phaseLine,
   podAction,
   ensureWorkspaceIgnoredSafely,
@@ -139,6 +142,10 @@ interface RecordedArgs {
   [key: string]: unknown;
   installIosApp: { appPath?: unknown };
   launchIosApp: { devClientScheme?: unknown; metroPort?: unknown; bundleId?: unknown };
+  buildIos: { configuration?: unknown; root?: unknown };
+  swapJsBundle: { cachedAppPath?: unknown; isExpo?: unknown; root?: unknown };
+  verifyReleaseLaunch: { pid?: unknown };
+  readBundleId: unknown;
   storeBuild: { options?: unknown; platform?: unknown; path?: unknown };
   resolveBuild: { key?: unknown };
   verifyLaunch: { since?: unknown; logsDir?: unknown };
@@ -267,6 +274,21 @@ function harness(overrides: LooseDeps = {}) {
     verifyLaunch: async (args) => {
       record('verifyLaunch', args);
       return { verified: true, waitedMs: 2500, record: { event: 'bundle_build_started' } };
+    },
+    // Release-only seams; a Debug run must never reach either.
+    swapJsBundle: async (args) => {
+      record('swapJsBundle', args);
+      return {
+        ok: true,
+        appPath: join(root, 'js-swap', 'Fixture.app'),
+        tmpDir: join(root, 'js-swap'),
+        hermes: true,
+        durationMs: 1200,
+      };
+    },
+    verifyReleaseLaunch: async (args) => {
+      record('verifyReleaseLaunch', args);
+      return { verified: true, waitedMs: 3000 };
     },
     ensureWorkspaceIgnored: async (dir) => {
       record('ensureWorkspaceIgnored', dir);
@@ -1931,6 +1953,7 @@ describe('iosFacts', () => {
       udid: UDID,
       deviceName: 'rn-iso-x',
       fingerprint: 'abc',
+      configuration: null,
       cacheKey: 'abc-debug-sim',
       cacheHit: 'local',
       cacheSkipped: false,
@@ -2201,4 +2224,160 @@ test('a miss with no prior entry (or a first build) prints the plain miss line, 
   assert(line);
   expect(line).toMatch(/miss \(\d+m?\d*s\)$/);
   expect(buildRecords().some((r) => r.event === 'fingerprint_diff')).toBe(false);
+});
+
+// --- release builds (--configuration, issue #57 phase 1) --------------------
+//
+// A non-Debug configuration is a different product: the JS is embedded by the
+// xcodebuild phase, so Metro is not part of the run at all -- and a
+// native-keyed cache hit is an app carrying its BUILDER's JS, which is why
+// the hit path swaps a fresh bundle in rather than installing the artifact
+// as-is. What is pinned here is the command's side of that: the gate that
+// does not run, the key that differs, the swap-then-install order, and the
+// fallback that never installs stale JS.
+
+describe('configuration resolution', () => {
+  test('flag > setting > default', () => {
+    expect(resolveConfiguration('Release', { ios: { configuration: 'Staging' } })).toBe('Release');
+    expect(resolveConfiguration(null, { ios: { configuration: 'Release' } })).toBe('Release');
+    expect(resolveConfiguration('  ', { ios: { configuration: 'Release' } })).toBe('Release');
+    expect(resolveConfiguration(null, {})).toBe(null);
+    expect(resolveConfiguration(null, null)).toBe(null);
+  });
+
+  test('iosConfigurationSetting reads ios.configuration and nothing shaped differently', () => {
+    expect(iosConfigurationSetting({ ios: { configuration: ' Release ' } })).toBe('Release');
+    expect(iosConfigurationSetting({ ios: { configuration: '' } })).toBe(null);
+    expect(iosConfigurationSetting({ ios: [] })).toBe(null);
+    expect(iosConfigurationSetting({})).toBe(null);
+    expect(iosConfigurationSetting(null)).toBe(null);
+  });
+
+  test('only Debug (case-insensitive) is the dev flow; everything else embeds its JS', () => {
+    expect(isReleaseConfiguration('Release')).toBe(true);
+    expect(isReleaseConfiguration('Staging')).toBe(true);
+    expect(isReleaseConfiguration('Debug')).toBe(false);
+    expect(isReleaseConfiguration('debug')).toBe(false);
+    expect(isReleaseConfiguration(null)).toBe(false);
+    expect(isReleaseConfiguration('')).toBe(false);
+  });
+});
+
+describe('release skips Metro entirely', () => {
+  test('no gate, no reservation needed, no port wiring, plain launch', async () => {
+    // Deliberately NO reserve(): a release run must not care.
+    const { exitCode, calls, errs } = await run({ configuration: 'Release' });
+    expect(exitCode).toBe(null);
+    expect(!calls.order.includes('resolveProjectMetro')).toBeTruthy();
+    expect(errs.join('\n')).not.toMatch(/RN_ISO_NO_METRO/);
+    expect(errs.join('\n')).toMatch(/skipped \(Release: the JS bundle is embedded/);
+    // A plain simctl launch: no port, no dev-client deep link.
+    expect(calls.args.launchIosApp.metroPort).toBe(null);
+    expect(calls.args.launchIosApp.devClientScheme).toBeUndefined();
+    // Verification is process-alive, not bundle-fetch.
+    expect(!calls.order.includes('verifyLaunch')).toBeTruthy();
+    expect(calls.order.includes('verifyReleaseLaunch')).toBeTruthy();
+    // The collector still attaches, so `logs --errors` works in release.
+    expect(calls.order.includes('replaceCollector')).toBeTruthy();
+  });
+
+  test('the payload says metroPort null, configuration Release, launched true', async () => {
+    const { logs } = await run({ configuration: 'Release', json: true });
+    const facts = parseFirst(logs);
+    expect(facts.platform).toBe('ios');
+    expect(facts.configuration).toBe('Release');
+    expect(facts.metroPort).toBe(null);
+    expect(facts.launched).toBe(true);
+    expect(facts.cacheKey).toBe(`${FINGERPRINT}-release-sim`);
+  });
+
+  test('a dead app process is launched: "unverified", with the device-log pointer', async () => {
+    const { logs, errs } = await run(
+      { configuration: 'Release', json: true },
+      {
+        verifyReleaseLaunch: async () => ({ verified: false, reason: 'exited', waitedMs: 3000 }),
+      },
+    );
+    expect(parseFirst(logs).launched).toBe('unverified');
+    expect(errs.join('\n')).toMatch(/process exited within/);
+    expect(errs.join('\n')).toMatch(/rn-iso logs --errors/);
+  });
+
+  test('the ios.configuration setting is the repo default, and the flag overrides it back to Debug', async () => {
+    // Setting alone: release-shaped.
+    const settings = { ios: { configuration: 'Release' } };
+    const first = await run({}, { resolveSettings: () => settings });
+    expect(!first.calls.order.includes('resolveProjectMetro')).toBeTruthy();
+    expect(first.calls.args.launchIosApp.metroPort).toBe(null);
+    // Flag Debug beats the setting: the ordinary gated flow, which refuses
+    // here because nothing is reserved.
+    const second = await run({ configuration: 'Debug' }, { resolveSettings: () => settings });
+    expect(second.exitCode).toBe(1);
+    expect(second.stderr).toMatch(/RN_ISO_NO_METRO/);
+  });
+});
+
+describe('the release cache key and the JS swap', () => {
+  test('the key differs from debug: -release-sim vs -debug-sim', async () => {
+    reserve();
+    const debugRun = await run({});
+    expect(debugRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-debug-sim`);
+    const releaseRun = await run({ configuration: 'Release' });
+    expect(releaseRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-release-sim`);
+    // And the fresh release artifact stores under it, exactly like Debug ones.
+    expect(releaseRun.calls.args.storeBuild.platform).toBe('ios');
+    expect((releaseRun.calls.args.storeBuild as { key?: unknown }).key).toBe(`${FINGERPRINT}-release-sim`);
+  });
+
+  test('a fresh release build passes the configuration to xcodebuild and needs no swap', async () => {
+    const { calls } = await run({ configuration: 'Release' });
+    expect(calls.args.buildIos.configuration).toBe('Release');
+    expect(!calls.order.includes('swapJsBundle')).toBeTruthy();
+  });
+
+  test('a release cache hit swaps: cached app in, temp copy out, THAT copy installed', async () => {
+    const cached = '/cache/ios/entry/Fixture.app';
+    const { exitCode, calls, errs } = await run({ configuration: 'Release' }, { resolveBuild: () => cached });
+    expect(exitCode).toBe(null);
+    // Order: resolve the cache, swap, then install -- never a build.
+    const order = calls.order;
+    expect(order.indexOf('swapJsBundle')).toBeGreaterThan(order.indexOf('resolveBuild'));
+    expect(order.indexOf('installIosApp')).toBeGreaterThan(order.indexOf('swapJsBundle'));
+    expect(!order.includes('buildIos')).toBeTruthy();
+    expect(!order.includes('runPodInstall')).toBeTruthy();
+    // The swap starts from the cached artifact and the INSTALL gets the
+    // re-signed temp copy, never the cache entry itself.
+    expect(calls.args.swapJsBundle.cachedAppPath).toBe(cached);
+    expect(calls.args.installIosApp.appPath).toBe(join(root, 'js-swap', 'Fixture.app'));
+    // The bundle id is read from the copy that will be installed.
+    expect(calls.args.readBundleId).toBe(join(root, 'js-swap', 'Fixture.app'));
+    expect(errs.join('\n')).toMatch(/js swap/);
+  });
+
+  test('a debug cache hit never swaps', async () => {
+    reserve();
+    const cached = '/cache/ios/entry/Fixture.app';
+    const { calls } = await run({}, { resolveBuild: () => cached });
+    expect(!calls.order.includes('swapJsBundle')).toBeTruthy();
+    expect(calls.args.installIosApp.appPath).toBe(cached);
+  });
+
+  test('a swap failure falls back to a FULL build with a note -- stale JS is never installed', async () => {
+    const cached = '/cache/ios/entry/Fixture.app';
+    const { exitCode, calls, errs, logs, appPath } = await run(
+      { configuration: 'Release', json: true },
+      {
+        resolveBuild: () => cached,
+        swapJsBundle: async () => ({ failed: true, step: 'bundle', reason: 'expo export:embed failed (exit code 1)' }),
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(errs.join('\n')).toMatch(/js swap/);
+    expect(errs.join('\n')).toMatch(/building fresh instead/);
+    // The fallback compiled, stored, and installed ITS artifact.
+    expect(calls.order.includes('buildIos')).toBeTruthy();
+    expect(calls.args.installIosApp.appPath).toBe(appPath);
+    // The payload reports what actually happened: not a cache hit.
+    expect(parseFirst(logs).cacheHit).toBe(false);
+  });
 });

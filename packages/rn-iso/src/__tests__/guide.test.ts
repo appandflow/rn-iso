@@ -36,6 +36,7 @@ test('the facts topic documents the fields each --json payload actually carries'
       'udid',
       'deviceName',
       'fingerprint',
+      'configuration',
       'cacheKey',
       'cacheHit',
       'cacheSkipped',
@@ -73,7 +74,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
   assert(lifecycle);
   const advertised = {
     'start.ts': ['--json', '--wait'],
-    'ios.ts': ['--json', '--no-metro-check', '--no-build-cache'],
+    'ios.ts': ['--json', '--no-metro-check', '--no-build-cache', '--configuration'],
     'android.ts': ['--json', '--no-metro-check', '--no-build-cache', '--variant'],
     'stop.ts': ['--json', '--force'],
     'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],

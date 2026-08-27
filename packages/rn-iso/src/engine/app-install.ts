@@ -46,6 +46,10 @@ export type IosLaunchResult = {
   mode?: string;
   url?: string;
   jsLocation?: string;
+  // The app's host process id, parsed from `simctl launch` output on the
+  // plain-launch path (a simulator app IS a host process). null when the
+  // launch went through openurl, which starts no process of its own.
+  pid?: number | null;
   failed?: boolean;
   code?: string;
   reason?: string;
@@ -146,53 +150,73 @@ export function devClientUrl(scheme: string, metroPort: number | string, host = 
   return `${scheme}://expo-development-client/?url=${encodeURIComponent(`http://${host}:${metroPort}`)}`;
 }
 
+// PURE. The pid from `simctl launch`'s one output line, `<bundleId>: <pid>`.
+// null on anything else -- an unparseable line is a launch whose process
+// cannot be verified, not a failed launch.
+export function parseLaunchedPid(text: unknown): number | null {
+  if (typeof text !== 'string') return null;
+  const match = text.trim().match(/:\s*(\d+)\s*$/);
+  if (!match) return null;
+  const pid = Number(match[1]);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
 // Order matters. RCT_jsLocation is written FIRST, unconditionally, even on
 // the dev-client path: the openurl carries the port for the launcher, but a
 // later in-app reload that goes through RCTBundleURLProvider reads the
 // default instead, and a stale one there sends the reload at 8081 -- another
 // workspace's bundler.
+//
+// `metroPort: null` is the RELEASE contract: the JS bundle is embedded in the
+// app, so there is no port to wire -- no RCT_jsLocation write (release builds
+// compile RCTBundleURLProvider's dev path out entirely) and no dev-client deep
+// link, just a plain `simctl launch`.
 export function launchIosApp(
   {
     udid,
     bundleId,
     metroPort,
     devClientScheme = null,
-  }: { udid: string; bundleId: string; metroPort: number | string; devClientScheme?: string | null },
+  }: { udid: string; bundleId: string; metroPort: number | string | null; devClientScheme?: string | null },
   { exec = null }: ExecOpt = {},
 ): IosLaunchResult {
   const e = exec || getExecutor();
-  try {
-    e.runFile('xcrun', [
-      'simctl',
-      'spawn',
-      udid,
-      'defaults',
-      'write',
-      bundleId,
-      'RCT_jsLocation',
-      jsLocationValue(metroPort),
-    ]);
-  } catch (err) {
-    return {
-      failed: true,
-      code: LAUNCH_ERROR,
-      reason: `Could not point ${bundleId} at Metro port ${metroPort} (defaults write RCT_jsLocation): ${describe(err)}`,
-    };
-  }
-
-  if (devClientScheme) {
-    const url = devClientUrl(devClientScheme, metroPort);
+  if (metroPort !== null) {
     try {
-      e.runFile('xcrun', ['simctl', 'openurl', udid, url]);
-      return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort) };
+      e.runFile('xcrun', [
+        'simctl',
+        'spawn',
+        udid,
+        'defaults',
+        'write',
+        bundleId,
+        'RCT_jsLocation',
+        jsLocationValue(metroPort),
+      ]);
     } catch (err) {
-      return { failed: true, code: LAUNCH_ERROR, reason: `simctl openurl ${url} failed: ${describe(err)}` };
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `Could not point ${bundleId} at Metro port ${metroPort} (defaults write RCT_jsLocation): ${describe(err)}`,
+      };
+    }
+
+    if (devClientScheme) {
+      const url = devClientUrl(devClientScheme, metroPort);
+      try {
+        e.runFile('xcrun', ['simctl', 'openurl', udid, url]);
+        return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort) };
+      } catch (err) {
+        return { failed: true, code: LAUNCH_ERROR, reason: `simctl openurl ${url} failed: ${describe(err)}` };
+      }
     }
   }
 
   try {
-    e.runFile('xcrun', ['simctl', 'launch', udid, bundleId]);
-    return { ok: true, mode: 'launch', jsLocation: jsLocationValue(metroPort) };
+    const out = e.runFile('xcrun', ['simctl', 'launch', udid, bundleId]);
+    const result: IosLaunchResult = { ok: true, mode: 'launch', pid: parseLaunchedPid(out) };
+    if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
+    return result;
   } catch (err) {
     return { failed: true, code: LAUNCH_ERROR, reason: `simctl launch ${bundleId} failed: ${describe(err)}` };
   }
@@ -575,6 +599,57 @@ export type VerifyLaunchResult = {
   mode: string | null;
   waitedMs: number;
 };
+
+// How long a Release app gets to crash before its process is declared alive.
+// A bad embedded bundle takes the app down within a second or two of launch;
+// checking instantly would verify a process that is one frame from dying.
+const RELEASE_VERIFY_WAIT_MS = 3000;
+
+export type ReleaseVerifyResult = {
+  verified: boolean;
+  // Why an unverified result could not be verified: 'no-pid' when the launch
+  // output carried no process id to check, 'exited' when the process was gone
+  // at check time.
+  reason?: 'no-pid' | 'exited';
+  waitedMs: number;
+};
+
+// The Release counterpart of verifyLaunch. A release build fetches nothing
+// from Metro -- its bundle is embedded -- so "did it load a bundle from us"
+// is not a question that exists. What CAN be proven is that the launched
+// process is still alive a moment later: a simulator app is a host process,
+// so `kill(pid, 0)` from here answers it. Weaker proof than a bundle request,
+// deliberately reported as such by the callers.
+export async function verifyReleaseLaunch({
+  pid,
+  waitMs = RELEASE_VERIFY_WAIT_MS,
+  alive = isProcessAlive,
+  now = Date.now,
+  sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
+}: {
+  pid?: number | null;
+  waitMs?: number;
+  alive?: (pid: number) => boolean;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<unknown>;
+}): Promise<ReleaseVerifyResult> {
+  const startedAt = now();
+  if (!pid) return { verified: false, reason: 'no-pid', waitedMs: 0 };
+  await sleep(Math.max(0, waitMs));
+  const waitedMs = now() - startedAt;
+  return alive(pid) ? { verified: true, waitedMs } : { verified: false, reason: 'exited', waitedMs };
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM is a process that exists but is not ours -- alive, then. Only
+    // ESRCH (and anything else unexpected) reads as gone.
+    return (err as NodeJS.ErrnoException)?.code === 'EPERM';
+  }
+}
 
 export const LAUNCH_UNVERIFIED = 'unverified';
 

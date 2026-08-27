@@ -94,7 +94,7 @@ test('unknownSettingKeys reports keys rn-iso no longer reads', () => {
 test('unknownSettingKeys accepts every key that is still honoured', () => {
   expect(
     unknownSettingKeys({
-      ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' },
+      ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2', configuration: 'Release' },
       android: { systemImage: 'pkg', variant: 'productionDebug' },
       worktree: { baseRef: 'fresh', include: ['.env'] },
       worktreeDir: '/tmp/wt',
