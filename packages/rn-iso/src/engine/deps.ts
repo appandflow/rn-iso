@@ -16,6 +16,7 @@
 // wrapper that gets them.
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -224,6 +225,74 @@ function readOrNull(file: string) {
 // Never throws: a missing `pod`, a non-zero exit and a spawn error all come
 // back as { failed, reason } so the command layer prints one diagnostic and
 // a log path instead of a stack.
+
+// The environment `pod install` runs with. rn-iso owns this subprocess, so
+// its env is rn-iso's job, not the caller's (appandflow/rn-iso#43, #44):
+// - CocoaPods requires a UTF-8 locale, and an agent shell / launchd job / CI
+//   runner usually exports none -- so without a default, the FIRST build of
+//   any repo fails. A locale the caller set is honoured.
+// - A repo that pins a ruby (.ruby-version) is naming the ruby its Gemfile's
+//   cocoapods was installed under. When that exact version exists in a known
+//   version-manager prefix, it is prepended to PATH (with GEM_HOME/GEM_PATH
+//   for rvm's layout) so bundler-aware pod shims resolve the right gem home
+//   instead of failing with "Could not find proper version of cocoapods" and
+//   the circular advice to run `bundle install`.
+export function podEnv(
+  root: string,
+  {
+    env = process.env,
+    home = homedir(),
+    exists = existsSync,
+  }: { env?: NodeJS.ProcessEnv; home?: string; exists?: (p: string) => boolean } = {},
+): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {
+    ...env,
+    FORCE_COLOR: '0',
+    CLICOLOR: '0',
+    LANG: env.LANG ?? 'en_US.UTF-8',
+    LC_ALL: env.LC_ALL ?? env.LANG ?? 'en_US.UTF-8',
+  };
+  const version = readRubyVersion(root);
+  if (!version) return out;
+  const candidates: Array<{ bin: string; gems?: string }> = [
+    { bin: join(home, '.rbenv', 'versions', version, 'bin') },
+    {
+      bin: join(home, '.rvm', 'rubies', `ruby-${version}`, 'bin'),
+      gems: join(home, '.rvm', 'gems', `ruby-${version}`),
+    },
+    { bin: join(home, '.asdf', 'installs', 'ruby', version, 'bin') },
+    { bin: join(home, '.local', 'share', 'mise', 'installs', 'ruby', version, 'bin') },
+  ];
+  for (const c of candidates) {
+    if (!exists(c.bin)) continue;
+    out.PATH = `${c.bin}:${out.PATH ?? ''}`;
+    if (c.gems && exists(c.gems)) {
+      out.GEM_HOME = c.gems;
+      out.GEM_PATH = c.gems;
+    }
+    break;
+  }
+  return out;
+}
+
+// .ruby-version's first non-blank line, e.g. "3.3.10" (a "ruby-" prefix is
+// tolerated and stripped). Null when the repo pins nothing.
+export function readRubyVersion(
+  root: string,
+  { read = readFileSync }: { read?: typeof readFileSync } = {},
+): string | null {
+  try {
+    const first = String(read(join(root, '.ruby-version'), 'utf-8'))
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l && !l.startsWith('#'));
+    if (!first) return null;
+    return first.replace(/^ruby-/, '');
+  } catch {
+    return null;
+  }
+}
+
 export async function runPodInstall(
   root: string,
   logWriter: NdjsonWriter | null | undefined,
@@ -272,7 +341,7 @@ export async function runPodInstall(
       stdio: ['ignore', 'pipe', 'pipe'],
       // CocoaPods paints progress in colour; an escape sequence inside a JSON
       // string is unreadable in the log and unmatchable by `logs --grep`.
-      env: { ...process.env, FORCE_COLOR: '0', CLICOLOR: '0' },
+      env: podEnv(root),
     });
   } catch (err) {
     return (
@@ -327,10 +396,25 @@ export async function runPodInstall(
     // The anchored extraction is what the caller prints; the tail survives
     // beside it as the fallback for a transcript neither pattern matched.
     const extracted = extractPodDiagnostics(transcript.join('\n'));
+    // Bundler's "run `bundle install`" advice on this error is circular when
+    // the actual cause is the wrong ruby: the gems exist, under the ruby the
+    // repo pins, and bundler is looking in the current ruby's gem home
+    // (appandflow/rn-iso#44). Name the real cause instead.
+    const pinned = /Could not find proper version of cocoapods/.test(transcript.join('\n'))
+      ? readRubyVersion(root)
+      : null;
     return {
       failed: true,
       code: DEPS_ERROR,
       reason: `\`pod install\` failed (${how}).`,
+      ...(pinned
+        ? {
+            remedy:
+              `This repo pins ruby ${pinned} (.ruby-version) and its Gemfile's cocoapods was installed under it; ` +
+              `the shell's ruby is likely a different version, so bundler looks in the wrong gem home. ` +
+              `Put ruby ${pinned} on PATH (rbenv/rvm/asdf/mise) -- \`bundle install\` will NOT fix this.`,
+          }
+        : {}),
       diagnosticSource: extracted ? extracted.source : ('tail' as const),
       diagnosticLines: extracted ? extracted.lines : ([] as string[]),
       lastLines: transcript.slice(-LAST_LINES),
