@@ -774,7 +774,7 @@ describe('the remote cache', () => {
     expect(storedEntry.path).toBe(remoteApp);
     expect(storedEntry.key).toBe(calls.args.resolveBuild.key);
     expect(calls.args.installIosApp.appPath).toBe(storedApp);
-    expect(errs.join('\n')).toMatch(/^cache {7}remote hit \(eas\) -> stored locally$/m);
+    expect(errs.join('\n')).toMatch(/^cache {7}remote hit \(eas\) -> stored locally \(\d+m?\d*s\)$/m);
     const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('remote');
     expect(facts.appPath).toBe(storedApp);
@@ -1542,11 +1542,12 @@ describe('success output', () => {
     expect(logs.length).toBe(1);
     expect(logs[0]).toMatch(/^OK: com\.example\.app on rn-iso-fixture \(BF2A\.\.\), Metro port 8082/);
     const text = errs.join('\n');
-    expect(text).toMatch(/^device {6}rn-iso-fixture \(BF2A\.\.\) booted$/m);
-    expect(text).toMatch(/^fingerprint a3f9b1\.\. miss$/m);
+    // Every phase line carries its own duration, in formatDuration's shape.
+    expect(text).toMatch(/^device {6}rn-iso-fixture \(BF2A\.\.\) booted \(\d+m?\d*s\)$/m);
+    expect(text).toMatch(/^fingerprint a3f9b1\.\. miss \(\d+m?\d*s\)$/m);
     expect(text).toMatch(/^build {7}ok \(2m41s\)$/m);
-    expect(text).toMatch(/^install {5}-> rn-iso-fixture \(BF2A\.\.\)$/m);
-    expect(text).toMatch(/^launch {6}com\.example\.app$/m);
+    expect(text).toMatch(/^install {5}-> rn-iso-fixture \(BF2A\.\.\) \(\d+m?\d*s\)$/m);
+    expect(text).toMatch(/^launch {6}com\.example\.app \(\d+m?\d*s\)$/m);
   });
 
   test('--json emits exactly one line of facts on stdout', async () => {
