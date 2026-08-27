@@ -10,10 +10,13 @@
 // Findings are observations with a reason, not pass/fail rules: the specifics
 // are Xcode- and SDK-version-shaped and will age. A finding that says what was
 // seen and why it matters stays useful even when its advice does not.
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { getExecutor } from './exec.ts';
 import { detectIsExpo } from './project.ts';
+import { diffFingerprintSources, fingerprintProject, loadFingerprinter, type Fingerprinter } from './build-cache.ts';
+import { dirtyFingerprintFiles } from './worktree.ts';
 import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from './config.ts';
 import { liveOwnedDeviceCount } from './engine/device.ts';
 import { listBuildSlots } from './engine/build-slots.ts';
@@ -354,7 +357,7 @@ export function checkBuildCacheProvider(
     return finding(
       'note',
       `Cannot check the build cache provider in ${dynamicConfig}`,
-      'This config is code, so it is not readable without executing it. Confirm by hand that a buildCacheProvider is set, and that it is on the key this SDK reads.',
+      'This config is code, so it is not readable without executing it. A provider is optional -- rn-iso ios/android have their own cache -- but if this project DOES set one, confirm by hand that it is on the key this SDK reads.',
       `${
         sdkMajor && sdkMajor <= 53
           ? `SDK ${sdkMajor} reads expo.experiments.buildCacheProvider and ignores the top-level key in silence.`
@@ -367,14 +370,13 @@ export function checkBuildCacheProvider(
   const topLevel = expo.buildCacheProvider;
   const experimental = (expo.experiments as AnyJson | null | undefined)?.buildCacheProvider;
 
-  if (!topLevel && !experimental) {
-    return finding(
-      'note',
-      'No Expo build cache provider configured',
-      'Without one, every `expo run` builds the app even when no native input changed. rn-iso ios/android have their own local cache regardless; a provider extends the same benefit to builds run outside rn-iso.',
-      'Add a buildCacheProvider to app.json -- "eas" for the remote EAS cache, or @rn-iso/expo-build-cache for the local one. An existing provider is kept as-is.',
-    );
-  }
+  // NO provider at all is deliberately not a finding. rn-iso's own cache
+  // already covers every build rn-iso drives, so a provider only adds value to
+  // builds run OUTSIDE it (`expo run` by hand, EAS for a team) -- optional, and
+  // not part of setup. What this check reports is a provider that IS
+  // configured but on a key this SDK never reads, which is a silent no-op.
+  if (!topLevel && !experimental) return null;
+
   // A provider is configured. Which one is the project's own business: "eas"
   // (the remote cache), @rn-iso/expo-build-cache, or a custom module all
   // satisfy this check, and init never replaces one. rn-iso ios/android do
@@ -471,6 +473,39 @@ export function checkEasAuth({
   return null;
 }
 
+// Gradle's task-output cache (`org.gradle.caching`) is OFF by default, and a
+// second worktree then recompiles every task from scratch even when nothing
+// changed -- the exact cost this command exists to name. The cache lives under
+// the Gradle user home (~/.gradle by default), which every worktree on the
+// machine already shares, so one property is the whole fix.
+//
+// `source` is android/gradle.properties, read and never evaluated. Null means
+// the file is absent -- a CNG project has no android/ until prebuild generates
+// one -- and the check is skipped rather than guessed at: there is no file to
+// set the property in, and prebuild writes the template's own.
+export function checkGradleBuildCache(gradlePropertiesSource: string | null): Finding | null {
+  if (gradlePropertiesSource == null) return null;
+  const enabled = String(gradlePropertiesSource)
+    .split('\n')
+    .map((line) => line.trim())
+    // A properties file comments with # or !; a commented-out property sets
+    // nothing.
+    .filter((line) => line && !line.startsWith('#') && !line.startsWith('!'))
+    .some((line) => {
+      // The KEY is case-sensitive (Java properties are); the VALUE is parsed
+      // by Boolean.parseBoolean, which is not.
+      const m = /^org\.gradle\.caching\s*[=:]\s*(.+)$/.exec(line);
+      return m !== null && m[1]?.trim().toLowerCase() === 'true';
+    });
+  if (enabled) return null;
+  return finding(
+    'note',
+    "Gradle's build cache is off",
+    "org.gradle.caching=true is not set in android/gradle.properties, so Gradle re-runs every task from scratch in a fresh worktree -- the task-output cache that would let a second workspace reuse the first one's compiled classes is simply off. It lives under the Gradle user home, which every worktree on this machine already shares.",
+    'Add org.gradle.caching=true to android/gradle.properties.',
+  );
+}
+
 // The one note about concurrency limits, and ONLY when a limit is set: an
 // unset cap is the default (rn-iso imposes nothing), so saying "no limits are
 // configured" on every run would be noise. When one IS set, echoing the caps
@@ -531,6 +566,9 @@ export function runDoctor(
     : ['app.config.ts', 'app.config.js', 'app.config.mjs'].find((f) => existsSync(join(projectRoot, f))) || null;
   const podfileProperties = readJson(join(projectRoot, 'ios', 'Podfile.properties.json'));
   const podfile = read(join('ios', 'Podfile'));
+  // Null when android/gradle.properties does not exist -- a CNG project has no
+  // android/ until prebuild -- which skips the gradle-cache check entirely.
+  const gradleProperties = read(join('android', 'gradle.properties'));
   const metroConfig = read('metro.config.js') ?? read('metro.config.cjs');
   const gitignore = read('.gitignore');
   // git's verdict on the workspace dir, monorepo-aware. check-ignore exits 0
@@ -584,6 +622,7 @@ export function runDoctor(
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
     checkCompilationCache(podfile, xcodeMajor),
+    checkGradleBuildCache(gradleProperties),
     checkArtifactLayout({ gitignoreSource: gitignore, gitIgnored }),
     checkCcacheConflict(podfile, podfileProperties),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
@@ -621,5 +660,115 @@ function countActiveBuilds(): number {
     return listBuildSlots().filter((s) => s.alive).length;
   } catch {
     return 0;
+  }
+}
+
+// --- fingerprint parity: does THIS checkout hash like a fresh worktree? -----
+//
+// The whole premise of the shared build cache is that a worktree of the same
+// commit computes the same fingerprint as the checkout that filled the cache.
+// When the main checkout carries uncommitted edits to a fingerprint input,
+// that premise is silently false: every entry it stores is keyed on a hash no
+// fresh worktree will ever compute, and every worktree misses. The only way to
+// measure that is to actually do it once -- fingerprint HEAD in a clean
+// temporary worktree and compare.
+
+// PURE. The finding, given both hashes and the diagnosis.
+export function checkFingerprintParity({
+  projectHash,
+  worktreeHash,
+  changed = [],
+  dirtyFiles = [],
+}: {
+  projectHash?: string | null;
+  worktreeHash?: string | null;
+  changed?: string[];
+  dirtyFiles?: string[];
+} = {}): Finding | null {
+  if (!projectHash || !worktreeHash || projectHash === worktreeHash) return null;
+  const names = changed.slice(0, 3).join(', ');
+  const differing = changed.length
+    ? ` The differing source${changed.length === 1 ? '' : 's'}: ${names}${changed.length > 3 ? ` (and ${changed.length - 3} more)` : ''}.`
+    : '';
+  const cause = dirtyFiles.length
+    ? `The likely cause is uncommitted changes to tracked fingerprint inputs -- git reports ${dirtyFiles.slice(0, 3).join(', ')}${dirtyFiles.length > 3 ? ` (and ${dirtyFiles.length - 3} more)` : ''} dirty in this checkout.`
+    : 'The likely cause is uncommitted changes to tracked fingerprint inputs (this check compared against a clean worktree of HEAD).';
+  return finding(
+    'note',
+    'This checkout does not fingerprint like a fresh worktree of HEAD',
+    `A clean detached worktree of HEAD computes a different @expo/fingerprint hash than this checkout, so worktrees will MISS the cache entries this checkout fills (and vice versa) until the two agree.${differing} ${cause} (To measure this, doctor ran a real fingerprint twice and briefly created a temporary git worktree -- .git/worktrees metadata was touched and cleaned up.)`,
+    'Commit the dirty fingerprint inputs, or add genuinely build-irrelevant ones to .fingerprintignore.',
+  );
+}
+
+// The I/O half. ONE temporary detached worktree of HEAD in the OS tmpdir, a
+// fingerprint on each side, and an unconditional cleanup. Every guard skips
+// silently -- not a git repo, `git worktree add` refused, no @expo/fingerprint,
+// a fingerprint that throws -- because doctor always exits 0 and a diagnostic
+// must not manufacture a failure of its own. This is doctor's most expensive
+// check (two real fingerprints); callers run it LAST.
+export async function detectFingerprintParity(
+  projectRoot: string,
+  {
+    load = loadFingerprinter,
+    dirtyFiles = dirtyFingerprintFiles,
+  }: {
+    load?: (projectRoot: string) => Fingerprinter | null;
+    dirtyFiles?: (root: string) => string[];
+  } = {},
+): Promise<Finding | null> {
+  const fp = load(projectRoot);
+  if (!fp) return null;
+  const exec = getExecutor();
+  const quotedRoot = JSON.stringify(projectRoot);
+  if (exec.runQuiet(`git -C ${quotedRoot} rev-parse --git-dir`, { timeoutMs: 10000 }) == null) return null;
+
+  // The same platform scope ios/android use, picked by what this repo has, so
+  // the two hashes compared here are the ones the cache is actually keyed on.
+  const platform = existsSync(join(projectRoot, 'ios'))
+    ? 'ios'
+    : existsSync(join(projectRoot, 'android'))
+      ? 'android'
+      : undefined;
+
+  const base = mkdtempSync(join(tmpdir(), 'rn-iso-parity-'));
+  const worktree = join(base, 'head');
+  const added = exec.runQuiet(`git -C ${quotedRoot} worktree add --detach ${JSON.stringify(worktree)} HEAD`, {
+    timeoutMs: 60000,
+  });
+  if (added == null) {
+    rmSync(base, { recursive: true, force: true });
+    return null;
+  }
+
+  try {
+    const loadHere = () => fp;
+    const project = await fingerprintProject(projectRoot, { platform, load: loadHere });
+    const clean = await fingerprintProject(worktree, { platform, load: loadHere });
+    if (!project || !clean) return null;
+    if (project.hash === clean.hash) return null;
+    const changed = diffFingerprintSources({
+      previous: clean.sources,
+      previousHash: clean.hash,
+      current: project,
+      differ: fp.diffFingerprints ?? null,
+    });
+    return checkFingerprintParity({
+      projectHash: project.hash,
+      worktreeHash: clean.hash,
+      changed,
+      dirtyFiles: dirtyFiles(projectRoot),
+    });
+  } catch {
+    // A fingerprint that cannot run (a worktree with no node_modules can make
+    // the project's own fingerprinter throw) is a skip, not a finding.
+    return null;
+  } finally {
+    // Always, on every exit path: the temp worktree registered itself in
+    // .git/worktrees, and leaving it there would make this read-only command
+    // the thing that dirtied the repo.
+    exec.runQuiet(`git -C ${quotedRoot} worktree remove --force ${JSON.stringify(worktree)}`, { timeoutMs: 30000 });
+    rmSync(base, { recursive: true, force: true });
+    exec.runQuiet(`git -C ${quotedRoot} worktree prune`, { timeoutMs: 10000 });
   }
 }

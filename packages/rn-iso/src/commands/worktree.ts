@@ -11,6 +11,7 @@ import {
   addWorktree,
   branchExists,
   carryOverFiles,
+  carryUncommittedChanges,
   depsOutOfSync,
   cloneIgnoredEntries,
   defaultWorktreeDir,
@@ -61,7 +62,7 @@ export function registerCreate(worktree: Command): void {
     .option('--label <label>', 'rn-iso shortcut for the worktree (defaults to the worktree name)')
     .option(
       '--carry-ignored',
-      'clone every gitignored path (node_modules, Pods, build output) except those in .worktreeexclude',
+      "clone the source's working state: every gitignored path (node_modules, Pods, build output) except those in .worktreeexclude, plus its uncommitted tracked changes (applied when they fit this base)",
     )
     .action(async (name, opts) => {
       // `name` comes from a hook (session text), not a hand-typed argument,
@@ -261,6 +262,18 @@ export function registerCreate(worktree: Command): void {
             ),
           );
         }
+        // The clone above carried artifacts built against the SOURCE's working
+        // tree, and this worktree materializes a clean base -- so the source's
+        // uncommitted tracked changes are carried too, as a patch. Applied when
+        // it fits this base; reported (and NOT applied) when the base diverges
+        // from the source HEAD. Untracked non-ignored files stay out of scope,
+        // exactly as they always were.
+        const changes = carryUncommittedChanges({ root, target });
+        if (changes?.applied) {
+          console.error(chalk.dim(carriedChangesLine(changes.files)));
+        } else if (changes?.conflicted) {
+          console.error(chalk.yellow(carryConflictWarning(changes.files)));
+        }
       }
 
       // Register the label now, before `rn-iso ios` ever runs, and mark this
@@ -287,6 +300,32 @@ export function registerCreate(worktree: Command): void {
       // else may be written here.
       console.log(target);
     });
+}
+
+// PURE. Up to three of the carried files by name, the rest as a count: the
+// line has to stay a line, and the full list is one `git status` away in the
+// worktree itself.
+function carriedFileList(files: string[]): string {
+  const shown = files.slice(0, 3).join(', ');
+  return files.length > 3 ? `${shown}, +${files.length - 3}` : shown;
+}
+
+// PURE. The stderr line a clean carry prints: what landed, and that it is
+// deliberately still uncommitted -- committing someone's half-done edit is the
+// worktree's author's call, never this command's.
+export function carriedChangesLine(files: string[]): string {
+  return `Carried ${files.length} uncommitted change(s) from the source (${carriedFileList(files)}) -- uncommitted here too; commit deliberately.`;
+}
+
+// PURE. The warning when the patch does NOT apply: the worktree's base
+// diverges from the source HEAD, nothing was changed, and the consequence is
+// named -- the carried artifacts (and the fingerprints they will produce)
+// belong to the source's uncommitted state, not to this tree.
+export function carryConflictWarning(files: string[]): string {
+  return (
+    `Could not carry the source's uncommitted changes (${carriedFileList(files)}): this worktree's base diverges from the source HEAD, so the patch does not apply and nothing was changed here. ` +
+    "The carried artifacts were installed for the source's uncommitted state, so fingerprints and cache keys in this worktree will differ from the source's until those changes are reconciled."
+  );
 }
 
 // PURE. The path a `git status --porcelain` line is about.

@@ -1,4 +1,6 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -8,7 +10,10 @@ import {
   checkCcacheConflict,
   checkDevClient,
   checkEasAuth,
+  checkFingerprintParity,
+  checkGradleBuildCache,
   checkMetroCache,
+  detectFingerprintParity,
   runDoctor,
   metroConfigDelegate,
   detectXcodeMajor,
@@ -526,4 +531,192 @@ test('runDoctor emits one concurrency note when a limit is set', () => {
   const notes = findings.filter((f) => /concurrency/i.test(f.title));
   expect(notes.length).toBe(1);
   rmSync(project, { recursive: true, force: true });
+});
+
+// --- a MISSING provider is deliberately silent -------------------------------
+//
+// rn-iso's own cache covers every build rn-iso drives, so a provider only adds
+// value to builds run outside it -- optional, and not part of setup. What the
+// check still reports is a provider CONFIGURED on a key this SDK never reads.
+test('a project with no provider configured at all is reported as nothing', () => {
+  expect(checkBuildCacheProvider({ expo: {} }, 57)).toBe(null);
+  expect(checkBuildCacheProvider({ expo: {} }, 53)).toBe(null);
+  expect(checkBuildCacheProvider({ expo: { name: 'app' } }, null)).toBe(null);
+});
+
+// --- Gradle's task-output cache ---------------------------------------------
+test('org.gradle.caching=true is reported as nothing, in every spelling gradle accepts', () => {
+  expect(checkGradleBuildCache('org.gradle.jvmargs=-Xmx2g\norg.gradle.caching=true\n')).toBe(null);
+  expect(checkGradleBuildCache('org.gradle.caching = TRUE')).toBe(null);
+  expect(checkGradleBuildCache('org.gradle.caching:true')).toBe(null);
+});
+
+test('a gradle.properties without org.gradle.caching=true is a note naming the cost and the fix', () => {
+  for (const source of [
+    'org.gradle.jvmargs=-Xmx2g\n',
+    '# org.gradle.caching=true\n',
+    'org.gradle.caching=false\n',
+    // The key is case-sensitive: Gradle does not read this one.
+    'ORG.GRADLE.CACHING=true\n',
+  ]) {
+    const f = checkGradleBuildCache(source);
+    assert(f, `expected a finding for ${JSON.stringify(source)}`);
+    expect(f.level).toBe('note');
+    expect(f.title).toMatch(/Gradle/);
+    expect(f.detail).toMatch(/worktree/);
+    expect(f.fix).toMatch(/org\.gradle\.caching=true/);
+  }
+});
+
+test('an absent android/gradle.properties (CNG) skips the gradle check entirely', () => {
+  expect(checkGradleBuildCache(null)).toBe(null);
+});
+
+test('runDoctor reads android/gradle.properties and reports the gradle cache, but only when the file exists', () => {
+  const withAndroid = mkdtempSync(join(tmpdir(), 'rn-iso-doc-gradle-'));
+  writeFileSync(join(withAndroid, 'package.json'), JSON.stringify({ name: 'x' }));
+  mkdirSync(join(withAndroid, 'android'), { recursive: true });
+  writeFileSync(join(withAndroid, 'android', 'gradle.properties'), 'org.gradle.jvmargs=-Xmx2g\n');
+  const findings = runDoctor(withAndroid);
+  expect(findings.some((f) => /Gradle/.test(f.title))).toBeTruthy();
+
+  writeFileSync(join(withAndroid, 'android', 'gradle.properties'), 'org.gradle.caching=true\n');
+  expect(runDoctor(withAndroid).some((f) => /Gradle/.test(f.title))).toBe(false);
+  rmSync(withAndroid, { recursive: true, force: true });
+
+  const cng = mkdtempSync(join(tmpdir(), 'rn-iso-doc-cng-'));
+  writeFileSync(join(cng, 'package.json'), JSON.stringify({ name: 'x' }));
+  expect(runDoctor(cng).some((f) => /Gradle/.test(f.title))).toBe(false);
+  rmSync(cng, { recursive: true, force: true });
+});
+
+// --- fingerprint parity ------------------------------------------------------
+test('checkFingerprintParity is silent when the hashes agree or either side is unknown', () => {
+  expect(checkFingerprintParity({ projectHash: 'a', worktreeHash: 'a' })).toBe(null);
+  expect(checkFingerprintParity({ projectHash: null, worktreeHash: 'a' })).toBe(null);
+  expect(checkFingerprintParity({ projectHash: 'a', worktreeHash: null })).toBe(null);
+  expect(checkFingerprintParity()).toBe(null);
+});
+
+test('a parity mismatch names the differing sources, the dirty files, the consequence and the cost', () => {
+  const f = checkFingerprintParity({
+    projectHash: 'aaa',
+    worktreeHash: 'bbb',
+    changed: ['app.json', 'ios/Podfile.lock', 'android/build.gradle', 'package.json'],
+    dirtyFiles: ['app.json'],
+  });
+  assert(f);
+  expect(f.level).toBe('note');
+  expect(f.title).toMatch(/fresh worktree/);
+  // Up to three differing sources, then a count.
+  expect(f.detail).toMatch(/app\.json, ios\/Podfile\.lock, android\/build\.gradle/);
+  expect(f.detail).toMatch(/and 1 more/);
+  // WHICH tracked inputs git reports dirty (the change-3 status helper).
+  expect(f.detail).toMatch(/git reports app\.json/);
+  // The consequence: worktrees miss what this checkout fills.
+  expect(f.detail).toMatch(/MISS/);
+  // The cost of the measurement is disclosed.
+  expect(f.detail).toMatch(/fingerprint twice/);
+  expect(f.detail).toMatch(/\.git\/worktrees/);
+  expect(f.detail).toMatch(/cleaned up/);
+});
+
+test('a parity mismatch with no dirty files still fires, hedged instead of accusing', () => {
+  const f = checkFingerprintParity({ projectHash: 'aaa', worktreeHash: 'bbb', changed: ['ios/Podfile.lock'] });
+  assert(f);
+  expect(f.detail).toMatch(/likely cause/);
+  expect(f.detail).not.toMatch(/git reports/);
+});
+
+// Real git throughout (CLAUDE.md item 9): worktree add/remove are exactly the
+// commands a mocked executor cannot vouch for. The fingerprinter is injected --
+// a scratch repo has no @expo/fingerprint -- as a content hash of app.json, so
+// the dirty checkout and the clean HEAD worktree genuinely differ.
+test('detectFingerprintParity against a real repo: a dirty app.json fires the note and the temp worktree is cleaned up', async () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'rn-iso-parity-repo-'));
+  const repo = join(base, 'repo');
+  try {
+    mkdirSync(repo, { recursive: true });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+    git('git add package.json app.json');
+    git('git commit -q -m init');
+    writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app', scheme: 'dirty' } }));
+
+    const load = () => ({
+      createFingerprintAsync: async (dir: string) => {
+        const hash = createHash('sha1')
+          .update(readFileSync(join(dir, 'app.json'), 'utf-8'))
+          .digest('hex');
+        return { hash, sources: [{ type: 'file', filePath: 'app.json', hash }] };
+      },
+    });
+
+    const finding = await detectFingerprintParity(repo, { load });
+    assert(finding, 'expected the parity note to fire');
+    expect(finding.level).toBe('note');
+    expect(finding.title).toMatch(/fresh worktree/);
+    expect(finding.detail).toMatch(/app\.json/);
+    expect(finding.detail).toMatch(/git reports app\.json/);
+
+    // The temp worktree is GONE on the success path: git lists only the main
+    // working tree, and prune left no stale metadata behind.
+    const worktrees = git('git worktree list').trim().split('\n');
+    expect(worktrees.length).toBe(1);
+    const stale = existsSync(join(repo, '.git', 'worktrees'))
+      ? execSync(`ls ${JSON.stringify(join(repo, '.git', 'worktrees'))}`, { encoding: 'utf-8' }).trim()
+      : '';
+    expect(stale).toBe('');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('detectFingerprintParity against a real repo: a clean checkout is silent', async () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'rn-iso-parity-clean-'));
+  const repo = join(base, 'repo');
+  try {
+    mkdirSync(repo, { recursive: true });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+    git('git add app.json');
+    git('git commit -q -m init');
+
+    const load = () => ({
+      createFingerprintAsync: async (dir: string) => {
+        const hash = createHash('sha1')
+          .update(readFileSync(join(dir, 'app.json'), 'utf-8'))
+          .digest('hex');
+        return { hash, sources: [{ type: 'file', filePath: 'app.json', hash }] };
+      },
+    });
+
+    expect(await detectFingerprintParity(repo, { load })).toBe(null);
+    expect(execSync('git worktree list', { cwd: repo, encoding: 'utf-8' }).trim().split('\n').length).toBe(1);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('detectFingerprintParity skips silently outside a git repo and without a fingerprinter', async () => {
+  resetExecutor();
+  const dir = mkdtempSync(join(tmpdir(), 'rn-iso-parity-nogit-'));
+  try {
+    const load = () => ({
+      createFingerprintAsync: async () => ({ hash: 'x', sources: [] }),
+    });
+    expect(await detectFingerprintParity(dir, { load })).toBe(null);
+    expect(await detectFingerprintParity(dir, { load: () => null })).toBe(null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

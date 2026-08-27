@@ -48,6 +48,14 @@ Each path is cloned with `cp -Rc`, so on APFS the copy is copy-on-write -- a 3.6
 
 Cloned dependencies match the source worktree, not necessarily the new branch's manifests -- the same contract as restoring a CI cache. Reinstall if the branch changes them.
 
+`--carry-ignored` carries the source's **working state**, not just its gitignored trees: after the clone it also carries the source tree's uncommitted **tracked** changes (`git diff HEAD --binary`, checked with `git apply --check` and then applied), because the cloned artifacts were installed and fingerprinted against that working tree, not against a clean HEAD. When the patch applies, the worktree says so on stderr and leaves the changes uncommitted:
+
+```
+Carried 2 uncommitted change(s) from the source (app.json, ios/Podfile.lock) -- uncommitted here too; commit deliberately.
+```
+
+When the worktree's `--base` diverges from the source HEAD and the patch does not apply, **nothing is changed** and a warning names the files instead: the carried artifacts were installed for the source's uncommitted state, so fingerprints and cache keys in the worktree will differ from the source's until the two are reconciled. Untracked (non-ignored) files are not carried, same as always -- and a plain `worktree create` without the flag stays pure HEAD: no clone, no diff carry, no warning.
+
 ### Why worktrees live next to the repo, not inside it
 
 `worktree create` places new worktrees in a sibling directory (`../<repo>-worktrees/<name>`), never under the repo root. A worktree nested inside the repo puts a second copy of every `package.json` inside Metro's watch root, which causes jest-haste-map naming collisions (two files claiming the same module name). Its multi-gigabyte `node_modules` also gets walked by Metro, TypeScript, and ESLint on every run. Gitignoring the nested worktree directory does not fix either problem: those tools walk the filesystem directly, not `git`, so a `.gitignore` entry is invisible to them.

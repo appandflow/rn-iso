@@ -82,9 +82,14 @@ a file it can read statically:
 | `expo-dev-client` is not installed                                           | `package.json`                                                             |
 | Metro cache is per-project, or its `cacheStores` is only wired conditionally | `metro.config.js`, read and never evaluated                                |
 | Compilation caching off, or left at its default CAS path                     | `ios/Podfile`                                                              |
+| Gradle's build cache is off (`org.gradle.caching=true` not set)              | `android/gradle.properties` (absent on CNG -> skipped)                     |
 | ccache and compilation caching both enabled                                  | `ios/Podfile` + `ios/Podfile.properties.json`                              |
-| `buildCacheProvider` missing, or on the key this SDK ignores                 | `app.json` (an `app.config.ts` is code, so it says so instead of guessing) |
+| A configured `buildCacheProvider` on the key this SDK ignores                | `app.json` (an `app.config.ts` is code, so it says so instead of guessing) |
 | `.rn-iso/` missing from `.gitignore`                                         | the project's `.gitignore`                                                 |
+| This checkout does not fingerprint like a fresh worktree of HEAD             | a real fingerprint, twice (see "Fingerprint hygiene" below)                |
+
+A provider that is MISSING is deliberately not on that list any more -- see
+"The build cache needs no setup" below.
 
 **Everything else on this page is yours to check by hand.** doctor does not read
 `.fingerprintignore`, does not look at `CLANG_OTHER_PREFIX_MAPPINGS` or
@@ -130,28 +135,36 @@ EXDevMenuShowFloatingActionButton  false
 EXDevMenuShowsAtLaunch             false
 ```
 
-## Skip the build entirely
+## The build cache needs no setup
 
-_doctor reports whether a provider is configured, and whether it is on the key
-this SDK reads. It does not check `.fingerprintignore`._
+rn-iso's own cache covers every build rn-iso drives: `rn-iso ios` /
+`rn-iso android` fingerprint the native inputs and share built artifacts
+through `~/.rn-iso/build-cache` on their own, on Expo and bare projects alike.
+An Expo build cache **provider** is optional and deliberately not part of
+setup: `@rn-iso/expo-build-cache` extends the same cache to expo runs made
+outside rn-iso (`npx expo run:ios` by hand), and `"eas"` shares builds across a
+team. Configure one only when this repo needs those cases -- doctor no longer
+asks for one, and whatever provider the project already has is kept exactly
+where it is (rn-iso never consults it for its own builds and never replaces
+it).
 
-A ticket that changes no native input should not compile anything. Expo's build
-cache provider keys a built `.app` on a fingerprint of the native inputs and
-installs it instead of building.
+### A provider that IS configured can still break, silently
 
-This matters for builds run **outside** rn-iso — `npx expo run:ios` by hand, or
-EAS. `rn-iso ios` / `rn-iso android` consult the same cache directly and need no
-provider at all; configuring one makes the two share artifacts instead of
-filling two caches with the same builds.
+_doctor reports this, from `app.json`. An `app.config.ts` is code, so doctor
+says it cannot check instead of guessing -- answer it yourself with
+`npx expo config --json | grep -i buildCacheProvider` (an `undefined` behind an
+env-var ternary counts as configured too)._
 
-**An existing provider is kept, never replaced.** If the project already
-configures one -- `"buildCacheProvider": "eas"` on newer SDKs is common, and it
-serves the whole team a remote cache -- leave it exactly where it is. Do not
-swap it for `@rn-iso/expo-build-cache`: `rn-iso ios` / `rn-iso android` never
-consult the provider (they build directly and use rn-iso's local cache), so
-the EAS cache keeps serving `expo run` / CI builds while rn-iso's cache serves
-the agent loop. The two coexist; replacing one with the other only removes a
-cache someone was using.
+Where the key goes moved when the setting left experiments, and the wrong
+combination is a silent no-op rather than an error:
+
+| SDK | Reads                                                          |
+| --- | -------------------------------------------------------------- |
+| 53  | `expo.experiments.buildCacheProvider` **only**                 |
+| 54+ | `expo.buildCacheProvider`, falling back to the experiments key |
+
+So top-level is right going forward, and top-level on SDK 53 is the combination
+that does nothing at all.
 
 ### `"buildCacheProvider": "eas"` needs a session, and says nothing when it has none
 
@@ -190,49 +203,17 @@ definitively broken, then **build with the local cache only** -- a missing
 session costs the team tier, never the build. Offline is not an auth failure and
 is never reported as one.
 
-**When the config is code, find out before you conclude anything.** doctor will
-not execute an `app.config.ts` to read it, so its finding there says only that
-it could not check. One command answers it without running a build:
+## Fingerprint hygiene: what makes the cache actually hit
 
-```bash
-npx expo config --json | grep -i buildCacheProvider
-```
-
-An `undefined` behind an env-var ternary counts as configured too -- read what
-the default branch produces, not just that the key is present.
-
-**Where the project has NO provider, use the packaged one rather than writing
-your own.** It addresses the same
-`~/.rn-iso/build-cache` that `rn-iso ios` does, it registers itself with rn-iso
-so `gc` can report and trim it, and it works with no rn-iso installed:
-
-```bash
-npm i -D @rn-iso/expo-build-cache
-```
-
-Where the key goes moved when the setting left experiments, and the wrong
-combination is a silent no-op rather than an error:
-
-| SDK | Reads                                                          |
-| --- | -------------------------------------------------------------- |
-| 53  | `expo.experiments.buildCacheProvider` **only**                 |
-| 54+ | `expo.buildCacheProvider`, falling back to the experiments key |
-
-```jsonc
-// SDK 54+
-{ "expo": { "buildCacheProvider": { "plugin": "@rn-iso/expo-build-cache" } } }
-```
-
-So top-level is right going forward, and top-level on SDK 53 is the combination
-that does nothing at all.
-
-What the provider does, if you need to write your own: Expo hands it the
-platform, a fingerprint hash of the native inputs, and the run options. It
-returns the path of a matching `.app`/`.apk` or null, and is called again after
-a build to store one. Key on the fingerprint **plus** the build configuration
-and the target class — a Release build must not answer a Debug lookup, and a
-device build must not answer a simulator one, because both produce a binary that
-cannot run and neither says so.
+_doctor's LAST check measures this directly ("fingerprint parity"): in a git
+repo it creates one temporary detached worktree of HEAD in the OS tmpdir,
+computes a real fingerprint in both trees, compares, and always removes the
+worktree again. It is doctor's most expensive check -- two real fingerprints --
+and it briefly touches `.git/worktrees` metadata (cleaned up on every exit
+path). A mismatch is a note naming the differing sources and the tracked
+files git reports dirty; it means worktrees will MISS every cache entry this
+checkout fills until the dirty inputs are committed (or fingerprint-ignored).
+doctor does not read `.fingerprintignore` itself._
 
 Add `.fingerprintignore` for anything that changes without changing the build.
 `ios/Podfile.lock` is the usual culprit: pod checksums can embed absolute paths,
@@ -379,6 +360,28 @@ explicitly built modules, which compilation caching requires, so enabling both
 tends to mean neither works. ccache also keys on absolute paths — including
 paths _inside_ generated files like header maps and VFS overlays, which no
 `base_dir` setting can rewrite — so it misses across worktrees regardless.
+
+## Turn on Gradle's build cache
+
+_doctor reports this, from `android/gradle.properties`. On CNG (no `android/`
+checked in) there is no file to set it in and doctor skips the check._
+
+Gradle's task-output cache is **off by default** (`org.gradle.caching`), so a
+second worktree re-runs every compile task from scratch even when nothing
+changed. The cache lives under the Gradle user home (`~/.gradle` unless
+something overrides it), which every rn-iso worktree on the machine already
+shares -- so this one line is the whole fix:
+
+```properties
+# android/gradle.properties
+org.gradle.caching=true
+```
+
+Note the difference from the caches Gradle has anyway: the dependency and
+wrapper caches under `~/.gradle` are always shared, but they only spare the
+downloads. `org.gradle.caching=true` is what lets worktree B reuse worktree A's
+**task outputs** (compiled classes, processed resources) instead of rebuilding
+them.
 
 ## Share Metro's transform cache
 

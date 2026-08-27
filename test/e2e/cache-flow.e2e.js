@@ -98,8 +98,8 @@ test('worktree create prints only the worktree path, and makes a real worktree',
 // --- 2. the cross-worktree fingerprint premise -------------------------------
 
 test('two worktrees of one commit fingerprint identically when scoped', async () => {
-  const a = await fingerprintProject(ctx.wt1, { platform: 'android', load });
-  const b = await fingerprintProject(ctx.wt2, { platform: 'android', load });
+  const a = (await fingerprintProject(ctx.wt1, { platform: 'android', load }))?.hash;
+  const b = (await fingerprintProject(ctx.wt2, { platform: 'android', load }))?.hash;
   assert.ok(a && typeof a === 'string', 'a real hash came back');
   assert.equal(a, b, 'identical native trees at one commit hash identically -- the whole premise');
   ctx.androidHash1 = a;
@@ -112,15 +112,15 @@ test('a worktree-local path under ios/ changes the ios hash but NOT the android 
   writeFileSync(join(ctx.wt1, 'ios', 'Podfile.lock'), `PODS:\n  - hermes-engine (from \`${ctx.wt1}/ios\`)\n`);
   writeFileSync(join(ctx.wt2, 'ios', 'Podfile.lock'), `PODS:\n  - hermes-engine (from \`${ctx.wt2}/ios\`)\n`);
 
-  const iosA = await fingerprintProject(ctx.wt1, { platform: 'ios', load });
-  const iosB = await fingerprintProject(ctx.wt2, { platform: 'ios', load });
+  const iosA = (await fingerprintProject(ctx.wt1, { platform: 'ios', load }))?.hash;
+  const iosB = (await fingerprintProject(ctx.wt2, { platform: 'ios', load }))?.hash;
   assert.notEqual(iosA, iosB, 'the ios hash differs across worktrees -- an UNSCOPED hash would poison android too');
 
   // ... and the android hash is untouched by the ios/ divergence: still equal,
   // still what it was before. This is the property that makes the cross-worktree
   // android cache hit at all.
-  const androidA = await fingerprintProject(ctx.wt1, { platform: 'android', load });
-  const androidB = await fingerprintProject(ctx.wt2, { platform: 'android', load });
+  const androidA = (await fingerprintProject(ctx.wt1, { platform: 'android', load }))?.hash;
+  const androidB = (await fingerprintProject(ctx.wt2, { platform: 'android', load }))?.hash;
   assert.equal(androidA, androidB, 'scoping keeps the ios/ churn out of the android key');
   assert.equal(androidA, ctx.androidHash1, 'and the android hash did not move');
 });
@@ -128,8 +128,8 @@ test('a worktree-local path under ios/ changes the ios hash but NOT the android 
 // --- 3. cross-worktree cache hit, then a miss on a native change -------------
 
 test('a build stored under wt1 key resolves from wt2 key: a cross-worktree HIT', async () => {
-  const hash1 = await fingerprintProject(ctx.wt1, { platform: 'android', load });
-  const hash2 = await fingerprintProject(ctx.wt2, { platform: 'android', load });
+  const hash1 = (await fingerprintProject(ctx.wt1, { platform: 'android', load }))?.hash;
+  const hash2 = (await fingerprintProject(ctx.wt2, { platform: 'android', load }))?.hash;
   const key1 = buildCacheKey('android', hash1, {});
   const key2 = buildCacheKey('android', hash2, {});
   assert.equal(key1, key2, 'same fingerprint, same options -> same cache key across worktrees');
@@ -157,7 +157,7 @@ test('changing a native input in wt2 changes the key and turns the hit into a MI
   const gradle = join(ctx.wt2, 'android', 'app', 'build.gradle');
   writeFileSync(gradle, readFileSync(gradle, 'utf-8') + '\n// native input changed by the e2e\n');
 
-  const changed = await fingerprintProject(ctx.wt2, { platform: 'android', load });
+  const changed = (await fingerprintProject(ctx.wt2, { platform: 'android', load }))?.hash;
   assert.notEqual(changed, ctx.androidHash1, 'the fingerprint moved with the native input');
 
   const changedKey = buildCacheKey('android', changed, {});

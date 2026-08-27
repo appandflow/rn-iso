@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { basename, dirname, join } from 'path';
 import { getExecutor } from './exec.ts';
 import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.ts';
@@ -470,6 +471,92 @@ export function depsOutOfSync(
     }
   }
   return problems;
+}
+
+// The tracked files whose uncommitted edits move the @expo/fingerprint hash on
+// virtually every project: the app config in each of its spellings, and
+// package.json. Not exhaustive (an edit under ios/ or android/ moves it too);
+// these are the ones worth asking git about by name, because they are the
+// files agents most often leave dirty in the source tree.
+const FINGERPRINT_INPUT_FILES = ['app.json', 'app.config.ts', 'app.config.js', 'app.config.mjs', 'package.json'];
+
+// Which of those files have uncommitted changes (staged or not) in `root`.
+// [] when git could not answer -- this is advisory context for a note, and
+// "unknown" must not manufacture an accusation.
+export function dirtyFingerprintFiles(root: string): string[] {
+  const out = getExecutor().runQuiet(`git -C "${root}" status --porcelain -- ${FINGERPRINT_INPUT_FILES.join(' ')}`);
+  if (out === null || out.trim() === '') return [];
+  return out
+    .split('\n')
+    .map((line) => normalizePorcelainLine(line.trimEnd()))
+    .filter((line) => line !== '')
+    .map((line) => line.slice(3).trim())
+    .filter((path) => path !== '');
+}
+
+// --- carrying the source tree's uncommitted tracked changes -----------------
+//
+// `--carry-ignored` clones the gitignored HALF of the source's working state
+// (node_modules, Pods, build output) -- but those artifacts were installed and
+// fingerprinted against the source's WORKING TREE, and the new worktree
+// materializes a clean HEAD. When the source has uncommitted tracked changes,
+// the two disagree: the carried Pods match an app.json the worktree does not
+// have, and every fingerprint differs from the source's until the change is
+// replicated. So the uncommitted tracked diff is carried too, as a patch --
+// applied when it applies cleanly, reported when the worktree's base diverges
+// from the source HEAD and it cannot be.
+//
+// Only TRACKED changes: untracked non-ignored files are not carried today and
+// stay out of scope, exactly like the plain create path.
+
+export interface CarriedChanges {
+  // The files the source diff touches, from `git diff HEAD --name-only`.
+  files: string[];
+  // True when the patch landed in the target worktree (still uncommitted).
+  applied: boolean;
+  // True when `git apply --check` refused: the target's base diverges from
+  // the source HEAD, and nothing was changed in the target.
+  conflicted: boolean;
+}
+
+// Null when there is nothing to carry (clean source tree) or git could not
+// answer at all -- both are "do nothing, say nothing".
+export function carryUncommittedChanges({ root, target }: { root: string; target: string }): CarriedChanges | null {
+  const exec = getExecutor();
+  // --binary so an edited image or icon travels too; HEAD so staged and
+  // unstaged changes are one patch, matching what the worktree lacks.
+  const patch = exec.runQuiet(`git -C "${root}" diff HEAD --binary`);
+  if (patch === null || patch.trim() === '') return null;
+  const files = (exec.runQuiet(`git -C "${root}" diff HEAD --name-only`) || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+
+  // Through a temp file and `runFile`: a patch is not shell-safe, and argv
+  // arrays keep the path literal. The executor trims output, so the trailing
+  // newline a patch must end with is restored here -- twice for a binary
+  // patch, whose last chunk is terminated by a blank line.
+  const staging = mkdtempSync(join(tmpdir(), 'rn-iso-carry-'));
+  const patchFile = join(staging, 'uncommitted.patch');
+  try {
+    writeFileSync(patchFile, patch + (/^GIT binary patch$/m.test(patch) ? '\n\n' : '\n'));
+    try {
+      exec.runFile('git', ['-C', target, 'apply', '--check', patchFile]);
+    } catch {
+      return { files, applied: false, conflicted: true };
+    }
+    try {
+      exec.runFile('git', ['-C', target, 'apply', patchFile]);
+    } catch {
+      // --check passed and apply still failed: treat it as the conflict case
+      // -- nothing (or not everything) landed, and saying "carried" would be
+      // a lie about the tree.
+      return { files, applied: false, conflicted: true };
+    }
+    return { files, applied: true, conflicted: false };
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
 }
 
 // Returns null (indeterminate) when `runQuiet` could not get an answer from

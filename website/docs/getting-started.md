@@ -29,10 +29,13 @@ In your app's repo, invoke the init skill:
 
 The agent runs `rn-iso doctor` (read-only), then applies each finding by hand
 in the files your project already owns: the shared Metro transform cache, the
-local Expo build cache provider, the settings that silently prevent either
-from working. There is deliberately no `rn-iso init` generator — every edit
-lands in a file with existing project logic in it, which is judgement, not
-templating.
+compiler caches (Xcode compilation caching, Gradle's build cache), the
+settings that silently prevent them from working. There is deliberately no
+`rn-iso init` generator — every edit lands in a file with existing project
+logic in it, which is judgement, not templating. The build cache itself needs
+no setup: rn-iso's own cache covers every build rn-iso drives, and an Expo
+build cache provider (`@rn-iso/expo-build-cache` for `expo run` outside
+rn-iso, EAS for team sharing) is optional and deliberately not part of setup.
 
 ## 3. Describe what you want
 

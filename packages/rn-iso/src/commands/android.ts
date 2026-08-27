@@ -33,7 +33,16 @@ import type { Command } from 'commander';
 import type { AndroidFacts, WaitedForBuild } from '../types.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
-import { buildCacheKey, fingerprintProject, resolveBuild, storeBuild } from '../build-cache.ts';
+import {
+  buildCacheKey,
+  describeFingerprintMiss,
+  fingerprintDiffRecord,
+  fingerprintDiffSuffix,
+  fingerprintProject,
+  resolveBuild,
+  storeBuild,
+  type FingerprintSourceLike,
+} from '../build-cache.ts';
 import {
   acquireBuildLock,
   releaseBuildLock,
@@ -991,12 +1000,15 @@ export async function runAndroid(
   // Covers the fingerprint compute plus the LOCAL cache resolve; a remote
   // consult reports its own time on its own cache line below.
   const fingerprintTimer = stepTimer(now);
-  let hash;
+  let hash: string | null;
+  let fingerprintSources: FingerprintSourceLike[] = [];
   try {
     // Scoped to Android. Unscoped, ios/ hashes into this key: a podspec that
     // bakes an absolute path into ios/Podfile.lock then makes every
     // cross-worktree build a miss. See src/build-cache.js.
-    hash = await fingerprint(root, { platform: PLATFORM });
+    const computed = await fingerprint(root, { platform: PLATFORM });
+    hash = computed?.hash ?? null;
+    fingerprintSources = computed?.sources ?? [];
   } catch (err) {
     return fail(
       NO_FINGERPRINT,
@@ -1021,9 +1033,27 @@ export async function runAndroid(
   const cached = useBuildCache ? resolveCached(PLATFORM, cacheKey) : null;
   record.cacheHit = cached ? 'local' : false;
   record.cacheSkipped = !useBuildCache;
+  // On a miss, say WHAT moved when it can be known: the previous build's entry
+  // (state.json.lastBuild) stored its fingerprint sources, so the two source
+  // lists can be diffed. Three names on the line; the full list (capped) in
+  // the build log as a fingerprint_diff record.
+  let missDiff = '';
+  if (!cached) {
+    const lastBuild = (readState(root)?.lastBuild ?? null) as Record<string, unknown> | null;
+    const miss = describeFingerprintMiss({
+      projectRoot: root,
+      platform: PLATFORM,
+      current: { hash, sources: fingerprintSources },
+      lastBuild,
+    });
+    if (miss) {
+      missDiff = fingerprintDiffSuffix(miss.changed);
+      writer.write(fingerprintDiffRecord({ changed: miss.changed, previousHash: miss.previousHash, hash }));
+    }
+  }
   phase(
     'fingerprint',
-    `${shortHash(hash)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}`,
+    `${shortHash(hash)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}${missDiff}`,
   );
 
   // ---- level two: the project's OWN Expo build-cache provider ----------
@@ -1083,7 +1113,7 @@ export async function runAndroid(
       // machine rather than once per worktree.
       let stored = null;
       try {
-        stored = storeCached(PLATFORM, cacheKey, hit.appPath);
+        stored = storeCached(PLATFORM, cacheKey, hit.appPath, { sources: fingerprintSources });
       } catch (err) {
         phase('cache', chalk.yellow(`remote hit could not be stored locally: ${(err as Error)?.message || err}`));
       }
@@ -1263,7 +1293,7 @@ export async function runAndroid(
       // that is there is the one this run was told not to trust, and leaving it
       // would mean the next run trusts it again.
       try {
-        storeCached(PLATFORM, cacheKey, apkPath!, { overwrite: !useBuildCache });
+        storeCached(PLATFORM, cacheKey, apkPath!, { overwrite: !useBuildCache, sources: fingerprintSources });
       } catch (err) {
         // A cache that cannot be written still builds; it just costs the next
         // workspace a rebuild. Never a reason to fail a run that succeeded.
