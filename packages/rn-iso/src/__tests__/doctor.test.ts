@@ -826,3 +826,27 @@ test('runDoctor checks one shared backend once', () => {
     rmSync(project, { recursive: true, force: true });
   }
 });
+
+test.each([
+  ['AGENT_DEVICE_DAEMON_BASE_URL', '   ', 'proxy-token-fixture'],
+  ['AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'https://proxy.example/agent-device', '\t\n'],
+] as const)('runDoctor rejects a whitespace-only %s', (_missingVariable, baseUrl, token) => {
+  const project = mkdtempSync(join(tmpdir(), 'rn-iso-doc-remote-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(join(project, '.rn-iso.json'), JSON.stringify({ ios: { remote: 'proxy' } }));
+    const findings = runDoctor(project, {
+      concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      remoteEnv: {
+        AGENT_DEVICE_DAEMON_BASE_URL: baseUrl,
+        AGENT_DEVICE_DAEMON_AUTH_TOKEN: token,
+      },
+      lookupAgentDevice: () => true,
+    });
+
+    expect(findings.some((finding) => finding.title === 'The remote proxy credentials are missing')).toBe(true);
+    expect(findings.some((finding) => finding.title === 'This project uses a remote proxy')).toBe(false);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});

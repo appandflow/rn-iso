@@ -600,7 +600,9 @@ export function runDoctor(
   const remoteBackends = [
     ...new Set([remoteIosSetting(projectSettings), remoteAndroidSetting(projectSettings)]),
   ].filter((backend): backend is RemoteDeviceBackend => backend !== null);
-  const daemonInEnv = Boolean(remoteEnv.AGENT_DEVICE_DAEMON_BASE_URL && remoteEnv.AGENT_DEVICE_DAEMON_AUTH_TOKEN);
+  const daemonInEnv = Boolean(
+    remoteEnv.AGENT_DEVICE_DAEMON_BASE_URL?.trim() && remoteEnv.AGENT_DEVICE_DAEMON_AUTH_TOKEN?.trim(),
+  );
   const agentDeviceOnPath = remoteBackends.length
     ? lookupAgentDevice
       ? lookupAgentDevice()

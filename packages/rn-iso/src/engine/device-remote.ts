@@ -204,6 +204,12 @@ interface RemoteSession {
   profilePath: string;
 }
 
+const PROXY_CREDENTIAL_ENV = ['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN'] as const;
+
+function easExecOptions(root: string): { cwd: string; omitEnv: typeof PROXY_CREDENTIAL_ENV } {
+  return { cwd: root, omitEnv: PROXY_CREDENTIAL_ENV };
+}
+
 function writeProfile(ctx: RemoteContext, daemon: RemoteDaemon): string {
   const path = remoteProfilePath(ctx.root);
   mkdirSync(dirname(path), { recursive: true });
@@ -234,7 +240,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
   let session: RemoteSession | null = null;
 
   const exec = () => getExecutor();
-  const easEnv = { cwd: ctx.root };
+  const easEnv = easExecOptions(ctx.root);
 
   return {
     // Remote has no local device to count. maxDevices caps booted simulators
@@ -645,7 +651,7 @@ function defaultSleep(ms: number): Promise<void> {
  */
 function abandonSession(ctx: RemoteContext, sessionId: string, reason: string): { failed: true; reason: string } {
   try {
-    getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), { cwd: ctx.root });
+    getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), easExecOptions(ctx.root));
     return { failed: true, reason: `${reason} The session was stopped.` };
   } catch (err) {
     return {
@@ -690,7 +696,7 @@ const LIVE_STATUSES = new Set(['NEW', 'IN_PROGRESS']);
 function readLiveDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null {
   let stdout: string;
   try {
-    stdout = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), { cwd: ctx.root });
+    stdout = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easExecOptions(ctx.root));
   } catch {
     return null;
   }
@@ -706,7 +712,7 @@ function readLiveDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | n
 function readDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null {
   let stdout: string;
   try {
-    stdout = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), { cwd: ctx.root });
+    stdout = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easExecOptions(ctx.root));
   } catch {
     return null;
   }
@@ -865,7 +871,7 @@ export function teardownRemote(
   }
   if (!sessionId) return { status: 'torn-down' };
   try {
-    getExecutor().runFile(ctx.easBin, stopArgs, { cwd: ctx.root });
+    getExecutor().runFile(ctx.easBin, stopArgs, easExecOptions(ctx.root));
     return { status: 'torn-down' };
   } catch (err) {
     return { status: 'failed', reason: `eas simulator:stop ${sessionId} failed: ${describe(err)}` };

@@ -17,6 +17,9 @@ interface ExecOptions {
   // to one child process without being written anywhere: the remote device
   // passes AGENT_DEVICE_DAEMON_AUTH_TOKEN this way.
   env?: Record<string, string>;
+  // Variables removed from the effective child environment after inherited
+  // and extra variables are combined.
+  omitEnv?: readonly string[];
 }
 
 // The seam every child_process call in rn-iso goes through. Tests inject a mock
@@ -60,7 +63,7 @@ const defaultExecutor: Executor = {
   // No shell, so an argument carrying a space, a quote, or a `$` reaches the
   // program as one literal argument. Use this whenever an argument is a path
   // the user chose rather than a string this codebase composed.
-  runFile(file, args = [], { timeoutMs, cwd, env } = {}) {
+  runFile(file, args = [], { timeoutMs, cwd, env, omitEnv } = {}) {
     const opts: Parameters<typeof execFileSync>[2] = {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -68,7 +71,11 @@ const defaultExecutor: Executor = {
     };
     if (timeoutMs) opts.timeout = timeoutMs;
     if (cwd) opts.cwd = cwd;
-    if (env) opts.env = { ...process.env, ...env };
+    if (env || omitEnv?.length) {
+      const childEnv = { ...process.env, ...env };
+      for (const key of omitEnv ?? []) delete childEnv[key];
+      opts.env = childEnv;
+    }
     return String(execFileSync(file, args, opts)).trim();
   },
   runQuiet(cmd, opts) {
