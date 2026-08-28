@@ -13,8 +13,11 @@ path.
 
 - `rn-iso start` starts a local dev server and does not create a tunnel.
 - `rn-iso start --remote` prepares a dev server for a later remote device run.
-- `ios.remote: true` or `android.remote: true` also gives `start` remote intent.
+- An `ios.remote` or `android.remote` backend setting also gives `start` remote
+  intent.
 - `metro.tunnel` selects the tunnel provider only after remote intent exists.
+- `metro.ngrokUrl` supplies a stable endpoint for the managed ngrok provider.
+  It requires `metro.tunnel: "ngrok"`.
 - An explicit `metro.publicUrl` remains an operator-supplied remote origin.
 
 For an Expo project, `start --remote` can pass `--tunnel` to Expo. The tunnel
@@ -23,6 +26,23 @@ manifest. A healthy local supervisor cannot gain that option later. In that
 case, `start --remote` refuses with a remedy to run `stop` and then
 `start --remote`.
 
+`metro.tunnel: "ngrok"` and `metro.tunnel: "cloudflared"` select the two
+managed providers. `auto` prefers ngrok and then cloudflared for a bare React
+Native project. On Expo, `auto` selects Expo's own tunnel. A managed provider
+starts during `start --remote`, before the dev server, so Expo can advertise
+the public origin in its manifest. The later device command reuses the
+recorded tunnel.
+
+Provider readiness requires a tunnel URL, not only a binary on `PATH`.
+For bare React Native under `auto`, rn-iso tries ngrok first. If ngrok exits
+before it returns a URL, including an authentication refusal, rn-iso cleans up
+that attempt and tries cloudflared when available. An explicit
+`metro.tunnel: "ngrok"` never falls back to a different provider.
+
+A configured ngrok URL is passed with `ngrok http <port> --url <url>`. rn-iso
+still owns and stops that process. `metro.publicUrl` remains different: it
+describes an already-running tunnel that rn-iso never stops.
+
 A plain `start` against an existing remote-ready supervisor leaves it running.
 The command does not restart a healthy server only to remove a tunnel.
 
@@ -30,17 +50,20 @@ The command does not restart a healthy server only to remove a tunnel.
 
 `start --remote` prepares Metro only. The device command chooses the backend.
 
-1. If `AGENT_DEVICE_DAEMON_BASE_URL` and
-   `AGENT_DEVICE_DAEMON_AUTH_TOKEN` are both present, rn-iso uses that daemon.
-   This covers `agent-device proxy` and an externally created EAS session.
-   rn-iso creates no session and owns no session teardown.
-2. Otherwise, rn-iso uses `eas-cli` to create an EAS Simulator session. rn-iso
-   records the session ID and owns its teardown.
-3. If neither source is available, the device command refuses before a build
-   or billable session starts.
+- `rn-iso ios --remote proxy` and `rn-iso android --remote proxy` connect to an
+  existing agent-device daemon. They require
+  `AGENT_DEVICE_DAEMON_BASE_URL` and `AGENT_DEVICE_DAEMON_AUTH_TOKEN`. The
+  daemon can run on another machine. rn-iso sends authenticated device
+  operations to that URL. rn-iso creates no EAS session and owns no session
+  teardown.
+- `rn-iso ios --remote eas` and `rn-iso android --remote eas` use `eas-cli` to
+  create an EAS Simulator session. rn-iso records the session ID and owns its
+  teardown. Daemon environment variables do not change this selection.
+- `ios.remote` and `android.remote` accept `"proxy"` or `"eas"` as the
+  settings equivalent of the command argument.
 
-One partial daemon environment variable is an error. rn-iso does not guess
-which backend the operator intended.
+A missing backend, an unknown backend, or incomplete proxy credentials is an
+error. rn-iso does not infer a backend from environment variables.
 
 ## Android lifecycle
 
@@ -90,7 +113,10 @@ The shipped rn-iso skill documents:
 
 - `start --remote` before a remote debug run;
 - plain `start` as the local path;
-- environment daemon precedence over EAS session creation;
+- explicit `--remote proxy` and `--remote eas` device commands;
+- the agent-device daemon URL and token contract for proxy mode;
+- explicit ngrok and cloudflared provider settings;
+- stable managed ngrok URLs versus operator-owned `metro.publicUrl`;
 - rn-iso ownership only for sessions it creates;
 - the required teardown and billing warning.
 
@@ -103,6 +129,9 @@ command order, failure paths, identity checks, and `gc` output. The complete
 format, typecheck, unit, lint, and Knip checks run after integration with
 current `main`.
 
-The final field test runs both local and remote Expo starts. The local run must
-show no public tunnel. The remote iOS run must create one EAS session, fetch a
-bundle through the public origin, report no errors, and stop the session.
+The final field test runs local, proxy, and EAS paths. The local run must show
+no public tunnel. Managed tunnel tests must prove the provider choice, ngrok
+authentication fallback, and the ngrok `--url` argument. A proxy contract
+test must use only the selected daemon. The remote iOS EAS run must create one
+session, fetch a bundle through the public origin, report no errors, and stop
+the session.
