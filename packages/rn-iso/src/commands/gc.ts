@@ -1214,14 +1214,25 @@ export async function collectGcReport(
 // device sweep with `unsafeAllowScopedDeviceSweep`; commander supplies only
 // the flags declared below.
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
+  const runWithoutEasSweep = (notice: string): Promise<void> =>
+    runGcWithRemoteSessionLocksHeld(opts, { ...deps, easSweepBlockedNotice: notice });
   let projectRoot: string | null = null;
   try {
     projectRoot = (deps.findProjectRoot ?? findProjectRoot)(process.cwd());
-    if (!projectRoot || !(deps.detectIsExpo ?? detectIsExpo)(projectRoot)) {
-      return runGcWithRemoteSessionLocksHeld(opts, deps);
+    if (!projectRoot) {
+      return runWithoutEasSweep(
+        'EAS session sweep skipped: no current project was available before EAS project lock acquisition.',
+      );
     }
-  } catch {
-    return runGcWithRemoteSessionLocksHeld(opts, deps);
+    if (!(deps.detectIsExpo ?? detectIsExpo)(projectRoot)) {
+      return runWithoutEasSweep(
+        'EAS session sweep skipped: the current project was not classified as Expo before EAS project lock acquisition.',
+      );
+    }
+  } catch (error) {
+    return runWithoutEasSweep(
+      `EAS session sweep skipped: project classification failed before EAS project lock acquisition: ${describeError(error)}`,
+    );
   }
   const withProjectLock = deps.withEasProjectLock ?? withEasProjectLock;
   let sweepStarted = false;

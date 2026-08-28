@@ -666,6 +666,37 @@ describe('EAS orphan session sweep', () => {
     expect(existsSync(staleLock)).toBe(false);
   });
 
+  test('a false then true Expo classification cannot enable an unlocked EAS sweep', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_race', name: 'rn-iso-race', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: {
+        drs_race: JSON.stringify({ id: 'drs_race', name: 'rn-iso-race', status: 'IN_PROGRESS' }),
+      },
+      stop: { drs_race: JSON.stringify({ id: 'drs_race', status: 'STOPPED' }) },
+    });
+    let classifications = 0;
+
+    const output = await captureLog(() =>
+      runGc(
+        { delete: true },
+        {
+          ...harness.deps,
+          detectIsExpo: () => classifications++ > 0,
+        },
+      ),
+    );
+
+    expect(classifications).toBeGreaterThanOrEqual(2);
+    expect(output).toMatch(/EAS session sweep skipped.*lock/i);
+    expect(harness.calls).toEqual([]);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
   test('dry run does not wait behind an active remote session creation lock', async () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
