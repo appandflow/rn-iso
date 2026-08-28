@@ -28,6 +28,8 @@ import {
   teardownRemote,
   withRemoteSessionLock,
 } from '../engine/device-remote.ts';
+import { withEasProjectLock } from '../engine/eas-project-lock.ts';
+import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 
 // The same-machine proxy: the simulator shares this host's loopback, so
 // localhost in the deep link reaches rn-iso's own Metro. Live-verified.
@@ -111,6 +113,7 @@ function ctx(overrides: Partial<Parameters<typeof remoteIosDeps>[0]> = {}) {
     backend,
     easBin: '/bin/eas',
     agentDeviceBin: '/bin/agent-device',
+    easLedgerRoot: tmpHome,
     // The readiness poll is bounded at three minutes of real time; a test
     // asserting the give-up path must not pay it.
     sleep: async () => {},
@@ -388,11 +391,14 @@ await withRemoteSessionLock(process.argv[2], async () => {
       firstEntered = resolve;
     });
     let secondBooted = false;
+    const withFixedLock: typeof withEasProjectLock = (project, fn, options) =>
+      withEasProjectLock(project, fn, { ...options, machineRoot: join(root, 'machine-eas') });
 
     try {
       const first = ensureRemoteBootOwned({
         root,
         platform: 'ios',
+        sessionName: 'rn-iso-first',
         startedAt: '2026-08-28T00:00:00.000Z',
         register: () => {},
         boot: async () => {
@@ -403,11 +409,14 @@ await withRemoteSessionLock(process.argv[2], async () => {
         createdSessionId: () => null,
         abandonCreatedSession: () => ({ ok: true, sessionId: null }),
         writeState: () => {},
+        withProjectLock: withFixedLock,
+        ledgerRoot: join(root, 'machine-eas'),
       });
       await entered;
       const second = ensureRemoteBootOwned({
         root: otherRoot,
         platform: 'ios',
+        sessionName: 'rn-iso-second',
         startedAt: '2026-08-28T00:00:00.000Z',
         register: () => {},
         boot: async () => {
@@ -417,6 +426,73 @@ await withRemoteSessionLock(process.argv[2], async () => {
         createdSessionId: () => null,
         abandonCreatedSession: () => ({ ok: true, sessionId: null }),
         writeState: () => {},
+        withProjectLock: withFixedLock,
+        ledgerRoot: join(root, 'machine-eas'),
+      });
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(secondBooted).toBe(false);
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(secondBooted).toBe(true);
+    } finally {
+      releaseFirst();
+      if (previousHome === undefined) delete process.env.RN_ISO_HOME;
+      else process.env.RN_ISO_HOME = previousHome;
+    }
+  });
+
+  test('EAS starts serialize across separate RN_ISO_HOME values', async () => {
+    const otherRoot = join(root, 'other-clone');
+    mkdirSync(otherRoot, { recursive: true });
+    const previousHome = process.env.RN_ISO_HOME;
+    let releaseFirst!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+    let secondBooted = false;
+    const withFixedLock: typeof withEasProjectLock = (project, fn, options) =>
+      withEasProjectLock(project, fn, { ...options, machineRoot: join(root, 'machine-eas') });
+
+    try {
+      process.env.RN_ISO_HOME = join(root, 'home-a');
+      const first = ensureRemoteBootOwned({
+        root,
+        platform: 'ios',
+        sessionName: 'rn-iso-first',
+        startedAt: '2026-08-28T00:00:00.000Z',
+        boot: async () => {
+          firstEntered();
+          await held;
+          return { ok: true };
+        },
+        createdSessionId: () => null,
+        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
+        writeState: () => {},
+        withProjectLock: withFixedLock,
+        ledgerRoot: join(root, 'machine-eas'),
+      });
+      await entered;
+
+      process.env.RN_ISO_HOME = join(root, 'home-b');
+      const second = ensureRemoteBootOwned({
+        root: otherRoot,
+        platform: 'ios',
+        sessionName: 'rn-iso-second',
+        startedAt: '2026-08-28T00:00:00.000Z',
+        boot: async () => {
+          secondBooted = true;
+          return { ok: true };
+        },
+        createdSessionId: () => null,
+        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
+        writeState: () => {},
+        withProjectLock: withFixedLock,
+        ledgerRoot: join(root, 'machine-eas'),
       });
 
       await new Promise<void>((resolve) => setTimeout(resolve, 50));
@@ -433,6 +509,60 @@ await withRemoteSessionLock(process.argv[2], async () => {
 });
 
 describe('session creation', () => {
+  test('publishes the fixed ownership claim before workspace state', async () => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    let claimVisibleDuringStateWrite = false;
+
+    const result = await ensureRemoteBootOwned({
+      root,
+      platform: 'ios',
+      sessionName: 'rn-iso-wt',
+      startedAt: '2026-08-28T00:00:00.000Z',
+      boot: async () => ({ ok: true, udid: 'drs_claimed' }),
+      createdSessionId: () => 'drs_claimed',
+      abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_claimed' }),
+      writeState: () => {
+        claimVisibleDuringStateWrite = readEasSessionLedger(ledgerRoot).claims.has('drs_claimed');
+      },
+      withProjectLock: async (_project, fn) => fn(),
+      withLock: async (_project, fn) => fn(),
+      ledgerRoot,
+    });
+
+    expect('failed' in result && result.failed).toBe(false);
+    expect(claimVisibleDuringStateWrite).toBe(true);
+  });
+
+  test('a claim write failure stops the new session before state publication', async () => {
+    const blockedRoot = join(tmpHome, 'blocked-ledger');
+    writeFileSync(blockedRoot, 'not a directory');
+    let abandoned = false;
+    let stateWritten = false;
+
+    const result = await ensureRemoteBootOwned({
+      root,
+      platform: 'ios',
+      sessionName: 'rn-iso-wt',
+      startedAt: '2026-08-28T00:00:00.000Z',
+      boot: async () => ({ ok: true, udid: 'drs_unclaimed' }),
+      createdSessionId: () => 'drs_unclaimed',
+      abandonCreatedSession: () => {
+        abandoned = true;
+        return { ok: true, sessionId: 'drs_unclaimed' };
+      },
+      writeState: () => {
+        stateWritten = true;
+      },
+      withProjectLock: async (_project, fn) => fn(),
+      withLock: async (_project, fn) => fn(),
+      ledgerRoot: blockedRoot,
+    });
+
+    expect('failed' in result && result.failed).toBe(true);
+    expect(abandoned).toBe(true);
+    expect(stateWritten).toBe(false);
+  });
+
   test('runs in the project directory, because eas sim resolves it from cwd', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     await remoteIosDeps(ctx()).ensureBooted({});
@@ -485,6 +615,50 @@ describe('session creation', () => {
     // close runs first, best-effort, to release any claim a previous run
     // left on the device. See closeArgs.
     expect(exec.calls.map((c) => c.args[0])).toEqual(['close', 'connect']);
+  });
+});
+
+describe('fixed ownership claim teardown', () => {
+  test('verified teardown removes the claim', () => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    recordEasSessionClaim(
+      {
+        sessionId: 'drs_42',
+        name: 'rn-iso-wt',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: tmpHome,
+        stateFile: workspaceStateFile(root),
+      },
+      ledgerRoot,
+    );
+    mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+      },
+    });
+
+    expect(teardownRemote(ctx({ easLedgerRoot: ledgerRoot }), { sessionId: 'drs_42' }).status).toBe('torn-down');
+    expect(readEasSessionLedger(ledgerRoot).claims.has('drs_42')).toBe(false);
+  });
+
+  test('failed teardown keeps the claim', () => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    recordEasSessionClaim(
+      {
+        sessionId: 'drs_42',
+        name: 'rn-iso-wt',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: tmpHome,
+        stateFile: workspaceStateFile(root),
+      },
+      ledgerRoot,
+    );
+    mockExec({ fail: 'simulator:get' });
+
+    expect(teardownRemote(ctx({ easLedgerRoot: ledgerRoot }), { sessionId: 'drs_42' }).status).toBe('failed');
+    expect(readEasSessionLedger(ledgerRoot).claims.has('drs_42')).toBe(true);
   });
 });
 

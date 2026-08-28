@@ -24,7 +24,7 @@ import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
-import { workspaceDir, workspaceLogsDir } from '../paths.ts';
+import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import type { RemoteDeviceBackend } from '../types.ts';
 import {
@@ -54,6 +54,8 @@ import {
 } from './eas-simulator.ts';
 import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
 import { withEasProjectLock } from './eas-project-lock.ts';
+import { easMachineStateRoot, recordEasSessionClaim, removeEasSessionClaim } from './eas-session-ledger.ts';
+import { getConfigDir } from '../config.ts';
 
 export const REMOTE_SESSION_ERROR = 'RN_ISO_NO_REMOTE_SESSION';
 const REMOTE_METRO_ERROR = 'RN_ISO_REMOTE_METRO_UNREACHABLE';
@@ -209,6 +211,7 @@ export interface RemoteContext {
   // an exported EAS session). rn-iso then creates NO session and destroys
   // none: it is a guest on someone else's device.
   existingDaemon?: RemoteDaemon | null;
+  easLedgerRoot?: string;
 }
 
 // The live session for one `rn-iso ios` run. Held in a closure rather than in
@@ -776,6 +779,7 @@ export function withRemoteSessionLock<T>(
 export async function ensureRemoteBootOwned<T extends BootResult>({
   root,
   platform,
+  sessionName,
   startedAt,
   boot,
   createdSessionId,
@@ -784,9 +788,11 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   register = () => {},
   withProjectLock = withEasProjectLock,
   withLock = withRemoteSessionLock,
+  ledgerRoot = easMachineStateRoot(),
 }: {
   root: string;
   platform: 'ios' | 'android';
+  sessionName: string;
   startedAt: string;
   boot: () => Promise<T>;
   createdSessionId: () => string | null;
@@ -795,6 +801,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   register?: () => unknown;
   withProjectLock?: typeof withEasProjectLock;
   withLock?: typeof withRemoteSessionLock;
+  ledgerRoot?: string;
 }): Promise<T | BootResult> {
   try {
     return await withProjectLock(
@@ -807,11 +814,23 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
           const sessionId = createdSessionId();
           if (!sessionId) return booted;
           try {
+            recordEasSessionClaim(
+              {
+                sessionId,
+                name: sessionName,
+                platform,
+                workspaceRoot: root,
+                workspaceHome: getConfigDir(),
+                stateFile: workspaceStateFile(root),
+              },
+              ledgerRoot,
+            );
             writeState(root, { remoteDevice: { platform, sessionId, startedAt } });
             return booted;
           } catch (err) {
             const cleanup = abandonCreatedSession();
             if (cleanup.ok) {
+              removeEasSessionClaim(sessionId, ledgerRoot);
               return {
                 failed: true,
                 code: 'RN_ISO_REMOTE_SESSION_STATE',
@@ -827,7 +846,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
             };
           }
         }),
-      { ownerPurpose: 'EAS remote start' },
+      { ownerPurpose: 'EAS remote start', machineRoot: ledgerRoot },
     );
   } catch (err) {
     const code = (err as Error & { code?: string }).code ?? REMOTE_SESSION_ERROR;
@@ -1014,11 +1033,13 @@ export function endRecordedSession({
   sessionId,
   easBin,
   lookupAgentDevice,
+  ledgerRoot,
 }: {
   root: string;
   sessionId: string;
   easBin: string | null;
   lookupAgentDevice?: () => string | null;
+  ledgerRoot?: string;
 }): { status: 'torn-down' | 'failed'; reason?: string } {
   const agentDeviceBin = (lookupAgentDevice ?? defaultLookupAgentDevice)();
   if (!easBin) {
@@ -1028,7 +1049,15 @@ export function endRecordedSession({
     };
   }
   return teardownRemote(
-    { root, label: '', backend: 'eas', easBin, agentDeviceBin: agentDeviceBin ?? '', existingDaemon: null },
+    {
+      root,
+      label: '',
+      backend: 'eas',
+      easBin,
+      agentDeviceBin: agentDeviceBin ?? '',
+      existingDaemon: null,
+      easLedgerRoot: ledgerRoot,
+    },
     { sessionId },
   );
 }
@@ -1058,7 +1087,10 @@ export function teardownRemote(
   try {
     sessionOutput = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
   } catch (err) {
-    if (isDefinitiveMissingSessionError(err, sessionId)) return { status: 'torn-down' };
+    if (isDefinitiveMissingSessionError(err, sessionId)) {
+      removeEasSessionClaim(sessionId, ctx.easLedgerRoot);
+      return { status: 'torn-down' };
+    }
     return {
       status: 'failed',
       reason: `Could not verify EAS session ${sessionId}: ${describe(err)}. The session record was kept for retry.`,
@@ -1068,7 +1100,10 @@ export function teardownRemote(
   if (inspection.action === 'refused') {
     return { status: 'failed', reason: `${inspection.reason} The session record was kept for retry.` };
   }
-  if (inspection.action === 'already-stopped') return { status: 'torn-down' };
+  if (inspection.action === 'already-stopped') {
+    removeEasSessionClaim(sessionId, ctx.easLedgerRoot);
+    return { status: 'torn-down' };
+  }
 
   let stopOutput: string;
   try {
@@ -1081,6 +1116,7 @@ export function teardownRemote(
   }
   const verified = verifyStoppedSession(stopOutput, sessionId);
   if (!verified.ok) return { status: 'failed', reason: `${verified.reason} The session record was kept for retry.` };
+  removeEasSessionClaim(sessionId, ctx.easLedgerRoot);
   return { status: 'torn-down' };
 }
 

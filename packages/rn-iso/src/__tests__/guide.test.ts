@@ -153,6 +153,10 @@ test('the cleanup guide documents fail-closed EAS orphan recovery', () => {
     expect(cleanup).toMatch(new RegExp(`verified[^.]*${proof}`, 'i'));
   }
   expect(cleanup).toMatch(/registered root[^.]*missing[^.]*unreadable[^.]*fails closed/i);
+  expect(cleanup).toMatch(/fixed[^.]*~\/\.rn-iso\/machine\/eas[^.]*independent of RN_ISO_HOME/i);
+  expect(cleanup).toMatch(/unclaimed[^.]*never stopped/i);
+  expect(cleanup).toMatch(/missing config\.json[^.]*does not authorize/i);
+  expect(cleanup).toMatch(/exact recorded workspace state path/i);
   expect(cleanup).toMatch(/remote EAS session[^.]*running/i);
   expect(cleanup).toMatch(/local cleanup[^.]*continues/i);
   expect(cleanup).not.toMatch(/EAS session and local claim stay/i);
@@ -262,6 +266,10 @@ test('the skill teaches the complete remote-device contract', () => {
   expect(skill).toMatch(/android\.remote[^.]*accept[^.]*"proxy"[^.]*"eas"/i);
   expect(skill).toMatch(/gc --delete[\s\S]*active rn-iso-\* EAS sessions/i);
   expect(skill).toMatch(/registered root[^.]*missing[^.]*unreadable[^.]*fails closed/i);
+  expect(skill).toMatch(/fixed[^.]*~\/\.rn-iso\/machine\/eas[^.]*independent of RN_ISO_HOME/i);
+  expect(skill).toMatch(/unclaimed[^.]*never stopped/i);
+  expect(skill).toMatch(/missing config\.json[^.]*does not authorize/i);
+  expect(skill).toMatch(/exact recorded workspace state path/i);
   expect(skill).toMatch(/remote EAS session[^.]*running/i);
   expect(skill).toMatch(/local cleanup[^.]*continues/i);
   expect(skill).not.toMatch(/including `stop`, is safe/i);

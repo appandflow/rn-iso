@@ -156,6 +156,8 @@ rn-iso verifies that the public URL reaches this workspace before it creates a r
 
 Plain `gc` is a dry run. `gc --delete` can stop active rn-iso-* EAS sessions after workspace state is missing. The cleanup verifies the EAS project, session name, platform, and status. If a registered root is missing or unreadable, the EAS sweep fails closed and leaves the remote EAS session running. Independent proven-stale local cleanup continues.
 
+A fixed ownership record and lock live under ~/.rn-iso/machine/eas, independent of RN_ISO_HOME. An unclaimed session is reported but never stopped. A missing config.json does not authorize cleanup. The exact recorded workspace state path must prove that the session ID is absent.
+
 Remote devices do not provide native device logs. Metro errors and redboxes remain available through `logs --errors`.
 
 ## When things go wrong

@@ -49,6 +49,7 @@ import {
   resolveRemoteContext,
 } from '../engine/device-remote.ts';
 import { detectProviders } from '../engine/metro-reach.ts';
+import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { type Diagnostic, describeDiagnostic } from '../engine/errors-xcode.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import {
@@ -1034,6 +1035,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       ? d.ensureRemoteBootOwned({
           root,
           platform: PLATFORM,
+          sessionName: ownedSessionName(remoteDevice.ctx.label),
           startedAt,
           boot,
           createdSessionId: remoteDevice.createdSessionId,

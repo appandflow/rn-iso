@@ -1125,6 +1125,12 @@ REMOTE EAS SESSIONS
   project, name, platform, and status ownership. The same run also cleans the
   local state that it can prove is stale.
 
+  A fixed ownership record and lock live under ~/.rn-iso/machine/eas,
+  independent of RN_ISO_HOME. Unclaimed sessions are never stopped.
+  Missing config.json does not authorize cleanup.
+  The exact recorded workspace state path must prove that the session ID is
+  absent.
+
   If a registered root is missing or unreadable, the EAS sweep fails closed and
   leaves the remote EAS session running. Independent local cleanup continues
   for entries it proves stale.

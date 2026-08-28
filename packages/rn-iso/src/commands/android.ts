@@ -78,6 +78,7 @@ import {
   resolveRemoteContext,
 } from '../engine/device-remote.ts';
 import { detectProviders } from '../engine/metro-reach.ts';
+import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { OwnedDeviceRecord } from '../engine/device.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid } from '../engine/gradle.ts';
@@ -984,6 +985,7 @@ export async function runAndroid(
       ? ensureRemoteOwned({
           root,
           platform: PLATFORM,
+          sessionName: ownedSessionName(remoteDevice.ctx.label),
           startedAt,
           boot,
           createdSessionId: remoteDevice.createdSessionId,

@@ -238,7 +238,13 @@ function realStoredSessionStop(sessionOutput: string, calls: string[]) {
     spawn: () => {},
   });
   return (root: string, sessionId: string) =>
-    endRecordedSession({ root, sessionId, easBin: '/bin/eas', lookupAgentDevice: () => '/bin/agent-device' });
+    endRecordedSession({
+      root,
+      sessionId,
+      easBin: '/bin/eas',
+      lookupAgentDevice: () => '/bin/agent-device',
+      ledgerRoot: tmpHome,
+    });
 }
 
 test.each([
