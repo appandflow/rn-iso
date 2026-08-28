@@ -1218,12 +1218,13 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const startedAt = new Date(started).toISOString();
   const elapsed = () => d.now() - started;
 
-  const root = d.findProjectRoot(process.cwd());
-  if (!root) {
+  const foundRoot = d.findProjectRoot(process.cwd());
+  if (!foundRoot) {
     note(chalk.red('Not in a React Native project (no package.json found).'));
     process.exit(1);
     return null;
   }
+  const root = foundRoot;
 
   try {
     await d.ensureWorkspaceStorage(root, { note });
@@ -1351,7 +1352,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   });
   if (capacity) return fail(capacity);
 
-  let device;
+  let device: Awaited<ReturnType<typeof ensureOwnedDevice>>;
   try {
     device = await d.ensureOwnedDevice({
       platform: PLATFORM,
@@ -1372,292 +1373,290 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   }
 
   let metroPort = proj?.metroPort ?? null;
-  if (release) {
-    metroPort = null;
-    phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
-  } else if (metroCheck) {
-    if (!metroPort) {
-      return fail({
-        code: 'RN_ISO_NO_METRO',
-        message: 'No Metro port is reserved for this workspace, so there is no dev server to build against.',
-        remedy: 'Run `rn-iso start` first, or pass --no-metro-check.',
-      });
-    }
-    const resolution = await d.resolveMetroWithRetry(d.resolveProjectMetro, metroPort, root, {
-      onRetry: ({ delayMs }) =>
-        note(
-          chalk.dim(
-            phaseLine(
-              'metro',
-              `port ${metroPort} did not verify yet; retrying in ${Math.round(delayMs / 1000)}s (Metro may still be indexing)`,
-            ),
-          ),
-        ),
-    });
-    if (!resolution?.metro) {
-      const supervisor = (d.readWorkspaceState(root)?.supervisor ?? null) as SupervisorLike | null;
-      const supervisorAlive = Boolean(supervisor?.pid && d.isPidAlive(supervisor.pid));
-      return fail({
-        code: 'RN_ISO_NO_METRO',
-        message: noMetroMessage({ port: metroPort, resolution, supervisor, supervisorAlive }),
-        remedy: noMetroRemedy({ port: metroPort, supervisor, supervisorAlive }),
-      });
-    }
-  } else if (!metroPort) {
-    metroPort = DEFAULT_METRO_PORT;
-    note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${metroPort}.`));
-  }
-
-  // ---- the remote device's route to Metro, and proof of it ----
-  //
-  // HERE, not with the dep overrides above, and the difference is the whole
-  // point: only now is the RESERVED PORT known and only now has the gate
-  // above confirmed a dev server is actually on it. Resolving this earlier
-  // defaulted the port to 8081 -- so a managed tunnel got built to whatever
-  // happened to be on 8081, routinely a different workspace -- and reported a
-  // simply-absent Metro as "serving a different dev server".
-  //
-  // Still before ensureBooted, which is what creates the billable session, so
-  // every refusal here is free. A release build has no dev server at all
-  // (metroPort is null), so there is nothing to reach and nothing to prove.
-  if (remoteDevice && metroPort !== null) {
-    const reachable = await d.ensureMetroReachable({
-      ctx: remoteDevice.ctx,
-      metroPort,
-      isExpo,
-      tunnelMode: tunnelModeSetting(settings) ?? undefined,
-      publicUrl: publicUrlSetting(settings),
-      available: d.detectProviders(binOnPath),
-    });
-    if ('failed' in reachable) {
-      return fail({
-        code: reachable.code ?? REMOTE_SESSION_ERROR,
-        message: reachable.failed,
-        remedy: reachable.remedy,
-      });
-    }
-  }
-
-  // Boot is KICKED OFF here and awaited only at install: nothing in between
-  // -- the fingerprint, the cache resolution, even xcodebuild (a Shutdown sim
-  // is a valid -destination) -- needs a live device, and awaiting up front
-  // added the whole boot ahead of a multi-minute compile for no reason. The
-  // catch holds a rare boot failure until the await, where it fails with the
-  // same code it always did.
-  // The boot's own elapsed time, stamped the moment its promise settles: the
-  // boot overlaps the build by design, so reading the clock where the await
-  // happens would report the build's time, not the boot's.
-  const bootTimer = stepTimer(d.now);
   let bootDuration = '';
-  const boot = (): Promise<IosBootLike> =>
-    Promise.resolve(d.ensureBooted({ platform: PLATFORM, device, out: note })).catch((e) => ({
-      ok: false,
-      reason: String((e as Error)?.message || e),
-    }));
-  const bootPromise: Promise<IosBootLike> = (
-    remoteDevice?.ctx.backend === 'eas'
-      ? d.ensureRemoteBootOwned({
-          root,
-          platform: PLATFORM,
-          sessionName: ownedSessionName(remoteDevice.ctx.label),
-          startedAt,
-          boot,
-          createdSessionId: remoteDevice.createdSessionId,
-          abandonCreatedSession: remoteDevice.abandonCreatedSession,
-          writeState: d.writeWorkspaceState,
-          register: registerProject,
-        })
-      : boot()
-  ).then((result) => {
-    bootDuration = bootTimer();
-    return result;
-  });
-  // The build destination: the udid exists as soon as the device record does.
-  // The rare record without one (legacy shapes) waits for the boot to resolve
-  // it, which is exactly the old ordering.
-  //
-  // A REMOTE device has no udid on its record at all -- the session that
-  // identifies it does not exist until ensureBooted creates it -- so this
-  // await is what serialises session creation ahead of the build. That is
-  // deliberate: the artifact has to be uploaded to a device that exists.
-  const udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
-
-  const fingerprintTimer = stepTimer(d.now);
-  let fingerprint: string | null;
+  let bootPromise!: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>;
+  let udid = '';
+  let fingerprint = '';
   let fingerprintSources: FingerprintSource[] = [];
-  try {
-    const computed = await d.fingerprintProject(root, { platform: PLATFORM });
-    fingerprint = computed?.hash ?? null;
-    fingerprintSources = computed?.sources ?? [];
-  } catch (e) {
-    fingerprint = null;
-    note(chalk.dim(`Fingerprinting failed: ${(e as Error)?.message || e}`));
-  }
-  if (!fingerprint) {
-    return fail({
-      code: 'RN_ISO_NO_FINGERPRINT',
-      message: `Could not fingerprint ${root}: @expo/fingerprint produced no hash for it.`,
-      remedy: 'Check the project native inputs and the @expo/fingerprint error above, then retry.',
-    });
-  }
-  const cacheKey = buildCacheKey(PLATFORM, fingerprint, configuration ? { configuration } : {});
-
-  let storeHash = fingerprint;
-  let storeKey = cacheKey;
-  let storeSources = fingerprintSources;
-
-  const cached = useBuildCache ? d.resolveBuild(PLATFORM, cacheKey) : null;
-  let cacheHit: CacheHitLevel = cached ? 'local' : false;
-  let missDiff = '';
-  let missUntracked: string | null = null;
-  if (!cached) {
-    const lastBuild = (d.readWorkspaceState(root)?.lastBuild ?? null) as Record<string, unknown> | null;
-    const miss = describeFingerprintMiss({
-      platform: PLATFORM,
-      current: { hash: fingerprint, sources: fingerprintSources },
-      lastBuild,
-    });
-    if (miss) {
-      missDiff = fingerprintDiffSuffix(miss.changed);
-      logWriter().write(
-        fingerprintDiffRecord({ changed: miss.changed, previousHash: miss.previousHash, hash: fingerprint }),
-      );
-    } else if (useBuildCache) {
-      missUntracked = untrackedMissLine(d.untrackedNativeFiles({ projectRoot: root }));
-    }
-  }
-  phase(
-    'fingerprint',
-    `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}${missDiff}`,
-  );
-  if (missUntracked) note(chalk.dim(phaseLine('fingerprint', missUntracked)));
-
-  let appPath: string | null = cached;
+  let cacheKey = '';
+  let storeHash = '';
+  let storeKey = '';
+  let storeSources: FingerprintSource[] = [];
+  let appPath: string | null = null;
   let bundleId: string | null = null;
-
+  let cacheHit: CacheHitLevel = false;
   let remote: LoadProjectProviderResult | null = null;
   let abandonedRemote = false;
   let uploadPending: Promise<RemoteUploadLike> | null = null;
-  if (!appPath) {
-    const loaded: LoadProjectProviderResult = await d.loadProjectProvider(root, { isExpo });
-    if (loaded?.unavailable) {
-      note(chalk.yellow(phaseLine('cache', `provider not usable: ${loaded.unavailable}`)));
-    } else if (loaded?.provider) {
-      remote = loaded;
-    }
-    if (remote?.name === 'eas') {
-      const auth = d.checkEasAuth({ projectRoot: root, owner: loaded?.owner || null });
-      const authNote = easAuthNote(auth as Parameters<typeof easAuthNote>[0]);
-      if (authNote) note(chalk.yellow(phaseLine('cache', authNote)));
-      if (auth?.code === 'logged-out') remote = null;
-    }
-  }
-
-  if (remote && useBuildCache) {
-    const remoteTimer = stepTimer(d.now);
-    const hit = await d.resolveRemote({
-      logWriter: logWriter(),
-      provider: remote.provider,
-      platform: PLATFORM,
-      projectRoot: root,
-      fingerprintHash: fingerprint,
-      runOptions: configuration ? { configuration } : null,
-    });
-    if (hit?.appPath) {
-      let stored = null;
-      try {
-        stored = d.storeBuild(PLATFORM, cacheKey, hit.appPath, { sources: fingerprintSources });
-      } catch (e) {
-        note(chalk.yellow(phaseLine('cache', `remote hit could not be stored locally: ${(e as Error)?.message || e}`)));
-      }
-      appPath = stored || hit.appPath;
-      cacheHit = 'remote';
-      phase('cache', `remote hit (${remote.name})${stored ? ' -> stored locally' : ''} ${remoteTimer()}`);
-    } else if (hit?.timedOut) {
-      abandonedRemote = true;
-      note(
-        chalk.yellow(
-          phaseLine(
-            'cache',
-            `${remote.name} did not answer within ${formatDuration(RESOLVE_TIMEOUT_MS)}; building instead`,
-          ),
-        ),
-      );
-    } else if (hit?.failed) {
-      const authNote =
-        remote.name === 'eas' && isEasAuthFailureText(hit.failed)
-          ? easAuthNote({ code: 'logged-out', reason: hit.failed })
-          : null;
-      note(
-        chalk.yellow(
-          phaseLine('cache', authNote || `${remote.name} could not be used: ${hit.failed}; building instead`),
-        ),
-      );
-    } else {
-      phase('cache', `remote miss (${remote.name}) ${remoteTimer()}`);
-    }
-  }
-
   let waitedForBuild: WaitedForBuild | null = null;
-  if (!appPath && useBuildCache) {
-    let attempt: BuildLockHandle | null = null;
+  let swapDir: string | null = null;
+  let buildFailure: BuildFailureFields = {};
+
+  async function resolveMetroPort(): Promise<boolean> {
+    if (release) {
+      metroPort = null;
+      phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
+    } else if (metroCheck) {
+      if (!metroPort) {
+        fail({
+          code: 'RN_ISO_NO_METRO',
+          message: 'No Metro port is reserved for this workspace, so there is no dev server to build against.',
+          remedy: 'Run `rn-iso start` first, or pass --no-metro-check.',
+        });
+        return false;
+      }
+      const resolution = await d.resolveMetroWithRetry(d.resolveProjectMetro, metroPort, root, {
+        onRetry: ({ delayMs }) =>
+          note(
+            chalk.dim(
+              phaseLine(
+                'metro',
+                `port ${metroPort} did not verify yet; retrying in ${Math.round(delayMs / 1000)}s (Metro may still be indexing)`,
+              ),
+            ),
+          ),
+      });
+      if (!resolution?.metro) {
+        const supervisor = (d.readWorkspaceState(root)?.supervisor ?? null) as SupervisorLike | null;
+        const supervisorAlive = Boolean(supervisor?.pid && d.isPidAlive(supervisor.pid));
+        fail({
+          code: 'RN_ISO_NO_METRO',
+          message: noMetroMessage({ port: metroPort, resolution, supervisor, supervisorAlive }),
+          remedy: noMetroRemedy({ port: metroPort, supervisor, supervisorAlive }),
+        });
+        return false;
+      }
+    } else if (!metroPort) {
+      metroPort = DEFAULT_METRO_PORT;
+      note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${metroPort}.`));
+    }
+    if (remoteDevice && metroPort !== null) {
+      const reachable = await d.ensureMetroReachable({
+        ctx: remoteDevice.ctx,
+        metroPort,
+        isExpo,
+        tunnelMode: tunnelModeSetting(settings) ?? undefined,
+        publicUrl: publicUrlSetting(settings),
+        available: d.detectProviders(binOnPath),
+      });
+      if ('failed' in reachable) {
+        fail({
+          code: reachable.code ?? REMOTE_SESSION_ERROR,
+          message: reachable.failed,
+          remedy: reachable.remedy,
+        });
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async function resolveInitialFingerprint(): Promise<boolean> {
+    const bootTimer = stepTimer(d.now);
+    const boot = (): Promise<IosBootLike> =>
+      Promise.resolve(d.ensureBooted({ platform: PLATFORM, device, out: note })).catch((e) => ({
+        ok: false,
+        reason: String((e as Error)?.message || e),
+      }));
+    bootPromise = (
+      remoteDevice?.ctx.backend === 'eas'
+        ? d.ensureRemoteBootOwned({
+            root,
+            platform: PLATFORM,
+            sessionName: ownedSessionName(remoteDevice.ctx.label),
+            startedAt,
+            boot,
+            createdSessionId: remoteDevice.createdSessionId,
+            abandonCreatedSession: remoteDevice.abandonCreatedSession,
+            writeState: d.writeWorkspaceState,
+            register: registerProject,
+          })
+        : boot()
+    ).then((result) => {
+      bootDuration = bootTimer();
+      return result;
+    });
+    udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
+
+    const fingerprintTimer = stepTimer(d.now);
+    let computedFingerprint: string | null;
     try {
-      attempt = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
+      const computed = await d.fingerprintProject(root, { platform: PLATFORM });
+      computedFingerprint = computed?.hash ?? null;
+      fingerprintSources = computed?.sources ?? [];
     } catch (e) {
-      note(
-        chalk.yellow(
-          phaseLine('build', `could not take the build lock: ${(e as Error)?.message || e}; building anyway`),
-        ),
-      );
+      computedFingerprint = null;
+      note(chalk.dim(`Fingerprinting failed: ${(e as Error)?.message || e}`));
+    }
+    if (!computedFingerprint) {
+      fail({
+        code: 'RN_ISO_NO_FINGERPRINT',
+        message: `Could not fingerprint ${root}: @expo/fingerprint produced no hash for it.`,
+        remedy: 'Check the project native inputs and the @expo/fingerprint error above, then retry.',
+      });
+      return false;
+    }
+    fingerprint = computedFingerprint;
+    cacheKey = buildCacheKey(PLATFORM, fingerprint, configuration ? { configuration } : {});
+    storeHash = fingerprint;
+    storeKey = cacheKey;
+    storeSources = fingerprintSources;
+
+    const cached = useBuildCache ? d.resolveBuild(PLATFORM, cacheKey) : null;
+    cacheHit = cached ? 'local' : false;
+    let missDiff = '';
+    let missUntracked: string | null = null;
+    if (!cached) {
+      const lastBuild = (d.readWorkspaceState(root)?.lastBuild ?? null) as Record<string, unknown> | null;
+      const miss = describeFingerprintMiss({
+        platform: PLATFORM,
+        current: { hash: fingerprint, sources: fingerprintSources },
+        lastBuild,
+      });
+      if (miss) {
+        missDiff = fingerprintDiffSuffix(miss.changed);
+        logWriter().write(
+          fingerprintDiffRecord({ changed: miss.changed, previousHash: miss.previousHash, hash: fingerprint }),
+        );
+      } else if (useBuildCache) {
+        missUntracked = untrackedMissLine(d.untrackedNativeFiles({ projectRoot: root }));
+      }
+    }
+    phase(
+      'fingerprint',
+      `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}${missDiff}`,
+    );
+    if (missUntracked) note(chalk.dim(phaseLine('fingerprint', missUntracked)));
+    appPath = cached;
+    return true;
+  }
+
+  async function resolveRemoteArtifact(): Promise<void> {
+    if (!appPath) {
+      const loaded: LoadProjectProviderResult = await d.loadProjectProvider(root, { isExpo });
+      if (loaded?.unavailable) {
+        note(chalk.yellow(phaseLine('cache', `provider not usable: ${loaded.unavailable}`)));
+      } else if (loaded?.provider) {
+        remote = loaded;
+      }
+      if (remote?.name === 'eas') {
+        const auth = d.checkEasAuth({ projectRoot: root, owner: loaded?.owner || null });
+        const authNote = easAuthNote(auth as Parameters<typeof easAuthNote>[0]);
+        if (authNote) note(chalk.yellow(phaseLine('cache', authNote)));
+        if (auth?.code === 'logged-out') remote = null;
+      }
     }
 
-    if (attempt?.acquired) {
-      buildLock = attempt;
-      if (attempt.tookOver) note(chalk.yellow(phaseLine('build', takeoverLine(attempt.tookOver))));
-    } else if (attempt?.held) {
-      const held = attempt.held;
-      const who = held.projectRoot || 'another workspace';
-      phase(
-        'build',
-        `${who} is already building ${shortHash(fingerprint)} (pid ${held.pid})` +
-          `${held.logFile ? ` -- tail ${held.logFile}` : ''}`,
-      );
-
-      let waited: WaitForBuildResult | null = null;
-      try {
-        waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note });
-      } catch (e) {
-        const err = e as Error & { code?: string; lockPath?: string };
-        if (err?.code !== 'RN_ISO_BUILD_WAIT_TIMEOUT') throw e;
-        return fail({
-          code: 'RN_ISO_BUILD_WAIT_TIMEOUT',
-          message: err.message,
-          remedy: `Check pid ${held.pid}; if it is not really building, remove ${err.lockPath} and run \`rn-iso ios\` again.`,
-          build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
-        });
-      }
-
-      if (waited?.hit) {
-        appPath = waited.hit ?? null;
-        cacheHit = 'local';
-        waitedForBuild = { pid: held.pid, ms: waited.waitedMs };
-        phase('build', `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache`);
-      } else {
+    if (remote && useBuildCache) {
+      const remoteTimer = stepTimer(d.now);
+      const hit = await d.resolveRemote({
+        logWriter: logWriter(),
+        provider: remote.provider,
+        platform: PLATFORM,
+        projectRoot: root,
+        fingerprintHash: fingerprint,
+        runOptions: configuration ? { configuration } : null,
+      });
+      if (hit?.appPath) {
+        let stored = null;
+        try {
+          stored = d.storeBuild(PLATFORM, cacheKey, hit.appPath, { sources: fingerprintSources });
+        } catch (e) {
+          note(
+            chalk.yellow(phaseLine('cache', `remote hit could not be stored locally: ${(e as Error)?.message || e}`)),
+          );
+        }
+        appPath = stored || hit.appPath;
+        cacheHit = 'remote';
+        phase('cache', `remote hit (${remote.name})${stored ? ' -> stored locally' : ''} ${remoteTimer()}`);
+      } else if (hit?.timedOut) {
+        abandonedRemote = true;
         note(
           chalk.yellow(
-            phaseLine('build', `${who}'s build ended without an artifact (${waited?.builderFailed}); building here`),
+            phaseLine(
+              'cache',
+              `${remote.name} did not answer within ${formatDuration(RESOLVE_TIMEOUT_MS)}; building instead`,
+            ),
           ),
         );
-        try {
-          const takeover = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
-          if (takeover?.acquired) buildLock = takeover;
-        } catch {}
-        note(chalk.yellow(phaseLine('build', takeoverLine(held))));
+      } else if (hit?.failed) {
+        const authNote =
+          remote.name === 'eas' && isEasAuthFailureText(hit.failed)
+            ? easAuthNote({ code: 'logged-out', reason: hit.failed })
+            : null;
+        note(
+          chalk.yellow(
+            phaseLine('cache', authNote || `${remote.name} could not be used: ${hit.failed}; building instead`),
+          ),
+        );
+      } else {
+        phase('cache', `remote miss (${remote.name}) ${remoteTimer()}`);
       }
     }
   }
 
-  let swapDir: string | null = null;
+  async function waitForSharedBuild(): Promise<boolean> {
+    if (!appPath && useBuildCache) {
+      let attempt: BuildLockHandle | null = null;
+      try {
+        attempt = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
+      } catch (e) {
+        note(
+          chalk.yellow(
+            phaseLine('build', `could not take the build lock: ${(e as Error)?.message || e}; building anyway`),
+          ),
+        );
+      }
+
+      if (attempt?.acquired) {
+        buildLock = attempt;
+        if (attempt.tookOver) note(chalk.yellow(phaseLine('build', takeoverLine(attempt.tookOver))));
+      } else if (attempt?.held) {
+        const held = attempt.held;
+        const who = held.projectRoot || 'another workspace';
+        phase(
+          'build',
+          `${who} is already building ${shortHash(fingerprint)} (pid ${held.pid})` +
+            `${held.logFile ? ` -- tail ${held.logFile}` : ''}`,
+        );
+
+        let waited: WaitForBuildResult | null = null;
+        try {
+          waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note });
+        } catch (e) {
+          const err = e as Error & { code?: string; lockPath?: string };
+          if (err?.code !== 'RN_ISO_BUILD_WAIT_TIMEOUT') throw e;
+          fail({
+            code: 'RN_ISO_BUILD_WAIT_TIMEOUT',
+            message: err.message,
+            remedy: `Check pid ${held.pid}; if it is not really building, remove ${err.lockPath} and run \`rn-iso ios\` again.`,
+            build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
+          });
+          return false;
+        }
+
+        if (waited?.hit) {
+          appPath = waited.hit ?? null;
+          cacheHit = 'local';
+          waitedForBuild = { pid: held.pid, ms: waited.waitedMs };
+          phase('build', `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache`);
+        } else {
+          note(
+            chalk.yellow(
+              phaseLine('build', `${who}'s build ended without an artifact (${waited?.builderFailed}); building here`),
+            ),
+          );
+          try {
+            const takeover = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
+            if (takeover?.acquired) buildLock = takeover;
+          } catch {}
+          note(chalk.yellow(phaseLine('build', takeoverLine(held))));
+        }
+      }
+    }
+    return true;
+  }
+
   const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
     if (!release) return cachedPath;
     phase('js swap', `regenerating this workspace's JS for the cached ${configuration} app`);
@@ -1684,151 +1683,165 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return null;
   };
 
-  if (appPath && cacheHit) {
-    const prepared = await installableCachedApp(appPath);
-    appPath = prepared;
-    if (!prepared) {
-      cacheHit = false;
-      waitedForBuild = null;
+  async function prepareCachedArtifact(): Promise<void> {
+    if (appPath && cacheHit) {
+      const prepared = await installableCachedApp(appPath);
+      appPath = prepared;
+      if (!prepared) {
+        cacheHit = false;
+        waitedForBuild = null;
+      }
     }
   }
 
-  const buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache };
-
-  if (!appPath) {
-    try {
-      if (limits.maxBuilds) {
-        try {
-          buildSlot = await d.acquireBuildSlot({ max: limits.maxBuilds, root, logFile, out: note });
-        } catch (e) {
-          note(
-            chalk.yellow(
-              phaseLine('build', `could not take a build slot: ${(e as Error)?.message || e}; building anyway`),
-            ),
-          );
-        }
-      }
-
-      const mutatingSteps: string[] = [];
-
-      if (d.needsPrebuild(root, PLATFORM, isExpo)) {
-        const result = await d.runPrebuild(root, PLATFORM, logWriter());
-        if (result?.failed) {
-          phase('prebuild', 'FAILED');
-          return fail({
-            code: result.code || 'RN_ISO_PREBUILD_FAILED',
-            message: result.reason || 'expo prebuild failed.',
-            remedy: result.remedy || `See ${logFile} for the transcript.`,
-            lines: (result.lastLines || []).slice(-5),
-            build: buildFailure,
-          });
-        }
-        phase('prebuild', `ios/ absent -> generated (${formatDuration(result?.durationMs ?? 0)})`);
-        mutatingSteps.push('prebuild');
-      }
-
-      const podState = d.readPodState(root);
-      const verdict = d.podsAreStale(podState.lockText, podState.manifestText);
-      const action = podAction(podState, verdict);
-      if (action.install) {
-        const result = await d.runPodInstall(root, logWriter());
-        if (result?.failed) {
-          phase('pods', 'FAILED');
-          return fail({
-            code: result.code || 'RN_ISO_DEPS_FAILED',
-            message: result.reason || '`pod install` failed.',
-            remedy: result.remedy || `See ${logFile} for the transcript.`,
-            lines: result.diagnosticLines?.length ? result.diagnosticLines : (result.lastLines || []).slice(-5),
-            build: buildFailure,
-          });
-        }
-        phase('pods', `${action.reason} -> installed (${formatDuration(result?.durationMs ?? 0)})`);
-        mutatingSteps.push('pod install');
-      }
-
-      if (mutatingSteps.length) {
-        const after = await refingerprintAfterMutation({
-          projectRoot: root,
-          platform: PLATFORM,
-          previousHash: fingerprint,
-          fingerprint: d.fingerprintProject,
-        });
-        if (after?.moved) {
-          storeHash = after.hash;
-          storeSources = after.sources;
-          storeKey = buildCacheKey(PLATFORM, after.hash, configuration ? { configuration } : {});
-          note(
-            chalk.dim(
-              phaseLine(
-                'fingerprint',
-                `${shortHash(fingerprint)} -> ${shortHash(storeHash)} after ${mutatingSteps.join(' + ')}; ` +
-                  'storing under the new key, which is the one the next run looks up',
+  async function buildArtifact(): Promise<boolean> {
+    buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache };
+    if (!appPath) {
+      try {
+        if (limits.maxBuilds) {
+          try {
+            buildSlot = await d.acquireBuildSlot({ max: limits.maxBuilds, root, logFile, out: note });
+          } catch (e) {
+            note(
+              chalk.yellow(
+                phaseLine('build', `could not take a build slot: ${(e as Error)?.message || e}; building anyway`),
               ),
-            ),
-          );
+            );
+          }
+        }
 
-          const late = useBuildCache ? d.resolveBuild(PLATFORM, storeKey) : null;
-          if (late) {
-            const prepared = await installableCachedApp(late);
-            if (prepared) {
-              appPath = prepared;
-              cacheHit = 'local';
-              phase(
-                'cache',
-                `hit under the post-${mutatingSteps.join('/')} key (this tree was cold, so the first lookup could not find it)`,
-              );
+        const mutatingSteps: string[] = [];
+
+        if (d.needsPrebuild(root, PLATFORM, isExpo)) {
+          const result = await d.runPrebuild(root, PLATFORM, logWriter());
+          if (result?.failed) {
+            phase('prebuild', 'FAILED');
+            fail({
+              code: result.code || 'RN_ISO_PREBUILD_FAILED',
+              message: result.reason || 'expo prebuild failed.',
+              remedy: result.remedy || `See ${logFile} for the transcript.`,
+              lines: (result.lastLines || []).slice(-5),
+              build: buildFailure,
+            });
+            return false;
+          }
+          phase('prebuild', `ios/ absent -> generated (${formatDuration(result?.durationMs ?? 0)})`);
+          mutatingSteps.push('prebuild');
+        }
+
+        const podState = d.readPodState(root);
+        const verdict = d.podsAreStale(podState.lockText, podState.manifestText);
+        const action = podAction(podState, verdict);
+        if (action.install) {
+          const result = await d.runPodInstall(root, logWriter());
+          if (result?.failed) {
+            phase('pods', 'FAILED');
+            fail({
+              code: result.code || 'RN_ISO_DEPS_FAILED',
+              message: result.reason || '`pod install` failed.',
+              remedy: result.remedy || `See ${logFile} for the transcript.`,
+              lines: result.diagnosticLines?.length ? result.diagnosticLines : (result.lastLines || []).slice(-5),
+              build: buildFailure,
+            });
+            return false;
+          }
+          phase('pods', `${action.reason} -> installed (${formatDuration(result?.durationMs ?? 0)})`);
+          mutatingSteps.push('pod install');
+        }
+
+        if (mutatingSteps.length) {
+          const after = await refingerprintAfterMutation({
+            projectRoot: root,
+            platform: PLATFORM,
+            previousHash: fingerprint,
+            fingerprint: d.fingerprintProject,
+          });
+          if (after?.moved) {
+            storeHash = after.hash;
+            storeSources = after.sources;
+            storeKey = buildCacheKey(PLATFORM, after.hash, configuration ? { configuration } : {});
+            note(
+              chalk.dim(
+                phaseLine(
+                  'fingerprint',
+                  `${shortHash(fingerprint)} -> ${shortHash(storeHash)} after ${mutatingSteps.join(' + ')}; ` +
+                    'storing under the new key, which is the one the next run looks up',
+                ),
+              ),
+            );
+
+            const late = useBuildCache ? d.resolveBuild(PLATFORM, storeKey) : null;
+            if (late) {
+              const prepared = await installableCachedApp(late);
+              if (prepared) {
+                appPath = prepared;
+                cacheHit = 'local';
+                phase(
+                  'cache',
+                  `hit under the post-${mutatingSteps.join('/')} key (this tree was cold, so the first lookup could not find it)`,
+                );
+              }
             }
           }
         }
-      }
 
-      if (!appPath) {
-        const result: BuildIosResultLike = await d.buildIos({
-          root,
-          udid,
-          destination: remoteDevice ? GENERIC_SIM_DESTINATION : null,
-          logWriter: logWriter(),
-          ...(configuration ? { configuration } : {}),
-        });
-        if (result?.failed) {
-          phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
-          printDiagnostics(note, result);
-          const report = xcodeFailureReport(result, logFile);
-          return fail({
-            code: result.code || 'RN_ISO_BUILD_FAILED',
-            message: report.message,
-            remedy: report.remedy,
-            logPath: logFile,
-            build: buildFailure,
-          });
-        }
-        phase('build', `ok (${formatDuration(result.durationMs)})`);
-        appPath = result.appPath ?? null;
-        bundleId = result.bundleId ?? null;
-
-        try {
-          d.storeBuild(PLATFORM, storeKey, appPath!, { overwrite: !useBuildCache, sources: storeSources });
-        } catch (e) {
-          note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
-        }
-
-        if (remote) {
-          uploadPending = d.uploadRemote({
+        if (!appPath) {
+          const result: BuildIosResultLike = await d.buildIos({
+            root,
+            udid,
+            destination: remoteDevice ? GENERIC_SIM_DESTINATION : null,
             logWriter: logWriter(),
-            provider: remote.provider,
-            platform: PLATFORM,
-            projectRoot: root,
-            fingerprintHash: storeHash,
-            buildPath: appPath!,
-            runOptions: configuration ? { configuration } : null,
+            ...(configuration ? { configuration } : {}),
           });
+          if (result?.failed) {
+            phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
+            printDiagnostics(note, result);
+            const report = xcodeFailureReport(result, logFile);
+            fail({
+              code: result.code || 'RN_ISO_BUILD_FAILED',
+              message: report.message,
+              remedy: report.remedy,
+              logPath: logFile,
+              build: buildFailure,
+            });
+            return false;
+          }
+          phase('build', `ok (${formatDuration(result.durationMs)})`);
+          appPath = result.appPath ?? null;
+          bundleId = result.bundleId ?? null;
+
+          try {
+            d.storeBuild(PLATFORM, storeKey, appPath!, { overwrite: !useBuildCache, sources: storeSources });
+          } catch (e) {
+            note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
+          }
+
+          if (remote) {
+            uploadPending = d.uploadRemote({
+              logWriter: logWriter(),
+              provider: remote.provider,
+              platform: PLATFORM,
+              projectRoot: root,
+              fingerprintHash: storeHash,
+              buildPath: appPath!,
+              runOptions: configuration ? { configuration } : null,
+            });
+          }
         }
+      } finally {
+        releaseLock();
+        releaseSlot();
       }
-    } finally {
-      releaseLock();
-      releaseSlot();
     }
+    return true;
   }
+
+  if (!(await resolveMetroPort())) return null;
+  if (!(await resolveInitialFingerprint())) return null;
+  await resolveRemoteArtifact();
+  if (!(await waitForSharedBuild())) return null;
+  await prepareCachedArtifact();
+  if (!(await buildArtifact())) return null;
 
   return finishIosRun({
     d,

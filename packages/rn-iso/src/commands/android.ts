@@ -1122,7 +1122,7 @@ async function finishAndroidRun({
   return { ok: true, facts };
 }
 
-export async function runAndroid(
+function resolveRunAndroidOptions(
   {
     root,
     json = false,
@@ -1180,7 +1180,124 @@ export async function runAndroid(
     out = (line) => console.error(line),
     emit = (line) => console.log(line),
   }: RunAndroidOptions = {} as RunAndroidOptions,
-): Promise<RunAndroidResult> {
+) {
+  return {
+    root,
+    json,
+    commandRemoteBackend,
+    resolveSettingsFor,
+    resolveRemoteDeviceContext,
+    makeRemoteDeviceDeps,
+    resolveEasBin,
+    ensureRemoteMetro,
+    ensureRemoteOwned,
+    detectRemoteProviders,
+    metroCheck,
+    useBuildCache,
+    variantFlag,
+    readApkPackage,
+    getLimits,
+    checkCapacity,
+    acquireSlot,
+    releaseSlot,
+    ensureDevice,
+    ensureDeviceBooted,
+    resolveMetro,
+    resolveMetroRetrying,
+    readState,
+    pidAlive,
+    verifyLaunched,
+    ensureStorage,
+    fingerprint,
+    untracked,
+    resolveCached,
+    storeCached,
+    storedAssets,
+    captureAssets,
+    acquireLock,
+    releaseLock,
+    waitForBuild,
+    loadProvider,
+    easAuth,
+    resolveRemoteBuild,
+    uploadRemoteBuild,
+    needsPrebuildFor,
+    prebuild,
+    build,
+    install,
+    launch,
+    launchRelease,
+    verifyReleaseLaunched,
+    swapApk,
+    resolveDevClientScheme,
+    spawn,
+    kill,
+    createWriter,
+    writeState,
+    now,
+    out,
+    emit,
+  };
+}
+
+export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOptions): Promise<RunAndroidResult> {
+  let {
+    root,
+    json,
+    commandRemoteBackend,
+    resolveSettingsFor,
+    resolveRemoteDeviceContext,
+    makeRemoteDeviceDeps,
+    resolveEasBin,
+    ensureRemoteMetro,
+    ensureRemoteOwned,
+    detectRemoteProviders,
+    metroCheck,
+    useBuildCache,
+    variantFlag,
+    readApkPackage,
+    getLimits,
+    checkCapacity,
+    acquireSlot,
+    releaseSlot,
+    ensureDevice,
+    ensureDeviceBooted,
+    resolveMetro,
+    resolveMetroRetrying,
+    readState,
+    pidAlive,
+    verifyLaunched,
+    ensureStorage,
+    fingerprint,
+    untracked,
+    resolveCached,
+    storeCached,
+    storedAssets,
+    captureAssets,
+    acquireLock,
+    releaseLock,
+    waitForBuild,
+    loadProvider,
+    easAuth,
+    resolveRemoteBuild,
+    uploadRemoteBuild,
+    needsPrebuildFor,
+    prebuild,
+    build,
+    install,
+    launch,
+    launchRelease,
+    verifyReleaseLaunched,
+    swapApk,
+    resolveDevClientScheme,
+    spawn,
+    kill,
+    createWriter,
+    writeState,
+    now,
+    out,
+    emit,
+  } = resolveRunAndroidOptions(options);
   const started = now();
   const startedAt = new Date(started).toISOString();
   try {
@@ -1306,40 +1423,52 @@ export async function runAndroid(
 
   // ---- metro (fail fast, before remote resolution and device work) ----
   const reservedPort = project?.metroPort ?? null;
-  if (release) {
-    phase('metro', `skipped (${variant}: the JS bundle is embedded, no dev server is used)`);
-  } else if (metroCheck) {
-    if (!reservedPort) {
-      return fail(
-        NO_METRO,
-        'No Metro port is reserved for this workspace.',
-        'Run `rn-iso start` first, or pass --no-metro-check.',
+  let metroPort: number | null = null;
+  let phaseFailure: RunAndroidResult | null = null;
+
+  async function resolveMetroPort(): Promise<boolean> {
+    if (release) {
+      phase('metro', `skipped (${variant}: the JS bundle is embedded, no dev server is used)`);
+    } else if (metroCheck) {
+      if (!reservedPort) {
+        phaseFailure = fail(
+          NO_METRO,
+          'No Metro port is reserved for this workspace.',
+          'Run `rn-iso start` first, or pass --no-metro-check.',
+        );
+        return false;
+      }
+      const held = await resolveMetroRetrying(resolveMetro, reservedPort, root, {
+        onRetry: ({ delayMs }) =>
+          phase(
+            'metro',
+            `port ${reservedPort} did not verify yet; retrying in ${Math.round(delayMs / 1000)}s (Metro may still be indexing)`,
+          ),
+      });
+      if (!held.metro) {
+        const supervisor = (readState(root)?.supervisor ?? null) as SupervisorLike | null;
+        const supervisorAlive = Boolean(supervisor?.pid && pidAlive(supervisor.pid));
+        phaseFailure = fail(
+          NO_METRO,
+          noMetroMessage({ port: reservedPort, resolution: held, supervisor, supervisorAlive }),
+          noMetroRemedy({ port: reservedPort, supervisor, supervisorAlive }),
+        );
+        return false;
+      }
+      phase('metro', `port ${reservedPort} (pid ${held.metro?.pid})`);
+    } else {
+      phase(
+        'metro',
+        reservedPort
+          ? `port ${reservedPort} (not checked)`
+          : `no reservation; using ${DEFAULT_METRO_PORT} (not checked)`,
       );
     }
-    const held = await resolveMetroRetrying(resolveMetro, reservedPort, root, {
-      onRetry: ({ delayMs }) =>
-        phase(
-          'metro',
-          `port ${reservedPort} did not verify yet; retrying in ${Math.round(delayMs / 1000)}s (Metro may still be indexing)`,
-        ),
-    });
-    if (!held.metro) {
-      const supervisor = (readState(root)?.supervisor ?? null) as SupervisorLike | null;
-      const supervisorAlive = Boolean(supervisor?.pid && pidAlive(supervisor.pid));
-      return fail(
-        NO_METRO,
-        noMetroMessage({ port: reservedPort, resolution: held, supervisor, supervisorAlive }),
-        noMetroRemedy({ port: reservedPort, supervisor, supervisorAlive }),
-      );
-    }
-    phase('metro', `port ${reservedPort} (pid ${held.metro?.pid})`);
-  } else {
-    phase(
-      'metro',
-      reservedPort ? `port ${reservedPort} (not checked)` : `no reservation; using ${DEFAULT_METRO_PORT} (not checked)`,
-    );
+    metroPort = release ? null : (reservedPort ?? DEFAULT_METRO_PORT);
+    return true;
   }
-  const metroPort: number | null = release ? null : (reservedPort ?? DEFAULT_METRO_PORT);
+
+  if (!(await resolveMetroPort())) return phaseFailure!;
 
   // ---- remote device: five dep overrides, or none ----
   //
@@ -1471,169 +1600,195 @@ export async function runAndroid(
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
 
-  const fingerprintTimer = stepTimer(now);
-  let hash: string | null;
+  let hash = '';
   let fingerprintSources: FingerprintSource[] = [];
-  try {
-    const computed = await fingerprint(root, { platform: PLATFORM });
-    hash = computed?.hash ?? null;
-    fingerprintSources = computed?.sources ?? [];
-  } catch (err) {
-    return fail(
-      NO_FINGERPRINT,
-      `@expo/fingerprint could not fingerprint ${root}: ${(err as Error)?.message || err}`,
-      'Fix the @expo/fingerprint error above, then retry.',
-    );
-  }
-  if (!hash) {
-    return fail(
-      NO_FINGERPRINT,
-      `@expo/fingerprint returned no hash for ${root}, so the build cache cannot be addressed.`,
-      'Check the project native inputs and the @expo/fingerprint error above, then retry.',
-    );
-  }
-  record.fingerprint = hash;
-  const cacheKey = buildCacheKey(PLATFORM, hash, variant ? { variant } : {});
-  record.cacheKey = cacheKey;
+  let cacheKey = '';
+  let storeHash = '';
+  let storeKey = '';
+  let storeSources: FingerprintSource[] = [];
+  let apkPath: string | null = null;
 
-  let storeHash = hash;
-  let storeKey = cacheKey;
-  let storeSources = fingerprintSources;
-
-  const cached = useBuildCache ? resolveCached(PLATFORM, cacheKey) : null;
-  record.cacheHit = cached ? 'local' : false;
-  record.cacheSkipped = !useBuildCache;
-  let missDiff = '';
-  let missUntracked: string | null = null;
-  if (!cached) {
-    const lastBuild = (readState(root)?.lastBuild ?? null) as Record<string, unknown> | null;
-    const miss = describeFingerprintMiss({
-      platform: PLATFORM,
-      current: { hash, sources: fingerprintSources },
-      lastBuild,
-    });
-    if (miss) {
-      missDiff = fingerprintDiffSuffix(miss.changed);
-      writer.write(fingerprintDiffRecord({ changed: miss.changed, previousHash: miss.previousHash, hash }));
-    } else if (useBuildCache) {
-      missUntracked = untrackedMissLine(untracked({ projectRoot: root }));
+  async function resolveInitialFingerprint(): Promise<boolean> {
+    const fingerprintTimer = stepTimer(now);
+    try {
+      const computed = await fingerprint(root, { platform: PLATFORM });
+      hash = computed?.hash ?? '';
+      fingerprintSources = computed?.sources ?? [];
+    } catch (err) {
+      phaseFailure = fail(
+        NO_FINGERPRINT,
+        `@expo/fingerprint could not fingerprint ${root}: ${(err as Error)?.message || err}`,
+        'Fix the @expo/fingerprint error above, then retry.',
+      );
+      return false;
     }
-  }
-  phase(
-    'fingerprint',
-    `${shortHash(hash)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}${missDiff}`,
-  );
-  if (missUntracked) phase('fingerprint', chalk.dim(missUntracked));
+    if (!hash) {
+      phaseFailure = fail(
+        NO_FINGERPRINT,
+        `@expo/fingerprint returned no hash for ${root}, so the build cache cannot be addressed.`,
+        'Check the project native inputs and the @expo/fingerprint error above, then retry.',
+      );
+      return false;
+    }
+    record.fingerprint = hash;
+    cacheKey = buildCacheKey(PLATFORM, hash, variant ? { variant } : {});
+    record.cacheKey = cacheKey;
+    storeHash = hash;
+    storeKey = cacheKey;
+    storeSources = fingerprintSources;
 
-  let apkPath: string | null = cached || null;
+    const cached = useBuildCache ? resolveCached(PLATFORM, cacheKey) : null;
+    record.cacheHit = cached ? 'local' : false;
+    record.cacheSkipped = !useBuildCache;
+    let missDiff = '';
+    let missUntracked: string | null = null;
+    if (!cached) {
+      const lastBuild = (readState(root)?.lastBuild ?? null) as Record<string, unknown> | null;
+      const miss = describeFingerprintMiss({
+        platform: PLATFORM,
+        current: { hash, sources: fingerprintSources },
+        lastBuild,
+      });
+      if (miss) {
+        missDiff = fingerprintDiffSuffix(miss.changed);
+        writer.write(fingerprintDiffRecord({ changed: miss.changed, previousHash: miss.previousHash, hash }));
+      } else if (useBuildCache) {
+        missUntracked = untrackedMissLine(untracked({ projectRoot: root }));
+      }
+    }
+    phase(
+      'fingerprint',
+      `${shortHash(hash)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}${missDiff}`,
+    );
+    if (missUntracked) phase('fingerprint', chalk.dim(missUntracked));
+    apkPath = cached || null;
+    return true;
+  }
+
+  if (!(await resolveInitialFingerprint())) return phaseFailure!;
+
   let remote: LoadProjectProviderResult | null = null;
   let abandonedRemote = false;
   let uploadPending: Promise<RemoteUploadLike> | null = null;
-  if (!apkPath) {
-    const loaded: LoadProjectProviderResult = await loadProvider(root, { isExpo });
-    if (loaded?.unavailable) {
-      phase('cache', chalk.yellow(`provider not usable: ${loaded.unavailable}`));
-    } else if (loaded?.provider) {
-      remote = loaded;
+
+  async function resolveRemoteArtifact(): Promise<void> {
+    if (!apkPath) {
+      const loaded: LoadProjectProviderResult = await loadProvider(root, { isExpo });
+      if (loaded?.unavailable) {
+        phase('cache', chalk.yellow(`provider not usable: ${loaded.unavailable}`));
+      } else if (loaded?.provider) {
+        remote = loaded;
+      }
+      if (remote?.name === 'eas') {
+        const auth = easAuth({ projectRoot: root, owner: loaded?.owner || null });
+        const authNote = easAuthNote(auth as Parameters<typeof easAuthNote>[0]);
+        if (authNote) phase('cache', chalk.yellow(authNote));
+        if (auth?.code === 'logged-out') remote = null;
+      }
     }
-    if (remote?.name === 'eas') {
-      const auth = easAuth({ projectRoot: root, owner: loaded?.owner || null });
-      const authNote = easAuthNote(auth as Parameters<typeof easAuthNote>[0]);
-      if (authNote) phase('cache', chalk.yellow(authNote));
-      if (auth?.code === 'logged-out') remote = null;
+
+    if (remote && useBuildCache) {
+      const remoteTimer = stepTimer(now);
+      const hit = await resolveRemoteBuild({
+        logWriter: writer,
+        provider: remote.provider,
+        platform: PLATFORM,
+        projectRoot: root,
+        fingerprintHash: hash,
+        runOptions: variant ? { variant } : null,
+      });
+      if (hit?.appPath) {
+        let stored = null;
+        try {
+          stored = storeCached(PLATFORM, cacheKey, hit.appPath, { sources: fingerprintSources });
+        } catch (err) {
+          phase('cache', chalk.yellow(`remote hit could not be stored locally: ${(err as Error)?.message || err}`));
+        }
+        apkPath = stored || hit.appPath;
+        record.cacheHit = 'remote';
+        phase('cache', `remote hit (${remote.name})${stored ? ' -> stored locally' : ''} ${remoteTimer()}`);
+      } else if (hit?.timedOut) {
+        abandonedRemote = true;
+        phase(
+          'cache',
+          chalk.yellow(`${remote.name} did not answer within ${formatDuration(RESOLVE_TIMEOUT_MS)}; building instead`),
+        );
+      } else if (hit?.failed) {
+        const authNote =
+          remote.name === 'eas' && isEasAuthFailureText(hit.failed)
+            ? easAuthNote({ code: 'logged-out', reason: hit.failed })
+            : null;
+        phase('cache', chalk.yellow(authNote || `${remote.name} could not be used: ${hit.failed}; building instead`));
+      } else {
+        phase('cache', `remote miss (${remote.name}) ${remoteTimer()}`);
+      }
     }
   }
 
-  if (remote && useBuildCache) {
-    const remoteTimer = stepTimer(now);
-    const hit = await resolveRemoteBuild({
-      logWriter: writer,
-      provider: remote.provider,
-      platform: PLATFORM,
-      projectRoot: root,
-      fingerprintHash: hash,
-      runOptions: variant ? { variant } : null,
-    });
-    if (hit?.appPath) {
-      let stored = null;
-      try {
-        stored = storeCached(PLATFORM, cacheKey, hit.appPath, { sources: fingerprintSources });
-      } catch (err) {
-        phase('cache', chalk.yellow(`remote hit could not be stored locally: ${(err as Error)?.message || err}`));
-      }
-      apkPath = stored || hit.appPath;
-      record.cacheHit = 'remote';
-      phase('cache', `remote hit (${remote.name})${stored ? ' -> stored locally' : ''} ${remoteTimer()}`);
-    } else if (hit?.timedOut) {
-      abandonedRemote = true;
-      phase(
-        'cache',
-        chalk.yellow(`${remote.name} did not answer within ${formatDuration(RESOLVE_TIMEOUT_MS)}; building instead`),
-      );
-    } else if (hit?.failed) {
-      const authNote =
-        remote.name === 'eas' && isEasAuthFailureText(hit.failed)
-          ? easAuthNote({ code: 'logged-out', reason: hit.failed })
-          : null;
-      phase('cache', chalk.yellow(authNote || `${remote.name} could not be used: ${hit.failed}; building instead`));
-    } else {
-      phase('cache', `remote miss (${remote.name}) ${remoteTimer()}`);
-    }
-  }
+  await resolveRemoteArtifact();
 
   let waitedForBuild: WaitedForBuild | null = null;
-  if (!apkPath && useBuildCache) {
-    let attempt: BuildLockHandle | null = null;
-    try {
-      attempt = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
-    } catch (err) {
-      phase('build', chalk.yellow(`could not take the build lock: ${(err as Error)?.message || err}; building anyway`));
-    }
-
-    if (attempt?.acquired) {
-      buildLock = attempt;
-      if (attempt.tookOver) phase('build', chalk.yellow(takeoverLine(attempt.tookOver)));
-    } else if (attempt?.held) {
-      const holder = attempt.held;
-      const who = holder.projectRoot || 'another workspace';
-      phase(
-        'build',
-        `${who} is already building ${shortHash(hash)} (pid ${holder.pid})` +
-          `${holder.logFile ? ` -- tail ${holder.logFile}` : ''}`,
-      );
-
-      let waited: WaitForBuildResult | null = null;
+  async function waitForSharedBuild(): Promise<boolean> {
+    if (!apkPath && useBuildCache) {
+      let attempt: BuildLockHandle | null = null;
       try {
-        waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out });
+        attempt = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
       } catch (err) {
-        const wtErr = err as Error & { code?: string; lockPath?: string };
-        if (wtErr?.code !== 'RN_ISO_BUILD_WAIT_TIMEOUT') throw err;
-        return fail(
-          'RN_ISO_BUILD_WAIT_TIMEOUT',
-          wtErr.message,
-          `Check pid ${holder.pid}; if it is not really building, remove ${wtErr.lockPath} and run \`rn-iso android\` again.`,
-          { lastBuildStatus: true },
-        );
-      }
-
-      if (waited?.hit) {
-        apkPath = waited.hit ?? null;
-        record.cacheHit = 'local';
-        waitedForBuild = { pid: holder.pid, ms: waited.waitedMs };
-        phase('build', `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache`);
-      } else {
         phase(
           'build',
-          chalk.yellow(`${who}'s build ended without an artifact (${waited?.builderFailed}); building here`),
+          chalk.yellow(`could not take the build lock: ${(err as Error)?.message || err}; building anyway`),
         );
+      }
+
+      if (attempt?.acquired) {
+        buildLock = attempt;
+        if (attempt.tookOver) phase('build', chalk.yellow(takeoverLine(attempt.tookOver)));
+      } else if (attempt?.held) {
+        const holder = attempt.held;
+        const who = holder.projectRoot || 'another workspace';
+        phase(
+          'build',
+          `${who} is already building ${shortHash(hash)} (pid ${holder.pid})` +
+            `${holder.logFile ? ` -- tail ${holder.logFile}` : ''}`,
+        );
+
+        let waited: WaitForBuildResult | null = null;
         try {
-          const takeover = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
-          if (takeover?.acquired) buildLock = takeover;
-        } catch {}
-        phase('build', chalk.yellow(takeoverLine(holder)));
+          waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out });
+        } catch (err) {
+          const wtErr = err as Error & { code?: string; lockPath?: string };
+          if (wtErr?.code !== 'RN_ISO_BUILD_WAIT_TIMEOUT') throw err;
+          phaseFailure = fail(
+            'RN_ISO_BUILD_WAIT_TIMEOUT',
+            wtErr.message,
+            `Check pid ${holder.pid}; if it is not really building, remove ${wtErr.lockPath} and run \`rn-iso android\` again.`,
+            { lastBuildStatus: true },
+          );
+          return false;
+        }
+
+        if (waited?.hit) {
+          apkPath = waited.hit ?? null;
+          record.cacheHit = 'local';
+          waitedForBuild = { pid: holder.pid, ms: waited.waitedMs };
+          phase('build', `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache`);
+        } else {
+          phase(
+            'build',
+            chalk.yellow(`${who}'s build ended without an artifact (${waited?.builderFailed}); building here`),
+          );
+          try {
+            const takeover = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
+            if (takeover?.acquired) buildLock = takeover;
+          } catch {}
+          phase('build', chalk.yellow(takeoverLine(holder)));
+        }
       }
     }
+    return true;
   }
+
+  if (!(await waitForSharedBuild())) return phaseFailure!;
 
   let swapDir: string | null = null;
   let swapFellBack = false;
@@ -1679,125 +1834,140 @@ export async function runAndroid(
     return null;
   };
 
-  if (apkPath && record.cacheHit) {
-    const prepared = await installableCachedApk(cacheKey, apkPath);
-    apkPath = prepared;
-    if (!prepared) {
-      record.cacheHit = false;
-      waitedForBuild = null;
+  async function prepareCachedArtifact(): Promise<void> {
+    if (apkPath && record.cacheHit) {
+      const prepared = await installableCachedApk(cacheKey, apkPath);
+      apkPath = prepared;
+      if (!prepared) {
+        record.cacheHit = false;
+        waitedForBuild = null;
+      }
     }
   }
 
-  if (!apkPath) {
-    try {
-      if (limits.maxBuilds) {
-        try {
-          buildSlot = await acquireSlot({ max: limits.maxBuilds, root, logFile: buildLog, out });
-        } catch (err) {
-          phase(
-            'build',
-            chalk.yellow(`could not take a build slot: ${(err as Error)?.message || err}; building anyway`),
-          );
+  async function buildArtifact(): Promise<boolean> {
+    if (!apkPath) {
+      try {
+        if (limits.maxBuilds) {
+          try {
+            buildSlot = await acquireSlot({ max: limits.maxBuilds, root, logFile: buildLog, out });
+          } catch (err) {
+            phase(
+              'build',
+              chalk.yellow(`could not take a build slot: ${(err as Error)?.message || err}; building anyway`),
+            );
+          }
         }
-      }
 
-      if (needsPrebuildFor(root, PLATFORM, isExpo)) {
-        const pre: PrebuildResultLike = await prebuild(root, PLATFORM, writer, { isExpo });
-        if (pre.failed) {
-          return fail(pre.code!, pre.reason, pre.remedy, {
-            lastBuildStatus: true,
-            lines: tail(pre.lastLines),
-            logPath: displayPath(root, buildLog),
+        if (needsPrebuildFor(root, PLATFORM, isExpo)) {
+          const pre: PrebuildResultLike = await prebuild(root, PLATFORM, writer, { isExpo });
+          if (pre.failed) {
+            phaseFailure = fail(pre.code!, pre.reason, pre.remedy, {
+              lastBuildStatus: true,
+              lines: tail(pre.lastLines),
+              logPath: displayPath(root, buildLog),
+            });
+            return false;
+          }
+          phase('prebuild', `android/ generated (${formatDuration(pre.durationMs)})`);
+          androidPackage = androidPackage || detectAndroidPackage(root);
+          record.bundleId = androidPackage;
+
+          const after = await refingerprintAfterMutation({
+            projectRoot: root,
+            platform: PLATFORM,
+            previousHash: hash,
+            fingerprint,
           });
-        }
-        phase('prebuild', `android/ generated (${formatDuration(pre.durationMs)})`);
-        androidPackage = androidPackage || detectAndroidPackage(root);
-        record.bundleId = androidPackage;
+          if (after?.moved) {
+            storeHash = after.hash;
+            storeSources = after.sources;
+            storeKey = buildCacheKey(PLATFORM, after.hash, variant ? { variant } : {});
+            record.fingerprint = storeHash;
+            record.cacheKey = storeKey;
+            phase(
+              'fingerprint',
+              chalk.dim(
+                `${shortHash(hash)} -> ${shortHash(storeHash)} after prebuild; ` +
+                  'storing under the new key, which is the one the next run looks up',
+              ),
+            );
 
-        const after = await refingerprintAfterMutation({
-          projectRoot: root,
-          platform: PLATFORM,
-          previousHash: hash,
-          fingerprint,
-        });
-        if (after?.moved) {
-          storeHash = after.hash;
-          storeSources = after.sources;
-          storeKey = buildCacheKey(PLATFORM, after.hash, variant ? { variant } : {});
-          record.fingerprint = storeHash;
-          record.cacheKey = storeKey;
-          phase(
-            'fingerprint',
-            chalk.dim(
-              `${shortHash(hash)} -> ${shortHash(storeHash)} after prebuild; ` +
-                'storing under the new key, which is the one the next run looks up',
-            ),
-          );
-
-          const late = useBuildCache ? resolveCached(PLATFORM, storeKey) : null;
-          if (late) {
-            const prepared = await installableCachedApk(storeKey, late);
-            if (prepared) {
-              apkPath = prepared;
-              record.cacheHit = 'local';
-              phase(
-                'cache',
-                'hit under the post-prebuild key (this tree was cold, so the first lookup could not find it)',
-              );
+            const late = useBuildCache ? resolveCached(PLATFORM, storeKey) : null;
+            if (late) {
+              const prepared = await installableCachedApk(storeKey, late);
+              if (prepared) {
+                apkPath = prepared;
+                record.cacheHit = 'local';
+                phase(
+                  'cache',
+                  'hit under the post-prebuild key (this tree was cold, so the first lookup could not find it)',
+                );
+              }
             }
           }
         }
-      }
 
-      if (!apkPath) {
-        const built: BuildAndroidResultLike = await build({ root, logWriter: writer, variant });
-        if (built.failed) {
-          const diagnostics = built.diagnostics || [];
-          for (const diag of diagnostics) {
-            writer.write({ src: 'build', level: 'error', event: 'gradle_diagnostic', msg: formatDiagnostic(diag) });
+        if (!apkPath) {
+          const built: BuildAndroidResultLike = await build({ root, logWriter: writer, variant });
+          if (built.failed) {
+            const diagnostics = built.diagnostics || [];
+            for (const diag of diagnostics) {
+              writer.write({ src: 'build', level: 'error', event: 'gradle_diagnostic', msg: formatDiagnostic(diag) });
+            }
+            phase('build', chalk.red(`FAILED after ${formatDuration(built.durationMs)}`));
+            const extracted = diagnostics.map(formatDiagnostic);
+            if ((built.truncated ?? 0) > 0) extracted.push(`... and ${built.truncated} more diagnostic(s) in the log`);
+            phaseFailure = fail(
+              built.code!,
+              built.reason,
+              diagnostics.find((d) => d.remedy)?.remedy || built.remedy || null,
+              {
+                lastBuildStatus: true,
+                diagnostics: extracted,
+                lines: extracted.length ? [] : tail(built.lastLines),
+                logPath: displayPath(root, buildLog),
+              },
+            );
+            return false;
           }
-          phase('build', chalk.red(`FAILED after ${formatDuration(built.durationMs)}`));
-          const extracted = diagnostics.map(formatDiagnostic);
-          if ((built.truncated ?? 0) > 0) extracted.push(`... and ${built.truncated} more diagnostic(s) in the log`);
-          return fail(built.code!, built.reason, diagnostics.find((d) => d.remedy)?.remedy || built.remedy || null, {
-            lastBuildStatus: true,
-            diagnostics: extracted,
-            lines: extracted.length ? [] : tail(built.lastLines),
-            logPath: displayPath(root, buildLog),
-          });
-        }
-        apkPath = built.apkPath ?? null;
-        phase('build', `${basename(apkPath!)} (${formatDuration(built.durationMs)})`);
-        if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
+          apkPath = built.apkPath ?? null;
+          phase('build', `${basename(apkPath!)} (${formatDuration(built.durationMs)})`);
+          if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
 
-        const assetManifest = release ? captureAssets(root, { variant }) : null;
-        try {
-          storeCached(PLATFORM, storeKey, apkPath!, {
-            overwrite: !useBuildCache || swapFellBack,
-            sources: storeSources,
-            assetManifest,
-          });
-        } catch (err) {
-          phase('cache', chalk.yellow(`could not store the build: ${(err as Error)?.message || err}`));
-        }
+          const assetManifest = release ? captureAssets(root, { variant }) : null;
+          try {
+            storeCached(PLATFORM, storeKey, apkPath!, {
+              overwrite: !useBuildCache || swapFellBack,
+              sources: storeSources,
+              assetManifest,
+            });
+          } catch (err) {
+            phase('cache', chalk.yellow(`could not store the build: ${(err as Error)?.message || err}`));
+          }
 
-        if (remote) {
-          uploadPending = uploadRemoteBuild({
-            logWriter: writer,
-            provider: remote.provider,
-            platform: PLATFORM,
-            projectRoot: root,
-            fingerprintHash: storeHash,
-            buildPath: apkPath!,
-            runOptions: variant ? { variant } : null,
-          });
+          if (remote) {
+            uploadPending = uploadRemoteBuild({
+              logWriter: writer,
+              provider: remote.provider,
+              platform: PLATFORM,
+              projectRoot: root,
+              fingerprintHash: storeHash,
+              buildPath: apkPath!,
+              runOptions: variant ? { variant } : null,
+            });
+          }
         }
+      } finally {
+        releaseHeldLock();
+        releaseHeldSlot();
       }
-    } finally {
-      releaseHeldLock();
-      releaseHeldSlot();
     }
+    return true;
   }
+
+  await prepareCachedArtifact();
+  if (!(await buildArtifact())) return phaseFailure!;
   record.appPath = apkPath;
 
   return finishAndroidRun({
