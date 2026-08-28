@@ -15,6 +15,7 @@
 // beyond that is the project's own bundler command, which is not rn-iso's
 // judgment to make.
 import chalk from 'chalk';
+import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync, readFileSync } from 'node:fs';
 import type { Command } from 'commander';
 import type { StartError, StartFacts, SupervisorRecord } from '../types.ts';
@@ -48,6 +49,7 @@ import { detectProviders, planMetroReach, PUBLIC_METRO_ENV, type ManagedProvider
 import {
   startTunnelSequence,
   stopTunnel,
+  terminateChild,
   withManagedTunnelLock,
   type StartTunnelSequenceOptions,
   type StartTunnelSequenceResult,
@@ -242,6 +244,8 @@ interface StartCommandDeps {
   isTunnelAlive(pid: number): boolean;
   writeTunnelRecord(root: string, patch: Parameters<typeof writeWorkspaceState>[1]): unknown;
   stopTunnel(record: TunnelRecord): ReturnType<typeof stopTunnel>;
+  writeSupervisorRecord(root: string, patch: Parameters<typeof writeWorkspaceState>[1]): unknown;
+  terminateSupervisorChild(child: ChildProcess): Promise<boolean>;
   withTunnelLock: typeof withManagedTunnelLock;
   clearTunnelRecord(root: string, record: TunnelRecord): void;
 }
@@ -262,6 +266,15 @@ const DEFAULT_START_DEPS: StartCommandDeps = {
   isTunnelAlive: isPidAlive,
   writeTunnelRecord: writeWorkspaceState,
   stopTunnel,
+  writeSupervisorRecord: writeWorkspaceState,
+  terminateSupervisorChild: (child) =>
+    terminateChild(child, {
+      alreadyExited: false,
+      timeoutMs: 1_000,
+      now: Date.now,
+      sleep,
+      isAlive: isPidAlive,
+    }),
   withTunnelLock: withManagedTunnelLock,
   clearTunnelRecord: clearManagedMetroTunnel,
 };
@@ -272,7 +285,12 @@ interface ManagedTunnelFailure {
   remedy: string;
 }
 
-type ManagedTunnelAcquisition = { origin: string; started: TunnelRecord | null } | { failed: ManagedTunnelFailure };
+interface ManagedTunnelTracking {
+  record: TunnelRecord;
+  startedHere: boolean;
+}
+
+type ManagedTunnelAcquisition = { origin: string; tunnel: ManagedTunnelTracking } | { failed: ManagedTunnelFailure };
 
 function normalizeManagedTunnelUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
@@ -394,7 +412,61 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
       let publicOrigin = remote ? publicUrl : null;
       let resolution = await resolveProjectMetro(port, root);
       let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
-      let startedManagedTunnel: TunnelRecord | null = null;
+      let managedTunnel: ManagedTunnelTracking | null = null;
+      let spawnedChild: ChildProcess | null = null;
+      let spawnedTs: number | null = null;
+      let childExit: ChildExitInfo | null = null;
+
+      const spawnSupervisor = (origin: string | null): ChildProcess => {
+        mkdirSync(logsDir, { recursive: true });
+        // One append-only descriptor preserves stdout and stderr order and
+        // records failures that occur before structured logging starts.
+        const fd = openSync(logFile, 'a');
+        spawnedTs = Date.now();
+        const supervisorArgs = [
+          supervisorEntry(),
+          '--root',
+          root,
+          '--port',
+          String(port),
+          ...(tunnel ? ['--tunnel'] : []),
+        ];
+        const child = getExecutor().spawn(process.execPath, supervisorArgs, {
+          cwd: root,
+          // The supervisor owns its process group so it survives this command
+          // and can be stopped without signalling the caller's shell.
+          detached: true,
+          stdio: ['ignore', fd, fd],
+          env: origin
+            ? {
+                ...process.env,
+                [PUBLIC_METRO_ENV]: origin,
+                EXPO_PACKAGER_PROXY_URL: origin,
+              }
+            : process.env,
+        });
+        child.unref?.();
+        child.on?.('exit', (code, signal) => {
+          childExit = { code, signal };
+        });
+        child.on?.('error', (err) => {
+          childExit = { code: null, signal: null, error: err };
+        });
+        out(chalk.dim(`Supervisor pid ${child.pid} starting the dev server on port ${port}...`));
+        spawnedChild = child;
+        return child;
+      };
+
+      const waitForSupervisorHandoff = async (child: ChildProcess): Promise<LiveSupervisor | null> => {
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          const found = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
+          if (found?.pid === child.pid) return found;
+          if (childExit !== null || (child.pid ? !isPidAlive(child.pid) : true)) return null;
+          await sleep(25);
+        }
+        return null;
+      };
 
       if (remote && !tunnel && !publicUrl && tunnelMode !== 'off') {
         const available = d.providers();
@@ -408,21 +480,94 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           let acquisition: ManagedTunnelAcquisition;
           try {
             acquisition = await d.withTunnelLock(root, async () => {
+              let tracking: ManagedTunnelTracking;
+              let startedCleanup: (() => Promise<{ status: 'stopped' | 'failed'; reason?: string }>) | null = null;
               const recorded = readMetroTunnel(root);
               if (recorded?.kind === 'managed' && d.isTunnelAlive(recorded.pid)) {
                 const reusable =
                   recorded.port === port &&
                   candidates.includes(recorded.provider) &&
                   (!expectedStableUrl || normalizeManagedTunnelUrl(recorded.url) === expectedStableUrl);
-                return reusable
-                  ? { origin: normalizeManagedTunnelUrl(recorded.url), started: null }
-                  : {
-                      failed: {
-                        code: 'RN_ISO_REMOTE_START_REQUIRED',
-                        message: `A different managed Metro tunnel is already running for this workspace.`,
-                        remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
-                      },
-                    };
+                if (!reusable) {
+                  return {
+                    failed: {
+                      code: 'RN_ISO_REMOTE_START_REQUIRED',
+                      message: `A different managed Metro tunnel is already running for this workspace.`,
+                      remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
+                    },
+                  };
+                }
+                tracking = {
+                  record: {
+                    provider: recorded.provider,
+                    pid: recorded.pid,
+                    url: normalizeManagedTunnelUrl(recorded.url),
+                    port: recorded.port,
+                    startedAt: recorded.startedAt,
+                  },
+                  startedHere: false,
+                };
+              } else {
+                const currentResolution = await resolveProjectMetro(port, root);
+                const currentSupervisor = liveSupervisor({
+                  state: readWorkspaceState(root),
+                  project: getProject(root),
+                  port,
+                });
+                if (currentResolution.metro || currentSupervisor) {
+                  return {
+                    failed: {
+                      code: 'RN_ISO_REMOTE_START_REQUIRED',
+                      message: `The dev server on port ${port} is local-only and cannot gain a managed tunnel while it is running.`,
+                      remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
+                    },
+                  };
+                }
+
+                const started = await d.startTunnelSequence({
+                  providers: candidates,
+                  port,
+                  ngrokUrl: expectedStableUrl,
+                  requireReachable: false,
+                });
+                if ('failed' in started) {
+                  return {
+                    failed: {
+                      code: 'RN_ISO_REMOTE_METRO_UNREACHABLE',
+                      message: `Could not start a managed Metro tunnel for port ${port}.`,
+                      remedy: started.reason,
+                    },
+                  };
+                }
+                const record: TunnelRecord = {
+                  provider: started.provider,
+                  pid: started.pid,
+                  url: normalizeManagedTunnelUrl(started.url),
+                  port,
+                  startedAt: new Date().toISOString(),
+                };
+                startedCleanup = started.cleanup;
+                try {
+                  d.writeTunnelRecord(root, {
+                    metroTunnel: {
+                      kind: 'managed',
+                      ...record,
+                    },
+                  });
+                } catch (err) {
+                  const stopped = await started.cleanup();
+                  return {
+                    failed: {
+                      code: 'RN_ISO_REMOTE_METRO_UNREACHABLE',
+                      message: `Could not record the managed Metro tunnel: ${(err as Error)?.message || err}`,
+                      remedy:
+                        stopped.status === 'failed'
+                          ? `Cleanup failed. Unmanaged pid ${record.pid} may still be running: ${stopped.reason ?? 'unknown error'}`
+                          : 'The tunnel process was stopped. Fix the workspace write error, then retry `rn-iso start --remote`.',
+                    },
+                  };
+                }
+                tracking = { record, startedHere: true };
               }
 
               const currentResolution = await resolveProjectMetro(port, root);
@@ -432,60 +577,77 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                 port,
               });
               if (currentResolution.metro || currentSupervisor) {
+                if (tracking.startedHere && startedCleanup) {
+                  const stopped = await startedCleanup();
+                  if (stopped.status === 'failed') {
+                    return {
+                      failed: {
+                        code: 'RN_ISO_REMOTE_START_REQUIRED',
+                        message: `The dev server on port ${port} started before the managed tunnel was ready.`,
+                        remedy: `Tunnel cleanup failed for pid ${tracking.record.pid}: ${stopped.reason ?? 'unknown error'}. The tunnel record remains available to \`rn-iso stop\`.`,
+                      },
+                    };
+                  }
+                  d.clearTunnelRecord(root, tracking.record);
+                  return {
+                    failed: {
+                      code: 'RN_ISO_REMOTE_START_REQUIRED',
+                      message: `The dev server on port ${port} started before the managed tunnel was ready.`,
+                      remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
+                    },
+                  };
+                }
+                return { origin: tracking.record.url, tunnel: tracking };
+              }
+
+              if (!d.isTunnelAlive(tracking.record.pid)) {
+                if (tracking.startedHere && startedCleanup) await startedCleanup();
+                d.clearTunnelRecord(root, tracking.record);
                 return {
                   failed: {
-                    code: 'RN_ISO_REMOTE_START_REQUIRED',
-                    message: `The dev server on port ${port} is local-only and cannot gain a managed tunnel while it is running.`,
-                    remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
+                    code: 'RN_ISO_REMOTE_METRO_UNREACHABLE',
+                    message: `The managed ${tracking.record.provider} tunnel exited before the supervisor started.`,
+                    remedy: 'Retry `rn-iso start --remote`.',
                   },
                 };
               }
 
-              const started = await d.startTunnelSequence({
-                providers: candidates,
-                port,
-                ngrokUrl: expectedStableUrl,
-                // Metro is not running yet. The remote device gate proves that
-                // this URL reaches the workspace before it launches the app.
-                requireReachable: false,
-              });
-              if ('failed' in started) {
+              let child: ChildProcess;
+              try {
+                child = spawnSupervisor(tracking.record.url);
+              } catch (err) {
                 return {
                   failed: {
-                    code: 'RN_ISO_REMOTE_METRO_UNREACHABLE',
-                    message: `Could not start a managed Metro tunnel for port ${port}.`,
-                    remedy: started.reason,
+                    code: 'RN_ISO_SUPERVISOR_EXITED',
+                    message: `Could not spawn the dev server supervisor: ${(err as Error)?.message || err}`,
+                    remedy: 'Fix the spawn error, then retry `rn-iso start --remote`.',
                   },
                 };
               }
-              const record: TunnelRecord = {
-                provider: started.provider,
-                pid: started.pid,
-                url: normalizeManagedTunnelUrl(started.url),
+              const handoffRecord = {
+                pid: child.pid as number,
                 port,
-                startedAt: new Date().toISOString(),
+                mode: isExpo ? 'expo-child' : 'bare-inproc',
+                startedAt: new Date(spawnedTs ?? Date.now()).toISOString(),
               };
               try {
-                d.writeTunnelRecord(root, {
-                  metroTunnel: {
-                    kind: 'managed',
-                    ...record,
-                  },
-                });
-              } catch (err) {
-                const stopped = await started.cleanup();
-                return {
-                  failed: {
-                    code: 'RN_ISO_REMOTE_METRO_UNREACHABLE',
-                    message: `Could not record the managed Metro tunnel: ${(err as Error)?.message || err}`,
-                    remedy:
-                      stopped.status === 'failed'
-                        ? `Cleanup failed. Unmanaged pid ${record.pid} may still be running: ${stopped.reason ?? 'unknown error'}`
-                        : 'The tunnel process was stopped. Fix the workspace write error, then retry `rn-iso start --remote`.',
-                  },
-                };
+                d.writeSupervisorRecord(root, { supervisor: handoffRecord });
+              } catch {
+                const handedOff = await waitForSupervisorHandoff(child);
+                if (!handedOff) {
+                  const stopped = await d.terminateSupervisorChild(child);
+                  return {
+                    failed: {
+                      code: 'RN_ISO_SUPERVISOR_EXITED',
+                      message: `Could not record supervisor pid ${child.pid ?? 'unknown'} before releasing the managed start lock.`,
+                      remedy: stopped
+                        ? 'The supervisor process was stopped. Retry `rn-iso start --remote`.'
+                        : `Cleanup failed. Unmanaged supervisor pid ${child.pid ?? 'unknown'} may still be running. Stop it before retrying.`,
+                    },
+                  };
+                }
               }
-              return { origin: record.url, started: record };
+              return { origin: tracking.record.url, tunnel: tracking };
             });
           } catch (err) {
             return fail({
@@ -498,16 +660,17 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             return fail(acquisition.failed);
           }
           publicOrigin = acquisition.origin;
-          startedManagedTunnel = acquisition.started;
+          managedTunnel = acquisition.tunnel;
           resolution = await resolveProjectMetro(port, root);
           supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
         }
       }
 
-      const managedTunnelExited = () => startedManagedTunnel !== null && !d.isTunnelAlive(startedManagedTunnel.pid);
+      const managedTunnelExited = () => managedTunnel !== null && !d.isTunnelAlive(managedTunnel.record.pid);
       const failExitedManagedTunnel = async (): Promise<never> => {
-        const record = startedManagedTunnel as TunnelRecord;
-        const stopped = await d.stopTunnel(record);
+        const tracked = managedTunnel as ManagedTunnelTracking;
+        const record = tracked.record;
+        const stopped = tracked.startedHere ? await d.stopTunnel(record) : { status: 'missing' as const };
         d.clearTunnelRecord(root, record);
         return fail({
           code: 'RN_ISO_REMOTE_METRO_UNREACHABLE',
@@ -531,7 +694,8 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
 
       // Already up: the whole point of an idempotent start. Two `start` runs in
       // a row must leave one supervisor, not two bundlers fighting for a port.
-      if (resolution.metro) {
+      if (!spawnedChild && resolution.metro) {
+        if (managedTunnelExited()) return failExitedManagedTunnel();
         if (tunnel && supervisor) {
           const tunnelReady = await waitForExpoTunnel({
             root,
@@ -561,6 +725,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           note(chalk.dim(`A dev server for this project already answers on port ${port}, started outside rn-iso.`));
           note(chalk.dim('Leaving it alone: rn-iso will not start a second bundler over a working one.'));
         }
+        if (managedTunnelExited()) return failExitedManagedTunnel();
         report({ json, out, port, supervisor, logsDir, alreadyRunning: true, waited: waitTimer() });
         return;
       }
@@ -569,14 +734,20 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
       // (the common case, when two `start` runs race) or wedged. Either way,
       // spawning a second one would leave the workspace with two supervisors
       // and one port, so we wait on the one that exists instead.
-      if (supervisor) {
+      if (!spawnedChild && supervisor) {
         note(
           chalk.dim(
             `Supervisor pid ${supervisor.pid} is already running for this workspace; waiting for it to answer on port ${port}...`,
           ),
         );
-        const healthy = await waitForMetro({ root, port, seconds: waitSeconds });
+        const healthy = await waitForMetro({
+          root,
+          port,
+          seconds: waitSeconds,
+          aborted: managedTunnel ? managedTunnelExited : undefined,
+        });
         if (!healthy) {
+          if (managedTunnelExited()) return failExitedManagedTunnel();
           return fail({
             code: 'RN_ISO_METRO_TIMEOUT',
             message: `Supervisor pid ${supervisor.pid} did not serve port ${port} within ${waitSeconds}s.`,
@@ -611,53 +782,15 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) ||
           (tunnel ? null : supervisor);
         requireExpoTunnel();
+        if (managedTunnelExited()) return failExitedManagedTunnel();
         report({ json, out, port, supervisor, logsDir, alreadyRunning: true, waited: waitTimer() });
         return;
       }
 
       // ---- spawn the supervisor ----
       if (managedTunnelExited()) return failExitedManagedTunnel();
-      mkdirSync(logsDir, { recursive: true });
-      // Appended, never truncated, and shared by stdout and stderr so the two
-      // interleave in the order they were written. This file is the ONLY
-      // record of a supervisor that died before it could write a structured
-      // one, which is why the failure path below quotes it.
-      const fd = openSync(logFile, 'a');
-      const spawnedTs = Date.now();
-      const supervisorArgs = [
-        supervisorEntry(),
-        '--root',
-        root,
-        '--port',
-        String(port),
-        ...(tunnel ? ['--tunnel'] : []),
-      ];
-      const child = getExecutor().spawn(process.execPath, supervisorArgs, {
-        cwd: root,
-        // detached: the supervisor leads its own process group, so it
-        // survives this command exiting and `stop` can signal that group
-        // without reaching the caller's shell.
-        detached: true,
-        stdio: ['ignore', fd, fd],
-        env: publicOrigin
-          ? {
-              ...process.env,
-              [PUBLIC_METRO_ENV]: publicOrigin,
-              EXPO_PACKAGER_PROXY_URL: publicOrigin,
-            }
-          : process.env,
-      });
-      child.unref?.();
-
-      let childExit: ChildExitInfo | null = null;
-      child.on?.('exit', (code, signal) => {
-        childExit = { code, signal };
-      });
-      child.on?.('error', (err) => {
-        childExit = { code: null, signal: null, error: err };
-      });
-
-      out(chalk.dim(`Supervisor pid ${child.pid} starting the dev server on port ${port}...`));
+      const child = spawnedChild ?? spawnSupervisor(publicOrigin);
+      const attemptStartedTs = spawnedTs ?? Date.now();
 
       const healthy = await waitForMetro({
         root,
@@ -690,14 +823,14 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             ? {
                 code: 'RN_ISO_SUPERVISOR_EXITED',
                 message: `The supervisor exited (${how}) before the dev server came up on port ${port}.`,
-                lines: failureEvidence({ logFile, logsDir, sinceTs: spawnedTs }),
+                lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
                 remedy:
                   'Fix the error above and run `rn-iso start` again; `rn-iso logs --errors` has the full records.',
               }
             : {
                 code: 'RN_ISO_METRO_TIMEOUT',
                 message: `The dev server did not answer on port ${port} within ${waitSeconds}s.`,
-                lines: failureEvidence({ logFile, logsDir, sinceTs: spawnedTs }),
+                lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
                 remedy: 'It may still be starting. Run `rn-iso stop` to halt it, or `rn-iso logs` to follow along.',
               },
         );

@@ -514,7 +514,7 @@ async function signalAndWaitForExit(
   return hasExited();
 }
 
-async function terminateChild(
+export async function terminateChild(
   child: ChildProcess,
   {
     alreadyExited,
