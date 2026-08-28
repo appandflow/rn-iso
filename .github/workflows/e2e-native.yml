@@ -259,17 +259,8 @@ jobs:
           script: |
             adb -s emulator-5554 emu kill || true
             sleep 3
-            case "$STIM_CLI_E2E_SUITE" in
-              loop|all)
-                node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home"
-                ;;
-            esac
-            case "$STIM_CLI_E2E_SUITE" in
-              caches|all)
-                node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home" \
-                  --summary "$GITHUB_WORKSPACE/cache-summary-android-${{ matrix.framework }}.json"
-                ;;
-            esac
+            if [ "$STIM_CLI_E2E_SUITE" = loop ] || [ "$STIM_CLI_E2E_SUITE" = all ]; then node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home"; fi
+            if [ "$STIM_CLI_E2E_SUITE" = caches ] || [ "$STIM_CLI_E2E_SUITE" = all ]; then node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home" --summary "$GITHUB_WORKSPACE/cache-summary-android-${{ matrix.framework }}.json"; fi
 
       - name: Upload the cache-suite summary
         if: always() && (env.STIM_CLI_E2E_SUITE == 'caches' || env.STIM_CLI_E2E_SUITE == 'all')
