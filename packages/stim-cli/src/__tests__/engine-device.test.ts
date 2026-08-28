@@ -475,6 +475,7 @@ describe('ensureOwnedDevice: ios', () => {
       expect(run.some((c) => /simctl create/.test(c))).toBeTruthy();
       expect(result.deviceUdid).toBe('NEW-UDID');
       expect(result.owned).toBe(true);
+      expect(result.created).toBe(true);
       expect(notes.some((n) => /not stim-cli-owned by name/i.test(n))).toBeTruthy();
     } finally {
       rmSync(root, { recursive: true, force: true });

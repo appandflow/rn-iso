@@ -17,6 +17,7 @@ export interface OwnedDeviceRecord {
   deviceUdid?: string;
   deviceName?: string;
   owned?: boolean;
+  created?: boolean;
   avdName?: string;
   consolePort?: number;
   serial?: string;
@@ -154,7 +155,7 @@ function ensureOwnedIosDevice({
   const newRecord = { deviceUdid: created.udid, owned: true, deviceName: created.name };
   setDevice(projectPath, 'ios', newRecord);
   bootIosSim(created.udid);
-  return newRecord;
+  return { ...newRecord, created: true };
 }
 
 function findOtherProjectOwningAvd(avdName: string, projectPath: string): string | null {

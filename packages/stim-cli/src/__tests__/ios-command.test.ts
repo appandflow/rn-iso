@@ -355,6 +355,35 @@ describe('the Metro gate', () => {
   });
 });
 
+describe('the simulator boot gate', () => {
+  test('waits for a new simulator to boot before fingerprinting and building', async () => {
+    reserve();
+    let booted = false;
+    const { exitCode, calls } = await run(
+      {},
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-cli-fixture',
+          owned: true,
+          created: true,
+        }),
+        ensureBooted: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          booted = true;
+          return { ok: true, udid: UDID };
+        },
+        fingerprintProject: async () => {
+          expect(booted).toBe(true);
+          return { hash: FINGERPRINT, sources: [] };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('buildIos')).toBe(true);
+  });
+});
+
 describe('the Metro gate retries an indexing Metro', () => {
   test('a port that verifies on the third attempt is not refused', async () => {
     reserve();
