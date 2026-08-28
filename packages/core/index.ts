@@ -3,6 +3,100 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 
+const DEFAULT_LOCK_STALE_MS = 10000;
+const DEFAULT_LOCK_WAIT_MS = 12000;
+const DEFAULT_LOCK_POLL_MS = 25;
+const lockDepths = new Map<string, number>();
+
+export interface DirLockOptions {
+  staleMs?: number;
+  waitMs?: number;
+  pollMs?: number;
+  ensureParent?: () => void;
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function acquireDirLock(
+  lockPath: string,
+  {
+    staleMs,
+    waitMs,
+    pollMs,
+    ensureParent,
+  }: Required<Pick<DirLockOptions, 'staleMs' | 'waitMs' | 'pollMs'>> & Pick<DirLockOptions, 'ensureParent'>,
+): void {
+  ensureParent?.();
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      fs.mkdirSync(lockPath);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
+    }
+    let ageMs: number | null = null;
+    try {
+      ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (ageMs > staleMs) {
+      try {
+        fs.rmSync(lockPath, { recursive: true, force: true });
+      } catch {}
+      continue;
+    }
+    if (Date.now() >= deadline) {
+      const error = new Error(
+        `Timed out waiting for the lock at ${lockPath}. ` +
+          'Another rn-iso process is holding it; if none is running, remove that directory.',
+      );
+      (error as Error & { code?: string; lockPath?: string }).code = 'RN_ISO_LOCK_TIMEOUT';
+      (error as Error & { code?: string; lockPath?: string }).lockPath = lockPath;
+      throw error;
+    }
+    sleepSync(pollMs);
+  }
+}
+
+function releaseDirLock(lockPath: string): void {
+  try {
+    fs.rmSync(lockPath, { recursive: true, force: true });
+  } catch {}
+}
+
+export function withDirLock<T>(
+  lockPath: string,
+  fn: () => T,
+  {
+    staleMs = DEFAULT_LOCK_STALE_MS,
+    waitMs = DEFAULT_LOCK_WAIT_MS,
+    pollMs = DEFAULT_LOCK_POLL_MS,
+    ensureParent,
+  }: DirLockOptions = {},
+): T {
+  const depth = lockDepths.get(lockPath) || 0;
+  if (depth > 0) {
+    lockDepths.set(lockPath, depth + 1);
+    try {
+      return fn();
+    } finally {
+      lockDepths.set(lockPath, (lockDepths.get(lockPath) ?? 1) - 1);
+    }
+  }
+  acquireDirLock(lockPath, { staleMs, waitMs, pollMs, ensureParent });
+  lockDepths.set(lockPath, 1);
+  try {
+    return fn();
+  } finally {
+    lockDepths.set(lockPath, 0);
+    releaseDirLock(lockPath);
+  }
+}
+
 export function configDir(): string {
   return process.env.RN_ISO_HOME || path.join(os.homedir(), '.rn-iso');
 }
@@ -129,20 +223,55 @@ export interface RegisterOptions {
   entriesDepth?: number;
 }
 
+export interface CacheManifest {
+  version: number;
+  caches: Array<Record<string, unknown>>;
+}
+
+export function cacheManifestLockPath(file: string): string {
+  return `${file}.lock`;
+}
+
+export function readCacheManifest(file: string): CacheManifest {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as { caches?: Array<Record<string, unknown>> };
+    return { version: 1, caches: Array.isArray(parsed?.caches) ? parsed.caches : [] };
+  } catch {
+    return { version: 1, caches: [] };
+  }
+}
+
+export function updateCacheManifest(
+  file: string,
+  mutate: (caches: Array<Record<string, unknown>>) => Array<Record<string, unknown>>,
+): CacheManifest {
+  const parent = path.dirname(file);
+  return withDirLock(
+    cacheManifestLockPath(file),
+    () => {
+      const next: CacheManifest = { version: 1, caches: mutate(readCacheManifest(file).caches) };
+      const temporary = path.join(parent, `.${path.basename(file)}.${process.pid}.tmp`);
+      try {
+        fs.writeFileSync(temporary, JSON.stringify(next, null, 2));
+        fs.renameSync(temporary, file);
+      } catch (error) {
+        fs.rmSync(temporary, { force: true });
+        throw error;
+      }
+      return next;
+    },
+    { ensureParent: () => fs.mkdirSync(parent, { recursive: true }) },
+  );
+}
+
 export function registerCache({ dir, name, prune, note, entriesDepth }: RegisterOptions): void {
   try {
-    const home = configDir();
-    const file = path.join(home, 'caches.json');
-    let manifest: { version: number; caches: Array<Record<string, unknown>> } = { version: 1, caches: [] };
-    try {
-      const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as { caches?: Array<Record<string, unknown>> };
-      if (Array.isArray(parsed?.caches)) manifest = { version: 1, caches: parsed.caches };
-    } catch {}
-    const others = manifest.caches.filter((c) => c.dir !== dir);
-    const record: Record<string, unknown> = { dir, name, prune, note, registeredBy: process.cwd() };
-    if (entriesDepth) record.entriesDepth = entriesDepth;
-    others.push(record);
-    fs.mkdirSync(home, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ version: 1, caches: others }, null, 2));
+    updateCacheManifest(path.join(configDir(), 'caches.json'), (caches) => {
+      const others = caches.filter((cache) => cache.dir !== dir);
+      const record: Record<string, unknown> = { dir, name, prune, note, registeredBy: process.cwd() };
+      if (entriesDepth) record.entriesDepth = entriesDepth;
+      others.push(record);
+      return others;
+    });
   } catch {}
 }
