@@ -33,19 +33,30 @@ There is no `up`, `device`, `release`, `shutdown`, `config`, `build-cache` or
 `worktree list`, no `--serial`, and no physical-device support. A project needing more wraps rn-iso in an npm script rather than
 rn-iso growing a flag.
 
-**`init` went too, and it is the most recent deletion — do not bring it back.**
-Repo setup is not a generator's job: every edit it would make lands in a file
-the project already owns (a `metro.config.js` with its own transformer, a
-`Podfile` with existing `post_install` logic, an app config that may be
-TypeScript), which is judgement, not templating. `doctor` reports the findings
-read-only and `skill/rn-iso-init/SKILL.md` is the playbook an agent follows to
-apply each one by hand. The generated `scripts/dev` went with it: rn-iso IS the
-build command, so there was no bundler or build command left to wrap. The one
-edit that never needed judgement — `.rn-iso/` in `.gitignore` — is now
+**`init` went too — do not bring it back.** Repo setup is not a generator's
+job: every edit it would make lands in a file the project already owns (a
+`metro.config.js` with its own transformer, a `Podfile` with existing
+`post_install` logic, an app config that may be TypeScript), which is
+judgement, not templating. The generated `scripts/dev` went with it: rn-iso IS
+the build command, so there was no bundler or build command left to wrap. The
+one edit that never needed judgement — `.rn-iso/` in `.gitignore` — is now
 SELF-ENSURED by the commands that create the directory
-(`ensureWorkspaceIgnored` in `src/engine/workspace.js`, called by `start`,
+(`ensureWorkspaceIgnored` in `src/engine/workspace.ts`, called by `start`,
 `ios` and `android`), which is what removed the setup step rather than moving
 it.
+
+**And the `rn-iso-init` SKILL went with it, which is the most recent deletion
+— do not bring that back either.** After #67 rn-iso supplies the compilation
+cache, the Gradle build cache and the shared Metro transform store on the
+command lines it composes itself, so there is no setup playbook left to
+follow: four of the old skill's ten sections had become "nothing to do", and a
+second skill that mostly says that is worse than no skill. ONE skill ships now
+(`skill/SKILL.md`). The three things rn-iso genuinely cannot do for a project
+did not disappear — they moved to where they are needed: `doctor` REPORTS each
+of them at the moment it matters, and its `fix` text carries the advice (the
+`expo-dev-client` install-and-rebuild, how to turn ccache off at the source
+that writes it, what belongs in a `.fingerprintignore`), with the fingerprint
+half also explained in `guide lifecycle`.
 
 State lives in `~/.rn-iso/config.json`, keyed by absolute project path, plus
 per-workspace `<root>/.rn-iso/state.json` (the supervisor record, the collector
@@ -236,8 +247,8 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
   test/
     *.test.js             # `node --test` (no framework)
   skill/
-    SKILL.md              # the always-on agent skill: how to drive the CLI
-    rn-iso-init/SKILL.md  # the task-shaped skill: making a repo fast for parallel agents
+    SKILL.md              # the ONE agent skill that ships: how to drive the CLI.
+                          # (rn-iso-init is deleted -- there is no setup playbook)
 
 packages/expo-build-cache/  # @rn-iso/expo-build-cache. CJS (see conventions above).
   index.js                  # the Expo build-cache provider: resolveBuildCache / uploadBuildCache
@@ -290,12 +301,13 @@ checklist:
 - Behavior change (e.g., a new `--json` field, a new destructive side effect)?
   Update both the relevant section and "When things go wrong".
 
-Two skills ship in the package, installed with `npx skills`:
-`skill/SKILL.md` (how to drive the CLI) and `skill/rn-iso-init/SKILL.md`
-(how to make a repo fast for parallel agents). The second one is the whole
-of repo setup -- it is a PLAYBOOK an agent applies by hand, not a description of
-a command -- so a change to caching or to `doctor` belongs there, not in the
-first.
+ONE skill ships in the package, installed with `npx skills`: `skill/SKILL.md`
+(how to drive the CLI). The second one, `rn-iso-init`, is deleted -- there is no
+setup playbook any more. A change to caching or to `doctor` therefore belongs
+in `doctor`'s own finding text (which is where a project reads it, at the
+moment it matters), in `guide`, and in this one skill's short "needs no project
+changes" paragraph -- which must stay SHORT, and must not grow the playbook
+back.
 Staleness breaks agent guidance, and the copy on a user's machine is a
 plain file copy that upgrading rn-iso does not refresh.
 
@@ -352,8 +364,9 @@ runs `expo start --port <n>` and NOTHING else, ever. `ios` / `android` drive
 `xcodebuild` / `gradlew` directly with a fixed argument list this codebase
 composes, never one it inferred from a package.json script. Nothing reads
 `scripts.start` or `scripts.ios`; there is no `init`, and no `bundlerCommand` /
-`runCommandFor` / `detectPackageManager` — repo setup is judgement (the
-`rn-iso-init` skill applying `doctor`'s findings by hand), not templating.
+`runCommandFor` / `detectPackageManager` — what little repo setup is left is
+judgement (`doctor` reports it, an agent applies it in the repo's own style),
+not templating.
 
 **What replaces the broker rule as the guard is the OPTION SURFACE.** It is
 fixed and it does not grow:
