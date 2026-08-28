@@ -176,8 +176,14 @@ export function verifyCleanup({ h, platform, appDir, created }) {
 
   const porcelain = h.sh('git', ['-C', appDir, 'status', '--porcelain']).stdout.trim();
   assert(porcelain === '', `main checkout is dirty after the run:\n${porcelain}`);
-  const wl = h.sh('git', ['-C', appDir, 'worktree', 'list']).stdout;
-  assert(!/e2e-/.test(wl), `a worktree registration survived:\n${wl}`);
+  const wl = h.sh('git', ['-C', appDir, 'worktree', 'list', '--porcelain']).stdout;
+  const registered = new Set(
+    wl
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '))
+      .map((line) => line.slice('worktree '.length)),
+  );
+  assert(!created.some((path) => registered.has(resolve(path))), `a worktree registration survived:\n${wl}`);
   h.log('(4) main checkout byte-clean, no worktrees linger');
 
   const gc = h.cli(['gc'], { allowFail: true });
