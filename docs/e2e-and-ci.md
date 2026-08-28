@@ -1,19 +1,22 @@
 # End-to-end tests and CI
 
-rn-iso has three test layers. The unit suite (`npm test`, ~1350 `node:test`
-cases across the three packages) is the bulk of the coverage. On top of it sit
-two end-to-end layers that exercise the _published loop_ rather than individual
-functions.
+rn-iso has three test layers. The unit suite (`pnpm test`, vitest, ~1780 cases
+across the four packages) is the bulk of the coverage. On top of it sit two
+end-to-end layers that exercise the _published loop_ rather than individual
+functions. Above all three sits the manual pass:
+[`docs/field-test-protocol.md`](./field-test-protocol.md), which covers what no
+CI job can reach (real repos, real remote cache tiers, release builds, product
+flavors) and is a **pre-tag gate** in `RELEASE.md`.
 
 ## The fast cross-platform e2e
 
 `test/e2e/cache-flow.e2e.js`, run with:
 
 ```bash
-npm run test:e2e
+pnpm run test:e2e
 ```
 
-Runs anywhere Node 20+ and git are available -- **no Xcode, no Android SDK**.
+Runs anywhere Node 22+ and git are available -- **no Xcode, no Android SDK**.
 It drives the real CLI and the real cache library end to end under a throwaway
 `RN_ISO_HOME` and a throwaway temp repo, so it never touches the machine's real
 caches, registry, or checkouts. What it proves:
@@ -59,6 +62,12 @@ real artifact; the second worktree hits the local cache with **no compile**
 (proven from the build log, not just the JSON); and the protocol's five cleanup
 checks pass.
 
+What it does NOT reach, and the manual protocol therefore owns: the Metro
+transform store's actual contents, the Xcode CAS, Gradle's `--build-cache` and
+`FROM-CACHE` reuse, release builds and their JS/APK swap, Android product
+flavors, the remote cache tier, Pods reuse, single-flight with a real compiler,
+and `gc`'s report over all of them.
+
 It is **slow and occasionally flaky by nature**, so it is not run on every push.
 Run one variant by hand:
 
@@ -79,11 +88,13 @@ them without touching assertion logic.
 
 Two workflows under `.github/workflows/`:
 
-- **`ci.yml`** -- on every push and pull request. Ubuntu, Node matrix `[20, 22]`
-  (20 is the `engines` floor, proven). Steps: `npm ci`, `npm test`,
-  `npm run test:e2e`. Fast and **blocking**. (A lint/typecheck step is left as a
-  commented placeholder for the planned TypeScript migration -- neither tool is
-  set up yet.)
+- **`ci.yml`** -- on every push and pull request. Ubuntu, Node matrix `[22, 24]`
+  (22 is the `engines` floor; Node 20 is EOL). Steps:
+  `pnpm install --frozen-lockfile`, `pnpm run lint` (oxlint),
+  `pnpm run format:check` (oxfmt), `pnpm run build` (tsdown -- BEFORE typecheck,
+  because the CJS cache packages' `.d.ts` files are build output),
+  `pnpm run typecheck`, `pnpm run knip`, `pnpm test` (vitest), and
+  `pnpm run test:e2e`. Fast and **blocking**.
 
 - **`e2e-native.yml`** -- the native matrix. **Gated**: it runs nightly
   (schedule), on demand (`workflow_dispatch`), and on a pull request **only when

@@ -44,7 +44,7 @@ git log "v$last..HEAD" --oneline
 
 If `git describe --tags --abbrev=0` is _higher_ than `v$last`, a previous
 release got tagged but never landed on npm. **Retry that publish before
-bumping again** (re-run step 7 with the existing version) rather than
+bumping again** (re-run section 4's step 7 with the existing version) rather than
 incrementing past it.
 
 Look at every commit in the list and decide:
@@ -54,25 +54,75 @@ Look at every commit in the list and decide:
 - **Major** (`0.x -> 1.0`, `1.x -> 2.0`) — only post-1.0, or when intentionally cutting a 1.0.
 
 If anything in the list is breaking, plan to call it out under "Removed
-(breaking)" / "Migration notes" in the release notes (step 5 below).
+(breaking)" / "Migration notes" in the release notes (section 4, step 6).
 
 ## 2. Pre-flight
 
 From `main`, fully up to date with `origin/main`:
 
 ```bash
-pnpm test                                          # all tests pass
-node packages/rn-iso/bin/cli.js --help            # CLI loads cleanly
-node packages/rn-iso/bin/cli.js --version         # matches package.json (0.2.0 shipped with 0.1.0 once)
-git status --short                                # working tree clean
+pnpm run lint && pnpm run format:check      # oxlint + oxfmt, as CI runs them
+pnpm run build                              # tsdown; dist/ is what publishes
+pnpm run typecheck && pnpm run knip
+pnpm test                                   # vitest; all tests pass
+pnpm run test:e2e                           # the fast cross-platform e2e
+node packages/rn-iso/dist/cli.js --help     # CLI loads cleanly (the published bin)
+node packages/rn-iso/dist/cli.js --version  # matches package.json (0.2.0 shipped with 0.1.0 once)
+git status --short                          # working tree clean
 ```
+
+`bin/cli.ts` is the SOURCE; `dist/cli.js` is the `bin` entry that publishes, so
+smoke-test the built one -- a `bin/cli.js` has not existed since the TypeScript
+migration.
 
 If `git status` isn't clean, commit / discard before tagging.
 
-## 3. Cut the release
+## 3. The pre-tag QA gate
 
-1. **Bump the version in lockstep.** All three `package.json` files carry the
-   same number, and `bin/cli.js` reads it from its own `package.json`, so no
+**No tag without a QA pass.** Run it here, BEFORE the version bump in section
+4 -- a gate run after the bump either blocks a commit that is already written
+or gets skipped.
+
+The protocol is [`docs/field-test-protocol.md`](./docs/field-test-protocol.md);
+its **Release QA matrix** section names the exact combinations and which of
+them a patch needs versus a minor. In short:
+
+- **Patch:** matrix rows 1, 2 and 7, plus every row the patch's own changes
+  touch.
+- **Minor:** every row.
+- **Major:** every row, on two different real repos.
+
+```bash
+# Row 1 is the automated matrix, not a hand pass. iOS on a mac, android where
+# an SDK is set up; run at least the framework the release touched.
+node test/e2e/native/run-native-e2e.mjs --framework expo --platform ios
+node test/e2e/native/run-native-e2e.mjs --framework bare --platform ios
+```
+
+The remaining rows are a human or agent pass on REAL repos, following the
+protocol. The pass produces a report in the structure the protocol's last
+section names.
+
+**The rule that keeps this from rotting:** every NEW claim in the release
+notes must have a matching step in the protocol and evidence in the report.
+A release that says it added a cache has to show that cache GROWING (a `du` +
+file count before and after) and being REUSED by a second workspace -- not
+merely that its flag reached a command line. If a claim has no step, ADD THE
+STEP to the protocol in this same release, and run it. A claim with no step
+does not ship.
+
+Before moving on, confirm out loud:
+
+- [ ] every required matrix row exercised, or explicitly waived with a reason
+- [ ] zero CRITICAL findings (a CRITICAL blocks the tag, always)
+- [ ] every HIGH finding either fixed or named in the release notes
+- [ ] every new claim in the draft notes has a protocol step and evidence
+- [ ] the report is attached to the release PR or pasted into the release thread
+
+## 4. Cut the release
+
+1. **Bump the version in lockstep.** All FOUR `package.json` files carry the
+   same number, and the CLI reads it from its own `package.json`, so no
    source file needs editing:
 
    ```bash
@@ -80,13 +130,13 @@ If `git status` isn't clean, commit / discard before tagging.
    pnpm install --lockfile-only
    ```
 
-   The filtered `exec` bumps all three; `--no-git-tag-version` keeps the commit and
+   The filtered `exec` bumps all four; `--no-git-tag-version` keeps the commit and
    the tag as their own later steps, where the ordering is deliberate. The
    `pnpm install` refreshes `pnpm-lock.yaml`, which duplicates every
    workspace's version -- a stale lockfile breaks nothing functionally, but is
    confusing to publish alongside a bumped manifest.
 
-   Then confirm all three moved, and that the peer ranges in the two cache
+   Then confirm all four moved, and that the peer ranges in the two cache
    packages still name a version of `rn-iso` that exists:
 
    ```bash
@@ -112,8 +162,9 @@ If `git status` isn't clean, commit / discard before tagging.
    done
    ```
    The `files` whitelist in each `package.json` controls this — keep it tight
-   (`bin`, `src`, `skill`, `LICENSE`, `README.md` for the CLI; `index.js` and
-   `README.md` for the caches).
+   (`dist`, `shim`, `skill`, `LICENSE`, `README.md` for the CLI; `dist`,
+   `README.md`, `LICENSE` for `@rn-iso/core` and the two caches). `dist` means
+   `pnpm run build` must have run before `npm pack`.
 4. **Commit** with a `chore: X.Y.Z — <one-line summary>` title. The body can be terse; the GitHub release notes carry the real changelog.
 5. **Tag and push:**
    ```bash
@@ -183,9 +234,9 @@ If `git status` isn't clean, commit / discard before tagging.
    publishes from `packages/rn-iso`. Check it, rather than assuming a README in
    the repo means a README on npm.
 
-## 4. After the release
+## 5. After the release
 
-- Leave every `package.json` at the just-released version. The next release bumps them as part of its own step 3; we don't carry a `-dev` suffix between releases.
+- Leave every `package.json` at the just-released version. The next release bumps them as part of its own section 4, step 1; we don't carry a `-dev` suffix between releases.
 
 ## Don't
 
