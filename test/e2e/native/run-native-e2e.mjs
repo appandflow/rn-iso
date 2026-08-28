@@ -74,7 +74,6 @@ const ENV = { ...process.env, RN_ISO_HOME: HOME_DIR, CI: '1' };
 const WARM_CACHE = process.env.RN_ISO_E2E_WARM_CACHE === '1';
 
 const created = []; // worktree paths we made, for cleanup + diagnostics.
-let mainCheckout = null;
 
 // ---- the run ----------------------------------------------------------------
 
@@ -84,7 +83,6 @@ async function main() {
   // 1. Fixture: a freshly created app, committed, with a bare remote so
   //    `worktree remove` sees the branch tip as pushed (no --force needed).
   const appDir = args.appDir ? resolve(args.appDir) : createFixture();
-  mainCheckout = appDir;
   if (args.fixtureOnly) {
     log(`fixture-only: app created at ${appDir}. Stopping before any build.`);
     return;
@@ -207,7 +205,7 @@ function worktreeCreate(name, appDir) {
   // build without a reinstall -- fast (APFS clone) on macOS, a full copy on the
   // Linux android runner but still correct. stdout is ONLY the path.
   const r = cli(['worktree', 'create', name, '--base', 'head', '--carry-ignored'], { cwd: appDir });
-  const path = r.stdout.trim().split('\n').filter(Boolean).pop();
+  const path = r.stdout.trim().split('\n').findLast(Boolean);
   assert(path && existsSync(path), `worktree create did not yield a real path: ${JSON.stringify(r.stdout)}`);
   created.push(path);
   log(`worktree ${name} -> ${path}`);
@@ -231,7 +229,7 @@ function startAndAssertMode(cwd) {
     }
     die(`rn-iso start failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
   }
-  const line = r.stdout.trim().split('\n').filter(Boolean).pop();
+  const line = r.stdout.trim().split('\n').findLast(Boolean);
   const facts = JSON.parse(line);
   assert(
     facts.mode === EXPECTED_MODE,
@@ -280,16 +278,16 @@ function handleLaunch(facts, label) {
 // any compile step. This is the on-disk proof that the cache short-circuited the
 // compiler, independent of the JSON's cacheHit field.
 function assertNoCompile(cwd) {
-  const log_ = buildLog(cwd);
-  if (!log_) {
+  const logPath = buildLog(cwd);
+  if (!logPath) {
     log('warn: no build-*.ndjson to inspect for compile signatures');
     return;
   }
-  const text = readFileSync(log_, 'utf-8');
+  const text = readFileSync(logPath, 'utf-8');
   for (const sign of COMPILE_SIGNS) {
     assert(
       !sign.test(text),
-      `the cached build's log contains a compile signature ${sign} -- it should have installed, not compiled:\n${log_}`,
+      `the cached build's log contains a compile signature ${sign} -- it should have installed, not compiled:\n${logPath}`,
     );
   }
   log('no-compile proof: the second worktree build log holds no compiler invocation.');
@@ -443,7 +441,7 @@ function cliJson(argv, opts = {}) {
   const r = cli(argv, opts);
   if (r.code !== 0) throw new Error(`rn-iso ${argv.join(' ')} failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
   // The --json contract: exactly one parseable line on stdout.
-  const line = r.stdout.trim().split('\n').filter(Boolean).pop();
+  const line = r.stdout.trim().split('\n').findLast(Boolean);
   try {
     return JSON.parse(line);
   } catch {
@@ -486,7 +484,7 @@ function buildLog(cwd) {
   const candidates = readdirSync(dir)
     .filter((f) => /^build-.*\.ndjson$/.test(f))
     .map((f) => join(dir, f));
-  return candidates.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0] || null;
+  return candidates.toSorted((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0] || null;
 }
 
 // Dump the tail of every worktree's build log on failure: the extracted
@@ -495,13 +493,13 @@ function buildLog(cwd) {
 function dumpDiagnostics() {
   banner('DIAGNOSTICS (build log tails)');
   for (const wt of created) {
-    const log_ = buildLog(wt);
-    if (!log_) {
+    const logPath = buildLog(wt);
+    if (!logPath) {
       log(`no build log under ${wt}`);
       continue;
     }
-    log(`--- ${log_} (tail) ---`);
-    process.stderr.write(lastLines(readFileSync(log_, 'utf-8'), 60) + '\n');
+    log(`--- ${logPath} (tail) ---`);
+    process.stderr.write(lastLines(readFileSync(logPath, 'utf-8'), 60) + '\n');
   }
 }
 

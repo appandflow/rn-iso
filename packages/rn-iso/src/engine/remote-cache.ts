@@ -402,11 +402,11 @@ export async function loadPlugin(
   reference: string,
   { requireFrom = null }: { requireFrom?: ((root: string) => NodeRequire) | null } = {},
 ): Promise<ProviderPlugin> {
-  const require_ = requireFrom ? requireFrom(projectRoot) : createRequire(join(projectRoot, 'package.json'));
-  const file = require_.resolve(reference);
+  const localRequire = requireFrom ? requireFrom(projectRoot) : createRequire(join(projectRoot, 'package.json'));
+  const file = localRequire.resolve(reference);
   let mod;
   try {
-    mod = require_(file);
+    mod = localRequire(file);
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code !== 'ERR_REQUIRE_ESM') throw err;
     mod = await import(pathToFileURL(file).href);

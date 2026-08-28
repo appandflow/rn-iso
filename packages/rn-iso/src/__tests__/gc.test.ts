@@ -102,7 +102,7 @@ test('findOrphanedDevices proposes only rn-iso devices absent from config', () =
     }),
     isMounted: () => true,
   });
-  expect(result.orphaned.map((o) => o.id).sort()).toEqual(['U1', 'rn-iso-old']);
+  expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['U1', 'rn-iso-old']);
 });
 
 test('devices referenced by a project on an unmounted volume are kept', () => {
@@ -854,7 +854,6 @@ test('--delete on its own never touches a shared cache', async () => {
 
   await cli(['--delete']);
 
-  const { existsSync } = await import('node:fs');
   expect(existsSync(entry)).toBeTruthy();
 });
 
@@ -874,7 +873,6 @@ test('--delete --older-than trims the cache entries nothing has touched', async 
 
   await cli(['--delete', '--older-than', '30']);
 
-  const { existsSync } = await import('node:fs');
   expect(existsSync(oldEntry)).toBe(false);
   expect(existsSync(freshEntry)).toBeTruthy();
 });
@@ -1033,7 +1031,9 @@ test('rejects a non-numeric --older-than instead of silently skipping every entr
   const program = new Command();
   program.exitOverride();
   gcCommand(program);
-  await expect(() => program.parseAsync(['node', 'rn-iso', 'gc', '--older-than', 'lastweek'])).rejects.toThrow();
+  await expect(() => program.parseAsync(['node', 'rn-iso', 'gc', '--older-than', 'lastweek'])).rejects.toThrow(
+    /must be a whole number of days/,
+  );
 });
 
 // With no config, gc must never DELETE (a missing config makes every rn-iso-*

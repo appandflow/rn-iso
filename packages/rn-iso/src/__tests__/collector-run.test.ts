@@ -192,7 +192,7 @@ describe('Contract 5: the registration', () => {
   test('two platforms coexist, and unregistering one leaves the other', () => {
     registerCollector(root, 'ios', { pid: 1, startedAt: 'a' });
     registerCollector(root, 'android', { pid: 2, startedAt: 'b' });
-    expect(Object.keys(readCollectors(root)).sort()).toEqual(['android', 'ios']);
+    expect(Object.keys(readCollectors(root)).toSorted()).toEqual(['android', 'ios']);
     unregisterCollector(root, 'ios');
     expect(readCollectors(root)).toEqual({ android: { pid: 2, startedAt: 'b' } });
   });

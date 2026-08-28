@@ -60,20 +60,20 @@ function fakeRequire(
   modules: Record<string, unknown>,
   { throwOnLoad = {} }: { throwOnLoad?: Record<string, string> } = {},
 ) {
-  const require_ = (id: string) => {
+  const localRequire = (id: string) => {
     if (throwOnLoad[id]) throw new Error(throwOnLoad[id]);
     if (!(id in modules)) {
       throw makeError(`Cannot find module '${id}'`, { code: 'MODULE_NOT_FOUND' });
     }
     return modules[id];
   };
-  require_.resolve = (id: string) => {
+  localRequire.resolve = (id: string) => {
     if (!(id in modules) && !(id in throwOnLoad)) {
       throw makeError(`Cannot find module '${id}'`, { code: 'MODULE_NOT_FOUND' });
     }
     return id;
   };
-  return () => asRequire(require_);
+  return () => asRequire(localRequire);
 }
 
 type OkModules = {

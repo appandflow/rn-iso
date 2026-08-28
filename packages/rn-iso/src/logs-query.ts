@@ -254,7 +254,7 @@ export function logFiles(dir: string): string[] {
   return entries
     .filter((e) => e.isFile() && e.name.endsWith('.ndjson'))
     .map((e) => e.name)
-    .sort();
+    .toSorted();
 }
 
 export function fileSizes(dir: string): Record<string, number> {
@@ -444,7 +444,7 @@ function tsOf(record: NdjsonRecord | null | undefined): number | null {
 }
 
 function sortByTs(records: NdjsonRecord[]): NdjsonRecord[] {
-  return records.sort((a, b) => {
+  return records.toSorted((a, b) => {
     const ta = tsOf(a);
     const tb = tsOf(b);
     if (ta === null && tb === null) return 0;

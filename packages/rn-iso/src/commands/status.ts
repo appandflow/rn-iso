@@ -30,6 +30,10 @@ interface StatusOptions {
   json?: boolean;
 }
 
+function formatGb(mb: number): string {
+  return `${(mb / 1024).toFixed(1)} GB`;
+}
+
 export default function statusCommand(program: Command): void {
   program
     .command('status')
@@ -197,10 +201,9 @@ export default function statusCommand(program: Command): void {
         for (const w of orphanWorktrees) console.log(chalk.dim(`  ${w.path}${w.branch ? ` [${w.branch}]` : ''}`));
       }
 
-      const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
       console.log(
         chalk.dim(
-          `\n${cap.liveCount} live environment(s), roughly ${gb(cap.committedMb)} of ${gb(cap.totalMemoryMb)} committed.`,
+          `\n${cap.liveCount} live environment(s), roughly ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)} committed.`,
         ),
       );
       // RAM was the only resource reported, and disk is the one that actually

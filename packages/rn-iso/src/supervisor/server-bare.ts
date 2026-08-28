@@ -97,19 +97,19 @@ export function resolveBareDeps(
   root: string,
   { requireFrom = projectRequire }: { requireFrom?: (root: string) => NodeJS.Require } = {},
 ): BareDeps {
-  const require_ = requireFrom(root);
+  const localRequire = requireFrom(root);
   const modules: Record<string, BareModule> = {};
   const missing: string[] = [];
   for (const name of BARE_PACKAGES) {
     let resolved: string;
     try {
-      resolved = require_.resolve(name);
+      resolved = localRequire.resolve(name);
     } catch {
       missing.push(name);
       continue;
     }
     try {
-      modules[name] = normalizeModule(require_(resolved), REQUIRED_EXPORTS[name] ?? []);
+      modules[name] = normalizeModule(localRequire(resolved), REQUIRED_EXPORTS[name] ?? []);
     } catch (err) {
       throw supervisorError(
         'RN_ISO_BARE_LOAD',

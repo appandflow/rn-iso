@@ -41,7 +41,7 @@ function walk(dir, acc, root) {
   } catch {
     return;
   }
-  for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+  for (const entry of entries.toSorted((a, b) => (a.name < b.name ? -1 : 1))) {
     if (IGNORED_SEGMENTS.has(entry.name)) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
@@ -83,7 +83,7 @@ export async function createFingerprintAsync(projectRoot, options = {}) {
   // Scope goes into the hash too, so an ['android'] fingerprint can never
   // collide with an ['ios'] one even for a project whose two native trees
   // happen to be byte-identical.
-  hasher.update(`platforms:${[...platforms].sort().join(',')}\n`);
+  hasher.update(`platforms:${[...platforms].toSorted().join(',')}\n`);
   for (const [path, contents] of files) {
     hasher.update(path);
     hasher.update('\0');

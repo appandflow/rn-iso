@@ -141,7 +141,7 @@ describe('pickDebugApk', () => {
   // readdir order is not a contract; two orderings must give one answer.
   test('is deterministic whatever order the listing arrives in', () => {
     const files = ['b-debug.apk', 'a-debug.apk'];
-    expect(pickDebugApk(files)).toBe(pickDebugApk([...files].reverse()));
+    expect(pickDebugApk(files)).toBe(pickDebugApk(files.toReversed()));
   });
 });
 
@@ -277,7 +277,7 @@ describe('locateApk', () => {
     const preview = writeFlavoredApk('preview', 'debug', 'app-preview-debug.apk');
     const result = locateApk(root, '');
     expect(result.apkPath).toBe(null);
-    expect(result.candidates).toEqual([preview, production].sort());
+    expect(result.candidates).toEqual([preview, production].toSorted());
   });
 
   test('the recursive fallback never picks an intermediate or an androidTest APK', () => {

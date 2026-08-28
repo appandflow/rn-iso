@@ -132,12 +132,12 @@ export async function runPrebuild(
 
   const bin = expoBinPath(root);
   if (!bin) {
-    const refusal = expoBinRefusal(root, 'prebuild');
+    const binRefusal = expoBinRefusal(root, 'prebuild');
     return {
       failed: true,
       code: PREBUILD_ERROR,
-      reason: refusal.message,
-      remedy: refusal.remedy,
+      reason: binRefusal.message,
+      remedy: binRefusal.remedy,
       lastLines: [],
     };
   }

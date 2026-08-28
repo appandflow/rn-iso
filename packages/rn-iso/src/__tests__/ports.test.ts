@@ -67,7 +67,6 @@ test('allocatePort reclaims dead ports and removes the dead project', async () =
   const port = await allocatePort('/new', probe, allFree);
   expect(port).toBe(8082);
   // Caller should have removed /a -- verify via behavior
-  const { getProject } = await import('../config.ts');
   expect(getProject('/a')).toBe(null);
 });
 

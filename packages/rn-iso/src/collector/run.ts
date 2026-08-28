@@ -171,6 +171,8 @@ export interface RunCollectorHandle {
   pid: number | null;
 }
 
+const noopFlush = () => {};
+
 // Seams, all defaulted to the real thing, so the whole lifecycle is testable
 // without a device: startStream returns something with .stdout/.stderr and an
 // 'exit' event, exactly like a spawned child.
@@ -229,7 +231,7 @@ export async function runCollector({
   // always clean up after itself. Registering first left a window -- small,
   // but a `stop` racing a just-spawned collector lands in it, and CI found it.
   let child: ChildProcess | null = null;
-  let flushReaders = () => {};
+  let flushReaders = noopFlush;
   if (attachSignals) {
     for (const signal of ['SIGTERM', 'SIGINT']) {
       process.on(signal, () => {

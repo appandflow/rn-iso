@@ -958,7 +958,7 @@ test('carry against a real git repo leaves a tracked file under an ignored direc
     expect(skipped).toEqual([]);
     expect(readFileSync(join(target, 'dir/keep.txt'), 'utf-8')).toBe('BRANCH-VERSION');
     // Everything else under the ignored directory still carries.
-    expect(copied.sort()).toEqual(['dir/junk.txt', 'dir/sub']);
+    expect(copied.toSorted()).toEqual(['dir/junk.txt', 'dir/sub']);
     expect(readFileSync(join(target, 'dir/junk.txt'), 'utf-8')).toBe('junk');
     expect(readFileSync(join(target, 'dir/sub/deep.txt'), 'utf-8')).toBe('deep');
 
@@ -1091,7 +1091,7 @@ test('C1: addWorktree never lets a $(...) baseRef reach a shell, and still creat
         baseRef: '$(touch PWNED2)',
         cwd: root,
       }),
-    ).toThrow();
+    ).toThrow(/invalid reference/);
     expect(existsSync(join(root, 'PWNED2'))).toBe(false);
 
     // A real base ref still produces a working worktree on a fresh branch.

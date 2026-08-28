@@ -20,6 +20,10 @@ const LEVEL_WIDTH = 5; // 'debug' / 'fatal'
 const SRC_WIDTH = 6; // 'client' / 'device'
 const INDENT = '    ';
 
+function padTimePart(value: number, width = 2): string {
+  return String(value).padStart(width, '0');
+}
+
 // Stack frames arrive as {file,line,column,fn} straight off the wire, and any
 // field may be absent.
 interface StackFrame {
@@ -32,8 +36,7 @@ interface StackFrame {
 export function formatTime(ts: unknown): string {
   if (typeof ts !== 'number' || !Number.isFinite(ts)) return '--:--:--.---';
   const d = new Date(ts);
-  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+  return `${padTimePart(d.getHours())}:${padTimePart(d.getMinutes())}:${padTimePart(d.getSeconds())}.${padTimePart(d.getMilliseconds(), 3)}`;
 }
 
 // Stacks arrive as {file,line,column,fn} and any field may be absent -- this

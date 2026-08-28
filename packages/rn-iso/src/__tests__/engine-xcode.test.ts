@@ -954,8 +954,8 @@ describe('buildIos with a mocked executor', () => {
     const result = asResult(await promise);
     expect(result.diagnostics).toEqual([]);
     expect(result.tail).toEqual(['something', 'went', 'wrong', 'somehow', 'entirely']);
-    const errors = writer.records.filter((r) => r.level === 'error');
-    expect(errors[0]?.msg).toMatch(/no recognizable diagnostic/);
+    const error = writer.records.find((r) => r.level === 'error');
+    expect(error?.msg).toMatch(/no recognizable diagnostic/);
   });
 
   test('no ios/ directory fails before anything is spawned', async () => {

@@ -76,8 +76,8 @@ function buildFailure(message: string, remedy: string | null): XcodeProject {
 // Pure: takes a directory listing, returns a choice. Nothing here touches fs.
 export function pickXcodeProject(entries: unknown): { kind: string; flag: string; file: string; name: string } | null {
   const names = (Array.isArray(entries) ? entries : []).filter((e) => typeof e === 'string');
-  const workspaces = names.filter((e) => e.endsWith('.xcworkspace')).sort();
-  const projects = names.filter((e) => e.endsWith('.xcodeproj')).sort();
+  const workspaces = names.filter((e) => e.endsWith('.xcworkspace')).toSorted();
+  const projects = names.filter((e) => e.endsWith('.xcodeproj')).toSorted();
 
   if (workspaces.length > 0) {
     // With more than one workspace, the one named after a project beside it is
@@ -461,7 +461,7 @@ export function productsDir(
 export function pickAppBundle(entries: unknown, preferredName: string | null = null): string | null | undefined {
   const apps = (Array.isArray(entries) ? entries : [])
     .filter((e) => typeof e === 'string' && e.endsWith('.app'))
-    .sort();
+    .toSorted();
   if (apps.length === 0) return null;
   if (preferredName) {
     const wanted = `${preferredName}.app`;

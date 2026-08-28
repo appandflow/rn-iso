@@ -137,29 +137,31 @@ export function discoverCaches({ declared = [] }: { declared?: string[] } = {}):
   // registeredCaches() widens `prune` to `string` (an untyped object literal in
   // cache-manifest.js), so the cast here just recovers the union its own
   // runtime values are always drawn from ('atomic' or 'entries').
-  const registered: CacheDescriptor[] = registeredCaches().map((c): CacheDescriptor => ({
-    ...c,
-    // register() always writes name/note (falling back to dir / a default), so
-    // these coalesces only recover the union CacheDescriptor requires from
-    // CacheEntry's optional fields; a corrupt manifest missing them still maps.
-    name: c.name ?? c.dir,
-    note: c.note ?? 'registered',
-    prune: c.prune as 'atomic' | 'entries',
-    source: 'registered',
-  }));
+  const registered: CacheDescriptor[] = registeredCaches().map((c): CacheDescriptor =>
+    Object.assign({}, c, {
+      // register() always writes name/note (falling back to dir / a default), so
+      // these coalesces only recover the union CacheDescriptor requires from
+      // CacheEntry's optional fields; a corrupt manifest missing them still maps.
+      name: c.name ?? c.dir,
+      note: c.note ?? 'registered',
+      prune: c.prune as 'atomic' | 'entries',
+      source: 'registered' as const,
+    }),
+  );
   const seen = new Set(registered.map((c) => c.dir));
   const detected = [compilationCache(), metroFileMaps(), ...declaredCaches(declared)]
     .filter((c): c is CacheDescriptor => Boolean(c))
     .filter((c) => !seen.has(c.dir))
-    .map((c): CacheDescriptor => ({ ...c, source: 'detected' }));
+    .map((c): CacheDescriptor => Object.assign({}, c, { source: 'detected' as const }));
   return [...registered, ...detected];
 }
 
 export function sizeCaches(caches: CacheDescriptor[]): CacheDescriptor[] {
-  return caches.map((c) => ({
-    ...c,
-    bytes: c.bytes ?? directorySize(c.dir),
-  }));
+  return caches.map((c) =>
+    Object.assign({}, c, {
+      bytes: c.bytes ?? directorySize(c.dir),
+    }),
+  );
 }
 
 // Remove entries not used in the last `olderThanDays`, and report what went.

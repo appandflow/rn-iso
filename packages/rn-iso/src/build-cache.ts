@@ -124,8 +124,8 @@ export interface ProjectFingerprint {
 export function loadFingerprinter(projectRoot: string): Fingerprinter | null {
   for (const from of [join(projectRoot, 'package.json'), import.meta.url]) {
     try {
-      const require_ = createRequire(from);
-      return require_('@expo/fingerprint');
+      const localRequire = createRequire(from);
+      return localRequire('@expo/fingerprint');
     } catch {
       // Try the next location.
     }
