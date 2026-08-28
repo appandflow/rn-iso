@@ -1,4 +1,5 @@
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -17,7 +18,9 @@ import {
 } from '../commands/worktree.ts';
 import type { Command } from 'commander';
 import { ensureWorkspaceIgnored, renderWorkspaceIgnoreBlock } from '../engine/workspace.ts';
-import { withManagedTunnelLock } from '../engine/tunnel.ts';
+import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
+import { registerStart } from '../commands/start.ts';
+import { asProcessExit } from './_factories.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, getProject } from '../config.ts';
 
@@ -205,6 +208,28 @@ function captureAction(register: (cmd: Command) => void) {
     if (!captured) throw new Error('register did not register an action');
     return captured(target, opts);
   };
+}
+
+function captureStartAction(overrides: Parameters<typeof registerStart>[1]) {
+  let captured: ((opts: Record<string, unknown>) => void | Promise<void>) | undefined;
+  const stub: CommandStub = {
+    command() {
+      return stub;
+    },
+    description() {
+      return stub;
+    },
+    option() {
+      return stub;
+    },
+    action(fn) {
+      captured = fn as unknown as (opts: Record<string, unknown>) => void | Promise<void>;
+      return stub;
+    },
+  };
+  registerStart(stub as Command, overrides);
+  if (!captured) throw new Error('registerStart did not register an action');
+  return captured;
 }
 
 interface PorcelainEntry {
@@ -549,7 +574,7 @@ test('action: main-checkout artifact deletion blocks a concurrent replacement tu
   const original = console.error;
   console.error = (message) => {
     if (String(message).includes('removed .rn-iso')) {
-      competingStart = withManagedTunnelLock(mainDir, async () => {
+      competingStart = withManagedRemoteWorktreeLock(mainDir, async () => {
         mkdirSync(join(mainDir, '.rn-iso'), { recursive: true });
         writeFileSync(join(mainDir, '.rn-iso', 'state.json'), JSON.stringify({ metroTunnel: { pid: 5252 } }));
       }).then(
@@ -1017,7 +1042,7 @@ test('action: a concurrent tunnel start cannot publish a replacement during work
   const originalRunFile = exec.runFile.bind(exec);
   exec.runFile = (file, args = []) => {
     if (/worktree remove/.test([file, ...args].join(' '))) {
-      competingStart = withManagedTunnelLock(wtDir, async () => {
+      competingStart = withManagedRemoteWorktreeLock(wtDir, async () => {
         mkdirSync(join(wtDir, '.rn-iso'), { recursive: true });
         writeFileSync(join(wtDir, '.rn-iso', 'state.json'), JSON.stringify({ metroTunnel: { pid: 5252 } }));
       }).then(
@@ -1035,6 +1060,78 @@ test('action: a concurrent tunnel start cannot publish a replacement during work
   expect(competingStart).not.toBeNull();
   await expect(competingStart).resolves.toBe('refused');
   expect(existsSync(join(wtDir, '.rn-iso', 'state.json'))).toBe(false);
+});
+
+test('the worktree removal lock lives outside project workspace state', async () => {
+  const key = createHash('sha256').update(resolve(wtDir)).digest('hex');
+  const owner = join(tmpHome, 'process-locks', 'worktrees', key, 'managed-remote.lock', 'owner.json');
+
+  await withManagedRemoteWorktreeLock(wtDir, async () => {
+    expect(existsSync(owner)).toBe(true);
+  });
+});
+
+test('action: an unregistered nested remote start cannot bypass the worktree removal lock', async () => {
+  const nestedDir = join(wtDir, 'apps', 'new-mobile');
+  mkdirSync(nestedDir, { recursive: true });
+  writeFileSync(join(nestedDir, 'package.json'), JSON.stringify({ name: 'new-mobile' }));
+  upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
+  const exec = makeExecutor({
+    dirty: '?? .rn-iso/\n',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  const originalRunQuiet = exec.runQuiet.bind(exec);
+  exec.runQuiet = (cmd) => {
+    if (cmd.includes('rev-parse --show-toplevel')) return wtDir;
+    return originalRunQuiet(cmd);
+  };
+  let nestedStart: Promise<void> | null = null;
+  const originalRunFile = exec.runFile.bind(exec);
+  const originalExit = process.exit;
+  exec.runFile = (file, args = []) => {
+    if (/worktree remove/.test([file, ...args].join(' '))) {
+      const originalCwd = process.cwd();
+      process.chdir(nestedDir);
+      try {
+        const runStart = captureStartAction({
+          providers: () => ['ngrok'],
+          startTunnelSequence: async () => ({
+            provider: 'ngrok',
+            url: 'https://replacement.ngrok.app',
+            pid: 5252,
+            processToken: 'linux:200',
+            cleanup: async () => ({ status: 'stopped' }),
+          }),
+          writeTunnelRecord: (projectRoot, patch) => {
+            writeFileSync(join(projectRoot, '.rn-iso', 'state.json'), JSON.stringify(patch));
+            throw new Error('stop after attempted publication');
+          },
+        });
+        nestedStart = Promise.resolve(runStart({ remote: true, wait: '1', json: true })).catch(() => {});
+      } finally {
+        process.chdir(originalCwd);
+      }
+    }
+    return originalRunFile(file, args);
+  };
+  process.exit = asProcessExit(() => {});
+  setExecutor(exec);
+
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+    expect(nestedStart).not.toBeNull();
+    await nestedStart;
+  } finally {
+    process.exit = originalExit;
+  }
+
+  expect(getProject(nestedDir)).toBeNull();
+  expect(existsSync(join(nestedDir, '.rn-iso', 'state.json'))).toBe(false);
+  await expect(withManagedRemoteWorktreeLock(wtDir, async () => 'released')).resolves.toBe('released');
 });
 
 // Containment: a path out of `git status` is relative to the worktree, and

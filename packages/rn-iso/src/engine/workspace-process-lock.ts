@@ -21,9 +21,17 @@ export interface WorkspaceProcessLockOptions {
   waitMs?: number;
   ownerPurpose?: string;
   rejectOwnerPurposes?: readonly string[];
+  external?: boolean;
 }
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+export function workspaceProcessLockError(err: unknown): 'refused' | 'timeout' | null {
+  const code = (err as Error & { code?: string })?.code;
+  if (code === 'RN_ISO_LOCK_REFUSED') return 'refused';
+  if (code === 'RN_ISO_LOCK_TIMEOUT') return 'timeout';
+  return null;
+}
 
 function readLock(path: string): LockRecord | null {
   try {
@@ -69,9 +77,10 @@ export async function withWorkspaceProcessLock<T>(
     waitMs = DEFAULT_WAIT_MS,
     ownerPurpose,
     rejectOwnerPurposes = [],
+    external = false,
   }: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  const path = join(root, '.rn-iso', `${name}.lock`);
+  const path = external ? join(root, `${name}.lock`) : join(root, '.rn-iso', `${name}.lock`);
   const deadline = now() + waitMs;
   let owned: LockRecord | null = null;
 

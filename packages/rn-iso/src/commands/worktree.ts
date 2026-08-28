@@ -6,7 +6,7 @@ import { resolveSettings, unknownSettingKeys } from '../settings.ts';
 import { isPathPrefix, loadConfig, upsertProject } from '../config.ts';
 import { workspaceDir } from '../paths.ts';
 import { reclaimProject } from '../reclaim.ts';
-import { withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
+import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import { listsWorkspaceDir, renderWorkspaceIgnoreBlock } from '../engine/workspace.ts';
 import {
@@ -880,37 +880,39 @@ function hasRegisteredProjectUnder(rootPath: string): boolean {
 // A retained owned-resource record keeps its `.rn-iso/` directory and makes
 // the command exit 1, so the next removal attempt can retry the teardown.
 async function reclaimEnvironment(root: string, why: string): Promise<void> {
-  await withReclaimLocks(root, async (lockedKeys) => {
-    const result = await reclaimAll(root, lockedKeys);
-    const kept = new Set(result.keptEntries);
-    for (const key of result.reclaimedKeys) {
-      // Contained by construction: every key is `root` itself or a registered
-      // path-segment-prefix child of it (see reclaimAll), and only the key's
-      // own `.rn-iso/` is touched -- never anything else in the tree.
-      if (kept.has(key)) continue;
-      const dir = workspaceDir(key);
-      if (!existsSync(dir)) continue;
-      try {
-        rmSync(dir, { recursive: true, force: true });
-        console.error(chalk.dim(`  removed ${relative(root, dir) || dir} (this workspace's own output)`));
-      } catch {
-        console.error(chalk.yellow(`  could not remove ${dir}`));
+  await withManagedRemoteWorktreeRemovalLock(root, () =>
+    withReclaimLocks(root, async (lockedKeys) => {
+      const result = await reclaimAll(root, lockedKeys);
+      const kept = new Set(result.keptEntries);
+      for (const key of result.reclaimedKeys) {
+        // Contained by construction: every key is `root` itself or a registered
+        // path-segment-prefix child of it (see reclaimAll), and only the key's
+        // own `.rn-iso/` is touched -- never anything else in the tree.
+        if (kept.has(key)) continue;
+        const dir = workspaceDir(key);
+        if (!existsSync(dir)) continue;
+        try {
+          rmSync(dir, { recursive: true, force: true });
+          console.error(chalk.dim(`  removed ${relative(root, dir) || dir} (this workspace's own output)`));
+        } catch {
+          console.error(chalk.yellow(`  could not remove ${dir}`));
+        }
       }
-    }
-    if (result.dereferenced.length)
-      console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
-    for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
-    if (result.deletedDevices.length)
-      console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
-    if (result.keptEntries.length) {
-      reportRetainedResources(root, result);
-      return;
-    }
-    for (const s of result.skippedDevices) {
-      console.error(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
-    }
-    console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
-  });
+      if (result.dereferenced.length)
+        console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
+      for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
+      if (result.deletedDevices.length)
+        console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+      if (result.keptEntries.length) {
+        reportRetainedResources(root, result);
+        return;
+      }
+      for (const s of result.skippedDevices) {
+        console.error(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
+      }
+      console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
+    }),
+  );
 }
 
 // Deletes the workspace directories `git status` reported inside `root`, and
@@ -1157,121 +1159,123 @@ export function registerRemove(worktree: Command): void {
       // under a nested app dir, not the root -- is not left leaking. The
       // worktree's build output needs no separate step: it lives inside the
       // directory `git worktree remove` deletes.
-      await withReclaimLocks(path, async (lockedKeys) => {
-        const result = await reclaimAll(path, lockedKeys);
+      await withManagedRemoteWorktreeRemovalLock(path, () =>
+        withReclaimLocks(path, async (lockedKeys) => {
+          const result = await reclaimAll(path, lockedKeys);
 
-        if (result.keptEntries.length) {
-          reportRetainedResources(path, result);
-          return;
-        }
+          if (result.keptEntries.length) {
+            reportRetainedResources(path, result);
+            return;
+          }
 
-        // ... and now the workspace directories themselves, so git's own
-        // cleanliness check does not refuse over the one thing rn-iso just
-        // decided was not work. Ordered after reclaimAll on purpose: the
-        // supervisor writing into .rn-iso/logs is stopped by then.
-        for (const purged of purgeWorkspaceArtifacts(path, allDirty)) {
-          console.error(chalk.dim(`  removed ${purged} (this workspace's own output)`));
-        }
-
-        // ... and the same step for a .gitignore rn-iso wrote to itself, for the
-        // same reason and no other: git's cleanliness check counts a modified
-        // tracked file, so leaving it to die with the directory is not actually
-        // an option -- verified against real git, which refuses with "contains
-        // modified or untracked files" and offers only --force. Restoring is the
-        // narrowest way through: the only change being undone is one rn-iso made,
-        // the file is inside a directory that is about to be deleted anyway, and
-        // the line says exactly what was decided and why.
-        for (const file of selfHealedIgnores) {
-          if (restoreFile(path, file)) {
-            console.error(chalk.dim(`  restoring ${file} (only rn-iso's own entry was added)`));
-          } else {
-            console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
-          }
-        }
-        // ... and the same step for `pod install`'s churn, for the same reason:
-        // git's own cleanliness check counts these tracked modifications and
-        // refuses the removal over them, so leaving them to die with the
-        // directory is not an option. The note names the file and says why,
-        // because unlike the .gitignore above these were written by the
-        // project's own tooling and a reader has to be able to see that rn-iso
-        // decided to undo something it did not write.
-        for (const file of podChurn) {
-          if (restoreFile(path, file)) {
-            console.error(chalk.dim(`  restored ${file} (pod install churn; the worktree is being removed)`));
-          } else {
-            console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
-          }
-        }
-        // ... and a .gitignore that exists only because rn-iso wrote it is
-        // deleted rather than restored: there is no earlier version to go back
-        // to, and git refuses over an untracked file exactly as it refuses over a
-        // modified one. Same containment as the workspace purge -- the path is
-        // resolved and checked to still be inside the worktree that is about to
-        // be deleted anyway.
-        for (const file of selfCreatedIgnores) {
-          if (removeInside(path, file)) {
-            console.error(chalk.dim(`  removed ${file} (rn-iso wrote all of it)`));
-          } else {
-            console.error(chalk.yellow(`  could not remove ${file}; git may refuse to remove the worktree`));
-          }
-        }
-        // Undoing that entry un-ignores what it was ignoring: `.rn-iso/` was
-        // invisible to the listing above precisely BECAUSE the self-heal had
-        // added the entry, and the moment it is restored the directory is
-        // untracked again -- which is the exact thing git refuses over. Found
-        // against real git, where the removal failed here with "contains
-        // modified or untracked files" after a clean verdict. So ask git once
-        // more, and only when something was actually restored.
-        if (selfHealedIgnores.length || selfCreatedIgnores.length) {
-          for (const purged of purgeWorkspaceArtifacts(path, dirtyPaths(path, { limit: Infinity }))) {
+          // ... and now the workspace directories themselves, so git's own
+          // cleanliness check does not refuse over the one thing rn-iso just
+          // decided was not work. Ordered after reclaimAll on purpose: the
+          // supervisor writing into .rn-iso/logs is stopped by then.
+          for (const purged of purgeWorkspaceArtifacts(path, allDirty)) {
             console.error(chalk.dim(`  removed ${purged} (this workspace's own output)`));
           }
-        }
 
-        try {
-          removeWorktree(path, { force: opts.force });
-        } catch (e) {
-          // reclaimProject already dropped rn-iso's own tracking for this
-          // project (and may have killed its Metro process) before this ran,
-          // per the ordering requirement above -- but the directory and its
-          // git worktree registration are untouched, since `git worktree
-          // remove` failed before deleting anything. Say so plainly rather
-          // than crash with a raw stack trace, and report exactly what was
-          // already released (the same two lines the success path prints
-          // below) so the user knows which sim was freed and whether their
-          // bundler is gone, instead of just "tracking was cleared".
-          console.error(chalk.red(`git worktree remove failed: ${String((e as Error)?.message || e)}`));
-          console.error(
-            chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`),
-          );
+          // ... and the same step for a .gitignore rn-iso wrote to itself, for the
+          // same reason and no other: git's cleanliness check counts a modified
+          // tracked file, so leaving it to die with the directory is not actually
+          // an option -- verified against real git, which refuses with "contains
+          // modified or untracked files" and offers only --force. Restoring is the
+          // narrowest way through: the only change being undone is one rn-iso made,
+          // the file is inside a directory that is about to be deleted anyway, and
+          // the line says exactly what was decided and why.
+          for (const file of selfHealedIgnores) {
+            if (restoreFile(path, file)) {
+              console.error(chalk.dim(`  restoring ${file} (only rn-iso's own entry was added)`));
+            } else {
+              console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
+            }
+          }
+          // ... and the same step for `pod install`'s churn, for the same reason:
+          // git's own cleanliness check counts these tracked modifications and
+          // refuses the removal over them, so leaving them to die with the
+          // directory is not an option. The note names the file and says why,
+          // because unlike the .gitignore above these were written by the
+          // project's own tooling and a reader has to be able to see that rn-iso
+          // decided to undo something it did not write.
+          for (const file of podChurn) {
+            if (restoreFile(path, file)) {
+              console.error(chalk.dim(`  restored ${file} (pod install churn; the worktree is being removed)`));
+            } else {
+              console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
+            }
+          }
+          // ... and a .gitignore that exists only because rn-iso wrote it is
+          // deleted rather than restored: there is no earlier version to go back
+          // to, and git refuses over an untracked file exactly as it refuses over a
+          // modified one. Same containment as the workspace purge -- the path is
+          // resolved and checked to still be inside the worktree that is about to
+          // be deleted anyway.
+          for (const file of selfCreatedIgnores) {
+            if (removeInside(path, file)) {
+              console.error(chalk.dim(`  removed ${file} (rn-iso wrote all of it)`));
+            } else {
+              console.error(chalk.yellow(`  could not remove ${file}; git may refuse to remove the worktree`));
+            }
+          }
+          // Undoing that entry un-ignores what it was ignoring: `.rn-iso/` was
+          // invisible to the listing above precisely BECAUSE the self-heal had
+          // added the entry, and the moment it is restored the directory is
+          // untracked again -- which is the exact thing git refuses over. Found
+          // against real git, where the removal failed here with "contains
+          // modified or untracked files" after a clean verdict. So ask git once
+          // more, and only when something was actually restored.
+          if (selfHealedIgnores.length || selfCreatedIgnores.length) {
+            for (const purged of purgeWorkspaceArtifacts(path, dirtyPaths(path, { limit: Infinity }))) {
+              console.error(chalk.dim(`  removed ${purged} (this workspace's own output)`));
+            }
+          }
+
+          try {
+            removeWorktree(path, { force: opts.force });
+          } catch (e) {
+            // reclaimProject already dropped rn-iso's own tracking for this
+            // project (and may have killed its Metro process) before this ran,
+            // per the ordering requirement above -- but the directory and its
+            // git worktree registration are untouched, since `git worktree
+            // remove` failed before deleting anything. Say so plainly rather
+            // than crash with a raw stack trace, and report exactly what was
+            // already released (the same two lines the success path prints
+            // below) so the user knows which sim was freed and whether their
+            // bundler is gone, instead of just "tracking was cleared".
+            console.error(chalk.red(`git worktree remove failed: ${String((e as Error)?.message || e)}`));
+            console.error(
+              chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`),
+            );
+            if (result.dereferenced.length)
+              console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
+            for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
+            if (result.deletedDevices.length)
+              console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+            if (result.stoppedSessions.length)
+              console.error(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
+            if (result.stoppedTunnels.length)
+              console.error(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
+            for (const s of result.skippedDevices)
+              console.error(chalk.dim(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
+            process.exitCode = 1;
+            return;
+          }
+          console.log(chalk.green(`Removed worktree ${path}`));
           if (result.dereferenced.length)
-            console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
-          for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
+            console.log(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
+          for (const pid of result.killedPids) console.log(chalk.dim(`  killed Metro pid ${pid}`));
           if (result.deletedDevices.length)
-            console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+            console.log(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
           if (result.stoppedSessions.length)
-            console.error(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
+            console.log(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
           if (result.stoppedTunnels.length)
-            console.error(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
-          for (const s of result.skippedDevices)
-            console.error(chalk.dim(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
-          process.exitCode = 1;
-          return;
-        }
-        console.log(chalk.green(`Removed worktree ${path}`));
-        if (result.dereferenced.length)
-          console.log(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
-        for (const pid of result.killedPids) console.log(chalk.dim(`  killed Metro pid ${pid}`));
-        if (result.deletedDevices.length)
-          console.log(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
-        if (result.stoppedSessions.length)
-          console.log(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
-        if (result.stoppedTunnels.length)
-          console.log(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
-        for (const s of result.skippedDevices) {
-          console.log(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
-        }
-      });
+            console.log(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
+          for (const s of result.skippedDevices) {
+            console.log(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
+          }
+        }),
+      );
     });
 }
 

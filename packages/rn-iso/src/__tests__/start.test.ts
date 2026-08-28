@@ -839,6 +839,29 @@ describe('action: spawning the supervisor', () => {
     expect(JSON.parse(result.logs[0] ?? '').code).toBe('RN_ISO_BAD_ARG');
   });
 
+  test('start --remote reports worktree removal before project registration', async () => {
+    setExecutor(metroExecutor({ listeners: {} }));
+    let providerChecked = false;
+    const result = await runAction({ json: true, remote: true }, (cmd) =>
+      registerStart(cmd, {
+        providers: () => {
+          providerChecked = true;
+          return ['ngrok'];
+        },
+        withWorktreeLock: async () => {
+          throw Object.assign(new Error('held for worktree removal'), { code: 'RN_ISO_LOCK_REFUSED' });
+        },
+      }),
+    );
+
+    const error = JSON.parse(result.logs[0] ?? '');
+    expect(result.exitCode).toBe(1);
+    expect(error.code).toBe('RN_ISO_WORKTREE_REMOVAL_IN_PROGRESS');
+    expect(error.remedy).toMatch(/retry.*worktree remove.*finishes/i);
+    expect(providerChecked).toBe(false);
+    expect(getProject(root)).toBeNull();
+  });
+
   test.each(['ios', 'android'])('%s.remote gives plain start remote intent', async (platform) => {
     const port = platform === 'ios' ? 8164 : 8165;
     const { exec } = await runSpawnedExpoStart({

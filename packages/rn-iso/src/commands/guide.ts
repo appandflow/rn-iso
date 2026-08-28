@@ -598,6 +598,11 @@ RN_ISO_REMOTE_METRO_UNREACHABLE
 
 --- DEV-SERVER CODES (\`rn-iso start\`) ---
 
+RN_ISO_WORKTREE_REMOVAL_IN_PROGRESS
+  A managed remote start found that \`rn-iso worktree remove\` owns the
+  worktree lock. The start did not register the project or create a tunnel.
+  Wait for removal to finish, then run \`rn-iso start --remote\` again.
+
 RN_ISO_REMOTE_START_REQUIRED
   A healthy bare or Expo server was started without its required remote
   tunnel. A running server cannot gain that option. For an rn-iso supervisor,

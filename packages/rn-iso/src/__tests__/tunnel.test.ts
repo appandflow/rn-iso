@@ -155,6 +155,35 @@ describe('startTunnel: the happy path', () => {
     await promise;
     expect(unrefed).toBe(true);
   });
+
+  test('does not record a PID reused after spawn with a different process token', async () => {
+    let token = 'linux:100';
+    const signals: Array<NodeJS.Signals | number | undefined> = [];
+    const child = makeChildProcess({
+      kill(signal) {
+        signals.push(signal);
+        return true;
+      },
+    });
+    const promise = startTunnel({
+      provider: 'ngrok',
+      port: 8081,
+      spawnFn: () => child,
+      probeReachable: async () => true,
+      readProcessToken: () => token,
+      isChildAlive: () => true,
+      cleanupTimeoutMs: 1,
+    });
+    child.stdout?.emit('data', `${JSON.stringify({ url: 'https://replacement.ngrok.app' })}\n`);
+    token = 'linux:200';
+    child.emit('exit', 0, null);
+
+    await expect(promise).resolves.toEqual({
+      failed: true,
+      reason: expect.stringContaining('process identity changed'),
+    });
+    expect(signals).toEqual([]);
+  });
 });
 
 describe('startTunnel: nothing here throws -- every failure is a returned value', () => {
@@ -181,7 +210,7 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     child.emit('exit', 1, null);
     const result = await promise;
     expect(result).toEqual({ failed: true, reason: expect.stringContaining('exited before printing') });
-    expect(killed).toBe(true);
+    expect(killed).toBe(false);
   });
 
   test('a provider that stays silent is bounded by urlTimeoutMs, not left running', async () => {

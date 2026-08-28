@@ -132,9 +132,38 @@ export async function withManagedTunnelRemovalLock<T>(
   });
 }
 
+export async function withManagedRemoteWorktreeLock<T>(
+  worktreeRoot: string,
+  fn: () => Promise<T>,
+  options: WorkspaceProcessLockOptions = {},
+): Promise<T> {
+  return withWorkspaceProcessLock(managedRemoteWorktreeLockRoot(worktreeRoot), 'managed-remote', fn, {
+    ...options,
+    external: true,
+    rejectOwnerPurposes: ['worktree removal'],
+  });
+}
+
+export async function withManagedRemoteWorktreeRemovalLock<T>(
+  worktreeRoot: string,
+  fn: () => Promise<T>,
+  options: WorkspaceProcessLockOptions = {},
+): Promise<T> {
+  return withWorkspaceProcessLock(managedRemoteWorktreeLockRoot(worktreeRoot), 'managed-remote', fn, {
+    ...options,
+    external: true,
+    ownerPurpose: 'worktree removal',
+  });
+}
+
 function managedTunnelLockRoot(root: string): string {
   const key = createHash('sha256').update(resolvePath(root)).digest('hex');
   return join(getConfigDir(), 'process-locks', key);
+}
+
+function managedRemoteWorktreeLockRoot(worktreeRoot: string): string {
+  const key = createHash('sha256').update(resolvePath(worktreeRoot)).digest('hex');
+  return join(getConfigDir(), 'process-locks', 'worktrees', key);
 }
 
 // Any HTTP response -- even a 404 from Metro's own router -- proves the
@@ -289,8 +318,11 @@ export async function startTunnel({
     return { failed: true, reason: `Could not start ${provider}: ${describe(err)}` };
   }
 
-  const { url, exited } = await waitForUrl(child, parserFor(provider), urlTimeoutMs);
-  const cleanup = async (alreadyExited = false): Promise<TunnelCleanupResult> => {
+  let childExited = false;
+  child.once('exit', () => {
+    childExited = true;
+  });
+  const cleanup = async (alreadyExited = childExited): Promise<TunnelCleanupResult> => {
     const stopped = await terminateChild(child, {
       alreadyExited,
       timeoutMs: cleanupTimeoutMs,
@@ -305,7 +337,7 @@ export async function startTunnel({
           reason: `Sent SIGKILL but could not confirm that pid ${child.pid ?? 'unknown'} exited.`,
         };
   };
-  const failAfterCleanup = async (reason: string, alreadyExited = false): Promise<StartTunnelResult> => {
+  const failAfterCleanup = async (reason: string, alreadyExited = childExited): Promise<StartTunnelResult> => {
     const stopped = await cleanup(alreadyExited);
     return stopped.status === 'stopped'
       ? { failed: true, reason }
@@ -315,12 +347,29 @@ export async function startTunnel({
           cleanupFailed: true,
         };
   };
+  const pid = child.pid;
+  if (!pid) {
+    return failAfterCleanup(`${provider} started but reported no pid.`);
+  }
+  const captureProcessToken = (): string | null => {
+    try {
+      return readProcessToken(pid);
+    } catch {
+      return null;
+    }
+  };
+  const initialProcessToken = captureProcessToken();
+  if (!initialProcessToken) {
+    return failAfterCleanup(`${provider} started but its process identity token could not be read.`);
+  }
+
+  const { url, exited } = await waitForUrl(child, parserFor(provider), urlTimeoutMs);
   if (!url) {
     return failAfterCleanup(
       exited
         ? `${provider} exited before printing a tunnel URL.`
         : `${provider} did not print a tunnel URL within ${urlTimeoutMs}ms.`,
-      exited,
+      exited || childExited,
     );
   }
   resumeChildPipes(child);
@@ -341,17 +390,13 @@ export async function startTunnel({
     }
   }
 
-  const pid = child.pid;
-  if (!pid) {
-    return failAfterCleanup(`${provider} started but reported no pid.`);
-  }
-  const processToken = readProcessToken(pid);
-  if (!processToken) {
-    return failAfterCleanup(`${provider} started but its process identity token could not be read.`);
+  const finalProcessToken = captureProcessToken();
+  if (!finalProcessToken || finalProcessToken !== initialProcessToken) {
+    return failAfterCleanup(`${provider} process identity changed before its tunnel could be recorded.`);
   }
   unrefChildPipes(child);
   child.unref?.();
-  return { url, pid, processToken, cleanup: () => cleanup() };
+  return { url, pid, processToken: initialProcessToken, cleanup: () => cleanup() };
 }
 
 export interface StartTunnelSequenceOptions {
@@ -465,11 +510,6 @@ export async function terminateChild(
   },
 ): Promise<boolean> {
   if (alreadyExited) {
-    try {
-      child.kill('SIGTERM');
-    } catch {
-      /* already gone */
-    }
     closeChildPipes(child);
     return true;
   }
