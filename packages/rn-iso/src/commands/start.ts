@@ -473,14 +473,14 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                   },
                 });
               } catch (err) {
-                const stopped = await d.stopTunnel(record);
+                const stopped = await started.cleanup();
                 return {
                   failed: {
                     code: 'RN_ISO_REMOTE_METRO_UNREACHABLE',
                     message: `Could not record the managed Metro tunnel: ${(err as Error)?.message || err}`,
                     remedy:
                       stopped.status === 'failed'
-                        ? `The tunnel also could not be stopped: ${stopped.reason ?? 'unknown error'}`
+                        ? `Cleanup failed. Unmanaged pid ${record.pid} may still be running: ${stopped.reason ?? 'unknown error'}`
                         : 'The tunnel process was stopped. Fix the workspace write error, then retry `rn-iso start --remote`.',
                   },
                 };

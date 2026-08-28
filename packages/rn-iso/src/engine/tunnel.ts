@@ -314,7 +314,14 @@ export interface StartTunnelOptions {
   isChildAlive?: (pid: number) => boolean;
 }
 
-export type StartTunnelResult = { url: string; pid: number } | { failed: true; reason: string; cleanupFailed?: true };
+interface TunnelCleanupResult {
+  status: 'stopped' | 'failed';
+  reason?: string;
+}
+
+export type StartTunnelResult =
+  | { url: string; pid: number; cleanup: () => Promise<TunnelCleanupResult> }
+  | { failed: true; reason: string; cleanupFailed?: true };
 
 const CLEANUP_TIMEOUT_MS = 1_000;
 const CLEANUP_POLL_MS = 25;
@@ -359,7 +366,7 @@ export async function startTunnel({
   }
 
   const { url, exited } = await waitForUrl(child, parserFor(provider), urlTimeoutMs);
-  const failAfterCleanup = async (reason: string, alreadyExited = false): Promise<StartTunnelResult> => {
+  const cleanup = async (alreadyExited = false): Promise<TunnelCleanupResult> => {
     const stopped = await terminateChild(child, {
       alreadyExited,
       timeoutMs: cleanupTimeoutMs,
@@ -368,10 +375,19 @@ export async function startTunnel({
       isAlive: isChildAlive,
     });
     return stopped
+      ? { status: 'stopped' }
+      : {
+          status: 'failed',
+          reason: `Sent SIGKILL but could not confirm that pid ${child.pid ?? 'unknown'} exited.`,
+        };
+  };
+  const failAfterCleanup = async (reason: string, alreadyExited = false): Promise<StartTunnelResult> => {
+    const stopped = await cleanup(alreadyExited);
+    return stopped.status === 'stopped'
       ? { failed: true, reason }
       : {
           failed: true,
-          reason: `${reason} Sent SIGKILL but could not confirm that pid ${child.pid ?? 'unknown'} exited.`,
+          reason: `${reason} ${stopped.reason}`,
           cleanupFailed: true,
         };
   };
@@ -407,7 +423,7 @@ export async function startTunnel({
   }
   unrefChildPipes(child);
   child.unref?.();
-  return { url, pid };
+  return { url, pid, cleanup: () => cleanup() };
 }
 
 export interface StartTunnelSequenceOptions {
@@ -419,7 +435,7 @@ export interface StartTunnelSequenceOptions {
 }
 
 export type StartTunnelSequenceResult =
-  | { provider: ManagedProvider; url: string; pid: number }
+  | { provider: ManagedProvider; url: string; pid: number; cleanup: () => Promise<TunnelCleanupResult> }
   | { failed: true; reason: string };
 
 /** Try the selected providers in order until one returns a public URL. */

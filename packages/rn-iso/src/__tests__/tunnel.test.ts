@@ -24,6 +24,8 @@ function clock(start = 1_000) {
   return { now: () => t, sleep: async (ms: number) => void (t += ms) };
 }
 
+const successfulTunnelCleanup = async () => ({ status: 'stopped' as const });
+
 describe('tunnelArgv', () => {
   test('cloudflared: a quick tunnel at the local port', () => {
     expect(tunnelArgv('cloudflared', 8081)).toEqual({
@@ -104,7 +106,11 @@ describe('startTunnel: the happy path', () => {
       probeReachable: async () => true,
     });
     child.stderr?.emit('data', 'banner |  https://random-words.trycloudflare.com  |\n');
-    await expect(promise).resolves.toEqual({ url: 'https://random-words.trycloudflare.com', pid: 4242 });
+    await expect(promise).resolves.toMatchObject({
+      url: 'https://random-words.trycloudflare.com',
+      pid: 4242,
+      cleanup: expect.any(Function),
+    });
   });
 
   test('ngrok: the URL from a JSON stdout line, confirmed reachable', async () => {
@@ -116,7 +122,11 @@ describe('startTunnel: the happy path', () => {
       probeReachable: async () => true,
     });
     child.stdout?.emit('data', `${JSON.stringify({ msg: 'started tunnel', url: 'https://abcd.ngrok-free.app' })}\n`);
-    await expect(promise).resolves.toEqual({ url: 'https://abcd.ngrok-free.app', pid: 4242 });
+    await expect(promise).resolves.toMatchObject({
+      url: 'https://abcd.ngrok-free.app',
+      pid: 4242,
+      cleanup: expect.any(Function),
+    });
   });
 
   test("the child is unref'd on success so it can outlive the caller", async () => {
@@ -225,7 +235,9 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
       port: 8081,
       start: async ({ provider }) => {
         providers.push(provider);
-        if (provider === 'cloudflared') return { url: 'https://fallback.trycloudflare.com', pid: 4243 };
+        if (provider === 'cloudflared') {
+          return { url: 'https://fallback.trycloudflare.com', pid: 4243, cleanup: successfulTunnelCleanup };
+        }
         return startTunnel({
           provider,
           port: 8081,
@@ -259,7 +271,7 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
       start: async ({ provider }) => {
         if (provider === 'cloudflared') {
           order.push('cloudflared-start');
-          return { url: 'https://fallback.trycloudflare.com', pid: 4243 };
+          return { url: 'https://fallback.trycloudflare.com', pid: 4243, cleanup: successfulTunnelCleanup };
         }
         return startTunnel({ provider, port: 8081, spawnFn: () => child, urlTimeoutMs: 1 });
       },
@@ -303,7 +315,7 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     });
     child.stderr?.emit('data', 'https://x.trycloudflare.com\n');
     const result = await promise;
-    expect(result).toEqual({ url: 'https://x.trycloudflare.com', pid: 4242 });
+    expect(result).toMatchObject({ url: 'https://x.trycloudflare.com', pid: 4242, cleanup: expect.any(Function) });
     expect(calls).toBe(3);
   });
 
@@ -336,12 +348,17 @@ describe('startTunnelSequence', () => {
         calls.push(provider);
         return provider === 'ngrok'
           ? { failed: true as const, reason: 'authentication failed before printing a tunnel URL' }
-          : { url: 'https://fallback.trycloudflare.com', pid: 4243 };
+          : { url: 'https://fallback.trycloudflare.com', pid: 4243, cleanup: successfulTunnelCleanup };
       },
     });
 
     expect(calls).toEqual(['ngrok', 'cloudflared']);
-    expect(result).toEqual({ provider: 'cloudflared', url: 'https://fallback.trycloudflare.com', pid: 4243 });
+    expect(result).toEqual({
+      provider: 'cloudflared',
+      url: 'https://fallback.trycloudflare.com',
+      pid: 4243,
+      cleanup: successfulTunnelCleanup,
+    });
   });
 
   test('a successful ngrok URL wins without starting cloudflared', async () => {
@@ -351,12 +368,17 @@ describe('startTunnelSequence', () => {
       port: 8081,
       start: async ({ provider }) => {
         calls.push(provider);
-        return { url: 'https://ready.ngrok.app', pid: 4242 };
+        return { url: 'https://ready.ngrok.app', pid: 4242, cleanup: successfulTunnelCleanup };
       },
     });
 
     expect(calls).toEqual(['ngrok']);
-    expect(result).toEqual({ provider: 'ngrok', url: 'https://ready.ngrok.app', pid: 4242 });
+    expect(result).toEqual({
+      provider: 'ngrok',
+      url: 'https://ready.ngrok.app',
+      pid: 4242,
+      cleanup: successfulTunnelCleanup,
+    });
   });
 
   test('explicit ngrok is fail-closed when it is the only candidate', async () => {

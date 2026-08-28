@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import type { Command } from 'commander';
 import { getProject, upsertProject } from '../config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import type { TunnelRecord } from '../engine/tunnel.ts';
+import { startTunnel, startTunnelSequence, type TunnelRecord } from '../engine/tunnel.ts';
 import { supervisorLogFile, workspaceLogsDir } from '../paths.ts';
 import { writeWorkspaceState } from '../supervisor/run.ts';
 import { readMetroTunnel } from '../supervisor/state.ts';
@@ -32,10 +32,12 @@ import {
   tailLines,
   wantsExpoOwnTunnel,
 } from '../commands/start.ts';
-import { asProcessExit } from './_factories.ts';
+import { asProcessExit, makeChildProcess } from './_factories.ts';
 
 let tmpHome: string;
 let root: string;
+
+const successfulTunnelCleanup = async () => ({ status: 'stopped' as const });
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
@@ -594,7 +596,12 @@ describe('action: already running', () => {
           providers: () => ['ngrok'],
           startTunnelSequence: async () => {
             tunnelStarted = true;
-            return { provider: 'ngrok', url: 'https://late.ngrok.app', pid: 4242 };
+            return {
+              provider: 'ngrok',
+              url: 'https://late.ngrok.app',
+              pid: 4242,
+              cleanup: successfulTunnelCleanup,
+            };
           },
           isTunnelAlive: () => false,
         }),
@@ -924,7 +931,12 @@ describe('action: spawning the supervisor', () => {
               ngrokUrl: 'https://stable.ngrok.app',
               requireReachable: false,
             });
-            return { provider: 'ngrok', url: 'https://stable.ngrok.app', pid: 4242 };
+            return {
+              provider: 'ngrok',
+              url: 'https://stable.ngrok.app',
+              pid: 4242,
+              cleanup: successfulTunnelCleanup,
+            };
           },
           isTunnelAlive: () => true,
         }),
@@ -972,7 +984,12 @@ describe('action: spawning the supervisor', () => {
             maxActive = Math.max(maxActive, active);
             await new Promise((resolve) => setTimeout(resolve, 20));
             active -= 1;
-            return { provider: 'ngrok', url: 'https://one.ngrok.app', pid: 4242 };
+            return {
+              provider: 'ngrok',
+              url: 'https://one.ngrok.app',
+              pid: 4242,
+              cleanup: successfulTunnelCleanup,
+            };
           },
           isTunnelAlive: () => true,
         }),
@@ -1023,7 +1040,12 @@ describe('action: spawning the supervisor', () => {
             active -= 1;
             return attempt === 1
               ? { failed: true, reason: 'authentication failed' }
-              : { provider: 'ngrok', url: 'https://retry.ngrok.app', pid: 4243 };
+              : {
+                  provider: 'ngrok',
+                  url: 'https://retry.ngrok.app',
+                  pid: 4243,
+                  cleanup: successfulTunnelCleanup,
+                };
           },
           isTunnelAlive: () => true,
         }),
@@ -1048,28 +1070,122 @@ describe('action: spawning the supervisor', () => {
     };
     setExecutor(exec);
     upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
-    const stopped: unknown[] = [];
+    let cleanupCalled = false;
 
     const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
       registerStart(cmd, {
         providers: () => ['ngrok'],
-        startTunnelSequence: async () => ({ provider: 'ngrok', url: 'https://ready.ngrok.app', pid: 4242 }),
+        startTunnelSequence: async () => ({
+          provider: 'ngrok',
+          url: 'https://ready.ngrok.app',
+          pid: 4242,
+          cleanup: async () => {
+            cleanupCalled = true;
+            return { status: 'stopped' };
+          },
+        }),
         isTunnelAlive: () => false,
         writeTunnelRecord: () => {
           throw new Error('disk full');
-        },
-        stopTunnel: async (record) => {
-          stopped.push(record);
-          return { status: 'stopped' };
         },
       }),
     );
 
     expect(result.exitCode).toBe(1);
     expect(serverStarted).toBe(false);
-    expect(stopped).toEqual([
-      expect.objectContaining({ provider: 'ngrok', pid: 4242, url: 'https://ready.ngrok.app', port }),
-    ]);
+    expect(cleanupCalled).toBe(true);
+  });
+
+  test('a failed managed tunnel record escalates cleanup for a child that ignores SIGTERM', async () => {
+    const port = 8184;
+    const exec = metroExecutor({ listeners: {} });
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    const signals: Array<NodeJS.Signals | number | undefined> = [];
+    let alive = true;
+    let exited = false;
+    let now = 0;
+    const child = makeChildProcess({
+      kill(signal) {
+        signals.push(signal);
+        if (signal === 'SIGKILL') {
+          alive = false;
+          exited = true;
+          child.emit('exit', null, 'SIGKILL');
+        }
+        return true;
+      },
+    });
+
+    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
+      registerStart(cmd, {
+        providers: () => ['ngrok'],
+        startTunnelSequence: (options) =>
+          startTunnelSequence({
+            ...options,
+            start: async (startOptions) => {
+              const started = startTunnel({
+                ...startOptions,
+                spawnFn: () => child,
+                cleanupTimeoutMs: 1,
+                isChildAlive: () => alive,
+                now: () => now,
+                sleep: async (ms) => void (now += ms),
+              });
+              child.stdout?.emit('data', `${JSON.stringify({ url: 'https://ready.ngrok.app' })}\n`);
+              return started;
+            },
+          }),
+        writeTunnelRecord: () => {
+          throw new Error('disk full');
+        },
+        stopTunnel: async () => ({ status: 'failed', reason: 'SIGTERM did not stop pid 4242.' }),
+      }),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(exited).toBe(true);
+    expect(exec.calls.spawn).toEqual([]);
+  });
+
+  test('an unconfirmed record-failure cleanup reports the unmanaged pid', async () => {
+    const port = 8185;
+    const exec = metroExecutor({ listeners: {} });
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    let now = 0;
+    const child = makeChildProcess({ kill: () => true });
+
+    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
+      registerStart(cmd, {
+        providers: () => ['ngrok'],
+        startTunnelSequence: (options) =>
+          startTunnelSequence({
+            ...options,
+            start: async (startOptions) => {
+              const started = startTunnel({
+                ...startOptions,
+                spawnFn: () => child,
+                cleanupTimeoutMs: 1,
+                isChildAlive: () => true,
+                now: () => now,
+                sleep: async (ms) => void (now += ms),
+              });
+              child.stdout?.emit('data', `${JSON.stringify({ url: 'https://ready.ngrok.app' })}\n`);
+              return started;
+            },
+          }),
+        writeTunnelRecord: () => {
+          throw new Error('disk full');
+        },
+        stopTunnel: async () => ({ status: 'failed', reason: 'SIGTERM did not stop pid 4242.' }),
+      }),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs[0] ?? '').remedy).toMatch(/unmanaged.*pid 4242/i);
+    expect(exec.calls.spawn).toEqual([]);
   });
 
   test('a managed provider that exits before Metro readiness fails and clears its record', async () => {
@@ -1100,7 +1216,12 @@ describe('action: spawning the supervisor', () => {
       result = await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
         registerStart(cmd, {
           providers: () => ['ngrok'],
-          startTunnelSequence: async () => ({ provider: 'ngrok', url: 'https://gone.ngrok.app', pid: 4242 }),
+          startTunnelSequence: async () => ({
+            provider: 'ngrok',
+            url: 'https://gone.ngrok.app',
+            pid: 4242,
+            cleanup: successfulTunnelCleanup,
+          }),
           isTunnelAlive: () => ++livenessChecks === 1,
           stopTunnel: async (record) => {
             stopped.push(record);
@@ -1145,7 +1266,12 @@ describe('action: spawning the supervisor', () => {
       await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
         registerStart(cmd, {
           providers: () => ['ngrok'],
-          startTunnelSequence: async () => ({ provider: 'ngrok', url: 'https://gone.ngrok.app', pid: 4242 }),
+          startTunnelSequence: async () => ({
+            provider: 'ngrok',
+            url: 'https://gone.ngrok.app',
+            pid: 4242,
+            cleanup: successfulTunnelCleanup,
+          }),
           isTunnelAlive: () => {
             if (++livenessChecks === 1) return true;
             if (!replaced) {
