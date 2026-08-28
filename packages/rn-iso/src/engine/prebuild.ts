@@ -3,9 +3,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
+import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { detectIsExpo } from '../project.ts';
-import { createLineReader, expoBinPath, expoBinRefusal, stripAnsi } from '../supervisor/server-expo.ts';
-import { waitForChild } from './deps.ts';
+import { expoBinPath, expoBinRefusal } from '../supervisor/server-expo.ts';
 
 export const PREBUILD_ERROR = 'RN_ISO_PREBUILD_FAILED';
 

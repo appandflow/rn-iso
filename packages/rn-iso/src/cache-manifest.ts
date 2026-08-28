@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { homedir } from 'os';
-import { basename, dirname, join, resolve } from 'path';
+import { join, resolve } from 'path';
+import { readCacheManifest, updateCacheManifest } from '@rn-iso/core';
 import { getConfigDir } from './config.ts';
 
 export interface CacheEntry {
@@ -21,35 +22,17 @@ function expand(dir: string): string {
 }
 
 export function readManifest(path: string = manifestPath()): { version: number; caches: CacheEntry[] } {
-  if (!existsSync(path)) return { version: 1, caches: [] };
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf-8'));
-    const caches = Array.isArray(parsed?.caches)
-      ? (parsed.caches as unknown[]).filter((c): c is CacheEntry => typeof (c as { dir?: unknown })?.dir === 'string')
-      : [];
-    return { version: 1, caches };
-  } catch {
-    return { version: 1, caches: [] };
-  }
+  return { version: 1, caches: cacheEntries(readCacheManifest(path).caches) };
 }
 
-function writeManifest(path: string, caches: CacheEntry[]): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
-  try {
-    writeFileSync(tmp, JSON.stringify({ version: 1, caches }, null, 2));
-    renameSync(tmp, path);
-  } catch (e) {
-    rmSync(tmp, { force: true });
-    throw e;
-  }
+function cacheEntries(caches: Array<Record<string, unknown>>): Array<Record<string, unknown> & CacheEntry> {
+  return caches.filter((cache): cache is Record<string, unknown> & CacheEntry => typeof cache.dir === 'string');
 }
 
 export function register(entry: CacheEntry, path: string = manifestPath()): CacheEntry {
   if (!entry?.dir) throw new Error('a cache registration needs a `dir`');
   const dir = expand(entry.dir);
-  const manifest = readManifest(path);
-  const record: CacheEntry = {
+  const record: Record<string, unknown> & CacheEntry = {
     dir,
     name: entry.name || dir,
     prune: entry.prune === 'atomic' ? 'atomic' : 'entries',
@@ -57,9 +40,10 @@ export function register(entry: CacheEntry, path: string = manifestPath()): Cach
     note: entry.note || 'registered by the project',
     registeredBy: entry.registeredBy || process.cwd(),
   };
-  const caches = manifest.caches.filter((c) => expand(c.dir) !== dir);
-  caches.push(record);
-  writeManifest(path, caches);
+  updateCacheManifest(path, (caches) => {
+    const others = cacheEntries(caches).filter((cache) => expand(cache.dir) !== dir);
+    return [...others, record];
+  });
   return record;
 }
 
@@ -70,12 +54,15 @@ function normalizeDepth(value: unknown): number {
 }
 
 export function unregister(dir: string, path: string = manifestPath()): boolean {
-  const manifest = readManifest(path);
   const target = expand(dir);
-  const caches = manifest.caches.filter((c) => expand(c.dir) !== target);
-  if (caches.length === manifest.caches.length) return false;
-  writeManifest(path, caches);
-  return true;
+  let removed = false;
+  updateCacheManifest(path, (caches) => {
+    const entries = cacheEntries(caches);
+    const remaining = entries.filter((cache) => expand(cache.dir) !== target);
+    removed = remaining.length !== entries.length;
+    return remaining;
+  });
+  return removed;
 }
 
 export function registeredCaches(path: string = manifestPath()): {

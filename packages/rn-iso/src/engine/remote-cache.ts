@@ -7,6 +7,7 @@ import { format } from 'node:util';
 import { getExecutor } from '../exec.ts';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../paths.ts';
+import { stripAnsi } from '../process-output.ts';
 import { resolvePackageJson } from '../project.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
 
@@ -505,11 +506,6 @@ let patched: {
 } | null = null;
 
 const PROVIDER_CONTEXT = new AsyncLocalStorage<CaptureFrame>();
-
-function stripAnsi(text?: string | null): string {
-  // oxlint-disable-next-line no-control-regex -- intentional ANSI escape match
-  return String(text ?? '').replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
-}
 
 export function uploadDestination(lines?: string[] | null): string | null {
   const text = (lines || []).map(stripAnsi);

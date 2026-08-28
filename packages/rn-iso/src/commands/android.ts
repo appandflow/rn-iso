@@ -5,6 +5,7 @@ import { basename, join, relative } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
 import type { Command } from 'commander';
 import type { AndroidFacts, SettingsObject, WaitedForBuild } from '../types.ts';
+import { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import {
@@ -81,6 +82,8 @@ import {
   type LoadProjectProviderResult,
 } from '../engine/remote-cache.ts';
 import { formatDiagnostic, type Diagnostic } from '../engine/errors-gradle.ts';
+
+export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 
 export const PLATFORM = 'android';
 
@@ -194,8 +197,6 @@ export const NO_FINGERPRINT = 'RN_ISO_NO_FINGERPRINT';
 export const NO_DEVICE = 'RN_ISO_NO_DEVICE';
 export const INSTALL_FAILED = 'RN_ISO_INSTALL_FAILED';
 export const LAUNCH_FAILED = 'RN_ISO_LAUNCH_FAILED';
-
-const LABEL_WIDTH = 11;
 
 const FALLBACK_LINES = 5;
 
@@ -370,28 +371,9 @@ function readEmulatorLogTail(file: string): string {
   }
 }
 
-export function phaseLine(label: unknown, text: string): string {
-  return `  ${String(label).padEnd(LABEL_WIDTH)} ${text}`;
-}
-
 export function displayPath(root: string, path: string): string {
   const rel = relative(root, path);
   return rel && !rel.startsWith('..') ? rel : path;
-}
-
-export function shortHash(hash: unknown): string {
-  const text = String(hash || '');
-  return text.length > 8 ? `${text.slice(0, 6)}..` : text;
-}
-
-export function formatDuration(ms: unknown): string {
-  const value = Number(ms);
-  if (!Number.isFinite(value) || value < 0) return 'unknown';
-  if (value < 1000) return `${Math.round(value)}ms`;
-  const seconds = value / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m${String(Math.round(seconds - minutes * 60)).padStart(2, '0')}s`;
 }
 
 export function androidFacts({
