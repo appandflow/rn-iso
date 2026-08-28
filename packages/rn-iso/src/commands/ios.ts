@@ -74,6 +74,10 @@ function writeNote(line: string): void {
   console.error(line);
 }
 
+function writePhase(name: unknown, text: string): void {
+  console.error(phaseLine(name, text));
+}
+
 export const PLATFORM = 'ios';
 
 interface DeviceLike {
@@ -701,7 +705,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const metroCheck = opts.metroCheck !== false;
   const useBuildCache = opts.buildCache !== false;
 
-  const phase = (name: unknown, text: string) => console.error(phaseLine(name, text));
+  const phase = writePhase;
   const note = writeNote;
 
   const started = d.now();

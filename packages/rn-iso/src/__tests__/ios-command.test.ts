@@ -1325,9 +1325,7 @@ describe('failure output', () => {
     expect(text).toMatch(/AppDelegate\.mm:12:4: use of undeclared identifier 'foo'/);
     expect(text).toMatch(/The sandbox is not in sync/);
     expect(text).toMatch(/and 3 more diagnostics in the log/);
-    expect(text).toMatch(
-      new RegExp(`^  log {9}${buildLogFile(root).replace(/[/\\^$*+?.()|[\]{}]/g, '\\$&')}`, 'm'),
-    );
+    expect(text).toMatch(new RegExp(`^  log {9}${buildLogFile(root).replace(/[/\\^$*+?.()|[\]{}]/g, '\\$&')}`, 'm'));
     expect(text).toMatch(/^  failed {6}RN_ISO_BUILD_FAILED/m);
   });
 
