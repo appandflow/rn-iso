@@ -1,7 +1,7 @@
 {
   "id": "agent-skills",
-  "title": "Agent skills",
-  "description": "Installing and refreshing the bundled skills with npx skills",
+  "title": "Agent skill",
+  "description": "Installing and refreshing the bundled skill with npx skills",
   "source": "@site/docs/agent-skills.md",
   "sourceDirName": ".",
   "slug": "/agent-skills",
@@ -13,9 +13,9 @@
   "version": "current",
   "sidebarPosition": 3,
   "frontMatter": {
-    "title": "Agent skills",
+    "title": "Agent skill",
     "sidebar_position": 3,
-    "description": "Installing and refreshing the bundled skills with npx skills"
+    "description": "Installing and refreshing the bundled skill with npx skills"
   },
   "sidebar": "docs",
   "previous": {

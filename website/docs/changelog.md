@@ -8,6 +8,88 @@ description: "Release notes, generated from docs/releases/ -- the single source 
 
 Full release history is also on [GitHub Releases](https://github.com/appandflow/rn-iso/releases).
 
+## 1.5.0
+
+Android product flavors, self-diagnosing cache misses, and a workspace
+model that treats the main checkout as a first-class citizen. Everything
+here was field- or live-verified on real repos before merging.
+
+### New
+
+- **Android product flavors.** `rn-iso android --variant productionDebug`
+  (the flag wins; an `android.variant` settings key sets a repo default)
+  drives `assemble<Variant>`, finds the APK in the flavor's output dir,
+  keys the cache per variant, and reads the applicationId from the built
+  APK -- the binary is the truth, as on iOS. A stale carried APK is
+  refused by mtime rather than installed as fresh.
+- **`worktree remove` works on the main checkout**: it reclaims the
+  environment -- owned devices deleted, port freed, registry and
+  `.rn-iso/` gone -- and leaves the source tree byte-for-byte untouched.
+- **`--carry-ignored` carries the working state whole**: the source's
+  uncommitted tracked changes are applied when they fit the base (a
+  conflict warns and applies nothing), so carried artifacts and the
+  files they were built for travel together.
+- **Cache misses diagnose themselves**: entries store their fingerprint
+  sources, and a miss with a prior entry names the changed files on the
+  fingerprint line, with the full diff in the build log.
+- **doctor: fingerprint parity and Gradle build cache.** Parity compares
+  the project against a temporary worktree of HEAD and names what
+  diverges; the Gradle note flags `org.gradle.caching` off. The Expo
+  build-cache-provider nudge is gone -- rn-iso's own cache covers
+  rn-iso-driven builds, providers are optional.
+
+### Faster and clearer
+
+- Every phase line prints how long the step took; the device line
+  reports the boot's own elapsed time (boot overlaps the build).
+- `isolatedDeclarations`: every exported symbol carries an explicit
+  type, and .d.ts emit uses the fast isolated path.
+
+## 1.4.0
+
+A performance release, plus a fourth package. Everything here came out of one
+question -- "are we parallelizing what we can?" -- and two field-filed issues.
+
+### New
+
+- **`@rn-iso/core`.** The primitives the CLI and the two cache packages must
+  agree on -- config-dir and cache-root resolution, the build cache key, cache
+  self-registration -- now live in one small CJS package all three depend on,
+  instead of three deliberately maintained copies. Internal dependency, not a
+  user-facing API; public surfaces are unchanged.
+- **Cache locations in the machine config.** `caches.buildCache` /
+  `caches.metroCache` in `~/.rn-iso/config.json` relocate the shared caches
+  (say, to an external disk) for every process, shell profile or not. The
+  `RN_ISO_BUILD_CACHE` / `RN_ISO_METRO_CACHE` env vars still win; same
+  config-plus-env, no-CLI pattern as the concurrency limits.
+
+### Faster
+
+- **The device boots in parallel with the build.** `ios` / `android` kick the
+  boot off after the Metro gate and only await it at install -- the first step
+  that needs a live device. xcodebuild takes a Shutdown sim as its
+  destination and gradle needs no device at all, so a cold boot (up to
+  minutes for a software-rendered emulator) no longer sits in front of a
+  multi-minute compile. A boot failure surfaces at install with the same
+  `RN_ISO_NO_DEVICE`, and the build that ran anyway is in the shared cache,
+  so the retry installs instead of compiling.
+- **Artifacts are stored as APFS clones.** The several-hundred-MB copy into
+  the build cache on every miss is now `cp -c` -- milliseconds on the same
+  volume -- with the plain copy as the cross-volume/non-APFS fallback. Both
+  the CLI store and the Expo provider's twin.
+
+### Fixes
+
+- **#43** -- `pod install` runs with a UTF-8 locale even when the caller
+  exports none (the normal state of an agent shell, where CocoaPods
+  otherwise fails every first build). A locale the caller set is honoured.
+- **#44** -- a repo pinning `.ruby-version` gets that ruby prepended to the
+  `pod install` subprocess PATH when rbenv/rvm/asdf/mise has it installed
+  (rvm's layout gets `GEM_HOME`/`GEM_PATH` too). When the bundler
+  "Could not find proper version of cocoapods" failure still fires with a
+  pin present, the remedy names the ruby mismatch instead of repeating
+  bundler's circular `bundle install` advice.
+
 ## 1.3.3
 
 The polish left over from the 1.3.2 verification passes (issue #36).

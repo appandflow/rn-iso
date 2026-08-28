@@ -1,12 +1,10 @@
 ---
 title: 'Getting started'
 sidebar_position: 2
-description: 'Install the skill, then describe what you want built. rn-iso needs no changes to your repo.'
+description: 'Install the skill, then tell your agent what you want built.'
 ---
 
-rn-iso is a CLI **humans never run** — your coding agent does. There are two
-steps, and **rn-iso needs no changes to your repo**: point it at a clean
-checkout and the whole loop works, caches included. Trying it out costs no PR.
+rn-iso is a CLI **humans never run** — your coding agent does.
 
 ## 1. Install the agent skill
 
@@ -19,7 +17,7 @@ That installs one skill into your agent's skill directory (`~/.claude/skills`,
 ownership model, the destructive-command rules). Re-run the same command after
 upgrading rn-iso to refresh it.
 
-## 2. Describe what you want
+## 2. Tell your agent what you want
 
 ```
 Build and run the app on the iOS simulator and fix anything that breaks.
@@ -34,14 +32,14 @@ npx rn-iso logs --errors     # no output + exit 0 = nothing is broken
 npx rn-iso stop              # supervisor down, sim shut down, port freed
 ```
 
-— its own dev server on a reserved port, its own **owned** simulator,
-a native build that installs from the shared cache when nothing native
-changed, and a queryable log timeline to check its work. About ten lines of
-output for the whole cycle, `--json` everywhere.
+— its own dev server on a reserved port, its own **owned** simulator, a native
+build that installs from the shared cache when nothing native changed, and a
+queryable log timeline to check its work. About ten lines of output for the
+whole cycle, `--json` everywhere.
 
-There is no setup step and no init command. The Xcode compilation cache,
-Gradle's build cache and a shared Metro transform store all ride on the command
-lines rn-iso composes itself, so none of them is a file you have to commit.
+Point it at a clean checkout and all of that works, caches included: the Xcode
+compilation cache, Gradle's build cache and a shared Metro transform store ride
+on the command lines rn-iso composes itself.
 
 ## If something is blocked or slow
 
