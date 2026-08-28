@@ -825,21 +825,28 @@ describe('EAS orphan session sweep', () => {
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
   });
 
-  test('the project sweep lock covers worktrees with asymmetric static EAS config through the final stop', async () => {
+  test('the EAS sweep lock covers separate clones with asymmetric static and dynamic config through the final stop', async () => {
     const project = join(fakeHome, 'expo-app');
-    const otherWorkspace = join(fakeHome, 'expo-app-worktree');
-    const gitCommon = join(fakeHome, 'repo.git');
+    const otherWorkspace = join(fakeHome, 'expo-app-clone');
+    const projectGitCommon = join(fakeHome, 'project.git');
+    const otherGitCommon = join(fakeHome, 'other.git');
     registerExpoProject(project);
     mkdirSync(otherWorkspace, { recursive: true });
-    mkdirSync(gitCommon, { recursive: true });
+    mkdirSync(projectGitCommon, { recursive: true });
+    mkdirSync(otherGitCommon, { recursive: true });
     const appConfig = JSON.stringify({ expo: { extra: { eas: { projectId: 'shared-eas-project' } } } });
     writeFileSync(join(project, 'app.json'), appConfig);
+    writeFileSync(
+      join(otherWorkspace, 'app.config.js'),
+      "module.exports = { extra: { eas: { projectId: 'shared-eas-project' } } };\n",
+    );
     setExecutor({
       run(cmd) {
         throw new Error(`unexpected run: ${cmd}`);
       },
       runQuiet(cmd) {
-        return cmd.includes('--git-common-dir') ? gitCommon : null;
+        if (!cmd.includes('--git-common-dir')) return null;
+        return cmd.includes(otherWorkspace) ? otherGitCommon : projectGitCommon;
       },
       spawn(cmd) {
         throw new Error(`unexpected spawn: ${cmd}`);
