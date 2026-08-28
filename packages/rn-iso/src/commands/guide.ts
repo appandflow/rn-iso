@@ -1061,13 +1061,12 @@ DESTRUCTIVE COMMANDS -- ask the user first
   worktree remove --force discards uncommitted and untracked work
   stop --force            kills a process rn-iso could not identify
 
-Destruction lives in exactly TWO commands: \`worktree remove\` (the workspace
-you name) and \`gc --delete\` (the machine). \`stop\` destroys nothing by
-design -- it shuts the owned device down and leaves it assigned, and there is
-no flag on it that could become a delete. An agent reaching for \`stop\` to
-reclaim memory must not have a \`--delete\` within reach of a typo.
-\`stop --force\` is not an exception: it only kills an unidentified process on
-the reserved port, and deletes nothing.
+Permanent local deletion lives in exactly TWO commands: \`worktree remove\`
+(the workspace you name) and \`gc --delete\` (the machine). For a local device,
+\`stop\` shuts it down and never deletes it. For a recorded EAS session,
+\`stop\` irreversibly ends the session. \`stop --force\` can also kill an
+unidentified process on the reserved port. There is no \`--delete\` flag on
+\`stop\`.
 
 CAPACITY
   A booted iOS sim is roughly 1-2 GB of RAM, an Android emulator 2-3 GB. On a
@@ -1140,8 +1139,9 @@ REMOTE EAS SESSIONS
   project, name, platform, and status ownership. The same run also cleans the
   local state that it can prove is stale.
 
-  If a registered root is missing or unreadable, cleanup fails closed. The
-  EAS session and local claim stay in place when rn-iso cannot prove ownership.
+  If a registered root is missing or unreadable, the EAS sweep fails closed and
+  leaves the remote EAS session running. Independent local cleanup continues
+  for entries it proves stale.
 
 THE MIRROR IMAGE: A STALE DEVICE RECORD
   A device deleted out from under a LIVE project (by hand, or by Xcode) leaves

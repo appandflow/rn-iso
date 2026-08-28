@@ -161,6 +161,18 @@ test('the cleanup guide documents fail-closed EAS orphan recovery', () => {
     expect(cleanup).toMatch(new RegExp(`verified[^.]*${proof}`, 'i'));
   }
   expect(cleanup).toMatch(/registered root[^.]*missing[^.]*unreadable[^.]*fails closed/i);
+  expect(cleanup).toMatch(/remote EAS session[^.]*running/i);
+  expect(cleanup).toMatch(/local cleanup[^.]*continues/i);
+  expect(cleanup).not.toMatch(/EAS session and local claim stay/i);
+});
+
+test('the guide distinguishes local stop behavior from EAS session teardown', () => {
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+
+  expect(lifecycle).not.toMatch(/stop[^.]*destroys nothing/i);
+  expect(lifecycle).toMatch(/local device[^.]*never deletes/i);
+  expect(lifecycle).toMatch(/recorded EAS session[^.]*irreversibly ends/i);
 });
 
 // The commands v3 deleted. A guide that still teaches one of them is worse than
@@ -274,6 +286,10 @@ test('the skill teaches the complete remote-device contract', () => {
   expect(skill).toMatch(/android\.remote[^.]*accept[^.]*"proxy"[^.]*"eas"/i);
   expect(skill).toMatch(/gc --delete[\s\S]*active rn-iso-\* EAS sessions/i);
   expect(skill).toMatch(/registered root[^.]*missing[^.]*unreadable[^.]*fails closed/i);
+  expect(skill).toMatch(/remote EAS session[^.]*running/i);
+  expect(skill).toMatch(/local cleanup[^.]*continues/i);
+  expect(skill).not.toMatch(/including `stop`, is safe/i);
+  expect(skill).toMatch(/recorded EAS session[^.]*irreversibly ends/i);
 });
 
 // The surface list in the skill IS the surface an agent reads first. A command
