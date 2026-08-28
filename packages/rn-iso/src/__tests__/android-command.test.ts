@@ -45,6 +45,7 @@ import {
 } from '../commands/android.ts';
 import { newestBuildTools } from '../sim/android.ts';
 import { BUILD_ERROR } from '../engine/gradle.ts';
+import { LAUNCH_UNVERIFIED } from '../engine/app-install.ts';
 import type { AssetManifest } from '../engine/asset-manifest.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_factories.ts';
@@ -866,7 +867,7 @@ describe('explicit remote backend behavior', () => {
 
   test('remote release skips Metro and launches with the remote adapter', async () => {
     const remoteLaunches: LaunchArgs[] = [];
-    const h = harness({
+    const options = {
       remoteDevice: 'eas',
       variant: 'productionRelease',
       resolveMetro: never('the local Metro gate'),
@@ -891,13 +892,20 @@ describe('explicit remote backend behavior', () => {
       launchRelease: never('the local release launcher'),
       spawn: never('the local adb collector'),
       verifyReleaseLaunched: never('the local release verifier'),
-    });
+    };
+    const h = harness(options);
 
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(remoteLaunches).toEqual([{ serial: 'drs_42', packageName: 'com.example.app', metroPort: null }]);
     expect(result.facts?.logs).toBeNull();
-    expect(result.facts?.launched).toBe(true);
+    expect(result.facts?.launched).toBe(LAUNCH_UNVERIFIED);
+    expect(h.stderr.join('\n')).toContain('UNVERIFIED');
+    expect(h.stdout[0]).toContain('-- launch UNVERIFIED');
+
+    const json = harness({ ...options, json: true });
+    expect((await json.run()).ok).toBe(true);
+    expect(JSON.parse(json.stdout[0] ?? '{}')).toMatchObject({ launched: LAUNCH_UNVERIFIED, logs: null });
   });
 });
 

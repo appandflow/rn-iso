@@ -2040,7 +2040,8 @@ export async function runAndroid(
   // `verified` / `skipped` / `waitedMs`.
   let launchState: boolean | string = true;
   if (remoteRelease) {
-    phase('verify', 'remote adapter launch accepted; local process verification is unavailable');
+    launchState = LAUNCH_UNVERIFIED;
+    phase('verify', chalk.yellow('UNVERIFIED: remote adapter launch accepted; process verification is unavailable'));
   } else if (release) {
     // A release app fetches nothing from Metro -- its bundle is embedded --
     // so the bundle-request proof does not exist. What CAN be proven is that
