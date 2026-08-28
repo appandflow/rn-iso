@@ -1345,6 +1345,31 @@ describe('action: spawning the supervisor', () => {
     expect(exec.calls.spawn).toEqual([]);
   });
 
+  test('an unconfirmed pre-spawn cleanup keeps the managed tunnel record', async () => {
+    const port = 8190;
+    const exec = metroExecutor({ listeners: {} });
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+
+    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
+      registerStart(cmd, {
+        providers: () => ['ngrok'],
+        startTunnelSequence: async () => ({
+          provider: 'ngrok',
+          url: 'https://unconfirmed.ngrok.app',
+          pid: 4242,
+          cleanup: async () => ({ status: 'failed', reason: 'SIGKILL did not confirm exit' }),
+        }),
+        isTunnelAlive: () => false,
+      }),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs[0] ?? '').remedy).toMatch(/unmanaged.*pid 4242/i);
+    expect(readMetroTunnel(root)).toMatchObject({ pid: 4242, url: 'https://unconfirmed.ngrok.app' });
+    expect(exec.calls.spawn).toEqual([]);
+  });
+
   test('a managed provider that exits before Metro readiness fails and clears its record', async () => {
     const port = 8182;
     const exec = metroExecutor({ listeners: {} });
@@ -1394,6 +1419,38 @@ describe('action: spawning the supervisor', () => {
     expect(JSON.parse(result.logs[0] ?? '').code).toBe('RN_ISO_REMOTE_METRO_UNREACHABLE');
     expect(stopped).toEqual([expect.objectContaining({ pid: 4242 })]);
     expect(readMetroTunnel(root)).toBeNull();
+  });
+
+  test('a failed readiness cleanup keeps the managed tunnel record for stop to retry', async () => {
+    const port = 8191;
+    const exec = metroExecutor({ listeners: {} });
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      return { pid: process.pid, unref() {}, on() {} };
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    let livenessChecks = 0;
+
+    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
+      registerStart(cmd, {
+        providers: () => ['ngrok'],
+        startTunnelSequence: async () => ({
+          provider: 'ngrok',
+          url: 'https://cleanup-failed.ngrok.app',
+          pid: 4242,
+          cleanup: successfulTunnelCleanup,
+        }),
+        isTunnelAlive: () => ++livenessChecks === 1,
+        stopTunnel: async () => ({ status: 'failed', reason: 'pid 4242 ignored SIGTERM' }),
+      }),
+    );
+
+    const error = JSON.parse(result.logs[0] ?? '');
+    expect(result.exitCode).toBe(1);
+    expect(error.code).toBe('RN_ISO_REMOTE_METRO_UNREACHABLE');
+    expect(error.remedy).toMatch(/cleanup.*failed.*rn-iso stop/i);
+    expect(readMetroTunnel(root)).toMatchObject({ pid: 4242, url: 'https://cleanup-failed.ngrok.app' });
   });
 
   test('a reused managed provider that dies before Metro readiness fails without clearing its replacement', async () => {

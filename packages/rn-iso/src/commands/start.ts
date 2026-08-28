@@ -601,7 +601,18 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
               }
 
               if (!d.isTunnelAlive(tracking.record.pid)) {
-                if (tracking.startedHere && startedCleanup) await startedCleanup();
+                if (tracking.startedHere && startedCleanup) {
+                  const stopped = await startedCleanup();
+                  if (stopped.status === 'failed') {
+                    return {
+                      failed: {
+                        code: 'RN_ISO_REMOTE_METRO_UNREACHABLE',
+                        message: `The managed ${tracking.record.provider} tunnel exited before the supervisor started.`,
+                        remedy: `Cleanup failed. Unmanaged pid ${tracking.record.pid} may still be running: ${stopped.reason ?? 'unknown error'}. The tunnel record remains available to \`rn-iso stop\`.`,
+                      },
+                    };
+                  }
+                }
                 d.clearTunnelRecord(root, tracking.record);
                 return {
                   failed: {
@@ -671,7 +682,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         const tracked = managedTunnel as ManagedTunnelTracking;
         const record = tracked.record;
         const stopped = tracked.startedHere ? await d.stopTunnel(record) : { status: 'missing' as const };
-        d.clearTunnelRecord(root, record);
+        if (stopped.status !== 'failed') d.clearTunnelRecord(root, record);
         return fail({
           code: 'RN_ISO_REMOTE_METRO_UNREACHABLE',
           message: `The managed ${record.provider} tunnel exited before the dev server became ready.`,
