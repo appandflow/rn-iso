@@ -573,7 +573,7 @@ describe('action: already running', () => {
 
     let result;
     try {
-      result = await runAction({ json: true, remote: true });
+      result = await runAction({ json: true, remote: true, wait: '1' });
     } finally {
       server.close();
     }
@@ -585,6 +585,38 @@ describe('action: already running', () => {
       message: `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`,
       remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
     });
+  });
+
+  test('a concurrent remote start waits when an owned Expo server is already healthy before its tunnel', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    const port = 8173;
+    const server = await metroListener(port);
+    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
+    const tunnelWritten = new Promise<number>((resolve) => {
+      setTimeout(() => {
+        writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://already-healthy.exp.direct' } });
+        resolve(Date.now());
+      }, 1000);
+    });
+
+    let result;
+    let completedAt = 0;
+    let tunnelWrittenAt = 0;
+    try {
+      result = await runAction({ json: true, remote: true, wait: '10' });
+      completedAt = Date.now();
+    } finally {
+      tunnelWrittenAt = await tunnelWritten;
+      server.close();
+    }
+
+    expect(result.exitCode).toBe(null);
+    expect(exec.calls.spawn).toEqual([]);
+    expect(JSON.parse(result.logs[0] ?? '').alreadyRunning).toBe(true);
+    expect(completedAt >= tunnelWrittenAt).toBe(true);
   });
 });
 
