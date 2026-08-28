@@ -8,6 +8,7 @@
 // clock, because the real timeout is minutes long.
 import {
   startTunnel,
+  startTunnelSequence,
   stopTunnel,
   parseCloudflaredLine,
   parseNgrokLine,
@@ -36,6 +37,17 @@ describe('tunnelArgv', () => {
       bin: 'ngrok',
       args: ['http', '8081', '--log=stdout', '--log-format=json'],
     });
+  });
+
+  test('ngrok: appends the configured stable URL', () => {
+    expect(tunnelArgv('ngrok', 8081, 'https://stable.ngrok.app')).toEqual({
+      bin: 'ngrok',
+      args: ['http', '8081', '--log=stdout', '--log-format=json', '--url', 'https://stable.ngrok.app'],
+    });
+  });
+
+  test('ngrok: does not add --url without a configured stable URL', () => {
+    expect(tunnelArgv('ngrok', 8081).args).not.toContain('--url');
   });
 });
 
@@ -210,6 +222,83 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     child.stdout?.emit('data', `${JSON.stringify({ url: 'https://x.ngrok-free.app' })}\n`);
     const result = await promise;
     expect(result).toEqual({ failed: true, reason: expect.stringContaining('reported no pid') });
+  });
+});
+
+describe('startTunnelSequence', () => {
+  test('auto falls back to cloudflared after ngrok exits before returning a URL', async () => {
+    const calls: string[] = [];
+    const result = await startTunnelSequence({
+      providers: ['ngrok', 'cloudflared'],
+      port: 8081,
+      start: async ({ provider }) => {
+        calls.push(provider);
+        return provider === 'ngrok'
+          ? { failed: true as const, reason: 'authentication failed before printing a tunnel URL' }
+          : { url: 'https://fallback.trycloudflare.com', pid: 4243 };
+      },
+    });
+
+    expect(calls).toEqual(['ngrok', 'cloudflared']);
+    expect(result).toEqual({ provider: 'cloudflared', url: 'https://fallback.trycloudflare.com', pid: 4243 });
+  });
+
+  test('a successful ngrok URL wins without starting cloudflared', async () => {
+    const calls: string[] = [];
+    const result = await startTunnelSequence({
+      providers: ['ngrok', 'cloudflared'],
+      port: 8081,
+      start: async ({ provider }) => {
+        calls.push(provider);
+        return { url: 'https://ready.ngrok.app', pid: 4242 };
+      },
+    });
+
+    expect(calls).toEqual(['ngrok']);
+    expect(result).toEqual({ provider: 'ngrok', url: 'https://ready.ngrok.app', pid: 4242 });
+  });
+
+  test('explicit ngrok is fail-closed when it is the only candidate', async () => {
+    const calls: string[] = [];
+    const result = await startTunnelSequence({
+      providers: ['ngrok'],
+      port: 8081,
+      start: async ({ provider }) => {
+        calls.push(provider);
+        return { failed: true as const, reason: 'authentication failed' };
+      },
+    });
+
+    expect(calls).toEqual(['ngrok']);
+    expect(result).toEqual({ failed: true, reason: expect.stringContaining('ngrok: authentication failed') });
+  });
+
+  test('explicit cloudflared is fail-closed when it is the only candidate', async () => {
+    const calls: string[] = [];
+    const result = await startTunnelSequence({
+      providers: ['cloudflared'],
+      port: 8081,
+      start: async ({ provider }) => {
+        calls.push(provider);
+        return { failed: true as const, reason: 'quick tunnel refused' };
+      },
+    });
+
+    expect(calls).toEqual(['cloudflared']);
+    expect(result).toEqual({ failed: true, reason: expect.stringContaining('cloudflared: quick tunnel refused') });
+  });
+
+  test('reports evidence from every failed auto provider', async () => {
+    const result = await startTunnelSequence({
+      providers: ['ngrok', 'cloudflared'],
+      port: 8081,
+      start: async ({ provider }) => ({ failed: true as const, reason: `${provider} evidence` }),
+    });
+
+    expect(result).toEqual({
+      failed: true,
+      reason: expect.stringMatching(/ngrok: ngrok evidence.*cloudflared: cloudflared evidence/),
+    });
   });
 });
 

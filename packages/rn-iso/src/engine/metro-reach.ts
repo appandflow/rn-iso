@@ -19,6 +19,9 @@ export type TunnelMode = 'auto' | 'off' | 'expo' | 'cloudflared' | 'ngrok';
 
 export const TUNNEL_MODES: readonly TunnelMode[] = ['auto', 'off', 'expo', 'cloudflared', 'ngrok'];
 
+/** The public Metro origin passed from `start` to remote device commands. */
+export const PUBLIC_METRO_ENV = 'RN_ISO_METRO_PUBLIC_URL';
+
 /** The tunnel providers rn-iso can start and reap itself. */
 const MANAGED_PROVIDERS = ['ngrok', 'cloudflared'] as const;
 export type ManagedProvider = (typeof MANAGED_PROVIDERS)[number];

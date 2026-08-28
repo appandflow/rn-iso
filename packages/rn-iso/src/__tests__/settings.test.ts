@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   mergeSettingsLayers,
+  ngrokUrlSetting,
   publicUrlSetting,
   readCommittedSettings,
   resolveSettings,
@@ -150,8 +151,16 @@ test('a repo-layer array setting survives resolution as an array', () => {
   expect(resolved.caches).toEqual(['~/.myapp-metro-cache', '/tmp/build-cache']);
 });
 
-test('unknownSettingKeys accepts metro.tunnel and metro.publicUrl', () => {
-  expect(unknownSettingKeys({ metro: { tunnel: 'cloudflared', publicUrl: 'https://x.example.com' } })).toEqual([]);
+test('unknownSettingKeys accepts metro.tunnel, metro.ngrokUrl, and metro.publicUrl', () => {
+  expect(
+    unknownSettingKeys({
+      metro: {
+        tunnel: 'ngrok',
+        ngrokUrl: 'https://stable.ngrok.app',
+        publicUrl: 'https://x.example.com',
+      },
+    }),
+  ).toEqual([]);
 });
 
 describe('tunnelModeSetting', () => {
@@ -183,5 +192,25 @@ describe('publicUrlSetting', () => {
     expect(publicUrlSetting({ metro: { publicUrl: '' } })).toBeNull();
     expect(publicUrlSetting({ metro: { publicUrl: 42 } })).toBeNull();
     expect(publicUrlSetting({})).toBeNull();
+  });
+});
+
+describe('ngrokUrlSetting', () => {
+  test('reads a valid HTTPS URL with explicit ngrok mode', () => {
+    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'https://stable.ngrok.app' } })).toBe(
+      'https://stable.ngrok.app',
+    );
+  });
+
+  test('is unset for auto and every other tunnel mode', () => {
+    for (const tunnel of ['auto', 'expo', 'cloudflared', 'off']) {
+      expect(ngrokUrlSetting({ metro: { tunnel, ngrokUrl: 'https://stable.ngrok.app' } })).toBeNull();
+    }
+  });
+
+  test('rejects non-HTTPS and malformed URLs', () => {
+    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'http://stable.ngrok.app' } })).toBeNull();
+    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'not a url' } })).toBeNull();
+    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 42 } })).toBeNull();
   });
 });

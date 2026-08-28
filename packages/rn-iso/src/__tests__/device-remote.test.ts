@@ -429,37 +429,41 @@ describe('the Metro refusal comes before anything billable', () => {
 });
 
 describe('a tunnel rn-iso starts for itself', () => {
-  test('is started, recorded, and gated -- in that order', async () => {
-    const order: string[] = [];
+  test('reuses the tunnel recorded by start and gates it', async () => {
+    let started = false;
     const { result, ctx } = await reach({
       available: ['cloudflared'],
       startManagedTunnel: async () => {
-        order.push('start');
+        started = true;
         return { url: 'https://t.trycloudflare.com', pid: 4242 };
       },
-      writeTunnelRecord: () => {
-        order.push('record');
-        return {};
-      },
-      readTunnelRecord: () => null,
-      gateOrigin: async () => {
-        order.push('gate');
-        return { ok: true as const };
-      },
+      readTunnelRecord: () => ({
+        kind: 'managed',
+        provider: 'cloudflared',
+        pid: 4242,
+        url: 'https://t.trycloudflare.com',
+        port: 8085,
+        startedAt: 'T',
+      }),
+      isTunnelAlive: () => true,
     });
     expect('ok' in result).toBe(true);
-    // Recorded BEFORE the gate: a crash between the two must still leave
-    // something reapable.
-    expect(order).toEqual(['start', 'record', 'gate']);
+    expect(started).toBe(false);
     expect(ctx.publicMetroUrl).toBe('https://t.trycloudflare.com');
   });
 
   test('a gate failure refuses with the gate stable code, and sets no origin', async () => {
     const { result, ctx } = await reach({
       available: ['cloudflared'],
-      startManagedTunnel: async () => ({ url: 'https://t.trycloudflare.com', pid: 1 }),
-      writeTunnelRecord: () => ({}),
-      readTunnelRecord: () => null,
+      readTunnelRecord: () => ({
+        kind: 'managed',
+        provider: 'cloudflared',
+        pid: 1,
+        url: 'https://t.trycloudflare.com',
+        port: 8085,
+        startedAt: 'T',
+      }),
+      isTunnelAlive: () => true,
       gateOrigin: async () => ({
         failed: true as const,
         code: 'RN_ISO_REMOTE_METRO_WRONG',
@@ -473,13 +477,19 @@ describe('a tunnel rn-iso starts for itself', () => {
     expect(ctx.publicMetroUrl).toBeNull();
   });
 
-  test('a tunnel that never starts is a refusal, not a throw', async () => {
+  test('a missing managed tunnel requires start --remote and never starts a duplicate', async () => {
+    let started = false;
     const { result } = await reach({
       available: ['cloudflared'],
-      startManagedTunnel: async () => ({ failed: true as const, reason: 'cloudflared exited' }),
+      startManagedTunnel: async () => {
+        started = true;
+        return { url: 'https://duplicate.trycloudflare.com', pid: 4242 };
+      },
       readTunnelRecord: () => null,
     });
     expect('failed' in result).toBe(true);
+    if ('failed' in result) expect(result.remedy).toContain('start --remote');
+    expect(started).toBe(false);
   });
 });
 

@@ -114,6 +114,10 @@ describe('a managed provider', () => {
 });
 
 describe('the mode list', () => {
+  test('contains only the supported values', () => {
+    expect(TUNNEL_MODES).toEqual(['auto', 'off', 'expo', 'cloudflared', 'ngrok']);
+  });
+
   test('every mode is handled, so a new one cannot be added without a decision', () => {
     for (const mode of TUNNEL_MODES) {
       const plan = planMetroReach({ ...EXPO, mode, available: ['cloudflared'] });

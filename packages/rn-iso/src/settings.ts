@@ -44,6 +44,7 @@ const KNOWN_SETTINGS = new Set([
   'android.keystorePassword',
   'android.remote',
   'metro.tunnel',
+  'metro.ngrokUrl',
   'metro.publicUrl',
   'worktreeDir',
   'worktree.baseRef',
@@ -146,4 +147,22 @@ export function publicUrlSetting(settings: SettingsObject): string | null {
   if (typeof block !== 'object' || block === null) return null;
   const url = (block as { publicUrl?: unknown }).publicUrl;
   return typeof url === 'string' && url.trim() ? url : null;
+}
+
+// A stable URL for a managed ngrok process. It is deliberately scoped to an
+// explicit ngrok selection: `auto` can fall back to cloudflared, where an
+// ngrok-only URL has no meaning. HTTPS is required because remote development
+// clients must not receive a public clear-text origin.
+export function ngrokUrlSetting(settings: SettingsObject): string | null {
+  const block = settings.metro;
+  if (typeof block !== 'object' || block === null) return null;
+  if ((block as { tunnel?: unknown }).tunnel !== 'ngrok') return null;
+  const raw = (block as { ngrokUrl?: unknown }).ngrokUrl;
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const url = new URL(raw.trim());
+    return url.protocol === 'https:' ? raw.trim() : null;
+  } catch {
+    return null;
+  }
 }

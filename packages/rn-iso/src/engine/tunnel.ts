@@ -43,11 +43,18 @@ export interface TunnelRecord {
 // --- pure: argv and the untrusted-output parsers ---------------------------
 
 /** PURE. The argv rn-iso runs for a managed provider's own binary. */
-export function tunnelArgv(provider: ManagedProvider, port: number): { bin: string; args: string[] } {
+export function tunnelArgv(
+  provider: ManagedProvider,
+  port: number,
+  ngrokUrl?: string | null,
+): { bin: string; args: string[] } {
   if (provider === 'cloudflared') {
     return { bin: 'cloudflared', args: ['tunnel', '--url', `http://127.0.0.1:${port}`] };
   }
-  return { bin: 'ngrok', args: ['http', String(port), '--log=stdout', '--log-format=json'] };
+  return {
+    bin: 'ngrok',
+    args: ['http', String(port), '--log=stdout', '--log-format=json', ...(ngrokUrl ? ['--url', ngrokUrl] : [])],
+  };
 }
 
 const CLOUDFLARED_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
@@ -180,6 +187,8 @@ export interface StartTunnelOptions {
   probeReachable?: (url: string, signal: AbortSignal) => Promise<boolean>;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  ngrokUrl?: string | null;
+  requireReachable?: boolean;
 }
 
 export type StartTunnelResult = { url: string; pid: number } | { failed: true; reason: string };
@@ -202,9 +211,11 @@ export async function startTunnel({
   probeReachable = defaultProbeReachable,
   now = Date.now,
   sleep = defaultSleep,
+  ngrokUrl = null,
+  requireReachable = true,
 }: StartTunnelOptions): Promise<StartTunnelResult> {
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
-  const { bin, args } = tunnelArgv(provider, port);
+  const { bin, args } = tunnelArgv(provider, port, ngrokUrl);
 
   let child: ChildProcess;
   try {
@@ -232,19 +243,21 @@ export async function startTunnel({
 
   // CRITICAL (see header): printing the URL is not the same as the URL being
   // routable, so success is never reported on it alone.
-  const reachable = await waitUntilReachable({
-    url,
-    now,
-    sleep,
-    probe: probeReachable,
-    timeoutMs: reachableTimeoutMs,
-  });
-  if (!reachable) {
-    killChild(child);
-    return {
-      failed: true,
-      reason: `${url} did not become reachable within ${reachableTimeoutMs}ms; ${provider} may still be registering, or the network path is blocked.`,
-    };
+  if (requireReachable) {
+    const reachable = await waitUntilReachable({
+      url,
+      now,
+      sleep,
+      probe: probeReachable,
+      timeoutMs: reachableTimeoutMs,
+    });
+    if (!reachable) {
+      killChild(child);
+      return {
+        failed: true,
+        reason: `${url} did not become reachable within ${reachableTimeoutMs}ms; ${provider} may still be registering, or the network path is blocked.`,
+      };
+    }
   }
 
   const pid = child.pid;
@@ -254,6 +267,40 @@ export async function startTunnel({
   }
   child.unref?.();
   return { url, pid };
+}
+
+export interface StartTunnelSequenceOptions {
+  providers: readonly ManagedProvider[];
+  port: number;
+  ngrokUrl?: string | null;
+  requireReachable?: boolean;
+  start?: (options: StartTunnelOptions) => Promise<StartTunnelResult>;
+}
+
+export type StartTunnelSequenceResult =
+  | { provider: ManagedProvider; url: string; pid: number }
+  | { failed: true; reason: string };
+
+/** Try the selected providers in order until one returns a public URL. */
+export async function startTunnelSequence({
+  providers,
+  port,
+  ngrokUrl = null,
+  requireReachable = true,
+  start = startTunnel,
+}: StartTunnelSequenceOptions): Promise<StartTunnelSequenceResult> {
+  const failures: string[] = [];
+  for (const provider of providers) {
+    const result = await start({
+      provider,
+      port,
+      ngrokUrl: provider === 'ngrok' ? ngrokUrl : null,
+      requireReachable,
+    });
+    if (!('failed' in result)) return { provider, ...result };
+    failures.push(`${provider}: ${result.reason}`);
+  }
+  return { failed: true, reason: failures.join(' ') || 'No managed tunnel provider was selected.' };
 }
 
 // Aborts a tunnel attempt that is not going to succeed. Uses the ChildProcess

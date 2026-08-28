@@ -582,10 +582,10 @@ RN_ISO_REMOTE_METRO_WRONG
   manual tunnel, rebuild it against that port.
 
 RN_ISO_REMOTE_METRO_UNREACHABLE
-  Same proof, at LAUNCH time rather than at the gate: the device could not be
-  told where Metro is at all (no origin resolved). Follows the same remedy as
-  RN_ISO_NO_REMOTE_SESSION's tunnel guidance -- set metro.tunnel, or
-  metro.publicUrl if you already have one.
+  A remote start could not create its selected managed tunnel, or the device
+  could not be told where Metro is. Follows the same remedy as
+  RN_ISO_NO_REMOTE_SESSION's tunnel guidance -- set metro.tunnel, or use
+  metro.publicUrl for an existing endpoint.
 
 --- DEV-SERVER CODES (\`rn-iso start\`) ---
 
@@ -1221,13 +1221,17 @@ KEYS RN-ISO READS
   android.remote        the android half of ios.remote, same rule
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
-                        local. "auto" (default) arranges a tunnel, preferring
-                        ngrok then cloudflared; "off" asserts the device shares this
-                        machine (a local \`agent-device proxy\`) and is the
-                        only mode that needs no tunnel; "expo" lets the
-                        Expo dev server tunnel itself; "cloudflared" /
+                        local. "auto" (default) uses Expo's own tunnel on Expo
+                        projects; on bare React Native it prefers ngrok, then
+                        cloudflared. "off" asserts the device shares this
+                        machine and is the only mode that needs no tunnel;
+                        "expo" lets the Expo dev server tunnel itself;
+                        "cloudflared" /
                         "ngrok" name a managed provider explicitly. Any
                         other value is treated as unset.
+  metro.ngrokUrl        an HTTPS URL reserved for the managed ngrok provider.
+                        Requires metro.tunnel "ngrok" and passes --url to
+                        ngrok http. rn-iso owns this process.
   metro.publicUrl       an existing tunnel's URL. Takes precedence over
                         starting one, whatever metro.tunnel says -- rn-iso
                         did not create it, so a Metro request through it is

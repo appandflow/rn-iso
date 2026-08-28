@@ -26,17 +26,26 @@ import { queryLogs } from '../logs-query.ts';
 import { supervisorLogFile, workspaceLogsDir } from '../paths.ts';
 import { reserveMetroPort } from '../ports.ts';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
-import { readMetroTunnel, readWorkspaceState } from '../supervisor/state.ts';
+import { readMetroTunnel, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
 import { ensureWorkspaceIgnored } from '../engine/workspace.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import {
   publicUrlSetting,
+  ngrokUrlSetting,
   remoteAndroidSetting,
   remoteIosSetting,
   resolveSettings,
   tunnelModeSetting,
   unknownSettingKeys,
 } from '../settings.ts';
+import { detectProviders, planMetroReach, PUBLIC_METRO_ENV, type ManagedProvider } from '../engine/metro-reach.ts';
+import {
+  startTunnelSequence,
+  stopTunnel,
+  type StartTunnelSequenceOptions,
+  type StartTunnelSequenceResult,
+  type TunnelRecord,
+} from '../engine/tunnel.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 // The same stopwatch the build commands stamp their phase lines with, so the
 // OK line's total wait reads the same way ("4s", "1m4s").
@@ -220,7 +229,34 @@ interface StartOptions {
   remote?: boolean;
 }
 
-export function registerStart(program: Command): void {
+interface StartCommandDeps {
+  providers(): ManagedProvider[];
+  startTunnelSequence(options: StartTunnelSequenceOptions): Promise<StartTunnelSequenceResult>;
+  isTunnelAlive(pid: number): boolean;
+  writeTunnelRecord(root: string, patch: Parameters<typeof writeWorkspaceState>[1]): unknown;
+  stopTunnel(record: TunnelRecord): ReturnType<typeof stopTunnel>;
+}
+
+function providersOnPath(): ManagedProvider[] {
+  return detectProviders((bin) => {
+    try {
+      return Boolean(getExecutor().runQuiet(`command -v ${bin}`, { timeoutMs: 5000 }));
+    } catch {
+      return false;
+    }
+  });
+}
+
+const DEFAULT_START_DEPS: StartCommandDeps = {
+  providers: providersOnPath,
+  startTunnelSequence,
+  isTunnelAlive: isPidAlive,
+  writeTunnelRecord: writeWorkspaceState,
+  stopTunnel,
+};
+
+export function registerStart(program: Command, overrides: Partial<StartCommandDeps> = {}): void {
+  const d = { ...DEFAULT_START_DEPS, ...overrides };
   program
     .command('start')
     .description(
@@ -309,19 +345,91 @@ export function registerStart(program: Command): void {
         note(chalk.yellow(`Warning: setting "${key}" is not read by rn-iso and will be ignored.`));
       }
       const remote = Boolean(opts.remote) || remoteIosSetting(settings) || remoteAndroidSetting(settings);
+      const tunnelMode = tunnelModeSetting(settings) ?? 'auto';
+      const publicUrl = publicUrlSetting(settings);
       // Decided here, not at `ios`/`android --remote` time: a later run
       // cannot retroactively add `--tunnel` to an already-running dev server.
       const tunnel = wantsExpoOwnTunnel({
         isExpo,
         remote,
-        mode: tunnelModeSetting(settings) ?? 'auto',
-        publicUrl: publicUrlSetting(settings),
+        mode: tunnelMode,
+        publicUrl,
       });
       if (tunnel) note(chalk.dim("note   requesting an Expo tunnel for this workspace's dev server"));
 
       const logsDir = workspaceLogsDir(root);
       const logFile = supervisorLogFile(root);
       const port = await resolvePort(root, note);
+      let publicOrigin = publicUrl;
+
+      if (remote && !tunnel && !publicUrl && tunnelMode !== 'off') {
+        const available = d.providers();
+        const plan = planMetroReach({ mode: tunnelMode, metroPort: port, publicUrl, isExpo, available });
+        if ('failed' in plan) {
+          return fail({ code: 'RN_ISO_REMOTE_METRO_UNREACHABLE', message: plan.failed, remedy: plan.remedy });
+        }
+        if ('start' in plan) {
+          const candidates: readonly ManagedProvider[] = tunnelMode === 'auto' ? available : [plan.start];
+          const recorded = readMetroTunnel(root);
+          const expectedStableUrl = ngrokUrlSetting(settings);
+          if (recorded?.kind === 'managed' && d.isTunnelAlive(recorded.pid)) {
+            const reusable =
+              recorded.port === port &&
+              candidates.includes(recorded.provider) &&
+              (!expectedStableUrl || recorded.url === expectedStableUrl);
+            if (!reusable) {
+              return fail({
+                code: 'RN_ISO_REMOTE_START_REQUIRED',
+                message: `A different managed Metro tunnel is already running for this workspace.`,
+                remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
+              });
+            }
+            publicOrigin = recorded.url;
+          } else {
+            const started = await d.startTunnelSequence({
+              providers: candidates,
+              port,
+              ngrokUrl: expectedStableUrl,
+              // Metro is not running yet. The remote device gate proves that
+              // this URL reaches the workspace before it launches the app.
+              requireReachable: false,
+            });
+            if ('failed' in started) {
+              return fail({
+                code: 'RN_ISO_REMOTE_METRO_UNREACHABLE',
+                message: `Could not start a managed Metro tunnel for port ${port}.`,
+                remedy: started.reason,
+              });
+            }
+            const record: TunnelRecord = {
+              provider: started.provider,
+              pid: started.pid,
+              url: started.url,
+              port,
+              startedAt: new Date().toISOString(),
+            };
+            try {
+              d.writeTunnelRecord(root, {
+                metroTunnel: {
+                  kind: 'managed',
+                  ...record,
+                },
+              });
+            } catch (err) {
+              const stopped = await d.stopTunnel(record);
+              return fail({
+                code: 'RN_ISO_REMOTE_METRO_UNREACHABLE',
+                message: `Could not record the managed Metro tunnel: ${(err as Error)?.message || err}`,
+                remedy:
+                  stopped.status === 'failed'
+                    ? `The tunnel also could not be stopped: ${stopped.reason ?? 'unknown error'}`
+                    : 'The tunnel process was stopped. Fix the workspace write error, then retry `rn-iso start --remote`.',
+              });
+            }
+            publicOrigin = started.url;
+          }
+        }
+      }
 
       let resolution = await resolveProjectMetro(port, root);
       let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
@@ -444,7 +552,13 @@ export function registerStart(program: Command): void {
         // without reaching the caller's shell.
         detached: true,
         stdio: ['ignore', fd, fd],
-        env: process.env,
+        env: publicOrigin
+          ? {
+              ...process.env,
+              [PUBLIC_METRO_ENV]: publicOrigin,
+              EXPO_PACKAGER_PROXY_URL: publicOrigin,
+            }
+          : process.env,
       });
       child.unref?.();
 
