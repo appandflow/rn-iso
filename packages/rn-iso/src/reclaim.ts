@@ -121,11 +121,22 @@ async function reclaimMetroTunnel(
       failed: {
         platform: 'ios',
         name: `${record.provider} tunnel (pid ${record.pid})`,
-        reason: `${result.reason ?? 'stop failed'} -- it may still be running: kill ${record.pid} by hand.`,
+        reason:
+          `${result.reason ?? 'stop failed'} The process identity could not be verified or the stop could not be confirmed. ` +
+          'The ownership record is kept. Inspect the process and retry `rn-iso worktree remove`.',
       },
     };
   }
-  clearManagedMetroTunnel(root, record);
+  if (!clearManagedMetroTunnel(root, record)) {
+    return {
+      stopped: null,
+      failed: {
+        platform: 'ios',
+        name: 'replacement managed tunnel',
+        reason: 'A replacement managed tunnel record appeared during cleanup and is retained for a later stop.',
+      },
+    };
+  }
   return { stopped: record.provider, failed: null };
 }
 

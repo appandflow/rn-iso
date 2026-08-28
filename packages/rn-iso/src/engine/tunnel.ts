@@ -16,7 +16,9 @@
 // anything.
 import type { ChildProcess } from 'node:child_process';
 import { closeSync, openSync, readSync } from 'node:fs';
-import { basename } from 'node:path';
+import { createHash } from 'node:crypto';
+import { basename, join, resolve as resolvePath } from 'node:path';
+import { getConfigDir } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
 import { createLineReader } from '../supervisor/server-expo.ts';
@@ -36,6 +38,7 @@ export interface TunnelRecord {
   url: string;
   port: number;
   startedAt: string;
+  processToken: string | null;
 }
 
 // --- pure: argv and the untrusted-output parsers ---------------------------
@@ -112,7 +115,26 @@ export async function withManagedTunnelLock<T>(
   fn: () => Promise<T>,
   options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  return withWorkspaceProcessLock(root, 'metro-tunnel', fn, options);
+  return withWorkspaceProcessLock(managedTunnelLockRoot(root), 'metro-tunnel', fn, {
+    ...options,
+    rejectOwnerPurposes: ['workspace removal'],
+  });
+}
+
+export async function withManagedTunnelRemovalLock<T>(
+  root: string,
+  fn: () => Promise<T>,
+  options: WorkspaceProcessLockOptions = {},
+): Promise<T> {
+  return withWorkspaceProcessLock(managedTunnelLockRoot(root), 'metro-tunnel', fn, {
+    ...options,
+    ownerPurpose: 'workspace removal',
+  });
+}
+
+function managedTunnelLockRoot(root: string): string {
+  const key = createHash('sha256').update(resolvePath(root)).digest('hex');
+  return join(getConfigDir(), 'process-locks', key);
 }
 
 // Any HTTP response -- even a 404 from Metro's own router -- proves the
@@ -212,6 +234,7 @@ export interface StartTunnelOptions {
   requireReachable?: boolean;
   cleanupTimeoutMs?: number;
   isChildAlive?: (pid: number) => boolean;
+  readProcessToken?: (pid: number) => string | null;
 }
 
 interface TunnelCleanupResult {
@@ -220,7 +243,7 @@ interface TunnelCleanupResult {
 }
 
 export type StartTunnelResult =
-  | { url: string; pid: number; cleanup: () => Promise<TunnelCleanupResult> }
+  | { url: string; pid: number; processToken: string; cleanup: () => Promise<TunnelCleanupResult> }
   | { failed: true; reason: string; cleanupFailed?: true };
 
 const CLEANUP_TIMEOUT_MS = 1_000;
@@ -248,6 +271,7 @@ export async function startTunnel({
   requireReachable = true,
   cleanupTimeoutMs = CLEANUP_TIMEOUT_MS,
   isChildAlive = isPidAlive,
+  readProcessToken = readTunnelProcessToken,
 }: StartTunnelOptions): Promise<StartTunnelResult> {
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const { bin, args } = tunnelArgv(provider, port, ngrokUrl);
@@ -321,9 +345,13 @@ export async function startTunnel({
   if (!pid) {
     return failAfterCleanup(`${provider} started but reported no pid.`);
   }
+  const processToken = readProcessToken(pid);
+  if (!processToken) {
+    return failAfterCleanup(`${provider} started but its process identity token could not be read.`);
+  }
   unrefChildPipes(child);
   child.unref?.();
-  return { url, pid, cleanup: () => cleanup() };
+  return { url, pid, processToken, cleanup: () => cleanup() };
 }
 
 export interface StartTunnelSequenceOptions {
@@ -335,7 +363,13 @@ export interface StartTunnelSequenceOptions {
 }
 
 export type StartTunnelSequenceResult =
-  | { provider: ManagedProvider; url: string; pid: number; cleanup: () => Promise<TunnelCleanupResult> }
+  | {
+      provider: ManagedProvider;
+      url: string;
+      pid: number;
+      processToken: string;
+      cleanup: () => Promise<TunnelCleanupResult>;
+    }
   | { failed: true; reason: string };
 
 /** Try the selected providers in order until one returns a public URL. */
@@ -458,6 +492,7 @@ function describe(err: unknown): string {
 export interface StopTunnelOptions {
   isAlive?: (pid: number) => boolean;
   readProcessArgs?: (pid: number) => readonly string[] | null;
+  readProcessToken?: (pid: number) => string | null;
   kill?: (pid: number) => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -503,7 +538,11 @@ function defaultReadProcCommand(path: string, maxBytes: number): Buffer {
 }
 
 function defaultRunPsCommand(pid: number, timeoutMs: number): string {
-  return getExecutor().runFile('ps', ['-o', 'command=', '-p', String(pid)], { timeoutMs });
+  return getExecutor().runFile('ps', ['-ww', '-o', 'command=', '-p', String(pid)], { timeoutMs });
+}
+
+function defaultRunPsStartCommand(pid: number, timeoutMs: number): string {
+  return getExecutor().runFile('ps', ['-ww', '-o', 'lstart=', '-p', String(pid)], { timeoutMs });
 }
 
 function parseProcCommand(data: Buffer, maxBytes: number): string[] | null {
@@ -589,6 +628,49 @@ export function readTunnelProcessArgs(
   }
 }
 
+function parseLinuxStartToken(data: Buffer, maxBytes: number): string | null {
+  if (data.length === 0 || data.length > maxBytes || data.includes(0)) return null;
+  const stat = data.toString('utf-8').trim();
+  const commandEnd = stat.lastIndexOf(')');
+  if (commandEnd < 2 || stat[commandEnd + 1] !== ' ') return null;
+  const fields = stat.slice(commandEnd + 2).split(' ');
+  const startTime = fields[19];
+  return startTime && /^\d+$/.test(startTime) ? `linux:${startTime}` : null;
+}
+
+function parsePsStartToken(output: string): string | null {
+  const trimmed = output.trim();
+  if (!trimmed || trimmed.includes('\0') || trimmed.includes('\n') || trimmed.includes('\r')) return null;
+  const normalized = trimmed.replace(/\s+/g, ' ');
+  return normalized ? `ps-lstart:${normalized}` : null;
+}
+
+export function readTunnelProcessToken(
+  pid: number,
+  {
+    platform = process.platform,
+    readProcStat = defaultReadProcCommand,
+    runPsStartCommand = defaultRunPsStartCommand,
+  }: {
+    platform?: NodeJS.Platform;
+    readProcStat?: ReadProcCommand;
+    runPsStartCommand?: RunPsCommand;
+  } = {},
+): string | null {
+  try {
+    if (platform === 'linux') {
+      return parseLinuxStartToken(
+        readProcStat(`/proc/${pid}/stat`, PROCESS_COMMAND_MAX_BYTES),
+        PROCESS_COMMAND_MAX_BYTES,
+      );
+    }
+    if (platform === 'win32') return null;
+    return parsePsStartToken(runPsStartCommand(pid, PROCESS_COMMAND_TIMEOUT_MS));
+  } catch {
+    return null;
+  }
+}
+
 function isHttpsUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -627,6 +709,7 @@ export async function stopTunnel(
   {
     isAlive = isPidAlive,
     readProcessArgs = readTunnelProcessArgs,
+    readProcessToken = readTunnelProcessToken,
     kill = defaultKill,
     now = Date.now,
     sleep = defaultSleep,
@@ -635,12 +718,38 @@ export async function stopTunnel(
 ): Promise<StopTunnelResult> {
   const pid = record?.pid;
   if (!pid || !isAlive(pid)) return { status: 'missing' };
+  if (!record.processToken) {
+    return {
+      status: 'failed',
+      reason:
+        `tunnel pid ${pid} has no process identity token, so rn-iso cannot verify ownership. ` +
+        'Keep the record. Inspect the process, stop it with the provider tooling, remove the stale metroTunnel state, and retry.',
+    };
+  }
 
   let processArgs: readonly string[] | null = null;
+  let processTokenBefore: string | null = null;
+  let processTokenAfter: string | null = null;
   try {
+    processTokenBefore = readProcessToken(pid);
     processArgs = readProcessArgs(pid);
+    processTokenAfter = readProcessToken(pid);
   } catch {
     processArgs = null;
+  }
+  if (!processTokenBefore || processTokenBefore !== processTokenAfter) {
+    if (!isAlive(pid)) return { status: 'missing' };
+    return {
+      status: 'failed',
+      reason: `could not verify the process instance for tunnel pid ${pid}; refusing to signal it.`,
+    };
+  }
+  if (processTokenBefore !== record.processToken) {
+    if (!isAlive(pid)) return { status: 'missing' };
+    return {
+      status: 'failed',
+      reason: `tunnel pid ${pid} belongs to a different process instance; refusing to signal it.`,
+    };
   }
   if (!processArgs) {
     if (!isAlive(pid)) return { status: 'missing' };

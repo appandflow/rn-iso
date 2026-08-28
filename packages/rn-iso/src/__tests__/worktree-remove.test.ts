@@ -17,6 +17,7 @@ import {
 } from '../commands/worktree.ts';
 import type { Command } from 'commander';
 import { ensureWorkspaceIgnored, renderWorkspaceIgnoreBlock } from '../engine/workspace.ts';
+import { withManagedTunnelLock } from '../engine/tunnel.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, getProject } from '../config.ts';
 
@@ -331,6 +332,7 @@ function writeManagedTunnel(root: string, pid: number): void {
         url: 'https://recorded.ngrok.app',
         port: 8081,
         startedAt: 'T',
+        processToken: 'linux:100',
       },
     }),
   );
@@ -527,8 +529,45 @@ test('action: a tunnel verification failure on the main checkout retains its sta
   expect(getProject(mainDir)).not.toBeNull();
   expect(existsSync(join(mainDir, '.rn-iso', 'state.json'))).toBe(true);
   expect(errs.join('\n')).toMatch(/could not release owned resources/i);
-  expect(errs.join('\n')).toContain(`kill ${child.pid} by hand`);
+  expect(errs.join('\n')).toMatch(/identity could not be verified/i);
+  expect(errs.join('\n')).not.toMatch(new RegExp(`kill\\s+${child.pid}`));
   expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
+  await expect(withManagedTunnelLock(mainDir, async () => true)).resolves.toBe(true);
+});
+
+test('action: main-checkout artifact deletion blocks a concurrent replacement tunnel start', async () => {
+  upsertProject(mainDir, { label: 'main' });
+  mkdirSync(join(mainDir, '.rn-iso'), { recursive: true });
+  writeFileSync(join(mainDir, '.rn-iso', 'state.json'), '{}');
+  setExecutor(
+    makeExecutor({
+      worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+      mainTrees: [mainDir],
+    }),
+  );
+  let competingStart: Promise<'started' | 'refused'> | null = null;
+  const original = console.error;
+  console.error = (message) => {
+    if (String(message).includes('removed .rn-iso')) {
+      competingStart = withManagedTunnelLock(mainDir, async () => {
+        mkdirSync(join(mainDir, '.rn-iso'), { recursive: true });
+        writeFileSync(join(mainDir, '.rn-iso', 'state.json'), JSON.stringify({ metroTunnel: { pid: 5252 } }));
+      }).then(
+        () => 'started',
+        () => 'refused',
+      );
+    }
+  };
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(competingStart).not.toBeNull();
+  await expect(competingStart).resolves.toBe('refused');
+  expect(existsSync(join(mainDir, '.rn-iso', 'state.json'))).toBe(false);
 });
 
 // A registered directory that is not a git repo at all: there is no worktree
@@ -646,7 +685,9 @@ test('action: tunnel verification failure retains state and refuses worktree rem
   expect(existsSync(join(wtDir, '.rn-iso', 'state.json'))).toBe(true);
   expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
   expect(errs.join('\n')).toMatch(/Refusing to remove/);
-  expect(errs.join('\n')).toContain(`kill ${child.pid} by hand`);
+  expect(errs.join('\n')).toMatch(/identity could not be verified/i);
+  expect(errs.join('\n')).not.toMatch(new RegExp(`kill\\s+${child.pid}`));
+  await expect(withManagedTunnelLock(wtDir, async () => true)).resolves.toBe(true);
 });
 
 test('action: a missing recorded tunnel does not block normal worktree removal', async () => {
@@ -959,6 +1000,41 @@ test('action: the workspace directory is deleted before git worktree remove is c
 
   expect(existsSync(join(wtDir, '.rn-iso'))).toBe(false);
   expect(process.exitCode).not.toBe(1);
+});
+
+test('action: a concurrent tunnel start cannot publish a replacement during worktree removal', async () => {
+  upsertProject(wtDir, { metroPort: 8092 });
+  mkdirSync(join(wtDir, '.rn-iso'), { recursive: true });
+  writeFileSync(join(wtDir, '.rn-iso', 'state.json'), '{}');
+  const exec = makeExecutor({
+    dirty: '?? .rn-iso/\n',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  let competingStart: Promise<'started' | 'refused'> | null = null;
+  const originalRunFile = exec.runFile.bind(exec);
+  exec.runFile = (file, args = []) => {
+    if (/worktree remove/.test([file, ...args].join(' '))) {
+      competingStart = withManagedTunnelLock(wtDir, async () => {
+        mkdirSync(join(wtDir, '.rn-iso'), { recursive: true });
+        writeFileSync(join(wtDir, '.rn-iso', 'state.json'), JSON.stringify({ metroTunnel: { pid: 5252 } }));
+      }).then(
+        () => 'started',
+        () => 'refused',
+      );
+    }
+    return originalRunFile(file, args);
+  };
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(competingStart).not.toBeNull();
+  await expect(competingStart).resolves.toBe('refused');
+  expect(existsSync(join(wtDir, '.rn-iso', 'state.json'))).toBe(false);
 });
 
 // Containment: a path out of `git status` is relative to the worktree, and

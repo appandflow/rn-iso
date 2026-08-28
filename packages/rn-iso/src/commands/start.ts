@@ -494,6 +494,16 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
               let startedCleanup: (() => Promise<{ status: 'stopped' | 'failed'; reason?: string }>) | null = null;
               const recorded = readMetroTunnel(root);
               if (recorded?.kind === 'managed' && d.isTunnelAlive(recorded.pid)) {
+                if (!recorded.processToken) {
+                  return {
+                    failed: {
+                      code: 'RN_ISO_REMOTE_START_REQUIRED',
+                      message: 'The recorded managed Metro tunnel has no process identity token.',
+                      remedy:
+                        'Inspect the process, stop it with the provider tooling, remove the stale metroTunnel state, and retry.',
+                    },
+                  };
+                }
                 const reusable =
                   recorded.port === port &&
                   candidates.includes(recorded.provider) &&
@@ -514,6 +524,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                     url: normalizeManagedTunnelUrl(recorded.url),
                     port: recorded.port,
                     startedAt: recorded.startedAt,
+                    processToken: recorded.processToken,
                   },
                   startedHere: false,
                 };
@@ -555,6 +566,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                   url: normalizeManagedTunnelUrl(started.url),
                   port,
                   startedAt: new Date().toISOString(),
+                  processToken: started.processToken,
                 };
                 startedCleanup = started.cleanup;
                 try {

@@ -896,6 +896,7 @@ function withManagedTunnel() {
         url: 'https://abc.ngrok.app',
         port: 8083,
         startedAt: 'T',
+        processToken: 'linux:100',
       },
       lastBuild: { hash: 'keepme' },
     }),
@@ -919,7 +920,15 @@ test('stopping reaps a managed tunnel this workspace started', async () => {
 
   expect(r.ok).toBe(true);
   expect(stopped).toEqual([
-    { kind: 'managed', provider: 'ngrok', pid: 4242, url: 'https://abc.ngrok.app', port: 8083, startedAt: 'T' },
+    {
+      kind: 'managed',
+      provider: 'ngrok',
+      pid: 4242,
+      url: 'https://abc.ngrok.app',
+      port: 8083,
+      startedAt: 'T',
+      processToken: 'linux:100',
+    },
   ]);
   expect(r.outcomes.metroTunnel).toEqual({ status: 'stopped', provider: 'ngrok', reason: undefined });
   const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
@@ -932,13 +941,14 @@ test('stopping clears only the tunnel record that it verified', async () => {
   withManagedTunnel();
   const replacement = {
     kind: 'managed',
-    provider: 'cloudflared',
-    pid: 5252,
-    url: 'https://replacement.trycloudflare.com',
+    provider: 'ngrok',
+    pid: 4242,
+    url: 'https://abc.ngrok.app',
     port: 8083,
-    startedAt: 'replacement',
+    startedAt: 'T',
+    processToken: 'linux:200',
   } as const;
-  await runStop({
+  const result = await runStop({
     root: tmpRoot,
     isAlive: () => false,
     resolveMetro: async () => ({ missing: true }),
@@ -952,6 +962,9 @@ test('stopping clears only the tunnel record that it verified', async () => {
 
   const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
   expect(state.metroTunnel).toEqual(replacement);
+  expect(result.ok).toBe(false);
+  expect(result.outcomes.port.status).toBe('kept');
+  expect(getProject(tmpRoot)?.metroPort).toBe(8083);
 });
 
 test('a tunnel that fails to stop fails the command and keeps its record', async () => {
@@ -967,6 +980,12 @@ test('a tunnel that fails to stop fails the command and keeps its record', async
 
   expect(r.ok).toBe(false);
   expect(r.outcomes.metroTunnel.status).toBe('failed');
+  expect(r.outcomes.port).toEqual({
+    status: 'kept',
+    port: 8083,
+    reason: 'pid 4242 did not exit within 5000ms.',
+  });
+  expect(getProject(tmpRoot)?.metroPort).toBe(8083);
   const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
   expect(state.metroTunnel.pid).toBe(4242);
 });

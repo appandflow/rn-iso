@@ -560,19 +560,29 @@ export async function runStop({
   // stillHolding guard: nothing about a supervisor that ignored SIGTERM makes
   // a separate ngrok/cloudflared process any less safe to stop.
   const tunnel = metroTunnel === undefined ? readMetroTunnel(root) : metroTunnel;
+  let tunnelHolding: string | null = null;
   if (tunnel?.kind === 'managed') {
     const result = await stopMetroTunnel(tunnel);
     outcomes.metroTunnel = { status: result.status, provider: tunnel.provider, reason: result.reason };
     if (result.status === 'failed') {
       ok = false;
-      report(chalk.red(`tunnel: ${result.reason ?? `could not stop the ${tunnel.provider} tunnel`}`));
+      tunnelHolding = result.reason ?? `could not stop the ${tunnel.provider} tunnel`;
+      if (!stillHolding) stillHolding = tunnelHolding;
+      report(chalk.red(`tunnel: ${tunnelHolding}`));
     } else {
-      report(
-        chalk.dim(
-          result.status === 'missing' ? 'tunnel: already gone' : `tunnel: stopped the ${tunnel.provider} tunnel`,
-        ),
-      );
-      clearManagedMetroTunnel(root, tunnel);
+      if (!clearManagedMetroTunnel(root, tunnel)) {
+        tunnelHolding = 'a replacement managed tunnel record appeared during cleanup and remains active';
+        stillHolding = stillHolding ?? tunnelHolding;
+        ok = false;
+        outcomes.metroTunnel = { status: 'failed', provider: tunnel.provider, reason: tunnelHolding };
+        report(chalk.red(`tunnel: ${tunnelHolding}`));
+      } else {
+        report(
+          chalk.dim(
+            result.status === 'missing' ? 'tunnel: already gone' : `tunnel: stopped the ${tunnel.provider} tunnel`,
+          ),
+        );
+      }
     }
   } else if (tunnel?.kind === 'expo') {
     outcomes.metroTunnel = { status: 'not-managed' };
@@ -583,6 +593,14 @@ export async function runStop({
   if (stillHolding) {
     outcomes.port = { status: 'kept', port: reservedPort, reason: stillHolding };
     report(chalk.yellow(`port: keeping reservation ${reservedPort ?? '(none)'} -- ${stillHolding}`));
+    const supervisorIsDown =
+      outcomes.supervisor.status === 'none' ||
+      outcomes.supervisor.status === 'already-stopped' ||
+      outcomes.supervisor.status === 'stopped';
+    if (tunnelHolding && supervisorIsDown) {
+      clearState(root);
+      await clearRegistration(root);
+    }
   } else {
     if (reservedPort !== null) {
       freePort(root, reservedPort);

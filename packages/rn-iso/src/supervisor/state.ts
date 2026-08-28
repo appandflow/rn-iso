@@ -54,6 +54,7 @@ export interface ManagedTunnelRecord {
   url: string;
   port: number;
   startedAt: string;
+  processToken: string | null;
 }
 
 export type MetroTunnelRecord = ExpoTunnelRecord | ManagedTunnelRecord;
@@ -80,10 +81,19 @@ export function readMetroTunnel(root: string): MetroTunnelRecord | null {
     const pid = (record as { pid?: unknown }).pid;
     const port = (record as { port?: unknown }).port;
     const startedAt = (record as { startedAt?: unknown }).startedAt;
+    const processToken = (record as { processToken?: unknown }).processToken;
     if ((provider !== 'ngrok' && provider !== 'cloudflared') || typeof pid !== 'number' || typeof port !== 'number') {
       return null;
     }
-    return { kind: 'managed', provider, pid, url, port, startedAt: typeof startedAt === 'string' ? startedAt : '' };
+    return {
+      kind: 'managed',
+      provider,
+      pid,
+      url,
+      port,
+      startedAt: typeof startedAt === 'string' ? startedAt : '',
+      processToken: typeof processToken === 'string' && processToken.length > 0 ? processToken : null,
+    };
   }
   return null;
 }
@@ -179,9 +189,9 @@ export function clearExpoMetroTunnel(root: string): void {
   });
 }
 
-export function clearManagedMetroTunnel(root: string, expected: Omit<ManagedTunnelRecord, 'kind'>): void {
-  if (!existsSync(workspaceStateFile(root))) return;
-  clearWorkspaceStateKey(root, 'metroTunnel', (value) => {
+export function clearManagedMetroTunnel(root: string, expected: Omit<ManagedTunnelRecord, 'kind'>): boolean {
+  if (!existsSync(workspaceStateFile(root))) return true;
+  return clearWorkspaceStateKey(root, 'metroTunnel', (value) => {
     if (typeof value !== 'object' || value === null) return false;
     const record = value as Partial<ManagedTunnelRecord>;
     return (
@@ -190,7 +200,8 @@ export function clearManagedMetroTunnel(root: string, expected: Omit<ManagedTunn
       record.pid === expected.pid &&
       record.url === expected.url &&
       record.port === expected.port &&
-      record.startedAt === expected.startedAt
+      record.startedAt === expected.startedAt &&
+      (record.processToken ?? null) === (expected.processToken ?? null)
     );
   });
 }
@@ -229,10 +240,11 @@ export function clearWorkspaceStateKeys(root: string, keys: readonly string[]): 
 
 // Removes only the selected key. The file goes when nothing else is left in
 // it, so a stopped workspace has no state.json rather than an empty one.
-function clearWorkspaceStateKey(root: string, key: string, shouldClear: (value: unknown) => boolean): void {
-  withWorkspaceStateLock(root, () => {
+function clearWorkspaceStateKey(root: string, key: string, shouldClear: (value: unknown) => boolean): boolean {
+  return withWorkspaceStateLock(root, () => {
     const state = readWorkspaceState(root);
-    if (!state || !(key in state) || !shouldClear(state[key])) return;
+    if (!state || !(key in state)) return true;
+    if (!shouldClear(state[key])) return false;
     delete state[key];
     const file = workspaceStateFile(root);
     if (Object.keys(state).length === 0) {
@@ -241,9 +253,10 @@ function clearWorkspaceStateKey(root: string, key: string, shouldClear: (value: 
       } catch {
         /* already gone */
       }
-      return;
+      return true;
     }
     replaceWorkspaceState(root, state);
+    return true;
   });
 }
 

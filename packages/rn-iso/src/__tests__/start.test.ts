@@ -606,6 +606,7 @@ describe('action: already running', () => {
               provider: 'ngrok',
               url: 'https://late.ngrok.app',
               pid: 4242,
+              processToken: 'linux:100',
               cleanup: successfulTunnelCleanup,
             };
           },
@@ -941,6 +942,7 @@ describe('action: spawning the supervisor', () => {
               provider: 'ngrok',
               url: 'https://stable.ngrok.app',
               pid: 4242,
+              processToken: 'linux:100',
               cleanup: successfulTunnelCleanup,
             };
           },
@@ -994,6 +996,7 @@ describe('action: spawning the supervisor', () => {
               provider: 'ngrok',
               url: 'https://one.ngrok.app',
               pid: 4242,
+              processToken: 'linux:100',
               cleanup: successfulTunnelCleanup,
             };
           },
@@ -1051,6 +1054,7 @@ describe('action: spawning the supervisor', () => {
             provider: 'ngrok',
             url: 'https://one.ngrok.app',
             pid: 4242,
+            processToken: 'linux:100',
             cleanup: successfulTunnelCleanup,
           }),
           isTunnelAlive: () => true,
@@ -1091,6 +1095,7 @@ describe('action: spawning the supervisor', () => {
             provider: 'ngrok',
             url: 'https://still-running.ngrok.app',
             pid: 4242,
+            processToken: 'linux:100',
             cleanup: async () => ({ status: 'failed', reason: 'pid 4242 ignored SIGKILL' }),
           };
         },
@@ -1137,6 +1142,7 @@ describe('action: spawning the supervisor', () => {
           provider: 'ngrok',
           url: 'https://ready.ngrok.app',
           pid: 4343,
+          processToken: 'linux:100',
           cleanup: successfulTunnelCleanup,
         }),
         isTunnelAlive: () => true,
@@ -1201,6 +1207,7 @@ describe('action: spawning the supervisor', () => {
                   provider: 'ngrok',
                   url: 'https://retry.ngrok.app',
                   pid: 4243,
+                  processToken: 'linux:100',
                   cleanup: successfulTunnelCleanup,
                 };
           },
@@ -1236,6 +1243,7 @@ describe('action: spawning the supervisor', () => {
           provider: 'ngrok',
           url: 'https://ready.ngrok.app',
           pid: 4242,
+          processToken: 'linux:100',
           cleanup: async () => {
             cleanupCalled = true;
             return { status: 'stopped' };
@@ -1288,6 +1296,7 @@ describe('action: spawning the supervisor', () => {
                 isChildAlive: () => alive,
                 now: () => now,
                 sleep: async (ms) => void (now += ms),
+                readProcessToken: () => 'linux:100',
               });
               child.stdout?.emit('data', `${JSON.stringify({ url: 'https://ready.ngrok.app' })}\n`);
               return started;
@@ -1328,6 +1337,7 @@ describe('action: spawning the supervisor', () => {
                 isChildAlive: () => true,
                 now: () => now,
                 sleep: async (ms) => void (now += ms),
+                readProcessToken: () => 'linux:100',
               });
               child.stdout?.emit('data', `${JSON.stringify({ url: 'https://ready.ngrok.app' })}\n`);
               return started;
@@ -1358,6 +1368,7 @@ describe('action: spawning the supervisor', () => {
           provider: 'ngrok',
           url: 'https://unconfirmed.ngrok.app',
           pid: 4242,
+          processToken: 'linux:100',
           cleanup: async () => ({ status: 'failed', reason: 'SIGKILL did not confirm exit' }),
         }),
         isTunnelAlive: () => false,
@@ -1402,6 +1413,7 @@ describe('action: spawning the supervisor', () => {
             provider: 'ngrok',
             url: 'https://gone.ngrok.app',
             pid: 4242,
+            processToken: 'linux:100',
             cleanup: successfulTunnelCleanup,
           }),
           isTunnelAlive: () => ++livenessChecks === 1,
@@ -1439,6 +1451,7 @@ describe('action: spawning the supervisor', () => {
           provider: 'ngrok',
           url: 'https://cleanup-failed.ngrok.app',
           pid: 4242,
+          processToken: 'linux:100',
           cleanup: successfulTunnelCleanup,
         }),
         isTunnelAlive: () => ++livenessChecks === 1,
@@ -1472,6 +1485,7 @@ describe('action: spawning the supervisor', () => {
       url: 'https://reused.ngrok.app',
       port,
       startedAt: 'old',
+      processToken: 'linux:100',
     };
     const replacement = {
       kind: 'managed' as const,
@@ -1480,6 +1494,7 @@ describe('action: spawning the supervisor', () => {
       url: 'https://replacement.ngrok.app',
       port,
       startedAt: 'new',
+      processToken: 'linux:200',
     };
     writeWorkspaceState(root, { metroTunnel: reused });
     let livenessChecks = 0;
@@ -1537,6 +1552,7 @@ describe('action: spawning the supervisor', () => {
             provider: 'ngrok',
             url: 'https://gone.ngrok.app',
             pid: 4242,
+            processToken: 'linux:100',
             cleanup: successfulTunnelCleanup,
           }),
           isTunnelAlive: () => {
@@ -1551,6 +1567,7 @@ describe('action: spawning the supervisor', () => {
                   pid: 9999,
                   port,
                   startedAt: 'later',
+                  processToken: 'linux:200',
                 },
               });
             }

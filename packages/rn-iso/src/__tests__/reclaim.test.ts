@@ -300,6 +300,7 @@ function workspaceWithManagedTunnel(pid: number): string {
         url: 'https://abc.ngrok.app',
         port: 8082,
         startedAt: 'T',
+        processToken: 'linux:100',
       },
     }),
   );
@@ -334,13 +335,14 @@ test('reclaim preserves a replacement managed tunnel record', async () => {
   const root = workspaceWithManagedTunnel(4242);
   const replacement = {
     kind: 'managed',
-    provider: 'cloudflared',
-    pid: 5252,
-    url: 'https://replacement.trycloudflare.com',
+    provider: 'ngrok',
+    pid: 4242,
+    url: 'https://abc.ngrok.app',
     port: 8082,
-    startedAt: 'replacement',
+    startedAt: 'T',
+    processToken: 'linux:200',
   } as const;
-  await reclaimProject(root, {
+  const result = await reclaimProject(root, {
     stopMetroTunnel: async () => {
       writeFileSync(join(root, '.rn-iso', 'state.json'), JSON.stringify({ metroTunnel: replacement }));
       return { status: 'stopped' };
@@ -348,6 +350,9 @@ test('reclaim preserves a replacement managed tunnel record', async () => {
   });
   const state = JSON.parse(readFileSync(join(root, '.rn-iso', 'state.json'), 'utf-8'));
   expect(state.metroTunnel).toEqual(replacement);
+  expect(result.keptEntry).toBe(true);
+  expect(result.stoppedTunnel).toBeNull();
+  expect(result.failedDevices[0]?.reason).toMatch(/replacement.*retained/i);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -368,7 +373,7 @@ test('the tunnel is stopped even without deleteOwnedDevices', async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test('a tunnel that could not be stopped keeps the entry and names the manual fix', async () => {
+test('a tunnel that could not be verified keeps the entry and gives a safe retry remedy', async () => {
   const root = workspaceWithManagedTunnel(4242);
   const r = await reclaimProject(root, {
     stopMetroTunnel: async () => ({ status: 'failed', reason: 'pid 4242 did not exit within 5000ms.' }),
@@ -377,7 +382,9 @@ test('a tunnel that could not be stopped keeps the entry and names the manual fi
   expect(r.keptEntry).toBe(true);
   expect(getProject(root)).toBeTruthy();
   const reported = r.failedDevices[0]?.reason ?? '';
-  expect(reported).toContain('kill 4242');
+  expect(reported).toMatch(/identity could not be verified/i);
+  expect(reported).toMatch(/inspect.*retry/i);
+  expect(reported).not.toMatch(/kill\s+4242/);
   rmSync(root, { recursive: true, force: true });
 });
 

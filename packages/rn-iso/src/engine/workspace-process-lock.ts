@@ -11,6 +11,7 @@ const RECORD_GRACE_MS = 5_000;
 interface LockRecord {
   pid: number;
   token: string;
+  purpose?: string;
 }
 
 export interface WorkspaceProcessLockOptions {
@@ -18,6 +19,8 @@ export interface WorkspaceProcessLockOptions {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   waitMs?: number;
+  ownerPurpose?: string;
+  rejectOwnerPurposes?: readonly string[];
 }
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -26,7 +29,11 @@ function readLock(path: string): LockRecord | null {
   try {
     const parsed = JSON.parse(readFileSync(join(path, LOCK_RECORD), 'utf-8')) as Partial<LockRecord>;
     return typeof parsed.pid === 'number' && typeof parsed.token === 'string'
-      ? { pid: parsed.pid, token: parsed.token }
+      ? {
+          pid: parsed.pid,
+          token: parsed.token,
+          purpose: typeof parsed.purpose === 'string' ? parsed.purpose : undefined,
+        }
       : null;
   } catch {
     return null;
@@ -60,6 +67,8 @@ export async function withWorkspaceProcessLock<T>(
     now = Date.now,
     sleep = defaultSleep,
     waitMs = DEFAULT_WAIT_MS,
+    ownerPurpose,
+    rejectOwnerPurposes = [],
   }: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
   const path = join(root, '.rn-iso', `${name}.lock`);
@@ -70,7 +79,7 @@ export async function withWorkspaceProcessLock<T>(
     try {
       mkdirSync(dirname(path), { recursive: true });
       mkdirSync(path);
-      owned = { pid: process.pid, token: randomUUID() };
+      owned = { pid: process.pid, token: randomUUID(), purpose: ownerPurpose };
       writeFileSync(join(path, LOCK_RECORD), JSON.stringify(owned));
       break;
     } catch (err) {
@@ -84,6 +93,11 @@ export async function withWorkspaceProcessLock<T>(
     if (holder && !isAlive(holder.pid)) {
       reapLock(path);
       continue;
+    }
+    if (holder?.purpose && rejectOwnerPurposes.includes(holder.purpose)) {
+      const error = new Error(`The ${name} lock at ${path} is held for ${holder.purpose}.`);
+      (error as Error & { code?: string }).code = 'RN_ISO_LOCK_REFUSED';
+      throw error;
     }
     if (!holder) {
       const age = lockAge(path, now());
