@@ -512,6 +512,155 @@ async function reclaimEnvironment(root: string, why: string): Promise<void> {
   );
 }
 
+interface RemoveOptions {
+  force?: boolean;
+}
+
+interface RemovalInspection {
+  dirtyLines: string[];
+  podChurn: string[];
+  unpushed: string[] | null;
+  blockers: string[];
+}
+
+function removalPath(target: string | undefined): string {
+  const resolved = resolve(target ?? process.cwd());
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function inspectRemoval(path: string): RemovalInspection {
+  const gitAnswered = hasUncommittedWork(path);
+  const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
+  const { lines: dirtyLines, restore: podChurn } = excludePodChurn(allDirty);
+  const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
+  const unpushed = unpushedCommits(path);
+  return { dirtyLines, podChurn, unpushed, blockers: removalBlockers({ dirty, unpushed }) };
+}
+
+function printRemovalRefusal(path: string, inspection: RemovalInspection): void {
+  const { blockers, dirtyLines, unpushed } = inspection;
+  console.error(chalk.red(`Refusing to remove ${path}:`));
+  for (const blocker of blockers) console.error(chalk.red(`  - ${blocker}`));
+  if (unpushed && unpushed.length && !hasRemote(path)) {
+    console.error(
+      chalk.dim(
+        '  (no remote is configured for this worktree, so every commit no other local branch reaches counts as unpushed)',
+      ),
+    );
+  }
+  for (const line of dirtyLines.slice(0, 10)) console.error(chalk.dim(`      ${line}`));
+  if (dirtyLines.length) console.error(chalk.dim(`  (git -C ${path} status -s for the full list)`));
+  for (const line of removalRemedy(dirtyLines, { worktree: path })) console.error(chalk.dim(line));
+  console.error(chalk.dim('Otherwise: commit or push the branch (only commits found nowhere else are counted,'));
+  console.error(chalk.dim("so pushing publishes nothing but this worktree's own work). --force is a last"));
+  console.error(chalk.dim('resort -- it discards uncommitted changes and untracked files permanently; committed'));
+  console.error(chalk.dim('work stays on the branch.'));
+  process.exitCode = 1;
+}
+
+function restorePodChurn(path: string, files: string[]): void {
+  for (const file of files) {
+    if (restoreFile(path, file)) {
+      console.error(chalk.dim(`  restored ${file} (pod install churn; the worktree is being removed)`));
+    } else {
+      console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
+    }
+  }
+}
+
+function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
+  const print = failed ? console.error : console.log;
+  if (!failed) {
+    for (const dir of result.removedWorkspaceDirs) print(chalk.dim(`  removed workspace output ${dir}`));
+  }
+  if (result.dereferenced.length) print(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
+  for (const pid of result.killedPids) print(chalk.dim(`  killed Metro pid ${pid}`));
+  if (result.deletedDevices.length) print(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+  if (result.stoppedSessions.length)
+    print(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
+  if (result.stoppedTunnels.length) print(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
+  for (const skipped of result.skippedDevices) {
+    print((failed ? chalk.dim : chalk.yellow)(`  kept ${describeKeptDevice(skipped)}: ${skipped.reason}`));
+  }
+  for (const kept of result.keptEntries) {
+    print(
+      (failed ? chalk.dim : chalk.yellow)(
+        `  rn-iso still tracks ${kept} because environment cleanup failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
+      ),
+    );
+  }
+}
+
+async function runRemove(target: string | undefined, opts: RemoveOptions = {}): Promise<void> {
+  let path = removalPath(target);
+  if (!existsSync(path)) {
+    console.error(chalk.red(`No such worktree: ${path}`));
+    process.exitCode = 1;
+    return;
+  }
+
+  const entry = matchWorktreeEntry(listWorktrees(path), path);
+  if (!entry) {
+    if (gitCommonDir(path) === null && hasRegisteredProjectUnder(path)) {
+      await reclaimEnvironment(path, 'it is not a git repository');
+      return;
+    }
+    console.error(chalk.red(`Refusing to remove ${path}: it is not inside any worktree known to git.`));
+    console.error(
+      chalk.dim(
+        '  Run it from inside the worktree, or pass the worktree root path, e.g. as printed by `git worktree list`.',
+      ),
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (isMainWorkingTree(entry.path)) {
+    if (entry.path !== path) {
+      console.error(chalk.dim(`${path} is inside the main checkout ${entry.path}; reclaiming its environment.`));
+    }
+    await reclaimEnvironment(entry.path, 'it is the main checkout');
+    return;
+  }
+  if (entry.path !== path) {
+    console.error(chalk.dim(`${path} is inside the worktree ${entry.path}; removing that.`));
+    path = entry.path;
+  }
+
+  const inspection = inspectRemoval(path);
+  if (inspection.blockers.length && !opts.force) {
+    printRemovalRefusal(path, inspection);
+    return;
+  }
+
+  await withManagedRemoteWorktreeRemovalLock(path, () =>
+    withReclaimLocks(path, async (lockedKeys) => {
+      const result = await reclaimAll(path, lockedKeys);
+      if (result.keptEntries.length) {
+        reportRetainedResources(path, result);
+        return;
+      }
+      restorePodChurn(path, inspection.podChurn);
+      try {
+        removeWorktree(path, { force: opts.force });
+      } catch (error) {
+        console.error(chalk.red(`git worktree remove failed: ${String((error as Error)?.message || error)}`));
+        console.error(
+          chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`),
+        );
+        printRemovalCleanup(result, true);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(chalk.green(`Removed worktree ${path}`));
+      printRemovalCleanup(result, false);
+    }),
+  );
+}
+
 export function registerRemove(worktree: Command): void {
   worktree
     .command('remove [target]')
@@ -519,154 +668,7 @@ export function registerRemove(worktree: Command): void {
       'Remove a worktree and reclaim its build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the main checkout it reclaims the environment only and leaves the tree in place.',
     )
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work')
-    .action(async (target, opts) => {
-      target = target ?? process.cwd();
-      let path;
-      try {
-        path = realpathSync(resolve(target));
-      } catch {
-        path = resolve(target);
-      }
-      if (!existsSync(path)) {
-        console.error(chalk.red(`No such worktree: ${path}`));
-        process.exitCode = 1;
-        return;
-      }
-
-      const entries = listWorktrees(path);
-      const entry = matchWorktreeEntry(entries, path);
-      if (!entry) {
-        if (gitCommonDir(path) === null && hasRegisteredProjectUnder(path)) {
-          await reclaimEnvironment(path, 'it is not a git repository');
-          return;
-        }
-        console.error(chalk.red(`Refusing to remove ${path}: it is not inside any worktree known to git.`));
-        console.error(
-          chalk.dim(
-            '  Run it from inside the worktree, or pass the worktree root path, e.g. as printed by `git worktree list`.',
-          ),
-        );
-        process.exitCode = 1;
-        return;
-      }
-      if (isMainWorkingTree(entry.path)) {
-        if (entry.path !== path) {
-          console.error(chalk.dim(`${path} is inside the main checkout ${entry.path}; reclaiming its environment.`));
-        }
-        await reclaimEnvironment(entry.path, 'it is the main checkout');
-        return;
-      }
-      if (entry.path !== path) {
-        console.error(chalk.dim(`${path} is inside the worktree ${entry.path}; removing that.`));
-        path = entry.path;
-      }
-
-      const gitAnswered = hasUncommittedWork(path);
-      const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
-      const { lines: dirtyLines, restore: podChurn } = excludePodChurn(allDirty);
-      const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
-      const unpushed = unpushedCommits(path);
-      const blockers = removalBlockers({ dirty, unpushed });
-      if (blockers.length && !opts.force) {
-        console.error(chalk.red(`Refusing to remove ${path}:`));
-        for (const b of blockers) console.error(chalk.red(`  - ${b}`));
-        if (unpushed && unpushed.length && !hasRemote(path)) {
-          console.error(
-            chalk.dim(
-              '  (no remote is configured for this worktree, so every commit no other local branch reaches counts as unpushed)',
-            ),
-          );
-        }
-        const shown = dirtyLines.slice(0, 10);
-        if (shown.length) {
-          for (const line of shown) console.error(chalk.dim(`      ${line}`));
-          console.error(chalk.dim(`  (git -C ${path} status -s for the full list)`));
-        }
-        for (const line of removalRemedy(dirtyLines, { worktree: path })) console.error(chalk.dim(line));
-        console.error(chalk.dim('Otherwise: commit or push the branch (only commits found nowhere else are counted,'));
-        console.error(chalk.dim("so pushing publishes nothing but this worktree's own work). --force is a last"));
-        console.error(
-          chalk.dim('resort -- it discards uncommitted changes and untracked files permanently; committed'),
-        );
-        console.error(chalk.dim('work stays on the branch.'));
-        process.exitCode = 1;
-        return;
-      }
-
-      // (The target was confirmed to be a linked worktree of this repo, and not
-      // the main checkout, before any of the above ran -- see isMainWorkingTree
-      // at the top of the action. The main checkout took the environment-reclaim
-      // branch there, so nothing on this path can reach `git worktree remove`
-      // with a tree git would refuse as "a main working tree".)
-
-      // Release rn-iso's own state before the directory disappears. Reclaims
-      // the worktree root AND every nested registered project under it (see
-      // reclaimAll above) so a monorepo's Metro/device claim -- registered
-      // under a nested app dir, not the root -- is not left leaking. The
-      // worktree's build output needs no separate step: it lives inside the
-      // directory `git worktree remove` deletes.
-      await withManagedRemoteWorktreeRemovalLock(path, () =>
-        withReclaimLocks(path, async (lockedKeys) => {
-          const result = await reclaimAll(path, lockedKeys);
-
-          if (result.keptEntries.length) {
-            reportRetainedResources(path, result);
-            return;
-          }
-
-          for (const file of podChurn) {
-            if (restoreFile(path, file)) {
-              console.error(chalk.dim(`  restored ${file} (pod install churn; the worktree is being removed)`));
-            } else {
-              console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
-            }
-          }
-          try {
-            removeWorktree(path, { force: opts.force });
-          } catch (e) {
-            // reclaimProject already dropped rn-iso's own tracking for this
-            // project (and may have killed its Metro process) before this ran,
-            // per the ordering requirement above -- but the directory and its
-            // git worktree registration are untouched, since `git worktree
-            // remove` failed before deleting anything. Say so plainly rather
-            // than crash with a raw stack trace, and report exactly what was
-            // already released (the same two lines the success path prints
-            // below) so the user knows which sim was freed and whether their
-            // bundler is gone, instead of just "tracking was cleared".
-            console.error(chalk.red(`git worktree remove failed: ${String((e as Error)?.message || e)}`));
-            console.error(
-              chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`),
-            );
-            if (result.dereferenced.length)
-              console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
-            for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
-            if (result.deletedDevices.length)
-              console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
-            if (result.stoppedSessions.length)
-              console.error(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
-            if (result.stoppedTunnels.length)
-              console.error(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
-            for (const s of result.skippedDevices)
-              console.error(chalk.dim(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
-            process.exitCode = 1;
-            return;
-          }
-          console.log(chalk.green(`Removed worktree ${path}`));
-          if (result.dereferenced.length)
-            console.log(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
-          for (const pid of result.killedPids) console.log(chalk.dim(`  killed Metro pid ${pid}`));
-          if (result.deletedDevices.length)
-            console.log(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
-          if (result.stoppedSessions.length)
-            console.log(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
-          if (result.stoppedTunnels.length)
-            console.log(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
-          for (const s of result.skippedDevices) {
-            console.log(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
-          }
-        }),
-      );
-    });
+    .action(runRemove);
 }
 
 export default function worktreeCommand(program: Command): void {

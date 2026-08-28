@@ -778,6 +778,441 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     });
 }
 
+interface VerifyIosRunArgs {
+  d: IosDeps;
+  release: boolean;
+  launched: ReturnType<IosDeps['launchIosApp']>;
+  configuration: string | null;
+  phase: (name: unknown, text: string) => void;
+  note: (line: string) => void;
+  metroCheck: boolean;
+  logsDir: string;
+  launchedAt: number;
+  metroPort: number | null;
+  isExpo: boolean;
+  bundleId: string;
+  udid: string;
+  scheme?: string;
+  remoteDevice: boolean;
+  metroOrigin: string | null;
+}
+
+async function verifyIosRun({
+  d,
+  release,
+  launched,
+  configuration,
+  phase,
+  note,
+  metroCheck,
+  logsDir,
+  launchedAt,
+  metroPort,
+  isExpo,
+  bundleId,
+  udid,
+  scheme,
+  remoteDevice,
+  metroOrigin,
+}: VerifyIosRunArgs): Promise<boolean | string> {
+  if (release) {
+    const processCheck = await d.verifyReleaseLaunch({ pid: launched?.pid ?? null });
+    if (processCheck?.verified) {
+      phase(
+        'verify',
+        `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${configuration}: no bundle fetch to observe)`,
+      );
+      return true;
+    }
+    phase(
+      'verify',
+      chalk.yellow(
+        processCheck?.reason === 'exited'
+          ? `UNVERIFIED: the app process exited within ${formatDuration(processCheck.waitedMs ?? 0)} of launch`
+          : 'UNVERIFIED: simctl launch reported no process id to check',
+      ),
+    );
+    note(
+      chalk.yellow(
+        phaseLine(
+          '',
+          'A release app that dies at startup usually crashed loading its embedded bundle; `rn-iso logs --errors` has the device log that says why.',
+        ),
+      ),
+    );
+    return LAUNCH_UNVERIFIED;
+  }
+
+  const verification: VerifyLaunchResultLike = metroCheck
+    ? await d.verifyLaunch({ logsDir, since: launchedAt, metroPort, mode: isExpo ? MODE_EXPO : MODE_BARE })
+    : { verified: false, skipped: true };
+  if (verification?.verified) {
+    phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
+    return true;
+  }
+  if (verification?.skipped) {
+    phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
+    return LAUNCH_UNVERIFIED;
+  }
+  if (verification?.requested) {
+    phase(
+      'verify',
+      `BUNDLING: the app asked port ${metroPort} for its bundle and Metro was still building it ` +
+        `after ${formatDuration(verification.waitedMs ?? 0)} (a cold bundle on a large graph outlasts this window)`,
+    );
+    note(
+      chalk.dim(
+        phaseLine(
+          '',
+          'Nothing to do: `rn-iso logs --source metro` shows the build finishing, usually within a minute.',
+        ),
+      ),
+    );
+    return LAUNCH_BUNDLING;
+  }
+
+  phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
+  for (const line of unverifiedLaunchLines({
+    platform: PLATFORM,
+    metroPort: metroPort ?? DEFAULT_METRO_PORT,
+    waitedMs: verification?.waitedMs,
+    bundleId,
+    udid,
+    devClientUrl: scheme ? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null,
+    mode: isExpo ? MODE_EXPO : MODE_BARE,
+    remote: remoteDevice,
+    metroOrigin,
+  }))
+    note(chalk.yellow(phaseLine('', line)));
+  return LAUNCH_UNVERIFIED;
+}
+
+async function finishIosUpload(
+  uploadPending: Promise<RemoteUploadLike> | null,
+  remote: LoadProjectProviderResult | null,
+  phase: (name: unknown, text: string) => void,
+  note: (line: string) => void,
+): Promise<boolean> {
+  if (!uploadPending) return false;
+  const upload = await uploadPending;
+  if (upload?.uploaded) {
+    phase('cache', `uploaded (${remote?.name})`);
+  } else if (upload?.timedOut) {
+    note(
+      chalk.yellow(
+        phaseLine(
+          'cache',
+          `${remote?.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`,
+        ),
+      ),
+    );
+    return true;
+  } else if (upload?.failed) {
+    const authNote =
+      remote?.name === 'eas' && isEasAuthFailureText(upload.failed)
+        ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
+        : null;
+    note(chalk.yellow(phaseLine('cache', authNote || `${remote?.name} upload failed: ${upload.failed}`)));
+  }
+  return false;
+}
+
+interface ReportIosResultArgs {
+  d: IosDeps;
+  root: string;
+  json: boolean;
+  release: boolean;
+  configuration: string | null;
+  metroPort: number | null;
+  logsDir: string;
+  device: DeviceLike;
+  udid: string;
+  appPath: string | null;
+  bundleId: string;
+  elapsed: () => number;
+  startedAt: string;
+  storeHash: string;
+  storeKey: string;
+  cacheHit: CacheHitLevel;
+  useBuildCache: boolean;
+  waitedForBuild: WaitedForBuild | null;
+  launchState: boolean | string;
+  remote: LoadProjectProviderResult | null;
+  closeWriter: () => void;
+  webPreviewUrl: string | null;
+}
+
+function reportIosResult({
+  d,
+  root,
+  json,
+  release,
+  configuration,
+  metroPort,
+  logsDir,
+  device,
+  udid,
+  appPath,
+  bundleId,
+  elapsed,
+  startedAt,
+  storeHash,
+  storeKey,
+  cacheHit,
+  useBuildCache,
+  waitedForBuild,
+  launchState,
+  remote,
+  closeWriter,
+  webPreviewUrl,
+}: ReportIosResultArgs): IosFacts {
+  const durationMs = elapsed();
+  writeLastBuild(
+    root,
+    lastBuildRecord({
+      fingerprint: storeHash,
+      cacheKey: storeKey,
+      cacheHit,
+      cacheSkipped: !useBuildCache,
+      durationMs,
+      appPath,
+      bundleId,
+      startedAt,
+      status: 'ok',
+    }),
+    { write: d.writeWorkspaceState },
+  );
+  closeWriter();
+
+  const facts = iosFacts({
+    udid,
+    deviceName: device?.deviceName ?? null,
+    fingerprint: storeHash,
+    configuration,
+    cacheKey: storeKey,
+    cacheHit,
+    cacheSkipped: !useBuildCache,
+    waitedForBuild,
+    appPath,
+    bundleId,
+    metroPort,
+    logsDir,
+    durationMs,
+    launched: launchState,
+    webPreviewUrl,
+  });
+  if (json) {
+    console.log(JSON.stringify(facts));
+  } else {
+    const summary =
+      `OK: ${bundleId} on ${deviceLabel(device, udid)}, ` +
+      (release ? `${configuration} (embedded JS, no Metro)` : `Metro port ${metroPort}`) +
+      ` (${cacheDescription(cacheHit, remote?.name)}, ${formatDuration(durationMs)})`;
+    console.log(
+      launchState === LAUNCH_UNVERIFIED
+        ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
+        : launchState === LAUNCH_BUNDLING
+          ? chalk.green(`${summary} -- bundle requested, still building`)
+          : chalk.green(summary),
+    );
+    if (facts.webPreviewUrl) console.error(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));
+  }
+  return facts;
+}
+
+interface FinishIosRunArgs {
+  d: IosDeps;
+  root: string;
+  json: boolean;
+  release: boolean;
+  configuration: string | null;
+  isExpo: boolean;
+  metroCheck: boolean;
+  metroPort: number | null;
+  logsDir: string;
+  logFile: string;
+  device: DeviceLike;
+  udid: string;
+  remoteDevice: ReturnType<IosDeps['remoteIosDeps']> | null;
+  bootPromise: Promise<IosBootLike | null | undefined>;
+  bootDuration: () => string;
+  appPath: string | null;
+  bundleId: string | null;
+  swapDir: string | null;
+  buildFailure: BuildFailureFields;
+  fail: (args: FailArgs) => null;
+  phase: (name: unknown, text: string) => void;
+  note: (line: string) => void;
+  logWriter: () => NdjsonWriter;
+  uploadPending: Promise<RemoteUploadLike> | null;
+  remote: LoadProjectProviderResult | null;
+  abandonedRemote: boolean;
+  elapsed: () => number;
+  startedAt: string;
+  storeHash: string;
+  storeKey: string;
+  cacheHit: CacheHitLevel;
+  useBuildCache: boolean;
+  waitedForBuild: WaitedForBuild | null;
+  closeWriter: () => void;
+}
+
+async function finishIosRun({
+  d,
+  root,
+  json,
+  release,
+  configuration,
+  isExpo,
+  metroCheck,
+  metroPort,
+  logsDir,
+  logFile,
+  device,
+  udid,
+  remoteDevice,
+  bootPromise,
+  bootDuration,
+  appPath,
+  bundleId: initialBundleId,
+  swapDir,
+  buildFailure,
+  fail,
+  phase,
+  note,
+  logWriter,
+  uploadPending,
+  remote,
+  abandonedRemote: remoteWasAbandoned,
+  elapsed,
+  startedAt,
+  storeHash,
+  storeKey,
+  cacheHit,
+  useBuildCache,
+  waitedForBuild,
+  closeWriter,
+}: FinishIosRunArgs): Promise<IosFacts | null> {
+  let bundleId = initialBundleId;
+
+  if (appPath && !bundleId) {
+    bundleId = d.readBundleId(appPath) || d.detectBundleId(root);
+    if (!bundleId) {
+      return fail({
+        code: 'RN_ISO_INSTALL_FAILED',
+        message: `Could not read a bundle identifier from the cached app at ${appPath}.`,
+        remedy: 'Remove the cache entry (`rn-iso gc`) and run again to rebuild it.',
+        build: { ...buildFailure, appPath },
+      });
+    }
+  }
+
+  if (bundleId) d.upsertProject(root, { bundleId });
+
+  const booted = await bootPromise;
+  if (!booted?.ok) {
+    return fail({
+      code: booted?.code || 'RN_ISO_NO_DEVICE',
+      message: booted?.reason || 'The owned simulator could not be booted.',
+      remedy: booted?.remedy || 'Run `rn-iso ios` again to re-establish an owned simulator for this workspace.',
+    });
+  }
+  phase('device', `${deviceLabel(device, udid)} booted ${bootDuration()}`);
+
+  const installTimer = stepTimer(d.now);
+  const installed = d.installIosApp({ udid, appPath: appPath! });
+  if (installed?.failed) {
+    return fail({
+      code: installed.code || 'RN_ISO_INSTALL_FAILED',
+      message: installed.reason,
+      remedy: 'Check that the simulator is booted and that the app was built for the simulator SDK.',
+      build: { ...buildFailure, appPath, bundleId },
+    });
+  }
+  phase('install', `-> ${deviceLabel(device, udid)} ${installTimer()}`);
+
+  if (swapDir) {
+    try {
+      rmSync(swapDir, { recursive: true, force: true });
+    } catch {}
+  }
+
+  const scheme = release ? undefined : d.devClientScheme(root, appPath);
+  const launchTimer = stepTimer(d.now);
+  const launchedAt = d.now();
+  const launched = d.launchIosApp({ udid, bundleId: bundleId!, metroPort, devClientScheme: scheme });
+  if (launched?.failed) {
+    return fail({
+      code: launched.code || 'RN_ISO_LAUNCH_FAILED',
+      message: launched.reason,
+      remedy: `Run \`xcrun simctl launch --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`,
+      build: { ...buildFailure, appPath, bundleId },
+    });
+  }
+  phase('launch', `${bundleId!} ${launchTimer()}`);
+
+  logWriter().write({
+    src: 'build',
+    level: 'info',
+    marker: true,
+    event: 'launch',
+    msg: release
+      ? `launched ${bundleId} on ${udid} (${configuration}, embedded JS bundle, no Metro)`
+      : `launched ${bundleId} on ${udid} against Metro port ${metroPort}` +
+        (launched?.mode === 'openurl' ? ' (expo-dev-client)' : ''),
+  });
+
+  await d.replaceCollector({ root, udid, bundleId: bundleId!, appName: appNameFromPath(appPath), note });
+
+  const launchState = await verifyIosRun({
+    d,
+    release,
+    launched,
+    configuration,
+    phase,
+    note,
+    metroCheck,
+    logsDir,
+    launchedAt,
+    metroPort,
+    isExpo,
+    bundleId: bundleId!,
+    udid,
+    scheme,
+    remoteDevice: Boolean(remoteDevice),
+    metroOrigin: typeof launched?.jsLocation === 'string' ? launched.jsLocation : null,
+  });
+  logWriter().write(launchOutcomeRecord({ launchState, release, bundleId, configuration, metroPort }));
+
+  const uploadWasAbandoned = await finishIosUpload(uploadPending, remote, phase, note);
+  const facts = reportIosResult({
+    d,
+    root,
+    json,
+    release,
+    configuration,
+    metroPort,
+    logsDir,
+    device,
+    udid,
+    appPath,
+    bundleId: bundleId!,
+    elapsed,
+    startedAt,
+    storeHash,
+    storeKey,
+    cacheHit,
+    useBuildCache,
+    waitedForBuild,
+    launchState,
+    remote,
+    closeWriter,
+    webPreviewUrl: remoteDevice?.webPreviewUrl() ?? null,
+  });
+  if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
+  return facts;
+}
+
 export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> = {}): Promise<IosFacts | null> {
   // Annotated explicitly: spreading a Partial<> over the full DEFAULT_DEPS
   // would otherwise let TS infer some properties as possibly-undefined, even
@@ -1406,246 +1841,42 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     }
   }
 
-  if (appPath && !bundleId) {
-    bundleId = d.readBundleId(appPath) || d.detectBundleId(root);
-    if (!bundleId) {
-      return fail({
-        code: 'RN_ISO_INSTALL_FAILED',
-        message: `Could not read a bundle identifier from the cached app at ${appPath}.`,
-        remedy: 'Remove the cache entry (`rn-iso gc`) and run again to rebuild it.',
-        build: { ...buildFailure, appPath },
-      });
-    }
-  }
-
-  if (bundleId) d.upsertProject(root, { bundleId });
-
-  const booted = await bootPromise;
-  if (!booted?.ok) {
-    return fail({
-      code: booted?.code || 'RN_ISO_NO_DEVICE',
-      message: booted?.reason || 'The owned simulator could not be booted.',
-      remedy: booted?.remedy || 'Run `rn-iso ios` again to re-establish an owned simulator for this workspace.',
-    });
-  }
-  phase('device', `${deviceLabel(device, udid)} booted ${bootDuration}`);
-
-  const installTimer = stepTimer(d.now);
-  const installed = d.installIosApp({ udid, appPath: appPath! });
-  if (installed?.failed) {
-    return fail({
-      code: installed.code || 'RN_ISO_INSTALL_FAILED',
-      message: installed.reason,
-      remedy: 'Check that the simulator is booted and that the app was built for the simulator SDK.',
-      build: { ...buildFailure, appPath, bundleId },
-    });
-  }
-  phase('install', `-> ${deviceLabel(device, udid)} ${installTimer()}`);
-
-  if (swapDir) {
-    try {
-      rmSync(swapDir, { recursive: true, force: true });
-    } catch {}
-  }
-
-  const scheme = release ? undefined : d.devClientScheme(root, appPath);
-  const launchTimer = stepTimer(d.now);
-  const launchedAt = d.now();
-  const launched = d.launchIosApp({
-    udid,
-    bundleId: bundleId!,
-    metroPort,
-    devClientScheme: scheme,
-  });
-  if (launched?.failed) {
-    return fail({
-      code: launched.code || 'RN_ISO_LAUNCH_FAILED',
-      message: launched.reason,
-      remedy: `Run \`xcrun simctl launch --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`,
-      build: { ...buildFailure, appPath, bundleId },
-    });
-  }
-  phase('launch', `${bundleId!} ${launchTimer()}`);
-
-  logWriter().write({
-    src: 'build',
-    level: 'info',
-    marker: true,
-    event: 'launch',
-    msg: release
-      ? `launched ${bundleId} on ${udid} (${configuration}, embedded JS bundle, no Metro)`
-      : `launched ${bundleId} on ${udid} against Metro port ${metroPort}` +
-        (launched?.mode === 'openurl' ? ' (expo-dev-client)' : ''),
-  });
-
-  await d.replaceCollector({
+  return finishIosRun({
+    d,
     root,
-    udid,
-    bundleId: bundleId!,
-    appName: appNameFromPath(appPath),
-    note,
-  });
-
-  let launchState: boolean | string = true;
-  if (release) {
-    // A release app fetches nothing from Metro -- its bundle is embedded --
-    // so the bundle-request proof does not exist. What can be proven is that
-    // the launched PROCESS is still alive a moment later: a bad embedded
-    // bundle takes the app down within a second or two of launch.
-    const processCheck = await d.verifyReleaseLaunch({ pid: launched?.pid ?? null });
-    if (processCheck?.verified) {
-      phase(
-        'verify',
-        `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${configuration}: no bundle fetch to observe)`,
-      );
-    } else {
-      launchState = LAUNCH_UNVERIFIED;
-      phase(
-        'verify',
-        chalk.yellow(
-          processCheck?.reason === 'exited'
-            ? `UNVERIFIED: the app process exited within ${formatDuration(processCheck.waitedMs ?? 0)} of launch`
-            : 'UNVERIFIED: simctl launch reported no process id to check',
-        ),
-      );
-      note(
-        chalk.yellow(
-          phaseLine(
-            '',
-            'A release app that dies at startup usually crashed loading its embedded bundle; `rn-iso logs --errors` has the device log that says why.',
-          ),
-        ),
-      );
-    }
-  } else {
-    const verification: VerifyLaunchResultLike = metroCheck
-      ? await d.verifyLaunch({ logsDir, since: launchedAt, metroPort, mode: isExpo ? MODE_EXPO : MODE_BARE })
-      : { verified: false, skipped: true };
-    if (verification?.verified) {
-      phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
-    } else if (verification?.skipped) {
-      launchState = LAUNCH_UNVERIFIED;
-      phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
-    } else if (verification?.requested) {
-      launchState = LAUNCH_BUNDLING;
-      phase(
-        'verify',
-        `BUNDLING: the app asked port ${metroPort} for its bundle and Metro was still building it ` +
-          `after ${formatDuration(verification.waitedMs ?? 0)} (a cold bundle on a large graph outlasts this window)`,
-      );
-      note(
-        chalk.dim(
-          phaseLine(
-            '',
-            'Nothing to do: `rn-iso logs --source metro` shows the build finishing, usually within a minute.',
-          ),
-        ),
-      );
-    } else {
-      launchState = LAUNCH_UNVERIFIED;
-      const lines = unverifiedLaunchLines({
-        platform: PLATFORM,
-        metroPort: metroPort ?? DEFAULT_METRO_PORT,
-        waitedMs: verification?.waitedMs,
-        bundleId,
-        udid,
-        devClientUrl: scheme ? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null,
-        mode: isExpo ? MODE_EXPO : MODE_BARE,
-        remote: Boolean(remoteDevice),
-        // What the app was ACTUALLY pointed at. On a remote device that is not
-        // localhost, and printing localhost sends the reader looking in the
-        // wrong place.
-        metroOrigin: typeof launched?.jsLocation === 'string' ? launched.jsLocation : null,
-      });
-      phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
-      for (const line of lines) note(chalk.yellow(phaseLine('', line)));
-    }
-  }
-
-  logWriter().write(launchOutcomeRecord({ launchState, release, bundleId, configuration, metroPort }));
-
-  if (uploadPending) {
-    const upload = await uploadPending;
-    if (upload?.uploaded) {
-      phase('cache', `uploaded (${remote?.name})`);
-    } else if (upload?.timedOut) {
-      abandonedRemote = true;
-      note(
-        chalk.yellow(
-          phaseLine(
-            'cache',
-            `${remote?.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`,
-          ),
-        ),
-      );
-    } else if (upload?.failed) {
-      const authNote =
-        remote?.name === 'eas' && isEasAuthFailureText(upload.failed)
-          ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
-          : null;
-      note(chalk.yellow(phaseLine('cache', authNote || `${remote?.name} upload failed: ${upload.failed}`)));
-    }
-  }
-
-  const durationMs = elapsed();
-  writeLastBuild(
-    root,
-    lastBuildRecord({
-      fingerprint: storeHash,
-      cacheKey: storeKey,
-      cacheHit,
-      cacheSkipped: !useBuildCache,
-      durationMs,
-      appPath,
-      bundleId,
-      startedAt,
-      status: 'ok',
-    }),
-    { write: d.writeWorkspaceState },
-  );
-
-  writer?.close?.();
-
-  const facts = iosFacts({
-    udid,
-    deviceName: device?.deviceName ?? null,
-    fingerprint: storeHash,
+    json,
+    release,
     configuration,
-    cacheKey: storeKey,
-    cacheHit,
-    cacheSkipped: !useBuildCache,
-    waitedForBuild,
-    appPath,
-    bundleId,
+    isExpo,
+    metroCheck,
     metroPort,
     logsDir,
-    durationMs,
-    launched: launchState,
-    webPreviewUrl: remoteDevice?.webPreviewUrl() ?? null,
+    logFile,
+    device,
+    udid,
+    remoteDevice,
+    bootPromise,
+    bootDuration: () => bootDuration,
+    appPath,
+    bundleId,
+    swapDir,
+    buildFailure,
+    fail,
+    phase,
+    note,
+    logWriter,
+    uploadPending,
+    remote,
+    abandonedRemote,
+    elapsed,
+    startedAt,
+    storeHash,
+    storeKey,
+    cacheHit,
+    useBuildCache,
+    waitedForBuild,
+    closeWriter: () => writer?.close?.(),
   });
-
-  if (json) {
-    console.log(JSON.stringify(facts));
-  } else {
-    const summary =
-      `OK: ${bundleId} on ${deviceLabel(device, udid)}, ` +
-      (release ? `${configuration} (embedded JS, no Metro)` : `Metro port ${metroPort}`) +
-      ` (${cacheDescription(cacheHit, remote?.name)}, ${formatDuration(durationMs)})`;
-    console.log(
-      launchState === LAUNCH_UNVERIFIED
-        ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
-        : launchState === LAUNCH_BUNDLING
-          ? chalk.green(`${summary} -- bundle requested, still building`)
-          : chalk.green(summary),
-    );
-    // Repeated after the outcome, not only when the session was created: by
-    // now a build may have scrolled the earlier line away, and this is the
-    // only way a person can look at a device in a datacenter.
-    if (facts.webPreviewUrl) console.error(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));
-  }
-
-  if (abandonedRemote) exitAfterFlush(0);
-  return facts;
 }
 
 export function launchOutcomeRecord({
