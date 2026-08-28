@@ -3,8 +3,8 @@ import type { ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
-import type { Command } from 'commander';
-import type { AndroidFacts, SettingsObject, WaitedForBuild } from '../types.ts';
+import { InvalidArgumentError, type Command } from 'commander';
+import type { AndroidFacts, RemoteDeviceBackend, SettingsObject, WaitedForBuild } from '../types.ts';
 import { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
@@ -45,7 +45,14 @@ import {
   resolveMetroWithRetry,
   stepTimer,
 } from './ios.ts';
-import { resolveSettings } from '../settings.ts';
+import {
+  REMOTE_DEVICE_BACKENDS,
+  publicUrlSetting,
+  remoteAndroidSetting,
+  remoteDeviceSettingError,
+  resolveSettings,
+  tunnelModeSetting,
+} from '../settings.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 import { readCollectors } from '../collector/state.ts';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
@@ -63,6 +70,16 @@ import {
 } from '../engine/app-install.ts';
 import { androidHome, emulatorFailureRemedy, extractEmulatorFailure, findBuildTool } from '../sim/android.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
+import {
+  REMOTE_SESSION_ERROR,
+  binOnPath,
+  ensureRemoteBootOwned,
+  ensureMetroReachable as ensureRemoteMetroReachable,
+  remoteAndroidDeps,
+  resolveRemoteContext,
+} from '../engine/device-remote.ts';
+import { detectProviders } from '../engine/metro-reach.ts';
+import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { OwnedDeviceRecord } from '../engine/device.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid } from '../engine/gradle.ts';
@@ -74,6 +91,7 @@ import {
   cacheLevel,
   exitAfterFlush,
   checkEasAuth,
+  resolveEasCliBin,
   easAuthNote,
   isEasAuthFailureText,
   loadProjectProvider,
@@ -172,6 +190,7 @@ interface AndroidCommandOptions {
   metroCheck?: boolean;
   buildCache?: boolean;
   variant?: string;
+  remote?: RemoteDeviceBackend;
 }
 
 interface FailExtra {
@@ -530,6 +549,14 @@ export function registerAndroid(program: Command): void {
       '--variant <name>',
       'Gradle variant to assemble and install (e.g. productionDebug on a flavored project); overrides the android.variant setting. A variant ending in Release embeds the JS bundle and skips Metro entirely. Default: debug',
     )
+    .option(
+      '--remote <backend>',
+      'Install and launch on a remote device with proxy or EAS. The build still happens here.',
+      (value) => {
+        if ((REMOTE_DEVICE_BACKENDS as readonly string[]).includes(value)) return value as RemoteDeviceBackend;
+        throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
+      },
+    )
     .action(async (opts: AndroidCommandOptions) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
@@ -543,6 +570,7 @@ export function registerAndroid(program: Command): void {
         metroCheck: opts.metroCheck !== false,
         useBuildCache: opts.buildCache !== false,
         variant: opts.variant ?? null,
+        remoteDevice: opts.remote ?? null,
       });
       if (!result.ok) process.exit(1);
     });
@@ -555,6 +583,16 @@ interface RunAndroidOptions {
   useBuildCache?: boolean;
   variant?: string | null;
   readApkPackage?: (apkPath: string | null) => string | null;
+  // `--remote`. Named for the device rather than the flag because `remote`
+  // already means the build-cache provider in this file.
+  remoteDevice?: RemoteDeviceBackend | null;
+  resolveSettingsFor?: typeof resolveSettings;
+  resolveRemoteDeviceContext?: typeof resolveRemoteContext;
+  remoteDeviceDeps?: typeof remoteAndroidDeps;
+  resolveEasBin?: typeof resolveEasCliBin;
+  ensureMetroReachable?: typeof ensureRemoteMetroReachable;
+  ensureRemoteBootOwned?: typeof ensureRemoteBootOwned;
+  detectRemoteProviders?: typeof detectProviders;
   getLimits?: typeof getConcurrencyLimits;
   checkCapacity?: typeof checkDeviceCapacity;
   acquireSlot?: typeof acquireBuildSlot;
@@ -604,10 +642,20 @@ interface RunAndroidResult {
   facts?: AndroidFacts;
 }
 
+interface AndroidBootLike {
+  ok?: boolean;
+  failed?: boolean;
+  serial?: string;
+  reason?: string;
+  code?: string;
+  remedy?: string;
+}
+
 type AndroidWriter = ReturnType<typeof createNdjsonWriter>;
 
 interface VerifyAndroidRunArgs {
   release: boolean;
+  remoteRelease: boolean;
   verifyReleaseLaunched: typeof verifyAndroidReleaseLaunch;
   verifyLaunched: typeof verifyLaunch;
   serial: string;
@@ -624,6 +672,7 @@ interface VerifyAndroidRunArgs {
 
 async function verifyAndroidRun({
   release,
+  remoteRelease,
   verifyReleaseLaunched,
   verifyLaunched,
   serial,
@@ -637,6 +686,10 @@ async function verifyAndroidRun({
   scheme,
   phase,
 }: VerifyAndroidRunArgs): Promise<boolean | string> {
+  if (remoteRelease) {
+    phase('verify', chalk.yellow('UNVERIFIED: remote adapter launch accepted; process verification is unavailable'));
+    return LAUNCH_UNVERIFIED;
+  }
   if (release) {
     const processCheck = await verifyReleaseLaunched({ serial, packageName: androidPackage });
     if (processCheck?.verified) {
@@ -730,7 +783,7 @@ interface ReportAndroidResultArgs {
   variant: string | null;
   release: boolean;
   metroPort: number | null;
-  logsDir: string;
+  logsDir: string | null;
   serial: string;
   apkPath: string | null;
   androidPackage: string;
@@ -816,7 +869,8 @@ interface FinishAndroidRunArgs {
   logsDir: string;
   emuLog: string;
   device: OwnedDeviceRecord;
-  bootPromise: Promise<{ failed?: boolean; reason?: string | null; serial?: string | null }>;
+  remoteDevice: ReturnType<typeof remoteAndroidDeps> | null;
+  bootPromise: Promise<AndroidBootLike>;
   bootDuration: () => string;
   apkPath: string | null;
   androidPackage: string | null;
@@ -865,6 +919,7 @@ async function finishAndroidRun({
   logsDir,
   emuLog,
   device,
+  remoteDevice,
   bootPromise,
   bootDuration,
   apkPath,
@@ -960,7 +1015,9 @@ async function finishAndroidRun({
   const launchTimer = stepTimer(now);
   const launchedAt = now();
   const launched: LaunchResultLike = release
-    ? launchRelease({ serial, packageName: androidPackage })
+    ? remoteDevice
+      ? remoteDevice.launch({ serial, packageName: androidPackage, metroPort: null })
+      : launchRelease({ serial, packageName: androidPackage })
     : launch({
         serial,
         packageName: androidPackage,
@@ -1015,11 +1072,15 @@ async function finishAndroidRun({
 
   persistLastBuild({ writeState, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
 
-  const collectorPid = await startCollector({ root, serial, packageName: androidPackage, spawn, kill, out });
-  phase('logs', `${displayPath(root, logsDir)}${collectorPid ? ` (collector pid ${collectorPid})` : ''}`);
+  const remoteRelease = Boolean(remoteDevice && release);
+  if (!remoteRelease) {
+    const collectorPid = await startCollector({ root, serial, packageName: androidPackage, spawn, kill, out });
+    phase('logs', `${displayPath(root, logsDir)}${collectorPid ? ` (collector pid ${collectorPid})` : ''}`);
+  }
 
   const launchState = await verifyAndroidRun({
     release,
+    remoteRelease,
     verifyReleaseLaunched,
     verifyLaunched,
     serial,
@@ -1043,7 +1104,7 @@ async function finishAndroidRun({
     variant,
     release,
     metroPort,
-    logsDir,
+    logsDir: remoteRelease ? null : logsDir,
     serial,
     apkPath,
     androidPackage,
@@ -1061,10 +1122,18 @@ async function finishAndroidRun({
   return { ok: true, facts };
 }
 
-export async function runAndroid(
+function resolveRunAndroidOptions(
   {
     root,
     json = false,
+    remoteDevice: commandRemoteBackend = null,
+    resolveSettingsFor = resolveSettings,
+    resolveRemoteDeviceContext = resolveRemoteContext,
+    remoteDeviceDeps: makeRemoteDeviceDeps = remoteAndroidDeps,
+    resolveEasBin = resolveEasCliBin,
+    ensureMetroReachable: ensureRemoteMetro = ensureRemoteMetroReachable,
+    ensureRemoteBootOwned: ensureRemoteOwned = ensureRemoteBootOwned,
+    detectRemoteProviders = detectProviders,
     metroCheck = true,
     useBuildCache = true,
     variant: variantFlag = null,
@@ -1111,7 +1180,124 @@ export async function runAndroid(
     out = (line) => console.error(line),
     emit = (line) => console.log(line),
   }: RunAndroidOptions = {} as RunAndroidOptions,
-): Promise<RunAndroidResult> {
+) {
+  return {
+    root,
+    json,
+    commandRemoteBackend,
+    resolveSettingsFor,
+    resolveRemoteDeviceContext,
+    makeRemoteDeviceDeps,
+    resolveEasBin,
+    ensureRemoteMetro,
+    ensureRemoteOwned,
+    detectRemoteProviders,
+    metroCheck,
+    useBuildCache,
+    variantFlag,
+    readApkPackage,
+    getLimits,
+    checkCapacity,
+    acquireSlot,
+    releaseSlot,
+    ensureDevice,
+    ensureDeviceBooted,
+    resolveMetro,
+    resolveMetroRetrying,
+    readState,
+    pidAlive,
+    verifyLaunched,
+    ensureStorage,
+    fingerprint,
+    untracked,
+    resolveCached,
+    storeCached,
+    storedAssets,
+    captureAssets,
+    acquireLock,
+    releaseLock,
+    waitForBuild,
+    loadProvider,
+    easAuth,
+    resolveRemoteBuild,
+    uploadRemoteBuild,
+    needsPrebuildFor,
+    prebuild,
+    build,
+    install,
+    launch,
+    launchRelease,
+    verifyReleaseLaunched,
+    swapApk,
+    resolveDevClientScheme,
+    spawn,
+    kill,
+    createWriter,
+    writeState,
+    now,
+    out,
+    emit,
+  };
+}
+
+export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOptions): Promise<RunAndroidResult> {
+  let {
+    root,
+    json,
+    commandRemoteBackend,
+    resolveSettingsFor,
+    resolveRemoteDeviceContext,
+    makeRemoteDeviceDeps,
+    resolveEasBin,
+    ensureRemoteMetro,
+    ensureRemoteOwned,
+    detectRemoteProviders,
+    metroCheck,
+    useBuildCache,
+    variantFlag,
+    readApkPackage,
+    getLimits,
+    checkCapacity,
+    acquireSlot,
+    releaseSlot,
+    ensureDevice,
+    ensureDeviceBooted,
+    resolveMetro,
+    resolveMetroRetrying,
+    readState,
+    pidAlive,
+    verifyLaunched,
+    ensureStorage,
+    fingerprint,
+    untracked,
+    resolveCached,
+    storeCached,
+    storedAssets,
+    captureAssets,
+    acquireLock,
+    releaseLock,
+    waitForBuild,
+    loadProvider,
+    easAuth,
+    resolveRemoteBuild,
+    uploadRemoteBuild,
+    needsPrebuildFor,
+    prebuild,
+    build,
+    install,
+    launch,
+    launchRelease,
+    verifyReleaseLaunched,
+    swapApk,
+    resolveDevClientScheme,
+    spawn,
+    kill,
+    createWriter,
+    writeState,
+    now,
+    out,
+    emit,
+  } = resolveRunAndroidOptions(options);
   const started = now();
   const startedAt = new Date(started).toISOString();
   try {
@@ -1197,60 +1383,45 @@ export async function runAndroid(
     return { ok: false, error: { code, message, remedy: remedy ?? null } };
   };
 
-  const settings = resolveSettings({
+  // ---- project facts -------------------------------------------------
+  const settings = resolveSettingsFor({
     projectPath: root,
     gitCommonDir: gitCommonDir(root),
     repoRoot: repoRoot(root),
   });
+  const remoteSettingError = remoteDeviceSettingError(settings);
+  if (remoteSettingError) {
+    return fail(
+      'RN_ISO_BAD_ARG',
+      remoteSettingError,
+      `Set ios.remote and android.remote to one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`,
+    );
+  }
+  // The flavored variant drives the gradle task, the APK location and the
+  // cache key below. Precedence: the --variant flag (per-invocation judgment)
+  // over the android.variant setting (the repo-level default) over nothing --
+  // the plain assembleDebug flow, unchanged.
   const variant = resolveVariant(variantFlag, settings);
   const release = isReleaseVariant(variant);
   const isExpo = detectIsExpo(root);
+  const remoteBackend = commandRemoteBackend ?? remoteAndroidSetting(settings);
   let androidPackage = detectAndroidPackage(root);
   record.bundleId = androidPackage;
-  upsertProject(root, {
-    bundleId: detectBundleId(root) ?? undefined,
-    androidPackage: androidPackage ?? undefined,
-    isExpo,
-  });
+  const registerProject = () =>
+    upsertProject(root, {
+      bundleId: detectBundleId(root) ?? undefined,
+      androidPackage: androidPackage ?? undefined,
+      isExpo,
+    });
+  if (remoteBackend !== 'eas') registerProject();
   const project = getProject(root);
   const label = projectShortcut(root, project);
 
-  const limits = getLimits();
+  // The backend name is known here, but no remote tool or device operation
+  // runs until the local Metro gate below succeeds.
+  let remoteDevice: ReturnType<typeof makeRemoteDeviceDeps> | null = null;
 
-  const capacity = checkCapacity({
-    platform: PLATFORM,
-    project,
-    max: limits.maxDevices,
-  });
-  if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
-
-  const emuLog = emulatorLogFile(root);
-  let device: OwnedDeviceRecord;
-  try {
-    device = await ensureDevice({
-      platform: PLATFORM,
-      project,
-      projectPath: root,
-      label,
-      settings,
-      flags: {},
-      note: out,
-      out,
-      logFile: emuLog,
-    });
-  } catch (err) {
-    const diag = noDeviceDiagnostic({
-      reason: `Could not ensure an owned Android emulator: ${(err as Error)?.message || err}`,
-      logFile: emuLog,
-      remedy:
-        'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
-    });
-    return fail(NO_DEVICE, diag.message, diag.remedy, {
-      lines: diag.lines,
-      logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
-    });
-  }
-
+  // ---- metro (fail fast, before remote resolution and device work) ----
   const reservedPort = project?.metroPort ?? null;
   let metroPort: number | null = null;
   let phaseFailure: RunAndroidResult | null = null;
@@ -1299,18 +1470,133 @@ export async function runAndroid(
 
   if (!(await resolveMetroPort())) return phaseFailure!;
 
+  // ---- remote device: five dep overrides, or none ----
+  //
+  // The local Metro identity is known before remote setup begins. A debug
+  // run then proves the public route before ensureDeviceBooted can connect a
+  // proxy device or create a billable EAS session.
+  if (remoteBackend) {
+    const resolved = await resolveRemoteDeviceContext({
+      root,
+      label,
+      platform: PLATFORM,
+      backend: remoteBackend,
+      easBin: resolveEasBin(root)?.file ?? null,
+    });
+    if ('failed' in resolved) return fail(resolved.code ?? REMOTE_SESSION_ERROR, resolved.failed, resolved.remedy);
+    remoteDevice = makeRemoteDeviceDeps(resolved.ctx);
+
+    if (metroPort !== null) {
+      const reachable = await ensureRemoteMetro({
+        ctx: remoteDevice.ctx,
+        metroPort,
+        isExpo,
+        tunnelMode: tunnelModeSetting(settings) ?? undefined,
+        publicUrl: publicUrlSetting(settings),
+        available: detectRemoteProviders(binOnPath),
+      });
+      if ('failed' in reachable) {
+        return fail(reachable.code ?? REMOTE_SESSION_ERROR, reachable.failed, reachable.remedy);
+      }
+    }
+
+    checkCapacity = remoteDevice.checkCapacity;
+    ensureDevice = remoteDevice.ensureDevice;
+    ensureDeviceBooted = remoteDevice.ensureDeviceBooted;
+    install = remoteDevice.install;
+    launch = remoteDevice.launch;
+  }
+
+  // ---- concurrency: opt-in, unlimited by default ----
+  const limits = getLimits();
+  const capacity = checkCapacity({
+    platform: PLATFORM,
+    project,
+    max: limits.maxDevices,
+  });
+  if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
+
+  // ---- device --------------------------------------------------------
+  const emuLog = emulatorLogFile(root);
+  let device: OwnedDeviceRecord;
+  try {
+    device = await ensureDevice({
+      platform: PLATFORM,
+      project,
+      projectPath: root,
+      label,
+      settings,
+      flags: {},
+      note: out,
+      out,
+      logFile: emuLog,
+    });
+  } catch (err) {
+    const diag = noDeviceDiagnostic({
+      reason: `Could not ensure an owned Android emulator: ${(err as Error)?.message || err}`,
+      logFile: emuLog,
+      remedy:
+        'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
+    });
+    return fail(NO_DEVICE, diag.message, diag.remedy, {
+      lines: diag.lines,
+      logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
+    });
+  }
+
+  // Local boot is kicked off here and awaited only at install: gradle needs
+  // no device, so a cold AVD boot overlaps the build. Remote boot is awaited
+  // below because its EAS session must be recorded before build work starts.
+  // The catch converts a rare boot rejection into the normal result shape.
+  // The boot's own elapsed time, stamped the moment its promise settles: the
+  // boot overlaps the build by design, so reading the clock at the await
+  // would report the build's time, not the boot's.
   const bootTimer = stepTimer(now);
   let bootDuration = '';
-  const bootPromise = Promise.resolve(ensureDeviceBooted({ platform: PLATFORM, device, out, logFile: emuLog }))
-    .catch((e) => ({
+  const boot = (): Promise<AndroidBootLike> =>
+    Promise.resolve(ensureDeviceBooted({ platform: PLATFORM, device, out, logFile: emuLog })).catch((e) => ({
       failed: true as const,
       reason: String((e as Error)?.message || e),
-      serial: null,
-    }))
-    .then((result) => {
-      bootDuration = bootTimer();
-      return result;
-    });
+      serial: undefined,
+    }));
+  const bootPromise: Promise<AndroidBootLike> = (
+    remoteDevice?.ctx.backend === 'eas'
+      ? ensureRemoteOwned({
+          root,
+          platform: PLATFORM,
+          sessionName: ownedSessionName(remoteDevice.ctx.label),
+          startedAt,
+          boot,
+          createdSessionId: remoteDevice.createdSessionId,
+          abandonCreatedSession: remoteDevice.abandonCreatedSession,
+          writeState,
+          register: registerProject,
+        })
+      : boot()
+  ).then((result) => {
+    bootDuration = bootTimer();
+    return result;
+  });
+
+  // A remote session must be durable before fingerprinting, dependency
+  // setup, or a build can fail. Local boot keeps overlapping the build.
+  if (remoteDevice) {
+    const booted = await bootPromise;
+    if (booted.failed) {
+      if (booted.code) {
+        return fail(booted.code, booted.reason ?? 'The remote device did not boot.', booted.remedy ?? null);
+      }
+      const diag = noDeviceDiagnostic({
+        reason: booted.reason ?? 'The remote device did not boot.',
+        logFile: emuLog,
+        remedy: 'Run `rn-iso status` to inspect the remote device, then retry the command.',
+      });
+      return fail(NO_DEVICE, diag.message, diag.remedy, {
+        lines: diag.lines,
+        logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
+      });
+    }
+  }
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
 
@@ -1696,6 +1982,7 @@ export async function runAndroid(
     logsDir,
     emuLog,
     device,
+    remoteDevice,
     bootPromise,
     bootDuration: () => bootDuration,
     apkPath,

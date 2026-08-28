@@ -3,7 +3,7 @@ import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
-import type { Command } from 'commander';
+import { InvalidArgumentError, type Command } from 'commander';
 import {
   buildCacheKey,
   describeFingerprintMiss,
@@ -41,6 +41,16 @@ import {
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
+import {
+  REMOTE_SESSION_ERROR,
+  binOnPath,
+  ensureRemoteBootOwned,
+  ensureMetroReachable,
+  remoteIosDeps,
+  resolveRemoteContext,
+} from '../engine/device-remote.ts';
+import { detectProviders } from '../engine/metro-reach.ts';
+import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { type Diagnostic, describeDiagnostic } from '../engine/errors-xcode.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import {
@@ -52,6 +62,7 @@ import {
   exitAfterFlush,
   isEasAuthFailureText,
   loadProjectProvider,
+  resolveEasCliBin,
   resolveRemote,
   uploadRemote,
   type LoadProjectProviderResult,
@@ -59,12 +70,21 @@ import {
 import { swapJsBundle } from '../engine/js-swap.ts';
 import { buildIos, readBundleId } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
-import type { CacheHitLevel, IosFacts } from '../types.ts';
+import type { CacheHitLevel, IosFacts, RemoteDeviceBackend } from '../types.ts';
 import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.ts';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../paths.ts';
 import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.ts';
-import { resolveSettings, unknownSettingKeys, type SettingsObject } from '../settings.ts';
+import {
+  publicUrlSetting,
+  REMOTE_DEVICE_BACKENDS,
+  remoteDeviceSettingError,
+  remoteIosSetting,
+  resolveSettings,
+  tunnelModeSetting,
+  unknownSettingKeys,
+  type SettingsObject,
+} from '../settings.ts';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 
@@ -80,10 +100,30 @@ function writePhase(name: unknown, text: string): void {
 
 export const PLATFORM = 'ios';
 
+// Build for the simulator platform rather than one device. Used only when the
+// device is remote: see the buildIos call for why `id=<udid>` cannot work
+// there.
+const GENERIC_SIM_DESTINATION = 'generic/platform=iOS Simulator';
+
+// --- local, flat shapes for engine results ---------------------------------
+//
+// These interfaces describe only the shape THIS file reads off the engine and
+// sim results -- a deliberately local, all-optional view, looser than the
+// producers' own exported types, matching the defensive reads underneath.
+
 interface DeviceLike {
   deviceName?: string | null;
   name?: string | null;
   avdName?: string | null;
+}
+
+interface IosBootLike {
+  ok?: boolean;
+  failed?: boolean;
+  udid?: string;
+  reason?: string;
+  code?: string;
+  remedy?: string;
 }
 
 interface PodStateLike {
@@ -140,6 +180,7 @@ interface IosCommandOptions {
   metroCheck?: boolean;
   buildCache?: boolean;
   configuration?: string;
+  remote?: RemoteDeviceBackend;
 }
 
 interface WaitedForBuild {
@@ -451,6 +492,7 @@ export function iosFacts({
   logsDir,
   durationMs,
   launched = true,
+  webPreviewUrl = null,
 }: {
   udid: string;
   deviceName?: string | null;
@@ -466,6 +508,7 @@ export function iosFacts({
   logsDir?: string;
   durationMs?: number;
   launched?: boolean | string;
+  webPreviewUrl?: string | null;
 }): IosFacts {
   return {
     platform: PLATFORM,
@@ -483,6 +526,9 @@ export function iosFacts({
     metroPort,
     logs: { dir: logsDir },
     durationMs,
+    // Omitted entirely on a local device rather than carried as null: a key
+    // that is always present invites a caller to print an empty link.
+    ...(webPreviewUrl ? { webPreviewUrl } : {}),
   };
 }
 
@@ -572,6 +618,14 @@ export async function replaceCollector({
 }
 
 interface IosDeps {
+  // Remote mode's two entries. Everything else in this seam is a local
+  // engine call; these are what let `--remote` swap the device out.
+  resolveRemoteContext: typeof resolveRemoteContext;
+  ensureMetroReachable: typeof ensureMetroReachable;
+  ensureRemoteBootOwned: typeof ensureRemoteBootOwned;
+  detectProviders: typeof detectProviders;
+  remoteIosDeps: typeof remoteIosDeps;
+  resolveEasCliBin: typeof resolveEasCliBin;
   findProjectRoot: typeof findProjectRoot;
   resolveSettings: typeof resolveSettings;
   gitCommonDir: typeof gitCommonDir;
@@ -636,6 +690,11 @@ const DEFAULT_DEPS: IosDeps = {
   checkDeviceCapacity,
   ensureOwnedDevice,
   ensureBooted,
+  resolveRemoteContext,
+  remoteIosDeps,
+  ensureMetroReachable,
+  ensureRemoteBootOwned,
+  detectProviders,
   resolveProjectMetro,
   resolveMetroWithRetry,
   readWorkspaceState,
@@ -652,6 +711,7 @@ const DEFAULT_DEPS: IosDeps = {
   releaseBuildSlot,
   loadProjectProvider,
   checkEasAuth,
+  resolveEasCliBin,
   resolveRemote,
   uploadRemote,
   needsPrebuild,
@@ -694,6 +754,14 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       '--configuration <name>',
       'Xcode configuration to build (e.g. Release; simulator only). A non-Debug configuration embeds the JS bundle and skips Metro entirely. Overrides the ios.configuration setting. Default: Debug',
     )
+    .option(
+      '--remote <backend>',
+      'Install and launch on a remote device with proxy or EAS. The build still happens here.',
+      (value) => {
+        if ((REMOTE_DEVICE_BACKENDS as readonly string[]).includes(value)) return value as RemoteDeviceBackend;
+        throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
+      },
+    )
     .action(async (opts: IosCommandOptions) => {
       await runIos(opts, deps);
     });
@@ -714,6 +782,8 @@ interface VerifyIosRunArgs {
   bundleId: string;
   udid: string;
   scheme?: string;
+  remoteDevice: boolean;
+  metroOrigin: string | null;
 }
 
 async function verifyIosRun({
@@ -731,6 +801,8 @@ async function verifyIosRun({
   bundleId,
   udid,
   scheme,
+  remoteDevice,
+  metroOrigin,
 }: VerifyIosRunArgs): Promise<boolean | string> {
   if (release) {
     const processCheck = await d.verifyReleaseLaunch({ pid: launched?.pid ?? null });
@@ -797,6 +869,8 @@ async function verifyIosRun({
     udid,
     devClientUrl: scheme ? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null,
     mode: isExpo ? MODE_EXPO : MODE_BARE,
+    remote: remoteDevice,
+    metroOrigin,
   }))
     note(chalk.yellow(phaseLine('', line)));
   return LAUNCH_UNVERIFIED;
@@ -854,6 +928,7 @@ interface ReportIosResultArgs {
   launchState: boolean | string;
   remote: LoadProjectProviderResult | null;
   closeWriter: () => void;
+  webPreviewUrl: string | null;
 }
 
 function reportIosResult({
@@ -878,6 +953,7 @@ function reportIosResult({
   launchState,
   remote,
   closeWriter,
+  webPreviewUrl,
 }: ReportIosResultArgs): IosFacts {
   const durationMs = elapsed();
   writeLastBuild(
@@ -912,6 +988,7 @@ function reportIosResult({
     logsDir,
     durationMs,
     launched: launchState,
+    webPreviewUrl,
   });
   if (json) {
     console.log(JSON.stringify(facts));
@@ -927,6 +1004,7 @@ function reportIosResult({
           ? chalk.green(`${summary} -- bundle requested, still building`)
           : chalk.green(summary),
     );
+    if (facts.webPreviewUrl) console.error(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));
   }
   return facts;
 }
@@ -944,7 +1022,8 @@ interface FinishIosRunArgs {
   logFile: string;
   device: DeviceLike;
   udid: string;
-  bootPromise: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>;
+  remoteDevice: ReturnType<IosDeps['remoteIosDeps']> | null;
+  bootPromise: Promise<IosBootLike | null | undefined>;
   bootDuration: () => string;
   appPath: string | null;
   bundleId: string | null;
@@ -980,6 +1059,7 @@ async function finishIosRun({
   logFile,
   device,
   udid,
+  remoteDevice,
   bootPromise,
   bootDuration,
   appPath,
@@ -1021,9 +1101,9 @@ async function finishIosRun({
   const booted = await bootPromise;
   if (!booted?.ok) {
     return fail({
-      code: 'RN_ISO_NO_DEVICE',
+      code: booted?.code || 'RN_ISO_NO_DEVICE',
       message: booted?.reason || 'The owned simulator could not be booted.',
-      remedy: 'Run `rn-iso ios` again to re-establish an owned simulator for this workspace.',
+      remedy: booted?.remedy || 'Run `rn-iso ios` again to re-establish an owned simulator for this workspace.',
     });
   }
   phase('device', `${deviceLabel(device, udid)} booted ${bootDuration()}`);
@@ -1088,6 +1168,8 @@ async function finishIosRun({
     bundleId: bundleId!,
     udid,
     scheme,
+    remoteDevice: Boolean(remoteDevice),
+    metroOrigin: typeof launched?.jsLocation === 'string' ? launched.jsLocation : null,
   });
   logWriter().write(launchOutcomeRecord({ launchState, release, bundleId, configuration, metroPort }));
 
@@ -1114,13 +1196,17 @@ async function finishIosRun({
     launchState,
     remote,
     closeWriter,
+    webPreviewUrl: remoteDevice?.webPreviewUrl() ?? null,
   });
   if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
   return facts;
 }
 
 export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> = {}): Promise<IosFacts | null> {
-  const d: typeof DEFAULT_DEPS = { ...DEFAULT_DEPS, ...overrides };
+  // Annotated explicitly: spreading a Partial<> over the full DEFAULT_DEPS
+  // would otherwise let TS infer some properties as possibly-undefined, even
+  // though every key is always present (DEFAULT_DEPS supplies every one).
+  let d: typeof DEFAULT_DEPS = { ...DEFAULT_DEPS, ...overrides };
   const json = Boolean(opts.json);
   const metroCheck = opts.metroCheck !== false;
   const useBuildCache = opts.buildCache !== false;
@@ -1210,15 +1296,53 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   for (const key of unknownSettingKeys(settings)) {
     note(chalk.yellow(`Warning: setting "${key}" is not read by rn-iso and will be ignored.`));
   }
+  const remoteSettingError = remoteDeviceSettingError(settings);
+  if (remoteSettingError) {
+    return fail({
+      code: 'RN_ISO_BAD_ARG',
+      message: remoteSettingError,
+      remedy: `Set ios.remote and android.remote to one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`,
+    });
+  }
 
   const configuration = resolveConfiguration(opts.configuration, settings);
   const release = isReleaseConfiguration(configuration);
 
   const isExpo = d.detectIsExpo(root);
-  d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
+  const remoteBackend = opts.remote ?? remoteIosSetting(settings);
+  const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
+  if (remoteBackend !== 'eas') registerProject();
   const proj = d.getProject(root);
   const label = d.projectShortcut(root, proj);
 
+  // ---- remote device: four dep overrides, or none ----
+  //
+  // `--remote` swaps the device out and NOTHING else. The build, the
+  // fingerprint, the cache and Metro all stay exactly where they were, which
+  // is why this is four entries in the dep seam rather than a second command.
+  let remoteDevice: ReturnType<typeof d.remoteIosDeps> | null = null;
+  if (remoteBackend) {
+    const resolved = await d.resolveRemoteContext({
+      root,
+      label,
+      backend: remoteBackend,
+      easBin: d.resolveEasCliBin(root)?.file ?? null,
+    });
+    if ('failed' in resolved) {
+      return fail({ code: resolved.code ?? REMOTE_SESSION_ERROR, message: resolved.failed, remedy: resolved.remedy });
+    }
+    remoteDevice = d.remoteIosDeps(resolved.ctx);
+    d = {
+      ...d,
+      checkDeviceCapacity: remoteDevice.checkDeviceCapacity,
+      ensureOwnedDevice: remoteDevice.ensureOwnedDevice,
+      ensureBooted: remoteDevice.ensureBooted,
+      installIosApp: remoteDevice.installIosApp,
+      launchIosApp: remoteDevice.launchIosApp,
+    };
+  }
+
+  // ---- concurrency: opt-in, unlimited by default ----
   const limits = d.getConcurrencyLimits();
 
   const capacity = d.checkDeviceCapacity({
@@ -1306,17 +1430,52 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       metroPort = DEFAULT_METRO_PORT;
       note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${metroPort}.`));
     }
+    if (remoteDevice && metroPort !== null) {
+      const reachable = await d.ensureMetroReachable({
+        ctx: remoteDevice.ctx,
+        metroPort,
+        isExpo,
+        tunnelMode: tunnelModeSetting(settings) ?? undefined,
+        publicUrl: publicUrlSetting(settings),
+        available: d.detectProviders(binOnPath),
+      });
+      if ('failed' in reachable) {
+        fail({
+          code: reachable.code ?? REMOTE_SESSION_ERROR,
+          message: reachable.failed,
+          remedy: reachable.remedy,
+        });
+        return false;
+      }
+    }
     return true;
   }
 
   async function resolveInitialFingerprint(): Promise<boolean> {
     const bootTimer = stepTimer(d.now);
-    bootPromise = Promise.resolve(d.ensureBooted({ platform: PLATFORM, device, out: note }))
-      .catch((e) => ({ ok: false, reason: String((e as Error)?.message || e) }))
-      .then((result) => {
-        bootDuration = bootTimer();
-        return result;
-      });
+    const boot = (): Promise<IosBootLike> =>
+      Promise.resolve(d.ensureBooted({ platform: PLATFORM, device, out: note })).catch((e) => ({
+        ok: false,
+        reason: String((e as Error)?.message || e),
+      }));
+    bootPromise = (
+      remoteDevice?.ctx.backend === 'eas'
+        ? d.ensureRemoteBootOwned({
+            root,
+            platform: PLATFORM,
+            sessionName: ownedSessionName(remoteDevice.ctx.label),
+            startedAt,
+            boot,
+            createdSessionId: remoteDevice.createdSessionId,
+            abandonCreatedSession: remoteDevice.abandonCreatedSession,
+            writeState: d.writeWorkspaceState,
+            register: registerProject,
+          })
+        : boot()
+    ).then((result) => {
+      bootDuration = bootTimer();
+      return result;
+    });
     udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
 
     const fingerprintTimer = stepTimer(d.now);
@@ -1630,6 +1789,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           const result: BuildIosResultLike = await d.buildIos({
             root,
             udid,
+            destination: remoteDevice ? GENERIC_SIM_DESTINATION : null,
             logWriter: logWriter(),
             ...(configuration ? { configuration } : {}),
           });
@@ -1696,6 +1856,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     logFile,
     device,
     udid,
+    remoteDevice,
     bootPromise,
     bootDuration: () => bootDuration,
     appPath,

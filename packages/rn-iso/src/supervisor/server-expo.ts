@@ -171,6 +171,59 @@ interface ExpoExitInfo {
   error?: Error;
 }
 
+/**
+ * PURE. Tell Expo's dev server its PUBLIC address, when this workspace has
+ * one.
+ *
+ * Expo builds the manifest's `hostUri` and `launchAsset.url` from the request
+ * it is answering, taking the hostname from the Host header but the port from
+ * ITSELF. Behind a tunnel that produces an address that cannot exist:
+ *
+ *   "hostUri": "priest-contribute-mysql-leslie.trycloudflare.com:8085"
+ *
+ * -- the tunnel's hostname with the local Metro port, while the tunnel
+ * listens on 443. A remote device follows that manifest and fails, which is
+ * observable as a launch that reaches "Loading from Metro..." and then
+ * redboxes with "Could not connect to development server". Verified on a real
+ * EAS Simulator, and it is NOT fixable from the device side: the manifest
+ * wins over the launch URL.
+ *
+ * EXPO_PACKAGER_PROXY_URL is Expo's own answer, and setting it makes the
+ * manifest advertise the tunnel with no port at all.
+ *
+ * Derived from RN_ISO_METRO_PUBLIC_URL so the two halves cannot disagree:
+ * that one variable is already what `ios --remote` points the device at, and
+ * requiring a second one to match it by hand is a trap. An explicit
+ * EXPO_PACKAGER_PROXY_URL always wins -- a project that sets it has said
+ * something more specific than rn-iso can infer.
+ */
+export function expoProxyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  if (env.EXPO_PACKAGER_PROXY_URL) return {};
+  const publicUrl = env.RN_ISO_METRO_PUBLIC_URL?.trim();
+  return publicUrl ? { EXPO_PACKAGER_PROXY_URL: publicUrl.replace(/\/+$/, '') } : {};
+}
+
+// PURE. Expo's own dev server prints `Waiting on <url>` once on a
+// non-interactive stdout -- the shape rn-iso's piped child always is -- for
+// whichever address is active, LAN, localhost, or a tunnel. `cleanLine` has
+// already stripped the ANSI underline Expo wraps the URL in by the time a
+// record reaches this, so the match is plain text.
+//
+// Expo prints a native launch scheme for a tunneled native app. The same
+// host serves Metro over HTTPS, which is the origin the remote gate probes.
+const WAITING_ON_RE = /^Waiting on (\S+)/;
+const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+const HTTP_SCHEME_RE = /^https?:\/\//i;
+
+export function parseExpoWaitingOnUrl(line: unknown): string | null {
+  const match = WAITING_ON_RE.exec(String(line ?? ''));
+  if (!match) return null;
+  const url = match[1] as string;
+  if (HTTP_SCHEME_RE.test(url)) return url;
+  return URL_SCHEME_RE.test(url) ? url.replace(/^[^:]+:/, 'https:') : url;
+}
+
+// The ServerHandle runSupervisor drives, plus the pieces a test reaches for.
 export interface ExpoServerHandle {
   mode: string;
   serverPid: number | null;
@@ -241,6 +294,8 @@ export async function startExpoServer({
   writer = null,
   spawnFn = null,
   killTimeoutMs = 5000,
+  tunnel = false,
+  onTunnelUrl = null,
 }: {
   root: string;
   port: number;
@@ -248,6 +303,11 @@ export async function startExpoServer({
   writer?: NdjsonWriter | null;
   spawnFn?: ((cmd: string, args: string[], opts: SpawnOptions) => ChildProcess) | null;
   killTimeoutMs?: number;
+  // `metro.tunnel` resolved to expo (or auto on an Expo project): pass
+  // `--tunnel` and report the URL Expo prints once it comes up. `ios --remote`
+  // cannot add this after the fact, so it has to be decided here, at start.
+  tunnel?: boolean;
+  onTunnelUrl?: ((url: string) => void) | null;
 }): Promise<ExpoServerHandle> {
   const bin = expoBinPath(root);
   if (!bin) {
@@ -258,17 +318,36 @@ export async function startExpoServer({
   const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'));
   const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
 
+  const args = tunnel ? ['start', '--port', String(port), '--tunnel'] : ['start', '--port', String(port)];
+  // APPENDED to the caller's environment, never substituted for it: the
+  // NODE_OPTIONS composition inside metroStoreEnv keeps whatever was already
+  // there (a profiler, a --max-old-space-size a big graph needs).
   const storeEnv = resolveMetroStoreInjection(root, { log, env: process.env });
 
-  const child = spawn(bin, ['start', '--port', String(port)], {
+  const child = spawn(bin, args, {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
-    env: { ...process.env, FORCE_COLOR: '0', ...storeEnv },
+    env: {
+      ...process.env,
+      // Colour only makes the log harder to read; it is stripped either way.
+      FORCE_COLOR: '0',
+      ...expoProxyEnv(process.env),
+      ...storeEnv,
+      // Without this, `--tunnel` uses the legacy ws-tunnel session, which is
+      // hardcoded to port 8081 -- fatal here, since rn-iso's whole premise is
+      // a collision-free port per workspace. With it, Expo signs a tunnel URL
+      // for the actual reserved port through the caller's Expo account.
+      ...(tunnel ? { EXPO_UNSTABLE_TUNNEL_V2: '1' } : {}),
+    },
   });
 
   let lastMsg: string | null = null;
   let lastAt = 0;
+  // Fires at most once: the first "Waiting on <url>" line is Expo reporting
+  // its OWN dev server address, tunnel or not, and later lines (a reload, a
+  // second bundler event) reprint the same one.
+  let tunnelUrlSeen = false;
   const emit = (stream: string) => (chunk: unknown) => {
     const record = recordFromLine(chunk, { stream });
     if (!record) return;
@@ -277,6 +356,13 @@ export async function startExpoServer({
     lastMsg = typeof record.msg === 'string' ? record.msg : null;
     lastAt = now;
     log.write(record);
+    if (tunnel && !tunnelUrlSeen && onTunnelUrl && typeof record.msg === 'string') {
+      const url = parseExpoWaitingOnUrl(record.msg);
+      if (url) {
+        tunnelUrlSeen = true;
+        onTunnelUrl(url);
+      }
+    }
   };
   const outReader = createLineReader(emit('stdout'));
   const errReader = createLineReader(emit('stderr'));

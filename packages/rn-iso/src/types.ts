@@ -73,6 +73,7 @@ export type Config = RnIsoConfig;
 export type SettingsObject = Record<string, unknown>;
 export type Settings = SettingsObject;
 
+export type RemoteDeviceBackend = 'proxy' | 'eas';
 export type CacheHitLevel = 'local' | 'remote' | false;
 
 type LaunchStatus = boolean | 'unverified' | 'bundling';
@@ -102,6 +103,10 @@ export interface IosFacts {
   metroPort?: number | null;
   logs: LogsInfo;
   durationMs?: number;
+  // Only on a remote device that has a browser preview (an EAS Simulator
+  // session). A person cannot see a device in a datacenter; this is how they
+  // watch it.
+  webPreviewUrl?: string | null;
 }
 
 export interface AndroidFacts {

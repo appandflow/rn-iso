@@ -6,11 +6,19 @@ import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { supervisorPidFile, workspaceLogsDir } from '../paths.ts';
 import { detectIsExpo } from '../project.ts';
 import { describeError } from './errors.ts';
-import { MODE_BARE, MODE_EXPO, clearWorkspaceSupervisor, writePidFile, writeWorkspaceState } from './state.ts';
+import {
+  MODE_BARE,
+  MODE_EXPO,
+  clearExpoMetroTunnel,
+  clearWorkspaceSupervisor,
+  writePidFile,
+  writeWorkspaceState,
+} from './state.ts';
 
 export {
   MODE_BARE,
   MODE_EXPO,
+  clearExpoMetroTunnel,
   clearWorkspaceSupervisor,
   readPidFile,
   readWorkspaceState,
@@ -23,12 +31,14 @@ export type { WorkspaceState } from './state.ts';
 interface ParsedSupervisorArgs {
   root?: string;
   port?: number;
+  tunnel?: boolean;
   error?: string;
 }
 
 export function parseArgs(argv: string[]): ParsedSupervisorArgs {
   let root: string | undefined;
   let port: string | undefined;
+  let tunnel = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--root') {
@@ -39,15 +49,21 @@ export function parseArgs(argv: string[]): ParsedSupervisorArgs {
       port = argv[++i];
       continue;
     }
-    return { error: `Unknown supervisor argument "${arg}". Usage: run.js --root <path> --port <n>` };
+    // `start` decided the Expo dev server should tunnel itself
+    // (metro.tunnel resolved to expo/auto-on-Expo); see server-expo.ts.
+    if (arg === '--tunnel') {
+      tunnel = true;
+      continue;
+    }
+    return { error: `Unknown supervisor argument "${arg}". Usage: run.js --root <path> --port <n> [--tunnel]` };
   }
-  if (!root) return { error: 'Missing --root. Usage: run.js --root <path> --port <n>' };
+  if (!root) return { error: 'Missing --root. Usage: run.js --root <path> --port <n> [--tunnel]' };
   if (!isAbsolute(root)) return { error: `--root must be an absolute path, got "${root}".` };
   const parsedPort = Number(port);
   if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
     return { error: `--port must be a TCP port number, got "${port}".` };
   }
-  return { root: resolve(root), port: parsedPort };
+  return { root: resolve(root), port: parsedPort, tunnel };
 }
 
 export interface ServerExitInfo {
@@ -68,11 +84,18 @@ type ServerStarter = (opts: {
   port: number;
   logsDir: string;
   writer?: NdjsonWriter | null;
+  // Expo-only; startBareServer ignores both (a bare workspace has no dev
+  // server of its own to hand a `--tunnel` flag to).
+  tunnel?: boolean;
+  onTunnelUrl?: ((url: string) => void) | null;
 }) => Promise<ServerHandle>;
 
 export interface RunSupervisorOptions {
   root: string;
   port: number;
+  // `start` decided the Expo dev server should tunnel itself; see
+  // server-expo.ts's `tunnel` option. No effect on the bare path.
+  tunnel?: boolean;
   isExpo?: (projectRoot: string) => boolean;
   startBare?: ServerStarter | null;
   startExpo?: ServerStarter | null;
@@ -85,6 +108,7 @@ export interface RunSupervisorOptions {
 export async function runSupervisor({
   root,
   port,
+  tunnel = false,
   isExpo = detectIsExpo,
   startBare = null,
   startExpo = null,
@@ -104,6 +128,8 @@ export async function runSupervisor({
   const startedAt = new Date(now()).toISOString();
   const record = { pid: process.pid, port, mode, startedAt };
 
+  // ---- the record, first (rule 1) ----
+  clearExpoMetroTunnel(root);
   writePidFile(root, process.pid);
   writeWorkspaceState(root, { supervisor: record });
   try {
@@ -152,7 +178,21 @@ export async function runSupervisor({
       mode === MODE_EXPO
         ? startExpo || (await import('./server-expo.ts')).startExpoServer
         : startBare || (await import('./server-bare.ts')).startBareServer;
-    server = await start({ root, port, logsDir, writer });
+    server = await start({
+      root,
+      port,
+      logsDir,
+      writer,
+      tunnel,
+      onTunnelUrl: (url: string) => {
+        try {
+          writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url } });
+        } catch (err) {
+          stderr(`rn-iso supervisor: could not record the Expo tunnel URL: ${describeError(err)}`);
+        }
+        writer.write({ src: 'metro', level: 'info', event: 'expo_tunnel_ready', msg: `Expo tunnel ready: ${url}` });
+      },
+    });
   } catch (err) {
     stderr(`rn-iso supervisor: failed to start the ${mode} dev server: ${describeError(err)}`);
     finish(1, 'supervisor_failed', 'fatal', `failed to start the ${mode} dev server: ${describeError(err)}`);
@@ -220,7 +260,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.chdir(root);
   } catch {}
   process.title = 'rn-iso-supervisor';
-  await runSupervisor({ root, port: parsed.port as number });
+  await runSupervisor({ root, port: parsed.port as number, tunnel: parsed.tunnel ?? false });
 }
 
 function invokedDirectly(): boolean {

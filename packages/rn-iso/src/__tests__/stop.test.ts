@@ -1,5 +1,6 @@
 import assert from 'node:assert';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { saveConfig, getProject } from '../config.ts';
@@ -14,6 +15,8 @@ import {
   runStop,
 } from '../commands/stop.ts';
 import { makeConfig, makeError, makeMetroResolution } from './_factories.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
+import { endRecordedSession } from '../engine/device-remote.ts';
 
 test('no supervisor recorded anywhere is "none", not an error', () => {
   const r = resolveSupervisorTarget({ state: null, record: null, reservedPort: 8083, isAlive: () => true });
@@ -351,6 +354,7 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(tmpRoot, { recursive: true, force: true });
   delete process.env.RN_ISO_HOME;
+  resetExecutor();
 });
 
 test('readSupervisorState reads the supervisor block, and tolerates corruption', () => {
@@ -379,6 +383,44 @@ test('clearSupervisorState removes a state file that held only the supervisor', 
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 } }));
   clearSupervisorState(tmpRoot);
   expect(existsSync(workspaceStateFile(tmpRoot))).toBe(false);
+});
+
+test('state-key cleanup waits for a concurrent state writer and retains its new session', async () => {
+  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 } }));
+  const script = join(tmpRoot, 'write-session-under-lock.mjs');
+  const stateModule = new URL('../supervisor/state.ts', import.meta.url).href;
+  writeFileSync(
+    script,
+    `import { withWorkspaceStateLock, writeWorkspaceState } from ${JSON.stringify(stateModule)};
+withWorkspaceStateLock(process.argv[2], () => {
+  process.stdout.write('LOCKED\\n');
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+  writeWorkspaceState(process.argv[2], { remoteDevice: { platform: 'ios', sessionId: 'drs_B' } });
+});
+`,
+  );
+  const writer = spawn(process.execPath, ['--experimental-strip-types', script, tmpRoot], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  await new Promise<void>((resolve, reject) => {
+    writer.once('error', reject);
+    writer.stdout?.on('data', (chunk) => {
+      if (String(chunk).includes('LOCKED')) resolve();
+    });
+  });
+
+  const startedAt = Date.now();
+  clearSupervisorState(tmpRoot);
+  const elapsedMs = Date.now() - startedAt;
+  await new Promise<void>((resolve, reject) => {
+    writer.once('error', reject);
+    writer.once('exit', (code) => (code === 0 ? resolve() : reject(new Error(`state writer exited ${code}`))));
+  });
+
+  expect(elapsedMs).toBeGreaterThanOrEqual(150);
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.supervisor).toBeUndefined();
+  expect(state.remoteDevice.sessionId).toBe('drs_B');
 });
 
 test('stopping frees the reserved port in the registry and keeps the device record', async () => {
@@ -590,4 +632,447 @@ test('a not-owned skip is not given an occupancy hint', async () => {
   assert(reason);
   expect(!/UI-test runner/.test(reason)).toBeTruthy();
   expect(!/pid 1/.test(reason)).toBeTruthy();
+});
+
+// --- the remote session ----------------------------------------------------
+//
+// A remote session is the ONE device `stop` destroys rather than shuts down.
+// Locally that would be wrong (a shut-down sim costs nothing to keep); a
+// cloud session bills until its max duration, so leaving one up is worse.
+
+function withRemoteSession(sessionId: string) {
+  saveConfig(
+    makeConfig({
+      projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } },
+    }),
+  );
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({ remoteDevice: { platform: 'ios', sessionId }, lastBuild: { hash: 'keepme' } }),
+  );
+}
+
+test('stopping ends the remote session this workspace created', async () => {
+  withRemoteSession('drs_42');
+  const stopped: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: (_root, sessionId) => {
+      stopped.push(sessionId);
+      return { status: 'torn-down' };
+    },
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(true);
+  expect(stopped).toEqual(['drs_42']);
+  expect(r.outcomes.device.remote?.status).toBe('torn-down');
+});
+
+test('a session that could not be stopped fails the command, so it is not reported as clean', async () => {
+  // The failure mode this guards: a session nothing stopped keeps billing,
+  // and a green `stop` is how nobody finds out.
+  withRemoteSession('drs_99');
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: () => ({ status: 'failed', reason: 'eas simulator:stop drs_99 failed: offline' }),
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(false);
+  expect(r.outcomes.device.remote?.status).toBe('failed');
+  // The record SURVIVES a failed stop, for the same reason a failed local
+  // teardown keeps its device record: it is the only handle left to retry.
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice.sessionId).toBe('drs_99');
+});
+
+test('a successful stop drops the record but keeps lastBuild', async () => {
+  withRemoteSession('drs_7');
+  await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: () => ({ status: 'torn-down' }),
+    report: () => {},
+  });
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice).toBeUndefined();
+  // Taking the fingerprint away would make the next build a guaranteed miss.
+  expect(state.lastBuild.hash).toBe('keepme');
+});
+
+test('a stopped session with an unreconciled claim is reported and keeps its retry record', async () => {
+  withRemoteSession('drs_8');
+  const lines: string[] = [];
+
+  const result = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: () => ({
+      status: 'torn-down',
+      reason: 'The ownership claim could not be removed. Re-run stop to reconcile it.',
+    }),
+    report: (line) => lines.push(line),
+  });
+
+  expect(result.ok).toBe(false);
+  expect(lines.join('\n')).toMatch(/stopped session drs_8/i);
+  expect(lines.join('\n')).toMatch(/ownership claim.*could not be removed/i);
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice.sessionId).toBe('drs_8');
+});
+
+function verifiedTeardown(sessionOutput: string, calls: string[]) {
+  setExecutor({
+    runFile: (_file: string, args: string[]) => {
+      calls.push(args[0] ?? '');
+      if (args[0] === 'simulator:get') return sessionOutput;
+      if (args[0] === 'simulator:stop') return JSON.stringify({ id: 'drs_42', status: 'STOPPED' });
+      return '';
+    },
+    run: () => '',
+    runQuiet: () => null,
+    spawn: () => {},
+  });
+  return (root: string, sessionId: string) =>
+    endRecordedSession({
+      root,
+      sessionId,
+      easBin: '/bin/eas',
+      lookupAgentDevice: () => '/bin/agent-device',
+      ledgerRoot: tmpHome,
+    });
+}
+
+test.each([
+  ['unowned session', JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'IN_PROGRESS' })],
+  ['unowned terminal session', JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'STOPPED' })],
+  ['unnamed terminal session', JSON.stringify({ id: 'drs_42', status: 'STOPPED' })],
+  ['malformed output', 'not json'],
+  ['unknown status', JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'PAUSED' })],
+])('stop retains the session record after an unverifiable %s', async (_name, sessionOutput) => {
+  withRemoteSession('drs_42');
+  const calls: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: verifiedTeardown(sessionOutput, calls),
+    report: () => {},
+  });
+  expect(r.ok).toBe(false);
+  expect(calls).not.toContain('simulator:stop');
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice.sessionId).toBe('drs_42');
+});
+
+test('stop clears the record for a verified terminal session without issuing stop', async () => {
+  withRemoteSession('drs_42');
+  const calls: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: verifiedTeardown(
+      JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'STOPPED' }),
+      calls,
+    ),
+    report: () => {},
+  });
+  expect(r.ok).toBe(true);
+  expect(calls).not.toContain('simulator:stop');
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice).toBeUndefined();
+});
+
+test('a workspace with no remote session never calls the remote teardown', async () => {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  let called = false;
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: () => {
+      called = true;
+      return { status: 'torn-down' };
+    },
+    report: () => {},
+  });
+  expect(called).toBe(false);
+  expect(r.outcomes.device.remote).toBeUndefined();
+});
+
+test('a remote session is stopped even when something still holds the port', async () => {
+  // The stillHolding guard spares a LOCAL device from being yanked out from
+  // under a supervisor that ignored SIGTERM. A session in a datacenter is not
+  // what that supervisor is holding, and it bills by the minute regardless --
+  // so leaving it up because something else refused to die is the one outcome
+  // that costs money.
+  const stopped: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    // A supervisor that will not die is what sets stillHolding.
+    isAlive: () => true,
+    killGroup: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    remoteDevice: { platform: 'ios', sessionId: 'drs_42' },
+    teardownRemoteSession: (_root: string, id: string) => {
+      stopped.push(id);
+      return { status: 'torn-down' as const };
+    },
+    report: () => {},
+  });
+  expect(stopped).toEqual(['drs_42']);
+  expect(r.outcomes.device?.remote?.status).toBe('torn-down');
+});
+
+// --- a tunnel `ios`/`android --remote` started for itself -------------------
+//
+// engine/tunnel.ts's own process (a managed provider), unrelated to the
+// supervisor or to any local device -- reaped unconditionally, the same
+// reasoning as the remote session above.
+
+function withManagedTunnel() {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({
+      metroTunnel: {
+        kind: 'managed',
+        provider: 'ngrok',
+        pid: 4242,
+        url: 'https://abc.ngrok.app',
+        port: 8083,
+        startedAt: 'T',
+        processToken: 'linux:100',
+      },
+      lastBuild: { hash: 'keepme' },
+    }),
+  );
+}
+
+test('stopping reaps a managed tunnel this workspace started', async () => {
+  withManagedTunnel();
+  const stopped: unknown[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async (record) => {
+      stopped.push(record);
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(true);
+  expect(stopped).toEqual([
+    {
+      kind: 'managed',
+      provider: 'ngrok',
+      pid: 4242,
+      url: 'https://abc.ngrok.app',
+      port: 8083,
+      startedAt: 'T',
+      processToken: 'linux:100',
+    },
+  ]);
+  expect(r.outcomes.metroTunnel).toEqual({ status: 'stopped', provider: 'ngrok', reason: undefined });
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.metroTunnel).toBeUndefined();
+  // Taking the fingerprint away would make the next build a guaranteed miss.
+  expect(state.lastBuild.hash).toBe('keepme');
+});
+
+test('stopping clears only the tunnel record that it verified', async () => {
+  withManagedTunnel();
+  const replacement = {
+    kind: 'managed',
+    provider: 'ngrok',
+    pid: 4242,
+    url: 'https://abc.ngrok.app',
+    port: 8083,
+    startedAt: 'T',
+    processToken: 'linux:200',
+  } as const;
+  const result = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async () => {
+      writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ metroTunnel: replacement }));
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.metroTunnel).toEqual(replacement);
+  expect(result.ok).toBe(false);
+  expect(result.outcomes.port.status).toBe('kept');
+  expect(getProject(tmpRoot)?.metroPort).toBe(8083);
+});
+
+test('a tunnel that fails to stop fails the command and keeps its record', async () => {
+  withManagedTunnel();
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async () => ({ status: 'failed', reason: 'pid 4242 did not exit within 5000ms.' }),
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(false);
+  expect(r.outcomes.metroTunnel.status).toBe('failed');
+  expect(r.outcomes.port).toEqual({
+    status: 'kept',
+    port: 8083,
+    reason: 'pid 4242 did not exit within 5000ms.',
+  });
+  expect(getProject(tmpRoot)?.metroPort).toBe(8083);
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.metroTunnel.pid).toBe(4242);
+});
+
+test('a workspace with no recorded tunnel never calls stopMetroTunnel', async () => {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  let called = false;
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+  expect(called).toBe(false);
+  expect(r.outcomes.metroTunnel.status).toBe('none');
+});
+
+test('the tunnel is stopped even when something still holds the port', async () => {
+  // Same stillHolding setup as "a supervisor that outlives the wait is
+  // reported, never SIGKILLed" above: a recorded supervisor that ignores
+  // SIGTERM. The guard that spares a LOCAL device from being yanked out from
+  // under it does not apply here -- a tunnel is engine/tunnel.ts's own
+  // detached process, independent of the supervisor.
+  const stopped: number[] = [];
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083 },
+    isAlive: (pid: number) => pid === 4242,
+    waitForDeath: async () => false,
+    metroTunnel: {
+      kind: 'managed',
+      provider: 'cloudflared',
+      pid: 999,
+      url: 'https://x.trycloudflare.com',
+      port: 8083,
+      startedAt: 'T',
+    },
+    stopMetroTunnel: async (record: { pid: number }) => {
+      stopped.push(record.pid);
+      return { status: 'stopped' };
+    },
+  });
+  const r = await runStop(opts);
+  expect(r.outcomes.port.status).toBe('kept');
+  expect(calls.stateCleared).toBe(0);
+  expect(stopped).toEqual([999]);
+  expect(r.outcomes.metroTunnel.status).toBe('stopped');
+});
+
+test('an Expo-hosted tunnel has no process of its own -- stopMetroTunnel is never called for it', async () => {
+  let called = false;
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' },
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+  expect(called).toBe(false);
+  expect(r.outcomes.metroTunnel.status).toBe('not-managed');
+});
+
+test('an Expo tunnel record is dropped once the port is freed, not left stale for the next run', async () => {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({ metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' } }),
+  );
+  await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    report: () => {},
+  });
+  // Nothing else was in the file, so clearing the last key removes it.
+  expect(existsSync(workspaceStateFile(tmpRoot))).toBe(false);
+});
+
+test('an Expo tunnel record survives while something still holds the port', async () => {
+  // The expo child that fronts it is very likely still running -- the same
+  // reason the local device shutdown step is skipped in this case. Proven by
+  // the bookkeeping step (the only place that drops the record) never
+  // running at all: a supervisor that outlives the wait is what sets
+  // stillHolding, the same setup as the "outlives the wait" test above.
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083 },
+    isAlive: (pid: number) => pid === 4242,
+    waitForDeath: async () => false,
+    metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' },
+  });
+  const r = await runStop(opts);
+  expect(r.outcomes.port.status).toBe('kept');
+  expect(calls.stateCleared).toBe(0);
+  // 'not-managed': there is a recorded tunnel, but no process of its own to
+  // stop, and the record was left alone rather than dropped.
+  expect(r.outcomes.metroTunnel.status).toBe('not-managed');
+});
+
+test('an operator-supplied tunnel (metro.publicUrl) is never recorded, so `stop` never touches it', async () => {
+  // rn-iso only reaps what it created (CLAUDE.md item 2's ownership rule,
+  // applied to tunnels): an operator's own tunnel is used through
+  // metro.publicUrl and is never written to state.json's metroTunnel key,
+  // so there is nothing here for `stop` to find, let alone kill.
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  let called = false;
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+  expect(called).toBe(false);
+  expect(r.outcomes.metroTunnel.status).toBe('none');
 });

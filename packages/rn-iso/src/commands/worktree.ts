@@ -5,6 +5,8 @@ import type { Command } from 'commander';
 import { resolveSettings, unknownSettingKeys } from '../settings.ts';
 import { isPathPrefix, loadConfig, upsertProject } from '../config.ts';
 import { reclaimProject } from '../reclaim.ts';
+import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
+import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import {
   addWorktree,
   branchExists,
@@ -342,6 +344,10 @@ interface SkippedDevice {
   reason: string;
 }
 
+interface RetainedResource extends SkippedDevice {
+  project: string;
+}
+
 function describeKeptDevice(s: SkippedDevice): string {
   return s.udid && s.udid !== s.name ? `${s.name} (${s.udid})` : s.name;
 }
@@ -352,12 +358,18 @@ interface ReclaimAllResult {
   deletedDevices: string[];
   skippedDevices: SkippedDevice[];
   keptEntries: string[];
+  retainedResources: RetainedResource[];
+  // Every key that was reclaimed, including nested registered projects.
+  reclaimedKeys: string[];
+  // The remote sessions this reclaim ended. Each one was billing.
+  stoppedSessions: string[];
+  // The managed tunnels (ngrok/cloudflared) this reclaim ended.
+  stoppedTunnels: string[];
   removedWorkspaceDirs: string[];
   failedWorkspaceDirs: string[];
-  reclaimedKeys: string[];
 }
 
-async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
+function reclaimKeys(rootPath: string): string[] {
   const cfg = loadConfig();
   const keys = new Set([rootPath]);
   if (cfg?.projects) {
@@ -365,11 +377,28 @@ async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
       if (isPathPrefix(rootPath, key)) keys.add(key);
     }
   }
+  return [...keys].toSorted();
+}
+
+async function withReclaimLocks<T>(rootPath: string, fn: (lockedKeys: readonly string[]) => Promise<T>): Promise<T> {
+  const keys = reclaimKeys(rootPath);
+  const acquire = (index: number): Promise<T> =>
+    index === keys.length ? fn(keys) : withManagedTunnelRemovalLock(keys[index]!, () => acquire(index + 1));
+  return acquire(0);
+}
+
+async function reclaimAll(
+  rootPath: string,
+  keys: readonly string[] = reclaimKeys(rootPath),
+): Promise<ReclaimAllResult> {
   const dereferenced: string[] = [];
   const killedPids: number[] = [];
   const deletedDevices: string[] = [];
   const skippedDevices: SkippedDevice[] = [];
   const keptEntries: string[] = [];
+  const retainedResources: RetainedResource[] = [];
+  const stoppedSessions: string[] = [];
+  const stoppedTunnels: string[] = [];
   const removedWorkspaceDirs: string[] = [];
   const failedWorkspaceDirs: string[] = [];
   for (const key of keys) {
@@ -378,9 +407,38 @@ async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
     if (r.killedPid) killedPids.push(r.killedPid);
     deletedDevices.push(...r.deletedDevices);
     skippedDevices.push(...r.skippedDevices);
+    if (r.stoppedSession) stoppedSessions.push(r.stoppedSession);
+    if (r.stoppedTunnel) stoppedTunnels.push(r.stoppedTunnel);
     removedWorkspaceDirs.push(...r.removedWorkspaceDirs);
     failedWorkspaceDirs.push(...r.failedWorkspaceDirs);
-    if (r.keptEntry) keptEntries.push(key);
+    if (r.keptEntry) {
+      keptEntries.push(key);
+      for (const resource of r.failedDevices) retainedResources.push({ ...resource, project: key });
+    }
+  }
+  for (const key of keys) {
+    if (keptEntries.includes(key)) continue;
+    const tunnel = readMetroTunnel(key);
+    const managedTunnel = tunnel?.kind === 'managed' ? tunnel : null;
+    const remote = readRemoteSession(key);
+    if (!managedTunnel && !remote) continue;
+    keptEntries.push(key);
+    retainedResources.push({
+      platform: remote?.platform ?? 'ios',
+      name: remote ? `remote session ${remote.sessionId}` : `${managedTunnel?.provider ?? 'managed'} tunnel`,
+      reason: 'A remote ownership record appeared during reclaim and is retained for a later cleanup.',
+      project: key,
+    });
+  }
+  for (const key of reclaimKeys(rootPath)) {
+    if (keys.includes(key) || keptEntries.includes(key)) continue;
+    keptEntries.push(key);
+    retainedResources.push({
+      name: 'new project ownership state',
+      reason:
+        'The project was registered after removal acquired its locks. Retry removal after the other command finishes.',
+      project: key,
+    });
   }
   return {
     dereferenced,
@@ -388,10 +446,27 @@ async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
     deletedDevices,
     skippedDevices,
     keptEntries,
+    retainedResources,
+    reclaimedKeys: [...keys],
+    stoppedSessions,
+    stoppedTunnels,
     removedWorkspaceDirs,
     failedWorkspaceDirs,
-    reclaimedKeys: [...keys],
   };
+}
+
+function reportRetainedResources(root: string, result: ReclaimAllResult): void {
+  console.error(chalk.red(`Refusing to remove ${root}: rn-iso could not release owned resources.`));
+  for (const resource of result.retainedResources) {
+    console.error(chalk.yellow(`  - rn-iso still tracks ${describeKeptDevice(resource)} for ${resource.project}`));
+    console.error(chalk.dim(`    ${resource.reason}`));
+  }
+  for (const kept of result.keptEntries) {
+    if (result.retainedResources.some((resource) => resource.project === kept)) continue;
+    console.error(chalk.yellow(`  - retained rn-iso ownership state for ${kept}`));
+  }
+  console.error(chalk.dim('Fix the reported cause, then run `rn-iso worktree remove` again.'));
+  process.exitCode = 1;
 }
 
 function hasRegisteredProjectUnder(rootPath: string): boolean {
@@ -399,32 +474,42 @@ function hasRegisteredProjectUnder(rootPath: string): boolean {
   return Object.keys(cfg?.projects ?? {}).some((key) => isPathPrefix(rootPath, key));
 }
 
+// `worktree remove` on the MAIN working tree (or on a registered directory
+// that is not a git repo at all): everything the normal removal does to
+// rn-iso's own state -- reclaim every registered key under the root with the
+// owned devices deleted, drop the registry entries, delete each global
+// workspace directory -- with the source tree itself left completely alone. There is
+// no `git worktree remove` here (git cannot remove the main tree) and no
+// dirty/unpushed guard: those protect work in a tree about to be deleted,
+// and nothing here is deleted but rn-iso's own state dir, so dirt is not
+// this command's business and is not mentioned. Every line goes to stderr,
+// mirroring the normal removal's reporting.
+//
+// A retained owned-resource record keeps its global workspace directory and
+// makes the command exit 1, so the next removal attempt can retry the teardown.
 async function reclaimEnvironment(root: string, why: string): Promise<void> {
-  const result = await reclaimAll(root);
-  for (const dir of result.removedWorkspaceDirs) {
-    console.error(chalk.dim(`  removed ${dir} (this workspace's own output)`));
-  }
-  for (const dir of result.failedWorkspaceDirs) console.error(chalk.yellow(`  could not remove ${dir}`));
-  if (result.dereferenced.length) console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
-  for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
-  if (result.deletedDevices.length)
-    console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
-  for (const s of result.skippedDevices) {
-    console.error(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
-  }
-  for (const kept of result.keptEntries) {
-    console.error(
-      chalk.yellow(
-        `  rn-iso still tracks ${kept} because environment cleanup failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
-      ),
-    );
-  }
-  if (result.keptEntries.length) {
-    console.error(chalk.yellow(`Environment cleanup is incomplete; the working tree stays (${why}).`));
-    process.exitCode = 1;
-  } else {
-    console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
-  }
+  await withManagedRemoteWorktreeRemovalLock(root, () =>
+    withReclaimLocks(root, async (lockedKeys) => {
+      const result = await reclaimAll(root, lockedKeys);
+      for (const dir of result.removedWorkspaceDirs) {
+        console.error(chalk.dim(`  removed ${dir} (this workspace's own output)`));
+      }
+      for (const dir of result.failedWorkspaceDirs) console.error(chalk.yellow(`  could not remove ${dir}`));
+      if (result.dereferenced.length)
+        console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
+      for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
+      if (result.deletedDevices.length)
+        console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+      if (result.keptEntries.length) {
+        reportRetainedResources(root, result);
+        return;
+      }
+      for (const s of result.skippedDevices) {
+        console.error(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
+      }
+      console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
+    }),
+  );
 }
 
 interface RemoveOptions {
@@ -495,6 +580,9 @@ function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
   if (result.dereferenced.length) print(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
   for (const pid of result.killedPids) print(chalk.dim(`  killed Metro pid ${pid}`));
   if (result.deletedDevices.length) print(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+  if (result.stoppedSessions.length)
+    print(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
+  if (result.stoppedTunnels.length) print(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
   for (const skipped of result.skippedDevices) {
     print((failed ? chalk.dim : chalk.yellow)(`  kept ${describeKeptDevice(skipped)}: ${skipped.reason}`));
   }
@@ -548,21 +636,29 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
     return;
   }
 
-  const result = await reclaimAll(path);
-  restorePodChurn(path, inspection.podChurn);
-  try {
-    removeWorktree(path, { force: opts.force });
-  } catch (error) {
-    console.error(chalk.red(`git worktree remove failed: ${String((error as Error)?.message || error)}`));
-    console.error(
-      chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`),
-    );
-    printRemovalCleanup(result, true);
-    process.exitCode = 1;
-    return;
-  }
-  console.log(chalk.green(`Removed worktree ${path}`));
-  printRemovalCleanup(result, false);
+  await withManagedRemoteWorktreeRemovalLock(path, () =>
+    withReclaimLocks(path, async (lockedKeys) => {
+      const result = await reclaimAll(path, lockedKeys);
+      if (result.keptEntries.length) {
+        reportRetainedResources(path, result);
+        return;
+      }
+      restorePodChurn(path, inspection.podChurn);
+      try {
+        removeWorktree(path, { force: opts.force });
+      } catch (error) {
+        console.error(chalk.red(`git worktree remove failed: ${String((error as Error)?.message || error)}`));
+        console.error(
+          chalk.dim(`The directory at ${path} was not removed; rn-iso's own tracking for it was already cleared.`),
+        );
+        printRemovalCleanup(result, true);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(chalk.green(`Removed worktree ${path}`));
+      printRemovalCleanup(result, false);
+    }),
+  );
 }
 
 export function registerRemove(worktree: Command): void {

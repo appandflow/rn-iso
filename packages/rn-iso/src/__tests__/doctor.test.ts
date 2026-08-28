@@ -12,6 +12,7 @@ import {
   checkFingerprintParity,
   checkMetroCache,
   detectFingerprintParity,
+  checkRemoteDevice,
   runDoctor,
   detectXcodeMajor,
   parseXcodeMajor,
@@ -555,5 +556,141 @@ test('detectFingerprintParity skips silently outside a git repo without invoking
     expect(called).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- the remote device ------------------------------------------------------
+//
+// Silent unless this project actually uses one. doctor's whole value is that
+// every line it prints is worth reading, so a note about a feature the machine
+// never touches is worse than no note.
+
+test('a project with no remote device gets no remote finding', () => {
+  expect(checkRemoteDevice({})).toBeNull();
+  // Not even when the tools happen to be installed: having agent-device on
+  // PATH is not a request for a remote device.
+  expect(checkRemoteDevice({ agentDeviceOnPath: true, easCliResolvable: true })).toBeNull();
+  expect(checkRemoteDevice({ daemonInEnv: true, agentDeviceOnPath: true })).toBeNull();
+});
+
+test('a configured remote with no agent-device is a cost, not a note', () => {
+  // It fails at the device step, which is AFTER the build -- the expensive
+  // place to discover a missing tool.
+  const f = checkRemoteDevice({ configured: 'eas', agentDeviceOnPath: false });
+  assert(f);
+  expect(f.level).toBe('cost');
+  expect(f.fix).toContain('agent-device');
+  expect(f.detail).toContain('rn-iso ios --remote eas');
+  expect(f.detail).toContain('rn-iso android --remote eas');
+  expect(f.detail).not.toContain('`rn-iso ios --remote`');
+});
+
+test('the proxy backend reports that the operator owns the daemon', () => {
+  const f = checkRemoteDevice({ configured: 'proxy', daemonInEnv: true, agentDeviceOnPath: true });
+  assert(f);
+  expect(f.level).toBe('note');
+  // The load-bearing half: rn-iso neither creates nor stops that session.
+  expect(f.detail).toContain('does not create or stop the remote device');
+});
+
+test('the proxy backend requires both daemon variables', () => {
+  const f = checkRemoteDevice({ configured: 'proxy', daemonInEnv: false, agentDeviceOnPath: true });
+  assert(f);
+  expect(f.level).toBe('cost');
+  expect(f.fix).toContain('AGENT_DEVICE_DAEMON_BASE_URL');
+});
+
+test('the eas backend requires eas-cli even when daemon variables exist', () => {
+  const f = checkRemoteDevice({
+    configured: 'eas',
+    daemonInEnv: true,
+    agentDeviceOnPath: true,
+    easCliResolvable: false,
+  });
+  assert(f);
+  expect(f.level).toBe('cost');
+  expect(f.fix).toContain('eas-cli');
+});
+
+test('a fully configured remote says what it will do, including the log gap', () => {
+  const f = checkRemoteDevice({ configured: 'eas', agentDeviceOnPath: true, easCliResolvable: true });
+  assert(f);
+  expect(f.level).toBe('note');
+  expect(f.detail).toContain('Native device logs are not captured');
+});
+
+test.each([
+  ['proxy', 'eas'],
+  ['eas', 'proxy'],
+] as const)('runDoctor checks mixed %s and %s platform backends', (iosBackend, androidBackend) => {
+  const project = mkdtempSync(join(tmpdir(), 'rn-iso-doc-remote-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(
+      join(project, '.rn-iso.json'),
+      JSON.stringify({ ios: { remote: iosBackend }, android: { remote: androidBackend } }),
+    );
+    const findings = runDoctor(project, {
+      concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      remoteEnv: {
+        AGENT_DEVICE_DAEMON_BASE_URL: 'https://proxy.example/agent-device',
+        AGENT_DEVICE_DAEMON_AUTH_TOKEN: 'tok_proxy',
+      },
+      lookupAgentDevice: () => true,
+      lookupEasCli: () => false,
+    });
+
+    expect(findings.filter((finding) => finding.title === 'This project uses a remote proxy')).toHaveLength(1);
+    expect(findings.filter((finding) => finding.title.includes('no eas-cli'))).toHaveLength(1);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('runDoctor checks one shared backend once', () => {
+  const project = mkdtempSync(join(tmpdir(), 'rn-iso-doc-remote-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(
+      join(project, '.rn-iso.json'),
+      JSON.stringify({ ios: { remote: 'proxy' }, android: { remote: 'proxy' } }),
+    );
+    const findings = runDoctor(project, {
+      concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      remoteEnv: {
+        AGENT_DEVICE_DAEMON_BASE_URL: 'https://proxy.example/agent-device',
+        AGENT_DEVICE_DAEMON_AUTH_TOKEN: 'tok_proxy',
+      },
+      lookupAgentDevice: () => true,
+      lookupEasCli: () => false,
+    });
+
+    expect(findings.filter((finding) => finding.title === 'This project uses a remote proxy')).toHaveLength(1);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  ['AGENT_DEVICE_DAEMON_BASE_URL', '   ', 'proxy-token-fixture'],
+  ['AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'https://proxy.example/agent-device', '\t\n'],
+] as const)('runDoctor rejects a whitespace-only %s', (_missingVariable, baseUrl, token) => {
+  const project = mkdtempSync(join(tmpdir(), 'rn-iso-doc-remote-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(join(project, '.rn-iso.json'), JSON.stringify({ ios: { remote: 'proxy' } }));
+    const findings = runDoctor(project, {
+      concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      remoteEnv: {
+        AGENT_DEVICE_DAEMON_BASE_URL: baseUrl,
+        AGENT_DEVICE_DAEMON_AUTH_TOKEN: token,
+      },
+      lookupAgentDevice: () => true,
+    });
+
+    expect(findings.some((finding) => finding.title === 'The remote proxy credentials are missing')).toBe(true);
+    expect(findings.some((finding) => finding.title === 'This project uses a remote proxy')).toBe(false);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
   }
 });

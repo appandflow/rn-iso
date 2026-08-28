@@ -2,7 +2,18 @@ import assert from 'node:assert';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { mergeSettingsLayers, readCommittedSettings, resolveSettings, unknownSettingKeys } from '../settings.ts';
+import {
+  mergeSettingsLayers,
+  ngrokUrlSetting,
+  publicUrlSetting,
+  readCommittedSettings,
+  remoteAndroidSetting,
+  remoteDeviceSettingError,
+  remoteIosSetting,
+  resolveSettings,
+  tunnelModeSetting,
+  unknownSettingKeys,
+} from '../settings.ts';
 import { setProjectSetting, setRepoSetting, upsertProject } from '../config.ts';
 
 type SettingsView = {
@@ -97,6 +108,30 @@ test('unknownSettingKeys accepts every key that is still honoured', () => {
   ).toEqual([]);
 });
 
+describe('remote device settings', () => {
+  test('accepts only the explicit proxy and eas backends', () => {
+    expect(remoteIosSetting({ ios: { remote: 'proxy' } })).toBe('proxy');
+    expect(remoteIosSetting({ ios: { remote: 'eas' } })).toBe('eas');
+    expect(remoteAndroidSetting({ android: { remote: 'proxy' } })).toBe('proxy');
+    expect(remoteAndroidSetting({ android: { remote: 'eas' } })).toBe('eas');
+  });
+
+  test('reports invalid platform values instead of silently disabling remote mode', () => {
+    expect(remoteDeviceSettingError({ ios: { remote: true } })).toBe(
+      'Invalid ios.remote setting true. Expected one of: proxy, eas.',
+    );
+    expect(remoteDeviceSettingError({ android: { remote: 'cloud' } })).toBe(
+      'Invalid android.remote setting "cloud". Expected one of: proxy, eas.',
+    );
+  });
+
+  test('missing platform settings remain local and valid', () => {
+    expect(remoteIosSetting({})).toBeNull();
+    expect(remoteAndroidSetting({ android: {} })).toBeNull();
+    expect(remoteDeviceSettingError({})).toBeNull();
+  });
+});
+
 test('unknownSettingKeys reports a nested unknown without flagging its parent', () => {
   expect(unknownSettingKeys({ ios: { deviceType: 'x', bogus: 1 } })).toEqual(['ios.bogus']);
 });
@@ -132,4 +167,74 @@ test('a repo-layer array setting survives resolution as an array', () => {
   setRepoSetting('/repo/.git', 'caches', ['~/.myapp-metro-cache', '/tmp/build-cache']);
   const resolved = resolveSettings({ gitCommonDir: '/repo/.git' });
   expect(resolved.caches).toEqual(['~/.myapp-metro-cache', '/tmp/build-cache']);
+});
+
+test('unknownSettingKeys accepts metro.tunnel, metro.ngrokUrl, and metro.publicUrl', () => {
+  expect(
+    unknownSettingKeys({
+      metro: {
+        tunnel: 'ngrok',
+        ngrokUrl: 'https://stable.ngrok.app',
+        publicUrl: 'https://x.example.com',
+      },
+    }),
+  ).toEqual([]);
+});
+
+describe('tunnelModeSetting', () => {
+  test('reads one of the known modes', () => {
+    expect(tunnelModeSetting({ metro: { tunnel: 'cloudflared' } })).toBe('cloudflared');
+    expect(tunnelModeSetting({ metro: { tunnel: 'off' } })).toBe('off');
+  });
+
+  test('anything not a known mode -- a typo, an old value -- is unset, not trusted', () => {
+    expect(tunnelModeSetting({ metro: { tunnel: 'ngrok-please' } })).toBeNull();
+    expect(tunnelModeSetting({ metro: { tunnel: true } })).toBeNull();
+  });
+
+  test('a missing metro block, or no tunnel key, is unset', () => {
+    expect(tunnelModeSetting({})).toBeNull();
+    expect(tunnelModeSetting({ metro: {} })).toBeNull();
+    expect(tunnelModeSetting({ metro: 'nope' })).toBeNull();
+  });
+});
+
+describe('publicUrlSetting', () => {
+  test('reads a committed tunnel URL', () => {
+    expect(publicUrlSetting({ metro: { publicUrl: 'https://abc.trycloudflare.com' } })).toBe(
+      'https://abc.trycloudflare.com',
+    );
+  });
+
+  test('a non-string or blank value is unset', () => {
+    expect(publicUrlSetting({ metro: { publicUrl: '' } })).toBeNull();
+    expect(publicUrlSetting({ metro: { publicUrl: 42 } })).toBeNull();
+    expect(publicUrlSetting({})).toBeNull();
+  });
+});
+
+describe('ngrokUrlSetting', () => {
+  test('reads a valid HTTPS URL with explicit ngrok mode', () => {
+    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'https://stable.ngrok.app' } })).toBe(
+      'https://stable.ngrok.app',
+    );
+  });
+
+  test('normalizes a trailing slash for stable record reuse', () => {
+    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'https://stable.ngrok.app/' } })).toBe(
+      'https://stable.ngrok.app',
+    );
+  });
+
+  test('is unset for auto and every other tunnel mode', () => {
+    for (const tunnel of ['auto', 'expo', 'cloudflared', 'off']) {
+      expect(ngrokUrlSetting({ metro: { tunnel, ngrokUrl: 'https://stable.ngrok.app' } })).toBeNull();
+    }
+  });
+
+  test('rejects non-HTTPS and malformed URLs', () => {
+    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'http://stable.ngrok.app' } })).toBeNull();
+    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'not a url' } })).toBeNull();
+    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 42 } })).toBeNull();
+  });
 });

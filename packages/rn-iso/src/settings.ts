@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { getProjectSettings, getRepoSettings } from './config.ts';
-import type { Settings, SettingsObject } from './types.ts';
+import { TUNNEL_MODES, type TunnelMode } from './engine/metro-reach.ts';
+import type { RemoteDeviceBackend, Settings, SettingsObject } from './types.ts';
 export type { Settings, SettingsObject };
 
 function isPlainObject(v: unknown): v is SettingsObject {
@@ -27,10 +28,15 @@ const KNOWN_SETTINGS = new Set([
   'ios.deviceType',
   'ios.runtime',
   'ios.configuration',
+  'ios.remote',
   'android.systemImage',
   'android.variant',
   'android.keystore',
   'android.keystorePassword',
+  'android.remote',
+  'metro.tunnel',
+  'metro.ngrokUrl',
+  'metro.publicUrl',
   'worktreeDir',
   'worktree.baseRef',
   'worktree.include',
@@ -80,4 +86,101 @@ export function resolveSettings({
     gitCommonDir ? getRepoSettings(gitCommonDir) : null,
     readCommittedSettings(repoRoot),
   ]);
+}
+
+export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
+
+// Which remote backend this workspace's iOS device uses. Kept beside KNOWN_SETTINGS
+// for the reason stated above: the name of a setting and the code that reads
+// it drifting apart is how `worktree.install` became a silent no-op.
+//
+// Settings are Record<string, unknown> because they come from three JSON
+// layers, so the read narrows rather than asserts.
+export function remoteIosSetting(settings: SettingsObject): RemoteDeviceBackend | null {
+  return remoteSetting(settings, 'ios');
+}
+
+// The Android half uses the same explicit backend values.
+export function remoteAndroidSetting(settings: SettingsObject): RemoteDeviceBackend | null {
+  return remoteSetting(settings, 'android');
+}
+
+function remoteSetting(settings: SettingsObject, platform: 'ios' | 'android'): RemoteDeviceBackend | null {
+  const block = settings[platform];
+  if (!isPlainObject(block)) return null;
+  const remote = block.remote;
+  return typeof remote === 'string' && (REMOTE_DEVICE_BACKENDS as readonly string[]).includes(remote)
+    ? (remote as RemoteDeviceBackend)
+    : null;
+}
+
+export function remoteDeviceSettingError(settings: SettingsObject): string | null {
+  for (const platform of ['ios', 'android'] as const) {
+    const block = settings[platform];
+    if (!isPlainObject(block) || !('remote' in block)) continue;
+    if (remoteSetting(settings, platform) === null) {
+      return `Invalid ${platform}.remote setting ${JSON.stringify(block.remote)}. Expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`;
+    }
+  }
+  return null;
+}
+
+// engine/metro-reach.ts's TunnelMode, committed once for the whole repo
+// rather than passed per invocation -- there is no `--tunnel` flag. Readers
+// return null for missing or invalid input; commands validate before using the
+// value so invalid input cannot silently select a default.
+export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
+  const block = settings.metro;
+  if (typeof block !== 'object' || block === null) return null;
+  const mode = (block as { tunnel?: unknown }).tunnel;
+  return typeof mode === 'string' && (TUNNEL_MODES as readonly string[]).includes(mode) ? (mode as TunnelMode) : null;
+}
+
+export function metroTunnelSettingError(settings: SettingsObject): string | null {
+  const block = settings.metro;
+  if (!isPlainObject(block)) return null;
+  if ('tunnel' in block) {
+    const mode = block.tunnel;
+    if (typeof mode !== 'string' || !(TUNNEL_MODES as readonly string[]).includes(mode)) {
+      return `Invalid metro.tunnel setting ${JSON.stringify(mode)}. Expected one of: ${TUNNEL_MODES.join(', ')}.`;
+    }
+  }
+  if (!('ngrokUrl' in block)) return null;
+  if (block.tunnel !== 'ngrok') {
+    return 'metro.ngrokUrl requires metro.tunnel to be "ngrok".';
+  }
+  if (normalizedHttpsUrl(block.ngrokUrl) === null) {
+    return 'metro.ngrokUrl must be a valid HTTPS URL.';
+  }
+  return null;
+}
+
+// An operator-supplied tunnel URL that already exists. planMetroReach uses
+// this in place of starting one of its own, whatever metro.tunnel says.
+export function publicUrlSetting(settings: SettingsObject): string | null {
+  const block = settings.metro;
+  if (typeof block !== 'object' || block === null) return null;
+  const url = (block as { publicUrl?: unknown }).publicUrl;
+  return typeof url === 'string' && url.trim() ? url : null;
+}
+
+// A stable URL for a managed ngrok process. It is deliberately scoped to an
+// explicit ngrok selection: `auto` can fall back to cloudflared, where an
+// ngrok-only URL has no meaning. HTTPS is required because remote development
+// clients must not receive a public clear-text origin.
+export function ngrokUrlSetting(settings: SettingsObject): string | null {
+  const block = settings.metro;
+  if (typeof block !== 'object' || block === null) return null;
+  if ((block as { tunnel?: unknown }).tunnel !== 'ngrok') return null;
+  return normalizedHttpsUrl((block as { ngrokUrl?: unknown }).ngrokUrl);
+}
+
+function normalizedHttpsUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const url = new URL(raw.trim());
+    return url.protocol === 'https:' ? raw.trim().replace(/\/+$/, '') : null;
+  } catch {
+    return null;
+  }
 }

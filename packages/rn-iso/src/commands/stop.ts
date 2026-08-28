@@ -7,8 +7,18 @@ import { findProjectRoot } from '../project.ts';
 import { supervisorPidFile } from '../paths.ts';
 import { findPidListeningOnPort, isPidAlive, killMetroTree, resolveProjectMetro } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
-import { clearWorkspaceStateKeys, readWorkspaceState } from '../supervisor/state.ts';
+import {
+  clearManagedMetroTunnel,
+  clearRemoteSession,
+  clearWorkspaceStateKeys,
+  readMetroTunnel,
+  readRemoteSession,
+  readWorkspaceState,
+} from '../supervisor/state.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
+import { endRecordedSession } from '../engine/device-remote.ts';
+import { resolveEasCliBin } from '../engine/remote-cache.ts';
+import { stopTunnel } from '../engine/tunnel.ts';
 
 const DEFAULT_WAIT_MS = 10_000;
 const POLL_MS = 100;
@@ -49,6 +59,26 @@ export function readCollectorState(root: string): CollectorStateMap {
   return collectors && typeof collectors === 'object' ? (collectors as CollectorStateMap) : {};
 }
 
+// The remote session this workspace created, if any. Written by `ios --remote`
+// the moment the session exists, so a build that failed later still leaves a
+// handle here. Only the session id: the token is never persisted.
+interface RemoteDeviceRecord {
+  platform?: string | null;
+  sessionId?: string;
+}
+function readRemoteDeviceState(root: string): RemoteDeviceRecord | null {
+  return readRemoteSession(root);
+}
+
+// Drops the named top-level keys from state.json. NOT a delete of the file:
+// `ios` / `android` write `lastBuild` beside `supervisor` and `collectors`,
+// and taking the build fingerprint away with a pid would turn every stop into
+// a guaranteed cache miss on the next build.
+function dropStateKeys(root: string, keys: string[]): void {
+  clearWorkspaceStateKeys(root, keys);
+}
+
+// Drops the supervisor block and the pid file.
 export function clearSupervisorState(root: string): void {
   try {
     rmSync(supervisorPidFile(root), { force: true });
@@ -209,6 +239,11 @@ interface DeviceOutcomeEntry {
 interface DeviceOutcome {
   ios: DeviceOutcomeEntry | null;
   android: DeviceOutcomeEntry | null;
+  // Only set when this workspace created a remote session. Unlike ios and
+  // android, its `torn-down` means DESTROYED, not shut down: see the device
+  // step in runStop for why remote is the one exception to "stop never
+  // deletes".
+  remote?: DeviceOutcomeEntry | null;
 }
 
 interface PortOutcome {
@@ -223,6 +258,31 @@ interface StopOutcomes {
   metro: MetroOutcome;
   device: DeviceOutcome;
   port: PortOutcome;
+  metroTunnel: TunnelOutcome;
+}
+
+// A tunnel this workspace's Metro is reachable through, and what happened to
+// it here. Only a MANAGED tunnel (`ios`/`android --remote`'s engine/tunnel.ts)
+// has anything to stop: an Expo-hosted one has no process of its own, and an
+// operator-supplied metro.publicUrl is never recorded at all, so `stop` never
+// sees it and never touches it -- the ownership rule (CLAUDE.md item 2)
+// applied to tunnels.
+interface TunnelOutcome {
+  status: string; // none | not-managed | stopped | missing | failed
+  provider?: string;
+  reason?: string;
+}
+
+// Every side effect is injected so the ORDER -- which is the part that can
+// strand a live process or free a port out from under one -- is testable
+// without signalling anything.
+// The real teardown: resolve eas-cli against the project, then end the
+// session. Injected in tests so `stop`'s own suite never shells out.
+function defaultTeardownRemoteSession(
+  root: string,
+  sessionId: string,
+): { status: 'torn-down' | 'failed'; reason?: string } {
+  return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null });
 }
 
 export async function runStop({
@@ -242,6 +302,10 @@ export async function runStop({
   findListener = findPidListeningOnPort,
   teardownIos = teardownOwnedIosSim,
   teardownAvd = teardownOwnedAvd,
+  remoteDevice = undefined,
+  teardownRemoteSession = defaultTeardownRemoteSession,
+  metroTunnel = undefined,
+  stopMetroTunnel = stopTunnel,
   freePort = defaultFreePort,
   clearRegistration = defaultClearRegistration,
   clearState = clearSupervisorState,
@@ -263,6 +327,12 @@ export async function runStop({
   findListener?: (port: number) => number | null;
   teardownIos?: (udid: string, opts: { del?: boolean; label?: string }) => TeardownResult;
   teardownAvd?: (avdName: string, opts: { del?: boolean }) => TeardownResult;
+  remoteDevice?: RemoteDeviceRecord | null;
+  // `undefined` reads the real recorded tunnel; pass an explicit value
+  // (including `null`) in a test.
+  metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
+  stopMetroTunnel?: typeof stopTunnel;
+  teardownRemoteSession?: (root: string, sessionId: string) => { status: 'torn-down' | 'failed'; reason?: string };
   freePort?: (root: string, port: number) => void;
   clearRegistration?: (root: string) => Promise<void>;
   clearState?: (root: string) => void;
@@ -280,6 +350,7 @@ export async function runStop({
     metro: { status: 'none' },
     device: { ios: null, android: null },
     port: { status: 'none', port: reservedPort },
+    metroTunnel: { status: 'none' },
   };
   let ok = true;
   let stillHolding: string | null | undefined = null;
@@ -334,9 +405,84 @@ export async function runStop({
     if (outcomes.device.ios?.status === 'failed' || outcomes.device.android?.status === 'failed') ok = false;
   }
 
+  // A remote session is the ONE device rn-iso stops by DESTROYING. Locally
+  // `stop` never deletes, because a shut-down simulator costs nothing to
+  // keep. A cloud session bills until its max duration, so leaving one up is
+  // the worse failure -- and `ios --remote` creates a fresh one anyway.
+  //
+  // OUTSIDE the stillHolding guard, unlike the local shutdown above. That
+  // guard exists so a supervisor still driving a simulator does not get the
+  // device yanked out from under it -- a reason about a LOCAL device. A
+  // session in a datacenter is not what that supervisor is holding, and it
+  // charges by the minute whether or not a local process ignored SIGTERM.
+  // Leaving it up because something else refused to die is the one outcome
+  // that costs money.
+  const remote = remoteDevice === undefined ? readRemoteDeviceState(root) : remoteDevice;
+  const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
+  if (sessionId) {
+    const result = teardownRemoteSession(root, sessionId);
+    outcomes.device.remote = { status: result.status, label: sessionId, reason: result.reason };
+    if (result.status === 'failed') {
+      ok = false;
+      report(chalk.red(`remote: ${result.reason ?? `could not stop session ${sessionId}`}`));
+    } else {
+      report(chalk.dim(`remote: stopped session ${sessionId}`));
+      if (result.reason) {
+        ok = false;
+        report(chalk.yellow(`remote: ${result.reason}`));
+      } else {
+        clearRemoteSession(root, sessionId);
+      }
+    }
+  }
+
+  // A tunnel `ios`/`android --remote` started for itself. Its own detached
+  // process, unrelated to the supervisor or to any local device, so -- same
+  // reasoning as the remote session above -- it is reaped OUTSIDE the
+  // stillHolding guard: nothing about a supervisor that ignored SIGTERM makes
+  // a separate ngrok/cloudflared process any less safe to stop.
+  const tunnel = metroTunnel === undefined ? readMetroTunnel(root) : metroTunnel;
+  let tunnelHolding: string | null = null;
+  if (tunnel?.kind === 'managed') {
+    const result = await stopMetroTunnel(tunnel);
+    outcomes.metroTunnel = { status: result.status, provider: tunnel.provider, reason: result.reason };
+    if (result.status === 'failed') {
+      ok = false;
+      tunnelHolding = result.reason ?? `could not stop the ${tunnel.provider} tunnel`;
+      if (!stillHolding) stillHolding = tunnelHolding;
+      report(chalk.red(`tunnel: ${tunnelHolding}`));
+    } else {
+      if (!clearManagedMetroTunnel(root, tunnel)) {
+        tunnelHolding = 'a replacement managed tunnel record appeared during cleanup and remains active';
+        stillHolding = stillHolding ?? tunnelHolding;
+        ok = false;
+        outcomes.metroTunnel = { status: 'failed', provider: tunnel.provider, reason: tunnelHolding };
+        report(chalk.red(`tunnel: ${tunnelHolding}`));
+      } else {
+        report(
+          chalk.dim(
+            result.status === 'missing' ? 'tunnel: already gone' : `tunnel: stopped the ${tunnel.provider} tunnel`,
+          ),
+        );
+      }
+    }
+  } else if (tunnel?.kind === 'expo') {
+    outcomes.metroTunnel = { status: 'not-managed' };
+  }
+
+  // Step 5: the port, and step 6: the records. Both are bookkeeping, and both
+  // are wrong while a process this command failed to stop is still holding on.
   if (stillHolding) {
     outcomes.port = { status: 'kept', port: reservedPort, reason: stillHolding };
     report(chalk.yellow(`port: keeping reservation ${reservedPort ?? '(none)'} -- ${stillHolding}`));
+    const supervisorIsDown =
+      outcomes.supervisor.status === 'none' ||
+      outcomes.supervisor.status === 'already-stopped' ||
+      outcomes.supervisor.status === 'stopped';
+    if (tunnelHolding && supervisorIsDown) {
+      clearState(root);
+      await clearRegistration(root);
+    }
   } else {
     if (reservedPort !== null) {
       freePort(root, reservedPort);
@@ -345,6 +491,11 @@ export async function runStop({
     }
     clearState(root);
     await clearRegistration(root);
+    // An Expo-hosted tunnel has no process of its own here: it dies with the
+    // expo child the supervisor step above already stopped. Its record is
+    // stale the moment that server stops -- the next `start` writes a fresh
+    // one if metro.tunnel still calls for it.
+    if (tunnel?.kind === 'expo') dropStateKeys(root, ['metroTunnel']);
   }
 
   return { ok, outcomes, summary: summarize(root, outcomes, ok) };
@@ -574,6 +725,9 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   }
   if (outcomes.port.status === 'freed') parts.push(`port ${outcomes.port.port} freed`);
   if (outcomes.port.status === 'kept') parts.push(`port ${outcomes.port.port} kept`);
+  if (outcomes.metroTunnel.status === 'stopped') parts.push(`${outcomes.metroTunnel.provider} tunnel stopped`);
+  if (outcomes.metroTunnel.status === 'failed')
+    parts.push(`${outcomes.metroTunnel.provider} tunnel could not be stopped`);
   const what = parts.length ? parts.join(', ') : 'nothing was running';
   return `${ok ? 'Stopped' : 'Stopped with problems'}: ${what} (${root})`;
 }

@@ -1,11 +1,25 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { saveConfig, loadConfig } from '../config.ts';
 import { register } from '../cache-manifest.ts';
+import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
+import { withEasProjectLock } from '../engine/eas-project-lock.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../paths.ts';
 import gcCommand, {
   collectGcReport,
   describeUnverifiableDevices,
@@ -350,6 +364,124 @@ function captureLog(fn: () => unknown) {
     .then(() => logs.join('\n'));
 }
 
+interface EasCall {
+  args: string[];
+  options: { cwd?: string; timeoutMs?: number; omitEnv?: readonly string[] };
+}
+
+type EasResponse = string | Error | ((options: EasCall['options']) => string | Error);
+
+function easGcHarness({
+  project,
+  list,
+  get = {},
+  stop = {},
+}: {
+  project: string;
+  list:
+    | string
+    | Error
+    | Record<string, string | Error>
+    | ((after: string, page: number, options: EasCall['options']) => string | Error);
+  get?: Record<string, EasResponse>;
+  stop?: Record<string, EasResponse>;
+}) {
+  const calls: EasCall[] = [];
+  let page = 0;
+  return {
+    calls,
+    deps: {
+      easLedgerRoot: join(fakeHome, 'machine-eas'),
+      findProjectRoot: () => project,
+      detectIsExpo: () => true,
+      resolveEasCliBin: () => ({ file: '/bin/eas', source: 'path' as const }),
+      runEasFile(_file: string, args: string[], options: EasCall['options']) {
+        calls.push({ args, options });
+        const id = args[args.indexOf('--id') + 1] ?? '';
+        const after = args.includes('--after') ? (args[args.indexOf('--after') + 1] ?? '') : 'first';
+        const listValue =
+          typeof list === 'function'
+            ? list(after, page++, options)
+            : typeof list === 'object' && !(list instanceof Error)
+              ? list[after]
+              : list;
+        const selected = args[0] === 'simulator:list' ? listValue : args[0] === 'simulator:get' ? get[id] : stop[id];
+        const value = typeof selected === 'function' ? selected(options) : selected;
+        if (value instanceof Error) throw value;
+        return value ?? '';
+      },
+    },
+  };
+}
+
+function easList(
+  sessions: Array<{ id?: string; name?: string; status?: string; platform?: string | null }> = [],
+  pageInfo: { hasNextPage?: unknown; endCursor?: unknown } = { hasNextPage: false, endCursor: null },
+): string {
+  return JSON.stringify({ sessions, pageInfo });
+}
+
+function registerExpoProject(project: string): void {
+  mkdirSync(project, { recursive: true });
+  saveConfig({ version: 2, projects: { [project]: { isExpo: true } }, repos: {} });
+}
+
+function writeRemoteState(project: string, value: unknown): void {
+  ensureWorkspaceStorage(project);
+  writeFileSync(workspaceStateFile(project), typeof value === 'string' ? value : JSON.stringify(value));
+}
+
+function writeEasLedger(
+  ledgerRoot: string,
+  claims: Array<{
+    sessionId: string;
+    name: string;
+    platform: 'ios' | 'android';
+    workspaceRoot: string;
+    stateFile: string;
+  }>,
+): void {
+  mkdirSync(ledgerRoot, { recursive: true });
+  const file = join(ledgerRoot, 'sessions.json');
+  let existing: Record<string, unknown> = {};
+  if (existsSync(file)) {
+    const parsed = JSON.parse(readFileSync(file, 'utf-8')) as { claims?: Record<string, unknown> };
+    existing = parsed.claims ?? {};
+  }
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      claims: {
+        ...existing,
+        ...Object.fromEntries(
+          claims.map((claim) => [
+            claim.sessionId,
+            { ...claim, workspaceHome: dirname(dirname(dirname(claim.stateFile))) },
+          ]),
+        ),
+      },
+    }),
+  );
+}
+
+function claimEasSessions(
+  project: string,
+  sessions: Array<{ id: string; name: string; platform: 'ios' | 'android' }>,
+): void {
+  ensureWorkspaceStorage(project);
+  writeEasLedger(
+    join(fakeHome, 'machine-eas'),
+    sessions.map((session) => ({
+      sessionId: session.id,
+      name: session.name,
+      platform: session.platform,
+      workspaceRoot: project,
+      stateFile: workspaceStateFile(project),
+    })),
+  );
+}
+
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
   process.env.RN_ISO_HOME = tmpHome;
@@ -373,6 +505,1016 @@ afterEach(() => {
   else process.env.HOME = originalHome;
 });
 
+describe('EAS orphan session sweep', () => {
+  test('a session claimed from another RN_ISO_HOME is never stopped', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const clone = join(fakeHome, 'expo-app-clone');
+    const homeA = join(fakeHome, 'home-a');
+    const homeB = join(fakeHome, 'home-b');
+    const ledgerRoot = join(fakeHome, 'machine-eas');
+    mkdirSync(project, { recursive: true });
+    mkdirSync(clone, { recursive: true });
+
+    process.env.RN_ISO_HOME = homeB;
+    writeRemoteState(clone, { remoteDevice: { platform: 'ios', sessionId: 'drs_home_b' } });
+    const stateFile = workspaceStateFile(clone);
+    writeEasLedger(ledgerRoot, [
+      { sessionId: 'drs_home_b', name: 'rn-iso-home-b', platform: 'ios', workspaceRoot: clone, stateFile },
+    ]);
+
+    process.env.RN_ISO_HOME = homeA;
+    saveConfig({ version: 2, projects: { [project]: { isExpo: true } }, repos: {} });
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_home_b', name: 'rn-iso-home-b', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_home_b: JSON.stringify({ id: 'drs_home_b', name: 'rn-iso-home-b', status: 'IN_PROGRESS' }) },
+      stop: { drs_home_b: JSON.stringify({ id: 'drs_home_b', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, { ...harness.deps, easLedgerRoot: ledgerRoot }));
+
+    expect(output).not.toMatch(/Stopped EAS session drs_home_b/);
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+  });
+
+  test('a missing config never authorizes an unclaimed session stop', async () => {
+    const project = join(fakeHome, 'expo-app');
+    mkdirSync(project, { recursive: true });
+    installExecutor();
+    const ledgerRoot = join(fakeHome, 'machine-eas');
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_unclaimed', name: 'rn-iso-unclaimed', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_unclaimed: JSON.stringify({ id: 'drs_unclaimed', name: 'rn-iso-unclaimed', status: 'IN_PROGRESS' }) },
+      stop: { drs_unclaimed: JSON.stringify({ id: 'drs_unclaimed', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, { ...harness.deps, easLedgerRoot: ledgerRoot }));
+
+    expect(output).toMatch(/unclaimed|ownership.*not verified/i);
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+  });
+
+  test('a fixed ledger claim authorizes cleanup after its workspace state is verified absent', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const ledgerRoot = join(fakeHome, 'machine-eas');
+    mkdirSync(project, { recursive: true });
+    ensureWorkspaceStorage(project);
+    const stateFile = workspaceStateFile(project);
+    writeEasLedger(ledgerRoot, [
+      { sessionId: 'drs_claimed', name: 'rn-iso-claimed', platform: 'ios', workspaceRoot: project, stateFile },
+    ]);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_claimed', name: 'rn-iso-claimed', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_claimed: JSON.stringify({ id: 'drs_claimed', name: 'rn-iso-claimed', status: 'IN_PROGRESS' }) },
+      stop: { drs_claimed: JSON.stringify({ id: 'drs_claimed', status: 'STOPPED' }) },
+    });
+
+    await captureLog(() => runGc({ delete: true }, { ...harness.deps, easLedgerRoot: ledgerRoot }));
+
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list', 'simulator:get', 'simulator:stop']);
+  });
+
+  test.each(['missing', 'corrupt', 'mismatched', 'mismatched-state-path'])(
+    '%s fixed ledger data never authorizes stop',
+    async (kind) => {
+      const project = join(fakeHome, 'expo-app');
+      const ledgerRoot = join(fakeHome, 'machine-eas');
+      mkdirSync(project, { recursive: true });
+      ensureWorkspaceStorage(project);
+      if (kind === 'corrupt') {
+        mkdirSync(ledgerRoot, { recursive: true });
+        writeFileSync(join(ledgerRoot, 'sessions.json'), '{broken');
+      } else if (kind === 'mismatched') {
+        writeEasLedger(ledgerRoot, [
+          {
+            sessionId: 'drs_target',
+            name: 'rn-iso-different',
+            platform: 'ios',
+            workspaceRoot: project,
+            stateFile: workspaceStateFile(project),
+          },
+        ]);
+      } else if (kind === 'mismatched-state-path') {
+        const stateFile = join(tmpHome, 'workspaces', 'wrong-workspace', 'state.json');
+        mkdirSync(dirname(stateFile), { recursive: true });
+        writeEasLedger(ledgerRoot, [
+          {
+            sessionId: 'drs_target',
+            name: 'rn-iso-target',
+            platform: 'ios',
+            workspaceRoot: project,
+            stateFile,
+          },
+        ]);
+      }
+      installExecutor();
+      const harness = easGcHarness({
+        project,
+        list: easList([{ id: 'drs_target', name: 'rn-iso-target', status: 'IN_PROGRESS', platform: 'IOS' }]),
+        get: { drs_target: JSON.stringify({ id: 'drs_target', name: 'rn-iso-target', status: 'IN_PROGRESS' }) },
+        stop: { drs_target: JSON.stringify({ id: 'drs_target', status: 'STOPPED' }) },
+      });
+
+      await captureLog(() => runGc({ delete: true }, { ...harness.deps, easLedgerRoot: ledgerRoot }));
+
+      expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+    },
+  );
+
+  test('local delete work runs after the fixed EAS lock is released', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    writeLock({ pid: 999999 });
+    const harness = easGcHarness({ project, list: easList() });
+    let held = false;
+    let localDeleteHeld: boolean | null = null;
+    const originalLog = console.log;
+    const log = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      if (String(args[0]).includes('Cleared the ios build lock')) localDeleteHeld = held;
+    });
+
+    try {
+      await runGc(
+        { delete: true, all: true },
+        {
+          ...harness.deps,
+          easLedgerRoot: join(fakeHome, 'machine-eas'),
+          withEasProjectLock: async (_root, fn) => {
+            held = true;
+            try {
+              return await fn();
+            } finally {
+              held = false;
+            }
+          },
+        },
+      );
+    } finally {
+      log.mockRestore();
+      console.log = originalLog;
+    }
+
+    expect(localDeleteHeld).toBe(false);
+  });
+
+  test('dry run reports a project-scoped orphan and performs no lookup or stop', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [{ id: 'drs_orphan', name: 'rn-iso-old', platform: 'ios' }]);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_orphan', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+    });
+
+    const output = await captureLog(() => runGc({}, harness.deps));
+
+    expect(output).toMatch(/Orphaned EAS sessions \(1\)/);
+    expect(output).toContain('drs_orphan');
+    expect(output).toContain('rn-iso-old');
+    expect(output).toContain(project);
+    expect(output).toMatch(/eas simulator:stop --id drs_orphan/);
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+    expect(harness.calls[0]?.options).toMatchObject({ cwd: project, timeoutMs: expect.any(Number) });
+    expect(harness.calls[0]?.options.omitEnv).toEqual(
+      expect.arrayContaining(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']),
+    );
+  });
+
+  test('a session recorded by another registered workspace is not orphaned', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const otherWorkspace = join(fakeHome, 'expo-worktree');
+    mkdirSync(project, { recursive: true });
+    mkdirSync(otherWorkspace, { recursive: true });
+    saveConfig({
+      version: 2,
+      projects: { [project]: { isExpo: true }, [otherWorkspace]: { isExpo: true } },
+      repos: {},
+    });
+    claimEasSessions(project, [{ id: 'drs_orphan', name: 'rn-iso-old', platform: 'ios' }]);
+    writeRemoteState(otherWorkspace, { remoteDevice: { platform: 'ios', sessionId: 'drs_recorded' } });
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([
+        { id: 'drs_recorded', name: 'rn-iso-live', status: 'IN_PROGRESS', platform: 'IOS' },
+        { id: 'drs_orphan', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' },
+      ]),
+    });
+
+    const output = await captureLog(() => runGc({}, harness.deps));
+
+    expect(output).not.toContain('drs_recorded');
+    expect(output).toContain('drs_orphan');
+    expect(JSON.parse(readFileSync(workspaceStateFile(otherWorkspace), 'utf-8'))).toMatchObject({
+      remoteDevice: { sessionId: 'drs_recorded' },
+    });
+  });
+
+  test.each([
+    ['missing', (root: string) => root],
+    [
+      'inaccessible',
+      (root: string) => {
+        mkdirSync(root);
+        chmodSync(root, 0o000);
+        return root;
+      },
+    ],
+  ])('a registered workspace root that is %s fails closed', async (_label, prepareRoot) => {
+    const project = join(fakeHome, 'expo-app');
+    const unavailable = prepareRoot(join(fakeHome, 'unavailable-workspace'));
+    mkdirSync(project, { recursive: true });
+    saveConfig({
+      version: 2,
+      projects: { [project]: { isExpo: true }, [unavailable]: { isExpo: true } },
+      repos: {},
+    });
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_orphan', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_orphan: JSON.stringify({ id: 'drs_orphan', name: 'rn-iso-old', status: 'IN_PROGRESS' }) },
+      stop: { drs_orphan: JSON.stringify({ id: 'drs_orphan', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps)).finally(() => {
+      if (existsSync(unavailable)) chmodSync(unavailable, 0o700);
+    });
+
+    expect(output).toMatch(/unavailable-workspace.*not available|unavailable-workspace.*not readable/i);
+    expect(harness.calls).toEqual([]);
+  });
+
+  test('an existing registered workspace with no state file does not block deletion', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const emptyWorkspace = join(fakeHome, 'empty-workspace');
+    mkdirSync(project, { recursive: true });
+    mkdirSync(emptyWorkspace, { recursive: true });
+    saveConfig({
+      version: 2,
+      projects: { [project]: { isExpo: true }, [emptyWorkspace]: { isExpo: true } },
+      repos: {},
+    });
+    ensureWorkspaceStorage(emptyWorkspace);
+    claimEasSessions(emptyWorkspace, [{ id: 'drs_orphan', name: 'rn-iso-old', platform: 'ios' }]);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_orphan', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_orphan: JSON.stringify({ id: 'drs_orphan', name: 'rn-iso-old', status: 'IN_PROGRESS' }) },
+      stop: { drs_orphan: JSON.stringify({ id: 'drs_orphan', status: 'STOPPED' }) },
+    });
+
+    await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list', 'simulator:get', 'simulator:stop']);
+  });
+
+  test('an active remote session creation lock disables deletion while local cleanup continues', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_creating', name: 'rn-iso-creating', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: {
+        drs_creating: JSON.stringify({ id: 'drs_creating', name: 'rn-iso-creating', status: 'IN_PROGRESS' }),
+      },
+      stop: { drs_creating: JSON.stringify({ id: 'drs_creating', status: 'STOPPED' }) },
+    });
+
+    const output = await withRemoteSessionLock(project, () => captureLog(() => runGc({ delete: true }, harness.deps)));
+
+    expect(output).toMatch(/remote-session|remote session.*lock/i);
+    expect(harness.calls).toEqual([]);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('an active EAS start lock disables only the remote sweep while local cleanup continues', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    writeFileSync(
+      join(project, 'app.json'),
+      JSON.stringify({ expo: { extra: { eas: { projectId: 'active-eas-project' } } } }),
+    );
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_hidden', name: 'rn-iso-hidden', status: 'IN_PROGRESS', platform: 'IOS' }]),
+    });
+
+    const output = await withEasProjectLock(project, () => captureLog(() => runGc({ delete: true }, harness.deps)), {
+      machineRoot: join(fakeHome, 'machine-eas'),
+    });
+
+    expect(output).toMatch(/EAS project lock/i);
+    expect(harness.calls).toEqual([]);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('a false then true Expo classification cannot enable an unlocked EAS sweep', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_race', name: 'rn-iso-race', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: {
+        drs_race: JSON.stringify({ id: 'drs_race', name: 'rn-iso-race', status: 'IN_PROGRESS' }),
+      },
+      stop: { drs_race: JSON.stringify({ id: 'drs_race', status: 'STOPPED' }) },
+    });
+    let classifications = 0;
+
+    await captureLog(() =>
+      runGc(
+        { delete: true },
+        {
+          ...harness.deps,
+          detectIsExpo: () => classifications++ > 0,
+        },
+      ),
+    );
+
+    expect(classifications).toBe(1);
+    expect(harness.calls).toEqual([]);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('dry run does not wait behind an active remote session creation lock', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_creating', name: 'rn-iso-creating', status: 'IN_PROGRESS', platform: 'IOS' }]),
+    });
+    const startedAt = Date.now();
+
+    const output = await withRemoteSessionLock(project, () => captureLog(() => runGc({}, harness.deps)));
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(output).toMatch(/remote-session|remote session.*lock/i);
+    expect(harness.calls).toEqual([]);
+  });
+
+  test('a malformed remote session lock disables the EAS sweep', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const lockDir = join(workspaceDir(realpathSync(project)), 'remote-session.lock');
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(join(lockDir, 'owner.json'), '{not valid json');
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lockDir, old, old);
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_hidden', name: 'rn-iso-hidden', status: 'IN_PROGRESS', platform: 'IOS' }]),
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/remote-session|remote session.*lock/i);
+    expect(harness.calls).toEqual([]);
+    expect(existsSync(lockDir)).toBe(true);
+  });
+
+  test('registry expansion releases and retries the sorted remote session lock set', async () => {
+    const project = join(fakeHome, 'z-expo-app');
+    const added = join(fakeHome, 'a-expo-workspace');
+    registerExpoProject(project);
+    mkdirSync(added, { recursive: true });
+    installExecutor();
+    const harness = easGcHarness({ project, list: easList() });
+    const acquisitions: string[] = [];
+    let depth = 0;
+    let expanded = false;
+    const deps = {
+      ...harness.deps,
+      withRemoteSessionLock: async <T>(root: string, fn: () => Promise<T>): Promise<T> => {
+        acquisitions.push(root);
+        depth++;
+        try {
+          if (!expanded) {
+            expanded = true;
+            saveConfig({
+              version: 2,
+              projects: { [project]: { isExpo: true }, [added]: { isExpo: true } },
+              repos: {},
+            });
+          }
+          return await fn();
+        } finally {
+          depth--;
+        }
+      },
+    } as unknown as Parameters<typeof runGc>[1];
+
+    await captureLog(() => runGc({}, deps));
+
+    expect(acquisitions).toEqual([realpathSync(project), realpathSync(added), realpathSync(project)]);
+    expect(depth).toBe(0);
+  });
+
+  test('an error from the GC core is not retried as a lock acquisition failure', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const harness = easGcHarness({ project, list: easList() });
+    const failure = new Error('report output failed');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {
+      throw failure;
+    });
+
+    await expect(runGc({}, harness.deps)).rejects.toBe(failure);
+
+    expect(log).toHaveBeenCalledTimes(1);
+    log.mockRestore();
+  });
+
+  test('an unexpected EAS collection failure becomes a notice while local cleanup continues', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({ project, list: easList() });
+    const deps = {
+      ...harness.deps,
+      withRemoteSessionLock: async <T>(_root: string, fn: () => Promise<T>): Promise<T> => {
+        await fn();
+        throw new Error('remote session lock release failed');
+      },
+    } as unknown as Parameters<typeof runGc>[1];
+
+    const output = await captureLog(() => runGc({ delete: true }, deps));
+
+    expect(output).toMatch(/EAS collection failed.*remote session lock release failed/i);
+    expect(harness.calls.filter((call) => call.args[0] === 'simulator:stop')).toEqual([]);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('a workspace registered during the EAS list cannot hide a pending state write', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const added = join(fakeHome, 'new-expo-workspace');
+    registerExpoProject(project);
+    mkdirSync(added, { recursive: true });
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: () => {
+        saveConfig({
+          version: 2,
+          projects: { [project]: { isExpo: true }, [added]: { isExpo: true } },
+          repos: {},
+        });
+        return easList([{ id: 'drs_registering', name: 'rn-iso-registering', status: 'IN_PROGRESS', platform: 'IOS' }]);
+      },
+      get: {
+        drs_registering: JSON.stringify({
+          id: 'drs_registering',
+          name: 'rn-iso-registering',
+          status: 'IN_PROGRESS',
+        }),
+      },
+      stop: { drs_registering: JSON.stringify({ id: 'drs_registering', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/registered workspace roots.*changed|new.*remote-session lock/i);
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('the final state rescan rejects a workspace registered after classification', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const added = join(fakeHome, 'late-expo-workspace');
+    registerExpoProject(project);
+    claimEasSessions(project, [{ id: 'drs_registering', name: 'rn-iso-registering', platform: 'ios' }]);
+    mkdirSync(added, { recursive: true });
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: () => {
+        queueMicrotask(() => {
+          saveConfig({
+            version: 2,
+            projects: { [project]: { isExpo: true }, [added]: { isExpo: true } },
+            repos: {},
+          });
+          writeRemoteState(added, { remoteDevice: { platform: 'ios', sessionId: 'drs_registering' } });
+        });
+        return easList([{ id: 'drs_registering', name: 'rn-iso-registering', status: 'IN_PROGRESS', platform: 'IOS' }]);
+      },
+      get: {
+        drs_registering: JSON.stringify({
+          id: 'drs_registering',
+          name: 'rn-iso-registering',
+          status: 'IN_PROGRESS',
+        }),
+      },
+      stop: { drs_registering: JSON.stringify({ id: 'drs_registering', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/workspace record.*left running/i);
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+  });
+
+  test('the EAS sweep lock covers separate clones with asymmetric static and dynamic config through the final stop', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const otherWorkspace = join(fakeHome, 'expo-app-clone');
+    const projectGitCommon = join(fakeHome, 'project.git');
+    const otherGitCommon = join(fakeHome, 'other.git');
+    registerExpoProject(project);
+    mkdirSync(otherWorkspace, { recursive: true });
+    mkdirSync(projectGitCommon, { recursive: true });
+    mkdirSync(otherGitCommon, { recursive: true });
+    const appConfig = JSON.stringify({ expo: { extra: { eas: { projectId: 'shared-eas-project' } } } });
+    writeFileSync(join(project, 'app.json'), appConfig);
+    writeFileSync(
+      join(otherWorkspace, 'app.config.js'),
+      "module.exports = { extra: { eas: { projectId: 'shared-eas-project' } } };\n",
+    );
+    claimEasSessions(project, [{ id: 'drs_old', name: 'rn-iso-old', platform: 'ios' }]);
+    setExecutor({
+      run(cmd) {
+        throw new Error(`unexpected run: ${cmd}`);
+      },
+      runQuiet(cmd) {
+        if (!cmd.includes('--git-common-dir')) return null;
+        return cmd.includes(otherWorkspace) ? otherGitCommon : projectGitCommon;
+      },
+      spawn(cmd) {
+        throw new Error(`unexpected spawn: ${cmd}`);
+      },
+    });
+    const order: string[] = [];
+    let startPromise: Promise<unknown> | null = null;
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_old', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: {
+        drs_old: () => {
+          order.push('get');
+          startPromise = ensureRemoteBootOwned({
+            root: otherWorkspace,
+            platform: 'ios',
+            sessionName: 'rn-iso-new',
+            startedAt: '2026-08-28T00:00:00.000Z',
+            register: () => {
+              order.push('register');
+              const config = loadConfig();
+              saveConfig({
+                version: 2,
+                projects: { ...config?.projects, [otherWorkspace]: { isExpo: true } },
+                repos: config?.repos ?? {},
+              });
+            },
+            boot: async () => {
+              order.push('create');
+              return { ok: true, udid: 'drs_new' };
+            },
+            createdSessionId: () => 'drs_new',
+            abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_new' }),
+            writeState: () => {
+              order.push('publish');
+            },
+            ledgerRoot: join(fakeHome, 'machine-eas'),
+          });
+          return JSON.stringify({ id: 'drs_old', name: 'rn-iso-old', status: 'IN_PROGRESS' });
+        },
+      },
+      stop: {
+        drs_old: () => {
+          order.push('stop');
+          return JSON.stringify({ id: 'drs_old', status: 'STOPPED' });
+        },
+      },
+    });
+
+    await captureLog(() => runGc({ delete: true }, harness.deps));
+    await startPromise;
+
+    expect(order).toEqual(['get', 'stop', 'register', 'create', 'publish']);
+  });
+
+  test('collects every page before comparing current-project sessions', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [
+      { id: 'drs_page_1', name: 'rn-iso-one', platform: 'ios' },
+      { id: 'drs_page_2', name: 'rn-iso-two', platform: 'android' },
+    ]);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: {
+        first: easList([{ id: 'drs_page_1', name: 'rn-iso-one', status: 'IN_PROGRESS', platform: 'IOS' }], {
+          hasNextPage: true,
+          endCursor: 'cursor-2',
+        }),
+        'cursor-2': easList([{ id: 'drs_page_2', name: 'rn-iso-two', status: 'NEW', platform: 'ANDROID' }], {
+          hasNextPage: false,
+          endCursor: 'cursor-2-end',
+        }),
+      },
+    });
+
+    const output = await captureLog(() => runGc({}, harness.deps));
+
+    expect(output).toMatch(/Orphaned EAS sessions \(2\)/);
+    expect(output).toContain('drs_page_1');
+    expect(output).toContain('drs_page_2');
+    const pages = harness.calls.filter((call) => call.args[0] === 'simulator:list');
+    expect(pages).toHaveLength(2);
+    expect(pages[0]?.args).toEqual(expect.arrayContaining(['--limit', '100']));
+    expect(pages[0]?.args).not.toContain('--after');
+    expect(pages[1]?.args).toEqual(expect.arrayContaining(['--limit', '100', '--after', 'cursor-2']));
+    for (const page of pages) {
+      expect(page.options).toMatchObject({ cwd: project, timeoutMs: 30_000 });
+      expect(page.options.omitEnv).toEqual(
+        expect.arrayContaining(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']),
+      );
+    }
+  });
+
+  test('a unique-cursor sequence stops at the configured page limit', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: (_after, page) => {
+        if (page > 10) throw new Error('test safety bound reached');
+        return easList([], { hasNextPage: true, endCursor: `cursor-${page + 1}` });
+      },
+    });
+    const deps = { ...harness.deps, easMaxPages: 3 } as unknown as Parameters<typeof runGc>[1];
+
+    const output = await captureLog(() => runGc({ delete: true }, deps));
+
+    expect(output).toMatch(/EAS session sweep notice/i);
+    expect(output).toMatch(/page limit|maximum.*pages/i);
+    expect(harness.calls.filter((call) => call.args[0] === 'simulator:list')).toHaveLength(3);
+    expect(harness.calls.some((call) => call.args[0] === 'simulator:get')).toBe(false);
+    expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('a slow page sequence stops at the total deadline and shortens the final page timeout', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    let clock = 0;
+    const harness = easGcHarness({
+      project,
+      list: (_after, page) => {
+        clock += 40_000;
+        return easList(
+          page === 2 ? [{ id: 'drs_too_late', name: 'rn-iso-too-late', status: 'IN_PROGRESS', platform: 'IOS' }] : [],
+          { hasNextPage: page < 2, endCursor: `cursor-${page + 1}` },
+        );
+      },
+      get: {
+        drs_too_late: JSON.stringify({ id: 'drs_too_late', name: 'rn-iso-too-late', status: 'IN_PROGRESS' }),
+      },
+      stop: { drs_too_late: JSON.stringify({ id: 'drs_too_late', status: 'STOPPED' }) },
+    });
+    const deps = {
+      ...harness.deps,
+      easNow: () => clock,
+      easCollectionTimeoutMs: 60_000,
+    } as unknown as Parameters<typeof runGc>[1];
+
+    const output = await captureLog(() => runGc({ delete: true }, deps));
+
+    expect(output).toMatch(/EAS session sweep notice/i);
+    expect(output).toMatch(/deadline|time limit/i);
+    const listCalls = harness.calls.filter((call) => call.args[0] === 'simulator:list');
+    expect(listCalls.map((call) => call.options.timeoutMs)).toEqual([30_000, 20_000]);
+    expect(harness.calls.some((call) => call.args[0] === 'simulator:get')).toBe(false);
+    expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test.each([
+    [
+      'malformed page info',
+      { first: JSON.stringify({ sessions: [], pageInfo: { hasNextPage: 'yes', endCursor: null } }) },
+    ],
+    ['missing next cursor', { first: easList([], { hasNextPage: true, endCursor: null }) }],
+    [
+      'repeated cursor',
+      {
+        first: easList([], { hasNextPage: true, endCursor: 'same' }),
+        same: easList([], { hasNextPage: true, endCursor: 'same' }),
+      },
+    ],
+    [
+      'later page failure',
+      {
+        first: easList([], { hasNextPage: true, endCursor: 'next' }),
+        next: new Error('page request failed'),
+      },
+    ],
+  ])('a %s fails closed while local deletion continues', async (_label, list) => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({ project, list });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/EAS session sweep notice/i);
+    expect(output).toMatch(/page|cursor/i);
+    expect(harness.calls.some((call) => call.args[0] === 'simulator:get')).toBe(false);
+    expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test.each([
+    ['missing', undefined],
+    ['null', null],
+    ['unknown', 'WINDOWS'],
+  ])('an owned session with %s platform is never reported or stopped', async (_label, platform) => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_bad', name: 'rn-iso-bad', status: 'IN_PROGRESS', platform }]),
+      get: { drs_bad: JSON.stringify({ id: 'drs_bad', name: 'rn-iso-bad', status: 'IN_PROGRESS' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/platform/i);
+    expect(output).not.toMatch(/Orphaned EAS sessions/);
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+  });
+
+  test('delete stops an orphan only after a matching active owned lookup', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [{ id: 'drs_orphan', name: 'rn-iso-old', platform: 'ios' }]);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_orphan', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_orphan: JSON.stringify({ id: 'drs_orphan', name: 'rn-iso-old', status: 'IN_PROGRESS' }) },
+      stop: { drs_orphan: JSON.stringify({ id: 'drs_orphan', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list', 'simulator:get', 'simulator:stop']);
+    expect(output).toMatch(/Stopped EAS session drs_orphan/);
+  });
+
+  test.each([
+    {
+      label: 'terminal',
+      get: JSON.stringify({ id: 'drs_old', name: 'rn-iso-old', status: 'STOPPED' }),
+      expected: /already stopped/i,
+    },
+    {
+      label: 'missing',
+      get: Object.assign(new Error('lookup failed'), { stderr: 'Device run session drs_old was not found.' }),
+      expected: /already gone/i,
+    },
+  ])('treats a $label candidate as resolved without a stop', async ({ get, expected }) => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [{ id: 'drs_old', name: 'rn-iso-old', platform: 'ios' }]);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_old', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_old: get },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+    expect(output).toMatch(expected);
+  });
+
+  test.each([
+    ['network failure', new Error('getaddrinfo ENOTFOUND api.expo.dev')],
+    ['authentication failure', new Error('Authentication failed. Log in to EAS.')],
+    ['malformed output', 'not json'],
+  ])('reports a %s as a notice while local deletion continues', async (_label, list) => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({ project, list });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/EAS session sweep notice/i);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('a malformed workspace state fails closed for remote deletion', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    writeRemoteState(project, '{not json');
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_orphan', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_orphan: JSON.stringify({ id: 'drs_orphan', name: 'rn-iso-old', status: 'IN_PROGRESS' }) },
+      stop: { drs_orphan: JSON.stringify({ id: 'drs_orphan', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/state\.json.*could not be read|state\.json.*valid JSON/i);
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+  });
+
+  test('a listed state entry that cannot be read fails closed for remote deletion', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [{ id: 'drs_unreadable', name: 'rn-iso-old', platform: 'ios' }]);
+    symlinkSync(join(fakeHome, 'missing-state-target'), workspaceStateFile(project));
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_unreadable', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_unreadable: JSON.stringify({ id: 'drs_unreadable', name: 'rn-iso-old', status: 'IN_PROGRESS' }) },
+      stop: { drs_unreadable: JSON.stringify({ id: 'drs_unreadable', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/state\.json.*could not be read/i);
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+  });
+
+  test('a candidate changed to an unowned name is never stopped', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [{ id: 'drs_reused', name: 'rn-iso-old', platform: 'ios' }]);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_reused', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_reused: JSON.stringify({ id: 'drs_reused', name: 'manual-session', status: 'IN_PROGRESS' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/not owned by rn-iso/i);
+    expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+    expect(output).toMatch(/could not be deleted/i);
+  });
+
+  test('candidate failures are independent and do not block local cleanup', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [
+      { id: 'drs_lookup_fail', name: 'rn-iso-one', platform: 'ios' },
+      { id: 'drs_stop_fail', name: 'rn-iso-two', platform: 'android' },
+      { id: 'drs_ok', name: 'rn-iso-three', platform: 'ios' },
+    ]);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: easList([
+        { id: 'drs_lookup_fail', name: 'rn-iso-one', status: 'IN_PROGRESS', platform: 'IOS' },
+        { id: 'drs_stop_fail', name: 'rn-iso-two', status: 'IN_PROGRESS', platform: 'ANDROID' },
+        { id: 'drs_ok', name: 'rn-iso-three', status: 'IN_PROGRESS', platform: 'IOS' },
+      ]),
+      get: {
+        drs_lookup_fail: new Error('lookup timed out'),
+        drs_stop_fail: JSON.stringify({ id: 'drs_stop_fail', name: 'rn-iso-two', status: 'IN_PROGRESS' }),
+        drs_ok: JSON.stringify({ id: 'drs_ok', name: 'rn-iso-three', status: 'IN_PROGRESS' }),
+      },
+      stop: {
+        drs_stop_fail: new Error('stop failed'),
+        drs_ok: JSON.stringify({ id: 'drs_ok', status: 'STOPPED' }),
+      },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(harness.calls.filter((call) => call.args[0] === 'simulator:get')).toHaveLength(3);
+    expect(harness.calls.filter((call) => call.args[0] === 'simulator:stop')).toHaveLength(2);
+    expect(output).toContain('Stopped EAS session drs_ok');
+    expect(output).toMatch(/could not be deleted/i);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('a throwing claim removal reports resolved sessions and continues other candidates and local cleanup', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [
+      { id: 'drs_first', name: 'rn-iso-first', platform: 'ios' },
+      { id: 'drs_second', name: 'rn-iso-second', platform: 'android' },
+    ]);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: easList([
+        { id: 'drs_first', name: 'rn-iso-first', status: 'IN_PROGRESS', platform: 'IOS' },
+        { id: 'drs_second', name: 'rn-iso-second', status: 'IN_PROGRESS', platform: 'ANDROID' },
+      ]),
+      get: {
+        drs_first: JSON.stringify({ id: 'drs_first', name: 'rn-iso-first', status: 'IN_PROGRESS' }),
+        drs_second: JSON.stringify({ id: 'drs_second', name: 'rn-iso-second', status: 'IN_PROGRESS' }),
+      },
+      stop: {
+        drs_first: JSON.stringify({ id: 'drs_first', status: 'STOPPED' }),
+        drs_second: JSON.stringify({ id: 'drs_second', status: 'STOPPED' }),
+      },
+    });
+
+    const output = await captureLog(() =>
+      runGc({ delete: true }, {
+        ...harness.deps,
+        removeEasSessionClaim: () => {
+          throw new Error('claim store unavailable');
+        },
+      } as unknown as Parameters<typeof runGc>[1]),
+    );
+
+    expect(output).toMatch(/Stopped EAS session drs_first/);
+    expect(output).toMatch(/Stopped EAS session drs_second/);
+    expect(output).toMatch(/ownership claim.*could not be removed/i);
+    expect(harness.calls.map((call) => call.args[0])).toEqual([
+      'simulator:list',
+      'simulator:get',
+      'simulator:stop',
+      'simulator:get',
+      'simulator:stop',
+    ]);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('a false claim removal reports the stopped session and retained claim', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [{ id: 'drs_resolved', name: 'rn-iso-resolved', platform: 'ios' }]);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_resolved', name: 'rn-iso-resolved', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: {
+        drs_resolved: JSON.stringify({ id: 'drs_resolved', name: 'rn-iso-resolved', status: 'IN_PROGRESS' }),
+      },
+      stop: { drs_resolved: JSON.stringify({ id: 'drs_resolved', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() =>
+      runGc({ delete: true }, { ...harness.deps, removeEasSessionClaim: () => false } as unknown as Parameters<
+        typeof runGc
+      >[1]),
+    );
+
+    expect(output).toMatch(/Stopped EAS session drs_resolved/);
+    expect(output).toMatch(/ownership claim.*could not be removed/i);
+    expect(output).toMatch(/could not be deleted/i);
+  });
+
+  test('the report states that the EAS sweep covers only the current project', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [{ id: 'drs_old', name: 'rn-iso-old', platform: 'ios' }]);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_old', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+    });
+
+    const output = await captureLog(() => runGc({}, harness.deps));
+
+    expect(output).toMatch(/current EAS project only/i);
+    expect(output).not.toMatch(/all EAS projects/i);
+  });
+});
+
+// A bare `gc` must never write. The unmounted-volume entry is the one that
+// matters: an unplugged external SSD makes a live project look dead, and
+// unregistering it would drop its device claim (CLAUDE.md item 8).
 test('a bare gc leaves every registered entry in place', async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');
   saveConfig({

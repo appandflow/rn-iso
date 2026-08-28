@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Command } from 'commander';
 import { upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../paths.ts';
@@ -93,6 +94,22 @@ function captureAction(register: typeof registerIos, deps: LooseDeps) {
   };
 }
 
+function parseRemoteOption(args: string[]): unknown {
+  const program = new Command();
+  program.exitOverride();
+  program.configureOutput({ writeErr: () => {} });
+  registerIos(program);
+  const command = program.commands[0];
+  assert(command);
+  command.parseOptions(args);
+  return command.opts().remote;
+}
+
+// Every engine call is a seam. The defaults describe the happy path with a
+// cache MISS; each test overrides the one fact it is about.
+// The first NDJSON payload a --json command put on stdout, parsed. Asserts it
+// is present (noUncheckedIndexedAccess) then parses; the parsed value stays
+// JSON.parse-shaped, read one field at a time by the caller.
 function parseFirst(lines: string[]) {
   const [first] = lines;
   assert(first);
@@ -2006,6 +2023,264 @@ describe('concurrency limits', () => {
   });
 });
 
+// --- the remote device ------------------------------------------------------
+//
+// `--remote` swaps FOUR entries in the dep seam and nothing else. These tests
+// are about that boundary: which implementation each phase reached for, and
+// that the local path is untouched when the flag is absent.
+describe('--remote', () => {
+  test('the CLI parser accepts only an explicit proxy or eas backend', () => {
+    expect(parseRemoteOption(['--remote', 'proxy'])).toBe('proxy');
+    expect(parseRemoteOption(['--remote', 'eas'])).toBe('eas');
+    expect(() => parseRemoteOption(['--remote'])).toThrow(/argument missing/i);
+    expect(() => parseRemoteOption(['--remote', 'cloud'])).toThrow(/proxy.*eas/i);
+  });
+
+  // A stand-in for engine/device-remote's return value. Records which device
+  // calls went through the remote implementation rather than the local one.
+  function remoteStub(createdSessionId: string | null = 'drs_42') {
+    const hits: string[] = [];
+    const backends: unknown[] = [];
+    return {
+      hits,
+      backends,
+      deps: {
+        resolveRemoteContext: (args: { backend?: unknown }) => {
+          backends.push(args.backend);
+          return {
+            ctx: {
+              root,
+              label: 'fixture',
+              backend: args.backend,
+              easBin: '/bin/eas',
+              agentDeviceBin: '/bin/agent-device',
+            },
+          };
+        },
+        // The reach step runs between the Metro gate and the boot; these
+        // tests are about the device phases, not about tunnels.
+        ensureMetroReachable: async () => ({ ok: true as const }),
+        detectProviders: () => [],
+        remoteIosDeps: () => ({
+          ctx: { root, label: 'fixture', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+          checkDeviceCapacity: () => {
+            hits.push('checkDeviceCapacity');
+            return null;
+          },
+          ensureOwnedDevice: async () => {
+            hits.push('ensureOwnedDevice');
+            return { deviceName: 'EAS Simulator', owned: true, remote: true };
+          },
+          ensureBooted: async () => {
+            hits.push('ensureBooted');
+            return { ok: true, udid: 'drs_42' };
+          },
+          installIosApp: () => {
+            hits.push('installIosApp');
+            return { ok: true };
+          },
+          launchIosApp: () => {
+            hits.push('launchIosApp');
+            return { ok: true, mode: 'launch' };
+          },
+          createdSessionId: () => createdSessionId,
+          webPreviewUrl: () => null,
+        }),
+      },
+    };
+  }
+
+  test('the device phases run against the remote implementation', async () => {
+    const remote = remoteStub();
+    reserve();
+    const { calls, exitCode } = await run({ remote: 'eas' }, remote.deps);
+    expect(exitCode).toBeFalsy();
+    expect(remote.hits).toEqual([
+      'checkDeviceCapacity',
+      'ensureOwnedDevice',
+      'ensureBooted',
+      'installIosApp',
+      'launchIosApp',
+    ]);
+    expect(remote.backends).toEqual(['eas']);
+    // The local implementations were never reached for those phases.
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+    expect(calls.order.includes('installIosApp')).toBeFalsy();
+  });
+
+  test('the build still happens locally -- only the device moved', async () => {
+    const remote = remoteStub();
+    reserve();
+    const { calls } = await run({ remote: 'eas' }, remote.deps);
+    // The whole premise of remote mode: the fingerprint, the cache and the
+    // build are untouched, because none of them care where the device is.
+    expect(calls.order.includes('fingerprintProject')).toBeTruthy();
+    expect(calls.order.includes('resolveBuild')).toBeTruthy();
+    expect(calls.order.includes('buildIos')).toBeTruthy();
+  });
+
+  test('a reused EAS session keeps its original ownership timestamp', async () => {
+    writeWorkspaceState(root, {
+      remoteDevice: { platform: 'ios', sessionId: 'drs_old', startedAt: '2026-08-27T12:00:00.000Z' },
+    });
+    const remote = remoteStub(null);
+    reserve();
+
+    const { exitCode } = await run({ remote: 'eas' }, remote.deps);
+    expect(exitCode).toBeNull();
+    expect(readWorkspaceState(root)?.remoteDevice).toEqual({
+      platform: 'ios',
+      sessionId: 'drs_old',
+      startedAt: '2026-08-27T12:00:00.000Z',
+    });
+  });
+
+  test('the Metro gate still runs BEFORE the session is created', async () => {
+    // Remote inverts which device step is expensive: creating a billable
+    // cloud session happens in ensureBooted, so a dead port must still refuse
+    // before it. Same ordering property as local, opposite mechanics.
+    const remote = remoteStub();
+    reserve();
+    const { exitCode } = await run(
+      { remote: 'eas' },
+      { ...remote.deps, resolveProjectMetro: async () => ({ metro: null }) },
+    );
+    expect(exitCode).toBe(1);
+    expect(remote.hits.includes('ensureOwnedDevice')).toBeTruthy();
+    expect(remote.hits.includes('ensureBooted')).toBeFalsy();
+  });
+
+  test('an unusable remote setup refuses before any build work', async () => {
+    const { exitCode, calls, stderr } = await run(
+      { remote: 'eas' },
+      {
+        resolveRemoteContext: () => ({ failed: 'agent-device is not on PATH.', remedy: 'Install it.' }),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('agent-device is not on PATH.');
+    expect(calls.order.includes('fingerprintProject')).toBeFalsy();
+  });
+
+  test('without the flag nothing remote is consulted', async () => {
+    let asked = false;
+    reserve();
+    const { calls, exitCode } = await run(
+      {},
+      {
+        resolveRemoteContext: () => {
+          asked = true;
+          return { failed: 'should not be called', remedy: '' };
+        },
+      },
+    );
+    expect(exitCode).toBeFalsy();
+    expect(asked).toBe(false);
+    expect(calls.order.includes('ensureOwnedDevice')).toBeTruthy();
+  });
+
+  test('the ios.remote setting does the same thing as the flag', async () => {
+    const remote = remoteStub();
+    reserve();
+    const { exitCode } = await run({}, { ...remote.deps, resolveSettings: () => ({ ios: { remote: 'proxy' } }) });
+    expect(exitCode).toBeFalsy();
+    expect(remote.hits.includes('ensureBooted')).toBeTruthy();
+    expect(remote.backends).toEqual(['proxy']);
+  });
+
+  test('an invalid ios.remote value is a structured refusal', async () => {
+    let asked = false;
+    const { exitCode, stderr } = await run(
+      {},
+      {
+        resolveSettings: () => ({ ios: { remote: 'yes' } }),
+        resolveRemoteContext: () => {
+          asked = true;
+          return { failed: 'x', remedy: '' };
+        },
+      },
+    );
+    expect(asked).toBe(false);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('RN_ISO_BAD_ARG');
+    expect(stderr).toContain('Invalid ios.remote setting');
+  });
+
+  test('the reach step gets the RESERVED port, and runs after the Metro gate', async () => {
+    // The bug this pins: resolving reach with the dep overrides meant no port
+    // was passed, so it defaulted to 8081 -- a managed tunnel got built to
+    // whatever was on 8081, routinely a DIFFERENT workspace's Metro, which is
+    // the exact failure the gate exists to prevent.
+    const remote = remoteStub();
+    // A port that is deliberately NOT 8081, so defaulting is visible.
+    reserve(8092);
+    let seenPort: unknown = null;
+    const order: string[] = [];
+    await run(
+      { remote: 'eas' },
+      {
+        ...remote.deps,
+        resolveMetroWithRetry: async () => {
+          order.push('metroGate');
+          return { metro: { pid: 1, leader: 1 } };
+        },
+        ensureMetroReachable: async (args: { metroPort: unknown }) => {
+          order.push('reach');
+          seenPort = args.metroPort;
+          return { ok: true as const };
+        },
+      },
+    );
+    expect(seenPort).toBe(8092);
+    // And the local gate answers "is there a dev server at all" first, so an
+    // absent one reports RN_ISO_NO_METRO rather than "serving a different
+    // dev server".
+    expect(order).toEqual(['metroGate', 'reach']);
+  });
+
+  test('a remote build targets the simulator platform, not a udid', async () => {
+    // Live-verified failure this pins: `id=<session-id>` makes xcodebuild exit
+    // 70 with "Unable to find a device matching the provided destination
+    // specifier", because a remote device is not on this machine.
+    const remote = remoteStub();
+    reserve();
+    let seen = null as Record<string, unknown> | null;
+    await run(
+      { remote: 'eas' },
+      {
+        ...remote.deps,
+        buildIos: async (args: Record<string, unknown>) => {
+          seen = args;
+          return { ok: true, appPath: join(root, 'build', 'Fixture.app'), bundleId: 'com.example.app', durationMs: 1 };
+        },
+      },
+    );
+    expect(seen?.destination).toBe('generic/platform=iOS Simulator');
+  });
+
+  test('a local build still targets its own device', async () => {
+    reserve();
+    let seen = null as Record<string, unknown> | null;
+    await run(
+      {},
+      {
+        buildIos: async (args: Record<string, unknown>) => {
+          seen = args;
+          return { ok: true, appPath: join(root, 'build', 'Fixture.app'), bundleId: 'com.example.app', durationMs: 1 };
+        },
+      },
+    );
+    expect(seen?.destination).toBeFalsy();
+    expect(seen?.udid).toBe(UDID);
+  });
+});
+
+// --- a diagnosed MISS: what changed since this workspace's previous build ---
+//
+// The fingerprint line alone says only "the hash moved". When the previous
+// build's cache entry stored its sources (fingerprint-sources.json, written by
+// storeBuild), a miss can NAME the inputs that moved: up to three on the phase
+// line, the capped full list in the build log as a fingerprint_diff record.
 test('a miss with a prior stored entry appends the changed-sources suffix and logs fingerprint_diff', async () => {
   reserve();
   writeWorkspaceState(root, {
@@ -2189,6 +2464,62 @@ describe('the release cache key and the JS swap', () => {
   });
 });
 
+describe('the remote browser preview', () => {
+  function previewStub(url: string | null) {
+    return {
+      resolveRemoteContext: () => ({
+        ctx: { root, label: 'fixture', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+      }),
+      ensureMetroReachable: async () => ({ ok: true as const }),
+      detectProviders: () => [],
+      remoteIosDeps: () => ({
+        ctx: { root, label: 'fixture', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        checkDeviceCapacity: () => null,
+        ensureOwnedDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
+        ensureBooted: async () => ({ ok: true, udid: 'drs_42' }),
+        installIosApp: () => ({ ok: true }),
+        launchIosApp: () => ({ ok: true, mode: 'launch' }),
+        createdSessionId: () => 'drs_42',
+        webPreviewUrl: () => url,
+      }),
+    };
+  }
+
+  test('the --json payload carries the preview url', async () => {
+    // A person cannot see a device in a datacenter. This is the handle a
+    // caller gives them.
+    reserve();
+    const { logs } = await run({ remote: 'eas', json: true }, previewStub('https://preview.example/abc'));
+    expect(parseFirst(logs).webPreviewUrl).toBe('https://preview.example/abc');
+  });
+
+  test('the human summary prints it too', async () => {
+    reserve();
+    const { stderr } = await run({ remote: 'eas' }, previewStub('https://preview.example/abc'));
+    expect(stderr).toContain('Watch this device: https://preview.example/abc');
+  });
+
+  test('a device with no preview omits the key rather than carrying null', async () => {
+    // An always-present key invites a caller to print an empty link.
+    reserve();
+    const { logs } = await run({ remote: 'eas', json: true }, previewStub(null));
+    expect('webPreviewUrl' in parseFirst(logs)).toBe(false);
+  });
+
+  test('a local run has no preview url at all', async () => {
+    reserve();
+    const { logs } = await run({ json: true });
+    expect('webPreviewUrl' in parseFirst(logs)).toBe(false);
+  });
+});
+// --- issue #59: the artifact is stored under the POST-mutation key ----------
+//
+// `expo prebuild` generates ios/ and rewrites package.json's scripts and the
+// app config; `pod install` writes ios/Podfile.lock. All of them are
+// fingerprint SOURCES, so the hash a cold run looked up is not the hash its
+// tree has by the time there is an artifact. Storing under the lookup key
+// produced an entry no later run in that tree could ever hit -- field-measured
+// as 104 MB of cache nothing would ever look up.
 describe('re-fingerprint after the steps that rewrite fingerprinted files', () => {
   const COLD = 'aaaaaa1111';
   const WARM = 'bbbbbb2222';

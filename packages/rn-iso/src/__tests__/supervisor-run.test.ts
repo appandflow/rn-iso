@@ -46,7 +46,19 @@ function readMetroLog() {
 
 describe('parseArgs', () => {
   test('accepts --root and --port', () => {
-    expect(parseArgs(['--root', '/abs/path', '--port', '8082'])).toEqual({ root: '/abs/path', port: 8082 });
+    expect(parseArgs(['--root', '/abs/path', '--port', '8082'])).toEqual({
+      root: '/abs/path',
+      port: 8082,
+      tunnel: false,
+    });
+  });
+
+  test('accepts --tunnel', () => {
+    expect(parseArgs(['--root', '/abs/path', '--port', '8082', '--tunnel'])).toEqual({
+      root: '/abs/path',
+      port: 8082,
+      tunnel: true,
+    });
   });
 
   test('refuses a relative root: every other path in the supervisor derives from it', () => {
@@ -252,6 +264,27 @@ describe('runSupervisor', () => {
     expect(typeof startState.supervisor.startedAt).toBe('string');
   });
 
+  test('a new supervisor clears a stale Expo tunnel before it starts the server', async () => {
+    writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://stale.exp.direct' } });
+    const server = fakeServer({ mode: MODE_EXPO, serverPid: 31336 });
+    let tunnelAtStart: unknown = 'not observed';
+
+    await runSupervisor({
+      root,
+      port: 8090,
+      tunnel: true,
+      isExpo: () => true,
+      attachSignals: false,
+      onExit: () => {},
+      startExpo: async () => {
+        tunnelAtStart = readWorkspaceState(root)?.metroTunnel;
+        return server.handle;
+      },
+    });
+
+    expect(tunnelAtStart).toBe(undefined);
+  });
+
   test('detects the ecosystem and hosts Expo as a child', async () => {
     const server = fakeServer({ mode: MODE_EXPO, serverPid: 31337 });
     let bareCalled = false;
@@ -275,6 +308,51 @@ describe('runSupervisor', () => {
     assert(state.supervisor);
     expect(state.supervisor.serverPid).toBe(31337);
     expect(state.supervisor.mode).toBe(MODE_EXPO);
+  });
+
+  test('forwards `tunnel` to the expo starter, and records the URL it reports', async () => {
+    const server = fakeServer({ mode: MODE_EXPO, serverPid: 31338 });
+    let seenTunnel: boolean | undefined;
+    const running = await runSupervisor({
+      root,
+      port: 8097,
+      tunnel: true,
+      isExpo: () => true,
+      attachSignals: false,
+      onExit: () => {},
+      startExpo: async (opts) => {
+        seenTunnel = opts.tunnel;
+        opts.onTunnelUrl?.('exp://abc123.exp.direct');
+        return server.handle;
+      },
+    });
+    assert(running);
+    expect(seenTunnel).toBe(true);
+    const state = readWorkspaceState(root);
+    expect(state?.metroTunnel).toEqual({ kind: 'expo', url: 'exp://abc123.exp.direct' });
+    const records = readMetroLog();
+    expect(records.some((r) => r.event === 'expo_tunnel_ready')).toBe(true);
+  });
+
+  test('the bare path is never asked to tunnel -- there is no dev server to hand a flag to', async () => {
+    const server = fakeServer();
+    let bareSawTunnel: unknown = 'not called';
+    await runSupervisor({
+      root,
+      port: 8098,
+      tunnel: true,
+      isExpo: () => false,
+      attachSignals: false,
+      onExit: () => {},
+      startBare: async (opts) => {
+        bareSawTunnel = opts.tunnel;
+        return server.handle;
+      },
+    });
+    // startBareServer's own signature does not read `tunnel` at all; this
+    // only pins that runSupervisor still passes it through uniformly rather
+    // than special-casing the bare starter.
+    expect(bareSawTunnel).toBe(true);
   });
 
   test('SIGTERM-shaped shutdown closes the server, writes a final record and clears every registration', async () => {

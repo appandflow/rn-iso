@@ -1,4 +1,5 @@
-import { execSync } from 'node:child_process';
+import { execSync, spawn, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -11,9 +12,12 @@ import {
   removalRemedy,
 } from '../commands/worktree.ts';
 import type { Command } from 'commander';
+import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
+import { registerStart } from '../commands/start.ts';
+import { asProcessExit } from './_factories.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, getProject } from '../config.ts';
-import { ensureWorkspaceStorage, workspaceDir } from '../paths.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../paths.ts';
 
 type ActionFn = (target: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
 
@@ -138,6 +142,28 @@ function captureAction(register: (cmd: Command) => void) {
   };
 }
 
+function captureStartAction(overrides: Parameters<typeof registerStart>[1]) {
+  let captured: ((opts: Record<string, unknown>) => void | Promise<void>) | undefined;
+  const stub: CommandStub = {
+    command() {
+      return stub;
+    },
+    description() {
+      return stub;
+    },
+    option() {
+      return stub;
+    },
+    action(fn) {
+      captured = fn as unknown as (opts: Record<string, unknown>) => void | Promise<void>;
+      return stub;
+    },
+  };
+  registerStart(stub as Command, overrides);
+  if (!captured) throw new Error('registerStart did not register an action');
+  return captured;
+}
+
 interface PorcelainEntry {
   path: string;
   branch?: string;
@@ -220,15 +246,51 @@ function simctlJson(sims: unknown[]) {
 }
 
 let tmpHome: string, mainDir: string, wtDir: string;
+let liveProcesses: ChildProcess[];
+
+function liveUnrelatedProcess(): ChildProcess {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  if (!child.pid) throw new Error('test process did not start');
+  liveProcesses.push(child);
+  return child;
+}
+
+function writeManagedTunnel(root: string, pid: number): void {
+  ensureWorkspaceStorage(root);
+  writeFileSync(
+    workspaceStateFile(root),
+    JSON.stringify({
+      metroTunnel: {
+        kind: 'managed',
+        provider: 'ngrok',
+        pid,
+        url: 'https://recorded.ngrok.app',
+        port: 8081,
+        startedAt: 'T',
+        processToken: 'linux:100',
+      },
+    }),
+  );
+}
+
+function writeRemoteSession(root: string, sessionId: string): void {
+  ensureWorkspaceStorage(root);
+  writeFileSync(
+    workspaceStateFile(root),
+    JSON.stringify({ remoteDevice: { platform: 'ios', sessionId, startedAt: 'T' } }),
+  );
+}
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-home-'));
   process.env.RN_ISO_HOME = tmpHome;
   mainDir = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-main-')));
   wtDir = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-wt-')));
+  liveProcesses = [];
 });
 
 afterEach(() => {
+  for (const child of liveProcesses) child.kill('SIGKILL');
   resetExecutor();
   process.exitCode = 0;
   rmSync(tmpHome, { recursive: true, force: true });
@@ -362,6 +424,74 @@ test('action: a failed device teardown on the main checkout keeps the record and
   expect(errs.join('\n')).toMatch(/still tracks/);
 });
 
+test('action: a tunnel verification failure on the main checkout retains its state directory', async () => {
+  const child = liveUnrelatedProcess();
+  upsertProject(mainDir, { label: 'main' });
+  writeManagedTunnel(mainDir, child.pid!);
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+    mainTrees: [mainDir],
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => errs.push(String(message));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(mainDir)).not.toBeNull();
+  expect(existsSync(workspaceStateFile(mainDir))).toBe(true);
+  expect(errs.join('\n')).toMatch(/could not release owned resources/i);
+  expect(errs.join('\n')).toMatch(/identity could not be verified/i);
+  expect(errs.join('\n')).not.toMatch(new RegExp(`kill\\s+${child.pid}`));
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
+  await expect(withManagedTunnelLock(mainDir, async () => true)).resolves.toBe(true);
+});
+
+test('action: main-checkout artifact deletion blocks a concurrent replacement tunnel start', async () => {
+  upsertProject(mainDir, { label: 'main' });
+  ensureWorkspaceStorage(mainDir);
+  writeFileSync(workspaceStateFile(mainDir), '{}');
+  setExecutor(
+    makeExecutor({
+      worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+      mainTrees: [mainDir],
+    }),
+  );
+  let competingStart: Promise<'started' | 'refused'> | null = null;
+  const original = console.error;
+  console.error = (message) => {
+    if (String(message).includes("this workspace's own output")) {
+      competingStart = withManagedRemoteWorktreeLock(mainDir, async () => {
+        ensureWorkspaceStorage(mainDir);
+        writeFileSync(workspaceStateFile(mainDir), JSON.stringify({ metroTunnel: { pid: 5252 } }));
+      }).then(
+        () => 'started',
+        () => 'refused',
+      );
+    }
+  };
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(competingStart).not.toBeNull();
+  await expect(competingStart).resolves.toBe('refused');
+  expect(existsSync(workspaceStateFile(mainDir))).toBe(false);
+});
+
+// A registered directory that is not a git repo at all: there is no worktree
+// to hand to git and no git status to guard, so environment reclaim is the
+// only thing `remove` can mean there -- and it gets exactly that.
 test('action: a registered project directory that is not a git repo gets the same environment reclaim', async () => {
   upsertProject(wtDir, {
     metroPort: 8087,
@@ -441,6 +571,95 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
   expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });
 
+test('action: tunnel verification failure retains state and refuses worktree removal even with force', async () => {
+  const child = liveUnrelatedProcess();
+  upsertProject(wtDir, { label: 'feature' });
+  writeManagedTunnel(wtDir, child.pid!);
+  const exec = makeExecutor({
+    dirty: '',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => errs.push(String(message));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, { force: true });
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(wtDir)).not.toBeNull();
+  expect(existsSync(workspaceStateFile(wtDir))).toBe(true);
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
+  expect(errs.join('\n')).toMatch(/Refusing to remove/);
+  expect(errs.join('\n')).toMatch(/identity could not be verified/i);
+  expect(errs.join('\n')).not.toMatch(new RegExp(`kill\\s+${child.pid}`));
+  await expect(withManagedTunnelLock(wtDir, async () => true)).resolves.toBe(true);
+});
+
+test('action: a missing recorded tunnel does not block normal worktree removal', async () => {
+  upsertProject(wtDir, { label: 'feature' });
+  writeManagedTunnel(wtDir, 99_999_999);
+  const exec = makeExecutor({
+    dirty: '',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(wtDir)).toBeNull();
+  expect(existsSync(workspaceDir(wtDir))).toBe(false);
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(true);
+});
+
+test('action: a retained EAS session prevents generic worktree removal', async () => {
+  upsertProject(wtDir, { label: 'feature' });
+  writeRemoteSession(wtDir, 'drs_retained');
+  const exec = makeExecutor({
+    dirty: '',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => errs.push(String(message));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(wtDir)).not.toBeNull();
+  expect(existsSync(workspaceStateFile(wtDir))).toBe(true);
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
+  expect(errs.join('\n')).toContain('eas simulator:stop --id drs_retained');
+});
+
+// Regression: in a monorepo, `rn-iso ios` registers a nested app dir (e.g.
+// `<worktree>/apps/mobile`) as its own config key -- a different key from
+// the worktree root that `worktree create` registers. That nested key is
+// where metroPort and the device claim actually live. Reclaiming only the
+// exact `path` argument (the old behaviour) leaves the nested entry, its
+// Metro process, and its port claim to leak until `gc --delete` runs.
 test('action: reclaims a nested monorepo app-dir project registered under the worktree root, not just the root itself', async () => {
   const nestedDir = join(wtDir, 'apps', 'mobile');
   upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
@@ -632,6 +851,115 @@ test('action: rn-iso never deletes a project-local .rn-iso directory', async () 
   expect(process.exitCode).toBe(1);
 });
 
+test('action: a concurrent tunnel start cannot publish a replacement during worktree removal', async () => {
+  upsertProject(wtDir, { metroPort: 8092 });
+  ensureWorkspaceStorage(wtDir);
+  writeFileSync(workspaceStateFile(wtDir), '{}');
+  const exec = makeExecutor({
+    dirty: '',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  let competingStart: Promise<'started' | 'refused'> | null = null;
+  const originalRunFile = exec.runFile.bind(exec);
+  exec.runFile = (file, args = []) => {
+    if (/worktree remove/.test([file, ...args].join(' '))) {
+      competingStart = withManagedRemoteWorktreeLock(wtDir, async () => {
+        ensureWorkspaceStorage(wtDir);
+        writeFileSync(workspaceStateFile(wtDir), JSON.stringify({ metroTunnel: { pid: 5252 } }));
+      }).then(
+        () => 'started',
+        () => 'refused',
+      );
+    }
+    return originalRunFile(file, args);
+  };
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(competingStart).not.toBeNull();
+  await expect(competingStart).resolves.toBe('refused');
+  expect(existsSync(workspaceStateFile(wtDir))).toBe(false);
+});
+
+test('the worktree removal lock lives outside project workspace state', async () => {
+  const key = createHash('sha256').update(resolve(wtDir)).digest('hex');
+  const owner = join(tmpHome, 'process-locks', 'worktrees', key, 'managed-remote.lock', 'owner.json');
+
+  await withManagedRemoteWorktreeLock(wtDir, async () => {
+    expect(existsSync(owner)).toBe(true);
+  });
+});
+
+test('action: an unregistered nested remote start cannot bypass the worktree removal lock', async () => {
+  const nestedDir = join(wtDir, 'apps', 'new-mobile');
+  mkdirSync(nestedDir, { recursive: true });
+  writeFileSync(join(nestedDir, 'package.json'), JSON.stringify({ name: 'new-mobile' }));
+  upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
+  const exec = makeExecutor({
+    dirty: '',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  const originalRunQuiet = exec.runQuiet.bind(exec);
+  exec.runQuiet = (cmd) => {
+    if (cmd.includes('rev-parse --show-toplevel')) return wtDir;
+    return originalRunQuiet(cmd);
+  };
+  let nestedStart: Promise<void> | null = null;
+  const originalRunFile = exec.runFile.bind(exec);
+  const originalExit = process.exit;
+  exec.runFile = (file, args = []) => {
+    if (/worktree remove/.test([file, ...args].join(' '))) {
+      const originalCwd = process.cwd();
+      process.chdir(nestedDir);
+      try {
+        const runStart = captureStartAction({
+          providers: () => ['ngrok'],
+          startTunnelSequence: async () => ({
+            provider: 'ngrok',
+            url: 'https://replacement.ngrok.app',
+            pid: 5252,
+            processToken: 'linux:200',
+            cleanup: async () => ({ status: 'stopped' }),
+          }),
+          writeTunnelRecord: (projectRoot, patch) => {
+            writeFileSync(workspaceStateFile(projectRoot), JSON.stringify(patch));
+            throw new Error('stop after attempted publication');
+          },
+        });
+        nestedStart = Promise.resolve(runStart({ remote: true, wait: '1', json: true })).catch(() => {});
+      } finally {
+        process.chdir(originalCwd);
+      }
+    }
+    return originalRunFile(file, args);
+  };
+  process.exit = asProcessExit(() => {});
+  setExecutor(exec);
+
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+    expect(nestedStart).not.toBeNull();
+    await nestedStart;
+  } finally {
+    process.exit = originalExit;
+  }
+
+  expect(getProject(nestedDir)).toBeNull();
+  expect(existsSync(workspaceStateFile(nestedDir))).toBe(false);
+  await expect(withManagedRemoteWorktreeLock(wtDir, async () => 'released')).resolves.toBe('released');
+});
+
+// Containment: a path out of `git status` is relative to the worktree, and
+// anything that resolves outside it is left alone whatever it says.
 test('action: a dirty path escaping the worktree is never removed', async () => {
   upsertProject(wtDir, { metroPort: 8093 });
   const outside = join(mainDir, '.rn-iso');

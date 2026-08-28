@@ -1,0 +1,1610 @@
+// engine/device-remote.js -- the four dep overrides remote mode installs.
+//
+// These are asserted as exact argv against a mock executor, for the reason
+// CLAUDE.md item 9 gives: a mocked exec proves the right arguments were
+// composed, and that is the half a unit test can prove. The other half --
+// that `eas sim` and `agent-device` accept them -- is the field test.
+//
+// The ORDERING property is the one worth guarding. Locally the Metro gate
+// sits between ensureOwnedDevice (cheap) and ensureBooted (slow). Remote
+// inverts which step is expensive, so the session must be created in
+// ensureBooted, after the gate, and never in ensureOwnedDevice.
+import assert from 'node:assert';
+import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../paths.ts';
+import { remoteProfilePath } from '../engine/agent-device.ts';
+import {
+  ensureRemoteBootOwned,
+  ensureMetroReachable,
+  PUBLIC_METRO_ENV,
+  remoteAndroidDeps,
+  remoteIosDeps,
+  resolveRemoteContext,
+  resolveMetroOrigin,
+  teardownRemote,
+  withRemoteSessionLock,
+} from '../engine/device-remote.ts';
+import { withEasProjectLock } from '../engine/eas-project-lock.ts';
+import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
+
+// The same-machine proxy: the simulator shares this host's loopback, so
+// localhost in the deep link reaches rn-iso's own Metro. Live-verified.
+// A same-machine `agent-device proxy`. The device sharing this host is now
+// ASSERTED with tunnelMode 'off' rather than inferred from the loopback URL --
+// `ssh -L` makes that inference false. See engine/metro-reach.ts.
+const LOOPBACK = { baseUrl: 'http://127.0.0.1:4310', token: 'tok_proxy' };
+
+const CREATED = JSON.stringify({
+  id: 'drs_42',
+  name: 'rn-iso-wt',
+  type: 'agent-device',
+  deviceRunSessionUrl: 'https://expo.dev/x',
+  remoteConfig: {
+    __typename: 'AgentDeviceRunSessionRemoteConfig',
+    agentDeviceRemoteSessionUrl: 'https://sim-42.eas.dev/daemon',
+    agentDeviceRemoteSessionToken: 'tok_secret',
+  },
+});
+
+interface Call {
+  file: string;
+  args: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  omitEnv?: readonly string[];
+  timeoutMs?: number;
+}
+
+function mockExec({
+  fail = null,
+  outputs = {},
+  errors = {},
+}: {
+  fail?: string | null;
+  outputs?: Record<string, string>;
+  errors?: Record<string, Error & { stderr?: string }>;
+  existingDaemonMode?: boolean;
+} = {}) {
+  const calls: Call[] = [];
+  const exec: Executor & { calls: Call[] } = {
+    calls,
+    runFile(file: string, args: string[] = [], opts = {}) {
+      const o = opts as { env?: Record<string, string>; cwd?: string; omitEnv?: readonly string[]; timeoutMs?: number };
+      calls.push({ file, args, env: o.env, cwd: o.cwd, omitEnv: o.omitEnv, timeoutMs: o.timeoutMs });
+      const key = [file, ...args].join(' ');
+      if (fail && key.includes(fail)) throw new Error(`Command failed: ${key}`);
+      for (const [match, error] of Object.entries(errors)) {
+        if (key.includes(match)) throw error;
+      }
+      for (const [match, value] of Object.entries(outputs)) {
+        if (match === args[0] || (match !== 'sim' && key.includes(match))) return value;
+      }
+      if (args[0] === 'simulator:stop') {
+        const idIndex = args.indexOf('--id');
+        return JSON.stringify({ id: args[idIndex + 1], status: 'STOPPED' });
+      }
+      return '';
+    },
+    run() {
+      throw new Error('device-remote must use runFile, not the shell');
+    },
+    runQuiet() {
+      throw new Error('device-remote must use runFile, not the shell');
+    },
+    spawn() {
+      throw new Error('device-remote does not spawn');
+    },
+  };
+  setExecutor(exec);
+  return exec;
+}
+
+let root: string;
+let tmpHome: string;
+function ctx(overrides: Partial<Parameters<typeof remoteIosDeps>[0]> = {}) {
+  const backend = overrides.backend ?? (overrides.existingDaemon ? 'proxy' : 'eas');
+  return {
+    root,
+    label: 'wt',
+    backend,
+    easBin: '/bin/eas',
+    agentDeviceBin: '/bin/agent-device',
+    easLedgerRoot: tmpHome,
+    // The readiness poll is bounded at three minutes of real time; a test
+    // asserting the give-up path must not pay it.
+    sleep: async () => {},
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-home-'));
+  process.env.RN_ISO_HOME = tmpHome;
+  root = mkdtempSync(join(tmpdir(), 'rn-iso-remote-'));
+});
+afterEach(() => {
+  resetExecutor();
+  rmSync(root, { recursive: true, force: true });
+  rmSync(tmpHome, { recursive: true, force: true });
+  delete process.env.RN_ISO_HOME;
+});
+
+describe('explicit backend selection', () => {
+  const env = {
+    AGENT_DEVICE_DAEMON_BASE_URL: 'https://proxy.example/agent-device',
+    AGENT_DEVICE_DAEMON_AUTH_TOKEN: 'tok_proxy',
+  };
+
+  test('proxy requires both daemon variables with a precise remedy', async () => {
+    const missingToken = await resolveRemoteContext({
+      root,
+      label: 'wt',
+      backend: 'proxy',
+      easBin: '/bin/eas',
+      env: { AGENT_DEVICE_DAEMON_BASE_URL: env.AGENT_DEVICE_DAEMON_BASE_URL },
+      lookupAgentDevice: () => '/bin/agent-device',
+    });
+    expect(missingToken).toEqual({
+      failed: 'The proxy backend requires AGENT_DEVICE_DAEMON_AUTH_TOKEN.',
+      remedy: 'Export AGENT_DEVICE_DAEMON_AUTH_TOKEN, then run the device command with `--remote proxy` again.',
+      code: 'RN_ISO_REMOTE_PROXY_CONFIG',
+    });
+
+    const missingUrl = await resolveRemoteContext({
+      root,
+      label: 'wt',
+      backend: 'proxy',
+      easBin: '/bin/eas',
+      env: { AGENT_DEVICE_DAEMON_AUTH_TOKEN: env.AGENT_DEVICE_DAEMON_AUTH_TOKEN },
+      lookupAgentDevice: () => '/bin/agent-device',
+    });
+    expect(missingUrl).toEqual({
+      failed: 'The proxy backend requires AGENT_DEVICE_DAEMON_BASE_URL.',
+      remedy: 'Export AGENT_DEVICE_DAEMON_BASE_URL, then run the device command with `--remote proxy` again.',
+      code: 'RN_ISO_REMOTE_PROXY_CONFIG',
+    });
+  });
+
+  test('proxy uses only the supplied daemon and never creates an EAS session', async () => {
+    const resolved = await resolveRemoteContext({
+      root,
+      label: 'wt',
+      backend: 'proxy',
+      easBin: '/bin/eas',
+      env,
+      lookupAgentDevice: () => '/bin/agent-device',
+    });
+    expect('ctx' in resolved).toBe(true);
+    if (!('ctx' in resolved)) return;
+    expect(resolved.ctx.backend).toBe('proxy');
+    expect(resolved.ctx.existingDaemon).toEqual({
+      baseUrl: env.AGENT_DEVICE_DAEMON_BASE_URL,
+      token: env.AGENT_DEVICE_DAEMON_AUTH_TOKEN,
+    });
+
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(resolved.ctx).ensureBooted({});
+    expect(exec.calls.some((call) => call.file === '/bin/eas')).toBe(false);
+  });
+
+  test('eas requires the EAS CLI even when proxy variables are present', async () => {
+    const resolved = await resolveRemoteContext({
+      root,
+      label: 'wt',
+      backend: 'eas',
+      easBin: null,
+      env,
+      lookupAgentDevice: () => '/bin/agent-device',
+    });
+    expect(resolved).toEqual({
+      failed: 'The eas backend requires eas-cli.',
+      remedy: 'Install eas-cli, then run the device command with `--remote eas` again.',
+      code: 'RN_ISO_REMOTE_EAS_UNAVAILABLE',
+    });
+  });
+
+  test('eas ignores proxy variables and creates an EAS session', async () => {
+    const resolved = await resolveRemoteContext({
+      root,
+      label: 'wt',
+      backend: 'eas',
+      easBin: '/bin/eas',
+      env,
+      lookupAgentDevice: () => '/bin/agent-device',
+    });
+    expect('ctx' in resolved).toBe(true);
+    if (!('ctx' in resolved)) return;
+    expect(resolved.ctx.backend).toBe('eas');
+    expect(resolved.ctx.existingDaemon).toBeNull();
+
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(resolved.ctx).ensureBooted({});
+    expect(exec.calls.some((call) => call.file === '/bin/eas' && call.args[0] === 'sim')).toBe(true);
+    expect(
+      exec.calls.some((call) => call.env?.AGENT_DEVICE_DAEMON_AUTH_TOKEN === env.AGENT_DEVICE_DAEMON_AUTH_TOKEN),
+    ).toBe(false);
+  });
+
+  test('eas child processes omit proxy credentials and preserve the project environment', async () => {
+    const easBin = join(root, 'fake-eas.cjs');
+    const agentDeviceBin = join(root, 'fake-agent-device');
+    const reportPath = join(root, 'eas-child-env.json');
+    writeFileSync(
+      easBin,
+      `#!/usr/bin/env node
+const { writeFileSync } = require('node:fs');
+writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({
+  hasProxyUrl: Object.hasOwn(process.env, 'AGENT_DEVICE_DAEMON_BASE_URL'),
+  hasProxyToken: Object.hasOwn(process.env, 'AGENT_DEVICE_DAEMON_AUTH_TOKEN'),
+  expoToken: process.env.EXPO_TOKEN,
+  path: process.env.PATH,
+  lang: process.env.LANG,
+  projectVariable: process.env.RN_ISO_EAS_PROJECT_VARIABLE,
+}));
+process.stdout.write(${JSON.stringify(CREATED)});
+`,
+    );
+    writeFileSync(agentDeviceBin, '#!/bin/sh\nexit 0\n');
+    chmodSync(easBin, 0o755);
+    chmodSync(agentDeviceBin, 0o755);
+
+    const keys = [
+      'AGENT_DEVICE_DAEMON_BASE_URL',
+      'AGENT_DEVICE_DAEMON_AUTH_TOKEN',
+      'EXPO_TOKEN',
+      'LANG',
+      'RN_ISO_EAS_PROJECT_VARIABLE',
+    ] as const;
+    const previous = new Map(keys.map((key) => [key, process.env[key]]));
+    const expectedPath = process.env.PATH;
+    try {
+      process.env.AGENT_DEVICE_DAEMON_BASE_URL = 'https://proxy.example/agent-device';
+      process.env.AGENT_DEVICE_DAEMON_AUTH_TOKEN = 'proxy-token-fixture';
+      process.env.EXPO_TOKEN = 'expo-token-fixture';
+      process.env.LANG = 'rn-iso-test-locale';
+      process.env.RN_ISO_EAS_PROJECT_VARIABLE = 'project-value';
+
+      const resolved = await resolveRemoteContext({
+        root,
+        label: 'wt',
+        backend: 'eas',
+        easBin,
+        env: process.env,
+        lookupAgentDevice: () => agentDeviceBin,
+      });
+      expect('ctx' in resolved).toBe(true);
+      if (!('ctx' in resolved)) return;
+      const booted = await remoteIosDeps(resolved.ctx).ensureBooted({});
+      expect(booted.ok).toBe(true);
+
+      expect(JSON.parse(readFileSync(reportPath, 'utf8'))).toEqual({
+        hasProxyUrl: false,
+        hasProxyToken: false,
+        expoToken: 'expo-token-fixture',
+        path: expectedPath,
+        lang: 'rn-iso-test-locale',
+        projectVariable: 'project-value',
+      });
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+});
+
+describe('the expensive step happens after the Metro gate', () => {
+  test('ensureOwnedDevice creates no session and runs no command', async () => {
+    // The gate runs between ensureOwnedDevice and ensureBooted. Creating a
+    // billable cloud session in the first would mean paying for it and only
+    // then discovering the dev server is dead.
+    const exec = mockExec();
+    const deps = remoteIosDeps(ctx());
+    const device = await deps.ensureOwnedDevice();
+    expect(exec.calls).toEqual([]);
+    expect(device.remote).toBe(true);
+    expect(deps.createdSessionId()).toBeNull();
+  });
+
+  test('ensureBooted is what creates the session', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    const booted = await deps.ensureBooted({});
+    expect(booted.ok).toBe(true);
+    expect(booted.udid).toBe('drs_42');
+    expect(deps.createdSessionId()).toBe('drs_42');
+    expect(exec.calls[0]?.args[0]).toBe('sim');
+  });
+});
+
+describe('the remote session workspace lock', () => {
+  test('a second process waits and takes over after the owner dies', async () => {
+    const script = join(root, 'hold-lock.mjs');
+    const lockModule = new URL('../engine/device-remote.ts', import.meta.url).href;
+    writeFileSync(
+      script,
+      `import { withRemoteSessionLock } from ${JSON.stringify(lockModule)};
+await withRemoteSessionLock(process.argv[2], async () => {
+  process.stdout.write('LOCKED\\n');
+  await new Promise(() => setInterval(() => {}, 1_000));
+});
+`,
+    );
+    const owner = spawn(process.execPath, ['--experimental-strip-types', script, root], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const exited = new Promise<void>((resolve) => owner.once('exit', () => resolve()));
+    await new Promise<void>((resolve, reject) => {
+      owner.once('error', reject);
+      owner.stdout?.on('data', (chunk) => {
+        if (String(chunk).includes('LOCKED')) resolve();
+      });
+    });
+
+    try {
+      let entered = false;
+      const waiting = withRemoteSessionLock(root, async () => {
+        entered = true;
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(entered).toBe(false);
+
+      owner.kill('SIGKILL');
+      await exited;
+      await waiting;
+      expect(entered).toBe(true);
+    } finally {
+      if (owner.exitCode === null) owner.kill('SIGKILL');
+    }
+  });
+
+  test('workspaces with the same git common directory share the EAS project lock', async () => {
+    const otherRoot = join(root, 'other-worktree');
+    mkdirSync(otherRoot, { recursive: true });
+    const previousHome = process.env.RN_ISO_HOME;
+    process.env.RN_ISO_HOME = join(root, 'rn-iso-home');
+    setExecutor({
+      run() {
+        throw new Error('unexpected shell command');
+      },
+      runQuiet() {
+        return join(root, 'repository.git');
+      },
+      runFile() {
+        throw new Error('unexpected file command');
+      },
+      spawn() {
+        throw new Error('unexpected spawn');
+      },
+    });
+    let releaseFirst!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+    let secondBooted = false;
+    const withFixedLock: typeof withEasProjectLock = (project, fn, options) =>
+      withEasProjectLock(project, fn, { ...options, machineRoot: join(root, 'machine-eas') });
+
+    try {
+      const first = ensureRemoteBootOwned({
+        root,
+        platform: 'ios',
+        sessionName: 'rn-iso-first',
+        startedAt: '2026-08-28T00:00:00.000Z',
+        register: () => {},
+        boot: async () => {
+          firstEntered();
+          await held;
+          return { ok: true };
+        },
+        createdSessionId: () => null,
+        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
+        writeState: () => {},
+        withProjectLock: withFixedLock,
+        ledgerRoot: join(root, 'machine-eas'),
+      });
+      await entered;
+      const second = ensureRemoteBootOwned({
+        root: otherRoot,
+        platform: 'ios',
+        sessionName: 'rn-iso-second',
+        startedAt: '2026-08-28T00:00:00.000Z',
+        register: () => {},
+        boot: async () => {
+          secondBooted = true;
+          return { ok: true };
+        },
+        createdSessionId: () => null,
+        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
+        writeState: () => {},
+        withProjectLock: withFixedLock,
+        ledgerRoot: join(root, 'machine-eas'),
+      });
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(secondBooted).toBe(false);
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(secondBooted).toBe(true);
+    } finally {
+      releaseFirst();
+      if (previousHome === undefined) delete process.env.RN_ISO_HOME;
+      else process.env.RN_ISO_HOME = previousHome;
+    }
+  });
+
+  test('EAS starts serialize across separate RN_ISO_HOME values', async () => {
+    const otherRoot = join(root, 'other-clone');
+    mkdirSync(otherRoot, { recursive: true });
+    const previousHome = process.env.RN_ISO_HOME;
+    let releaseFirst!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+    let secondBooted = false;
+    const withFixedLock: typeof withEasProjectLock = (project, fn, options) =>
+      withEasProjectLock(project, fn, { ...options, machineRoot: join(root, 'machine-eas') });
+
+    try {
+      process.env.RN_ISO_HOME = join(root, 'home-a');
+      const first = ensureRemoteBootOwned({
+        root,
+        platform: 'ios',
+        sessionName: 'rn-iso-first',
+        startedAt: '2026-08-28T00:00:00.000Z',
+        boot: async () => {
+          firstEntered();
+          await held;
+          return { ok: true };
+        },
+        createdSessionId: () => null,
+        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
+        writeState: () => {},
+        withProjectLock: withFixedLock,
+        ledgerRoot: join(root, 'machine-eas'),
+      });
+      await entered;
+
+      process.env.RN_ISO_HOME = join(root, 'home-b');
+      const second = ensureRemoteBootOwned({
+        root: otherRoot,
+        platform: 'ios',
+        sessionName: 'rn-iso-second',
+        startedAt: '2026-08-28T00:00:00.000Z',
+        boot: async () => {
+          secondBooted = true;
+          return { ok: true };
+        },
+        createdSessionId: () => null,
+        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
+        writeState: () => {},
+        withProjectLock: withFixedLock,
+        ledgerRoot: join(root, 'machine-eas'),
+      });
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(secondBooted).toBe(false);
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(secondBooted).toBe(true);
+    } finally {
+      releaseFirst();
+      if (previousHome === undefined) delete process.env.RN_ISO_HOME;
+      else process.env.RN_ISO_HOME = previousHome;
+    }
+  });
+});
+
+describe('session creation', () => {
+  test('publishes the fixed ownership claim before workspace state', async () => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    let claimVisibleDuringStateWrite = false;
+
+    const result = await ensureRemoteBootOwned({
+      root,
+      platform: 'ios',
+      sessionName: 'rn-iso-wt',
+      startedAt: '2026-08-28T00:00:00.000Z',
+      boot: async () => ({ ok: true, udid: 'drs_claimed' }),
+      createdSessionId: () => 'drs_claimed',
+      abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_claimed' }),
+      writeState: () => {
+        claimVisibleDuringStateWrite = readEasSessionLedger(ledgerRoot).claims.has('drs_claimed');
+      },
+      withProjectLock: async (_project, fn) => fn(),
+      withLock: async (_project, fn) => fn(),
+      ledgerRoot,
+    });
+
+    expect('failed' in result && result.failed).toBe(false);
+    expect(claimVisibleDuringStateWrite).toBe(true);
+  });
+
+  test('a claim write failure stops the new session before state publication', async () => {
+    const blockedRoot = join(tmpHome, 'blocked-ledger');
+    writeFileSync(blockedRoot, 'not a directory');
+    let abandoned = false;
+    let stateWritten = false;
+
+    const result = await ensureRemoteBootOwned({
+      root,
+      platform: 'ios',
+      sessionName: 'rn-iso-wt',
+      startedAt: '2026-08-28T00:00:00.000Z',
+      boot: async () => ({ ok: true, udid: 'drs_unclaimed' }),
+      createdSessionId: () => 'drs_unclaimed',
+      abandonCreatedSession: () => {
+        abandoned = true;
+        return { ok: true, sessionId: 'drs_unclaimed' };
+      },
+      writeState: () => {
+        stateWritten = true;
+      },
+      withProjectLock: async (_project, fn) => fn(),
+      withLock: async (_project, fn) => fn(),
+      ledgerRoot: blockedRoot,
+    });
+
+    expect('failed' in result && result.failed).toBe(true);
+    expect(abandoned).toBe(true);
+    expect(stateWritten).toBe(false);
+  });
+
+  test.each([
+    ['false result', () => false],
+    [
+      'throw',
+      () => {
+        throw new Error('claim store unavailable');
+      },
+    ],
+  ])('a state publication failure contains a claim-removal %s after verified stop', async (_label, removeClaim) => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+
+    const result = await ensureRemoteBootOwned({
+      root,
+      platform: 'ios',
+      sessionName: 'rn-iso-wt',
+      startedAt: '2026-08-28T00:00:00.000Z',
+      boot: async () => ({ ok: true, udid: 'drs_claimed' }),
+      createdSessionId: () => 'drs_claimed',
+      abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_claimed' }),
+      writeState: () => {
+        throw new Error('state store unavailable');
+      },
+      removeEasSessionClaim: removeClaim,
+      withProjectLock: async (_project, fn) => fn(),
+      withLock: async (_project, fn) => fn(),
+      ledgerRoot,
+    });
+
+    expect('failed' in result && result.failed).toBe(true);
+    expect('code' in result && result.code).toBe('RN_ISO_REMOTE_SESSION_CLEANUP');
+    expect('reason' in result && result.reason).toMatch(/session.*stopped.*ownership claim.*could not be removed/i);
+    expect('remedy' in result && result.remedy).toContain(ledgerRoot);
+    expect(readEasSessionLedger(ledgerRoot).claims.has('drs_claimed')).toBe(true);
+  });
+
+  test('runs in the project directory, because eas sim resolves it from cwd', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(ctx()).ensureBooted({});
+    expect(exec.calls[0]?.cwd).toBe(root);
+  });
+
+  test('sends no duration of its own, because the cap is per-account', async () => {
+    // Live: a hardcoded 120 was rejected with "must not exceed 115 minutes
+    // for this account", failing the command before a session existed. EAS
+    // has its own default; teardown is what bounds the cost.
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(ctx()).ensureBooted({});
+    expect(exec.calls[0]?.args ?? []).not.toContain('--max-duration-minutes');
+  });
+
+  test('a caller-chosen duration is still sent', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(ctx({ maxDurationMinutes: 30 })).ensureBooted({});
+    const args = exec.calls[0]?.args ?? [];
+    expect(args[args.indexOf('--max-duration-minutes') + 1]).toBe('30');
+  });
+
+  test('a session of a type rn-iso cannot drive is refused, not half-used', async () => {
+    const appium = JSON.stringify({
+      id: 'drs_9',
+      remoteConfig: { __typename: 'AppiumRunSessionRemoteConfig', appiumUrl: 'https://x' },
+    });
+    // The get re-read returns the same unusable config.
+    mockExec({ outputs: { sim: appium, 'simulator:get': appium } });
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+    expect(booted.failed).toBe(true);
+    expect(booted.reason).toContain('drs_9');
+  });
+
+  test('a failing eas sim is a reason, never a throw', async () => {
+    mockExec({ fail: 'sim' });
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+    expect(booted.failed).toBe(true);
+    expect(booted.reason).toContain('eas sim failed');
+  });
+
+  test('an operator-supplied daemon creates no session at all', async () => {
+    // The `agent-device proxy` case: rn-iso is a guest on someone else's
+    // device, so it must not create a session and must not destroy one.
+    const exec = mockExec();
+    const deps = remoteIosDeps(ctx({ existingDaemon: { baseUrl: 'https://proxy.local/daemon', token: 'tok_proxy' } }));
+    const booted = await deps.ensureBooted({});
+    expect(booted.ok).toBe(true);
+    expect(deps.createdSessionId()).toBeNull();
+    // close runs first, best-effort, to release any claim a previous run
+    // left on the device. See closeArgs.
+    expect(exec.calls.map((c) => c.args[0])).toEqual(['close', 'connect']);
+  });
+});
+
+describe('fixed ownership claim teardown', () => {
+  test('verified teardown removes the claim', () => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    recordEasSessionClaim(
+      {
+        sessionId: 'drs_42',
+        name: 'rn-iso-wt',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: tmpHome,
+        stateFile: workspaceStateFile(root),
+      },
+      ledgerRoot,
+    );
+    mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+      },
+    });
+
+    expect(teardownRemote(ctx({ easLedgerRoot: ledgerRoot }), { sessionId: 'drs_42' }).status).toBe('torn-down');
+    expect(readEasSessionLedger(ledgerRoot).claims.has('drs_42')).toBe(false);
+  });
+
+  test('failed teardown keeps the claim', () => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    recordEasSessionClaim(
+      {
+        sessionId: 'drs_42',
+        name: 'rn-iso-wt',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: tmpHome,
+        stateFile: workspaceStateFile(root),
+      },
+      ledgerRoot,
+    );
+    mockExec({ fail: 'simulator:get' });
+
+    expect(teardownRemote(ctx({ easLedgerRoot: ledgerRoot }), { sessionId: 'drs_42' }).status).toBe('failed');
+    expect(readEasSessionLedger(ledgerRoot).claims.has('drs_42')).toBe(true);
+  });
+
+  test('verified teardown contains a throwing claim removal and reports reconciliation', () => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    recordEasSessionClaim(
+      {
+        sessionId: 'drs_42',
+        name: 'rn-iso-wt',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: tmpHome,
+        stateFile: workspaceStateFile(root),
+      },
+      ledgerRoot,
+    );
+    mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+      },
+    });
+
+    const result = teardownRemote(
+      ctx({
+        easLedgerRoot: ledgerRoot,
+        removeEasSessionClaim: () => {
+          throw new Error('claim store unavailable');
+        },
+      }),
+      { sessionId: 'drs_42' },
+    );
+
+    expect(result.status).toBe('torn-down');
+    expect(result.reason).toMatch(/ownership claim.*could not be removed/i);
+  });
+
+  test('verified teardown reports a false claim removal for reconciliation', () => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    recordEasSessionClaim(
+      {
+        sessionId: 'drs_42',
+        name: 'rn-iso-wt',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: tmpHome,
+        stateFile: workspaceStateFile(root),
+      },
+      ledgerRoot,
+    );
+    mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+      },
+    });
+
+    const result = teardownRemote(ctx({ easLedgerRoot: ledgerRoot, removeEasSessionClaim: () => false }), {
+      sessionId: 'drs_42',
+    });
+
+    expect(result.status).toBe('torn-down');
+    expect(result.reason).toMatch(/ownership claim.*could not be removed/i);
+  });
+});
+
+describe('the token never reaches disk', () => {
+  test('the profile written next to it contains no credential', async () => {
+    mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(ctx()).ensureBooted({});
+    const profilePath = remoteProfilePath(root);
+    expect(existsSync(profilePath)).toBe(true);
+    const written = readFileSync(profilePath, 'utf-8');
+    expect(written).not.toContain('tok_secret');
+    expect(JSON.parse(written).daemonBaseUrl).toBe('https://sim-42.eas.dev/daemon');
+  });
+
+  test('it travels as an env var on every agent-device call instead', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
+    await deps.ensureBooted({});
+    deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/My App.app' });
+    deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
+    const agentCalls = exec.calls.filter((c) => c.file === '/bin/agent-device');
+    expect(agentCalls.length).toBe(4);
+    for (const call of agentCalls) {
+      expect(call.env?.AGENT_DEVICE_DAEMON_AUTH_TOKEN).toBe('tok_proxy');
+    }
+  });
+
+  test('the profile lives in global workspace storage, never in the project itself', async () => {
+    mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(ctx()).ensureBooted({});
+    expect(existsSync(join(root, 'agent-device.remote.json'))).toBe(false);
+    expect(existsSync(join(root, '.env.eas-simulator'))).toBe(false);
+  });
+});
+
+describe('install and launch match their local counterparts', () => {
+  test('installIosApp passes the .app path as one literal argv element', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    const result = deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/My App.app' });
+    expect(result).toEqual({ ok: true, appPath: '/tmp/My App.app' });
+    const install = exec.calls.find((c) => c.args[0] === 'install');
+    expect(install?.args[1]).toBe('/tmp/My App.app');
+  });
+
+  test('a dev-client launch sends rn-iso own deep link, not agent-device metro hint', async () => {
+    // agent-device#1245: its hint writes bare-RN RCT_jsLocation, which a
+    // dev-client ignores. open <app> <url> runs simctl openurl verbatim.
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
+    await deps.ensureBooted({});
+    const result = deps.launchIosApp({
+      udid: 'drs_42',
+      bundleId: 'com.example.app',
+      metroPort: 8082,
+      devClientScheme: 'myapp',
+    });
+    expect(result.mode).toBe('openurl');
+    const open = exec.calls.find((c) => c.args[0] === 'open');
+    expect(open?.args[2]).toBe('myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082');
+  });
+
+  test('a bare RN launch has no url positional', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
+    await deps.ensureBooted({});
+    expect(deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 }).mode).toBe('launch');
+    const open = exec.calls.find((c) => c.args[0] === 'open');
+    expect(open?.args[1]).toBe('com.example.app');
+    expect(open?.args[2]).toBe('--relaunch');
+  });
+
+  test('install before a connection is a reason, not a crash', () => {
+    mockExec();
+    const result = remoteIosDeps(ctx()).installIosApp({ udid: 'x', appPath: '/tmp/a.app' });
+    expect(result.failed).toBe(true);
+    expect(result.reason).toContain('No remote session');
+  });
+
+  test('a failing install is a reason, never a throw', async () => {
+    mockExec({ outputs: { sim: CREATED }, fail: 'install' });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    const result = deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' });
+    expect(result.failed).toBe(true);
+    expect(result.code).toBe('RN_ISO_INSTALL_FAILED');
+  });
+});
+
+describe('the local device cap does not apply', () => {
+  test('checkDeviceCapacity never refuses', () => {
+    // maxDevices caps booted sims on THIS machine. Escaping that ceiling is
+    // the reason to go remote, so enforcing it here refuses the request.
+    expect(remoteIosDeps(ctx()).checkDeviceCapacity()).toBeNull();
+  });
+});
+
+describe('teardown', () => {
+  test('disconnects first, then stops the session', () => {
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+        'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
+      },
+    });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('torn-down');
+    expect(exec.calls.map((c) => c.args[0])).toEqual(['disconnect', 'simulator:get', 'simulator:stop']);
+  });
+
+  test('a failed disconnect does not prevent the stop, because the session is what bills', () => {
+    const exec = mockExec({
+      fail: 'disconnect',
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+        'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
+      },
+    });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('torn-down');
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(true);
+  });
+
+  test('a failed stop is reported, so the caller says leaked rather than torn down', () => {
+    mockExec({
+      fail: 'simulator:stop',
+      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }) },
+    });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('failed');
+    expect(result.reason).toContain('drs_42');
+  });
+
+  test('an operator-owned daemon has no session to stop', () => {
+    const exec = mockExec();
+    const result = teardownRemote(ctx(), { sessionId: null });
+    expect(result.status).toBe('torn-down');
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test.each([
+    {
+      name: 'unowned live session',
+      output: JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'IN_PROGRESS' }),
+    },
+    { name: 'malformed lookup output', output: 'not json' },
+    { name: 'unknown status', output: JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'PAUSED' }) },
+  ])('fails closed for $name', ({ output }) => {
+    const exec = mockExec({ outputs: { 'simulator:get': output } });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('failed');
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test.each([
+    'Authentication failed. Log in to EAS.',
+    'request failed: getaddrinfo ENOTFOUND api.expo.dev',
+    'The request timed out.',
+    'Failed to fetch simulator session drs_42.\nProject project_9 was not found.',
+  ])('fails closed when lookup fails: %s', (stderr) => {
+    const error = Object.assign(new Error(stderr), { stderr });
+    const exec = mockExec({ errors: { 'simulator:get': error } });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('failed');
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test('treats a definitive missing session as already gone', () => {
+    const stderr = 'Device run session drs_42 was not found.';
+    const error = Object.assign(new Error(stderr), { stderr });
+    const exec = mockExec({ errors: { 'simulator:get': error } });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('torn-down');
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test.each(['STOPPED', 'ERRORED'])('treats verified terminal status %s as already stopped', (status) => {
+    const exec = mockExec({
+      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status }) },
+    });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('torn-down');
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test('fails closed when stop output does not verify completion', () => {
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+        'simulator:stop': 'not json',
+      },
+    });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('failed');
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(true);
+  });
+
+  test('isolates proxy credentials from both lookup and stop', () => {
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+        'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
+      },
+    });
+    teardownRemote(ctx(), { sessionId: 'drs_42' });
+    const easCalls = exec.calls.filter((call) => call.file === '/bin/eas');
+    expect(easCalls).toHaveLength(2);
+    for (const call of easCalls) {
+      expect(call.omitEnv).toEqual(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']);
+      expect(call.timeoutMs).toBe(30_000);
+    }
+  });
+});
+
+describe('Metro reachability', () => {
+  // The hard part of a remote device, and the one agent-device does NOT solve
+  // for a self-hosted proxy: verified against 0.20.10, `agent-device proxy`
+  // serves no /api/metro route at all, so there is no bridge to lean on.
+  //
+  // Which address to use is now DECLARED (engine/metro-reach.ts), not inferred
+  // from the daemon's URL -- `ssh -L` made that inference false. These cover
+  // the wiring; the policy itself is pinned in metro-reach.test.ts.
+  test('an asserted-local device uses localhost and needs no gate', () => {
+    expect(resolveMetroOrigin({ metroPort: 8082, mode: 'off' })).toEqual({
+      origin: 'http://localhost:8082',
+      gate: false,
+    });
+  });
+
+  test('a named public url is used, and IS gated', () => {
+    expect(resolveMetroOrigin({ metroPort: 8082, publicUrl: 'https://abc.trycloudflare.com/' })).toEqual({
+      origin: 'https://abc.trycloudflare.com',
+      gate: true,
+    });
+  });
+
+  test('no address and nothing to build one with is a refusal, never localhost', () => {
+    // The bug this replaced: `localhost` sent to a device on another machine
+    // resolves there, and the run reads as merely unverified.
+    const r = resolveMetroOrigin({ metroPort: 8082, mode: 'auto', isExpo: false, available: [] });
+    expect('failed' in r).toBe(true);
+    assert('failed' in r);
+    expect(r.remedy).toContain('"off"');
+  });
+
+  test('launching against an unreachable Metro refuses instead of opening the app', async () => {
+    mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    const result = deps.launchIosApp({
+      udid: 'drs_42',
+      bundleId: 'com.example.app',
+      metroPort: 8082,
+      devClientScheme: 'myapp',
+    });
+    expect(result.failed).toBe(true);
+    expect(result.code).toBe('RN_ISO_REMOTE_METRO_UNREACHABLE');
+  });
+
+  test('the named url is what the deep link carries', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx({ publicMetroUrl: 'https://abc.trycloudflare.com' }));
+    await deps.ensureBooted({});
+    deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
+    const open = exec.calls.find((c) => c.args[0] === 'open');
+    expect(open?.args[2]).toBe('myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com');
+  });
+});
+
+// Reach planning, the tunnel and the gate run in ensureMetroReachable, which
+// commands/ios.ts calls AFTER the reserved port is known and the local Metro
+// gate has confirmed a dev server is on it -- and still before ensureBooted,
+// which is what creates the billable session.
+async function reach(over: Record<string, unknown> = {}) {
+  const context = {
+    root,
+    label: 'wt',
+    platform: 'ios' as const,
+    easBin: '/bin/eas',
+    agentDeviceBin: '/bin/agent-device',
+    publicMetroUrl: null as string | null,
+  };
+  const result = await ensureMetroReachable({
+    ctx: context,
+    metroPort: 8085,
+    isExpo: false,
+    env: {},
+    gateOrigin: async () => ({ ok: true as const }),
+    ...over,
+  } as unknown as Parameters<typeof ensureMetroReachable>[0]);
+  return { result, context };
+}
+
+describe('the Metro refusal comes before anything billable', () => {
+  test('no address and nothing to build one with is refused', async () => {
+    const { result, context } = await reach({ available: [] });
+    expect('failed' in result).toBe(true);
+    expect(context.publicMetroUrl).toBeNull();
+  });
+
+  test('a loopback daemon is NOT taken as proof the device is local', async () => {
+    // `ssh -L 4310:localhost:4310 macmini` is exactly this shape and the
+    // device is on the other machine, so nothing may infer "local" from it.
+    const { result } = await reach({ available: [] });
+    expect('failed' in result).toBe(true);
+  });
+
+  test('asserting the device is local needs no tunnel and no gate', async () => {
+    let gated = false;
+    const { result, context } = await reach({
+      tunnelMode: 'off',
+      gateOrigin: async () => {
+        gated = true;
+        return { ok: true as const };
+      },
+    });
+    expect('ok' in result).toBe(true);
+    expect(context.publicMetroUrl).toBe('http://localhost:8085');
+    expect(gated).toBe(false);
+  });
+
+  test('naming a public url is what unblocks it, and it IS gated', async () => {
+    let gatedOrigin: string | null = null;
+    const { result, context } = await reach({
+      env: { [PUBLIC_METRO_ENV]: 'https://abc.ngrok.app' },
+      gateOrigin: async ({ origin }: { origin: string }) => {
+        gatedOrigin = origin;
+        return { ok: true as const };
+      },
+    });
+    expect('ok' in result).toBe(true);
+    expect(context.publicMetroUrl).toBe('https://abc.ngrok.app');
+    expect(gatedOrigin).toBe('https://abc.ngrok.app');
+  });
+
+  test('an Expo Router project gates the bundle entry declared by package.json', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ main: 'expo-router/entry' }));
+    let entryPoint: string | null = null;
+    const { result } = await reach({
+      isExpo: true,
+      env: { [PUBLIC_METRO_ENV]: 'https://abc.ngrok.app' },
+      gateOrigin: async (options: { entryPoint?: string }) => {
+        entryPoint = options.entryPoint ?? null;
+        return { ok: true as const };
+      },
+    });
+
+    expect('ok' in result).toBe(true);
+    expect(entryPoint).toBe('node_modules/expo-router/entry');
+  });
+});
+
+describe('a tunnel rn-iso starts for itself', () => {
+  test('reuses the tunnel recorded by start and gates it', async () => {
+    let started = false;
+    const { result, context } = await reach({
+      available: ['cloudflared'],
+      startManagedTunnel: async () => {
+        started = true;
+        return { url: 'https://t.trycloudflare.com', pid: 4242 };
+      },
+      readTunnelRecord: () => ({
+        kind: 'managed',
+        provider: 'cloudflared',
+        pid: 4242,
+        url: 'https://t.trycloudflare.com',
+        port: 8085,
+        startedAt: 'T',
+      }),
+      isTunnelAlive: () => true,
+    });
+    expect('ok' in result).toBe(true);
+    expect(started).toBe(false);
+    expect(context.publicMetroUrl).toBe('https://t.trycloudflare.com');
+  });
+
+  test('a gate failure refuses with the gate stable code, and sets no origin', async () => {
+    const { result, context } = await reach({
+      available: ['cloudflared'],
+      readTunnelRecord: () => ({
+        kind: 'managed',
+        provider: 'cloudflared',
+        pid: 1,
+        url: 'https://t.trycloudflare.com',
+        port: 8085,
+        startedAt: 'T',
+      }),
+      isTunnelAlive: () => true,
+      gateOrigin: async () => ({
+        failed: true as const,
+        code: 'RN_ISO_REMOTE_METRO_WRONG',
+        reason: 'wrong',
+        remedy: 'fix',
+      }),
+    });
+    expect('failed' in result).toBe(true);
+    assert('failed' in result);
+    expect(result.code).toBe('RN_ISO_REMOTE_METRO_WRONG');
+    // Nothing downstream may treat this run as reachable.
+    expect(context.publicMetroUrl).toBeNull();
+  });
+
+  test('a missing managed tunnel requires start --remote and never starts a duplicate', async () => {
+    let started = false;
+    const { result } = await reach({
+      available: ['cloudflared'],
+      startManagedTunnel: async () => {
+        started = true;
+        return { url: 'https://duplicate.trycloudflare.com', pid: 4242 };
+      },
+      readTunnelRecord: () => null,
+    });
+    expect('failed' in result).toBe(true);
+    assert('failed' in result);
+    expect(result.remedy).toContain('start --remote');
+    expect(started).toBe(false);
+  });
+});
+
+describe('a session rn-iso created is never abandoned', () => {
+  // The window this closes: between `eas sim` succeeding and ensureBooted
+  // returning, the session exists and bills but its id is recorded nowhere,
+  // so stop/gc/worktree-remove cannot find it. Observed live -- a session
+  // with no endpoint yet left an IN_PROGRESS session nothing could reach.
+  const NO_ENDPOINT = JSON.stringify({ id: 'drs_9', remoteConfig: null });
+
+  test('a session that never becomes reachable is stopped, not left running', async () => {
+    const exec = mockExec({ outputs: { sim: NO_ENDPOINT, 'simulator:get': NO_ENDPOINT } });
+    const deps = remoteIosDeps(ctx({ existingDaemon: null }));
+    const booted = await deps.ensureBooted({});
+    expect(booted.failed).toBe(true);
+    expect(booted.reason).toContain('The session was stopped.');
+    const stop = exec.calls.find((c) => c.args[0] === 'simulator:stop');
+    expect(stop?.args).toContain('drs_9');
+    expect(stop?.timeoutMs).toBe(30_000);
+    expect(stop?.omitEnv).toEqual(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']);
+    const gets = exec.calls.filter((c) => c.args[0] === 'simulator:get');
+    expect(gets.length).toBeGreaterThan(0);
+    for (const get of gets) {
+      expect(get.timeoutMs).toBe(30_000);
+      expect(get.omitEnv).toEqual(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']);
+    }
+  });
+
+  test('when the stop also fails, the id and the manual command are reported', async () => {
+    // A leak nobody is told about is the worst outcome, so the message has to
+    // carry enough to fix it by hand.
+    mockExec({ outputs: { sim: NO_ENDPOINT, 'simulator:get': NO_ENDPOINT }, fail: 'simulator:stop' });
+    const booted = await remoteIosDeps(ctx({ existingDaemon: null })).ensureBooted({});
+    expect(booted.reason).toContain('eas simulator:stop --id drs_9');
+    expect(booted.reason).toContain('bills until its cap');
+  });
+
+  test.each([
+    ['malformed output', 'not json'],
+    ['non-terminal output', JSON.stringify({ id: 'drs_42', status: 'IN_PROGRESS' })],
+    ['a different session id', JSON.stringify({ id: 'drs_other', status: 'STOPPED' })],
+    ['ambiguous output', JSON.stringify({ id: 'drs_42' })],
+  ])('a zero-exit stop with %s keeps the current-run session actionable', async (_case, stopOutput) => {
+    mkdirSync(join(tmpHome, 'workspaces'), { recursive: true });
+    writeFileSync(workspaceDir(root), 'blocks the profile directory');
+    mockExec({ outputs: { sim: CREATED, 'simulator:stop': stopOutput } });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(booted.code).toBe('RN_ISO_REMOTE_SESSION_CLEANUP');
+    expect(booted.reason).toContain('drs_42');
+    expect(booted.reason).not.toContain('The session was stopped.');
+    expect(booted.remedy).toBe('Run `eas simulator:stop --id drs_42`.');
+  });
+
+  test('a connect failure after a create also ends the session', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED }, fail: 'connect' });
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+    expect(booted.failed).toBe(true);
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(true);
+  });
+
+  test('a profile write failure after creation stops the new session', async () => {
+    mkdirSync(join(tmpHome, 'workspaces'), { recursive: true });
+    writeFileSync(workspaceDir(root), 'blocks the profile directory');
+    const exec = mockExec({ outputs: { sim: CREATED } });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(booted.reason).toContain('The session was stopped.');
+    expect(exec.calls.find((call) => call.args[0] === 'simulator:stop')?.args).toContain('drs_42');
+  });
+
+  test('an unconfirmed profile-write cleanup reports the session and manual remedy', async () => {
+    mkdirSync(join(tmpHome, 'workspaces'), { recursive: true });
+    writeFileSync(workspaceDir(root), 'blocks the profile directory');
+    mockExec({ outputs: { sim: CREATED }, fail: 'simulator:stop' });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(booted.code).toBe('RN_ISO_REMOTE_SESSION_CLEANUP');
+    expect(booted.reason).toContain('drs_42');
+    expect(booted.remedy).toBe('Run `eas simulator:stop --id drs_42`.');
+  });
+
+  test('a connect failure against an operator daemon stops nothing', async () => {
+    // rn-iso created no session here, so it has none to end -- and ending
+    // someone else's would be destroying a device it does not own.
+    const exec = mockExec({ existingDaemonMode: true, fail: 'connect' });
+    const booted = await remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' })).ensureBooted({});
+    expect(booted.failed).toBe(true);
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+  });
+});
+
+describe('a re-run does not orphan the session it already has', () => {
+  // `eas sim` defaults to --force, so without this every run minted a fresh
+  // session while the previous one stayed live, unrecorded (state.json's id is
+  // overwritten) and billing to its cap. The documented loop re-runs `ios`
+  // after every native change, so it fired constantly.
+  function recordSession(id: string): void {
+    ensureWorkspaceStorage(root);
+    writeFileSync(workspaceStateFile(root), JSON.stringify({ remoteDevice: { platform: 'ios', sessionId: id } }));
+  }
+
+  const LIVE = JSON.stringify({
+    id: 'drs_old',
+    name: 'rn-iso-wt',
+    status: 'IN_PROGRESS',
+    remoteConfig: {
+      agentDeviceRemoteSessionUrl: 'https://old.eas.dev/daemon',
+      agentDeviceRemoteSessionToken: 'tok_old',
+    },
+  });
+
+  test('a live recorded session is reused, and no new one is created', async () => {
+    recordSession('drs_old');
+    const exec = mockExec({ outputs: { 'simulator:get': LIVE, sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    const booted = await deps.ensureBooted({});
+    expect(booted.ok).toBe(true);
+    expect(deps.createdSessionId()).toBeNull();
+    // The whole point: `eas sim` never ran.
+    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
+    const get = exec.calls.find((c) => c.args[0] === 'simulator:get');
+    expect(get?.timeoutMs).toBe(30_000);
+    expect(get?.omitEnv).toEqual(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']);
+  });
+
+  test('ios refuses an Android session without stopping or replacing it', async () => {
+    ensureWorkspaceStorage(root);
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({ remoteDevice: { platform: 'android', sessionId: 'drs_android' } }),
+    );
+    const exec = mockExec({ outputs: { sim: CREATED } });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(booted.code).toBe('RN_ISO_REMOTE_PLATFORM_MISMATCH');
+    expect(booted.reason).toContain('drs_android');
+    expect(exec.calls.some((call) => call.args[0] === 'sim')).toBe(false);
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test('android refuses an iOS session without stopping or replacing it', async () => {
+    recordSession('drs_ios');
+    const exec = mockExec({ outputs: { sim: CREATED } });
+
+    const booted = await remoteAndroidDeps(ctx()).ensureDeviceBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(booted.code).toBe('RN_ISO_REMOTE_PLATFORM_MISMATCH');
+    expect(booted.reason).toContain('drs_ios');
+    expect(exec.calls.some((call) => call.args[0] === 'sim')).toBe(false);
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test('creation ownership resets when a later boot reuses a session', async () => {
+    mockExec({ outputs: { 'simulator:get': LIVE, sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    expect((await deps.ensureBooted({})).ok).toBe(true);
+    expect(deps.createdSessionId()).toBe('drs_42');
+
+    recordSession('drs_old');
+    expect((await deps.ensureBooted({})).ok).toBe(true);
+    expect(deps.createdSessionId()).toBeNull();
+  });
+
+  test('creation ownership resets when a later boot fails', async () => {
+    mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    expect((await deps.ensureBooted({})).ok).toBe(true);
+    expect(deps.createdSessionId()).toBe('drs_42');
+
+    mockExec({ fail: 'sim' });
+    expect((await deps.ensureBooted({})).failed).toBe(true);
+    expect(deps.createdSessionId()).toBeNull();
+  });
+
+  test('a STOPPED session is not reused, even though it still reports a config', async () => {
+    // eas still returns remoteConfig for a stopped session, so reusing on
+    // config alone would connect to a daemon that is gone.
+    recordSession('drs_dead');
+    const dead = JSON.stringify({
+      id: 'drs_dead',
+      name: 'rn-iso-wt',
+      status: 'STOPPED',
+      remoteConfig: {
+        agentDeviceRemoteSessionUrl: 'https://dead.eas.dev/daemon',
+        agentDeviceRemoteSessionToken: 'tok_dead',
+      },
+    });
+    const exec = mockExec({ outputs: { 'simulator:get': dead, sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    expect(deps.createdSessionId()).toBe('drs_42');
+    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(true);
+  });
+
+  test('a verified terminal recorded session is replaced without another stop', async () => {
+    recordSession('drs_dead');
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'rn-iso-wt', status: 'ERRORED' }),
+        sim: CREATED,
+      },
+    });
+    await remoteIosDeps(ctx()).ensureBooted({});
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(true);
+  });
+
+  test('a stopped recorded session with an unreconciled claim is not replaced', async () => {
+    recordSession('drs_dead');
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    recordEasSessionClaim(
+      {
+        sessionId: 'drs_dead',
+        name: 'rn-iso-wt',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: tmpHome,
+        stateFile: workspaceStateFile(root),
+      },
+      ledgerRoot,
+    );
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'rn-iso-wt', status: 'STOPPED' }),
+        sim: CREATED,
+      },
+    });
+
+    const booted = await remoteIosDeps(
+      ctx({ easLedgerRoot: ledgerRoot, removeEasSessionClaim: () => false }),
+    ).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(booted.code).toBe('RN_ISO_REMOTE_SESSION_CLEANUP');
+    expect(booted.reason).toMatch(/ownership claim.*could not be removed/i);
+    expect(exec.calls.some((call) => call.args[0] === 'sim')).toBe(false);
+    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_dead');
+  });
+
+  test('an unowned live recorded session is neither stopped nor replaced', async () => {
+    recordSession('drs_other');
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_other', name: 'other-tool', status: 'IN_PROGRESS' }),
+        sim: CREATED,
+      },
+    });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
+    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_other');
+  });
+
+  test('a failed recorded-session lookup does not create a replacement', async () => {
+    recordSession('drs_old');
+    const stderr = 'request failed: getaddrinfo ENOTFOUND api.expo.dev';
+    const error = Object.assign(new Error(stderr), { stderr });
+    const exec = mockExec({ errors: { 'simulator:get': error }, outputs: { sim: CREATED } });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
+    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_old');
+  });
+
+  test('an operator-supplied daemon touches no recorded session at all', async () => {
+    // rn-iso is a guest there: it did not create that device and must not
+    // stop anything on the way in.
+    recordSession('drs_old');
+    const exec = mockExec();
+    await remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' })).ensureBooted({});
+    expect(exec.calls.some((c) => c.file === '/bin/eas')).toBe(false);
+  });
+});
+
+describe("the alert rn-iso's own url open raises", () => {
+  // A cloud simulator is always fresh, so iOS asks "Open in <app>?" in front
+  // of the deep link on EVERY remote run. Nothing requests a bundle until it
+  // is answered, which made `verify` report UNVERIFIED on launches that were
+  // fine. Observed on a real EAS Simulator.
+  test('a dev-client launch accepts it, so the bundle can actually load', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
+    await deps.ensureBooted({});
+    deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
+    const after = exec.calls.map((c) => c.args.slice(0, 2).join(' '));
+    expect(after).toContain('alert accept');
+    // Order matters: the alert exists only because `open` raised it.
+    expect(after.indexOf('alert accept')).toBeGreaterThan(after.indexOf('open com.example.app'));
+  });
+
+  test('a bare RN launch opens no url, so it does not reach for an alert', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
+    await deps.ensureBooted({});
+    deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
+    expect(exec.calls.some((c) => c.args[0] === 'alert')).toBe(false);
+  });
+
+  test('no alert to accept still leaves the launch successful', async () => {
+    // The ordinary case once a device has seen one. `alert accept` exits
+    // non-zero with nothing showing, and that must not fail a good launch.
+    const exec = mockExec({ outputs: { sim: CREATED }, fail: 'alert accept' });
+    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
+    await deps.ensureBooted({});
+    const result = deps.launchIosApp({
+      udid: 'drs_42',
+      bundleId: 'com.example.app',
+      metroPort: 8082,
+      devClientScheme: 'myapp',
+    });
+    expect(result.ok).toBe(true);
+    expect(exec.calls.some((c) => c.args.slice(0, 2).join(' ') === 'alert accept')).toBe(true);
+  });
+});
+
+describe('the android adapter', () => {
+  // On a REMOTE device the launch is the same operation as iOS: locally
+  // Android points the app at 10.0.2.2 (the emulator's route to its OWN host)
+  // and iOS at localhost, and the one public origin replaces both. So this is
+  // an adapter over the same core, not a second implementation.
+  test('android creates its session with --platform android', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteAndroidDeps(ctx());
+    await deps.ensureDeviceBooted({});
+    const args = exec.calls[0]?.args ?? [];
+    expect(args[args.indexOf('--platform') + 1]).toBe('android');
+  });
+
+  test('the boot result names a serial, which is what android.ts reads', async () => {
+    mockExec({ outputs: { sim: CREATED } });
+    const booted = await remoteAndroidDeps(ctx()).ensureDeviceBooted({});
+    expect(booted.ok).toBe(true);
+    expect(booted.serial).toBe('drs_42');
+  });
+
+  test('a failed boot keeps its reason rather than reporting a serial', async () => {
+    mockExec({ fail: 'sim' });
+    const booted = await remoteAndroidDeps(ctx()).ensureDeviceBooted({});
+    expect(booted.failed).toBe(true);
+    expect(booted.serial).toBeUndefined();
+  });
+
+  test('install takes the apk path', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteAndroidDeps(ctx());
+    await deps.ensureDeviceBooted({});
+    deps.install({ serial: 'drs_42', apkPath: '/tmp/My App.apk' });
+    const call = exec.calls.find((c) => c.args[0] === 'install');
+    expect(call?.args[1]).toBe('/tmp/My App.apk');
+  });
+
+  test('the launch points at the public origin, never 10.0.2.2 or a reverse', async () => {
+    // Both local mechanisms are host-relative: a reverse maps to the host
+    // running adb, and 10.0.2.2 is the emulator's own host. On a remote
+    // emulator both name the wrong machine.
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteAndroidDeps(ctx({ publicMetroUrl: 'https://abc.trycloudflare.com' }));
+    await deps.ensureDeviceBooted({});
+    deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
+    const open = exec.calls.find((c) => c.args[0] === 'open');
+    expect(open?.args[1]).toBe('com.example.app');
+    expect(open?.args[2]).toBe('myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com');
+    const flat = (open?.args ?? []).join(' ');
+    expect(flat).not.toContain('10.0.2.2');
+    expect(flat).not.toContain('reverse');
+    // The hint agent-device turns into debug_http_host on the device.
+    expect(open?.args[open.args.indexOf('--metro-host') + 1]).toBe('abc.trycloudflare.com');
+    expect(open?.args[open.args.indexOf('--metro-port') + 1]).toBe('443');
+  });
+
+  test('android refuses an unreachable Metro for the same reason iOS does', async () => {
+    mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteAndroidDeps(ctx());
+    await deps.ensureDeviceBooted({});
+    const r = deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: 8082 });
+    expect(r.failed).toBe(true);
+    expect(r.code).toBe('RN_ISO_REMOTE_METRO_UNREACHABLE');
+  });
+
+  test('the local device cap does not apply to a remote emulator either', () => {
+    expect(remoteAndroidDeps(ctx()).checkCapacity()).toBeNull();
+  });
+});
+
+describe('a release-shaped remote launch', () => {
+  // Upstream's release flow passes metroPort: null -- the JS is embedded and
+  // Metro is not part of the run. The reachability refusal below exists only
+  // for a dev build, so it must not fire here and turn a launch that needs no
+  // dev server into a failure.
+  test('a null port launches without asking where Metro is', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    const result = deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: null });
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('launch');
+    const open = exec.calls.find((c) => c.args[0] === 'open');
+    // No url, and no Metro hint: there is no dev server to point at.
+    expect(open?.args[1]).toBe('com.example.app');
+    expect(open?.args).not.toContain('--metro-host');
+  });
+
+  test('a dev launch on an unreachable device still refuses', async () => {
+    // The guard is not simply removed -- it still fires when a port IS given.
+    mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    const r = deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
+    expect(r.failed).toBe(true);
+    expect(r.code).toBe('RN_ISO_REMOTE_METRO_UNREACHABLE');
+  });
+
+  test('android release launches the same way', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteAndroidDeps(ctx());
+    await deps.ensureDeviceBooted({});
+    const r = deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: null });
+    expect(r.ok).toBe(true);
+    expect(exec.calls.find((c) => c.args[0] === 'open')?.args).not.toContain('--metro-host');
+  });
+});

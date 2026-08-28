@@ -17,7 +17,10 @@ import {
   checkEasAuth as probeEasAuth,
   ownerFromConfig,
   providerFromConfig,
+  resolveEasCliBin,
 } from './engine/remote-cache.ts';
+import { remoteAndroidSetting, remoteIosSetting, resolveSettings } from './settings.ts';
+import type { RemoteDeviceBackend } from './types.ts';
 
 type AnyJson = Record<string, unknown>;
 
@@ -233,6 +236,73 @@ export function checkConcurrency({
   );
 }
 
+// The remote device, and ONLY when this project has asked for one.
+//
+// Silent by default, for the reason checkConcurrency is: a machine that never
+// uses a remote device should not read about one on every run. "Asked for
+// one" means `ios.remote` or `android.remote` names a backend.
+//
+// PURE: the caller resolves both facts. The one thing worth being loud about
+// is a configured remote with no agent-device, because that fails at the
+// device step AFTER the build, which is the expensive place to find out.
+export function checkRemoteDevice({
+  configured = null,
+  daemonInEnv = false,
+  agentDeviceOnPath = false,
+  easCliResolvable = false,
+}: {
+  configured?: RemoteDeviceBackend | null;
+  daemonInEnv?: boolean;
+  agentDeviceOnPath?: boolean;
+  easCliResolvable?: boolean;
+} = {}): Finding | null {
+  if (!configured) return null;
+
+  if (!agentDeviceOnPath) {
+    return finding(
+      'cost',
+      'A remote device is configured, but agent-device is missing',
+      `agent-device drives the selected remote backend. Without it, \`rn-iso ios --remote ${configured}\` and \`rn-iso android --remote ${configured}\` refuse before device work.`,
+      'npm i -g agent-device',
+    );
+  }
+
+  if (configured === 'proxy') {
+    if (daemonInEnv) {
+      return finding(
+        'note',
+        'This project uses a remote proxy',
+        'The proxy backend connects through AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN. rn-iso does not create or stop the remote device.',
+        null,
+      );
+    }
+    return finding(
+      'cost',
+      'The remote proxy credentials are missing',
+      'The proxy backend requires AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN.',
+      'Export AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN.',
+    );
+  }
+
+  if (!easCliResolvable) {
+    return finding(
+      'cost',
+      'A remote device is configured, but there is no eas-cli to create a session with',
+      'The eas backend creates an EAS Simulator session. It needs eas-cli and an account with EAS Simulator access. Neither a project copy nor one on PATH was found.',
+      'Install eas-cli.',
+    );
+  }
+
+  return finding(
+    'note',
+    'This project uses a remote device',
+    '`ios --remote eas` / `android --remote eas` create an EAS Simulator session named rn-iso-<label> and end it on `stop` and `worktree remove`. The build still runs on this machine; only the device is elsewhere. Native device logs are not captured on a remote device -- the Metro half of the timeline is unaffected.',
+    null,
+  );
+}
+
+// Runs every check against one project directory. Pure enough to test: all file
+// reads happen here, and each check is a function of the text it was given.
 export function runDoctor(
   projectRoot: string,
   {
@@ -242,6 +312,9 @@ export function runDoctor(
     concurrency = getConcurrencyLimits,
     liveDevices = null,
     activeBuilds = null,
+    remoteEnv = process.env,
+    lookupAgentDevice = null,
+    lookupEasCli = null,
   }: {
     readFile?: typeof readFileSync;
     xcodeMajor?: number | null;
@@ -249,6 +322,9 @@ export function runDoctor(
     concurrency?: (() => ConcurrencyLimits) | ConcurrencyLimits;
     liveDevices?: (() => number) | null;
     activeBuilds?: (() => number) | null;
+    remoteEnv?: NodeJS.ProcessEnv;
+    lookupAgentDevice?: (() => boolean) | null;
+    lookupEasCli?: (() => boolean) | null;
   } = {},
 ): Finding[] {
   const read = (rel: string): string | null => {
@@ -296,6 +372,37 @@ export function runDoctor(
     });
   }
 
+  // The remote device. Both facts are cheap, and the check returns null unless
+  // one of them says this project actually uses one, so an ordinary project
+  // pays a settings read and nothing else.
+  const projectSettings = resolveSettings({ projectPath: projectRoot, repoRoot: projectRoot });
+  const remoteBackends = [
+    ...new Set([remoteIosSetting(projectSettings), remoteAndroidSetting(projectSettings)]),
+  ].filter((backend): backend is RemoteDeviceBackend => backend !== null);
+  const daemonInEnv = Boolean(
+    remoteEnv.AGENT_DEVICE_DAEMON_BASE_URL?.trim() && remoteEnv.AGENT_DEVICE_DAEMON_AUTH_TOKEN?.trim(),
+  );
+  const agentDeviceOnPath = remoteBackends.length
+    ? lookupAgentDevice
+      ? lookupAgentDevice()
+      : agentDeviceIsOnPath()
+    : false;
+  const easCliResolvable = remoteBackends.includes('eas')
+    ? lookupEasCli
+      ? lookupEasCli()
+      : Boolean(resolveEasCliBin(projectRoot))
+    : false;
+  const remoteFindings = remoteBackends
+    .map((backend) =>
+      checkRemoteDevice({
+        configured: backend,
+        daemonInEnv,
+        agentDeviceOnPath,
+        easCliResolvable,
+      }),
+    )
+    .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
+
   return [
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
@@ -304,9 +411,23 @@ export function runDoctor(
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
     easFinding,
     concurrencyFinding,
+    ...remoteFindings,
   ].filter((f): f is Finding => Boolean(f));
 }
 
+// Fails CLOSED to "present": a `command -v` that itself fails must not turn a
+// working setup into a "install agent-device" finding. The real refusal at the
+// device step is the authority; this is advice.
+function agentDeviceIsOnPath(): boolean {
+  try {
+    return Boolean(getExecutor().runQuiet('command -v agent-device', { timeoutMs: 5000 }));
+  } catch {
+    return true;
+  }
+}
+
+// The thin I/O behind the concurrency note. Both fail OPEN (0): a flaky simctl
+// or adb must not turn a read-only advice command into an error.
 function countLiveDevices(): number {
   let sims: IosSimRecord[] = [];
   let adb: AdbDevices = { emulators: [], physical: [], unhealthy: [] };

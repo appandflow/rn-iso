@@ -5,11 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseNdjsonText } from '../ndjson.ts';
 import {
+  expoProxyEnv,
   cleanLine,
   expoBinPath,
   expoSdkMajor,
   inferLevel,
   isBundleMarker,
+  parseExpoWaitingOnUrl,
   recordFromLine,
   startExpoServer,
 } from '../supervisor/server-expo.ts';
@@ -359,7 +361,143 @@ test('inferLevel classifies Expo bundling failures as errors', () => {
   expect(inferLevel('Bundling 100%')).toBe('info');
 });
 
-describe('the Metro store supplied to an Expo child', () => {
+// --- the public Metro address -----------------------------------------------
+//
+// Expo composes the manifest's hostUri from the Host header it was called
+// with plus ITS OWN port. Behind a tunnel that yields
+// "<tunnel-host>:8085" while the tunnel listens on 443, and a remote device
+// following that manifest can never connect. Verified on a real EAS
+// Simulator; the manifest wins over the launch URL, so it cannot be fixed
+// from the device side.
+
+test('a workspace with no public URL sets nothing', () => {
+  expect(expoProxyEnv({})).toEqual({});
+});
+
+test('the public URL becomes EXPO_PACKAGER_PROXY_URL', () => {
+  // One variable, not two that must agree by hand: this is the same value
+  // `ios --remote` points the device at.
+  expect(expoProxyEnv({ RN_ISO_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com' })).toEqual({
+    EXPO_PACKAGER_PROXY_URL: 'https://abc.trycloudflare.com',
+  });
+});
+
+test('a trailing slash is dropped', () => {
+  expect(expoProxyEnv({ RN_ISO_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com/' })).toEqual({
+    EXPO_PACKAGER_PROXY_URL: 'https://abc.trycloudflare.com',
+  });
+});
+
+test('an explicit EXPO_PACKAGER_PROXY_URL is never overridden', () => {
+  // A project that set it has said something more specific than rn-iso can
+  // infer.
+  expect(
+    expoProxyEnv({
+      EXPO_PACKAGER_PROXY_URL: 'https://chosen.example.com',
+      RN_ISO_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com',
+    }),
+  ).toEqual({});
+});
+
+describe('parseExpoWaitingOnUrl', () => {
+  test('preserves an HTTP URL from the plain, non-interactive line Expo prints', () => {
+    expect(parseExpoWaitingOnUrl('Waiting on http://localhost:8081')).toBe('http://localhost:8081');
+  });
+
+  test('converts native launch schemes to the HTTPS tunnel origin', () => {
+    expect(parseExpoWaitingOnUrl('Waiting on exp://abc123.exp.direct')).toBe('https://abc123.exp.direct');
+    expect(
+      parseExpoWaitingOnUrl('Waiting on exp+rniso-eas-test://c-appandflow-7jdyhu-mtcc9ftfejj3vw5r.on.expo.app'),
+    ).toBe('https://c-appandflow-7jdyhu-mtcc9ftfejj3vw5r.on.expo.app');
+    expect(parseExpoWaitingOnUrl('Waiting on myapp://custom.example.com')).toBe('https://custom.example.com');
+  });
+
+  test('a line that is not the waiting-on banner is not a match', () => {
+    expect(parseExpoWaitingOnUrl('Starting project at /app')).toBeNull();
+    expect(parseExpoWaitingOnUrl('')).toBeNull();
+  });
+});
+
+describe('starting a tunnel', () => {
+  test('--tunnel and EXPO_UNSTABLE_TUNNEL_V2 are only added when requested', async () => {
+    fakeBin();
+    const calls: { args: string[]; opts: SpawnOptions }[] = [];
+    await startExpoServer({
+      root,
+      port: 8120,
+      logsDir: join(root, 'logs'),
+      tunnel: true,
+      spawnFn: (_cmd, args, opts) => {
+        calls.push({ args, opts });
+        return fakeChild();
+      },
+    });
+    const seen = calls[0];
+    assert(seen);
+    expect(seen.args).toEqual(['start', '--port', '8120', '--tunnel']);
+    const env = seen.opts.env as Record<string, string>;
+    expect(env.EXPO_UNSTABLE_TUNNEL_V2).toBe('1');
+  });
+
+  test('without tunnel, neither the flag nor the env var is set', async () => {
+    fakeBin();
+    const calls: { args: string[]; opts: SpawnOptions }[] = [];
+    await startExpoServer({
+      root,
+      port: 8121,
+      logsDir: join(root, 'logs'),
+      spawnFn: (_cmd, args, opts) => {
+        calls.push({ args, opts });
+        return fakeChild();
+      },
+    });
+    const seen = calls[0];
+    assert(seen);
+    expect(seen.args).toEqual(['start', '--port', '8121']);
+    const env = seen.opts.env as Record<string, string>;
+    expect(env.EXPO_UNSTABLE_TUNNEL_V2).toBeUndefined();
+  });
+
+  test('the printed tunnel URL is reported exactly once, through onTunnelUrl', async () => {
+    fakeBin();
+    const child = fakeChild();
+    const urls: string[] = [];
+    await startExpoServer({
+      root,
+      port: 8122,
+      logsDir: join(root, 'logs'),
+      tunnel: true,
+      spawnFn: () => child,
+      onTunnelUrl: (url) => urls.push(url),
+    });
+    child.stdout!.emit('data', 'Waiting on exp://abc123.exp.direct\n');
+    // A reload reprints the same banner; only the first report matters.
+    child.stdout!.emit('data', 'Waiting on exp://abc123.exp.direct\n');
+    expect(urls).toEqual(['https://abc123.exp.direct']);
+  });
+
+  test('with no tunnel requested, a "Waiting on" line is logged but never reported as a tunnel', async () => {
+    fakeBin();
+    const child = fakeChild();
+    const urls: string[] = [];
+    await startExpoServer({
+      root,
+      port: 8123,
+      logsDir: join(root, 'logs'),
+      spawnFn: () => child,
+      onTunnelUrl: (url) => urls.push(url),
+    });
+    child.stdout!.emit('data', 'Waiting on http://localhost:8123\n');
+    expect(urls).toEqual([]);
+  });
+});
+// --- the shared transform store, injected into the Expo child --------------
+//
+// The bare path appends a store to the config it hosts. Here the dev server is
+// the project's own `expo start`, so the only seam is the environment -- and
+// the rule that matters is that NODE_OPTIONS is APPENDED to, never replaced:
+// the caller may have set it for reasons rn-iso knows nothing about.
+describe('the Metro store injected into an Expo child', () => {
   const adapter = '/pkg/rn-iso/shim/expo-metro-config.cjs';
 
   test('the env additions point Expo at the adapter and preserve an existing override', () => {

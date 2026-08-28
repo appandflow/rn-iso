@@ -54,6 +54,11 @@ other line goes to stderr, so it is always safe to pipe.
                               download; it is copied into the local cache on
                               the way past, so the next workspace is "local")
                     false     nothing answered, so it was compiled
+  webPreviewUrl   only on a remote device that has one (an EAS Simulator
+                  session): a browser URL showing that device's screen. Absent
+                  on a local device. Hand it to the human -- it is the only way
+                  to see a device that is not on this machine. Never open it ON
+                  the device; it is a page, not a deep link.
   cacheSkipped    true only when --no-build-cache was passed: "nothing was
                   looked up", which is a different fact from "nothing was found"
   waitedForBuild  { pid, ms } when ANOTHER workspace was already compiling this
@@ -167,6 +172,7 @@ RULES
     body: () => `THE DEV SERVER
 
   npx rn-iso start
+  npx rn-iso start --remote   # prepare Metro for a remote device
 
 Reserves (or reuses) this workspace's Metro port, starts the dev server under a
 detached SUPERVISOR, and waits until it both answers AND verifies as this
@@ -176,10 +182,32 @@ another worktree's bundler.
 
   --json            one line of facts on stdout, everything else on stderr:
                       { port, supervisorPid, mode, logsDir, alreadyRunning }
-  --wait <seconds>  how long to wait for the server to answer (default 60)
+  --wait <seconds>  how long to wait for server and remote tunnel readiness
+                    (default 60 for each)
+  --remote          expose Metro for a remote device
 
-Two flags, deliberately. Anything a project needs beyond them is the project's
-own bundler command, which is not rn-iso's judgment to make.
+Plain \`rn-iso start\` is local and does not create a public tunnel. Remote intent
+comes from \`start --remote\`, \`ios.remote\`, or \`android.remote\`. The
+\`metro.tunnel\` setting selects the provider after remote intent exists.
+
+REMOTE DEVICE BACKENDS
+  Metro exposure and device selection are separate:
+
+    rn-iso start --remote          prepare public Metro
+    rn-iso ios --remote proxy      use an agent-device daemon
+    rn-iso android --remote eas    create an EAS Simulator session
+
+  The command or the matching ios.remote/android.remote setting selects the
+  backend. Environment variables never select the backend.
+
+  The proxy backend connects to an agent-device daemon on another machine. It
+  requires AGENT_DEVICE_DAEMON_BASE_URL and
+  AGENT_DEVICE_DAEMON_AUTH_TOKEN. rn-iso creates no remote session for it.
+
+  The EAS backend needs eas-cli and an account with EAS Simulator access. An
+  EAS session is billable. EAS does not inherit the proxy credentials. Always
+  tear the session down: \`stop\`, \`worktree remove\`, and \`gc --delete\`
+  can end sessions that rn-iso proves it owns.
 
 IDEMPOTENT
   A healthy dev server on the reserved port is a no-op: \`start\` prints the
@@ -203,6 +231,16 @@ WHAT THE SUPERVISOR IS
                  a child and its stdout is parsed into records. Levels are
                  INFERRED from each line, so those records carry raw: true.
 
+  In expo-child mode, remote intent plus metro.tunnel "expo" makes \`start\` pass
+  \`--tunnel\` and EXPO_UNSTABLE_TUNNEL_V2=1 (the legacy ws-tunnel path is
+  locked to port 8081, which every reserved port but the first collides with)
+  and records the URL Expo reports under state.json's metroTunnel. This has to
+  happen here: \`ios --remote <proxy|eas>\` / \`android --remote <proxy|eas>\`
+  cannot add \`--tunnel\` to
+  an already-running dev server. A later \`start --remote\` refuses with a
+  stop-and-restart remedy when a healthy local Expo supervisor has no recorded
+  Expo tunnel. See \`guide settings\` for metro.tunnel.
+
   \`rn-iso status\` reports the pid, the mode, and whether it is answering.
   \`rn-iso stop\` is the inverse of \`start\`: it halts the supervisor, reaps
   the device-log collectors, shuts the owned device down (never deletes it)
@@ -225,7 +263,9 @@ WHAT THE SUPERVISOR IS
 STARTING YOUR OWN BUNDLER STILL WORKS
   A dev server YOU started is detected and left alone: \`start\` reports it
   with supervisorPid: null and mode: null, exits 0, and starts nothing over it.
-  Starting a second bundler on a working one is the actual failure.
+  Starting a second bundler on a working one is the actual failure. For
+  \`start --remote\`, an external Expo server also needs metro.publicUrl because
+  rn-iso cannot add Expo tunnel mode to a process it does not supervise.
 
   Start it from INSIDE the project directory, on the reserved port, or nothing
   can attribute it to you:
@@ -529,7 +569,50 @@ RN_ISO_AT_CAPACITY
   behaves differently: a compile WAITS for a free slot rather than refusing.
   See \`guide lifecycle\`, "opt-in concurrency limits".)
 
+--- REMOTE-DEVICE CODES (\`ios --remote <proxy|eas>\` / \`android --remote <proxy|eas>\`) ---
+
+RN_ISO_NO_REMOTE_SESSION
+  The selected backend could not use agent-device, or metro.tunnel names a
+  provider or mode this workspace cannot use (e.g. "expo" on a bare RN
+  project). The remedy line says which. Nothing was created yet.
+
+RN_ISO_REMOTE_PROXY_CONFIG
+  \`--remote proxy\` requires AGENT_DEVICE_DAEMON_BASE_URL and
+  AGENT_DEVICE_DAEMON_AUTH_TOKEN. These variables provide credentials after
+  proxy is selected. They never select the backend.
+
+RN_ISO_REMOTE_EAS_UNAVAILABLE
+  \`--remote eas\` requires eas-cli. Proxy environment variables do not change
+  this selection and are not passed to EAS.
+
+RN_ISO_REMOTE_METRO_WRONG
+  The gate that proves a tunnel still reaches THIS workspace's Metro failed --
+  before a session or a build, whether the tunnel is Expo's own, one rn-iso
+  started (metro.tunnel: cloudflared/ngrok/auto), or a named metro.publicUrl.
+  The usual cause: the tunnel was built for a port this workspace no longer
+  holds (a stale one survived a \`stop\`/\`start\` that reserved a different
+  port), and it now serves ANOTHER workspace's dev server -- healthy, and
+  wrong. Re-run \`rn-iso start\` (it prints the port it reserved) and, for a
+  manual tunnel, rebuild it against that port.
+
+RN_ISO_REMOTE_METRO_UNREACHABLE
+  A remote start could not create its selected managed tunnel, or the device
+  could not be told where Metro is. Follows the same remedy as
+  RN_ISO_NO_REMOTE_SESSION's tunnel guidance -- set metro.tunnel, or use
+  metro.publicUrl for an existing endpoint.
+
 --- DEV-SERVER CODES (\`rn-iso start\`) ---
+
+RN_ISO_WORKTREE_REMOVAL_IN_PROGRESS
+  A managed remote start found that \`rn-iso worktree remove\` owns the
+  worktree lock. The start did not register the project or create a tunnel.
+  Wait for removal to finish, then run \`rn-iso start --remote\` again.
+
+RN_ISO_REMOTE_START_REQUIRED
+  A healthy bare or Expo server was started without its required remote
+  tunnel. A running server cannot gain that option. For an rn-iso supervisor,
+  run \`rn-iso stop\`, then \`rn-iso start --remote\`. For an external server,
+  configure metro.publicUrl or let rn-iso supervise the server.
 
 RN_ISO_BARE_DEPS / RN_ISO_BARE_LOAD / RN_ISO_BARE_API  (bare RN)
   The supervisor hosts Metro out of the PROJECT's node_modules, so metro,
@@ -543,7 +626,8 @@ RN_ISO_EXPO_BIN  (Expo)
 
 RN_ISO_METRO_TIMEOUT
   "The dev server did not answer on port <n> within <s>s."
-  The supervisor is alive, but nothing is serving yet. \`start\` has already
+  The supervisor is alive, but Metro or its requested Expo tunnel is not ready.
+  \`start\` has already
   printed the last lines of the global workspace logs/supervisor.log above this -- read
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`rn-iso stop\`, then \`start\`.
@@ -557,9 +641,10 @@ RN_ISO_SUPERVISOR_EXITED
   the full records. Fix that and run \`start\` again; nothing is left running.
 
 RN_ISO_BAD_ARG / RN_ISO_NO_PROJECT
-  \`start\` refused before doing anything: an unusable --wait value, or a
-  working directory with no package.json above it. Both are caught before the
-  port is reserved and before anything is spawned, so nothing was started.
+  \`start\` refused before doing anything: an unusable --wait value, an invalid
+  Metro tunnel setting, or a working directory with no package.json above it.
+  These errors are caught before the port is reserved and before anything is
+  spawned, so nothing was started.
 
 "@rn-iso/metro is not installed ... so bundler and client logs will not be
 captured"  (in metro.ndjson, bare RN)
@@ -862,17 +947,19 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   the two env vars (see \`guide settings\`).
 
 THE OPTION SURFACE, IN FULL
-  start           --json --wait <seconds>
-  ios             --json --no-metro-check --no-build-cache --configuration <name>
-  android         --json --no-metro-check --no-build-cache --variant <name>
+  start           --json --wait <seconds> --remote
+  ios             --json --no-metro-check --no-build-cache --configuration <name> --remote <proxy|eas>
+  android         --json --no-metro-check --no-build-cache --variant <name> --remote <proxy|eas>
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide; there is no --all)
   gc              --delete --older-than <days> --all
   worktree create <name> --carry-ignored --base <ref>; remove [path] --force
 
-  That is the whole surface, deliberately. A project needing more wraps rn-iso
-  in an npm script rather than rn-iso growing a flag for it.
+  That is the whole surface today, and it is deliberately small. It can grow
+  when a flag is genuinely the best answer -- but project-specific knowledge
+  (release builds, variants, device targets) belongs in a script the repo owns,
+  not in a flag here.
 
   \`android --variant <name>\` selects the gradle variant to assemble and
   install on a project with product flavors -- \`--variant productionDebug\`
@@ -959,13 +1046,12 @@ DESTRUCTIVE COMMANDS -- ask the user first
   worktree remove --force discards uncommitted and untracked work
   stop --force            kills a process rn-iso could not identify
 
-Destruction lives in exactly TWO commands: \`worktree remove\` (the workspace
-you name) and \`gc --delete\` (the machine). \`stop\` destroys nothing by
-design -- it shuts the owned device down and leaves it assigned, and there is
-no flag on it that could become a delete. An agent reaching for \`stop\` to
-reclaim memory must not have a \`--delete\` within reach of a typo.
-\`stop --force\` is not an exception: it only kills an unidentified process on
-the reserved port, and deletes nothing.
+Permanent local deletion lives in exactly TWO commands: \`worktree remove\`
+(the workspace you name) and \`gc --delete\` (the machine). For a local device,
+\`stop\` shuts it down and never deletes it. For a recorded EAS session,
+\`stop\` irreversibly ends the session. \`stop --force\` can also kill an
+unidentified process on the reserved port. There is no \`--delete\` flag on
+\`stop\`.
 
 CAPACITY
   A booted iOS sim is roughly 1-2 GB of RAM, an Android emulator 2-3 GB. On a
@@ -1031,6 +1117,24 @@ sim survives with nothing pointing at it. \`rn-iso gc\` (no flag, writes
 nothing, always safe) reports those; \`gc --delete\` reaps them, and in the same
 run drops the dead config ENTRIES those projects left behind and frees their
 Metro ports.
+
+REMOTE EAS SESSIONS
+  Plain \`rn-iso gc\` is a dry run. \`gc --delete\` can stop active rn-iso-* EAS
+  sessions after workspace state is missing. The stop needs verified
+  project, name, platform, and status ownership. The same run also cleans the
+  local state that it can prove is stale.
+
+  A fixed ownership record and lock live under ~/.rn-iso/machine/eas,
+  independent of RN_ISO_HOME. Unclaimed sessions are never stopped.
+  Missing config.json does not authorize cleanup.
+  The exact recorded workspace state path must prove that the session ID is
+  absent.
+  If claim removal fails after a verified stop, the session is stopped, but the
+  workspace record is kept for reconciliation.
+
+  If a registered root is missing or unreadable, the EAS sweep fails closed and
+  leaves the remote EAS session running. Independent local cleanup continues
+  for entries it proves stale.
 
 THE MIRROR IMAGE: A STALE DEVICE RECORD
   A device deleted out from under a LIVE project (by hand, or by Xcode) leaves
@@ -1117,6 +1221,9 @@ KEYS RN-ISO READS
                         embedded JS, no Metro, cache keyed -release-sim, and
                         a JS-bundle swap on cache hits. The \`--configuration\`
                         flag overrides this per invocation. Unset means Debug.
+  ios.remote            "proxy" or "eas" to use that remote backend, the same
+                        as passing \`--remote proxy\` or \`--remote eas\`. The
+                        build still runs here; only the device is elsewhere.
   android.systemImage   e.g. "system-images;android-36;google_apis;arm64-v8a"
   android.variant       e.g. "productionDebug" -- the gradle variant to
                         assemble and install on a project with product
@@ -1147,6 +1254,26 @@ KEYS RN-ISO READS
                         committed .rn-iso.json avoids carrying a secret; a
                         bare string is used as the literal password. Unset
                         means the debug keystore's fixed "android".
+  android.remote        "proxy" or "eas"; the Android half of ios.remote
+  metro.tunnel          selects how a remote device reaches this workspace's
+                        Metro after remote intent exists. Plain \`start\` stays
+                        local. For Expo and bare React Native, "auto" (default)
+                        first tries an authenticated and working ngrok.
+                        After an auth refusal,
+                        or any failure before ngrok returns a URL, it falls back
+                        to cloudflared. "off" asserts the device
+                        shares this machine and is the only mode that needs no
+                        tunnel. "expo" lets the Expo dev server tunnel itself.
+                        "cloudflared" and "ngrok" name a managed provider
+                        explicitly. Any other value is refused as invalid.
+  metro.ngrokUrl        the stable managed ngrok URL. It requires metro.tunnel
+                        "ngrok" and passes --url to ngrok http. rn-iso owns
+                        this process.
+  metro.publicUrl       an existing tunnel's URL. Takes precedence over
+                        starting one, whatever metro.tunnel says -- rn-iso
+                        did not create it, so a Metro request through it is
+                        still gated the same way a managed tunnel's is. Set it
+                        before Expo start so the manifest advertises it.
   worktreeDir           where worktrees are created
   worktree.baseRef      "fresh" (origin/HEAD) or "head"
   worktree.include      carry-over patterns, same role as .worktreeinclude

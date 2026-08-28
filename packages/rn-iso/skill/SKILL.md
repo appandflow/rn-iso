@@ -1,7 +1,6 @@
 ---
 name: rn-iso
 description: The React Native / Expo CLI for AI agents. Each project (or worktree) gets its own owned simulator/emulator, a collision-free Metro port, a supervised dev server (`rn-iso start`), a build/install/launch that installs from a shared fingerprint cache when nothing native changed (`rn-iso ios` / `rn-iso android`), and a queryable log timeline (`rn-iso logs --errors`). Use to spin up a worktree, get a running app on a device that is yours, read the errors a build or a redbox produced, and discover which device to target for UI interactions.
-user_invocable: true
 ---
 
 # rn-iso -- the RN / Expo CLI for agents
@@ -88,11 +87,11 @@ One more consequence of "the clone matches the source, not the branch": a carrie
 
 ## Destructive commands -- ask the user first
 
-Destruction lives in exactly **two** commands. Everything else, including `stop`, is safe.
+Permanent local deletion lives in exactly **two** commands. `stop` never deletes a local device, but it irreversibly ends a recorded EAS session.
 
 - **`worktree remove --force`** discards uncommitted changes and untracked files permanently. Plain `worktree remove` deletes the worktree and reaps its owned device; it refuses when the tree is dirty. **`pod install` churn no longer causes that refusal**: when the only dirt left is `<app>/ios/Podfile.lock` or `<app>/ios/*.xcodeproj/project.pbxproj`, tracked and unstaged, rn-iso restores those files itself and proceeds, printing `restored <path> (pod install churn; the worktree is being removed)` for each. They are inside a directory about to be deleted wholesale, and a lockfile change anyone intended would have been committed. **One other dirty path and the whole set is refused, churn included** -- that fail-closed rule is what keeps this from ever eating real work. When it does refuse over something else, **restore what it names and retry** rather than forcing. The refusal names the right command per class: `git checkout --` for modified tracked files, `git clean -fd` (or an `rm`) for untracked ones, which checkout cannot clear. Current rn-iso state is global and never dirties the tree. It takes no argument: run it from anywhere inside the worktree, including a monorepo app dir, and it resolves the enclosing worktree root. `npx rn-iso guide errors` shows how. **On the main checkout it reclaims the environment only**: the owned device is deleted, the Metro port freed, the registry entries dropped, and the global workspace directory removed -- and it never touches source files (git cannot remove the main working tree, so the dirty-tree guard does not apply). It ends with `Reclaimed the environment; the working tree stays (it is the main checkout).` A registered project directory that is not a git repo at all gets the same environment reclaim.
-- **`gc --delete`** drops dead project entries and deletes the orphaned `rn-iso-*` devices it reported, potentially tens of GB of simulator. With `--older-than <days>` it also reaps the device of a project nothing has touched that long. With `--all` it empties the shared build caches, which every project on the machine then pays to refill. A bare `gc` only reports -- it writes nothing and is always safe.
-- **`stop --force`** is the one flag on a non-destructive command: it kills a process on the reserved port that rn-iso could not identify as yours. It deletes nothing. Plain `stop` halts the supervisor, reaps the device-log collectors, shuts the owned device down (**never** deletes it) and frees the port, so coming back to the branch costs a boot rather than a create and a reinstall. There is no `--delete` on it, deliberately -- an agent reaching for `stop` to reclaim memory must not have one within reach of a typo.
+- **`gc --delete`** drops dead project entries and deletes the orphaned `rn-iso-*` devices it reported, potentially tens of GB of simulator. With `--older-than <days>` it also reaps the device of a project nothing has touched that long. With `--all` it empties the shared build caches, which every project on the machine then pays to refill. From an Expo project, `gc` also reports orphaned `rn-iso-*` EAS Simulator sessions for the current EAS project; `--delete` stops only verified owned sessions. A project-classification or lock failure skips the EAS sweep, reports a notice, and leaves local cleanup running. A bare `gc` only reports -- it writes nothing and is always safe.
+- **`stop --force`** kills a process on the reserved port that rn-iso could not identify as yours. Plain `stop` halts the supervisor, reaps the device-log collectors, shuts the local device down (**never** deletes it), and frees the port. When the workspace owns a recorded EAS session, `stop` irreversibly ends that session. There is no `--delete` flag on `stop`.
 
 ## Capacity
 
@@ -134,6 +133,36 @@ it does not resolve a project copy at runtime.
 Ten commands: `doctor` (what is silently costing build time) · `worktree create|remove` · `start` (dev server under a supervisor, blocks until healthy) · `stop` (the inverse of `start`) · `ios` · `android` (build/install/launch, from cache when nothing native changed) · `logs` (query the captured NDJSON timeline) · `status` (devices, ports, supervisor health, last build, error counts) · `gc` (dead entries, orphaned devices, records of devices that no longer exist, and the shared build caches) · `guide`
 
 That is all of it. There is no `init` and no separate init skill -- rn-iso supplies its own caches and global workspace storage, while settings remain files and destruction is consolidated into `worktree remove` and `gc --delete`. There is also no `up`, no `release`, no `shutdown`, no `config`, no `build-cache`, and no `worktree list`; `status` covers listing and the build commands own the cache flow.
+
+## Remote devices
+
+Plain `rn-iso start` stays local. Prepare public Metro only when a remote device needs it:
+
+```bash
+rn-iso start --remote
+rn-iso ios --remote proxy
+rn-iso android --remote eas
+```
+
+The command selects the device backend. The `ios.remote` and `android.remote` settings accept `"proxy"` or `"eas"`. Environment variables never select the backend. The build and cache remain on this machine.
+
+The proxy backend connects to an `agent-device` daemon on another machine. It requires `AGENT_DEVICE_DAEMON_BASE_URL` and `AGENT_DEVICE_DAEMON_AUTH_TOKEN`. rn-iso does not create or stop the proxy device.
+
+The EAS backend needs `eas-cli` and an account with EAS Simulator access. EAS does not inherit proxy credentials. An EAS session is billable, so always tear it down with `stop`, `worktree remove`, or `gc --delete`. Give the user the `webPreviewUrl` from the command payload. Do not open that browser URL on the device.
+
+`metro.tunnel` accepts `"auto"`, `"expo"`, `"ngrok"`, `"cloudflared"`, or `"off"`. For Expo and bare React Native, `"auto"` tries an authenticated and working ngrok first. After an auth refusal, or any failure before ngrok returns a URL, it uses cloudflared. Use `"expo"` only when the Expo dev server must own its tunnel.
+
+`metro.ngrokUrl` is the stable managed ngrok URL. It requires `metro.tunnel: "ngrok"`. `metro.publicUrl` is an operator-managed URL. Set `metro.publicUrl` before Expo start so the manifest advertises it. rn-iso stops only the managed tunnels it started.
+
+rn-iso verifies that the public URL reaches this workspace before it creates a remote session. `metro.tunnel: "off"` is for a device that can already reach this machine.
+
+Plain `gc` is a dry run. `gc --delete` can stop active rn-iso-* EAS sessions after workspace state is missing. The cleanup verifies the EAS project, session name, platform, and status. If a registered root is missing or unreadable, the EAS sweep fails closed and leaves the remote EAS session running. Independent proven-stale local cleanup continues.
+
+A fixed ownership record and lock live under ~/.rn-iso/machine/eas, independent of RN_ISO_HOME. An unclaimed session is reported but never stopped. A missing config.json does not authorize cleanup. The exact recorded workspace state path must prove that the session ID is absent.
+
+If claim removal fails after a verified stop, the session is stopped, but the workspace record is kept for reconciliation.
+
+Remote devices do not provide native device logs. Metro errors and redboxes remain available through `logs --errors`.
 
 ## When things go wrong
 

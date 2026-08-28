@@ -1,7 +1,16 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+// src/supervisor/state.ts -- the workspace state + pid helpers, guard-free.
+//
+// Split out of supervisor/run.ts so that the importable state helpers live in a
+// module with NO top-level main() and NO server imports: `ios`, `android`,
+// `start` and the collector all read and write state.json through here, and
+// bundling any of them must never drag the spawnable daemon entry (or Metro)
+// in behind it. run.ts re-exports this surface for callers that still reach for
+// it there.
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
 import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile, workspaceStateLock } from '../paths.ts';
+import type { ManagedProvider } from '../engine/metro-reach.ts';
 
 export const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';
@@ -10,8 +19,90 @@ export interface WorkspaceState {
   supervisor?: Record<string, unknown>;
   collectors?: Record<string, unknown>;
   lastBuild?: Record<string, unknown>;
+  // Written by `ios --remote` the moment the session exists. The session id
+  // ONLY: the daemon token is never persisted anywhere.
+  remoteDevice?: Record<string, unknown>;
+  // The address a remote device reaches this workspace's Metro through, when
+  // rn-iso set one up itself: an Expo-hosted tunnel (`start`, kind 'expo') or
+  // a managed provider (`ios`/`android` --remote, kind 'managed'). Never
+  // written for an operator-supplied metro.publicUrl -- rn-iso only records
+  // what it can also reap.
+  metroTunnel?: Record<string, unknown>;
   [key: string]: unknown;
 }
+
+// The Expo dev server tunnelling itself (`expo start --tunnel`). Nothing to
+// reap: the tunnel dies with the expo child, which `stop` already kills.
+// Not exported on its own: nothing names it directly, only through the
+// MetroTunnelRecord union readMetroTunnel returns.
+interface ExpoTunnelRecord {
+  kind: 'expo';
+  url: string;
+}
+
+// A tunnel rn-iso started and owns the process of (engine/tunnel.ts's
+// TunnelRecord, plus the discriminant). `stop`, `gc` and `worktree remove`
+// reap this one by pid.
+export interface ManagedTunnelRecord {
+  kind: 'managed';
+  provider: ManagedProvider;
+  pid: number;
+  url: string;
+  port: number;
+  startedAt: string;
+  processToken: string | null;
+  logFile?: string | null;
+}
+
+export type MetroTunnelRecord = ExpoTunnelRecord | ManagedTunnelRecord;
+
+export interface RemoteSessionRecord {
+  platform: 'ios' | 'android' | null;
+  sessionId: string;
+  startedAt: string | null;
+}
+
+// The tunnel this workspace's Metro is reachable through, if rn-iso set one
+// up. A narrow reader for the same reason readRemoteSessionId is one: every
+// site that reads or reaps this record must agree on its shape and on what a
+// malformed one means.
+export function readMetroTunnel(root: string): MetroTunnelRecord | null {
+  const record = readWorkspaceState(root)?.metroTunnel;
+  if (!record || typeof record !== 'object') return null;
+  const kind = (record as { kind?: unknown }).kind;
+  const url = (record as { url?: unknown }).url;
+  if (typeof url !== 'string' || url.length === 0) return null;
+  if (kind === 'expo') return { kind: 'expo', url };
+  if (kind === 'managed') {
+    const provider = (record as { provider?: unknown }).provider;
+    const pid = (record as { pid?: unknown }).pid;
+    const port = (record as { port?: unknown }).port;
+    const startedAt = (record as { startedAt?: unknown }).startedAt;
+    const processToken = (record as { processToken?: unknown }).processToken;
+    const logFile = (record as { logFile?: unknown }).logFile;
+    if ((provider !== 'ngrok' && provider !== 'cloudflared') || typeof pid !== 'number' || typeof port !== 'number') {
+      return null;
+    }
+    return {
+      kind: 'managed',
+      provider,
+      pid,
+      url,
+      port,
+      startedAt: typeof startedAt === 'string' ? startedAt : '',
+      processToken: typeof processToken === 'string' && processToken.length > 0 ? processToken : null,
+      ...(typeof logFile === 'string' && logFile.length > 0 ? { logFile } : {}),
+    };
+  }
+  return null;
+}
+
+// --- Contract 2: the workspace state file --------------------------------
+//
+// The global workspace state file is written temp+rename so a reader never
+// sees half a file. Merged rather than overwritten: later steps put
+// `lastBuild` beside `supervisor`, and a supervisor shutting down must not
+// take it with it.
 
 export function readWorkspaceState(root: string): WorkspaceState | null {
   try {
@@ -23,6 +114,47 @@ export function readWorkspaceState(root: string): WorkspaceState | null {
   }
 }
 
+// The remote session this workspace created, or null.
+//
+// A narrow reader rather than a raw readWorkspaceState at each call site: the
+// three places that end a session (`stop`, `worktree remove` and `gc`, the
+// last two through reclaim) must all agree on where the id lives and on what
+// a malformed record means, and a session they disagree about is one that
+// keeps billing.
+export function readRemoteSession(root: string): RemoteSessionRecord | null {
+  const record = readWorkspaceState(root)?.remoteDevice;
+  if (!record || typeof record !== 'object') return null;
+  const id = (record as { sessionId?: unknown }).sessionId;
+  if (typeof id !== 'string' || id.length === 0) return null;
+  const platform = (record as { platform?: unknown }).platform;
+  const startedAt = (record as { startedAt?: unknown }).startedAt;
+  return {
+    platform: platform === 'ios' || platform === 'android' ? platform : null,
+    sessionId: id,
+    startedAt: typeof startedAt === 'string' ? startedAt : null,
+  };
+}
+
+export function readRemoteSessionId(root: string): string | null {
+  return readRemoteSession(root)?.sessionId ?? null;
+}
+
+export function clearRemoteSession(root: string, expectedSessionId: string): void {
+  clearWorkspaceStateKey(root, 'remoteDevice', (value) => {
+    if (typeof value !== 'object' || value === null) return false;
+    return (value as { sessionId?: unknown }).sessionId === expectedSessionId;
+  });
+}
+
+// Runs `fn` with the state.json lock held (reentrant within this process).
+// EVERY read-modify-write of state.json goes through here so the whole cycle
+// is atomic: the supervisor patches `supervisor`, each collector patches its
+// own `collectors.<platform>`, ios/android patch `lastBuild`, and these run at
+// once (the detached collector registers during the launch-verify window right
+// before writeLastBuild). renameSync stops a torn file, not a lost update --
+// two writers that both read the old state and rename their own version over it
+// drop one side's key, and a dropped `collectors.<platform>` leaks a log stream
+// `stop` can never reap. The lock is the thing that closes that window.
 export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
   const file = workspaceStateFile(root);
   return withDirLock(workspaceStateLock(root), fn, {
@@ -47,20 +179,80 @@ function replaceWorkspaceState(root: string, state: WorkspaceState): WorkspaceSt
 }
 
 export function clearWorkspaceSupervisor(root: string): void {
-  clearWorkspaceStateKeys(root, ['supervisor']);
+  clearWorkspaceStateKey(root, 'supervisor', () => true);
 }
 
-export function clearWorkspaceStateKeys(root: string, keys: string[]): void {
+export function clearExpoMetroTunnel(root: string): void {
+  clearWorkspaceStateKey(root, 'metroTunnel', (value) => {
+    return typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'expo';
+  });
+}
+
+export function clearManagedMetroTunnel(root: string, expected: Omit<ManagedTunnelRecord, 'kind'>): boolean {
+  if (!existsSync(workspaceStateFile(root))) return true;
+  return clearWorkspaceStateKey(root, 'metroTunnel', (value) => {
+    if (typeof value !== 'object' || value === null) return false;
+    const record = value as Partial<ManagedTunnelRecord>;
+    return (
+      record.kind === 'managed' &&
+      record.provider === expected.provider &&
+      record.pid === expected.pid &&
+      record.url === expected.url &&
+      record.port === expected.port &&
+      record.startedAt === expected.startedAt &&
+      (record.processToken ?? null) === (expected.processToken ?? null) &&
+      (record.logFile ?? null) === (expected.logFile ?? null)
+    );
+  });
+}
+
+export function clearWorkspaceStateKeys(root: string, keys: readonly string[]): void {
+  if (!existsSync(workspaceStateFile(root))) return;
   withWorkspaceStateLock(root, () => {
     const state = readWorkspaceState(root);
-    if (!state || !keys.some((key) => key in state)) return;
-    for (const key of keys) delete state[key];
     const file = workspaceStateFile(root);
+    if (!state) {
+      try {
+        rmSync(file, { force: true });
+      } catch {
+        /* already gone */
+      }
+      return;
+    }
+    let changed = false;
+    for (const key of keys) {
+      if (!(key in state)) continue;
+      delete state[key];
+      changed = true;
+    }
+    if (!changed) return;
     if (Object.keys(state).length === 0) {
       rmSync(file, { force: true });
       return;
     }
     replaceWorkspaceState(root, state);
+  });
+}
+
+// Removes only the selected key. The file goes when nothing else is left in
+// it, so a stopped workspace has no state.json rather than an empty one.
+function clearWorkspaceStateKey(root: string, key: string, shouldClear: (value: unknown) => boolean): boolean {
+  return withWorkspaceStateLock(root, () => {
+    const state = readWorkspaceState(root);
+    if (!state || !(key in state)) return true;
+    if (!shouldClear(state[key])) return false;
+    delete state[key];
+    const file = workspaceStateFile(root);
+    if (Object.keys(state).length === 0) {
+      try {
+        rmSync(file, { force: true });
+      } catch {
+        /* already gone */
+      }
+      return true;
+    }
+    replaceWorkspaceState(root, state);
+    return true;
   });
 }
 
