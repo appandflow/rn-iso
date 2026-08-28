@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
+import { createLineReader, waitForChild } from '../process-output.ts';
 import type { SettingsObject } from '../types.ts';
 import { findBuildTool, type BuildToolsEntry } from '../sim/android.ts';
-import { cleanLine, createLineReader } from '../supervisor/server-expo.ts';
+import { cleanLine } from '../supervisor/server-expo.ts';
 import {
   assetDiffReason,
   compareAssetManifests,
@@ -14,7 +15,6 @@ import {
   type AssetManifest,
   type AssetManifestDiff,
 } from './asset-manifest.ts';
-import { waitForChild } from './deps.ts';
 import { detectEntryFile } from './js-swap.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
 

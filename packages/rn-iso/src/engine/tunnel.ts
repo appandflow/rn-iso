@@ -21,7 +21,7 @@ import { basename, join, resolve as resolvePath, sep } from 'node:path';
 import { getConfigDir } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
-import { createLineReader } from '../supervisor/server-expo.ts';
+import { createLineReader } from '../process-output.ts';
 import type { ManagedProvider } from './metro-reach.ts';
 import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
 

@@ -735,7 +735,7 @@ describe('the remote cache', () => {
     expect(storedEntry.path).toBe(remoteApp);
     expect(storedEntry.key).toBe(calls.args.resolveBuild.key);
     expect(calls.args.installIosApp.appPath).toBe(storedApp);
-    expect(errs.join('\n')).toMatch(/^cache {7}remote hit \(eas\) -> stored locally \(\d+m?\d*s\)$/m);
+    expect(errs.join('\n')).toMatch(/^  cache {7}remote hit \(eas\) -> stored locally \(\d+ms\)$/m);
     const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('remote');
     expect(facts.appPath).toBe(storedApp);
@@ -775,7 +775,7 @@ describe('the remote cache', () => {
     ]);
     expect(calls.args.uploadRemote.buildPath).toBe(appPath);
     expect(calls.args.uploadRemote.fingerprintHash).toBe(FINGERPRINT);
-    expect(errs.join('\n')).toMatch(/^cache {7}uploaded \(eas\)$/m);
+    expect(errs.join('\n')).toMatch(/^  cache {7}uploaded \(eas\)$/m);
   });
 
   test('a provider that THROWS degrades to a local-only run with a note', async () => {
@@ -1259,7 +1259,7 @@ describe('pods', () => {
     );
     expect(calls.order.includes('runPodInstall')).toBeTruthy();
     expect(calls.order.indexOf('runPodInstall') < calls.order.indexOf('buildIos')).toBeTruthy();
-    expect(errs.join('\n')).toMatch(/^pods {8}.*differ -> installed \(18s\)/m);
+    expect(errs.join('\n')).toMatch(/^  pods {8}.*differ -> installed \(18s\)/m);
   });
 
   test('a Podfile whose pods have never been installed is installed too', async () => {
@@ -1338,12 +1338,12 @@ describe('failure output', () => {
     expect(payload.remedy).toBeTruthy();
     expect(payload.remedy).toMatch(/pod install/);
     const text = errs.join('\n');
-    expect(text).toMatch(/^build {7}FAILED after 2m41s/m);
+    expect(text).toMatch(/^  build {7}FAILED after 2m41s/m);
     expect(text).toMatch(/AppDelegate\.mm:12:4: use of undeclared identifier 'foo'/);
     expect(text).toMatch(/The sandbox is not in sync/);
     expect(text).toMatch(/and 3 more diagnostics in the log/);
-    expect(text).toMatch(new RegExp(`^log {9}${buildLogFile(root).replace(/[/\\^$*+?.()|[\]{}]/g, '\\$&')}`, 'm'));
-    expect(text).toMatch(/^failed {6}RN_ISO_BUILD_FAILED/m);
+    expect(text).toMatch(new RegExp(`^  log {9}${buildLogFile(root).replace(/[/\\^$*+?.()|[\]{}]/g, '\\$&')}`, 'm'));
+    expect(text).toMatch(/^  failed {6}RN_ISO_BUILD_FAILED/m);
   });
 
   test('--json puts one parseable {code, message, remedy} line on stdout when the gate refuses', async () => {
@@ -1445,11 +1445,11 @@ describe('success output', () => {
     expect(logs.length).toBe(1);
     expect(logs[0]).toMatch(/^OK: com\.example\.app on rn-iso-fixture \(BF2A\.\.\), Metro port 8082/);
     const text = errs.join('\n');
-    expect(text).toMatch(/^device {6}rn-iso-fixture \(BF2A\.\.\) booted \(\d+m?\d*s\)$/m);
-    expect(text).toMatch(/^fingerprint a3f9b1\.\. miss \(\d+m?\d*s\)$/m);
-    expect(text).toMatch(/^build {7}ok \(2m41s\)$/m);
-    expect(text).toMatch(/^install {5}-> rn-iso-fixture \(BF2A\.\.\) \(\d+m?\d*s\)$/m);
-    expect(text).toMatch(/^launch {6}com\.example\.app \(\d+m?\d*s\)$/m);
+    expect(text).toMatch(/^  device {6}rn-iso-fixture \(BF2A\.\.\) booted \(\d+ms\)$/m);
+    expect(text).toMatch(/^  fingerprint a3f9b1\.\. miss \(\d+ms\)$/m);
+    expect(text).toMatch(/^  build {7}ok \(2m41s\)$/m);
+    expect(text).toMatch(/^  install {5}-> rn-iso-fixture \(BF2A\.\.\) \(\d+ms\)$/m);
+    expect(text).toMatch(/^  launch {6}com\.example\.app \(\d+ms\)$/m);
   });
 
   test('--json emits exactly one line of facts on stdout', async () => {
@@ -1644,12 +1644,12 @@ describe('Contract 4: the state file', () => {
 
 describe('formatting', () => {
   test('durations read the way a build feels', () => {
-    expect(formatDuration(0)).toBe('0s');
+    expect(formatDuration(0)).toBe('0ms');
     expect(formatDuration(18000)).toBe('18s');
-    expect(formatDuration(59400)).toBe('59s');
+    expect(formatDuration(59400)).toBe('59.4s');
     expect(formatDuration(161000)).toBe('2m41s');
-    expect(formatDuration(119600)).toBe('2m0s');
-    expect(formatDuration(undefined)).toBe('0s');
+    expect(formatDuration(119600)).toBe('2m00s');
+    expect(formatDuration(undefined)).toBe('unknown');
   });
 
   test('the short forms are recognizably abbreviations', () => {
@@ -1661,9 +1661,9 @@ describe('formatting', () => {
   });
 
   test('every phase line starts its text at the same column', () => {
-    expect(phaseLine('device', 'x')).toBe('device      x');
-    expect(phaseLine('fingerprint', 'x')).toBe('fingerprint x');
-    expect(phaseLine('build', 'x')).toBe('build       x');
+    expect(phaseLine('device', 'x')).toBe('  device      x');
+    expect(phaseLine('fingerprint', 'x')).toBe('  fingerprint x');
+    expect(phaseLine('build', 'x')).toBe('  build       x');
   });
 
   test('the app name comes from the .app basename, not the bundle id', () => {
@@ -2309,7 +2309,7 @@ test('a miss with a prior stored entry appends the changed-sources suffix and lo
     },
   );
 
-  const line = errs.find((e) => e.startsWith('fingerprint'));
+  const line = errs.find((e) => e.startsWith('  fingerprint'));
   assert(line);
   expect(line).toMatch(/miss/);
   expect(line).toMatch(/ -- 1 source changed: ios\/Podfile\.lock$/);
@@ -2326,9 +2326,9 @@ test('a miss with a prior stored entry appends the changed-sources suffix and lo
 test('a miss with no prior entry (or a first build) prints the plain miss line, no suffix', async () => {
   reserve();
   const { errs } = await run();
-  const line = errs.find((e) => e.startsWith('fingerprint'));
+  const line = errs.find((e) => e.startsWith('  fingerprint'));
   assert(line);
-  expect(line).toMatch(/miss \(\d+m?\d*s\)$/);
+  expect(line).toMatch(/miss \(\d+ms\)$/);
   expect(buildRecords().some((r) => r.event === 'fingerprint_diff')).toBe(false);
 });
 
@@ -2565,7 +2565,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
         fingerprintProject: shifting(),
       },
     );
-    const shift = errs.find((line) => /^fingerprint\s+\S+ -> /.test(line));
+    const shift = errs.find((line) => /^  fingerprint\s+\S+ -> /.test(line));
     assert(shift, 'expected a fingerprint shift line on stderr');
     expect(shift).toMatch(/aaaaaa\.\. -> bbbbbb\.\./);
     expect(shift).toMatch(/prebuild \+ pod install/);
@@ -2668,7 +2668,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
         readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
       },
     );
-    expect(errs.some((line) => /^fingerprint\s+\S+ -> /.test(line))).toBe(false);
+    expect(errs.some((line) => /^  fingerprint\s+\S+ -> /.test(line))).toBe(false);
     expect(calls.args.storeBuild.key).toBe(calls.args.resolveBuild.key);
     expect(calls.order.filter((c) => c === 'resolveBuild').length).toBe(1);
   });

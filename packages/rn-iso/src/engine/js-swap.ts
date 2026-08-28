@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { cleanLine, createLineReader } from '../supervisor/server-expo.ts';
-import { waitForChild } from './deps.ts';
+import { createLineReader, waitForChild } from '../process-output.ts';
+import { cleanLine } from '../supervisor/server-expo.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
 
 export const JS_BUNDLE_NAME = 'main.jsbundle';

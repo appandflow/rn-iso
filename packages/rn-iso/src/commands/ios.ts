@@ -17,6 +17,7 @@ import {
   untrackedNativeFiles,
 } from '../build-cache.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
+import { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import {
   DEFAULT_METRO_PORT,
@@ -87,8 +88,14 @@ import {
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 
+export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
+
 function writeNote(line: string): void {
   console.error(line);
+}
+
+function writePhase(name: unknown, text: string): void {
+  console.error(phaseLine(name, text));
 }
 
 export const PLATFORM = 'ios';
@@ -218,23 +225,9 @@ const COLLECTOR_POLL_MS = 25;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-export function formatDuration(ms: unknown): string {
-  const total = Math.max(0, Math.round(Number(ms) || 0) / 1000);
-  if (total < 60) return `${Math.round(total)}s`;
-  const minutes = Math.floor(total / 60);
-  const seconds = Math.round(total - minutes * 60);
-  if (seconds === 60) return `${minutes + 1}m0s`;
-  return `${minutes}m${seconds}s`;
-}
-
 export function stepTimer(now: () => number = Date.now): () => string {
   const t0 = now();
   return () => `(${formatDuration(now() - t0)})`;
-}
-
-export function shortHash(hash: unknown): string {
-  const text = String(hash ?? '');
-  return text.length > 6 ? `${text.slice(0, 6)}..` : text;
 }
 
 export function shortUdid(udid: unknown): string {
@@ -245,10 +238,6 @@ export function shortUdid(udid: unknown): string {
 export function deviceLabel(device: DeviceLike | null | undefined, udid: unknown): string {
   const name = device?.deviceName || device?.name || null;
   return name ? `${name} (${shortUdid(udid)})` : shortUdid(udid);
-}
-
-export function phaseLine(name: unknown, text: string): string {
-  return `${String(name).padEnd(11)} ${text}`;
 }
 
 export function appNameFromPath(appPath: unknown): string | null {
@@ -1222,7 +1211,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const metroCheck = opts.metroCheck !== false;
   const useBuildCache = opts.buildCache !== false;
 
-  const phase = (name: unknown, text: string) => console.error(phaseLine(name, text));
+  const phase = writePhase;
   const note = writeNote;
 
   const started = d.now();
