@@ -190,6 +190,7 @@ RULES
     body: () => `THE DEV SERVER
 
   npx rn-iso start
+  npx rn-iso start --remote   # prepare Metro for a remote device
 
 Reserves (or reuses) this workspace's Metro port, starts the dev server under a
 detached SUPERVISOR, and waits until it both answers AND verifies as this
@@ -200,9 +201,11 @@ another worktree's bundler.
   --json            one line of facts on stdout, everything else on stderr:
                       { port, supervisorPid, mode, logsDir, alreadyRunning }
   --wait <seconds>  how long to wait for the server to answer (default 60)
+  --remote          expose Metro for a remote device
 
-Two flags, deliberately. Anything a project needs beyond them is the project's
-own bundler command, which is not rn-iso's judgment to make.
+Plain \`rn-iso start\` is local and does not create a public tunnel. Remote intent
+comes from \`start --remote\`, \`ios.remote\`, or \`android.remote\`. The
+\`metro.tunnel\` setting selects the provider after remote intent exists.
 
 IDEMPOTENT
   A healthy dev server on the reserved port is a no-op: \`start\` prints the
@@ -225,13 +228,15 @@ WHAT THE SUPERVISOR IS
                  a child and its stdout is parsed into records. Levels are
                  INFERRED from each line, so those records carry raw: true.
 
-  In expo-child mode, when metro.tunnel resolves to "expo" (or "auto" on an
-  Expo project and no metro.publicUrl is set), \`start\` also passes
+  In expo-child mode, remote intent plus metro.tunnel "expo" (or "auto" when
+  no metro.publicUrl is set) makes \`start\` pass
   \`--tunnel\` and EXPO_UNSTABLE_TUNNEL_V2=1 (the legacy ws-tunnel path is
   locked to port 8081, which every reserved port but the first collides with)
   and records the URL Expo reports under state.json's metroTunnel. This has to
   happen here: \`ios --remote\` / \`android --remote\` cannot add \`--tunnel\` to
-  an already-running dev server. See \`guide settings\` for metro.tunnel.
+  an already-running dev server. A later \`start --remote\` refuses with a
+  stop-and-restart remedy when a healthy local Expo supervisor has no recorded
+  Expo tunnel. See \`guide settings\` for metro.tunnel.
 
   \`rn-iso status\` reports the pid, the mode, and whether it is answering.
   \`rn-iso stop\` is the inverse of \`start\`: it halts the supervisor, reaps
@@ -581,6 +586,11 @@ RN_ISO_REMOTE_METRO_UNREACHABLE
 
 --- DEV-SERVER CODES (\`rn-iso start\`) ---
 
+RN_ISO_REMOTE_START_REQUIRED
+  A healthy Expo supervisor was started without a tunnel. A running Expo
+  server cannot gain that option. Run \`rn-iso stop\`, then
+  \`rn-iso start --remote\`.
+
 RN_ISO_BARE_DEPS / RN_ISO_BARE_LOAD / RN_ISO_BARE_API  (bare RN)
   The supervisor hosts Metro out of the PROJECT's node_modules, so metro,
   @react-native/dev-middleware and @react-native-community/cli-server-api must
@@ -913,7 +923,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   the two env vars (see \`guide settings\`).
 
 THE OPTION SURFACE, IN FULL
-  start           --json --wait <seconds>
+  start           --json --wait <seconds> --remote
   ios             --json --no-metro-check --no-build-cache --configuration <name> --remote
   android         --json --no-metro-check --no-build-cache --variant <name> --remote
   logs            --source --level --since --grep --tail --follow --errors --json
@@ -1204,10 +1214,10 @@ KEYS RN-ISO READS
                         bare string is used as the literal password. Unset
                         means the debug keystore's fixed "android".
   android.remote        the android half of ios.remote, same rule
-  metro.tunnel          how a remote device reaches this workspace's Metro:
-                        "auto" (default) assumes the device is elsewhere
-                        and arranges a tunnel, preferring ngrok then
-                        cloudflared; "off" asserts the device shares this
+  metro.tunnel          selects how a remote device reaches this workspace's
+                        Metro after remote intent exists. Plain \`start\` stays
+                        local. "auto" (default) arranges a tunnel, preferring
+                        ngrok then cloudflared; "off" asserts the device shares this
                         machine (a local \`agent-device proxy\`) and is the
                         only mode that needs no tunnel; "expo" lets the
                         Expo dev server tunnel itself; "cloudflared" /

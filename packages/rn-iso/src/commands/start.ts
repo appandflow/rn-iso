@@ -11,7 +11,7 @@
 // the identity check exists to prevent -- and the reserved port moves instead
 // of being reported as a conflict the caller can do nothing about.
 //
-// Two flags, and only ever two: --json and --wait. Anything a project needs
+// Three flags: --json, --wait, and --remote. Anything a project needs
 // beyond that is the project's own bundler command, which is not rn-iso's
 // judgment to make.
 import chalk from 'chalk';
@@ -26,10 +26,17 @@ import { queryLogs } from '../logs-query.ts';
 import { supervisorLogFile, workspaceLogsDir } from '../paths.ts';
 import { reserveMetroPort } from '../ports.ts';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
-import { readWorkspaceState } from '../supervisor/state.ts';
+import { readMetroTunnel, readWorkspaceState } from '../supervisor/state.ts';
 import { ensureWorkspaceIgnored } from '../engine/workspace.ts';
 import { spawnEntry } from '../spawn-entry.ts';
-import { publicUrlSetting, resolveSettings, tunnelModeSetting, unknownSettingKeys } from '../settings.ts';
+import {
+  publicUrlSetting,
+  remoteAndroidSetting,
+  remoteIosSetting,
+  resolveSettings,
+  tunnelModeSetting,
+  unknownSettingKeys,
+} from '../settings.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 // The same stopwatch the build commands stamp their phase lines with, so the
 // OK line's total wait reads the same way ("4s", "1m4s").
@@ -60,14 +67,16 @@ interface WaitResult {
 // probing for a decision this narrow.
 export function wantsExpoOwnTunnel({
   isExpo,
+  remote,
   mode,
   publicUrl,
 }: {
   isExpo: boolean;
+  remote: boolean;
   mode: string;
   publicUrl?: string | null;
 }): boolean {
-  return isExpo && !publicUrl && (mode === 'expo' || mode === 'auto');
+  return remote && isExpo && !publicUrl && (mode === 'expo' || mode === 'auto');
 }
 
 export function parseWait(value: unknown): WaitResult {
@@ -208,6 +217,7 @@ export default function startCommand(program: Command): void {
 interface StartOptions {
   json?: boolean;
   wait?: string;
+  remote?: boolean;
 }
 
 export function registerStart(program: Command): void {
@@ -219,6 +229,7 @@ export function registerStart(program: Command): void {
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option('--wait <seconds>', `How long to wait for the dev server to answer (default ${DEFAULT_WAIT_SECONDS})`)
+    .option('--remote', 'Prepare the dev server for a remote device')
     .action(async (opts: StartOptions) => {
       const json = Boolean(opts.json);
       // Total wait, command start to the OK line: `start` blocks on health by
@@ -297,10 +308,12 @@ export function registerStart(program: Command): void {
       for (const key of unknownSettingKeys(settings)) {
         note(chalk.yellow(`Warning: setting "${key}" is not read by rn-iso and will be ignored.`));
       }
+      const remote = Boolean(opts.remote) || remoteIosSetting(settings) || remoteAndroidSetting(settings);
       // Decided here, not at `ios`/`android --remote` time: a later run
       // cannot retroactively add `--tunnel` to an already-running dev server.
       const tunnel = wantsExpoOwnTunnel({
         isExpo,
+        remote,
         mode: tunnelModeSetting(settings) ?? 'auto',
         publicUrl: publicUrlSetting(settings),
       });
@@ -316,6 +329,13 @@ export function registerStart(program: Command): void {
       // Already up: the whole point of an idempotent start. Two `start` runs in
       // a row must leave one supervisor, not two bundlers fighting for a port.
       if (resolution.metro) {
+        if (tunnel && supervisor && readMetroTunnel(root)?.kind !== 'expo') {
+          return fail({
+            code: 'RN_ISO_REMOTE_START_REQUIRED',
+            message: `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`,
+            remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
+          });
+        }
         if (!supervisor) {
           note(chalk.dim(`A dev server for this project already answers on port ${port}, started outside rn-iso.`));
           note(chalk.dim('Leaving it alone: rn-iso will not start a second bundler over a working one.'));

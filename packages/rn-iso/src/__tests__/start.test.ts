@@ -199,25 +199,67 @@ async function runAction(opts: Record<string, unknown>) {
   return { logs, errs, exitCode };
 }
 
+async function runSpawnedExpoStart({
+  port,
+  options = {},
+  settings,
+}: {
+  port: number;
+  options?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+}) {
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+  const exec = metroExecutor({ listeners: {} });
+  const held: { server: Server | null } = { server: null };
+  exec.spawn = (cmd, args, opts) => {
+    exec.calls.spawn.push({ cmd, args, opts });
+    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
+    metroListener(port).then((server) => {
+      held.server = server;
+      exec.listening = true;
+    });
+    return { pid: process.pid, unref() {}, on() {} };
+  };
+  const base = exec.runQuiet.bind(exec);
+  exec.runQuiet = (cmd) => {
+    if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
+    return base(cmd);
+  };
+  setExecutor(exec);
+  upsertProject(root, { metroPort: port, ...(settings ? { settings } : {}) });
+
+  try {
+    return { result: await runAction(options), exec };
+  } finally {
+    held.server?.close();
+  }
+}
+
 describe('wantsExpoOwnTunnel', () => {
-  test('an Expo project with metro.tunnel unset (auto) or explicitly expo wants one', () => {
-    expect(wantsExpoOwnTunnel({ isExpo: true, mode: 'auto' })).toBe(true);
-    expect(wantsExpoOwnTunnel({ isExpo: true, mode: 'expo' })).toBe(true);
+  test('a local Expo start does not request a tunnel', () => {
+    expect(wantsExpoOwnTunnel({ isExpo: true, remote: false, mode: 'auto' })).toBe(false);
+  });
+
+  test('a remote Expo start requests its own tunnel in auto or expo mode', () => {
+    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'auto' })).toBe(true);
+    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'expo' })).toBe(true);
   });
 
   test('a bare RN workspace never does -- there is no dev server here to tunnel itself', () => {
-    expect(wantsExpoOwnTunnel({ isExpo: false, mode: 'auto' })).toBe(false);
-    expect(wantsExpoOwnTunnel({ isExpo: false, mode: 'expo' })).toBe(false);
+    expect(wantsExpoOwnTunnel({ isExpo: false, remote: true, mode: 'auto' })).toBe(false);
+    expect(wantsExpoOwnTunnel({ isExpo: false, remote: true, mode: 'expo' })).toBe(false);
   });
 
   test('an explicit managed provider defers to `ios`/`android --remote`, not `start`', () => {
-    expect(wantsExpoOwnTunnel({ isExpo: true, mode: 'cloudflared' })).toBe(false);
-    expect(wantsExpoOwnTunnel({ isExpo: true, mode: 'ngrok' })).toBe(false);
-    expect(wantsExpoOwnTunnel({ isExpo: true, mode: 'off' })).toBe(false);
+    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'cloudflared' })).toBe(false);
+    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'ngrok' })).toBe(false);
+    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'off' })).toBe(false);
   });
 
   test("an operator-supplied metro.publicUrl wins -- starting Expo's own tunnel too would be a second one", () => {
-    expect(wantsExpoOwnTunnel({ isExpo: true, mode: 'auto', publicUrl: 'https://abc.ngrok.app' })).toBe(false);
+    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'auto', publicUrl: 'https://abc.ngrok.app' })).toBe(
+      false,
+    );
   });
 });
 
@@ -453,6 +495,31 @@ describe('action: already running', () => {
     }
     expect(exec.calls.spawn).toEqual([]);
   });
+
+  test('start --remote refuses when a healthy local Expo supervisor has no Expo tunnel', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    const port = 8166;
+    const server = await metroListener(port);
+    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
+
+    let result;
+    try {
+      result = await runAction({ json: true, remote: true });
+    } finally {
+      server.close();
+    }
+
+    expect(result.exitCode).toBe(1);
+    expect(exec.calls.spawn).toEqual([]);
+    expect(JSON.parse(result.logs[0] ?? '')).toEqual({
+      code: 'RN_ISO_REMOTE_START_REQUIRED',
+      message: `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`,
+      remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
+    });
+  });
 });
 
 describe('action: spawning the supervisor', () => {
@@ -510,39 +577,31 @@ describe('action: spawning the supervisor', () => {
     expect(facts.mode).toBe('bare-inproc');
   });
 
-  test('passes --tunnel to the supervisor for an Expo workspace with metro.tunnel unset (auto)', async () => {
-    // `ios --remote` cannot retroactively add this to an already-running dev
-    // server, so `start` is the only place the decision can be made.
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
-    const port = 8156;
-    const exec = metroExecutor({ listeners: {} });
-    const held: { server: Server | null } = { server: null };
-    exec.spawn = (cmd, args, opts) => {
-      exec.calls.spawn.push({ cmd, args, opts });
-      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
-      metroListener(port).then((s) => {
-        held.server = s;
-        exec.listening = true;
-      });
-      return { pid: process.pid, unref() {}, on() {} };
-    };
-    const base = exec.runQuiet.bind(exec);
-    exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
-      return base(cmd);
-    };
-    setExecutor(exec);
-    upsertProject(root, { metroPort: port });
-
-    try {
-      await runAction({ json: true, wait: '10' });
-    } finally {
-      held.server?.close();
-    }
-
+  test('start --remote passes --tunnel to an Expo supervisor in auto mode', async () => {
+    const { exec } = await runSpawnedExpoStart({
+      port: 8156,
+      options: { json: true, wait: '10', remote: true },
+    });
     const spawned = exec.calls.spawn[0];
     assert(spawned);
-    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port), '--tunnel']);
+    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', '8156', '--tunnel']);
+  });
+
+  test('plain start does not pass --tunnel to an Expo supervisor in auto mode', async () => {
+    const { exec } = await runSpawnedExpoStart({ port: 8163, options: { json: true, wait: '10' } });
+    const spawned = exec.calls.spawn[0];
+    assert(spawned);
+    expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', '8163']);
+  });
+
+  test.each(['ios', 'android'])('%s.remote gives plain start remote intent', async (platform) => {
+    const port = platform === 'ios' ? 8164 : 8165;
+    const { exec } = await runSpawnedExpoStart({
+      port,
+      options: { json: true, wait: '10' },
+      settings: { [platform]: { remote: true } },
+    });
+    expect(exec.calls.spawn[0]?.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port), '--tunnel']);
   });
 
   test('does not pass --tunnel to a bare RN workspace', async () => {

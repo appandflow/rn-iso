@@ -76,7 +76,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
   const lifecycle = renderTopic('lifecycle');
   assert(lifecycle);
   const advertised = {
-    'start.ts': ['--json', '--wait'],
+    'start.ts': ['--json', '--wait', '--remote'],
     'ios.ts': ['--json', '--no-metro-check', '--no-build-cache', '--configuration', '--remote'],
     'android.ts': ['--json', '--no-metro-check', '--no-build-cache', '--variant', '--remote'],
     'stop.ts': ['--json', '--force'],
@@ -99,6 +99,14 @@ test('the flags the guide advertises are the flags the commands define', () => {
     assert(topic);
     expect(!topic.includes('status --all')).toBeTruthy();
   }
+});
+
+test('the Metro guide documents explicit remote intent and the local default', () => {
+  const body = renderTopic('metro');
+  assert(body);
+  expect(body).toMatch(/rn-iso start --remote/);
+  expect(body).toMatch(/plain `rn-iso start`[^.]*local/i);
+  expect(body).toMatch(/metro\.tunnel[^.]*provider/i);
 });
 
 // The commands v3 deleted. A guide that still teaches one of them is worse than
