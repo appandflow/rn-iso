@@ -69,6 +69,7 @@ export function createSessionArgs({
   platform: 'ios' | 'android';
   maxDurationMinutes?: number | null;
 }): string[] {
+  // eas-cli's default output writes .env.eas-simulator; env output keeps project files unchanged.
   const args = [
     'sim',
     '--platform',
@@ -89,6 +90,7 @@ export function getSessionArgs(sessionId: string): string[] {
 }
 
 export function stopSessionArgs(sessionId: string): string[] {
+  // eas-cli otherwise selects the session in .env.eas-simulator, which can belong to another worktree.
   return ['simulator:stop', '--id', sessionId, '--json', '--non-interactive'];
 }
 
@@ -109,6 +111,7 @@ export function listOwnedSessionsArgs(after: string | null = null): string[] {
 
 export function remoteDaemonFrom(config: unknown): RemoteDaemon | null {
   if (!isRecord(config)) return null;
+  // eas sim --json omits GraphQL __typename, so the agent-device URL and token identify the variant.
   const typename = str(config['__typename']);
   if (typename && typename !== 'AgentDeviceRunSessionRemoteConfig') return null;
   const baseUrl = str(config.agentDeviceRemoteSessionUrl);

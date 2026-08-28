@@ -126,6 +126,7 @@ interface GcDependencies {
   precollectedEasSessionSweep?: EasSessionSweep;
 }
 
+// simctl and emulator listings can exceed 10 seconds on loaded hosts; 30 seconds still bounds hangs.
 const DEVICE_LIST_TIMEOUT_MS = 30000;
 const EAS_OPERATION_TIMEOUT_MS = 30000;
 const EAS_COLLECTION_TIMEOUT_MS = 60000;

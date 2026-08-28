@@ -174,6 +174,7 @@ interface ExpoExitInfo {
 export function expoProxyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   if (env.EXPO_PACKAGER_PROXY_URL) return {};
   const publicUrl = env.RN_ISO_METRO_PUBLIC_URL?.trim();
+  // Expo otherwise combines a tunnel host with the local Metro port in its manifest.
   return publicUrl ? { EXPO_PACKAGER_PROXY_URL: publicUrl.replace(/\/+$/, '') } : {};
 }
 
@@ -292,6 +293,7 @@ export async function startExpoServer({
       FORCE_COLOR: '0',
       ...expoProxyEnv(process.env),
       ...storeEnv,
+      // Expo's legacy tunnel uses port 8081; v2 uses this workspace's reserved port.
       ...(tunnel ? { EXPO_UNSTABLE_TUNNEL_V2: '1' } : {}),
     },
   });

@@ -4,6 +4,7 @@ export const TUNNEL_MODES: readonly TunnelMode[] = ['auto', 'off', 'expo', 'clou
 
 export const PUBLIC_METRO_ENV = 'RN_ISO_METRO_PUBLIC_URL';
 
+// Prefer ngrok because Cloudflare quick tunnels can take minutes to become routable.
 const MANAGED_PROVIDERS = ['ngrok', 'cloudflared'] as const;
 export type ManagedProvider = (typeof MANAGED_PROVIDERS)[number];
 

@@ -965,6 +965,7 @@ describe('readTunnelProcessToken', () => {
 });
 
 describe('against output cloudflared really printed', () => {
+  // Captured from cloudflared 2026.8.2; keep these raw lines as parser fixtures.
   const BANNER =
     '2026-08-26T19:50:27Z INF |  https://priest-contribute-mysql-leslie.trycloudflare.com                                  |';
   const REQUEST_ERROR =

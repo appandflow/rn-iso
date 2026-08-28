@@ -485,6 +485,7 @@ function defaultLookupAgentDevice(): string | null {
   return file || null;
 }
 
+// eas sim can return before its agent-device endpoint exists; cloud VM boot can take minutes.
 const DAEMON_WAIT_MS = 180_000;
 const DAEMON_POLL_MS = 5_000;
 
@@ -676,6 +677,7 @@ function notConnected(code: string): OpFailure {
   };
 }
 
+// EAS retains remoteConfig after STOPPED, so reuse also requires a live status.
 const LIVE_STATUSES = new Set(['NEW', 'IN_PROGRESS']);
 
 function readLiveDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null {
@@ -742,6 +744,7 @@ export function remoteIosDeps(ctx: RemoteContext): {
   };
 }
 
+// adb reverse and 10.0.2.2 resolve on the remote host, so Android uses the public Metro origin.
 export function remoteAndroidDeps(ctx: RemoteContext): {
   ctx: RemoteContext;
   checkCapacity: () => null;

@@ -100,6 +100,7 @@ function writePhase(name: unknown, text: string): void {
 
 export const PLATFORM = 'ios';
 
+// xcodebuild cannot target a remote simulator UDID, so remote builds use the generic destination.
 const GENERIC_SIM_DESTINATION = 'generic/platform=iOS Simulator';
 
 interface DeviceLike {

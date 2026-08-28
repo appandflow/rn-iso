@@ -25,6 +25,7 @@ function reapCollectors(root: string): void {
   }
 }
 
+// eas simulator:stop needs a project cwd, so end the session before removing the worktree.
 function reclaimRemoteSession(
   root: string,
   { stopSession = defaultStopSession }: { stopSession?: StopSession } = {},

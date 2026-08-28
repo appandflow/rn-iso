@@ -407,6 +407,7 @@ describe('the executor seam', () => {
 });
 
 describe('the shape eas sim actually prints', () => {
+  // Captured from eas sim --platform ios --json; the payload intentionally omits __typename.
   const LIVE = JSON.stringify({
     id: '01a03fb5-c9f7-7403-8810-712f74e6cafc',
     name: 'rn-iso endpoint probe',

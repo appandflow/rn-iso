@@ -48,11 +48,13 @@ export function tunnelArgv(
 const CLOUDFLARED_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
 
 export function parseCloudflaredLine(line: string): string | null {
+  // cloudflared prints the quick-tunnel URL inside a stderr banner.
   const match = line.match(CLOUDFLARED_URL_RE);
   return match ? match[0] : null;
 }
 
 export function parseNgrokLine(line: string): string | null {
+  // ngrok --log-format=json emits the public URL in a line-level url field.
   let data: unknown;
   try {
     data = JSON.parse(line);
@@ -70,6 +72,7 @@ function parserFor(provider: ManagedProvider): (line: string) => string | null {
 
 const URL_TIMEOUT_MS = 15_000;
 
+// Cloudflare quick tunnels can take minutes to become routable after printing their URL.
 const REACHABLE_TIMEOUT_MS = 4 * 60_000;
 const REACHABLE_POLL_MS = 2_000;
 
