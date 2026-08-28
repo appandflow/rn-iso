@@ -3,6 +3,7 @@ import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.ts';
 import { readCollectors } from './collector/state.ts';
 import {
+  clearManagedMetroTunnel,
   clearRemoteSession,
   readMetroTunnel,
   readRemoteSessionId,
@@ -124,6 +125,7 @@ async function reclaimMetroTunnel(
       },
     };
   }
+  clearManagedMetroTunnel(root, record);
   return { stopped: record.provider, failed: null };
 }
 

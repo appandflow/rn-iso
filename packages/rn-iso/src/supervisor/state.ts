@@ -180,6 +180,7 @@ export function clearExpoMetroTunnel(root: string): void {
 }
 
 export function clearManagedMetroTunnel(root: string, expected: Omit<ManagedTunnelRecord, 'kind'>): void {
+  if (!existsSync(workspaceStateFile(root))) return;
   clearWorkspaceStateKey(root, 'metroTunnel', (value) => {
     if (typeof value !== 'object' || value === null) return false;
     const record = value as Partial<ManagedTunnelRecord>;

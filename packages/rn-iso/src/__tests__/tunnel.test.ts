@@ -7,6 +7,7 @@
 // confirms reachability -- and that confirmation must be provable on a fake
 // clock, because the real timeout is minutes long.
 import {
+  readTunnelProcessArgs,
   startTunnel,
   startTunnelSequence,
   stopTunnel,
@@ -447,11 +448,12 @@ describe('stopTunnel: idempotent, never throws', () => {
     expect(result).toEqual({ status: 'missing' });
   });
 
-  test('signals the recorded pid and confirms it exits', async () => {
+  test('signals an alive pid only when its ngrok command and port match', async () => {
     let alive = true;
     const signalled: number[] = [];
-    const result = await stopTunnel(fixtureRecord({ pid: 777 }), {
+    const result = await stopTunnel(fixtureRecord({ provider: 'ngrok', pid: 777 }), {
       isAlive: () => alive,
+      readProcessArgs: () => ['/opt/homebrew/bin/ngrok', 'http', '8081', '--log=stdout'],
       kill: (pid) => {
         signalled.push(pid);
         alive = false;
@@ -461,9 +463,75 @@ describe('stopTunnel: idempotent, never throws', () => {
     expect(result).toEqual({ status: 'stopped' });
   });
 
+  test('signals an alive pid only when its cloudflared command and local URL match', async () => {
+    let alive = true;
+    const signalled: number[] = [];
+    const result = await stopTunnel(fixtureRecord({ provider: 'cloudflared', pid: 778 }), {
+      isAlive: () => alive,
+      readProcessArgs: () => ['/opt/homebrew/bin/cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081'],
+      kill: (pid) => {
+        signalled.push(pid);
+        alive = false;
+      },
+    });
+    expect(signalled).toEqual([778]);
+    expect(result).toEqual({ status: 'stopped' });
+  });
+
+  test('does not signal an alive pid owned by the wrong provider', async () => {
+    const signalled: number[] = [];
+    const result = await stopTunnel(fixtureRecord({ provider: 'ngrok' }), {
+      isAlive: () => true,
+      readProcessArgs: () => ['/usr/local/bin/cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081'],
+      kill: (pid) => signalled.push(pid),
+    });
+    expect(signalled).toEqual([]);
+    expect(result).toEqual({ status: 'failed', reason: expect.stringContaining('could not verify') });
+  });
+
+  test('does not accept a provider word in an unrelated path or argument', async () => {
+    const signalled: number[] = [];
+    for (const args of [
+      ['/tmp/ngrok-helper', 'http', '8081'],
+      ['/usr/bin/node', '/tmp/ngrok/server.js', 'http', '8081'],
+      ['/usr/bin/sleep', 'ngrok', 'http', '8081'],
+    ]) {
+      const result = await stopTunnel(fixtureRecord({ provider: 'ngrok' }), {
+        isAlive: () => true,
+        readProcessArgs: () => args,
+        kill: (pid) => signalled.push(pid),
+      });
+      expect(result.status).toBe('failed');
+    }
+    expect(signalled).toEqual([]);
+  });
+
+  test('does not signal a matching provider command for a different local port', async () => {
+    const signalled: number[] = [];
+    const result = await stopTunnel(fixtureRecord({ provider: 'cloudflared', port: 8081 }), {
+      isAlive: () => true,
+      readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:9090'],
+      kill: (pid) => signalled.push(pid),
+    });
+    expect(signalled).toEqual([]);
+    expect(result.status).toBe('failed');
+  });
+
+  test('an unreadable live command fails closed without a signal', async () => {
+    const signalled: number[] = [];
+    const result = await stopTunnel(fixtureRecord(), {
+      isAlive: () => true,
+      readProcessArgs: () => null,
+      kill: (pid) => signalled.push(pid),
+    });
+    expect(signalled).toEqual([]);
+    expect(result).toEqual({ status: 'failed', reason: expect.stringContaining('could not read') });
+  });
+
   test("a kill racing the process's own exit (ESRCH) reads as missing, not failed", async () => {
     const result = await stopTunnel(fixtureRecord(), {
       isAlive: () => true,
+      readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081'],
       kill: () => {
         throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
       },
@@ -474,6 +542,7 @@ describe('stopTunnel: idempotent, never throws', () => {
   test('a kill that fails for another reason is a returned failed status, not a throw', async () => {
     const result = await stopTunnel(fixtureRecord(), {
       isAlive: () => true,
+      readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081'],
       kill: () => {
         throw new Error('operation not permitted');
       },
@@ -486,6 +555,7 @@ describe('stopTunnel: idempotent, never throws', () => {
     const c = clock();
     const result = await stopTunnel(fixtureRecord(), {
       isAlive: () => true,
+      readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081'],
       kill: () => {},
       now: c.now,
       sleep: c.sleep,
@@ -493,6 +563,66 @@ describe('stopTunnel: idempotent, never throws', () => {
     });
     expect(result.status).toBe('failed');
     expect(result.reason).toContain('did not exit');
+  });
+});
+
+describe('readTunnelProcessArgs', () => {
+  test('reads a bounded NUL-delimited command from Linux procfs', () => {
+    const reads: Array<{ path: string; maxBytes: number }> = [];
+    const result = readTunnelProcessArgs(4242, {
+      platform: 'linux',
+      readProcCommand: (path, maxBytes) => {
+        reads.push({ path, maxBytes });
+        return Buffer.from(['/usr/bin/ngrok', 'http', '8081', ''].join('\0'));
+      },
+    });
+    expect(result).toEqual(['/usr/bin/ngrok', 'http', '8081']);
+    expect(reads).toEqual([{ path: '/proc/4242/cmdline', maxBytes: expect.any(Number) }]);
+    expect(reads[0]?.maxBytes).toBeLessThanOrEqual(64 * 1024);
+  });
+
+  test('an unreadable Linux procfs command fails closed', () => {
+    expect(
+      readTunnelProcessArgs(4242, {
+        platform: 'linux',
+        readProcCommand: () => {
+          throw new Error('EACCES');
+        },
+      }),
+    ).toBeNull();
+  });
+
+  test('runs ps with a timeout on macOS and parses quoted arguments', () => {
+    const calls: Array<{ pid: number; timeoutMs: number }> = [];
+    const result = readTunnelProcessArgs(4242, {
+      platform: 'darwin',
+      runPsCommand: (pid, timeoutMs) => {
+        calls.push({ pid, timeoutMs });
+        return "'/opt/local/bin/ngrok' http 8081 --url 'https://stable.ngrok.app'";
+      },
+    });
+    expect(result).toEqual(['/opt/local/bin/ngrok', 'http', '8081', '--url', 'https://stable.ngrok.app']);
+    expect(calls).toEqual([{ pid: 4242, timeoutMs: expect.any(Number) }]);
+    expect(calls[0]?.timeoutMs).toBeLessThanOrEqual(5_000);
+  });
+
+  test.each([
+    [
+      'ps failure',
+      () => {
+        throw new Error('ps failed');
+      },
+    ],
+    [
+      'ps timeout',
+      () => {
+        throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
+      },
+    ],
+    ['empty output', () => ''],
+    ['malformed output', () => "'/usr/bin/ngrok http 8081"],
+  ])('%s fails closed', (_name, runPsCommand) => {
+    expect(readTunnelProcessArgs(4242, { platform: 'darwin', runPsCommand })).toBeNull();
   });
 });
 

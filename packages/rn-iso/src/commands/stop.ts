@@ -35,7 +35,12 @@ import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel } from '../engine/tunnel.ts';
-import { clearRemoteSession, clearWorkspaceStateKeys, readMetroTunnel } from '../supervisor/state.ts';
+import {
+  clearManagedMetroTunnel,
+  clearRemoteSession,
+  clearWorkspaceStateKeys,
+  readMetroTunnel,
+} from '../supervisor/state.ts';
 
 const DEFAULT_WAIT_MS = 10_000;
 const POLL_MS = 100;
@@ -567,7 +572,7 @@ export async function runStop({
           result.status === 'missing' ? 'tunnel: already gone' : `tunnel: stopped the ${tunnel.provider} tunnel`,
         ),
       );
-      dropStateKeys(root, ['metroTunnel']);
+      clearManagedMetroTunnel(root, tunnel);
     }
   } else if (tunnel?.kind === 'expo') {
     outcomes.metroTunnel = { status: 'not-managed' };

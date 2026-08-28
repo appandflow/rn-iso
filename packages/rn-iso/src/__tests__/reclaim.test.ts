@@ -321,6 +321,36 @@ test('reclaim ends the managed tunnel recorded for the workspace', async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test('reclaim clears the exact managed tunnel record after a successful stop', async () => {
+  const root = workspaceWithManagedTunnel(4242);
+  await reclaimProject(root, {
+    stopMetroTunnel: async () => ({ status: 'stopped' }),
+  });
+  expect(existsSync(join(root, '.rn-iso', 'state.json'))).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('reclaim preserves a replacement managed tunnel record', async () => {
+  const root = workspaceWithManagedTunnel(4242);
+  const replacement = {
+    kind: 'managed',
+    provider: 'cloudflared',
+    pid: 5252,
+    url: 'https://replacement.trycloudflare.com',
+    port: 8082,
+    startedAt: 'replacement',
+  } as const;
+  await reclaimProject(root, {
+    stopMetroTunnel: async () => {
+      writeFileSync(join(root, '.rn-iso', 'state.json'), JSON.stringify({ metroTunnel: replacement }));
+      return { status: 'stopped' };
+    },
+  });
+  const state = JSON.parse(readFileSync(join(root, '.rn-iso', 'state.json'), 'utf-8'));
+  expect(state.metroTunnel).toEqual(replacement);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test('the tunnel is stopped even without deleteOwnedDevices', async () => {
   // deleteOwnedDevices guards DESTROYING a local sim; a tunnel process is not
   // a device it could hand back later, it is simply leaked once its

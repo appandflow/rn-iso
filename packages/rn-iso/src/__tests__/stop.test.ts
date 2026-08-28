@@ -928,6 +928,32 @@ test('stopping reaps a managed tunnel this workspace started', async () => {
   expect(state.lastBuild.hash).toBe('keepme');
 });
 
+test('stopping clears only the tunnel record that it verified', async () => {
+  withManagedTunnel();
+  const replacement = {
+    kind: 'managed',
+    provider: 'cloudflared',
+    pid: 5252,
+    url: 'https://replacement.trycloudflare.com',
+    port: 8083,
+    startedAt: 'replacement',
+  } as const;
+  await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async () => {
+      writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ metroTunnel: replacement }));
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.metroTunnel).toEqual(replacement);
+});
+
 test('a tunnel that fails to stop fails the command and keeps its record', async () => {
   withManagedTunnel();
   const r = await runStop({

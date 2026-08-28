@@ -15,6 +15,8 @@
 // in sight, so the untrusted-output handling is tested without spawning
 // anything.
 import type { ChildProcess } from 'node:child_process';
+import { closeSync, openSync, readSync } from 'node:fs';
+import { basename } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
 import { createLineReader } from '../supervisor/server-expo.ts';
@@ -455,6 +457,7 @@ function describe(err: unknown): string {
 
 export interface StopTunnelOptions {
   isAlive?: (pid: number) => boolean;
+  readProcessArgs?: (pid: number) => readonly string[] | null;
   kill?: (pid: number) => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -468,6 +471,8 @@ export interface StopTunnelResult {
 
 const STOP_TIMEOUT_MS = 5_000;
 const STOP_POLL_MS = 100;
+const PROCESS_COMMAND_TIMEOUT_MS = 1_000;
+const PROCESS_COMMAND_MAX_BYTES = 32 * 1024;
 
 function defaultKill(pid: number): void {
   process.kill(pid, 'SIGTERM');
@@ -475,6 +480,159 @@ function defaultKill(pid: number): void {
 
 function isEsrch(err: unknown): boolean {
   return (err as NodeJS.ErrnoException)?.code === 'ESRCH';
+}
+
+type ReadProcCommand = (path: string, maxBytes: number) => Buffer;
+type RunPsCommand = (pid: number, timeoutMs: number) => string;
+
+function defaultReadProcCommand(path: string, maxBytes: number): Buffer {
+  const fd = openSync(path, 'r');
+  const buffer = Buffer.alloc(maxBytes + 1);
+  let bytesRead = 0;
+  try {
+    while (bytesRead < buffer.length) {
+      const count = readSync(fd, buffer, bytesRead, buffer.length - bytesRead, null);
+      if (count === 0) break;
+      bytesRead += count;
+    }
+  } finally {
+    closeSync(fd);
+  }
+  if (bytesRead > maxBytes) throw new Error(`process command exceeds ${maxBytes} bytes`);
+  return buffer.subarray(0, bytesRead);
+}
+
+function defaultRunPsCommand(pid: number, timeoutMs: number): string {
+  return getExecutor().runFile('ps', ['-o', 'command=', '-p', String(pid)], { timeoutMs });
+}
+
+function parseProcCommand(data: Buffer, maxBytes: number): string[] | null {
+  if (data.length === 0 || data.length > maxBytes || data[data.length - 1] !== 0) return null;
+  const args = data.subarray(0, -1).toString('utf-8').split('\0');
+  return args.length > 0 && args.every((arg) => arg.length > 0) ? args : null;
+}
+
+function parsePsCommand(command: string): string[] | null {
+  const input = command.trim();
+  if (!input || input.includes('\0') || input.includes('\n') || input.includes('\r')) return null;
+
+  const args: string[] = [];
+  let current = '';
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  let started = false;
+  const finishArg = () => {
+    if (!started) return;
+    args.push(current);
+    current = '';
+    started = false;
+  };
+
+  for (const char of input) {
+    if (escaped) {
+      current += char;
+      started = true;
+      escaped = false;
+      continue;
+    }
+    if (char === '\\' && quote !== "'") {
+      escaped = true;
+      started = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      else current += char;
+      started = true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      started = true;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      finishArg();
+      continue;
+    }
+    current += char;
+    started = true;
+  }
+  if (quote || escaped) return null;
+  finishArg();
+  return args.length > 0 && args.every((arg) => arg.length > 0) ? args : null;
+}
+
+export function readTunnelProcessArgs(
+  pid: number,
+  {
+    platform = process.platform,
+    readProcCommand = defaultReadProcCommand,
+    runPsCommand = defaultRunPsCommand,
+  }: {
+    platform?: NodeJS.Platform;
+    readProcCommand?: ReadProcCommand;
+    runPsCommand?: RunPsCommand;
+  } = {},
+): string[] | null {
+  try {
+    if (platform === 'linux') {
+      return parseProcCommand(
+        readProcCommand(`/proc/${pid}/cmdline`, PROCESS_COMMAND_MAX_BYTES),
+        PROCESS_COMMAND_MAX_BYTES,
+      );
+    }
+    if (platform === 'win32') return null;
+    return parsePsCommand(runPsCommand(pid, PROCESS_COMMAND_TIMEOUT_MS));
+  } catch {
+    return null;
+  }
+}
+
+function isExactLocalUrl(value: string, port: number): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === 'http:' &&
+      (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]') &&
+      url.port === String(port) &&
+      url.username === '' &&
+      url.password === '' &&
+      url.pathname === '/' &&
+      url.search === '' &&
+      url.hash === ''
+    );
+  } catch {
+    return false;
+  }
+}
+
+function matchesLocalTarget(value: string | undefined, port: number): boolean {
+  return value === String(port) || (typeof value === 'string' && isExactLocalUrl(value, port));
+}
+
+function matchesTunnelProcess(record: TunnelRecord, args: readonly string[]): boolean {
+  const [executable, ...commandArgs] = args;
+  if (!executable || basename(executable) !== record.provider) return false;
+
+  if (record.provider === 'ngrok') {
+    return commandArgs[0] === 'http' && matchesLocalTarget(commandArgs[1], record.port);
+  }
+
+  if (commandArgs[0] !== 'tunnel') return false;
+  const targets: string[] = [];
+  for (let index = 1; index < commandArgs.length; index += 1) {
+    const arg = commandArgs[index];
+    if (arg === '--url') {
+      const value = commandArgs[index + 1];
+      if (!value) return false;
+      targets.push(value);
+      index += 1;
+    } else if (arg?.startsWith('--url=')) {
+      targets.push(arg.slice('--url='.length));
+    }
+  }
+  return targets.length === 1 && isExactLocalUrl(targets[0]!, record.port);
 }
 
 /**
@@ -487,6 +645,7 @@ export async function stopTunnel(
   record: TunnelRecord | null | undefined,
   {
     isAlive = isPidAlive,
+    readProcessArgs = readTunnelProcessArgs,
     kill = defaultKill,
     now = Date.now,
     sleep = defaultSleep,
@@ -495,6 +654,24 @@ export async function stopTunnel(
 ): Promise<StopTunnelResult> {
   const pid = record?.pid;
   if (!pid || !isAlive(pid)) return { status: 'missing' };
+
+  let processArgs: readonly string[] | null = null;
+  try {
+    processArgs = readProcessArgs(pid);
+  } catch {
+    processArgs = null;
+  }
+  if (!processArgs) {
+    if (!isAlive(pid)) return { status: 'missing' };
+    return { status: 'failed', reason: `could not read the command for tunnel pid ${pid}; refusing to signal it.` };
+  }
+  if (!matchesTunnelProcess(record, processArgs)) {
+    if (!isAlive(pid)) return { status: 'missing' };
+    return {
+      status: 'failed',
+      reason: `could not verify tunnel pid ${pid} as ${record.provider} for local port ${record.port}; refusing to signal it.`,
+    };
+  }
 
   try {
     kill(pid);
