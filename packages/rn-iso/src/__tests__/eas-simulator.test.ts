@@ -136,10 +136,12 @@ describe('stored-session teardown authorization', () => {
 });
 
 describe('definitive missing-session errors', () => {
-  test('accepts a simulator-specific not-found result', () => {
-    expect(isDefinitiveMissingSessionError({ stderr: 'Device run session drs_42 was not found.' }, 'drs_42')).toBe(
-      true,
-    );
+  test.each([
+    'Device run session drs_42 not found.',
+    'Device-run session drs_42 was not found.',
+    'Simulator session drs_42 does not exist.',
+  ])('accepts a narrow session-specific result: %s', (stderr) => {
+    expect(isDefinitiveMissingSessionError({ stderr }, 'drs_42')).toBe(true);
   });
 
   test.each([
@@ -148,6 +150,7 @@ describe('definitive missing-session errors', () => {
     'The request timed out.',
     'Device run session drs_other was not found.',
     'Device run session drs_other was not found. Command: eas simulator:get --id drs_42',
+    'Failed to fetch device run session drs_42 because project project_9 was not found.',
     'Failed to fetch simulator session drs_42.\nProject project_9 was not found.',
     'Command target: device run session drs_42.\nRequested resource does not exist.',
   ])('fails closed for %s', (stderr) => {

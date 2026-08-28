@@ -715,9 +715,9 @@ function defaultSleep(ms: number): Promise<void> {
  * worst outcome here.
  */
 function stopCreatedSession(ctx: RemoteContext, sessionId: string): AbandonCreatedSessionResult {
+  let stopOutput: string;
   try {
-    getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
-    return { ok: true, sessionId };
+    stopOutput = getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
   } catch (err) {
     return {
       failed: true,
@@ -727,6 +727,17 @@ function stopCreatedSession(ctx: RemoteContext, sessionId: string): AbandonCreat
       sessionId,
     };
   }
+  const verified = verifyStoppedSession(stopOutput, sessionId);
+  if (!verified.ok) {
+    return {
+      failed: true,
+      code: 'RN_ISO_REMOTE_SESSION_CLEANUP',
+      reason: `rn-iso could not verify that session ${sessionId} stopped (${verified.reason}). The session bills until its cap.`,
+      remedy: `Run \`eas simulator:stop --id ${sessionId}\`.`,
+      sessionId,
+    };
+  }
+  return { ok: true, sessionId };
 }
 
 function abandonSession(ctx: RemoteContext, sessionId: string, reason: string): BootResult {

@@ -238,7 +238,7 @@ export function isDefinitiveMissingSessionError(error: unknown, sessionId: strin
   const message = typeof candidate?.message === 'string' ? candidate.message : '';
   const escapedSessionId = sessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const missingSession = new RegExp(
-    `(?:device[\\s-]*run[\\s-]*session|simulator[\\s-]*session)[^\\r\\n]*?\\b${escapedSessionId}\\b[^\\r\\n]*?(?:\\bnot\\s+found\\b|\\bdoes\\s+not\\s+exist\\b)`,
+    `(?:device[\\s-]*run[\\s-]*session|simulator[\\s-]*session)[\\s:#]*\\b${escapedSessionId}\\b[\\s,:]*(?:(?:was\\s+)?not\\s+found|does\\s+not\\s+exist)\\b`,
     'i',
   );
   return `${stderr}\n${message}`

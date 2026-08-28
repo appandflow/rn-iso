@@ -6,7 +6,7 @@
 // bundling any of them must never drag the spawnable daemon entry (or Metro)
 // in behind it. run.ts re-exports this surface for callers that still reach for
 // it there.
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
 import { supervisorPidFile, workspaceStateFile, workspaceStateLock } from '../paths.ts';
@@ -191,6 +191,38 @@ export function clearManagedMetroTunnel(root: string, expected: Omit<ManagedTunn
       record.port === expected.port &&
       record.startedAt === expected.startedAt
     );
+  });
+}
+
+export function clearWorkspaceStateKeys(root: string, keys: readonly string[]): void {
+  if (!existsSync(workspaceStateFile(root))) return;
+  withWorkspaceStateLock(root, () => {
+    const state = readWorkspaceState(root);
+    const file = workspaceStateFile(root);
+    if (!state) {
+      try {
+        rmSync(file, { force: true });
+      } catch {
+        /* already gone */
+      }
+      return;
+    }
+    let changed = false;
+    for (const key of keys) {
+      if (!(key in state)) continue;
+      delete state[key];
+      changed = true;
+    }
+    if (!changed) return;
+    if (Object.keys(state).length === 0) {
+      try {
+        rmSync(file, { force: true });
+      } catch {
+        /* already gone */
+      }
+      return;
+    }
+    replaceWorkspaceState(root, state);
   });
 }
 

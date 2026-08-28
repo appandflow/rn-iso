@@ -23,7 +23,7 @@
 // often as after a session, and an agent that reads a non-zero exit as "still
 // running" would loop on a workspace where nothing is left to stop.
 import chalk from 'chalk';
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { readFileSync, rmSync } from 'fs';
 import type { Command } from 'commander';
 import { clearSupervisor, getProject, upsertProject } from '../config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../config.ts';
@@ -35,7 +35,7 @@ import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel } from '../engine/tunnel.ts';
-import { clearRemoteSession, readMetroTunnel } from '../supervisor/state.ts';
+import { clearRemoteSession, clearWorkspaceStateKeys, readMetroTunnel } from '../supervisor/state.ts';
 
 const DEFAULT_WAIT_MS = 10_000;
 const POLL_MS = 100;
@@ -132,30 +132,7 @@ function readRemoteDeviceState(root: string): RemoteDeviceRecord | null {
 // and taking the build fingerprint away with a pid would turn every stop into
 // a guaranteed cache miss on the next build.
 function dropStateKeys(root: string, keys: string[]): void {
-  const file = workspaceStateFile(root);
-  if (!existsSync(file)) return;
-  let parsed;
-  try {
-    parsed = JSON.parse(readFileSync(file, 'utf-8'));
-  } catch {
-    // Unparseable: nothing in it can be preserved anyway, and a corrupt file
-    // left in place would fail every later read.
-    rmSync(file, { force: true });
-    return;
-  }
-  if (!parsed || typeof parsed !== 'object') {
-    rmSync(file, { force: true });
-    return;
-  }
-  for (const key of keys) delete parsed[key];
-  if (Object.keys(parsed).length === 0) {
-    rmSync(file, { force: true });
-    return;
-  }
-  // Same temp-then-rename as saveConfig: a reader must never see a partial file.
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, JSON.stringify(parsed, null, 2));
-  renameSync(tmp, file);
+  clearWorkspaceStateKeys(root, keys);
 }
 
 // Drops the supervisor block and the pid file.

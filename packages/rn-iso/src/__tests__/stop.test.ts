@@ -7,6 +7,7 @@
 // file kills anything, boots anything, or touches a real simulator.
 
 import assert from 'node:assert';
+import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -418,6 +419,45 @@ test('clearSupervisorState removes a state file that held only the supervisor', 
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 } }));
   clearSupervisorState(tmpRoot);
   expect(existsSync(workspaceStateFile(tmpRoot))).toBe(false);
+});
+
+test('state-key cleanup waits for a concurrent state writer and retains its new session', async () => {
+  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
+  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 } }));
+  const script = join(tmpRoot, 'write-session-under-lock.mjs');
+  const stateModule = new URL('../supervisor/state.ts', import.meta.url).href;
+  writeFileSync(
+    script,
+    `import { withWorkspaceStateLock, writeWorkspaceState } from ${JSON.stringify(stateModule)};
+withWorkspaceStateLock(process.argv[2], () => {
+  process.stdout.write('LOCKED\\n');
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+  writeWorkspaceState(process.argv[2], { remoteDevice: { platform: 'ios', sessionId: 'drs_B' } });
+});
+`,
+  );
+  const writer = spawn(process.execPath, ['--experimental-strip-types', script, tmpRoot], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  await new Promise<void>((resolve, reject) => {
+    writer.once('error', reject);
+    writer.stdout?.on('data', (chunk) => {
+      if (String(chunk).includes('LOCKED')) resolve();
+    });
+  });
+
+  const startedAt = Date.now();
+  clearSupervisorState(tmpRoot);
+  const elapsedMs = Date.now() - startedAt;
+  await new Promise<void>((resolve, reject) => {
+    writer.once('error', reject);
+    writer.once('exit', (code) => (code === 0 ? resolve() : reject(new Error(`state writer exited ${code}`))));
+  });
+
+  expect(elapsedMs).toBeGreaterThanOrEqual(150);
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.supervisor).toBeUndefined();
+  expect(state.remoteDevice.sessionId).toBe('drs_B');
 });
 
 test('stopping frees the reserved port in the registry and keeps the device record', async () => {

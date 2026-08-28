@@ -75,7 +75,11 @@ function mockExec({
         if (key.includes(match)) throw error;
       }
       for (const [match, value] of Object.entries(outputs)) {
-        if (key.includes(match)) return value;
+        if (match === args[0] || (match !== 'sim' && key.includes(match))) return value;
+      }
+      if (args[0] === 'simulator:stop') {
+        const idIndex = args.indexOf('--id');
+        return JSON.stringify({ id: args[idIndex + 1], status: 'STOPPED' });
       }
       return '';
     },
@@ -834,6 +838,24 @@ describe('a session rn-iso created is never abandoned', () => {
     const booted = await remoteIosDeps(ctx({ existingDaemon: null })).ensureBooted({});
     expect(booted.reason).toContain('eas simulator:stop --id drs_9');
     expect(booted.reason).toContain('bills until its cap');
+  });
+
+  test.each([
+    ['malformed output', 'not json'],
+    ['non-terminal output', JSON.stringify({ id: 'drs_42', status: 'IN_PROGRESS' })],
+    ['a different session id', JSON.stringify({ id: 'drs_other', status: 'STOPPED' })],
+    ['ambiguous output', JSON.stringify({ id: 'drs_42' })],
+  ])('a zero-exit stop with %s keeps the current-run session actionable', async (_case, stopOutput) => {
+    writeFileSync(join(root, '.rn-iso'), 'blocks the profile directory');
+    mockExec({ outputs: { sim: CREATED, 'simulator:stop': stopOutput } });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(booted.code).toBe('RN_ISO_REMOTE_SESSION_CLEANUP');
+    expect(booted.reason).toContain('drs_42');
+    expect(booted.reason).not.toContain('The session was stopped.');
+    expect(booted.remedy).toBe('Run `eas simulator:stop --id drs_42`.');
   });
 
   test('a connect failure after a create also ends the session', async () => {
