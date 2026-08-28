@@ -83,7 +83,7 @@ interface WaitResult {
 // PURE. Whether THIS Expo dev server should tunnel itself.
 //
 // Matches engine/metro-reach.ts's own condition for its `{ expoTunnel: true }`
-// branch (mode is "expo", or "auto" on an Expo project) and its precedence
+// branch (mode is "expo") and its precedence
 // (a named metro.publicUrl wins over starting anything). Not routed through
 // planMetroReach itself: that function also decides between a managed
 // provider and a refusal, neither of which `start` can act on -- there is no
@@ -100,7 +100,7 @@ export function wantsExpoOwnTunnel({
   mode: string;
   publicUrl?: string | null;
 }): boolean {
-  return remote && isExpo && !publicUrl && (mode === 'expo' || mode === 'auto');
+  return remote && isExpo && !publicUrl && mode === 'expo';
 }
 
 export function parseWait(value: unknown): WaitResult {
@@ -502,6 +502,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                       port: recorded.port,
                       startedAt: recorded.startedAt,
                       processToken: recorded.processToken,
+                      logFile: recorded.logFile,
                     },
                     startedHere: false,
                   };
@@ -544,6 +545,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                     port,
                     startedAt: new Date().toISOString(),
                     processToken: started.processToken,
+                    logFile: started.logFile,
                   };
                   startedCleanup = started.cleanup;
                   try {

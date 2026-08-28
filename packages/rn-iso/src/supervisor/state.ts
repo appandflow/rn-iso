@@ -51,6 +51,7 @@ export interface ManagedTunnelRecord {
   port: number;
   startedAt: string;
   processToken: string | null;
+  logFile?: string | null;
 }
 
 export type MetroTunnelRecord = ExpoTunnelRecord | ManagedTunnelRecord;
@@ -78,6 +79,7 @@ export function readMetroTunnel(root: string): MetroTunnelRecord | null {
     const port = (record as { port?: unknown }).port;
     const startedAt = (record as { startedAt?: unknown }).startedAt;
     const processToken = (record as { processToken?: unknown }).processToken;
+    const logFile = (record as { logFile?: unknown }).logFile;
     if ((provider !== 'ngrok' && provider !== 'cloudflared') || typeof pid !== 'number' || typeof port !== 'number') {
       return null;
     }
@@ -89,6 +91,7 @@ export function readMetroTunnel(root: string): MetroTunnelRecord | null {
       port,
       startedAt: typeof startedAt === 'string' ? startedAt : '',
       processToken: typeof processToken === 'string' && processToken.length > 0 ? processToken : null,
+      ...(typeof logFile === 'string' && logFile.length > 0 ? { logFile } : {}),
     };
   }
   return null;
@@ -197,7 +200,8 @@ export function clearManagedMetroTunnel(root: string, expected: Omit<ManagedTunn
       record.url === expected.url &&
       record.port === expected.port &&
       record.startedAt === expected.startedAt &&
-      (record.processToken ?? null) === (expected.processToken ?? null)
+      (record.processToken ?? null) === (expected.processToken ?? null) &&
+      (record.logFile ?? null) === (expected.logFile ?? null)
     );
   });
 }

@@ -148,7 +148,7 @@ The proxy backend connects to an `agent-device` daemon on another machine. It re
 
 The EAS backend needs `eas-cli` and an account with EAS Simulator access. EAS does not inherit proxy credentials. An EAS session is billable, so always tear it down with `stop`, `worktree remove`, or `gc --delete`. Give the user the `webPreviewUrl` from the command payload. Do not open that browser URL on the device.
 
-`metro.tunnel` accepts `"auto"`, `"expo"`, `"ngrok"`, `"cloudflared"`, or `"off"`. Expo `"auto"` uses the Expo tunnel. Bare React Native `"auto"` tries an authenticated and working ngrok first. After an auth refusal, or any failure before ngrok returns a URL, it uses cloudflared.
+`metro.tunnel` accepts `"auto"`, `"expo"`, `"ngrok"`, `"cloudflared"`, or `"off"`. For Expo and bare React Native, `"auto"` tries an authenticated and working ngrok first. After an auth refusal, or any failure before ngrok returns a URL, it uses cloudflared. Use `"expo"` only when the Expo dev server must own its tunnel.
 
 `metro.ngrokUrl` is the stable managed ngrok URL. It requires `metro.tunnel: "ngrok"`. `metro.publicUrl` is an operator-managed URL. Set `metro.publicUrl` before Expo start so the manifest advertises it. rn-iso stops only the managed tunnels it started.
 

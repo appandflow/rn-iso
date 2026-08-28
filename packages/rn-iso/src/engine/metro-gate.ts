@@ -43,6 +43,7 @@ export interface GateOptions {
   origin: string;
   metroPort: number | string;
   platform: 'ios' | 'android';
+  entryPoint?: string;
   /** Reads this workspace's Metro records, newest included. */
   readRecords: () => NdjsonRecord[];
   /** True when a record proves a bundle was requested after `since`. */
@@ -59,8 +60,9 @@ export interface GateOptions {
 // serves it directly. `dev=true` keeps it in the same cache bucket the app
 // will use, so the probe warms exactly the bundle the launch then wants
 // instead of building a second one.
-export function probeBundleUrl(origin: string, platform: 'ios' | 'android'): string {
-  return `${origin.replace(/\/+$/, '')}/index.bundle?platform=${platform}&dev=true`;
+export function probeBundleUrl(origin: string, platform: 'ios' | 'android', entryPoint = 'index'): string {
+  const entry = entryPoint.replace(/^\/+/, '').replace(/\.(?:[cm]?[jt]sx?)$/, '');
+  return `${origin.replace(/\/+$/, '')}/${entry}.bundle?platform=${platform}&dev=true`;
 }
 
 const defaultProbe = async (url: string, signal: AbortSignal): Promise<number | null> => {
@@ -83,6 +85,7 @@ export async function gateMetroOrigin({
   origin,
   metroPort,
   platform,
+  entryPoint = 'index',
   readRecords,
   isProof,
   probe = defaultProbe,
@@ -96,7 +99,7 @@ export async function gateMetroOrigin({
   // A rejection here is not a failure on its own -- aborting the request once
   // the proof lands rejects it by design -- so the outcome is decided purely
   // by what reached the log.
-  const request = probe(probeBundleUrl(origin, platform), controller.signal);
+  const request = probe(probeBundleUrl(origin, platform, entryPoint), controller.signal);
   void request.catch(() => {});
 
   try {

@@ -15,9 +15,9 @@
 // in sight, so the untrusted-output handling is tested without spawning
 // anything.
 import type { ChildProcess } from 'node:child_process';
-import { closeSync, openSync, readSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { basename, join, resolve as resolvePath } from 'node:path';
+import { closeSync, mkdirSync, openSync, readFileSync, readSync, unlinkSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { basename, join, resolve as resolvePath, sep } from 'node:path';
 import { getConfigDir } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
@@ -39,6 +39,7 @@ export interface TunnelRecord {
   port: number;
   startedAt: string;
   processToken: string | null;
+  logFile?: string | null;
 }
 
 // --- pure: argv and the untrusted-output parsers ---------------------------
@@ -48,13 +49,23 @@ export function tunnelArgv(
   provider: ManagedProvider,
   port: number,
   ngrokUrl?: string | null,
+  logFile?: string | null,
 ): { bin: string; args: string[] } {
   if (provider === 'cloudflared') {
-    return { bin: 'cloudflared', args: ['tunnel', '--url', `http://127.0.0.1:${port}`] };
+    return {
+      bin: 'cloudflared',
+      args: ['tunnel', '--url', `http://127.0.0.1:${port}`, ...(logFile ? ['--logfile', logFile] : [])],
+    };
   }
   return {
     bin: 'ngrok',
-    args: ['http', String(port), '--log=stdout', '--log-format=json', ...(ngrokUrl ? ['--url', ngrokUrl] : [])],
+    args: [
+      'http',
+      String(port),
+      `--log=${logFile || 'stdout'}`,
+      '--log-format=json',
+      ...(ngrokUrl ? ['--url', ngrokUrl] : []),
+    ],
   };
 }
 
@@ -224,6 +235,64 @@ function waitForUrl(
   });
 }
 
+function waitForFileUrl(
+  child: ChildProcess,
+  logFile: string,
+  parseLine: (line: string) => string | null,
+  timeoutMs: number,
+): Promise<{ url: string | null; exited: boolean }> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (url: string | null, exited = false) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(interval);
+      clearTimeout(timer);
+      child.removeListener('error', onError);
+      child.removeListener('exit', onExit);
+      resolve({ url, exited });
+    };
+    const probe = () => {
+      try {
+        for (const line of readFileSync(logFile, 'utf-8').split(/\r?\n/)) {
+          const url = parseLine(line);
+          if (url) return finish(url);
+        }
+      } catch {}
+    };
+    const onError = () => finish(null);
+    const onExit = () => finish(null, true);
+    child.on('error', onError);
+    child.on('exit', onExit);
+    const interval = setInterval(probe, 25);
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    probe();
+  });
+}
+
+function createTunnelLogFile(provider: ManagedProvider): string {
+  const dir = join(getConfigDir(), 'tunnel-logs');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${provider}-${randomUUID()}.log`);
+  closeSync(openSync(path, 'wx', 0o600));
+  return path;
+}
+
+function removeTunnelLogFile(path: string | null | undefined): void {
+  if (!path) return;
+  try {
+    unlinkSync(path);
+  } catch {}
+}
+
+function removeRecordedTunnelLogFile(path: string | null | undefined): void {
+  if (!path) return;
+  const dir = resolvePath(join(getConfigDir(), 'tunnel-logs'));
+  const resolved = resolvePath(path);
+  if (!resolved.startsWith(`${dir}${sep}`) || resolvePath(join(dir, basename(resolved))) !== resolved) return;
+  removeTunnelLogFile(resolved);
+}
+
 // Polls `url` until something answers or `timeoutMs` runs out. `now`/`sleep`
 // are the same clock-injection seam engine/metro-gate.ts uses, so a test
 // drives a four-minute timeout without spending four minutes.
@@ -264,6 +333,7 @@ export interface StartTunnelOptions {
   cleanupTimeoutMs?: number;
   isChildAlive?: (pid: number) => boolean;
   readProcessToken?: (pid: number) => string | null;
+  logFile?: string | null;
 }
 
 interface TunnelCleanupResult {
@@ -272,7 +342,13 @@ interface TunnelCleanupResult {
 }
 
 export type StartTunnelResult =
-  | { url: string; pid: number; processToken: string; cleanup: () => Promise<TunnelCleanupResult> }
+  | {
+      url: string;
+      pid: number;
+      processToken: string;
+      logFile?: string | null;
+      cleanup: () => Promise<TunnelCleanupResult>;
+    }
   | { failed: true; reason: string; cleanupFailed?: true };
 
 const CLEANUP_TIMEOUT_MS = 1_000;
@@ -301,20 +377,23 @@ export async function startTunnel({
   cleanupTimeoutMs = CLEANUP_TIMEOUT_MS,
   isChildAlive = isPidAlive,
   readProcessToken = readTunnelProcessToken,
+  logFile = null,
 }: StartTunnelOptions): Promise<StartTunnelResult> {
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
-  const { bin, args } = tunnelArgv(provider, port, ngrokUrl);
+  const outputFile = logFile || (spawnFn ? null : createTunnelLogFile(provider));
+  const { bin, args } = tunnelArgv(provider, port, ngrokUrl, outputFile);
 
   let child: ChildProcess;
   try {
     child = spawn(bin, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: outputFile ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
       // Detached: the tunnel outlives this call, exactly like the
       // supervisor it fronts, and leads its own process group so `stopTunnel`
       // can signal it without reaching whatever spawned it.
       detached: true,
     });
   } catch (err) {
+    removeTunnelLogFile(outputFile);
     return { failed: true, reason: `Could not start ${provider}: ${describe(err)}` };
   }
 
@@ -330,6 +409,7 @@ export async function startTunnel({
       sleep,
       isAlive: isChildAlive,
     });
+    if (stopped) removeTunnelLogFile(outputFile);
     return stopped
       ? { status: 'stopped' }
       : {
@@ -363,7 +443,9 @@ export async function startTunnel({
     return failAfterCleanup(`${provider} started but its process identity token could not be read.`);
   }
 
-  const { url, exited } = await waitForUrl(child, parserFor(provider), urlTimeoutMs);
+  const { url, exited } = outputFile
+    ? await waitForFileUrl(child, outputFile, parserFor(provider), urlTimeoutMs)
+    : await waitForUrl(child, parserFor(provider), urlTimeoutMs);
   if (!url) {
     return failAfterCleanup(
       exited
@@ -372,7 +454,7 @@ export async function startTunnel({
       exited || childExited,
     );
   }
-  resumeChildPipes(child);
+  if (!outputFile) resumeChildPipes(child);
 
   // Reachable startup proves that the discovered URL forwards traffic.
   if (requireReachable) {
@@ -394,12 +476,12 @@ export async function startTunnel({
   if (!finalProcessToken || finalProcessToken !== initialProcessToken) {
     return failAfterCleanup(`${provider} process identity changed before its tunnel could be recorded.`);
   }
-  unrefChildPipes(child);
+  if (!outputFile) unrefChildPipes(child);
   child.unref?.();
   if (childExited) {
     return failAfterCleanup(`${provider} exited before its tunnel could be recorded.`, true);
   }
-  return { url, pid, processToken: initialProcessToken, cleanup: () => cleanup() };
+  return { url, pid, processToken: initialProcessToken, logFile: outputFile, cleanup: () => cleanup() };
 }
 
 export interface StartTunnelSequenceOptions {
@@ -416,6 +498,7 @@ export type StartTunnelSequenceResult =
       url: string;
       pid: number;
       processToken: string;
+      logFile?: string | null;
       cleanup: () => Promise<TunnelCleanupResult>;
     }
   | { failed: true; reason: string };
@@ -732,13 +815,15 @@ function matchesTunnelProcess(record: TunnelRecord, args: readonly string[]): bo
   if (!executable || basename(executable) !== record.provider) return false;
 
   if (record.provider === 'ngrok') {
-    const owned = ['http', String(record.port), '--log=stdout', '--log-format=json'];
+    const owned = tunnelArgv('ngrok', record.port, null, record.logFile).args;
     return (
-      sameArgs(commandArgs, owned) || (isHttpsUrl(record.url) && sameArgs(commandArgs, [...owned, '--url', record.url]))
+      sameArgs(commandArgs, owned) ||
+      (isHttpsUrl(record.url) &&
+        sameArgs(commandArgs, tunnelArgv('ngrok', record.port, record.url, record.logFile).args))
     );
   }
 
-  return sameArgs(commandArgs, ['tunnel', '--url', `http://127.0.0.1:${record.port}`]);
+  return sameArgs(commandArgs, tunnelArgv('cloudflared', record.port, null, record.logFile).args);
 }
 
 /**
@@ -759,8 +844,12 @@ export async function stopTunnel(
     timeoutMs = STOP_TIMEOUT_MS,
   }: StopTunnelOptions = {},
 ): Promise<StopTunnelResult> {
+  const missing = (): StopTunnelResult => {
+    removeRecordedTunnelLogFile(record?.logFile);
+    return { status: 'missing' };
+  };
   const pid = record?.pid;
-  if (!pid || !isAlive(pid)) return { status: 'missing' };
+  if (!pid || !isAlive(pid)) return missing();
   if (!record.processToken) {
     return {
       status: 'failed',
@@ -781,25 +870,25 @@ export async function stopTunnel(
     processArgs = null;
   }
   if (!processTokenBefore || processTokenBefore !== processTokenAfter) {
-    if (!isAlive(pid)) return { status: 'missing' };
+    if (!isAlive(pid)) return missing();
     return {
       status: 'failed',
       reason: `could not verify the process instance for tunnel pid ${pid}; refusing to signal it.`,
     };
   }
   if (processTokenBefore !== record.processToken) {
-    if (!isAlive(pid)) return { status: 'missing' };
+    if (!isAlive(pid)) return missing();
     return {
       status: 'failed',
       reason: `tunnel pid ${pid} belongs to a different process instance; refusing to signal it.`,
     };
   }
   if (!processArgs) {
-    if (!isAlive(pid)) return { status: 'missing' };
+    if (!isAlive(pid)) return missing();
     return { status: 'failed', reason: `could not read the command for tunnel pid ${pid}; refusing to signal it.` };
   }
   if (!matchesTunnelProcess(record, processArgs)) {
-    if (!isAlive(pid)) return { status: 'missing' };
+    if (!isAlive(pid)) return missing();
     return {
       status: 'failed',
       reason: `could not verify tunnel pid ${pid} as ${record.provider} for local port ${record.port}; refusing to signal it.`,
@@ -809,7 +898,7 @@ export async function stopTunnel(
   try {
     kill(pid);
   } catch (err) {
-    return isEsrch(err) ? { status: 'missing' } : { status: 'failed', reason: describe(err) };
+    return isEsrch(err) ? missing() : { status: 'failed', reason: describe(err) };
   }
 
   const deadline = now() + timeoutMs;
@@ -817,5 +906,6 @@ export async function stopTunnel(
     await sleep(STOP_POLL_MS);
   }
   if (isAlive(pid)) return { status: 'failed', reason: `pid ${pid} did not exit within ${timeoutMs}ms.` };
+  removeRecordedTunnelLogFile(record.logFile);
   return { status: 'stopped' };
 }

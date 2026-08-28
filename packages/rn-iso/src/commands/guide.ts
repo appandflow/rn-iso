@@ -231,8 +231,7 @@ WHAT THE SUPERVISOR IS
                  a child and its stdout is parsed into records. Levels are
                  INFERRED from each line, so those records carry raw: true.
 
-  In expo-child mode, remote intent plus metro.tunnel "expo" (or "auto" when
-  no metro.publicUrl is set) makes \`start\` pass
+  In expo-child mode, remote intent plus metro.tunnel "expo" makes \`start\` pass
   \`--tunnel\` and EXPO_UNSTABLE_TUNNEL_V2=1 (the legacy ws-tunnel path is
   locked to port 8081, which every reserved port but the first collides with)
   and records the URL Expo reports under state.json's metroTunnel. This has to
@@ -1258,9 +1257,9 @@ KEYS RN-ISO READS
   android.remote        "proxy" or "eas"; the Android half of ios.remote
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
-                        local. "auto" (default) uses Expo's own tunnel on Expo
-                        projects. On bare React Native, "auto" first tries an
-                        authenticated and working ngrok. After an auth refusal,
+                        local. For Expo and bare React Native, "auto" (default)
+                        first tries an authenticated and working ngrok.
+                        After an auth refusal,
                         or any failure before ngrok returns a URL, it falls back
                         to cloudflared. "off" asserts the device
                         shares this machine and is the only mode that needs no

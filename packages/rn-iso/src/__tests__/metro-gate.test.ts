@@ -95,6 +95,12 @@ describe('the probe url', () => {
       'https://abc.example/index.bundle?platform=ios&dev=true',
     );
   });
+
+  test('uses an Expo Router entry instead of requesting a missing root index', () => {
+    expect(probeBundleUrl(ORIGIN, 'ios', 'node_modules/expo-router/entry')).toBe(
+      `${ORIGIN}/node_modules/expo-router/entry.bundle?platform=ios&dev=true`,
+    );
+  });
 });
 
 describe('failing closed', () => {

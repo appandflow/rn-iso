@@ -266,8 +266,8 @@ describe('wantsExpoOwnTunnel', () => {
     expect(wantsExpoOwnTunnel({ isExpo: true, remote: false, mode: 'auto' })).toBe(false);
   });
 
-  test('a remote Expo start requests its own tunnel in auto or expo mode', () => {
-    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'auto' })).toBe(true);
+  test('a remote Expo start requests its own tunnel only in expo mode', () => {
+    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'auto' })).toBe(false);
     expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'expo' })).toBe(true);
   });
 
@@ -510,7 +510,7 @@ describe('action: already running', () => {
     const server = await metroListener(port);
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
-    upsertProject(root, { metroPort: port });
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
 
     let result;
     try {
@@ -618,7 +618,7 @@ describe('action: already running', () => {
     const server = await metroListener(port);
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
-    upsertProject(root, { metroPort: port });
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
 
     let result;
@@ -643,7 +643,7 @@ describe('action: already running', () => {
     const server = await metroListener(port);
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
     setExecutor(exec);
-    upsertProject(root, { metroPort: port });
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
     const tunnelWritten = new Promise<number>((resolve) => {
       setTimeout(() => {
@@ -721,11 +721,12 @@ describe('action: spawning the supervisor', () => {
     expect(facts.mode).toBe('bare-inproc');
   });
 
-  test('start --remote passes --tunnel to an Expo supervisor in auto mode', async () => {
+  test('start --remote passes --tunnel to an Expo supervisor in explicit expo mode', async () => {
     const { exec } = await runSpawnedExpoStart({
       port: 8156,
       options: { json: true, wait: '10', remote: true },
       tunnelDelayMs: 0,
+      settings: { metro: { tunnel: 'expo' } },
     });
     const spawned = exec.calls.spawn[0];
     assert(spawned);
@@ -737,6 +738,7 @@ describe('action: spawning the supervisor', () => {
       port: 8168,
       options: { json: true, wait: '10', remote: true },
       tunnelDelayMs: 1000,
+      settings: { metro: { tunnel: 'expo' } },
     });
 
     expect(result.exitCode).toBe(null);
@@ -750,6 +752,7 @@ describe('action: spawning the supervisor', () => {
       options: { json: true, wait: '10', remote: true },
       tunnelDelayMs: 1000,
       exitAfterTunnel: true,
+      settings: { metro: { tunnel: 'expo' } },
     });
 
     expect(result.exitCode).toBe(1);
@@ -831,7 +834,7 @@ describe('action: spawning the supervisor', () => {
     const { exec } = await runSpawnedExpoStart({
       port,
       options: { json: true, wait: '10' },
-      settings: { [platform]: { remote: 'proxy' } },
+      settings: { [platform]: { remote: 'proxy' }, metro: { tunnel: 'expo' } },
       tunnelDelayMs: 0,
     });
     expect(exec.calls.spawn[0]?.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port), '--tunnel']);
@@ -1811,7 +1814,7 @@ describe('action: an existing supervisor that is not answering', () => {
       return base(cmd);
     };
     setExecutor(exec);
-    upsertProject(root, { metroPort: port });
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
     metroListener(port).then((server) => {
       held.server = server;
@@ -1843,7 +1846,7 @@ describe('action: an existing supervisor that is not answering', () => {
       return base(cmd);
     };
     setExecutor(exec);
-    upsertProject(root, { metroPort: port });
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'expo' } } });
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
     metroListener(port).then((server) => {
       held.server = server;

@@ -19,7 +19,7 @@
 // so `ensureOwnedDevice` here does NOTHING but record intent, and the session
 // is created in `ensureBooted`, AFTER the gate. Same ordering property, same
 // reason, opposite mechanics.
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
@@ -1267,6 +1267,7 @@ export async function ensureMetroReachable({
       origin: resolvedUrl,
       metroPort,
       platform,
+      entryPoint: bundleEntryPoint(root, isExpo),
       readRecords: () => readMetroRecords(logsDir),
       isProof: isBundleProof,
     });
@@ -1276,4 +1277,18 @@ export async function ensureMetroReachable({
   }
   ctx.publicMetroUrl = resolvedUrl;
   return { ok: true };
+}
+
+function bundleEntryPoint(root: string, isExpo: boolean): string {
+  if (!isExpo) return 'index';
+  try {
+    const pkg = JSON.parse(readFileSync(resolvePath(root, 'package.json'), 'utf-8')) as { main?: unknown };
+    if (typeof pkg.main !== 'string' || !pkg.main.trim()) return 'index';
+    const main = pkg.main.trim();
+    const local = main.startsWith('.') || /\.[cm]?[jt]sx?$/.test(main) || existsSync(resolvePath(root, main));
+    const normalized = main.replace(/^\.\//, '').replace(/\.(?:[cm]?[jt]sx?)$/, '');
+    return local ? normalized : `node_modules/${normalized}`;
+  } catch {
+    return 'index';
+  }
 }

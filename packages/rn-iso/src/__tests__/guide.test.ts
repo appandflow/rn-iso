@@ -135,7 +135,7 @@ test('the guide documents remote providers and backend credential boundaries', (
   for (const provider of ['auto', 'expo', 'ngrok', 'cloudflared', 'off']) {
     expect(settings).toContain(`"${provider}"`);
   }
-  expect(settings).toMatch(/Bare React Native[\s\S]*authenticated[\s\S]*ngrok[\s\S]*cloudflared/i);
+  expect(settings).toMatch(/Expo and bare React Native[\s\S]*authenticated[\s\S]*ngrok[\s\S]*cloudflared/i);
   expect(settings).toMatch(/auth[^.]*refus[^.]*cloudflared/i);
   expect(settings).toMatch(/metro\.ngrokUrl[^.]*stable[^.]*managed ngrok URL/i);
   expect(settings).toMatch(/metro\.ngrokUrl[\s\S]*requires metro\.tunnel\s+"ngrok"/i);

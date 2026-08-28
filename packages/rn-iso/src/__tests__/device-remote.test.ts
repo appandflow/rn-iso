@@ -1089,6 +1089,22 @@ describe('the Metro refusal comes before anything billable', () => {
     expect(context.publicMetroUrl).toBe('https://abc.ngrok.app');
     expect(gatedOrigin).toBe('https://abc.ngrok.app');
   });
+
+  test('an Expo Router project gates the bundle entry declared by package.json', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ main: 'expo-router/entry' }));
+    let entryPoint: string | null = null;
+    const { result } = await reach({
+      isExpo: true,
+      env: { [PUBLIC_METRO_ENV]: 'https://abc.ngrok.app' },
+      gateOrigin: async (options: { entryPoint?: string }) => {
+        entryPoint = options.entryPoint ?? null;
+        return { ok: true as const };
+      },
+    });
+
+    expect('ok' in result).toBe(true);
+    expect(entryPoint).toBe('node_modules/expo-router/entry');
+  });
 });
 
 describe('a tunnel rn-iso starts for itself', () => {

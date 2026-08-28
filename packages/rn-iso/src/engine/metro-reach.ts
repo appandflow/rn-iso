@@ -68,11 +68,9 @@ const NAMED: Record<string, string> = {
  * 2. An explicit URL wins over starting anything: the operator already built
  *    a tunnel, and a second one would be waste. It IS gated, because an
  *    address rn-iso did not create is an address it cannot vouch for.
- * 3. Expo can tunnel its own dev server, so an Expo project needs no third
- *    party and no lifecycle of rn-iso's own. Preferred over a managed
- *    provider for exactly that reason.
- * 4. Otherwise rn-iso starts one itself, preferring whichever provider the
- *    caller ranked first.
+ * 3. Explicit `expo` mode lets Expo tunnel its own dev server.
+ * 4. Otherwise rn-iso starts a managed provider, preferring whichever one
+ *    the caller ranked first.
  */
 export function planMetroReach({ mode, metroPort, publicUrl = null, isExpo, available = [] }: ReachInputs): ReachPlan {
   const named = publicUrl?.trim().replace(/\/+$/, '') || null;
@@ -88,7 +86,7 @@ export function planMetroReach({ mode, metroPort, publicUrl = null, isExpo, avai
   // gated: rn-iso did not create it and cannot vouch for what it reaches.
   if (named) return { origin: named, gate: true };
 
-  if (mode === 'expo' || (mode === 'auto' && isExpo)) {
+  if (mode === 'expo') {
     if (!isExpo) {
       return {
         failed: 'metro.tunnel is "expo", but this workspace does not run an Expo dev server.',

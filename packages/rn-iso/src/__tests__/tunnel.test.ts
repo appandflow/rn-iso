@@ -17,6 +17,9 @@ import {
   tunnelArgv,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 
@@ -41,6 +44,13 @@ describe('tunnelArgv', () => {
     });
   });
 
+  test('cloudflared: writes logs to an owned file when one is provided', () => {
+    expect(tunnelArgv('cloudflared', 8081, null, '/tmp/tunnel.log')).toEqual({
+      bin: 'cloudflared',
+      args: ['tunnel', '--url', 'http://127.0.0.1:8081', '--logfile', '/tmp/tunnel.log'],
+    });
+  });
+
   test('ngrok: JSON-formatted logs on stdout, so the URL can be parsed', () => {
     expect(tunnelArgv('ngrok', 8081)).toEqual({
       bin: 'ngrok',
@@ -57,6 +67,13 @@ describe('tunnelArgv', () => {
 
   test('ngrok: does not add --url without a configured stable URL', () => {
     expect(tunnelArgv('ngrok', 8081).args).not.toContain('--url');
+  });
+
+  test('ngrok: writes JSON logs to an owned file when one is provided', () => {
+    expect(tunnelArgv('ngrok', 8081, null, '/tmp/tunnel.log')).toEqual({
+      bin: 'ngrok',
+      args: ['http', '8081', '--log=/tmp/tunnel.log', '--log-format=json'],
+    });
   });
 });
 
@@ -156,6 +173,39 @@ describe('startTunnel: the happy path', () => {
     expect(unrefed).toBe(true);
   });
 
+  test('routes provider output to an owned file so the child is not attached to caller pipes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rn-iso-tunnel-log-test-'));
+    const logFile = join(dir, 'cloudflared.log');
+    const line = 'banner |  https://detached.trycloudflare.com  |\n';
+    const child = makeChildProcess();
+    let args: string[] = [];
+    let stdio: unknown;
+    const options = {
+      provider: 'cloudflared' as const,
+      port: 8081,
+      logFile,
+      spawnFn: (_cmd: string, childArgs: string[], spawnOptions: Record<string, unknown>) => {
+        args = childArgs;
+        stdio = spawnOptions.stdio;
+        queueMicrotask(() => {
+          writeFileSync(logFile, line);
+          child.stderr?.emit('data', line);
+        });
+        return child;
+      },
+      probeReachable: async () => true,
+    };
+
+    try {
+      const result = await startVerified(options);
+      expect(result).toMatchObject({ url: 'https://detached.trycloudflare.com', logFile });
+      expect(args).toEqual(['tunnel', '--url', 'http://127.0.0.1:8081', '--logfile', logFile]);
+      expect(stdio).toEqual(['ignore', 'ignore', 'ignore']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('does not record a PID reused after spawn with a different process token', async () => {
     let token = 'linux:100';
     const signals: Array<NodeJS.Signals | number | undefined> = [];
@@ -215,14 +265,20 @@ describe('startTunnel: the happy path', () => {
 
 describe('startTunnel: nothing here throws -- every failure is a returned value', () => {
   test('a binary that will not even start', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rn-iso-tunnel-spawn-test-'));
+    const logFile = join(dir, 'ngrok.log');
+    writeFileSync(logFile, '');
     const result = await startVerified({
       provider: 'ngrok',
       port: 8081,
+      logFile,
       spawnFn: () => {
         throw Object.assign(new Error('spawn ngrok ENOENT'), { code: 'ENOENT' });
       },
     });
     expect(result).toEqual({ failed: true, reason: expect.stringContaining('Could not start ngrok') });
+    expect(existsSync(logFile)).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   test('exiting before printing a URL is a failure, not a hang', async () => {
@@ -734,14 +790,27 @@ describe('stopTunnel: idempotent, never throws', () => {
   });
 
   test("a kill racing the process's own exit (ESRCH) reads as missing, not failed", async () => {
-    const result = await stopVerified(fixtureRecord(), {
-      isAlive: () => true,
-      readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081'],
-      kill: () => {
-        throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
-      },
-    });
-    expect(result).toEqual({ status: 'missing' });
+    const previousHome = process.env.RN_ISO_HOME;
+    const home = mkdtempSync(join(tmpdir(), 'rn-iso-tunnel-stop-test-'));
+    const logFile = join(home, 'tunnel-logs', 'cloudflared.log');
+    mkdirSync(join(home, 'tunnel-logs'));
+    writeFileSync(logFile, '');
+    process.env.RN_ISO_HOME = home;
+    try {
+      const result = await stopVerified(fixtureRecord({ logFile }), {
+        isAlive: () => true,
+        readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081', '--logfile', logFile],
+        kill: () => {
+          throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
+        },
+      });
+      expect(result).toEqual({ status: 'missing' });
+      expect(existsSync(logFile)).toBe(false);
+    } finally {
+      if (previousHome === undefined) delete process.env.RN_ISO_HOME;
+      else process.env.RN_ISO_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test('a kill that fails for another reason is a returned failed status, not a throw', async () => {

@@ -60,11 +60,13 @@ describe('an address the operator supplied', () => {
   });
 });
 
-describe('expo tunnels its own dev server', () => {
-  test('auto on an Expo project prefers expo over a managed provider', () => {
-    // No third-party binary and no lifecycle of rn-iso's own: the tunnel
-    // belongs to the dev server, so stopping the supervisor stops it too.
-    expect(planMetroReach({ ...EXPO, mode: 'auto', available: ['ngrok', 'cloudflared'] })).toEqual({
+describe('expo tunnels its own dev server only when selected', () => {
+  test('auto on an Expo project uses the preferred managed provider', () => {
+    expect(planMetroReach({ ...EXPO, mode: 'auto', available: ['ngrok', 'cloudflared'] })).toEqual({ start: 'ngrok' });
+  });
+
+  test('explicit expo mode lets the Expo dev server own its tunnel', () => {
+    expect(planMetroReach({ ...EXPO, mode: 'expo', available: ['ngrok', 'cloudflared'] })).toEqual({
       expoTunnel: true,
     });
   });
