@@ -622,6 +622,463 @@ interface RunAndroidResult {
   facts?: AndroidFacts;
 }
 
+type AndroidWriter = ReturnType<typeof createNdjsonWriter>;
+
+interface VerifyAndroidRunArgs {
+  release: boolean;
+  verifyReleaseLaunched: typeof verifyAndroidReleaseLaunch;
+  verifyLaunched: typeof verifyLaunch;
+  serial: string;
+  androidPackage: string;
+  variant: string | null;
+  metroCheck: boolean;
+  logsDir: string;
+  launchedAt: number;
+  metroPort: number | null;
+  isExpo: boolean;
+  scheme?: string | null;
+  phase: (label: unknown, text: string) => void;
+}
+
+async function verifyAndroidRun({
+  release,
+  verifyReleaseLaunched,
+  verifyLaunched,
+  serial,
+  androidPackage,
+  variant,
+  metroCheck,
+  logsDir,
+  launchedAt,
+  metroPort,
+  isExpo,
+  scheme,
+  phase,
+}: VerifyAndroidRunArgs): Promise<boolean | string> {
+  if (release) {
+    const processCheck = await verifyReleaseLaunched({ serial, packageName: androidPackage });
+    if (processCheck?.verified) {
+      phase(
+        'verify',
+        `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${variant}: no bundle fetch to observe)`,
+      );
+      return true;
+    }
+    phase(
+      'verify',
+      chalk.yellow(
+        `UNVERIFIED: no ${androidPackage} process on ${serial} ${formatDuration(processCheck?.waitedMs ?? 0)} after launch`,
+      ),
+    );
+    phase(
+      '',
+      chalk.yellow(
+        'A release app that dies at startup usually crashed loading its embedded bundle; `rn-iso logs --errors` has the device log that says why.',
+      ),
+    );
+    return LAUNCH_UNVERIFIED;
+  }
+
+  const verification: VerifyLaunchResultLike = metroCheck
+    ? await verifyLaunched({ logsDir, since: launchedAt, metroPort, mode: isExpo ? MODE_EXPO : MODE_BARE })
+    : { verified: false, skipped: true };
+  if (verification?.verified) {
+    phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
+    return true;
+  }
+  if (verification?.skipped) {
+    phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
+    return LAUNCH_UNVERIFIED;
+  }
+  if (verification?.requested) {
+    phase(
+      'verify',
+      `BUNDLING: the app asked port ${metroPort} for its bundle and Metro was still building it ` +
+        `after ${formatDuration(verification.waitedMs ?? 0)} (a cold bundle on a large graph outlasts this window)`,
+    );
+    phase(
+      '',
+      chalk.dim('Nothing to do: `rn-iso logs --source metro` shows the build finishing, usually within a minute.'),
+    );
+    return LAUNCH_BUNDLING;
+  }
+
+  phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
+  for (const line of unverifiedLaunchLines({
+    platform: PLATFORM,
+    metroPort: metroPort ?? DEFAULT_METRO_PORT,
+    waitedMs: verification?.waitedMs,
+    bundleId: androidPackage,
+    serial,
+    devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null,
+    mode: isExpo ? MODE_EXPO : MODE_BARE,
+  }))
+    phase('', chalk.yellow(line));
+  return LAUNCH_UNVERIFIED;
+}
+
+async function finishAndroidUpload(
+  uploadPending: Promise<RemoteUploadLike> | null,
+  remote: LoadProjectProviderResult | null,
+  phase: (label: unknown, text: string) => void,
+): Promise<boolean> {
+  if (!uploadPending) return false;
+  const upload = await uploadPending;
+  if (upload?.uploaded) {
+    phase('cache', `uploaded (${remote?.name})`);
+  } else if (upload?.timedOut) {
+    phase(
+      'cache',
+      chalk.yellow(`${remote?.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`),
+    );
+    return true;
+  } else if (upload?.failed) {
+    const authNote =
+      remote?.name === 'eas' && isEasAuthFailureText(upload.failed)
+        ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
+        : null;
+    phase('cache', chalk.yellow(authNote || `${remote?.name} upload failed: ${upload.failed}`));
+  }
+  return false;
+}
+
+interface ReportAndroidResultArgs {
+  json: boolean;
+  useBuildCache: boolean;
+  variant: string | null;
+  release: boolean;
+  metroPort: number | null;
+  logsDir: string;
+  serial: string;
+  apkPath: string | null;
+  androidPackage: string;
+  record: AndroidRecord;
+  storeHash: string;
+  storeKey: string;
+  waitedForBuild: WaitedForBuild | null;
+  remote: LoadProjectProviderResult | null;
+  launchState: boolean | string;
+  launched: LaunchResultLike;
+  writer: AndroidWriter;
+  emit: (line: string) => void;
+}
+
+function reportAndroidResult({
+  json,
+  useBuildCache,
+  variant,
+  release,
+  metroPort,
+  logsDir,
+  serial,
+  apkPath,
+  androidPackage,
+  record,
+  storeHash,
+  storeKey,
+  waitedForBuild,
+  remote,
+  launchState,
+  launched,
+  writer,
+  emit,
+}: ReportAndroidResultArgs): AndroidFacts {
+  const facts = androidFacts({
+    serial,
+    avdName: record.avdName,
+    deviceName: record.deviceName,
+    debugHttpHost: launched.debugHttpHost ?? null,
+    debugHttpHostNote: launched.debugHttpHostNote ?? null,
+    devClientUrl: launched.devClientUrl ?? null,
+    fingerprint: storeHash,
+    cacheKey: storeKey,
+    variant,
+    metroPort,
+    cacheHit: record.cacheHit,
+    cacheSkipped: !useBuildCache,
+    waitedForBuild,
+    appPath: apkPath,
+    bundleId: androidPackage,
+    launched: launchState,
+    logs: logsDir,
+  });
+  writer.close();
+
+  if (json) {
+    emit(JSON.stringify(facts));
+  } else {
+    const summary =
+      `OK: ${androidPackage} launched on ${serial}, ` +
+      `${release ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
+      `(${cacheOutcome(record.cacheHit, remote?.name)})`;
+    emit(
+      launchState === LAUNCH_UNVERIFIED
+        ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
+        : launchState === LAUNCH_BUNDLING
+          ? chalk.green(`${summary} -- bundle requested, still building`)
+          : chalk.green(summary),
+    );
+  }
+  return facts;
+}
+
+interface FinishAndroidRunArgs {
+  root: string;
+  json: boolean;
+  metroCheck: boolean;
+  useBuildCache: boolean;
+  variant: string | null;
+  release: boolean;
+  isExpo: boolean;
+  metroPort: number | null;
+  logsDir: string;
+  emuLog: string;
+  device: OwnedDeviceRecord;
+  bootPromise: Promise<{ failed?: boolean; reason?: string | null; serial?: string | null }>;
+  bootDuration: () => string;
+  apkPath: string | null;
+  androidPackage: string | null;
+  swapDir: string | null;
+  record: AndroidRecord;
+  storeHash: string;
+  storeKey: string;
+  waitedForBuild: WaitedForBuild | null;
+  uploadPending: Promise<RemoteUploadLike> | null;
+  remote: LoadProjectProviderResult | null;
+  abandonedRemote: boolean;
+  started: number;
+  startedAt: string;
+  writer: AndroidWriter;
+  phase: (label: unknown, text: string) => void;
+  fail: (
+    code: string | undefined,
+    message?: string | null,
+    remedy?: string | null,
+    extra?: FailExtra,
+  ) => RunAndroidResult;
+  readApkPackage: (apkPath: string | null) => string | null;
+  install: typeof installAndroidApp;
+  launch: typeof launchAndroidApp;
+  launchRelease: typeof launchAndroidReleaseApp;
+  resolveDevClientScheme: typeof androidDevClientScheme;
+  verifyLaunched: typeof verifyLaunch;
+  verifyReleaseLaunched: typeof verifyAndroidReleaseLaunch;
+  spawn: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
+  kill: (pid: number, signal: NodeJS.Signals) => boolean;
+  writeState: typeof writeWorkspaceState;
+  now: () => number;
+  out: (line: string) => void;
+  emit: (line: string) => void;
+}
+
+async function finishAndroidRun({
+  root,
+  json,
+  metroCheck,
+  useBuildCache,
+  variant,
+  release,
+  isExpo,
+  metroPort,
+  logsDir,
+  emuLog,
+  device,
+  bootPromise,
+  bootDuration,
+  apkPath,
+  androidPackage: initialPackage,
+  swapDir,
+  record,
+  storeHash,
+  storeKey,
+  waitedForBuild,
+  uploadPending,
+  remote,
+  abandonedRemote: remoteWasAbandoned,
+  started,
+  startedAt,
+  writer,
+  phase,
+  fail,
+  readApkPackage,
+  install,
+  launch,
+  launchRelease,
+  resolveDevClientScheme,
+  verifyLaunched,
+  verifyReleaseLaunched,
+  spawn,
+  kill,
+  writeState,
+  now,
+  out,
+  emit,
+}: FinishAndroidRunArgs): Promise<RunAndroidResult> {
+  let androidPackage = initialPackage;
+
+  const booted = await bootPromise;
+  if (booted.failed) {
+    const diag = noDeviceDiagnostic({
+      reason: booted.reason ?? 'The emulator did not boot.',
+      logFile: emuLog,
+      remedy:
+        'Run `rn-iso status` to see what rn-iso thinks it owns; re-running `rn-iso android` creates a fresh owned AVD.',
+    });
+    return fail(NO_DEVICE, diag.message, diag.remedy, {
+      lines: diag.lines,
+      logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
+    });
+  }
+  const serial = booted.serial!;
+  phase('device', `${device.avdName || serial} (${serial}) booted ${bootDuration()}`);
+
+  const installTimer = stepTimer(now);
+  const installed: InstallResultLike = install({
+    serial,
+    apkPath: apkPath!,
+    packageName: androidPackage,
+    allowUninstall: release,
+  });
+  if (installed.failed) {
+    return fail(
+      installed.code || INSTALL_FAILED,
+      installed.reason,
+      `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`,
+      { lastBuildStatus: true },
+    );
+  }
+  phase('install', `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} ${installTimer()}`);
+  if (installed.note) {
+    phase('install', chalk.yellow(installed.note));
+    writer.write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
+  }
+  if (swapDir) {
+    try {
+      rmSync(swapDir, { recursive: true, force: true });
+    } catch {}
+  }
+
+  const packageFromApk = readApkPackage(apkPath);
+  if (packageFromApk && androidPackage && packageFromApk !== androidPackage) {
+    phase('launch', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
+  }
+  androidPackage = packageFromApk || androidPackage || detectAndroidPackage(root);
+  if (androidPackage) upsertProject(root, { androidPackage });
+  record.bundleId = androidPackage;
+  if (!androidPackage) {
+    return fail(
+      LAUNCH_FAILED,
+      "Could not determine this app's Android package name, so there is nothing to launch.",
+      'Set `expo.android.package` in app.json / app.config.js, or `namespace` in android/app/build.gradle.',
+      { lastBuildStatus: true },
+    );
+  }
+
+  const scheme = release ? undefined : resolveDevClientScheme(root, apkPath);
+  const launchTimer = stepTimer(now);
+  const launchedAt = now();
+  const launched: LaunchResultLike = release
+    ? launchRelease({ serial, packageName: androidPackage })
+    : launch({
+        serial,
+        packageName: androidPackage,
+        metroPort: metroPort ?? DEFAULT_METRO_PORT,
+        devClientScheme: scheme,
+      });
+  if (launched.failed) {
+    return fail(
+      launched.code || LAUNCH_FAILED,
+      launched.reason,
+      `Check the app installed correctly (\`adb -s ${serial} shell pm list packages ${androidPackage}\`).`,
+      { lastBuildStatus: true },
+    );
+  }
+  writer.write({
+    src: 'build',
+    level: 'info',
+    event: 'app_launched',
+    marker: true,
+    msg: release
+      ? `launched ${androidPackage} on ${serial} (${variant}, embedded JS bundle, no Metro)`
+      : `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`,
+  });
+  const launchMode = launched.mode === 'deep-link' ? 'expo-dev-client deep link' : launched.mode;
+  phase('launch', `${launchMode ? `${androidPackage} (${launchMode})` : androidPackage} ${launchTimer()}`);
+
+  if (!release && launched.debugHttpHost) {
+    phase(
+      'wired',
+      `debug_http_host ${launched.debugHttpHost} + adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}`,
+    );
+  } else if (!release) {
+    phase(
+      'wired',
+      chalk.yellow(
+        `adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}; ${launched.debugHttpHostNote || 'debug_http_host not written'}`,
+      ),
+    );
+    writer.write({
+      src: 'build',
+      level: 'warn',
+      event: 'debug_http_host_failed',
+      msg: `debug_http_host was not written for ${androidPackage} on ${serial}: ${launched.debugHttpHostNote || 'unknown reason'}`,
+    });
+  }
+  if (launched.devClientNote) {
+    phase('wired', chalk.yellow(launched.devClientNote));
+    writer.write({ src: 'build', level: 'warn', event: 'dev_client_link_failed', msg: launched.devClientNote });
+  }
+
+  const uploadWasAbandoned = await finishAndroidUpload(uploadPending, remote, phase);
+
+  persistLastBuild({ writeState, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
+
+  const collectorPid = await startCollector({ root, serial, packageName: androidPackage, spawn, kill, out });
+  phase('logs', `${displayPath(root, logsDir)}${collectorPid ? ` (collector pid ${collectorPid})` : ''}`);
+
+  const launchState = await verifyAndroidRun({
+    release,
+    verifyReleaseLaunched,
+    verifyLaunched,
+    serial,
+    androidPackage,
+    variant,
+    metroCheck,
+    logsDir,
+    launchedAt,
+    metroPort,
+    isExpo,
+    scheme,
+    phase,
+  });
+  writer.write(
+    launchOutcomeRecord({ launchState, release, bundleId: androidPackage, configuration: variant, metroPort }),
+  );
+
+  const facts = reportAndroidResult({
+    json,
+    useBuildCache,
+    variant,
+    release,
+    metroPort,
+    logsDir,
+    serial,
+    apkPath,
+    androidPackage,
+    record,
+    storeHash,
+    storeKey,
+    waitedForBuild,
+    remote,
+    launchState,
+    launched,
+    writer,
+    emit,
+  });
+  if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
+  return { ok: true, facts };
+}
+
 export async function runAndroid(
   {
     root,
@@ -1192,251 +1649,49 @@ export async function runAndroid(
   }
   record.appPath = apkPath;
 
-  const booted = await bootPromise;
-  if (booted.failed) {
-    const diag = noDeviceDiagnostic({
-      reason: booted.reason ?? 'The emulator did not boot.',
-      logFile: emuLog,
-      remedy:
-        'Run `rn-iso status` to see what rn-iso thinks it owns; re-running `rn-iso android` creates a fresh owned AVD.',
-    });
-    return fail(NO_DEVICE, diag.message, diag.remedy, {
-      lines: diag.lines,
-      logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
-    });
-  }
-  const serial = booted.serial;
-  phase('device', `${device.avdName || serial} (${serial}) booted ${bootDuration}`);
-
-  const installTimer = stepTimer(now);
-  const installed: InstallResultLike = install({
-    serial: serial!,
-    apkPath: apkPath!,
-    packageName: androidPackage,
-    allowUninstall: release,
-  });
-  if (installed.failed) {
-    return fail(
-      installed.code || INSTALL_FAILED,
-      installed.reason,
-      `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`,
-      { lastBuildStatus: true },
-    );
-  }
-  phase('install', `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} ${installTimer()}`);
-  if (installed.note) {
-    phase('install', chalk.yellow(installed.note));
-    writer.write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
-  }
-  if (swapDir) {
-    try {
-      rmSync(swapDir, { recursive: true, force: true });
-    } catch {}
-  }
-
-  const packageFromApk = readApkPackage(apkPath);
-  if (packageFromApk && androidPackage && packageFromApk !== androidPackage) {
-    phase('launch', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
-  }
-  androidPackage = packageFromApk || androidPackage || detectAndroidPackage(root);
-  if (androidPackage) upsertProject(root, { androidPackage });
-  record.bundleId = androidPackage;
-  if (!androidPackage) {
-    return fail(
-      LAUNCH_FAILED,
-      "Could not determine this app's Android package name, so there is nothing to launch.",
-      'Set `expo.android.package` in app.json / app.config.js, or `namespace` in android/app/build.gradle.',
-      { lastBuildStatus: true },
-    );
-  }
-  const scheme = release ? undefined : resolveDevClientScheme(root, apkPath);
-  const launchTimer = stepTimer(now);
-  const launchedAt = now();
-  const launched: LaunchResultLike = release
-    ? launchRelease({ serial: serial!, packageName: androidPackage })
-    : launch({
-        serial: serial!,
-        packageName: androidPackage,
-        metroPort: metroPort ?? DEFAULT_METRO_PORT,
-        devClientScheme: scheme,
-      });
-  if (launched.failed) {
-    return fail(
-      launched.code || LAUNCH_FAILED,
-      launched.reason,
-      `Check the app installed correctly (\`adb -s ${serial} shell pm list packages ${androidPackage}\`).`,
-      { lastBuildStatus: true },
-    );
-  }
-  writer.write({
-    src: 'build',
-    level: 'info',
-    event: 'app_launched',
-    marker: true,
-    msg: release
-      ? `launched ${androidPackage} on ${serial} (${variant}, embedded JS bundle, no Metro)`
-      : `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`,
-  });
-  const launchMode = launched.mode === 'deep-link' ? 'expo-dev-client deep link' : launched.mode;
-  phase('launch', `${launchMode ? `${androidPackage} (${launchMode})` : androidPackage} ${launchTimer()}`);
-
-  if (release) {
-  } else if (launched.debugHttpHost) {
-    phase(
-      'wired',
-      `debug_http_host ${launched.debugHttpHost} + adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}`,
-    );
-  } else {
-    phase(
-      'wired',
-      chalk.yellow(
-        `adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}; ${launched.debugHttpHostNote || 'debug_http_host not written'}`,
-      ),
-    );
-    writer.write({
-      src: 'build',
-      level: 'warn',
-      event: 'debug_http_host_failed',
-      msg: `debug_http_host was not written for ${androidPackage} on ${serial}: ${launched.debugHttpHostNote || 'unknown reason'}`,
-    });
-  }
-  if (launched.devClientNote) {
-    phase('wired', chalk.yellow(launched.devClientNote));
-    writer.write({ src: 'build', level: 'warn', event: 'dev_client_link_failed', msg: launched.devClientNote });
-  }
-
-  if (uploadPending) {
-    const upload = await uploadPending;
-    if (upload?.uploaded) {
-      phase('cache', `uploaded (${remote?.name})`);
-    } else if (upload?.timedOut) {
-      abandonedRemote = true;
-      phase(
-        'cache',
-        chalk.yellow(`${remote?.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`),
-      );
-    } else if (upload?.failed) {
-      const authNote =
-        remote?.name === 'eas' && isEasAuthFailureText(upload.failed)
-          ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
-          : null;
-      phase('cache', chalk.yellow(authNote || `${remote?.name} upload failed: ${upload.failed}`));
-    }
-  }
-
-  persistLastBuild({ writeState, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
-
-  const collectorPid = await startCollector({ root, serial, packageName: androidPackage, spawn, kill, out });
-  phase('logs', `${displayPath(root, logsDir)}${collectorPid ? ` (collector pid ${collectorPid})` : ''}`);
-
-  let launchState: boolean | string = true;
-  if (release) {
-    const processCheck = await verifyReleaseLaunched({ serial: serial!, packageName: androidPackage });
-    if (processCheck?.verified) {
-      phase(
-        'verify',
-        `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${variant}: no bundle fetch to observe)`,
-      );
-    } else {
-      launchState = LAUNCH_UNVERIFIED;
-      phase(
-        'verify',
-        chalk.yellow(
-          `UNVERIFIED: no ${androidPackage} process on ${serial} ${formatDuration(processCheck?.waitedMs ?? 0)} after launch`,
-        ),
-      );
-      phase(
-        '',
-        chalk.yellow(
-          'A release app that dies at startup usually crashed loading its embedded bundle; `rn-iso logs --errors` has the device log that says why.',
-        ),
-      );
-    }
-  } else {
-    const verification: VerifyLaunchResultLike = metroCheck
-      ? await verifyLaunched({ logsDir, since: launchedAt, metroPort, mode: isExpo ? MODE_EXPO : MODE_BARE })
-      : { verified: false, skipped: true };
-    if (verification?.verified) {
-      phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
-    } else if (verification?.skipped) {
-      launchState = LAUNCH_UNVERIFIED;
-      phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
-    } else if (verification?.requested) {
-      launchState = LAUNCH_BUNDLING;
-      phase(
-        'verify',
-        `BUNDLING: the app asked port ${metroPort} for its bundle and Metro was still building it ` +
-          `after ${formatDuration(verification.waitedMs ?? 0)} (a cold bundle on a large graph outlasts this window)`,
-      );
-      phase(
-        '',
-        chalk.dim('Nothing to do: `rn-iso logs --source metro` shows the build finishing, usually within a minute.'),
-      );
-    } else {
-      launchState = LAUNCH_UNVERIFIED;
-      phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
-      for (const line of unverifiedLaunchLines({
-        platform: PLATFORM,
-        metroPort: metroPort ?? DEFAULT_METRO_PORT,
-        waitedMs: verification?.waitedMs,
-        bundleId: androidPackage,
-        serial,
-        devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null,
-        mode: isExpo ? MODE_EXPO : MODE_BARE,
-      }))
-        phase('', chalk.yellow(line));
-    }
-  }
-
-  writer.write(
-    launchOutcomeRecord({
-      launchState,
-      release,
-      bundleId: androidPackage,
-      configuration: variant,
-      metroPort,
-    }),
-  );
-
-  const facts = androidFacts({
-    serial,
-    avdName: record.avdName,
-    deviceName: record.deviceName,
-    debugHttpHost: launched.debugHttpHost ?? null,
-    debugHttpHostNote: launched.debugHttpHostNote ?? null,
-    devClientUrl: launched.devClientUrl ?? null,
-    fingerprint: storeHash,
-    cacheKey: storeKey,
+  return finishAndroidRun({
+    root,
+    json,
+    metroCheck,
+    useBuildCache,
     variant,
+    release,
+    isExpo,
     metroPort,
-    cacheHit: record.cacheHit,
-    cacheSkipped: !useBuildCache,
+    logsDir,
+    emuLog,
+    device,
+    bootPromise,
+    bootDuration: () => bootDuration,
+    apkPath,
+    androidPackage,
+    swapDir,
+    record,
+    storeHash,
+    storeKey,
     waitedForBuild,
-    appPath: apkPath,
-    bundleId: androidPackage,
-    launched: launchState,
-    logs: logsDir,
+    uploadPending,
+    remote,
+    abandonedRemote,
+    started,
+    startedAt,
+    writer,
+    phase,
+    fail,
+    readApkPackage,
+    install,
+    launch,
+    launchRelease,
+    resolveDevClientScheme,
+    verifyLaunched,
+    verifyReleaseLaunched,
+    spawn,
+    kill,
+    writeState,
+    now,
+    out,
+    emit,
   });
-  writer.close();
-
-  if (json) {
-    emit(JSON.stringify(facts));
-  } else {
-    const summary =
-      `OK: ${androidPackage} launched on ${serial}, ` +
-      `${release ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
-      `(${cacheOutcome(record.cacheHit, remote?.name)})`;
-    emit(
-      launchState === LAUNCH_UNVERIFIED
-        ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
-        : launchState === LAUNCH_BUNDLING
-          ? chalk.green(`${summary} -- bundle requested, still building`)
-          : chalk.green(summary),
-    );
-  }
-
-  if (abandonedRemote) exitAfterFlush(0);
-  return { ok: true, facts };
 }
 
 export function cacheOutcome(cacheHit: unknown, providerName: string | null = null): string {
