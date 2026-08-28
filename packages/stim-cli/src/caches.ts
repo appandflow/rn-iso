@@ -33,6 +33,18 @@ function compilationCache(): CacheDescriptor | null {
   };
 }
 
+function gradleBuildCache(): CacheDescriptor | null {
+  const gradleHome = process.env.GRADLE_USER_HOME || join(homedir(), '.gradle');
+  const dir = join(gradleHome, 'caches', 'build-cache-1');
+  if (!existsSync(dir)) return null;
+  return {
+    name: 'Gradle build cache',
+    dir,
+    prune: 'entries',
+    note: 'shared Gradle task outputs enabled by stim-cli --build-cache',
+  };
+}
+
 function metroFileMaps(): CacheDescriptor | null {
   const root = tmpdir();
   if (!existsSync(root)) return null;
@@ -87,7 +99,7 @@ export function discoverCaches({ declared = [] }: { declared?: string[] } = {}):
     }),
   );
   const seen = new Set(registered.map((c) => c.dir));
-  const detected = [compilationCache(), metroFileMaps(), ...declaredCaches(declared)]
+  const detected = [compilationCache(), gradleBuildCache(), metroFileMaps(), ...declaredCaches(declared)]
     .filter((c): c is CacheDescriptor => Boolean(c))
     .filter((c) => !seen.has(c.dir))
     .map((c): CacheDescriptor => Object.assign({}, c, { source: 'detected' as const }));

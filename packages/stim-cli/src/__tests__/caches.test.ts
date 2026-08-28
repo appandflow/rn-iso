@@ -56,6 +56,26 @@ test('metro file maps are reported as an explicit file list, never as a director
   }
 });
 
+test('discoverCaches reports the Gradle build cache from GRADLE_USER_HOME', () => {
+  const gradleHome = mkdtempSync(join(tmpdir(), 'stim-cli-gradle-home-'));
+  const previous = process.env.GRADLE_USER_HOME;
+  const buildCache = join(gradleHome, 'caches', 'build-cache-1');
+  mkdirSync(buildCache, { recursive: true });
+  try {
+    process.env.GRADLE_USER_HOME = gradleHome;
+    const found = discoverCaches().find((c) => c.name === 'Gradle build cache');
+    expect(found).toMatchObject({
+      dir: buildCache,
+      prune: 'entries',
+      source: 'detected',
+    });
+  } finally {
+    if (previous === undefined) delete process.env.GRADLE_USER_HOME;
+    else process.env.GRADLE_USER_HOME = previous;
+    rmSync(gradleHome, { recursive: true, force: true });
+  }
+});
+
 test('sizeCaches keeps a precounted size and measures the rest', () => {
   const dir = mkdtempSync(join(tmpdir(), 'stim-cli-size-'));
   try {
