@@ -200,7 +200,8 @@ another worktree's bundler.
 
   --json            one line of facts on stdout, everything else on stderr:
                       { port, supervisorPid, mode, logsDir, alreadyRunning }
-  --wait <seconds>  how long to wait for the server to answer (default 60)
+  --wait <seconds>  how long to wait for server and remote tunnel readiness
+                    (default 60 for each)
   --remote          expose Metro for a remote device
 
 Plain \`rn-iso start\` is local and does not create a public tunnel. Remote intent
@@ -260,7 +261,9 @@ WHAT THE SUPERVISOR IS
 STARTING YOUR OWN BUNDLER STILL WORKS
   A dev server YOU started is detected and left alone: \`start\` reports it
   with supervisorPid: null and mode: null, exits 0, and starts nothing over it.
-  Starting a second bundler on a working one is the actual failure.
+  Starting a second bundler on a working one is the actual failure. For
+  \`start --remote\`, an external Expo server also needs metro.publicUrl because
+  rn-iso cannot add Expo tunnel mode to a process it does not supervise.
 
   Start it from INSIDE the project directory, on the reserved port, or nothing
   can attribute it to you:
@@ -587,9 +590,10 @@ RN_ISO_REMOTE_METRO_UNREACHABLE
 --- DEV-SERVER CODES (\`rn-iso start\`) ---
 
 RN_ISO_REMOTE_START_REQUIRED
-  A healthy Expo supervisor was started without a tunnel. A running Expo
-  server cannot gain that option. Run \`rn-iso stop\`, then
-  \`rn-iso start --remote\`.
+  A healthy Expo server was started without a tunnel. A running Expo server
+  cannot gain that option. For an rn-iso supervisor, run \`rn-iso stop\`, then
+  \`rn-iso start --remote\`. For an external server, configure
+  metro.publicUrl or let rn-iso supervise the server.
 
 RN_ISO_BARE_DEPS / RN_ISO_BARE_LOAD / RN_ISO_BARE_API  (bare RN)
   The supervisor hosts Metro out of the PROJECT's node_modules, so metro,
@@ -603,7 +607,8 @@ RN_ISO_EXPO_BIN  (Expo)
 
 RN_ISO_METRO_TIMEOUT
   "The dev server did not answer on port <n> within <s>s."
-  The supervisor is alive, but nothing is serving yet. \`start\` has already
+  The supervisor is alive, but Metro or its requested Expo tunnel is not ready.
+  \`start\` has already
   printed the last lines of .rn-iso/logs/supervisor.log above this -- read
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`rn-iso stop\`, then \`start\`.

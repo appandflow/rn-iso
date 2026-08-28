@@ -145,14 +145,23 @@ function replaceWorkspaceState(root: string, state: WorkspaceState): WorkspaceSt
   return state;
 }
 
-// Removes only OUR key. The file goes when nothing else is left in it, so a
-// stopped workspace has no state.json rather than an empty one -- but a
-// workspace that has recorded something else keeps it.
 export function clearWorkspaceSupervisor(root: string): void {
+  clearWorkspaceStateKey(root, 'supervisor', () => true);
+}
+
+export function clearExpoMetroTunnel(root: string): void {
+  clearWorkspaceStateKey(root, 'metroTunnel', (value) => {
+    return typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'expo';
+  });
+}
+
+// Removes only the selected key. The file goes when nothing else is left in
+// it, so a stopped workspace has no state.json rather than an empty one.
+function clearWorkspaceStateKey(root: string, key: string, shouldClear: (value: unknown) => boolean): void {
   withWorkspaceStateLock(root, () => {
     const state = readWorkspaceState(root);
-    if (!state || !('supervisor' in state)) return;
-    delete state.supervisor;
+    if (!state || !(key in state) || !shouldClear(state[key])) return;
+    delete state[key];
     const file = workspaceStateFile(root);
     if (Object.keys(state).length === 0) {
       try {

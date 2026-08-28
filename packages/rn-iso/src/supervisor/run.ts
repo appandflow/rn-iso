@@ -31,7 +31,14 @@ import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { supervisorPidFile, workspaceLogsDir } from '../paths.ts';
 import { detectIsExpo } from '../project.ts';
 import { describeError } from './errors.ts';
-import { MODE_BARE, MODE_EXPO, clearWorkspaceSupervisor, writePidFile, writeWorkspaceState } from './state.ts';
+import {
+  MODE_BARE,
+  MODE_EXPO,
+  clearExpoMetroTunnel,
+  clearWorkspaceSupervisor,
+  writePidFile,
+  writeWorkspaceState,
+} from './state.ts';
 
 // The state + pid helpers now live in a guard-free module (state.ts) so the CLI
 // commands can import them without dragging this daemon entry in. Re-exported
@@ -39,6 +46,7 @@ import { MODE_BARE, MODE_EXPO, clearWorkspaceSupervisor, writePidFile, writeWork
 export {
   MODE_BARE,
   MODE_EXPO,
+  clearExpoMetroTunnel,
   clearWorkspaceSupervisor,
   readPidFile,
   readWorkspaceState,
@@ -164,6 +172,7 @@ export async function runSupervisor({
   const record = { pid: process.pid, port, mode, startedAt };
 
   // ---- the record, first (rule 1) ----
+  clearExpoMetroTunnel(root);
   writePidFile(root, process.pid);
   writeWorkspaceState(root, { supervisor: record });
   try {

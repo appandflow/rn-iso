@@ -326,7 +326,7 @@ export function registerStart(program: Command): void {
       let resolution = await resolveProjectMetro(port, root);
       let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
       const requireExpoTunnel = () => {
-        if (tunnel && supervisor && readMetroTunnel(root)?.kind !== 'expo') {
+        if (tunnel && (!supervisor || readMetroTunnel(root)?.kind !== 'expo')) {
           fail({
             code: 'RN_ISO_REMOTE_START_REQUIRED',
             message: `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`,
@@ -452,6 +452,24 @@ export function registerStart(program: Command): void {
         );
       }
 
+      if (tunnel) {
+        const tunnelReady = await waitForExpoTunnel({
+          root,
+          seconds: waitSeconds,
+          aborted: () => childExit !== null || (child.pid ? !isPidAlive(child.pid) : false),
+        });
+        if (!tunnelReady) {
+          const gone = childExit !== null || (child.pid ? !isPidAlive(child.pid) : false);
+          return fail({
+            code: gone ? 'RN_ISO_SUPERVISOR_EXITED' : 'RN_ISO_METRO_TIMEOUT',
+            message: gone
+              ? `The supervisor exited before the Expo tunnel became ready on port ${port}.`
+              : `Expo did not report a tunnel URL within ${waitSeconds}s.`,
+            remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
+          });
+        }
+      }
+
       supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) ||
         // child.pid is only undefined if the spawn itself failed, which the
         // health check above would already have turned into a failure.
@@ -500,6 +518,24 @@ async function waitForMetro({
   }
   const last = await probe(port, root);
   return Boolean(last.metro);
+}
+
+async function waitForExpoTunnel({
+  root,
+  seconds,
+  aborted = () => false,
+}: {
+  root: string;
+  seconds: number;
+  aborted?: () => boolean;
+}): Promise<boolean> {
+  const deadline = Date.now() + seconds * 1000;
+  while (Date.now() < deadline) {
+    if (readMetroTunnel(root)?.kind === 'expo') return true;
+    if (aborted()) return false;
+    await sleep(POLL_MS);
+  }
+  return readMetroTunnel(root)?.kind === 'expo';
 }
 
 // The evidence a start failure carries: the last lines of the supervisor's raw

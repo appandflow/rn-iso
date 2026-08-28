@@ -203,14 +203,17 @@ async function runSpawnedExpoStart({
   port,
   options = {},
   settings,
+  tunnelDelayMs,
 }: {
   port: number;
   options?: Record<string, unknown>;
   settings?: Record<string, unknown>;
+  tunnelDelayMs?: number;
 }) {
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
   const exec = metroExecutor({ listeners: {} });
   const held: { server: Server | null } = { server: null };
+  let tunnelWritten: Promise<number | null> = Promise.resolve(null);
   exec.spawn = (cmd, args, opts) => {
     exec.calls.spawn.push({ cmd, args, opts });
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
@@ -218,6 +221,14 @@ async function runSpawnedExpoStart({
       held.server = server;
       exec.listening = true;
     });
+    if (tunnelDelayMs !== undefined) {
+      tunnelWritten = new Promise((resolve) => {
+        setTimeout(() => {
+          writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://remote.exp.direct' } });
+          resolve(Date.now());
+        }, tunnelDelayMs);
+      });
+    }
     return { pid: process.pid, unref() {}, on() {} };
   };
   const base = exec.runQuiet.bind(exec);
@@ -229,7 +240,9 @@ async function runSpawnedExpoStart({
   upsertProject(root, { metroPort: port, ...(settings ? { settings } : {}) });
 
   try {
-    return { result: await runAction(options), exec };
+    const result = await runAction(options);
+    const completedAt = Date.now();
+    return { result, exec, completedAt, tunnelWrittenAt: await tunnelWritten };
   } finally {
     held.server?.close();
   }
@@ -479,6 +492,49 @@ describe('action: already running', () => {
     expect(result.errs.join('\n')).toMatch(/started outside rn-iso/);
   });
 
+  test('start --remote refuses an external Expo server that has no public URL', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    const port = 8169;
+    const server = await metroListener(port);
+    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+
+    let result;
+    try {
+      result = await runAction({ json: true, remote: true });
+    } finally {
+      server.close();
+    }
+
+    expect(result.exitCode).toBe(1);
+    expect(exec.calls.spawn).toEqual([]);
+    expect(JSON.parse(result.logs[0] ?? '').code).toBe('RN_ISO_REMOTE_START_REQUIRED');
+  });
+
+  test('start --remote accepts an external Expo server with an operator public URL', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    const port = 8170;
+    const server = await metroListener(port);
+    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
+    setExecutor(exec);
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { publicUrl: 'https://metro.example.test' } },
+    });
+
+    let result;
+    try {
+      result = await runAction({ json: true, remote: true });
+    } finally {
+      server.close();
+    }
+
+    expect(result.exitCode).toBe(null);
+    expect(exec.calls.spawn).toEqual([]);
+    expect(JSON.parse(result.logs[0] ?? '').alreadyRunning).toBe(true);
+  });
+
   test('two starts in a row leave one supervisor', async () => {
     const port = 8153;
     const server = await metroListener(port);
@@ -581,10 +637,23 @@ describe('action: spawning the supervisor', () => {
     const { exec } = await runSpawnedExpoStart({
       port: 8156,
       options: { json: true, wait: '10', remote: true },
+      tunnelDelayMs: 0,
     });
     const spawned = exec.calls.spawn[0];
     assert(spawned);
     expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', '8156', '--tunnel']);
+  });
+
+  test('start --remote waits for the Expo tunnel URL after Metro becomes healthy', async () => {
+    const { result, completedAt, tunnelWrittenAt } = await runSpawnedExpoStart({
+      port: 8168,
+      options: { json: true, wait: '10', remote: true },
+      tunnelDelayMs: 1000,
+    });
+
+    expect(result.exitCode).toBe(null);
+    expect(tunnelWrittenAt).not.toBe(null);
+    expect(completedAt >= (tunnelWrittenAt as number)).toBe(true);
   });
 
   test('plain start does not pass --tunnel to an Expo supervisor in auto mode', async () => {
@@ -600,6 +669,7 @@ describe('action: spawning the supervisor', () => {
       port,
       options: { json: true, wait: '10' },
       settings: { [platform]: { remote: true } },
+      tunnelDelayMs: 0,
     });
     expect(exec.calls.spawn[0]?.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port), '--tunnel']);
   });

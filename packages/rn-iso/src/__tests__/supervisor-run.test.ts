@@ -294,6 +294,27 @@ describe('runSupervisor', () => {
     expect(typeof startState.supervisor.startedAt).toBe('string');
   });
 
+  test('a new supervisor clears a stale Expo tunnel before it starts the server', async () => {
+    writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://stale.exp.direct' } });
+    const server = fakeServer({ mode: MODE_EXPO, serverPid: 31336 });
+    let tunnelAtStart: unknown = 'not observed';
+
+    await runSupervisor({
+      root,
+      port: 8090,
+      tunnel: true,
+      isExpo: () => true,
+      attachSignals: false,
+      onExit: () => {},
+      startExpo: async () => {
+        tunnelAtStart = readWorkspaceState(root)?.metroTunnel;
+        return server.handle;
+      },
+    });
+
+    expect(tunnelAtStart).toBe(undefined);
+  });
+
   test('detects the ecosystem and hosts Expo as a child', async () => {
     const server = fakeServer({ mode: MODE_EXPO, serverPid: 31337 });
     let bareCalled = false;
