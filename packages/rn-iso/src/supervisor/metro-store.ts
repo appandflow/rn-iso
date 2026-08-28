@@ -12,9 +12,9 @@
 // Two shapes, because the two dev servers are two different things:
 //   bare  -- rn-iso loads the project's Metro config in-process, so the store
 //            is APPENDED to config.cacheStores right there (appendCacheStore).
-//   expo  -- the dev server is the project's own `expo start` child, so the
-//            store rides in on NODE_OPTIONS=--require <shim> (metroShimPath /
-//            composeNodeOptions). The shim is the fail-soft half; see it.
+//   expo  -- SDK 54+ lets the child load a config path supplied through
+//            EXPO_OVERRIDE_METRO_CONFIG. rn-iso points that at its adapter,
+//            which composes the project's config and appends the store.
 //
 // BOTH ADDRESS ONE STORE. The root comes from @rn-iso/core's metroCacheRoot,
 // which is the same function @rn-iso/metro's own cacheRoot() calls, so a
@@ -31,12 +31,6 @@ import { register } from '../cache-manifest.ts';
 // A Metro FileStore, kept structural so rn-iso need not depend on
 // metro-cache's types: the constructor is all of it that is used here.
 type FileStoreCtor = new (options: { root: string }) => object;
-
-// The env vars the shim reads. Named here because this module is what sets
-// them and the shim is what reads them, and nothing else may -- which is also
-// why they are module-local rather than exported.
-const STORE_ENV = 'RN_ISO_METRO_STORE';
-const PROJECT_ENV = 'RN_ISO_PROJECT_ROOT';
 
 // PURE-ish (reads one file). The name that partitions this project's entries
 // inside the shared root, mirroring @rn-iso/metro's `sharedCacheStores(name)`
@@ -132,11 +126,11 @@ export function appendCacheStore(
   return { added: true, storeRoot };
 }
 
-// --- the Expo half: the shim and the NODE_OPTIONS it rides in on ------------
+// --- the Expo half: SDK 54+'s supported config override seam ----------------
 
-const SHIM_FILE = 'metro-cache-store.cjs';
+const EXPO_ADAPTER_FILE = 'expo-metro-config.cjs';
 
-// The shim is a real file shipped in the package (see package.json "files"),
+// The adapter is a real file shipped in the package (see package.json "files"),
 // not a string this module writes to a temp directory: it has to be
 // require()-able by SOMEBODY ELSE'S node process, and a generated temp file is
 // one more thing to clean up and one more thing to be missing.
@@ -144,73 +138,53 @@ const SHIM_FILE = 'metro-cache-store.cjs';
 // Two candidate depths because there are two ways this module runs: from
 // `dist/` in a published install, and from `src/supervisor/` in this repo.
 // Checking both beats hardcoding either.
-export function metroShimPath(fromUrl: string = import.meta.url): string | null {
+export function expoMetroConfigPath(fromUrl: string = import.meta.url): string | null {
   const here = dirname(fileURLToPath(fromUrl));
   for (const rel of ['../shim', '../../shim']) {
-    const candidate = resolve(here, rel, SHIM_FILE);
+    const candidate = resolve(here, rel, EXPO_ADAPTER_FILE);
     if (existsSync(candidate)) return candidate;
   }
   return null;
 }
 
-// PURE. NODE_OPTIONS with our --require APPENDED, never clobbered: the caller
-// may have set it for reasons of their own (a profiler, a source-map hook, an
-// --max-old-space-size a big graph needs) and dropping that would be rn-iso
-// silently changing how somebody else's dev server runs.
-//
-// Returns null when the shim must not be injected at all, which is a state the
-// caller reports rather than works around:
-//   - already there (an outer rn-iso, a re-exec): adding it twice is not
-//     harmful, but it is noise, and the shim is idempotent anyway
-//   - a path containing a double quote, which NODE_OPTIONS' own tokenizer
-//     cannot express. Node parses NODE_OPTIONS shell-like and understands
-//     quotes, so a path with SPACES is quoted here and works; a path with a
-//     quote in it is refused rather than mis-parsed into arguments that would
-//     make the child fail to start.
-export function composeNodeOptions(existing: string | undefined | null, shimPath: string): string | null {
-  if (shimPath.includes('"')) return null;
-  const current = typeof existing === 'string' ? existing : '';
-  if (current.includes(shimPath)) return null;
-  const flag = `--require ${/\s/.test(shimPath) ? `"${shimPath}"` : shimPath}`;
-  return current.trim() === '' ? flag : `${current} ${flag}`;
-}
-
-// THE SHIM'S SUCCESS LINE, and the other half of the contract the env vars
+// THE ADAPTER'S SUCCESS LINE, and the other half of the contract the env vars
 // above start. rn-iso can only ever know that it ASKED for the injection --
-// it set NODE_OPTIONS on a process it does not run -- so the record that says
-// the store IS in the config Metro loaded has to come from the shim, after it
-// put it there. The shim writes this one line to stderr; server-expo turns it
+// it configured a process it does not run -- so the record that says the store
+// IS in the config Metro loaded has to come from the adapter, after it put it
+// there. The adapter writes this one line to stderr; server-expo turns it
 // into the `cache_store_added` record, the same event the bare path writes for
 // the same fact.
 //
-// The prefix is duplicated in shim/metro-cache-store.cjs (which can import
-// nothing), so the two move together or the confirmation silently stops
-// arriving -- which is exactly the failure mode this replaced.
+// The prefix is duplicated in shim/expo-metro-config.cjs (which cannot import
+// rn-iso's ESM internals), so the two move together or the confirmation
+// silently stops arriving -- which is exactly the failure mode this replaced.
 const STORE_OK_PREFIX = 'rn-iso-metro-store: sharing Metro transforms through ';
 
-// PURE. The store root a shim line confirms, or null when this is not one.
+// PURE. The store root an adapter line confirms, or null when this is not one.
 export function metroStoreConfirmedRoot(line: string): string | null {
   if (!line.startsWith(STORE_OK_PREFIX)) return null;
   const root = line.slice(STORE_OK_PREFIX.length).trim();
   return root === '' ? null : root;
 }
 
-// PURE. The environment additions that put the shim into an Expo child, or
-// null when it must not go in. Kept separate from the spawn so the composition
-// -- which is the part with a rule in it -- is testable without a child
-// process.
-export function metroStoreEnv({
+// PURE. The environment additions that point an Expo child at the adapter.
+// Kept separate from the spawn so composing a caller's existing override is
+// testable without a child process.
+export function expoMetroStoreEnv({
   root,
   storeRoot,
-  shimPath,
-  nodeOptions,
+  adapterPath,
+  existingOverride,
 }: {
   root: string;
   storeRoot: string;
-  shimPath: string;
-  nodeOptions?: string | null;
-}): Record<string, string> | null {
-  const composed = composeNodeOptions(nodeOptions, shimPath);
-  if (composed === null) return null;
-  return { NODE_OPTIONS: composed, [STORE_ENV]: storeRoot, [PROJECT_ENV]: root };
+  adapterPath: string;
+  existingOverride?: string | null;
+}): Record<string, string> {
+  return {
+    EXPO_OVERRIDE_METRO_CONFIG: adapterPath,
+    RN_ISO_METRO_STORE: storeRoot,
+    RN_ISO_PROJECT_ROOT: root,
+    ...(existingOverride ? { RN_ISO_EXPO_METRO_CONFIG: existingOverride } : {}),
+  };
 }

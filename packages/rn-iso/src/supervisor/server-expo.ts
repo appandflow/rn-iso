@@ -14,9 +14,8 @@
 //
 // The cost is structure: levels are INFERRED from the line rather than read
 // from an event, and every record carries `raw: true` to say so. Hosting Expo
-// in-process by deep-importing MetroBundlerDevServer is the recorded upgrade
-// path, and is deferred because those are unversioned build artifacts of an
-// internal TS module.
+// in-process would require deep imports of unversioned CLI internals and would
+// still not provide a supported reporter hook, so the child is intentional.
 //
 // `expo start --port <n>` and NOTHING else, ever. Which flags a project needs
 // is the project's judgment, the same reason rn-iso stopped wrapping builds.
@@ -28,9 +27,9 @@ import { getExecutor } from '../exec.ts';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { resolvePackageJson } from '../project.ts';
 import {
-  metroShimPath,
+  expoMetroConfigPath,
+  expoMetroStoreEnv,
   metroStoreConfirmedRoot,
-  metroStoreEnv,
   metroStoreRoot,
   registerMetroStore,
 } from './metro-store.ts';
@@ -58,6 +57,23 @@ export function expoBinPath(root: string): string | null {
   const fromPackage = expoBinFromPackage(resolvePackageJson(root, 'expo'));
   if (fromPackage) return fromPackage;
   return findBinUpward(root, 'expo');
+}
+
+// Expo added EXPO_OVERRIDE_METRO_CONFIG in SDK 54. Older CLIs have no
+// supported way to supply a config without editing the project, so rn-iso
+// deliberately leaves their Metro cache alone.
+export function expoSdkMajor(root: string): number | null {
+  const packageJsonPath = resolvePackageJson(root, 'expo');
+  if (!packageJsonPath) return null;
+  try {
+    const pkg: unknown = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+    const version = (pkg as { version?: unknown } | null)?.version;
+    if (typeof version !== 'string') return null;
+    const match = /^(\d+)/.exec(version);
+    return match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
 }
 
 // PURE-ish (reads the package.json it is given the path to). The executable a
@@ -247,7 +263,7 @@ export function cleanLine(line: unknown): string {
 export function recordFromLine(line: unknown, { stream = 'stdout' }: { stream?: string } = {}): NdjsonRecord | null {
   const msg = cleanLine(line);
   if (!msg.trim()) return null;
-  // THE ONE STRUCTURED LINE IN THIS STREAM. The cache shim runs inside this
+  // THE ONE STRUCTURED LINE IN THIS STREAM. The config adapter runs inside this
   // child, so its success line is the only evidence rn-iso can have that the
   // shared transform store reached the config Metro loaded -- see
   // resolveMetroStoreInjection below for why the record cannot be written on
@@ -313,14 +329,13 @@ export interface ExpoServerHandle {
 // THE ZERO-CONFIG HALF OF `rn-iso start` ON AN EXPO PROJECT.
 //
 // The bare path can append a cache store to the config it loaded, because it
-// loads the config. Here the dev server is the project's own `expo start`, so
-// the only seam rn-iso has is the environment the child is spawned with:
-// NODE_OPTIONS gains `--require <shim>`, and the shim (packages/rn-iso/shim,
-// CJS, no dependencies) appends the store to whatever metro-config's
-// loadConfig returns inside that process.
+// loads the config. Here the dev server is the project's own `expo start`.
+// Expo SDK 54+ exposes EXPO_OVERRIDE_METRO_CONFIG, so rn-iso points it at a
+// packaged adapter that composes the project's own config and appends the
+// store. SDK 53 and older run normally without rn-iso's shared Metro store.
 //
-// This is deliberately the more invasive of the two, so it is the one with a
-// kill switch and a fail-soft shim: `caches.injectMetroStore: false` in
+// This path has a kill switch and a fail-soft adapter:
+// `caches.injectMetroStore: false` in
 // ~/.rn-iso/config.json turns it off MACHINE-wide, which is the point --
 // evaluating rn-iso must need no change to the repo, so opting out of a piece
 // of it must not need one either.
@@ -339,35 +354,44 @@ function resolveMetroStoreInjection(
     });
     return null;
   }
-  const shimPath = metroShimPath();
-  if (!shimPath) {
-    log.write({
-      src: 'metro',
-      level: 'warn',
-      event: 'cache_store_skipped',
-      msg: "rn-iso's Metro cache shim is missing from this install, so the Expo dev server runs on whatever transform cache the project configured",
-    });
-    return null;
-  }
-  const storeRoot = metroStoreRoot(root);
-  const additions = metroStoreEnv({ root, storeRoot, shimPath, nodeOptions: env.NODE_OPTIONS });
-  if (!additions) {
+  const sdkMajor = expoSdkMajor(root);
+  if (sdkMajor === null || sdkMajor < 54) {
     log.write({
       src: 'metro',
       level: 'debug',
       event: 'cache_store_skipped',
-      msg: `the shim at ${shimPath} could not be added to NODE_OPTIONS (already present, or a path NODE_OPTIONS cannot quote)`,
+      msg:
+        sdkMajor === null
+          ? "could not determine this project's Expo SDK, so rn-iso left its Metro cache unchanged"
+          : `Expo SDK ${sdkMajor} predates the config override added in SDK 54, so it runs with its normal Metro cache`,
     });
     return null;
   }
+  const adapterPath = expoMetroConfigPath();
+  if (!adapterPath) {
+    log.write({
+      src: 'metro',
+      level: 'warn',
+      event: 'cache_store_skipped',
+      msg: "rn-iso's Expo Metro config adapter is missing from this install, so the dev server runs on whatever transform cache the project configured",
+    });
+    return null;
+  }
+  const storeRoot = metroStoreRoot(root);
+  const additions = expoMetroStoreEnv({
+    root,
+    storeRoot,
+    adapterPath,
+    existingOverride: env.EXPO_OVERRIDE_METRO_CONFIG,
+  });
   registerMetroStore(storeRoot);
   // WHAT RN-ISO DID, NOT WHAT HAPPENED. This record used to claim the store
   // was shared, and it was written HERE -- before the child existed, let alone
-  // before the shim inside it had tried anything. On tlon that made the
-  // timeline report a shared store through three bundles while the shim was
+  // before the adapter inside it had tried anything. On tlon that made the
+  // timeline report a shared store through three bundles while the adapter was
   // failing on every one of them (issue #73). The only thing this side can
   // honestly report is the request it is about to make; the outcome belongs to
-  // the process that has it, and arrives as the shim's own line, which
+  // the process that has it, and arrives as the adapter's own line, which
   // recordFromLine turns into `cache_store_added`.
   log.write({
     src: 'metro',
@@ -375,7 +399,7 @@ function resolveMetroStoreInjection(
     event: 'cache_store_requested',
     msg:
       `asked this project's Expo dev server to share Metro transforms through ${storeRoot} ` +
-      '(NODE_OPTIONS=--require, no metro.config.js change); the shim in that process reports the outcome',
+      '(EXPO_OVERRIDE_METRO_CONFIG, no metro.config.js change); the config adapter in that process reports the outcome',
   });
   return additions;
 }
@@ -404,9 +428,9 @@ export async function startExpoServer({
   const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'));
   const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
 
-  // APPENDED to the caller's environment, never substituted for it: the
-  // NODE_OPTIONS composition inside metroStoreEnv keeps whatever was already
-  // there (a profiler, a --max-old-space-size a big graph needs).
+  // APPENDED to the caller's environment, never substituted for it. If the
+  // caller already supplied an Expo override, the adapter composes that config
+  // before adding the shared store.
   const storeEnv = resolveMetroStoreInjection(root, { log, env: process.env });
 
   const child = spawn(bin, ['start', '--port', String(port)], {

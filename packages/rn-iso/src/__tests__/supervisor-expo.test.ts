@@ -14,6 +14,7 @@ import {
   cleanLine,
   createLineReader,
   expoBinPath,
+  expoSdkMajor,
   inferLevel,
   isBundleMarker,
   recordFromLine,
@@ -21,10 +22,9 @@ import {
   stripAnsi,
 } from '../supervisor/server-expo.ts';
 import {
-  composeNodeOptions,
-  metroShimPath,
+  expoMetroConfigPath,
+  expoMetroStoreEnv,
   metroStoreConfirmedRoot,
-  metroStoreEnv,
   metroStoreRoot,
 } from '../supervisor/metro-store.ts';
 import { makeChildProcess } from './_factories.ts';
@@ -51,16 +51,20 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.RN_ISO_HOME;
   delete process.env.NODE_OPTIONS;
+  delete process.env.EXPO_OVERRIDE_METRO_CONFIG;
 });
 
 // The .bin shim, where a NON-hoisted install puts it. expoBinPath has to find
 // this one by walking up (it is in the project itself here), and the hoisted
 // case is covered in the monorepo-resolution suite.
-function fakeBin(dir = root) {
+function fakeBin(dir = root, sdk = 54) {
   const bin = join(dir, 'node_modules', '.bin', 'expo');
   mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true });
   writeFileSync(bin, '#!/bin/sh\n');
   chmodSync(bin, 0o755);
+  const expo = join(dir, 'node_modules', 'expo');
+  mkdirSync(expo, { recursive: true });
+  writeFileSync(join(expo, 'package.json'), JSON.stringify({ name: 'expo', version: `${sdk}.0.0` }));
   return bin;
 }
 
@@ -432,64 +436,42 @@ test('inferLevel classifies Expo bundling failures as errors', () => {
   expect(inferLevel('Bundling 100%')).toBe('info');
 });
 
-// --- the shared transform store, injected into the Expo child --------------
+// --- the shared transform store, supplied through Expo's config override ---
 //
 // The bare path appends a store to the config it hosts. Here the dev server is
-// the project's own `expo start`, so the only seam is the environment -- and
-// the rule that matters is that NODE_OPTIONS is APPENDED to, never replaced:
-// the caller may have set it for reasons rn-iso knows nothing about.
-describe('the Metro store injected into an Expo child', () => {
-  const shim = '/pkg/rn-iso/shim/metro-cache-store.cjs';
+// the project's own `expo start`, so SDK 54+'s EXPO_OVERRIDE_METRO_CONFIG is
+// the supported seam. SDK 53 and older simply keep Expo's normal cache.
+describe('the Metro store supplied to an Expo child', () => {
+  const adapter = '/pkg/rn-iso/shim/expo-metro-config.cjs';
 
-  test('an unset NODE_OPTIONS becomes exactly our --require', () => {
-    expect(composeNodeOptions(undefined, shim)).toBe(`--require ${shim}`);
-    expect(composeNodeOptions('', shim)).toBe(`--require ${shim}`);
-    expect(composeNodeOptions(null, shim)).toBe(`--require ${shim}`);
+  test('the env additions point Expo at the adapter and preserve an existing override', () => {
+    expect(
+      expoMetroStoreEnv({
+        root: '/w/app',
+        storeRoot: '/cache/app',
+        adapterPath: adapter,
+        existingOverride: '/w/app/custom-metro.cjs',
+      }),
+    ).toEqual({
+      EXPO_OVERRIDE_METRO_CONFIG: adapter,
+      RN_ISO_METRO_STORE: '/cache/app',
+      RN_ISO_PROJECT_ROOT: '/w/app',
+      RN_ISO_EXPO_METRO_CONFIG: '/w/app/custom-metro.cjs',
+    });
   });
 
-  test("the caller's own NODE_OPTIONS is kept and ours is APPENDED to it", () => {
-    expect(composeNodeOptions('--max-old-space-size=8192', shim)).toBe(`--max-old-space-size=8192 --require ${shim}`);
-    expect(composeNodeOptions('--require /other/hook.js --enable-source-maps', shim)).toBe(
-      `--require /other/hook.js --enable-source-maps --require ${shim}`,
-    );
-  });
-
-  test('a shim already on the line is not added twice', () => {
-    expect(composeNodeOptions(`--require ${shim}`, shim)).toBe(null);
-  });
-
-  // Node parses NODE_OPTIONS shell-like and understands double quotes, so a
-  // path with spaces works when it is quoted -- and a path with a quote in it
-  // is refused rather than mis-parsed into arguments that break the child.
-  test('a path with spaces is quoted, and a path with a quote is refused', () => {
-    expect(composeNodeOptions('', '/My Apps/rn-iso/shim.cjs')).toBe('--require "/My Apps/rn-iso/shim.cjs"');
-    expect(composeNodeOptions('', '/we"ird/shim.cjs')).toBe(null);
-  });
-
-  test('the env additions name the store and the project beside the require', () => {
-    const env = metroStoreEnv({ root: '/w/app', storeRoot: '/cache/app', shimPath: shim, nodeOptions: '--x' });
-    assert(env);
-    expect(env.NODE_OPTIONS).toBe(`--x --require ${shim}`);
-    expect(env.RN_ISO_METRO_STORE).toBe('/cache/app');
-    expect(env.RN_ISO_PROJECT_ROOT).toBe('/w/app');
-    expect(metroStoreEnv({ root: '/w/app', storeRoot: '/c', shimPath: shim, nodeOptions: `--require ${shim}` })).toBe(
-      null,
-    );
-  });
-
-  // The shim is a real file shipped in the package, not a string written to a
-  // temp directory: it has to be require()-able by somebody else's process.
-  test('the shim ships in this package and is found from here', () => {
-    const found = metroShimPath();
+  test('the adapter ships in this package and is found from here', () => {
+    const found = expoMetroConfigPath();
     assert(found);
-    expect(found.endsWith(join('shim', 'metro-cache-store.cjs'))).toBe(true);
+    expect(found.endsWith(join('shim', 'expo-metro-config.cjs'))).toBe(true);
     expect(existsSync(found)).toBe(true);
-    expect(metroShimPath('file:///nowhere/at/all/x.js')).toBe(null);
+    expect(expoMetroConfigPath('file:///nowhere/at/all/x.js')).toBe(null);
   });
 
-  test('the spawned child carries the require, the store and the environment it was given', async () => {
+  test('the spawned SDK 54 child carries the adapter, store, and caller environment', async () => {
     fakeBin();
     process.env.NODE_OPTIONS = '--max-old-space-size=8192';
+    process.env.EXPO_OVERRIDE_METRO_CONFIG = '/w/app/custom-metro.cjs';
     const calls: { opts: SpawnOptions }[] = [];
     await startExpoServer({
       root,
@@ -501,12 +483,35 @@ describe('the Metro store injected into an Expo child', () => {
       },
     });
     const env = calls[0]?.opts.env as Record<string, string>;
-    expect(env.NODE_OPTIONS?.startsWith('--max-old-space-size=8192 --require ')).toBe(true);
-    expect(env.NODE_OPTIONS).toContain('metro-cache-store.cjs');
+    expect(env.NODE_OPTIONS).toBe('--max-old-space-size=8192');
+    expect(env.EXPO_OVERRIDE_METRO_CONFIG).toContain('expo-metro-config.cjs');
+    expect(env.RN_ISO_EXPO_METRO_CONFIG).toBe('/w/app/custom-metro.cjs');
     expect(env.RN_ISO_METRO_STORE).toBe(metroStoreRoot(root));
     expect(env.RN_ISO_PROJECT_ROOT).toBe(root);
     // Still the project's own `expo start --port N`, unchanged.
     expect(env.FORCE_COLOR).toBe('0');
+    delete process.env.EXPO_OVERRIDE_METRO_CONFIG;
+  });
+
+  test('Expo SDK 53 runs normally without rn-iso Metro cache env', async () => {
+    fakeBin(root, 53);
+    const logsDir = join(root, '.rn-iso', 'logs');
+    const calls: { opts: SpawnOptions }[] = [];
+    await startExpoServer({
+      root,
+      port: 8119,
+      logsDir,
+      spawnFn: (_cmd, _args, opts) => {
+        calls.push({ opts });
+        return fakeChild();
+      },
+    });
+    const env = calls[0]?.opts.env as Record<string, string>;
+    expect(expoSdkMajor(root)).toBe(53);
+    expect(env.EXPO_OVERRIDE_METRO_CONFIG).toBe(undefined);
+    expect(env.RN_ISO_METRO_STORE).toBe(undefined);
+    const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
+    expect(String(records.find((record) => record.event === 'cache_store_skipped')?.msg)).toContain('predates');
   });
 
   test('the machine-level kill switch leaves NODE_OPTIONS exactly as the caller set it', async () => {
@@ -539,10 +544,10 @@ describe('the Metro store injected into an Expo child', () => {
 //
 // rn-iso wrote `cache_store_injected` -- "sharing Metro transforms through
 // ..." -- before the child was even spawned, so on tlon the timeline reported
-// a shared store through three bundles while the shim inside that child was
+// a shared store through three bundles while the old shim inside that child was
 // failing on every one of them. Nothing on this side CAN know the outcome: it
-// happens in another process. So this side reports the REQUEST, and the shim
-// reports the outcome in a line only a working shim writes.
+// happens in another process. So this side reports the REQUEST, and the config
+// adapter reports the outcome in a line only a working adapter writes.
 describe('the honest record of the Metro store injection', () => {
   test('what rn-iso writes on the way in is the request, not a claim of success', async () => {
     fakeBin();
@@ -559,7 +564,7 @@ describe('the honest record of the Metro store injection', () => {
     expect(records.some((r) => r.event === 'cache_store_added')).toBe(false);
   });
 
-  test("the shim's own line is what becomes the confirming record", () => {
+  test("the adapter's own line is what becomes the confirming record", () => {
     const record = recordFromLine('rn-iso-metro-store: sharing Metro transforms through /cache/app');
     assert(record);
     expect(record.event).toBe('cache_store_added');
@@ -570,7 +575,7 @@ describe('the honest record of the Metro store injection', () => {
     expect(record.raw).toBe(undefined);
   });
 
-  test('the confirmation parser only matches the shim, and only with a root', () => {
+  test('the confirmation parser only matches the adapter, and only with a root', () => {
     expect(metroStoreConfirmedRoot('rn-iso-metro-store: sharing Metro transforms through /cache/app')).toBe(
       '/cache/app',
     );
@@ -589,8 +594,8 @@ describe('the honest record of the Metro store injection', () => {
   });
 
   // And the failure half still reads as a warning, so `logs --errors` and
-  // `status` see a shim that could not apply.
-  test("the shim's failure line is still an ordinary warn record", () => {
+  // `status` see an adapter that could not apply.
+  test("the adapter's failure line is still an ordinary warn record", () => {
     const record = recordFromLine(
       "warning: rn-iso could not share this project's Metro transform cache (metro-cache exports no FileStore); the dev server is running with the cache it would have had anyway.",
     );

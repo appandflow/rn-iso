@@ -91,7 +91,7 @@ them without touching assertion logic.
 `test/e2e/native/run-cache-e2e.mjs` is the executable replacement for the
 hand-written cache field passes. Those kept drifting in coverage: one Android
 pass never checked Gradle caching at all, a zero-config pass ran iOS-only and
-left `--build-cache` unproven, and the Metro store shim shipped through green CI
+left `--build-cache` unproven, and a broken Expo Metro store shipped through green CI
 (#73) because nothing measured the directory it was supposed to be filling.
 
 **The three-part rule.** For every cache it proves three separate things, and
@@ -103,7 +103,7 @@ refuses to take one as evidence of another:
 - **STORES** -- the cache directory actually GREW. A file count before and a
   file count after. **This is the one that matters**: an engaged cache that
   stores nothing looks identical to a working one from every other angle, and
-  that is exactly the shape of the shim bug.
+  that is exactly the shape of the old loader-hook bug.
 - **REUSED** -- a SECOND workspace got the stored work back.
 
 **The eight checks.**
@@ -111,7 +111,7 @@ refuses to take one as evidence of another:
 | id                  | what it proves                                                                            | how                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `zero-config`       | rn-iso writes no runtime state into the repo; global workspace state needs no ignore rule | `git status --porcelain` before and after; a change to `metro.config.js` / `Podfile` / `gradle.properties` is a CRITICAL failure; every worktree is removed WITHOUT `--force` and no project `.gitignore` mutation is expected                                                                                                                                                          |
-| `metro-store`       | the shared transform store is engaged per dev-server mode, stores, and is reused          | the `cache_store_added` record in the global workspace `logs/metro.ndjson` (expo: the shim's confirmation from inside the child; bare: the in-process append), the ABSENCE of the shim's "could not share" warning, one store root for both workspaces, then a file count around each workspace's build+launch                                                                          |
+| `metro-store`       | the shared transform store is engaged per dev-server mode, stores, and is reused          | the `cache_store_added` record in the global workspace `logs/metro.ndjson` (Expo SDK 54+: the config adapter's confirmation from inside the child; bare: the in-process append), the absence of a "could not share" warning, one store root for both workspaces, then a file count around each workspace's build+launch                                                                 |
 | `xcode-cas`         | Xcode 26 compilation caching                                                              | the five build settings read verbatim off the `build_start` record in `build-ios.ndjson`, CAS directory growth across the cold compile, and near-zero growth when a never-compiled workspace compiles the same sources                                                                                                                                                                  |
 | `gradle-cache`      | the Gradle build cache                                                                    | `--build-cache` read off the `build_start` record in `build-android.ndjson` (added in #78 so this need not race `ps`), growth of `<gradle user home>/caches/build-cache-1`, and `FROM-CACHE` tasks in a second worktree forced to run gradle with `rn-iso android --no-build-cache`                                                                                                     |
 | `fingerprint-cache` | the entry is complete and under the right key                                             | the entry holds the artifact AND `fingerprint-sources.json` (and, for an Android release entry, `assets-manifest.json`); a second run in the SAME tree must HIT what the first stored, which is what proves the entry landed under the POST-mutation key that prebuild and `pod install` shift it to                                                                                    |
@@ -172,15 +172,11 @@ Recorded so that a red run is not mysterious. First full local run,
 `gradle-cache` SKIP (iOS), and **two checks fail on real product bugs, both
 still open**:
 
-- **`metro-store`** -- on Expo SDK 54+ the Metro packages are vendored under
-  `@expo/metro`, so the dev server requires `@expo/metro/metro-config` and never
-  the bare `metro-config` that `shim/metro-cache-store.cjs` hooks
-  (`if (request !== 'metro-config') return exports`). The shim therefore never
-  substitutes anything: no confirmation, **no warning either** (it only warns on
-  paths it reaches), and the shared transform store directory is never created.
-  The timeline shows `cache_store_requested` and nothing after it. This is the
-  #73 failure mode in a new place, and it is exactly what the STORES measurement
-  is for -- the request record alone looks like success.
+- **`metro-store` (fixed)** -- the old Expo implementation intercepted Node's
+  module loader and missed Expo's vendored Metro path. Expo SDK 54+'s
+  `EXPO_OVERRIDE_METRO_CONFIG` now loads a small adapter instead, so the project
+  config is composed through an explicit config seam and no module interception
+  remains. SDK 53 and older intentionally use Expo's normal Metro cache.
 - **`gc-view`** -- rn-iso points `COMPILATION_CACHE_CAS_PATH` at
   `<config dir>/compilation-cache`, but nothing registers that directory in the
   cache manifest, and `caches.ts` only DETECTS Xcode's default CAS under
