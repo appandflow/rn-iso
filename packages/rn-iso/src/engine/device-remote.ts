@@ -489,19 +489,9 @@ export async function resolveRemoteContext({
   label,
   platform = 'ios',
   easBin,
-  tunnelMode = 'auto',
-  publicUrl = null,
-  isExpo = false,
-  metroPort = 8081,
-  available = [],
   env = process.env,
   lookupAgentDevice = defaultLookupAgentDevice,
   maxDurationMinutes = null,
-  startManagedTunnel = startTunnel,
-  readTunnelRecord = readMetroTunnel,
-  writeTunnelRecord = writeWorkspaceState,
-  isTunnelAlive = isPidAlive,
-  gateOrigin = gateMetroOrigin,
 }: {
   root: string;
   label: string;
@@ -569,96 +559,6 @@ export async function resolveRemoteContext({
   // macmini` makes false -- and the app was then pointed at a localhost that
   // resolved on the Mac mini. `metro.tunnel: "off"` is how that case is
   // DECLARED instead; see engine/metro-reach.ts.
-  const publicMetroUrl = env[PUBLIC_METRO_ENV]?.trim() || publicUrl || null;
-  const plan = planMetroReach({ mode: tunnelMode, metroPort, publicUrl: publicMetroUrl, isExpo, available });
-  if ('failed' in plan) return plan;
-
-  // Act on the plan: an asserted-local origin needs nothing further; the
-  // other two branches produce an origin rn-iso has to arrange itself, and
-  // both are non-local -- see the `gate` decision below.
-  let resolvedUrl: string | null = null;
-  let gate = false;
-  if ('origin' in plan) {
-    resolvedUrl = plan.origin;
-    gate = plan.gate;
-  } else if ('expoTunnel' in plan) {
-    // `start` records the URL the moment Expo's own tunnel comes up (see
-    // supervisor/server-expo.ts); a remote run can only use it, never start
-    // one of its own -- `ios --remote` cannot add `--tunnel` to an
-    // already-running dev server.
-    const recorded = readTunnelRecord(root);
-    if (!recorded || recorded.kind !== 'expo') {
-      return {
-        failed:
-          "This workspace's Metro tunnels itself (metro.tunnel is expo, or auto on an Expo project), but no Expo tunnel URL is recorded.",
-        remedy:
-          'Run `rn-iso start` (or restart it) so Expo can establish its own tunnel before a remote device connects.',
-      };
-    }
-    resolvedUrl = recorded.url;
-    gate = true;
-  } else {
-    // { start: provider }. A tunnel already recorded for this port, still
-    // alive, is reused rather than doubling up -- the same reason a live EAS
-    // session is reused below: starting a second one on every re-run would
-    // leak the first, unrecorded and never reaped.
-    const port = Number(metroPort);
-    const recorded = readTunnelRecord(root);
-    if (recorded && recorded.kind === 'managed' && recorded.port === port && isTunnelAlive(recorded.pid)) {
-      resolvedUrl = recorded.url;
-    } else {
-      const started = await startManagedTunnel({ provider: plan.start, port });
-      if ('failed' in started) {
-        return {
-          failed: `Could not start a ${plan.start} tunnel for port ${port}: ${started.reason}`,
-          remedy:
-            'Set metro.publicUrl to a tunnel you already have, or metro.tunnel to "off" if the device shares this machine.',
-        };
-      }
-      // Recorded IMMEDIATELY: the process exists and holds a port from this
-      // line on, so a crash before ensureBooted must still leave `stop`,
-      // `gc` and `worktree remove` something to reap. A write failure is
-      // noted but never refuses the run -- the tunnel still works, only its
-      // record does not, which the next `stop` reports as a leak rather than
-      // silently losing it.
-      try {
-        writeTunnelRecord(root, {
-          metroTunnel: {
-            kind: 'managed',
-            provider: plan.start,
-            pid: started.pid,
-            url: started.url,
-            port,
-            startedAt: new Date().toISOString(),
-          },
-        });
-      } catch {
-        /* the tunnel still runs; only its record failed to write */
-      }
-      resolvedUrl = started.url;
-    }
-    gate = true;
-  }
-
-  // The gate, before anything billable. `resolvedUrl` is a SECOND address for
-  // the reserved port -- an operator's own, Expo's, or a managed one -- and
-  // none of them are proven to still reach THIS workspace without it (see
-  // engine/metro-gate.ts's header for the tunnel-outlived-the-reservation bug
-  // this closes).
-  if (gate && resolvedUrl) {
-    const logsDir = workspaceLogsDir(root);
-    const result = await gateOrigin({
-      origin: resolvedUrl,
-      metroPort,
-      platform,
-      readRecords: () => readMetroRecords(logsDir),
-      isProof: isBundleProof,
-    });
-    if (result.failed) {
-      return { failed: result.reason ?? 'Metro gate failed.', remedy: result.remedy ?? '', code: REMOTE_METRO_WRONG };
-    }
-  }
-
   return {
     ctx: {
       root,
@@ -667,12 +567,23 @@ export async function resolveRemoteContext({
       easBin: easBin ?? '',
       agentDeviceBin,
       maxDurationMinutes,
-      publicMetroUrl: resolvedUrl ?? publicMetroUrl,
-      tunnelMode,
-      isExpo,
+      // Filled in later by ensureMetroReachable, once the reserved port is
+      // known and the local Metro gate has confirmed a dev server is there.
+      publicMetroUrl: null,
       existingDaemon,
     },
   };
+}
+
+// PURE-ish. Is this binary on PATH? Used to decide which tunnel providers
+// rn-iso could start. Fails CLOSED to "absent": a probe that itself fails
+// must not make rn-iso try to spawn something that is not there.
+export function binOnPath(bin: string): boolean {
+  try {
+    return Boolean(getExecutor().runQuiet(`command -v ${bin}`, { timeoutMs: 5000 }));
+  } catch {
+    return false;
+  }
 }
 
 function defaultLookupAgentDevice(): string | null {
@@ -809,6 +720,9 @@ function readDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null 
  * and existing test is untouched.
  */
 export function remoteIosDeps(ctx: RemoteContext): {
+  // Handed back so the command layer can pass it to ensureMetroReachable,
+  // which fills in the origin once the reserved port is known.
+  ctx: RemoteContext;
   checkDeviceCapacity: () => null;
   ensureOwnedDevice: () => Promise<RemoteDeviceRecord>;
   ensureBooted: (opts?: { out?: (msg: string) => void }) => Promise<BootResult>;
@@ -822,8 +736,10 @@ export function remoteIosDeps(ctx: RemoteContext): {
   createdSessionId: () => string | null;
   webPreviewUrl: () => string | null;
 } {
-  const core = remoteDeviceDeps({ ...ctx, platform: 'ios' });
+  const shared: RemoteContext = { ...ctx, platform: 'ios' };
+  const core = remoteDeviceDeps(shared);
   return {
+    ctx: shared,
     checkDeviceCapacity: core.checkCapacity,
     ensureOwnedDevice: core.ensureDevice,
     ensureBooted: core.ensureBooted,
@@ -851,6 +767,7 @@ export function remoteIosDeps(ctx: RemoteContext): {
  * emulator where a reverse would be meaningless from here.
  */
 export function remoteAndroidDeps(ctx: RemoteContext): {
+  ctx: RemoteContext;
   checkCapacity: () => null;
   ensureDevice: () => Promise<RemoteDeviceRecord>;
   ensureDeviceBooted: (opts?: { out?: (msg: string) => void }) => Promise<{
@@ -869,8 +786,10 @@ export function remoteAndroidDeps(ctx: RemoteContext): {
   createdSessionId: () => string | null;
   webPreviewUrl: () => string | null;
 } {
-  const core = remoteDeviceDeps({ ...ctx, platform: 'android' });
+  const shared: RemoteContext = { ...ctx, platform: 'android' };
+  const core = remoteDeviceDeps(shared);
   return {
+    ctx: shared,
     checkCapacity: core.checkCapacity,
     ensureDevice: core.ensureDevice,
     // Same identity, different field name: android.ts reads `serial` where
@@ -946,4 +865,149 @@ export function teardownRemote(
   } catch (err) {
     return { status: 'failed', reason: `eas simulator:stop ${sessionId} failed: ${describe(err)}` };
   }
+}
+
+/**
+ * Give the device an address for Metro, and PROVE it reaches this workspace's.
+ *
+ * SEPARATE FROM resolveRemoteContext, and called later, because it needs two
+ * things that are not known when the dep overrides are installed: the port
+ * this workspace actually reserved, and confirmation from the local Metro
+ * gate that a dev server is running there at all.
+ *
+ * Running it earlier looked equivalent and was not. It defaulted the port to
+ * 8081 -- so a managed tunnel was built to whatever happened to be on 8081,
+ * which on this machine is routinely a DIFFERENT workspace -- and it probed
+ * before the local gate had established there was a dev server to reach, so a
+ * simply-absent Metro was reported as "the tunnel is serving a different dev
+ * server" instead of RN_ISO_NO_METRO.
+ *
+ * It still runs before ensureBooted, which is what creates the billable
+ * session, so every refusal here costs nothing.
+ *
+ * Mutates `ctx.publicMetroUrl`: remoteIosDeps has already closed over this
+ * object by the time this runs, and the launch reads the origin from it.
+ */
+export async function ensureMetroReachable({
+  ctx,
+  metroPort,
+  isExpo,
+  tunnelMode = 'auto',
+  publicUrl = null,
+  available = [],
+  env = process.env,
+  startManagedTunnel = startTunnel,
+  readTunnelRecord = readMetroTunnel,
+  writeTunnelRecord = writeWorkspaceState,
+  isTunnelAlive = isPidAlive,
+  gateOrigin = gateMetroOrigin,
+}: {
+  ctx: RemoteContext;
+  metroPort: number | string;
+  isExpo: boolean;
+  tunnelMode?: TunnelMode;
+  publicUrl?: string | null;
+  available?: readonly ManagedProvider[];
+  env?: NodeJS.ProcessEnv;
+  startManagedTunnel?: typeof startTunnel;
+  readTunnelRecord?: typeof readMetroTunnel;
+  writeTunnelRecord?: typeof writeWorkspaceState;
+  isTunnelAlive?: typeof isPidAlive;
+  gateOrigin?: typeof gateMetroOrigin;
+}): Promise<{ ok: true } | { failed: string; remedy: string; code?: string }> {
+  const { root } = ctx;
+  // The gate probes a platform-specific bundle path; ios is the shape both
+  // dev servers answer when a context predates the android wiring.
+  const platform = ctx.platform ?? 'ios';
+  const publicMetroUrl = env[PUBLIC_METRO_ENV]?.trim() || publicUrl || null;
+  const plan = planMetroReach({ mode: tunnelMode, metroPort, publicUrl: publicMetroUrl, isExpo, available });
+  if ('failed' in plan) return plan;
+
+  // Act on the plan: an asserted-local origin needs nothing further; the
+  // other two branches produce an origin rn-iso has to arrange itself, and
+  // both are non-local -- see the `gate` decision below.
+  let resolvedUrl: string | null = null;
+  let gate = false;
+  if ('origin' in plan) {
+    resolvedUrl = plan.origin;
+    gate = plan.gate;
+  } else if ('expoTunnel' in plan) {
+    // `start` records the URL the moment Expo's own tunnel comes up (see
+    // supervisor/server-expo.ts); a remote run can only use it, never start
+    // one of its own -- `ios --remote` cannot add `--tunnel` to an
+    // already-running dev server.
+    const recorded = readTunnelRecord(root);
+    if (!recorded || recorded.kind !== 'expo') {
+      return {
+        failed:
+          "This workspace's Metro tunnels itself (metro.tunnel is expo, or auto on an Expo project), but no Expo tunnel URL is recorded.",
+        remedy:
+          'Run `rn-iso start` (or restart it) so Expo can establish its own tunnel before a remote device connects.',
+      };
+    }
+    resolvedUrl = recorded.url;
+    gate = true;
+  } else {
+    // { start: provider }. A tunnel already recorded for this port, still
+    // alive, is reused rather than doubling up -- the same reason a live EAS
+    // session is reused below: starting a second one on every re-run would
+    // leak the first, unrecorded and never reaped.
+    const port = Number(metroPort);
+    const recorded = readTunnelRecord(root);
+    if (recorded && recorded.kind === 'managed' && recorded.port === port && isTunnelAlive(recorded.pid)) {
+      resolvedUrl = recorded.url;
+    } else {
+      const started = await startManagedTunnel({ provider: plan.start, port: Number(metroPort) });
+      if ('failed' in started) {
+        return {
+          failed: `Could not start a ${plan.start} tunnel for port ${port}: ${started.reason}`,
+          remedy:
+            'Set metro.publicUrl to a tunnel you already have, or metro.tunnel to "off" if the device shares this machine.',
+        };
+      }
+      // Recorded IMMEDIATELY: the process exists and holds a port from this
+      // line on, so a crash before ensureBooted must still leave `stop`,
+      // `gc` and `worktree remove` something to reap. A write failure is
+      // noted but never refuses the run -- the tunnel still works, only its
+      // record does not, which the next `stop` reports as a leak rather than
+      // silently losing it.
+      try {
+        writeTunnelRecord(root, {
+          metroTunnel: {
+            kind: 'managed',
+            provider: plan.start,
+            pid: started.pid,
+            url: started.url,
+            port,
+            startedAt: new Date().toISOString(),
+          },
+        });
+      } catch {
+        /* the tunnel still runs; only its record failed to write */
+      }
+      resolvedUrl = started.url;
+    }
+    gate = true;
+  }
+
+  // The gate, before anything billable. `resolvedUrl` is a SECOND address for
+  // the reserved port -- an operator's own, Expo's, or a managed one -- and
+  // none of them are proven to still reach THIS workspace without it (see
+  // engine/metro-gate.ts's header for the tunnel-outlived-the-reservation bug
+  // this closes).
+  if (gate && resolvedUrl) {
+    const logsDir = workspaceLogsDir(root);
+    const result = await gateOrigin({
+      origin: resolvedUrl,
+      metroPort,
+      platform,
+      readRecords: () => readMetroRecords(logsDir),
+      isProof: isBundleProof,
+    });
+    if (result.failed) {
+      return { failed: result.reason ?? 'Metro gate failed.', remedy: result.remedy ?? '', code: REMOTE_METRO_WRONG };
+    }
+  }
+  ctx.publicMetroUrl = resolvedUrl;
+  return { ok: true };
 }

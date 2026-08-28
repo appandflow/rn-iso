@@ -56,7 +56,14 @@ import {
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
-import { REMOTE_SESSION_ERROR, remoteIosDeps, resolveRemoteContext } from '../engine/device-remote.ts';
+import {
+  REMOTE_SESSION_ERROR,
+  binOnPath,
+  ensureMetroReachable,
+  remoteIosDeps,
+  resolveRemoteContext,
+} from '../engine/device-remote.ts';
+import { detectProviders } from '../engine/metro-reach.ts';
 import { type Diagnostic, describeDiagnostic } from '../engine/errors-xcode.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import {
@@ -81,7 +88,14 @@ import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../paths.ts';
 import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.ts';
-import { remoteIosSetting, resolveSettings, unknownSettingKeys, type SettingsObject } from '../settings.ts';
+import {
+  publicUrlSetting,
+  remoteIosSetting,
+  resolveSettings,
+  tunnelModeSetting,
+  unknownSettingKeys,
+  type SettingsObject,
+} from '../settings.ts';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 
@@ -805,6 +819,8 @@ interface IosDeps {
   // Remote mode's two entries. Everything else in this seam is a local
   // engine call; these are what let `--remote` swap the device out.
   resolveRemoteContext: typeof resolveRemoteContext;
+  ensureMetroReachable: typeof ensureMetroReachable;
+  detectProviders: typeof detectProviders;
   remoteIosDeps: typeof remoteIosDeps;
   resolveEasCliBin: typeof resolveEasCliBin;
   findProjectRoot: typeof findProjectRoot;
@@ -872,6 +888,8 @@ const DEFAULT_DEPS: IosDeps = {
   ensureBooted,
   resolveRemoteContext,
   remoteIosDeps,
+  ensureMetroReachable,
+  detectProviders,
   resolveProjectMetro,
   resolveMetroWithRetry,
   readWorkspaceState,
@@ -1207,6 +1225,36 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     // port, and 8081 is what an unconfigured debug build asks for anyway.
     metroPort = DEFAULT_METRO_PORT;
     note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${metroPort}.`));
+  }
+
+  // ---- the remote device's route to Metro, and proof of it ----
+  //
+  // HERE, not with the dep overrides above, and the difference is the whole
+  // point: only now is the RESERVED PORT known and only now has the gate
+  // above confirmed a dev server is actually on it. Resolving this earlier
+  // defaulted the port to 8081 -- so a managed tunnel got built to whatever
+  // happened to be on 8081, routinely a different workspace -- and reported a
+  // simply-absent Metro as "serving a different dev server".
+  //
+  // Still before ensureBooted, which is what creates the billable session, so
+  // every refusal here is free. A release build has no dev server at all
+  // (metroPort is null), so there is nothing to reach and nothing to prove.
+  if (remoteDevice && metroPort !== null) {
+    const reachable = await d.ensureMetroReachable({
+      ctx: remoteDevice.ctx,
+      metroPort,
+      isExpo,
+      tunnelMode: tunnelModeSetting(settings) ?? undefined,
+      publicUrl: publicUrlSetting(settings),
+      available: d.detectProviders(binOnPath),
+    });
+    if ('failed' in reachable) {
+      return fail({
+        code: reachable.code ?? REMOTE_SESSION_ERROR,
+        message: reachable.failed,
+        remedy: reachable.remedy,
+      });
+    }
   }
 
   // Boot is KICKED OFF here and awaited only at install: nothing in between

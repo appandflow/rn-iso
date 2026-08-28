@@ -2184,7 +2184,12 @@ describe('--remote', () => {
         resolveRemoteContext: () => ({
           ctx: { root, label: 'fixture', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
         }),
+        // The reach step runs between the Metro gate and the boot; these
+        // tests are about the device phases, not about tunnels.
+        ensureMetroReachable: async () => ({ ok: true as const }),
+        detectProviders: () => [],
         remoteIosDeps: () => ({
+          ctx: { root, label: 'fixture', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
           checkDeviceCapacity: () => {
             hits.push('checkDeviceCapacity');
             return null;
@@ -2305,6 +2310,38 @@ describe('--remote', () => {
       },
     );
     expect(asked).toBe(false);
+  });
+
+  test('the reach step gets the RESERVED port, and runs after the Metro gate', async () => {
+    // The bug this pins: resolving reach with the dep overrides meant no port
+    // was passed, so it defaulted to 8081 -- a managed tunnel got built to
+    // whatever was on 8081, routinely a DIFFERENT workspace's Metro, which is
+    // the exact failure the gate exists to prevent.
+    const remote = remoteStub();
+    // A port that is deliberately NOT 8081, so defaulting is visible.
+    reserve(8092);
+    let seenPort: unknown = null;
+    const order: string[] = [];
+    await run(
+      { remote: true },
+      {
+        ...remote.deps,
+        resolveMetroWithRetry: async () => {
+          order.push('metroGate');
+          return { metro: { pid: 1, leader: 1 } };
+        },
+        ensureMetroReachable: async (args: { metroPort: unknown }) => {
+          order.push('reach');
+          seenPort = args.metroPort;
+          return { ok: true as const };
+        },
+      },
+    );
+    expect(seenPort).toBe(8092);
+    // And the local gate answers "is there a dev server at all" first, so an
+    // absent one reports RN_ISO_NO_METRO rather than "serving a different
+    // dev server".
+    expect(order).toEqual(['metroGate', 'reach']);
   });
 
   test('a remote build targets the simulator platform, not a udid', async () => {
@@ -2506,7 +2543,10 @@ describe('the remote browser preview', () => {
       resolveRemoteContext: () => ({
         ctx: { root, label: 'fixture', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
       }),
+      ensureMetroReachable: async () => ({ ok: true as const }),
+      detectProviders: () => [],
       remoteIosDeps: () => ({
+        ctx: { root, label: 'fixture', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
         checkDeviceCapacity: () => null,
         ensureOwnedDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureBooted: async () => ({ ok: true, udid: 'drs_42' }),
