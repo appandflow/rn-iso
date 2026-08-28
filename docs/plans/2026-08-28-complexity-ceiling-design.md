@@ -16,6 +16,10 @@ single-purpose functions. Preserve behavior, call order, output contracts, and
 dependency injection. Do not add rule overrides, disable directives, or
 grandfathered files.
 
+Use local phase functions inside `runIos` and `runAndroid`. The functions can
+share the existing run state without large parameter objects. Keep the current
+module-level deployment, verification, upload, and result helpers unchanged.
+
 ## Alternatives
 
 - A higher ceiling would reduce the first refactor but would permit functions
