@@ -6,7 +6,7 @@ Replace the long repository guide with a short guide that agents can scan quickl
 
 ## Content
 
-`AGENT.md` will keep only durable information:
+`AGENTS.md` will keep only durable information:
 
 - The project purpose and normal command flow.
 - The fixed command and option surface.
@@ -17,10 +17,10 @@ The guide will remove implementation history, the full file inventory, resolved 
 
 ## File layout
 
-`AGENT.md` will contain the guide. `CLAUDE.md` will be a relative symlink to `AGENT.md`.
+`AGENTS.md` will contain the guide. `CLAUDE.md` will be a relative symlink to `AGENTS.md`.
 
 ## Verification
 
-- Confirm that `CLAUDE.md` is a symlink with target `AGENT.md`.
+- Confirm that `CLAUDE.md` is a symlink with target `AGENTS.md`.
 - Confirm that both paths return identical content.
 - Run the repository format check for the Markdown change.
