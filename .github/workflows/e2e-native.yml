@@ -95,6 +95,7 @@ jobs:
       TMPDIR: ${{ github.workspace }}/.e2e-tmp
     steps:
       - uses: actions/checkout@v4
+      - run: mkdir -p "$TMPDIR" "$STIM_CLI_BUILD_CACHE"
 
       - name: Set up Node 20
         uses: pnpm/action-setup@v4
@@ -116,8 +117,6 @@ jobs:
 
       - name: Build (dist/cli.js is what the native e2e drives)
         run: pnpm run build
-
-      - run: mkdir -p "$TMPDIR" "$STIM_CLI_BUILD_CACHE"
 
       - name: Restore cross-run build cache
         id: cache
@@ -196,6 +195,7 @@ jobs:
       TMPDIR: ${{ github.workspace }}/.e2e-tmp
     steps:
       - uses: actions/checkout@v4
+      - run: mkdir -p "$TMPDIR" "$STIM_CLI_BUILD_CACHE"
 
       - name: Set up Node 20
         uses: pnpm/action-setup@v4
@@ -217,8 +217,6 @@ jobs:
 
       - name: Build (dist/cli.js is what the native e2e drives)
         run: pnpm run build
-
-      - run: mkdir -p "$TMPDIR" "$STIM_CLI_BUILD_CACHE"
 
       - name: Restore cross-run build cache
         id: cache
