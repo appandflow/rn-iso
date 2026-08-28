@@ -37,6 +37,7 @@ export function remoteProfile({
   label: string;
 }): RemoteProfile {
   const scope = sessionNameFor(label);
+  // agent-device 0.20.10 requires metroProjectRoot to expose a bridge URL; the self-hosted proxy has none.
   // agent-device 0.20.10 requires tenant and runId in remote profiles.
   return {
     daemonBaseUrl: daemon.baseUrl,

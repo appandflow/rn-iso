@@ -137,6 +137,7 @@ function managedRemoteWorktreeLockRoot(worktreeRoot: string): string {
 async function defaultProbeReachable(url: string, signal: AbortSignal): Promise<boolean> {
   try {
     const res = await fetch(url, { signal, redirect: 'follow' });
+    // Any HTTP response proves the tunnel is routable; only a connection failure means unavailable.
     return res.status > 0;
   } catch {
     return false;
