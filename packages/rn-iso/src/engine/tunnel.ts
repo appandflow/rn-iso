@@ -396,6 +396,9 @@ export async function startTunnel({
   }
   unrefChildPipes(child);
   child.unref?.();
+  if (childExited) {
+    return failAfterCleanup(`${provider} exited before its tunnel could be recorded.`, true);
+  }
   return { url, pid, processToken: initialProcessToken, cleanup: () => cleanup() };
 }
 

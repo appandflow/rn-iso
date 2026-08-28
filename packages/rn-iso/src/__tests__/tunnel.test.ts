@@ -184,6 +184,33 @@ describe('startTunnel: the happy path', () => {
     });
     expect(signals).toEqual([]);
   });
+
+  test('does not record a replacement after the retained child exits with the same process token', async () => {
+    const signals: Array<NodeJS.Signals | number | undefined> = [];
+    const child = makeChildProcess({
+      kill(signal) {
+        signals.push(signal);
+        return true;
+      },
+    });
+    const promise = startTunnel({
+      provider: 'ngrok',
+      port: 8081,
+      spawnFn: () => child,
+      probeReachable: async () => true,
+      readProcessToken: () => 'ps-lstart:Fri Aug 28 06:00:00 2026',
+      isChildAlive: () => true,
+      cleanupTimeoutMs: 1,
+    });
+    child.stdout?.emit('data', `${JSON.stringify({ url: 'https://replacement.ngrok.app' })}\n`);
+    child.emit('exit', 0, null);
+
+    await expect(promise).resolves.toEqual({
+      failed: true,
+      reason: expect.stringContaining('exited before its tunnel could be recorded'),
+    });
+    expect(signals).toEqual([]);
+  });
 });
 
 describe('startTunnel: nothing here throws -- every failure is a returned value', () => {
