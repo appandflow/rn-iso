@@ -106,6 +106,7 @@ import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/
 import {
   REMOTE_SESSION_ERROR,
   binOnPath,
+  ensureRemoteBootOwned,
   ensureMetroReachable as ensureRemoteMetroReachable,
   remoteAndroidDeps,
   resolveRemoteContext,
@@ -850,6 +851,7 @@ interface RunAndroidOptions {
   remoteDeviceDeps?: typeof remoteAndroidDeps;
   resolveEasBin?: typeof resolveEasCliBin;
   ensureMetroReachable?: typeof ensureRemoteMetroReachable;
+  ensureRemoteBootOwned?: typeof ensureRemoteBootOwned;
   detectRemoteProviders?: typeof detectProviders;
   getLimits?: typeof getConcurrencyLimits;
   checkCapacity?: typeof checkDeviceCapacity;
@@ -903,6 +905,15 @@ interface RunAndroidResult {
   facts?: AndroidFacts;
 }
 
+interface AndroidBootLike {
+  ok?: boolean;
+  failed?: boolean;
+  serial?: string;
+  reason?: string;
+  code?: string;
+  remedy?: string;
+}
+
 // Every side effect is a seam with the real thing as its default, so the flow
 // is testable without an emulator, a gradle daemon, or a network. The command
 // action above passes none of them.
@@ -916,6 +927,7 @@ export async function runAndroid(
     remoteDeviceDeps: makeRemoteDeviceDeps = remoteAndroidDeps,
     resolveEasBin = resolveEasCliBin,
     ensureMetroReachable: ensureRemoteMetro = ensureRemoteMetroReachable,
+    ensureRemoteBootOwned: ensureRemoteOwned = ensureRemoteBootOwned,
     detectRemoteProviders = detectProviders,
     metroCheck = true,
     // --no-build-cache turns off every LOOKUP -- the local cache and the
@@ -1233,22 +1245,37 @@ export async function runAndroid(
   // would report the build's time, not the boot's.
   const bootTimer = stepTimer(now);
   let bootDuration = '';
-  const bootPromise = Promise.resolve(ensureDeviceBooted({ platform: PLATFORM, device, out, logFile: emuLog }))
-    .catch((e) => ({
+  const boot = (): Promise<AndroidBootLike> =>
+    Promise.resolve(ensureDeviceBooted({ platform: PLATFORM, device, out, logFile: emuLog })).catch((e) => ({
       failed: true as const,
       reason: String((e as Error)?.message || e),
-      serial: null,
-    }))
-    .then((result) => {
-      bootDuration = bootTimer();
-      return result;
-    });
+      serial: undefined,
+    }));
+  const bootPromise: Promise<AndroidBootLike> = (
+    remoteDevice?.ctx.backend === 'eas'
+      ? ensureRemoteOwned({
+          root,
+          platform: PLATFORM,
+          startedAt,
+          boot,
+          createdSessionId: remoteDevice.createdSessionId,
+          abandonCreatedSession: remoteDevice.abandonCreatedSession,
+          writeState,
+        })
+      : boot()
+  ).then((result) => {
+    bootDuration = bootTimer();
+    return result;
+  });
 
   // A remote session must be durable before fingerprinting, dependency
   // setup, or a build can fail. Local boot keeps overlapping the build.
   if (remoteDevice) {
     const booted = await bootPromise;
     if (booted.failed) {
+      if (booted.code) {
+        return fail(booted.code, booted.reason ?? 'The remote device did not boot.', booted.remedy ?? null);
+      }
       const diag = noDeviceDiagnostic({
         reason: booted.reason ?? 'The remote device did not boot.',
         logFile: emuLog,
@@ -1258,10 +1285,6 @@ export async function runAndroid(
         lines: diag.lines,
         logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
       });
-    }
-    const sessionId = remoteDevice.createdSessionId();
-    if (sessionId) {
-      writeState(root, { remoteDevice: { platform: PLATFORM, sessionId, startedAt } });
     }
   }
   record.avdName = device.avdName ?? null;
@@ -1814,7 +1837,7 @@ export async function runAndroid(
       logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
     });
   }
-  const serial = booted.serial;
+  const serial = booted.serial ?? undefined;
   phase('device', `${device.avdName || serial} (${serial}) booted ${bootDuration}`);
 
   // serial and apkPath are provably set by this point: booted.failed already
@@ -1992,11 +2015,14 @@ export async function runAndroid(
   // carries lastBuild forward rather than racing it.
   persistLastBuild({ writeState, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
 
-  // The collector is attached BEFORE the launch verification below: that poll
-  // can take 20 seconds, and those are the seconds whose logcat says why the
-  // app did not load a bundle.
-  const collectorPid = await startCollector({ root, serial, packageName: androidPackage, spawn, kill, out });
-  phase('logs', `${displayPath(root, logsDir)}${collectorPid ? ` (collector pid ${collectorPid})` : ''}`);
+  const remoteRelease = Boolean(remoteDevice && release);
+  if (!remoteRelease) {
+    // The collector is attached BEFORE the launch verification below: that poll
+    // can take 20 seconds, and those are the seconds whose logcat says why the
+    // app did not load a bundle.
+    const collectorPid = await startCollector({ root, serial, packageName: androidPackage, spawn, kill, out });
+    phase('logs', `${displayPath(root, logsDir)}${collectorPid ? ` (collector pid ${collectorPid})` : ''}`);
+  }
 
   // ---- proof, not assertion (see verifyLaunch in engine/app-install.js) ----
   //
@@ -2013,7 +2039,9 @@ export async function runAndroid(
   // verifyLaunch's return union -- this file branches only on
   // `verified` / `skipped` / `waitedMs`.
   let launchState: boolean | string = true;
-  if (release) {
+  if (remoteRelease) {
+    phase('verify', 'remote adapter launch accepted; local process verification is unavailable');
+  } else if (release) {
     // A release app fetches nothing from Metro -- its bundle is embedded --
     // so the bundle-request proof does not exist. What CAN be proven is that
     // the app's PROCESS is still alive a moment later: a bad embedded bundle
@@ -2111,7 +2139,7 @@ export async function runAndroid(
     appPath: apkPath,
     bundleId: androidPackage,
     launched: launchState,
-    logs: logsDir,
+    logs: remoteRelease ? null : logsDir,
   });
   writer.close();
 

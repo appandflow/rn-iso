@@ -15,13 +15,11 @@
 // in sight, so the untrusted-output handling is tested without spawning
 // anything.
 import type { ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
 import { createLineReader } from '../supervisor/server-expo.ts';
 import type { ManagedProvider } from './metro-reach.ts';
+import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
 
 // The signature every spawn-injection seam in this module accepts:
 // getExecutor().spawn's shape, loosened to a plain options bag so callers do
@@ -107,112 +105,12 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeou
 
 // --- serializing one managed acquisition per workspace --------------------
 
-const TUNNEL_LOCK_RECORD = 'owner.json';
-const TUNNEL_LOCK_WAIT_MS = 60_000;
-const TUNNEL_LOCK_POLL_MS = 25;
-const TUNNEL_LOCK_RECORD_GRACE_MS = 5_000;
-
-interface TunnelLockRecord {
-  pid: number;
-  token: string;
-}
-
-interface ManagedTunnelLockOptions {
-  isAlive?: (pid: number) => boolean;
-  now?: () => number;
-  sleep?: (ms: number) => Promise<void>;
-  waitMs?: number;
-}
-
-function managedTunnelLockPath(root: string): string {
-  return join(root, '.rn-iso', 'metro-tunnel.lock');
-}
-
-function readTunnelLock(path: string): TunnelLockRecord | null {
-  try {
-    const parsed = JSON.parse(readFileSync(join(path, TUNNEL_LOCK_RECORD), 'utf-8')) as Partial<TunnelLockRecord>;
-    return typeof parsed.pid === 'number' && typeof parsed.token === 'string'
-      ? { pid: parsed.pid, token: parsed.token }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function tunnelLockAge(path: string, now: number): number | null {
-  try {
-    return now - statSync(path).mtimeMs;
-  } catch {
-    return null;
-  }
-}
-
-function reapTunnelLock(path: string): void {
-  const aside = `${path}.reap-${process.pid}-${randomUUID()}`;
-  try {
-    renameSync(path, aside);
-  } catch {
-    return;
-  }
-  rmSync(aside, { recursive: true, force: true });
-}
-
 export async function withManagedTunnelLock<T>(
   root: string,
   fn: () => Promise<T>,
-  {
-    isAlive = isPidAlive,
-    now = Date.now,
-    sleep = defaultSleep,
-    waitMs = TUNNEL_LOCK_WAIT_MS,
-  }: ManagedTunnelLockOptions = {},
+  options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  const path = managedTunnelLockPath(root);
-  const deadline = now() + waitMs;
-  let owned: TunnelLockRecord | null = null;
-
-  while (!owned) {
-    try {
-      mkdirSync(dirname(path), { recursive: true });
-      mkdirSync(path);
-      owned = { pid: process.pid, token: randomUUID() };
-      writeFileSync(join(path, TUNNEL_LOCK_RECORD), JSON.stringify(owned));
-      break;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') {
-        if (owned) rmSync(path, { recursive: true, force: true });
-        throw err;
-      }
-    }
-
-    const holder = readTunnelLock(path);
-    if (holder && !isAlive(holder.pid)) {
-      reapTunnelLock(path);
-      continue;
-    }
-    if (!holder) {
-      const age = tunnelLockAge(path, now());
-      if (age === null) continue;
-      if (age > TUNNEL_LOCK_RECORD_GRACE_MS) {
-        reapTunnelLock(path);
-        continue;
-      }
-    }
-    if (now() >= deadline) {
-      const error = new Error(`Timed out waiting for the managed tunnel lock at ${path}.`);
-      (error as Error & { code?: string }).code = 'RN_ISO_LOCK_TIMEOUT';
-      throw error;
-    }
-    await sleep(TUNNEL_LOCK_POLL_MS);
-  }
-
-  try {
-    return await fn();
-  } finally {
-    if (readTunnelLock(path)?.token === owned?.token) {
-      rmSync(path, { recursive: true, force: true });
-    }
-  }
+  return withWorkspaceProcessLock(root, 'metro-tunnel', fn, options);
 }
 
 // Any HTTP response -- even a 404 from Metro's own router -- proves the

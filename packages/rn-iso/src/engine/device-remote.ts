@@ -25,7 +25,7 @@ import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceLogsDir } from '../paths.ts';
-import { readMetroTunnel, readRemoteSessionId } from '../supervisor/state.ts';
+import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import type { RemoteDeviceBackend } from '../types.ts';
 import {
   acceptAlertArgs,
@@ -49,6 +49,7 @@ import {
   stopSessionArgs,
   type RemoteDaemon,
 } from './eas-simulator.ts';
+import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
 
 export const REMOTE_SESSION_ERROR = 'RN_ISO_NO_REMOTE_SESSION';
 const REMOTE_METRO_ERROR = 'RN_ISO_REMOTE_METRO_UNREACHABLE';
@@ -140,11 +141,22 @@ interface OpFailure {
 // tidier in isolation, but every caller and every test in this codebase reads
 // these shapes field-by-field, and the seam's whole point is that the remote
 // half is indistinguishable from the local one.
-interface BootResult {
+export interface BootResult {
   ok?: boolean;
   udid?: string;
   failed?: boolean;
+  code?: string;
   reason?: string;
+  remedy?: string;
+}
+
+export interface AbandonCreatedSessionResult {
+  ok?: true;
+  failed?: true;
+  code?: string;
+  reason?: string;
+  remedy?: string;
+  sessionId: string | null;
 }
 interface InstallResult {
   ok?: boolean;
@@ -270,6 +282,13 @@ function remoteDeviceDeps(ctx: RemoteContext) {
     ensureBooted: async ({ out = () => {} }: { out?: (msg: string) => void } = {}): Promise<BootResult> => {
       session = null;
       createdSession = null;
+      const note = (message: string): void => {
+        try {
+          out(message);
+        } catch {
+          /* device ownership must not depend on terminal output */
+        }
+      };
       let daemon = ctx.existingDaemon ?? null;
       let id: string | null = null;
       let createdHere: string | null = null;
@@ -285,20 +304,28 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       // common case, which is the difference between `ios --remote` being
       // idempotent and being expensive.
       if (!daemon) {
-        const recorded = readRemoteSessionId(ctx.root);
+        const recorded = readRemoteSession(ctx.root);
+        if (recorded && recorded.platform !== (ctx.platform ?? 'ios')) {
+          return {
+            failed: true,
+            code: 'RN_ISO_REMOTE_PLATFORM_MISMATCH',
+            reason: `Session ${recorded.sessionId} belongs to ${recorded.platform ?? 'an unknown platform'}, not ${ctx.platform ?? 'ios'}.`,
+            remedy: 'Run `rn-iso stop` for this workspace before selecting a different remote platform.',
+          };
+        }
         if (recorded) {
-          const existing = readLiveDaemon(ctx, recorded);
+          const existing = readLiveDaemon(ctx, recorded.sessionId);
           if (existing) {
-            out(`Reusing EAS Simulator session ${recorded}.`);
+            note(`Reusing EAS Simulator session ${recorded.sessionId}.`);
             daemon = existing;
-            id = recorded;
+            id = recorded.sessionId;
           } else {
             // Not reachable any more (stopped, errored, or a type this cannot
             // drive). Ending it is cheap and is the only way to be sure the
             // one about to be created is the only live one.
-            out(`Recorded session ${recorded} is not usable; stopping it before creating another.`);
+            note(`Recorded session ${recorded.sessionId} is not usable; stopping it before creating another.`);
             try {
-              exec().runFile(ctx.easBin, stopSessionArgs(recorded), easEnv);
+              exec().runFile(ctx.easBin, stopSessionArgs(recorded.sessionId), easEnv);
             } catch {
               /* already gone, or unreachable: the create below still proceeds */
             }
@@ -307,7 +334,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       }
 
       if (!daemon) {
-        out('Creating an EAS Simulator session (this takes a moment).');
+        note('Creating an EAS Simulator session (this takes a moment).');
         let stdout: string;
         try {
           stdout = exec().runFile(
@@ -333,7 +360,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         // nothing else can, because the id is not recorded until this
         // function succeeds. Observed live -- a session with no endpoint yet
         // left an IN_PROGRESS session nothing could find.
-        daemon = created.daemon ?? (await waitForDaemon(ctx, created.id, out, { sleep: ctx.sleep ?? defaultSleep }));
+        daemon = created.daemon ?? (await waitForDaemon(ctx, created.id, note, { sleep: ctx.sleep ?? defaultSleep }));
         if (!daemon) {
           return abandonSession(
             ctx,
@@ -343,7 +370,14 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         }
       }
 
-      const profilePath = writeProfile(ctx, daemon);
+      let profilePath: string;
+      try {
+        profilePath = writeProfile(ctx, daemon);
+      } catch (err) {
+        const reason = `Could not write the remote connection profile: ${describe(err)}`;
+        if (createdHere) return abandonSession(ctx, createdHere, reason);
+        return { failed: true, reason };
+      }
       // Best-effort, and its failure is expected on a first run: there is no
       // session to close. See closeArgs for why it has to happen anyway.
       try {
@@ -360,7 +394,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
           env: daemonEnv(daemon),
         });
       } catch (err) {
-        if (id) return abandonSession(ctx, id, `agent-device connect failed: ${describe(err)}`);
+        if (createdHere) return abandonSession(ctx, createdHere, `agent-device connect failed: ${describe(err)}`);
         return { failed: true, reason: `agent-device connect failed: ${describe(err)}` };
       }
 
@@ -368,10 +402,9 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       // how a HUMAN watches a device they cannot see, and it is most useful
       // while the build is still running. On its own line so terminals
       // linkify it.
-      if (daemon.webPreviewUrl) out(`Watch this device: ${daemon.webPreviewUrl}`);
-
       session = { id, daemon, profilePath };
       createdSession = createdHere;
+      if (daemon.webPreviewUrl) note(`Watch this device: ${daemon.webPreviewUrl}`);
       // `udid` is the field ios.ts reads and prints, and shortUdid truncates
       // it for the phase line. A session id shortens to something meaningful;
       // a base URL shortens to "http..", which is noise. So a daemon with no
@@ -477,6 +510,17 @@ function remoteDeviceDeps(ctx: RemoteContext) {
     // Not a dep override. The command layer records a session created by this
     // boot attempt. A reused session already has its durable ownership record.
     createdSessionId: (): string | null => createdSession,
+
+    abandonCreatedSession: (): AbandonCreatedSessionResult => {
+      if (!createdSession) return { ok: true, sessionId: null };
+      const id = createdSession;
+      const stopped = stopCreatedSession(ctx, id);
+      if (stopped.ok) {
+        session = null;
+        createdSession = null;
+      }
+      return stopped;
+    },
 
     // Not a dep override either. The browser preview for this device, so the
     // --json payload can carry it and a caller can hand it to a person.
@@ -655,16 +699,93 @@ function defaultSleep(ms: number): Promise<void> {
  * `eas simulator:stop --id <id>`, and a leak nobody is told about is the
  * worst outcome here.
  */
-function abandonSession(ctx: RemoteContext, sessionId: string, reason: string): { failed: true; reason: string } {
+function stopCreatedSession(ctx: RemoteContext, sessionId: string): AbandonCreatedSessionResult {
   try {
     getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), easExecOptions(ctx.root));
-    return { failed: true, reason: `${reason} The session was stopped.` };
+    return { ok: true, sessionId };
   } catch (err) {
     return {
       failed: true,
-      reason:
-        `${reason} rn-iso could not stop it (${describe(err)}), and it bills until its cap -- ` +
-        `run \`eas simulator:stop --id ${sessionId}\`.`,
+      code: 'RN_ISO_REMOTE_SESSION_CLEANUP',
+      reason: `rn-iso could not stop session ${sessionId} (${describe(err)}). The session bills until its cap.`,
+      remedy: `Run \`eas simulator:stop --id ${sessionId}\`.`,
+      sessionId,
+    };
+  }
+}
+
+function abandonSession(ctx: RemoteContext, sessionId: string, reason: string): BootResult {
+  const stopped = stopCreatedSession(ctx, sessionId);
+  if (stopped.ok) return { failed: true, reason: `${reason} The session was stopped.` };
+  return {
+    failed: true,
+    code: stopped.code,
+    reason: `${reason} ${stopped.reason} ${stopped.remedy}`,
+    remedy: stopped.remedy,
+  };
+}
+
+export function withRemoteSessionLock<T>(
+  root: string,
+  fn: () => Promise<T>,
+  options: WorkspaceProcessLockOptions = {},
+): Promise<T> {
+  return withWorkspaceProcessLock(root, 'remote-session', fn, { waitMs: 4 * 60_000, ...options });
+}
+
+export async function ensureRemoteBootOwned<T extends BootResult>({
+  root,
+  platform,
+  startedAt,
+  boot,
+  createdSessionId,
+  abandonCreatedSession,
+  writeState,
+  withLock = withRemoteSessionLock,
+}: {
+  root: string;
+  platform: 'ios' | 'android';
+  startedAt: string;
+  boot: () => Promise<T>;
+  createdSessionId: () => string | null;
+  abandonCreatedSession: () => AbandonCreatedSessionResult;
+  writeState: (root: string, patch: Record<string, unknown>) => unknown;
+  withLock?: typeof withRemoteSessionLock;
+}): Promise<T | BootResult> {
+  try {
+    return await withLock(root, async () => {
+      const booted = await boot();
+      if (booted.failed) return booted;
+      const sessionId = createdSessionId();
+      if (!sessionId) return booted;
+      try {
+        writeState(root, { remoteDevice: { platform, sessionId, startedAt } });
+        return booted;
+      } catch (err) {
+        const cleanup = abandonCreatedSession();
+        if (cleanup.ok) {
+          return {
+            failed: true,
+            code: 'RN_ISO_REMOTE_SESSION_STATE',
+            reason: `Could not record EAS session ${sessionId}: ${describe(err)}. The session was stopped.`,
+            remedy: 'Fix workspace state storage, then retry the remote command.',
+          };
+        }
+        return {
+          failed: true,
+          code: cleanup.code ?? 'RN_ISO_REMOTE_SESSION_CLEANUP',
+          reason: `Could not record EAS session ${sessionId}: ${describe(err)}. ${cleanup.reason ?? ''}`.trim(),
+          remedy: cleanup.remedy ?? `Run \`eas simulator:stop --id ${sessionId}\`.`,
+        };
+      }
+    });
+  } catch (err) {
+    const code = (err as Error & { code?: string }).code ?? REMOTE_SESSION_ERROR;
+    return {
+      failed: true,
+      code,
+      reason: describe(err),
+      remedy: 'Retry the remote command after the other workspace operation finishes.',
     };
   }
 }
@@ -751,6 +872,7 @@ export function remoteIosDeps(ctx: RemoteContext): {
     devClientScheme?: string | null;
   }) => LaunchResult;
   createdSessionId: () => string | null;
+  abandonCreatedSession: () => AbandonCreatedSessionResult;
   webPreviewUrl: () => string | null;
 } {
   const shared: RemoteContext = { ...ctx, platform: 'ios' };
@@ -764,6 +886,7 @@ export function remoteIosDeps(ctx: RemoteContext): {
     launchIosApp: ({ bundleId, metroPort, devClientScheme }) =>
       core.launchApp({ appId: bundleId, metroPort, devClientScheme }),
     createdSessionId: core.createdSessionId,
+    abandonCreatedSession: core.abandonCreatedSession,
     webPreviewUrl: core.webPreviewUrl,
   };
 }
@@ -792,6 +915,8 @@ export function remoteAndroidDeps(ctx: RemoteContext): {
     serial?: string;
     failed?: boolean;
     reason?: string;
+    code?: string;
+    remedy?: string;
   }>;
   install: (a: { serial: string; apkPath: string }) => InstallResult;
   launch: (a: {
@@ -801,6 +926,7 @@ export function remoteAndroidDeps(ctx: RemoteContext): {
     devClientScheme?: string | null;
   }) => LaunchResult;
   createdSessionId: () => string | null;
+  abandonCreatedSession: () => AbandonCreatedSessionResult;
   webPreviewUrl: () => string | null;
 } {
   const shared: RemoteContext = { ...ctx, platform: 'android' };
@@ -819,6 +945,7 @@ export function remoteAndroidDeps(ctx: RemoteContext): {
     launch: ({ packageName, metroPort, devClientScheme }) =>
       core.launchApp({ appId: packageName, metroPort, devClientScheme }),
     createdSessionId: core.createdSessionId,
+    abandonCreatedSession: core.abandonCreatedSession,
     webPreviewUrl: core.webPreviewUrl,
   };
 }

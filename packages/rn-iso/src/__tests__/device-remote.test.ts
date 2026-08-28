@@ -13,6 +13,7 @@ import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import {
   ensureMetroReachable,
   PUBLIC_METRO_ENV,
@@ -21,6 +22,7 @@ import {
   resolveRemoteContext,
   resolveMetroOrigin,
   teardownRemote,
+  withRemoteSessionLock,
 } from '../engine/device-remote.ts';
 import { stopSessionArgs } from '../engine/eas-simulator.ts';
 
@@ -291,6 +293,48 @@ describe('the expensive step happens after the Metro gate', () => {
     expect(booted.udid).toBe('drs_42');
     expect(deps.createdSessionId()).toBe('drs_42');
     expect(exec.calls[0]?.args[0]).toBe('sim');
+  });
+});
+
+describe('the remote session workspace lock', () => {
+  test('a second process waits and takes over after the owner dies', async () => {
+    const script = join(root, 'hold-lock.mjs');
+    const lockModule = new URL('../engine/workspace-process-lock.ts', import.meta.url).href;
+    writeFileSync(
+      script,
+      `import { withWorkspaceProcessLock } from ${JSON.stringify(lockModule)};
+await withWorkspaceProcessLock(process.argv[2], 'remote-session', async () => {
+  process.stdout.write('LOCKED\\n');
+  await new Promise(() => setInterval(() => {}, 1_000));
+});
+`,
+    );
+    const owner = spawn(process.execPath, ['--experimental-strip-types', script, root], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const exited = new Promise<void>((resolve) => owner.once('exit', () => resolve()));
+    await new Promise<void>((resolve, reject) => {
+      owner.once('error', reject);
+      owner.stdout?.on('data', (chunk) => {
+        if (String(chunk).includes('LOCKED')) resolve();
+      });
+    });
+
+    try {
+      let entered = false;
+      const waiting = withRemoteSessionLock(root, async () => {
+        entered = true;
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(entered).toBe(false);
+
+      owner.kill('SIGKILL');
+      await exited;
+      await waiting;
+      expect(entered).toBe(true);
+    } finally {
+      if (owner.exitCode === null) owner.kill('SIGKILL');
+    }
   });
 });
 
@@ -694,6 +738,29 @@ describe('a session rn-iso created is never abandoned', () => {
     expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(true);
   });
 
+  test('a profile write failure after creation stops the new session', async () => {
+    writeFileSync(join(root, '.rn-iso'), 'blocks the profile directory');
+    const exec = mockExec({ outputs: { sim: CREATED } });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(booted.reason).toContain('The session was stopped.');
+    expect(exec.calls.find((call) => call.args[0] === 'simulator:stop')?.args).toContain('drs_42');
+  });
+
+  test('an unconfirmed profile-write cleanup reports the session and manual remedy', async () => {
+    writeFileSync(join(root, '.rn-iso'), 'blocks the profile directory');
+    mockExec({ outputs: { sim: CREATED }, fail: 'simulator:stop' });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(booted.code).toBe('RN_ISO_REMOTE_SESSION_CLEANUP');
+    expect(booted.reason).toContain('drs_42');
+    expect(booted.remedy).toBe('Run `eas simulator:stop --id drs_42`.');
+  });
+
   test('a connect failure against an operator daemon stops nothing', async () => {
     // rn-iso created no session here, so it has none to end -- and ending
     // someone else's would be destroying a device it does not own.
@@ -711,7 +778,10 @@ describe('a re-run does not orphan the session it already has', () => {
   // after every native change, so it fired constantly.
   function recordSession(id: string): void {
     mkdirSync(join(root, '.rn-iso'), { recursive: true });
-    writeFileSync(join(root, '.rn-iso', 'state.json'), JSON.stringify({ remoteDevice: { sessionId: id } }));
+    writeFileSync(
+      join(root, '.rn-iso', 'state.json'),
+      JSON.stringify({ remoteDevice: { platform: 'ios', sessionId: id } }),
+    );
   }
 
   const LIVE = JSON.stringify({
@@ -732,6 +802,36 @@ describe('a re-run does not orphan the session it already has', () => {
     expect(deps.createdSessionId()).toBeNull();
     // The whole point: `eas sim` never ran.
     expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
+  });
+
+  test('ios refuses an Android session without stopping or replacing it', async () => {
+    mkdirSync(join(root, '.rn-iso'), { recursive: true });
+    writeFileSync(
+      join(root, '.rn-iso', 'state.json'),
+      JSON.stringify({ remoteDevice: { platform: 'android', sessionId: 'drs_android' } }),
+    );
+    const exec = mockExec({ outputs: { sim: CREATED } });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(booted.code).toBe('RN_ISO_REMOTE_PLATFORM_MISMATCH');
+    expect(booted.reason).toContain('drs_android');
+    expect(exec.calls.some((call) => call.args[0] === 'sim')).toBe(false);
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test('android refuses an iOS session without stopping or replacing it', async () => {
+    recordSession('drs_ios');
+    const exec = mockExec({ outputs: { sim: CREATED } });
+
+    const booted = await remoteAndroidDeps(ctx()).ensureDeviceBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(booted.code).toBe('RN_ISO_REMOTE_PLATFORM_MISMATCH');
+    expect(booted.reason).toContain('drs_ios');
+    expect(exec.calls.some((call) => call.args[0] === 'sim')).toBe(false);
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
   });
 
   test('creation ownership resets when a later boot reuses a session', async () => {

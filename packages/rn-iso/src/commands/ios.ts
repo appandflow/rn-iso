@@ -64,6 +64,7 @@ import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/
 import {
   REMOTE_SESSION_ERROR,
   binOnPath,
+  ensureRemoteBootOwned,
   ensureMetroReachable,
   remoteIosDeps,
   resolveRemoteContext,
@@ -123,6 +124,15 @@ interface DeviceLike {
   deviceName?: string | null;
   name?: string | null;
   avdName?: string | null;
+}
+
+interface IosBootLike {
+  ok?: boolean;
+  failed?: boolean;
+  udid?: string;
+  reason?: string;
+  code?: string;
+  remedy?: string;
 }
 
 interface PodStateLike {
@@ -830,6 +840,7 @@ interface IosDeps {
   // engine call; these are what let `--remote` swap the device out.
   resolveRemoteContext: typeof resolveRemoteContext;
   ensureMetroReachable: typeof ensureMetroReachable;
+  ensureRemoteBootOwned: typeof ensureRemoteBootOwned;
   detectProviders: typeof detectProviders;
   remoteIosDeps: typeof remoteIosDeps;
   resolveEasCliBin: typeof resolveEasCliBin;
@@ -900,6 +911,7 @@ const DEFAULT_DEPS: IosDeps = {
   resolveRemoteContext,
   remoteIosDeps,
   ensureMetroReachable,
+  ensureRemoteBootOwned,
   detectProviders,
   resolveProjectMetro,
   resolveMetroWithRetry,
@@ -1293,14 +1305,27 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // happens would report the build's time, not the boot's.
   const bootTimer = stepTimer(d.now);
   let bootDuration = '';
-  const bootPromise: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined> = Promise.resolve(
-    d.ensureBooted({ platform: PLATFORM, device, out: note }),
-  )
-    .catch((e) => ({ ok: false, reason: String((e as Error)?.message || e) }))
-    .then((result) => {
-      bootDuration = bootTimer();
-      return result;
-    });
+  const boot = (): Promise<IosBootLike> =>
+    Promise.resolve(d.ensureBooted({ platform: PLATFORM, device, out: note })).catch((e) => ({
+      ok: false,
+      reason: String((e as Error)?.message || e),
+    }));
+  const bootPromise: Promise<IosBootLike> = (
+    remoteDevice?.ctx.backend === 'eas'
+      ? d.ensureRemoteBootOwned({
+          root,
+          platform: PLATFORM,
+          startedAt,
+          boot,
+          createdSessionId: remoteDevice.createdSessionId,
+          abandonCreatedSession: remoteDevice.abandonCreatedSession,
+          writeState: d.writeWorkspaceState,
+        })
+      : boot()
+  ).then((result) => {
+    bootDuration = bootTimer();
+    return result;
+  });
   // The build destination: the udid exists as soon as the device record does.
   // The rare record without one (legacy shapes) waits for the boot to resolve
   // it, which is exactly the old ordering.
@@ -1310,17 +1335,6 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // await is what serialises session creation ahead of the build. That is
   // deliberate: the artifact has to be uploaded to a device that exists.
   const udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
-
-  // Recorded the MOMENT the session exists, not at the end of a successful
-  // run. A remote session bills while it lives, so a build that fails three
-  // minutes from now must still leave `stop` and `gc` a handle to end it.
-  // The session id only; the token is re-read from eas when it is needed.
-  if (remoteDevice) {
-    const sessionId = remoteDevice.createdSessionId();
-    if (sessionId) {
-      d.writeWorkspaceState(root, { remoteDevice: { platform: PLATFORM, sessionId, startedAt } });
-    }
-  }
 
   // ---- fingerprint and cache ----
   // Covers the fingerprint compute plus the LOCAL cache resolve; a remote
@@ -1905,9 +1919,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const booted = await bootPromise;
   if (!booted?.ok) {
     return fail({
-      code: 'RN_ISO_NO_DEVICE',
+      code: booted?.code || 'RN_ISO_NO_DEVICE',
       message: booted?.reason || 'The owned simulator could not be booted.',
-      remedy: 'Run `rn-iso ios` again to re-establish an owned simulator for this workspace.',
+      remedy: booted?.remedy || 'Run `rn-iso ios` again to re-establish an owned simulator for this workspace.',
     });
   }
   phase('device', `${deviceLabel(device, udid)} booted ${bootDuration}`);

@@ -58,6 +58,12 @@ export interface ManagedTunnelRecord {
 
 export type MetroTunnelRecord = ExpoTunnelRecord | ManagedTunnelRecord;
 
+export interface RemoteSessionRecord {
+  platform: 'ios' | 'android' | null;
+  sessionId: string;
+  startedAt: string | null;
+}
+
 // The tunnel this workspace's Metro is reachable through, if rn-iso set one
 // up. A narrow reader for the same reason readRemoteSessionId is one: every
 // site that reads or reaps this record must agree on its shape and on what a
@@ -106,11 +112,22 @@ export function readWorkspaceState(root: string): WorkspaceState | null {
 // last two through reclaim) must all agree on where the id lives and on what
 // a malformed record means, and a session they disagree about is one that
 // keeps billing.
-export function readRemoteSessionId(root: string): string | null {
+export function readRemoteSession(root: string): RemoteSessionRecord | null {
   const record = readWorkspaceState(root)?.remoteDevice;
   if (!record || typeof record !== 'object') return null;
   const id = (record as { sessionId?: unknown }).sessionId;
-  return typeof id === 'string' && id.length > 0 ? id : null;
+  if (typeof id !== 'string' || id.length === 0) return null;
+  const platform = (record as { platform?: unknown }).platform;
+  const startedAt = (record as { startedAt?: unknown }).startedAt;
+  return {
+    platform: platform === 'ios' || platform === 'android' ? platform : null,
+    sessionId: id,
+    startedAt: typeof startedAt === 'string' ? startedAt : null,
+  };
+}
+
+export function readRemoteSessionId(root: string): string | null {
+  return readRemoteSession(root)?.sessionId ?? null;
 }
 
 // Runs `fn` with the state.json lock held (reentrant within this process).
