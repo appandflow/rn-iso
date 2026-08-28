@@ -1211,9 +1211,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   if (!fingerprint) {
     return fail({
       code: 'RN_ISO_NO_FINGERPRINT',
-      message: `Could not fingerprint ${root}: @expo/fingerprint is not resolvable from the project or from rn-iso.`,
+      message: `Could not fingerprint ${root}: @expo/fingerprint produced no hash for it.`,
       remedy:
-        'Install it in the project (`npm i -D @expo/fingerprint`) so builds can be cached and shared between worktrees.',
+        'rn-iso ships its own @expo/fingerprint, so this is not a missing dependency: check that this install is complete, or install a copy in the project (`npm i -D @expo/fingerprint`) to override the one rn-iso falls back to.',
     });
   }
   // The same key the Expo provider derives. The configuration is part of it

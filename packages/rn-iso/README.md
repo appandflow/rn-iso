@@ -107,11 +107,11 @@ constraint, not a coincidence: evaluating it must not cost a PR. The
 performance caches that used to be setup steps ride on the command lines
 rn-iso composes itself.
 
-| Cache                   | How rn-iso supplies it                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Xcode compilation cache | `COMPILATION_CACHE_ENABLE_CACHING`, a shared `COMPILATION_CACHE_CAS_PATH`, `SWIFT_ENABLE_COMPILE_CACHE=NO` and a `CLANG_OTHER_PREFIX_MAPPINGS` entry mapping this workspace's root, all as build-setting overrides on rn-iso's own `xcodebuild` argv -- so no Podfile `post_install` block. Xcode 26+ only (older Xcode ignores them, so they are not added), and skipped when the project configured ccache, which defeats it. |
-| Gradle build cache      | `--build-cache` on rn-iso's own `gradlew` argv -- so no `org.gradle.caching=true` in a committed `gradle.properties`. The cache directory is under the Gradle user home, already shared by every worktree.                                                                                                                                                                                                                      |
-| Metro transform cache   | A `FileStore` **appended** to the dev server `start` hosts -- in-process on bare React Native, and on Expo through a `NODE_OPTIONS=--require <shim>` on the child. Stores the project configured are kept, in order. The shim fails soft: anything it cannot patch is one line in the timeline and an uncached (not a dead) dev server.                                                                                         |
+| Cache                   | How rn-iso supplies it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Xcode compilation cache | `COMPILATION_CACHE_ENABLE_CACHING`, a shared `COMPILATION_CACHE_CAS_PATH`, `SWIFT_ENABLE_COMPILE_CACHE=NO` and a `CLANG_OTHER_PREFIX_MAPPINGS` entry mapping this workspace's root, all as build-setting overrides on rn-iso's own `xcodebuild` argv -- so no Podfile `post_install` block. Xcode 26+ only (older Xcode ignores them, so they are not added), and skipped when the project configured ccache, which defeats it.                                                                                                                                                                                                    |
+| Gradle build cache      | `--build-cache` on rn-iso's own `gradlew` argv -- so no `org.gradle.caching=true` in a committed `gradle.properties`. The cache directory is under the Gradle user home, already shared by every worktree.                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Metro transform cache   | A `FileStore` **appended** to the dev server `start` hosts -- in-process on bare React Native, and on Expo through a `NODE_OPTIONS=--require <shim>` on the child. Stores the project configured are kept, in order. The shim RETURNS a substitute for `metro-config` rather than editing it (every export of a Babel-transpiled Metro is non-configurable, so editing it was impossible), and it fails soft: anything it cannot substitute is one line in the timeline and an uncached (not a dead) dev server. The timeline entry that says the store IS shared comes from the shim itself, not from rn-iso's side of the spawn. |
 
 Each prints one dim line when it applies, so none of it is invisible. The
 Metro injection has a machine-level kill switch --
@@ -354,10 +354,14 @@ for builds run _outside_ rn-iso (`expo run:ios` by hand, or EAS), so that the tw
 share artifacts instead of filling two caches with the same builds. Bare React
 Native has no provider hook at all and needs none.
 
-What every entry point does need is `@expo/fingerprint`, resolved from the
-project, to compute the key. It works on a project with no Expo in it at all.
-Without it `rn-iso ios` refuses with `RN_ISO_NO_FINGERPRINT` rather than
-compiling from scratch forever.
+What every entry point does need is `@expo/fingerprint` to compute the key. It
+works on a project with no Expo in it at all. It is resolved from the PROJECT
+first -- an Expo app already ships it, and its copy computes the hash the
+project's own tooling computes -- and rn-iso **depends on** `@expo/fingerprint`
+itself as the fallback, so a bare `@react-native-community/cli init` app needs
+no `package.json` change to use the build cache. When neither can produce a
+hash, `rn-iso ios` refuses with `RN_ISO_NO_FINGERPRINT` rather than compiling
+from scratch forever.
 
 Entries are keyed `<fingerprintHash>-<variant>-<target>`, identically by every
 entry point. The fingerprint covers what the project _is_, never how it was

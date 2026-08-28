@@ -27,7 +27,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { metroCacheRoot, registerCache } from '@rn-iso/core';
+import { metroCacheRoot, registerCache, tagSharedStore } from '@rn-iso/core';
 
 // A Metro FileStore, kept structural so this package need not depend on
 // metro-cache's types: the constructor is all the caller relies on.
@@ -114,7 +114,11 @@ export function sharedCacheStores(name = 'app', { FileStore }: { FileStore?: Fil
   const Store: FileStoreCtor = FileStore || (require('metro-cache') as { FileStore: FileStoreCtor }).FileStore;
   const root = cacheRoot(name);
   registerOnce(root);
-  return [new Store({ root })];
+  // Tagged so rn-iso recognizes this store as ITS root and does not append a
+  // second one beside it when `rn-iso start` hosts a project that already
+  // called this function by hand. Metro's FileStore made `_root` private in
+  // metro-cache 0.83.0, so the tag is the only thing left to recognize.
+  return [tagSharedStore(new Store({ root }), root)];
 }
 
 // --- the NDJSON reporter ------------------------------------------------

@@ -31,6 +31,48 @@
 
 const STORE_ROOT = process.env.RN_ISO_METRO_STORE;
 
+// The property a shim marks its own substitute with, so a SECOND copy of this
+// file (an outer rn-iso, a different version in a nested install) recognizes
+// an already-wrapped metro-config and leaves it alone rather than stacking a
+// proxy on a proxy.
+const MARKER = 'rnIsoSharedCacheStore';
+
+// THE SUCCESS LINE, and the only thing this file prints when it works. It is
+// the machine-readable half of the contract with the supervisor: rn-iso can
+// only ever know that it ASKED for the injection (it set NODE_OPTIONS in
+// another process), so the record that says the store is actually in the
+// config Metro loaded has to come from HERE, after the store is in it.
+// server-expo.ts parses this exact prefix (metroStoreConfirmedRoot in
+// src/supervisor/metro-store.ts) into the `cache_store_added` record; anything
+// that changes it must change there too.
+const OK_PREFIX = 'rn-iso-metro-store: sharing Metro transforms through ';
+
+// The property every store rn-iso installs carries, so a second appender can
+// recognize it. Duplicated from @rn-iso/core's STORE_ROOT_TAG for the reason
+// the env var names are duplicated: this file may have no dependencies at all.
+// Metro made FileStore's `_root` private in metro-cache 0.83.0, so reading the
+// store's own field is not an option on anything current -- `_root` is still
+// read as a fallback for 0.82 and older, where it was public.
+const STORE_ROOT_TAG = 'rnIsoStoreRoot';
+
+function storeRootOf(store) {
+  if (!store || typeof store !== 'object') return null;
+  if (typeof store[STORE_ROOT_TAG] === 'string') return store[STORE_ROOT_TAG];
+  return typeof store._root === 'string' ? store._root : null;
+}
+
+// A tagged FileStore, or an untagged one if the instance refuses the property:
+// untaggable means undetectable, which costs a duplicate entry at worst.
+function makeStore(FileStore, root) {
+  const store = new FileStore({ root: root });
+  try {
+    Object.defineProperty(store, STORE_ROOT_TAG, { value: root, enumerable: false, configurable: true });
+  } catch {
+    // See above.
+  }
+  return store;
+}
+
 // ONE line, and it starts with "warning:" on purpose: server-expo.ts infers a
 // record's level from the line's leading word, so this lands in the timeline
 // as a warn rather than as info nobody queries. It is also why the reason is
@@ -49,17 +91,35 @@ function warn(reason) {
   }
 }
 
+// Once per process, however many times loadConfig is called (Expo calls it per
+// platform on some paths). The timeline wants the fact, not a repetition of it.
+let announced = false;
+function announce(root) {
+  if (announced) return;
+  announced = true;
+  try {
+    process.stderr.write(OK_PREFIX + root + '\n');
+  } catch {
+    // See warn(): a dead stderr is not a reason to throw at a dev server.
+  }
+}
+
 // Append, never replace. A project that configured its own cacheStores keeps
 // every one of them -- rn-iso's store is one more place to look, not a
 // substitute for the project's decision. `cacheStores` may also be a FUNCTION
 // of Metro's cache module (Metro supports that form), which is wrapped rather
 // than flattened, because calling it here would evaluate it at the wrong time.
-function appendStore(config, store, root) {
+//
+// Returns whether the resolved config will consult our store, which is TRUE
+// for the already-present case too: a project that points at this same root by
+// hand is sharing the store, and that is the fact the success line reports.
+function appendStore(config, FileStore, root) {
+  if (!config || typeof config !== 'object') return false;
   const stores = config.cacheStores;
   if (typeof stores === 'function') {
     config.cacheStores = function (metroCache) {
       const resolved = stores(metroCache);
-      return (Array.isArray(resolved) ? resolved : []).concat([store]);
+      return (Array.isArray(resolved) ? resolved : []).concat([makeStore(FileStore, root)]);
     };
     return true;
   }
@@ -67,22 +127,146 @@ function appendStore(config, store, root) {
     // Idempotent: two --require entries, or a project that already points at
     // this exact root, must not end up with the store twice.
     for (const existing of stores) {
-      if (existing && typeof existing === 'object' && existing._root === root) return false;
+      if (storeRootOf(existing) === root) return true;
     }
-    config.cacheStores = stores.concat([store]);
+    config.cacheStores = stores.concat([makeStore(FileStore, root)]);
     return true;
   }
-  config.cacheStores = [store];
+  config.cacheStores = [makeStore(FileStore, root)];
   return true;
 }
 
-function patch(metroConfig, filename) {
-  if (!metroConfig || typeof metroConfig !== 'object') return;
-  if (metroConfig.rnIsoSharedCacheStore) return;
-  if (typeof metroConfig.loadConfig !== 'function') {
+// The wrapper around the real loadConfig: await it, add the store to what came
+// back, hand the same config on. Every failure inside is a warning and the
+// UNTOUCHED config, never a rejected promise -- a dev server that cannot start
+// is strictly worse than one with a cold cache.
+function wrapLoadConfig(original, FileStore) {
+  return function loadConfig() {
+    const args = arguments;
+    const self = this;
+    return Promise.resolve()
+      .then(function () {
+        return original.apply(self, args);
+      })
+      .then(function (config) {
+        try {
+          if (appendStore(config, FileStore, STORE_ROOT)) announce(STORE_ROOT);
+        } catch (err) {
+          // The config loaded fine; only the store did not. Serve without it.
+          warn('the store could not be added to the loaded config: ' + (err && err.message));
+        }
+        return config;
+      });
+  };
+}
+
+// WHY A PROXY AND NOT AN ASSIGNMENT (issue #73, field-verified broken):
+// metro-config is Babel-transpiled ESM->CJS, so every export is an ACCESSOR
+// property defined with `configurable: false` (measured identical on
+// metro-config 0.84.4 and 0.87.0). `ns.loadConfig = wrapped` throws in strict
+// mode and `Object.defineProperty` throws "Cannot redefine property", so the
+// old mutate-the-namespace shim could never apply on any current Expo project.
+//
+// This file already controls what `require('metro-config')` RETURNS, so it
+// returns a SUBSTITUTE instead of editing the original: a Proxy whose `get`
+// trap answers `loadConfig` with the wrapper and forwards everything else.
+// That sidesteps configurable:false entirely and does not depend on Metro's
+// transpilation shape.
+//
+// Three properties of the handler are deliberate:
+//   - LAZINESS IS PRESERVED. A shallow copy (`{ ...ns }`) would work too and
+//     is what not to do: it evaluates every lazy getter at require time, which
+//     is Babel's whole reason for emitting them. `get` forwards one property at
+//     a time, and even `loadConfig` is only read from the target when somebody
+//     asks for it.
+//   - `Reflect.get(target, prop)` DROPS THE RECEIVER on purpose, so a
+//     forwarded getter runs with `this === target`, exactly as it would if the
+//     proxy were not there.
+//   - `getOwnPropertyDescriptor` reports the TARGET's descriptor for
+//     `loadConfig`, not ours. It has no choice: a proxy may not report a
+//     different `[[Get]]` for a non-configurable accessor property (the
+//     invariant check throws TypeError). So `Object.keys`, spread and
+//     `Object.getOwnPropertyDescriptors` see the real shape, while every
+//     ordinary read -- `ns.loadConfig`, `const { loadConfig } = ns` -- goes
+//     through `get` and gets the wrapper. That is the shape every consumer
+//     uses; the descriptor is not.
+function makeSubstitute(metroConfig, FileStore) {
+  let wrapped = null;
+  return new Proxy(metroConfig, {
+    get(target, prop) {
+      if (prop === MARKER) return true;
+      if (prop !== 'loadConfig') return Reflect.get(target, prop);
+      if (wrapped) return wrapped;
+      const original = Reflect.get(target, prop);
+      if (typeof original !== 'function') {
+        // Discovered late (the property exists but is not callable). Hand back
+        // exactly what the module has, so nothing changes shape underneath the
+        // consumer.
+        warn('the metro-config this project loaded exports a loadConfig that is not a function');
+        return original;
+      }
+      // Memoized so `ns.loadConfig === ns.loadConfig`: consumers bind it,
+      // store it and compare it.
+      wrapped = wrapLoadConfig(original, FileStore);
+      return wrapped;
+    },
+    // The remaining three traps are explicit forwards. They are the default
+    // behaviour, written out because they are the ones a consumer walking the
+    // namespace (`Object.keys`, `'loadConfig' in ns`, a spread) goes through,
+    // and because the descriptor trap above is the one place where forwarding
+    // is a decision rather than a default.
+    has(target, prop) {
+      return Reflect.has(target, prop);
+    },
+    ownKeys(target) {
+      return Reflect.ownKeys(target);
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      return Reflect.getOwnPropertyDescriptor(target, prop);
+    },
+  });
+}
+
+// One decision per loaded metro-config, remembered: Module._load runs on every
+// require, and both the proxy's identity (`require('metro-config') ===
+// require('metro-config')`) and the warning's ONE-line contract depend on
+// deciding once. Weak so a module that goes away can be collected.
+const decided = new WeakMap();
+
+// Returns what `require('metro-config')` should hand back: the substitute, or
+// the original module untouched when the substitute cannot be built. Never
+// throws, never mutates the module.
+function substitute(metroConfig, filename) {
+  if (!metroConfig || typeof metroConfig !== 'object') return metroConfig;
+  if (decided.has(metroConfig)) return decided.get(metroConfig);
+  const replacement = decide(metroConfig, filename);
+  decided.set(metroConfig, replacement);
+  return replacement;
+}
+
+function decide(metroConfig, filename) {
+  // Already substituted by another copy of this shim. Reading the marker is a
+  // property GET, which its proxy answers without touching the module.
+  if (metroConfig[MARKER]) return metroConfig;
+
+  // `in` rather than a read: it reports the property without evaluating the
+  // lazy getter behind it, so the diagnostic stays early and the laziness
+  // stays intact.
+  if (!('loadConfig' in metroConfig)) {
     warn('the metro-config this project loaded exports no loadConfig()');
-    metroConfig.rnIsoSharedCacheStore = true;
-    return;
+    return metroConfig;
+  }
+
+  // The one shape a `get` trap may not lie about: a non-configurable,
+  // non-writable DATA property must read back as itself, so returning the
+  // wrapper would throw a TypeError at the consumer. No metro-config observed
+  // does this (0.81.5 is a writable data property, 0.84.4 and 0.87.0 are
+  // accessors) -- it is checked because a proxy invariant violation would
+  // break the dev server, which is the one outcome this file may not have.
+  const descriptor = Object.getOwnPropertyDescriptor(metroConfig, 'loadConfig');
+  if (descriptor && 'value' in descriptor && !descriptor.writable && !descriptor.configurable) {
+    warn('metro-config.loadConfig is a non-configurable, non-writable value and cannot be substituted');
+    return metroConfig;
   }
 
   // metro-cache is resolved from METRO-CONFIG's own location rather than from
@@ -93,47 +277,14 @@ function patch(metroConfig, filename) {
     FileStore = require('node:module').createRequire(filename)('metro-cache').FileStore;
   } catch (err) {
     warn('metro-cache is not resolvable from ' + filename + ': ' + (err && err.message));
-    metroConfig.rnIsoSharedCacheStore = true;
-    return;
+    return metroConfig;
   }
   if (typeof FileStore !== 'function') {
     warn('metro-cache exports no FileStore');
-    metroConfig.rnIsoSharedCacheStore = true;
-    return;
+    return metroConfig;
   }
 
-  const original = metroConfig.loadConfig;
-  const wrapped = function loadConfig() {
-    const args = arguments;
-    const self = this;
-    return Promise.resolve()
-      .then(function () {
-        return original.apply(self, args);
-      })
-      .then(function (config) {
-        try {
-          appendStore(config, new FileStore({ root: STORE_ROOT }), STORE_ROOT);
-        } catch (err) {
-          // The config loaded fine; only the store did not. Serve without it.
-          warn('the store could not be added to the loaded config: ' + (err && err.message));
-        }
-        return config;
-      });
-  };
-
-  try {
-    metroConfig.loadConfig = wrapped;
-  } catch {
-    // A build output that defines its exports with getters, or a frozen
-    // namespace: try the explicit definition before giving up.
-    try {
-      Object.defineProperty(metroConfig, 'loadConfig', { value: wrapped, configurable: true, writable: true });
-    } catch (err) {
-      warn('metro-config.loadConfig is not writable: ' + (err && err.message));
-      return;
-    }
-  }
-  metroConfig.rnIsoSharedCacheStore = true;
+  return makeSubstitute(metroConfig, FileStore);
 }
 
 // WHY A LOADER HOOK RATHER THAN RESOLVING metro-config OURSELVES: resolving it
@@ -141,7 +292,7 @@ function patch(metroConfig, filename) {
 // actually requires (a monorepo, a pnpm store, a nested @expo/cli), and
 // patching the copy nobody loads is the one failure mode that would be
 // SILENT -- no warning, no cache, nothing to read. Hooking the load instead
-// means the module we patch is by construction the module Expo got.
+// means the module we substitute for is by construction the module Expo got.
 function install() {
   if (!STORE_ROOT) return;
   const Module = require('node:module');
@@ -152,14 +303,13 @@ function install() {
   }
   Module._load = function (request, parent, isMain) {
     const exports = load.apply(this, arguments);
-    if (request === 'metro-config') {
-      try {
-        patch(exports, Module._resolveFilename(request, parent, isMain));
-      } catch (err) {
-        warn('patching metro-config failed: ' + (err && err.message));
-      }
+    if (request !== 'metro-config') return exports;
+    try {
+      return substitute(exports, Module._resolveFilename(request, parent, isMain));
+    } catch (err) {
+      warn('substituting metro-config failed: ' + (err && err.message));
+      return exports;
     }
-    return exports;
   };
 }
 

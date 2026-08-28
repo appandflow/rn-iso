@@ -72,7 +72,15 @@ export function artifactIn(dir: string): string | null {
 
 // @expo/fingerprint is resolved from the PROJECT first: an Expo app already has
 // it, and using the project's copy means the hash matches the one its own CLI
-// would compute. Only then fall back to a copy installed alongside rn-iso.
+// would compute -- the same entry its own `expo run:ios` and its EAS build
+// address. Only then fall back to the copy rn-iso DEPENDS on.
+//
+// That fallback is why a bare `@react-native-community/cli init` app needs no
+// package.json change (issue #74): it has no @expo/fingerprint, the first
+// resolution misses, and rn-iso's own copy answers. It is deliberately second,
+// not first -- a project that ships a version has a reason to, and rn-iso
+// hashing a project differently from the project's own tooling is a cache
+// nobody shares.
 // Returning null rather than throwing lets the caller give advice instead of a
 // stack trace.
 // The only shape this module ever calls on the module @expo/fingerprint

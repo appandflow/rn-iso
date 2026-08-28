@@ -1,4 +1,5 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignore": ["website/**", "packages/rn-iso/shim/**"]
+  "ignore": ["website/**", "packages/rn-iso/shim/**"],
+  "ignoreDependencies": ["@expo/fingerprint"]
 }

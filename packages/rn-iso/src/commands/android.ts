@@ -1186,14 +1186,14 @@ export async function runAndroid(
     return fail(
       NO_FINGERPRINT,
       `@expo/fingerprint could not fingerprint ${root}: ${(err as Error)?.message || err}`,
-      'Fix the error above, or install a working copy with `npm i -D @expo/fingerprint`.',
+      "Fix the error above, or install a working copy in the project with `npm i -D @expo/fingerprint` (the project's copy wins over the one rn-iso ships).",
     );
   }
   if (!hash) {
     return fail(
       NO_FINGERPRINT,
-      `@expo/fingerprint is not resolvable from ${root} or from rn-iso, so the build cache cannot be addressed.`,
-      'Install it in the project: `npm i -D @expo/fingerprint`.',
+      `@expo/fingerprint returned no hash for ${root}, so the build cache cannot be addressed.`,
+      'rn-iso ships its own @expo/fingerprint, so this is not a missing dependency: check that this install is complete, or install a copy in the project (`npm i -D @expo/fingerprint`) to override the one rn-iso falls back to.',
     );
   }
   record.fingerprint = hash;

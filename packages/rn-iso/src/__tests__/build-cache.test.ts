@@ -13,6 +13,7 @@ import {
   fingerprintDiffRecord,
   fingerprintDiffSuffix,
   fingerprintProject,
+  loadFingerprinter,
   refingerprintAfterMutation,
   resolveBuild,
   storeBuild,
@@ -289,6 +290,54 @@ test('storing a build registers the cache root at the depth its entries actually
 // worktrees by construction, and an UNSCOPED fingerprint hashes ios/ into the
 // android key. With platforms scoped to the platform being built, both
 // worktrees fingerprinted identically (b5a268e6...).
+// --- resolving @expo/fingerprint at all (issue #74) -------------------------
+//
+// A plain `@react-native-community/cli init` app has no @expo/fingerprint, and
+// without it `ios` / `android` refuse with RN_ISO_NO_FINGERPRINT and a remedy
+// that is a package.json edit -- which is a project change, on the one path
+// (bare) where the zero-config claim had nothing behind it. rn-iso DEPENDS on
+// @expo/fingerprint now, so the second candidate always answers.
+describe('loadFingerprinter', () => {
+  test("falls back to rn-iso's own copy for a project that has none", () => {
+    // `root` is a fresh tmpdir with no node_modules anywhere above it, which
+    // is the bare project's situation exactly.
+    const fp = loadFingerprinter(root);
+    assert(fp);
+    expect(typeof fp.createFingerprintAsync).toBe('function');
+  });
+
+  // The fallback is a REAL dependency, not a hope that something hoisted one
+  // into place. Asserting the manifest is what keeps a future dependency
+  // cleanup from turning the bare path back into a refusal.
+  test('@expo/fingerprint is a declared dependency of the rn-iso package', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as {
+      dependencies?: Record<string, string>;
+    };
+    expect(typeof pkg.dependencies?.['@expo/fingerprint']).toBe('string');
+  });
+
+  // ...and it stays SECOND. A project that ships its own version has a reason
+  // to, and a hash rn-iso computes differently from the project's own tooling
+  // is a cache entry nobody else ever addresses.
+  test("the project's own copy still wins when it has one", () => {
+    const stub = join(root, 'node_modules', '@expo', 'fingerprint');
+    mkdirSync(stub, { recursive: true });
+    writeFileSync(join(stub, 'package.json'), JSON.stringify({ name: '@expo/fingerprint', main: 'index.js' }));
+    writeFileSync(join(stub, 'index.js'), 'exports.createFingerprintAsync = async () => ({ hash: "from-project" });\n');
+    const fp = loadFingerprinter(root);
+    assert(fp);
+    expect(fp.createFingerprintAsync).toBeDefined();
+    return expect(fp.createFingerprintAsync(root)).resolves.toEqual({ hash: 'from-project' });
+  });
+
+  // A path that does not exist is a resolution miss on the FIRST candidate and
+  // a hit on the second, never a throw: the caller's error message is what a
+  // user reads, not a stack.
+  test('a project path that does not exist still resolves rather than throwing', () => {
+    expect(loadFingerprinter(join(root, 'does', 'not', 'exist'))).not.toBe(null);
+  });
+});
+
 test('fingerprintProject scopes the hash to the platform being built', async () => {
   const seen: { dir: string; options: { platforms: string[] } | undefined }[] = [];
   const load = () => ({
