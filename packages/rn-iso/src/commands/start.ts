@@ -360,7 +360,9 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
       const logsDir = workspaceLogsDir(root);
       const logFile = supervisorLogFile(root);
       const port = await resolvePort(root, note);
-      let publicOrigin = publicUrl;
+      let publicOrigin = remote ? publicUrl : null;
+      let resolution = await resolveProjectMetro(port, root);
+      let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
 
       if (remote && !tunnel && !publicUrl && tunnelMode !== 'off') {
         const available = d.providers();
@@ -386,6 +388,13 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             }
             publicOrigin = recorded.url;
           } else {
+            if (resolution.metro || supervisor) {
+              return fail({
+                code: 'RN_ISO_REMOTE_START_REQUIRED',
+                message: `The dev server on port ${port} is local-only and cannot gain a managed tunnel while it is running.`,
+                remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
+              });
+            }
             const started = await d.startTunnelSequence({
               providers: candidates,
               port,
@@ -431,8 +440,6 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         }
       }
 
-      let resolution = await resolveProjectMetro(port, root);
-      let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
       const requireExpoTunnel = () => {
         if (tunnel && (!supervisor || readMetroTunnel(root)?.kind !== 'expo')) {
           fail({

@@ -546,6 +546,48 @@ describe('action: already running', () => {
     expect(JSON.parse(result.logs[0] ?? '').alreadyRunning).toBe(true);
   });
 
+  test.each([
+    ['owned', true],
+    ['external', false],
+  ])('start --remote refuses to add a managed tunnel to an existing %s bare server', async (_kind, owned) => {
+    const port = owned ? 8176 : 8177;
+    const server = await metroListener(port);
+    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+    if (owned) {
+      writeWorkspaceState(root, {
+        supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' },
+      });
+    }
+    let tunnelStarted = false;
+
+    let result;
+    try {
+      result = await runAction({ json: true, remote: true }, (cmd) =>
+        registerStart(cmd, {
+          providers: () => ['ngrok'],
+          startTunnelSequence: async () => {
+            tunnelStarted = true;
+            return { provider: 'ngrok', url: 'https://late.ngrok.app', pid: 4242 };
+          },
+          isTunnelAlive: () => false,
+        }),
+      );
+    } finally {
+      server.close();
+    }
+
+    expect(result.exitCode).toBe(1);
+    expect(tunnelStarted).toBe(false);
+    expect(exec.calls.spawn).toEqual([]);
+    expect(JSON.parse(result.logs[0] ?? '')).toEqual({
+      code: 'RN_ISO_REMOTE_START_REQUIRED',
+      message: `The dev server on port ${port} is local-only and cannot gain a managed tunnel while it is running.`,
+      remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
+    });
+  });
+
   test('two starts in a row leave one supervisor', async () => {
     const port = 8153;
     const server = await metroListener(port);
@@ -716,6 +758,18 @@ describe('action: spawning the supervisor', () => {
     const spawned = exec.calls.spawn[0];
     assert(spawned);
     expect(spawned.args).toEqual([supervisorEntry(), '--root', root, '--port', '8163']);
+  });
+
+  test('plain start does not inject a configured public URL into the dev server', async () => {
+    const { exec } = await runSpawnedExpoStart({
+      port: 8178,
+      options: { json: true, wait: '10' },
+      settings: { metro: { publicUrl: 'https://operator.example.test' } },
+    });
+    const spawned = exec.calls.spawn[0];
+    assert(spawned);
+    expect(spawned.opts.env).not.toHaveProperty('RN_ISO_METRO_PUBLIC_URL');
+    expect(spawned.opts.env).not.toHaveProperty('EXPO_PACKAGER_PROXY_URL');
   });
 
   test.each(['ios', 'android'])('%s.remote gives plain start remote intent', async (platform) => {
