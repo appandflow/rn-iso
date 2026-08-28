@@ -100,31 +100,63 @@ Each command takes `--json` and then prints exactly one line of JSON on stdout, 
 
 In a different worktree of the same app, the same two commands get a _different_ owned sim and Metro port, so both run side by side.
 
-To set a repo up for that in the first place, run `rn-iso doctor` and work
-through what it reports:
+## No project changes required
+
+**rn-iso runs on a clean checkout of somebody else's repo.** That is a design
+constraint, not a coincidence: evaluating it must not cost a PR. The
+performance caches that used to be setup steps ride on the command lines
+rn-iso composes itself.
+
+| Cache                   | How rn-iso supplies it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Xcode compilation cache | `COMPILATION_CACHE_ENABLE_CACHING`, a shared `COMPILATION_CACHE_CAS_PATH`, `SWIFT_ENABLE_COMPILE_CACHE=NO` and a `CLANG_OTHER_PREFIX_MAPPINGS` entry mapping this workspace's root, all as build-setting overrides on rn-iso's own `xcodebuild` argv -- so no Podfile `post_install` block. Xcode 26+ only (older Xcode ignores them, so they are not added), and skipped when the project configured ccache, which defeats it.                                                                                                                                                                                                    |
+| Gradle build cache      | `--build-cache` on rn-iso's own `gradlew` argv -- so no `org.gradle.caching=true` in a committed `gradle.properties`. The cache directory is under the Gradle user home, already shared by every worktree.                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Metro transform cache   | A `FileStore` **appended** to the dev server `start` hosts -- in-process on bare React Native, and on Expo through a `NODE_OPTIONS=--require <shim>` on the child. Stores the project configured are kept, in order. The shim RETURNS a substitute for `metro-config` rather than editing it (every export of a Babel-transpiled Metro is non-configurable, so editing it was impossible), and it fails soft: anything it cannot substitute is one line in the timeline and an uncached (not a dead) dev server. The timeline entry that says the store IS shared comes from the shim itself, not from rn-iso's side of the spawn. |
+
+Each prints one dim line when it applies, so none of it is invisible. The
+Metro injection has a machine-level kill switch --
+`{ "caches": { "injectMetroStore": false } }` in `~/.rn-iso/config.json`,
+which is a machine setting rather than a repo change on purpose.
+
+`.rn-iso/` in `.gitignore` is the same story from the other end: `start`,
+`ios` and `android` add it themselves and say so once on stderr. Commit that
+line with the change you were already making and it stops being rewritten in
+every fresh worktree.
+
+### What `doctor` is for, then
 
 ```bash
 npx rn-iso doctor
 ```
 
-There is no `rn-iso init`. Every edit that setup needs lands in a file the
+**It reports what rn-iso cannot fix for itself.** The mere absence of a
+project-side cache setting is not a finding at all -- rn-iso supplies the Metro
+store, the compilation cache and the Gradle build cache on its own command
+lines, so a repo that configures none of them is clean here. What it does
+report is active misconfiguration: a missing `expo-dev-client` (a reserved port
+cannot reach the app without it), ccache (the one thing that stops rn-iso
+adding its compilation cache), a checkout that does not fingerprint like a
+fresh worktree (every worktree then misses the build cache), a
+`buildCacheProvider` on a key this SDK ignores, an EAS session that cannot
+answer -- plus the settings that are wired in a way that defeats the builds
+you make OUTSIDE rn-iso (a `cacheStores` behind an env-var flag, a compilation
+CAS left at the per-workspace default). A clean run means there is nothing
+rn-iso needs from this repo.
+
+There is no `rn-iso init`, and no setup skill either. There is no longer a
+setup playbook to follow: what little a repo can get wrong is reported by
+`doctor` at the moment it matters, and the edit it names lands in a file the
 project already owns -- a `metro.config.js` with its own transformer, a
 `Podfile` with existing `post_install` logic, an app config that may be
-TypeScript -- and a generator that rewrites those eventually corrupts one. So
-`doctor` reports, read-only and always exit 0, and the bundled `rn-iso-init`
-skill is the playbook for applying each finding by hand. The one edit that
-needed no judgement, `.rn-iso/` in `.gitignore`, is self-ensured: `start`,
-`ios` and `android` each add it if it is missing and say so once on stderr --
-commit that line with the change you were already making, and it stops being
-rewritten in every fresh worktree.
+TypeScript -- which is judgement, not templating.
 
-For AI coding agents, install the bundled skills so the agent knows how to drive the CLI (the lifecycle, the facts contract, and the destructive-command rules). They install with the skills CLI, straight from GitHub:
+For AI coding agents, install the bundled skill so the agent knows how to drive the CLI (the lifecycle, the facts contract, and the destructive-command rules). It installs with the skills CLI, straight from GitHub:
 
 ```bash
 npx skills add appandflow/rn-iso
 ```
 
-[Getting started](https://appandflow.github.io/rn-iso/docs/getting-started) is the whole human-side setup: install the skill, have the agent run `/rn-iso-init`, then describe what you want built.
+[Getting started](https://appandflow.github.io/rn-iso/docs/getting-started) is the whole human-side setup: install the skill, then describe what you want built.
 
 ## Owned devices
 
@@ -163,7 +195,7 @@ All commands below take the same `npx rn-iso` prefix.
 | `stop [--force] [--json]`                                                                                      | The inverse of `start`: halt this workspace's supervisor, reap its device-log collectors, shut the owned device **down** (never deleted, so it stays assigned), and free the reserved port. Non-destructive and takes no target -- it acts on the current workspace. With no supervisor recorded it falls back to killing an identity-verified Metro on the reserved port; `--force` is only for an unproven listener there. Already-stopped is a success at every step.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `status [--json]`                                                                                              | Show every registered project (machine-wide by default; there is no `--all`): device assignments (owned/legacy), Metro state, supervisor pid / mode / health, last build (fingerprint, cache hit, duration), log directory and error count since the last marker, plus machine capacity and free disk -- on the boot volume, and on the current project's volume too when that is a different one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `gc [--delete] [--older-than <days>] [--all]`                                                                  | Report what rn-iso has left behind: entries for projects whose directory no longer exists, orphaned `rn-iso-*` devices, records naming a device that is no longer on the machine, and every shared build cache with its size. Reports and writes nothing by default; `--delete` reclaims the dead entries (freeing their Metro ports), reaps the orphaned devices, and clears the stale device records (the record only -- there is no device left to touch, so it issues no simctl/avdmanager command). `--older-than <days>` additionally reaps owned devices whose _project_ has gone untouched that long, and trims cache entries nothing has used in that time. `--all` (with `--delete`) empties the caches whole -- see below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `doctor [--json]`                                                                                              | Report the configuration that makes a second workspace slower than it needs to be: a missing dev client, a per-project Metro cache, a compilation cache left at its default path, Gradle's build cache off, a ccache conflict, a configured build-cache provider on the key this SDK ignores, and -- last, because it computes a real fingerprint twice via a temporary worktree of HEAD (removed again) -- a checkout that does not fingerprint like a fresh worktree. Read-only, and always exits 0.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `doctor [--json]`                                                                                              | Report what rn-iso cannot handle on its own. The ABSENCE of a project-side cache setting is not a finding -- rn-iso supplies the Metro store, the Xcode compilation cache and the Gradle build cache on its own command lines. What it reports is active misconfiguration: a missing dev client, ccache (which is what stops rn-iso adding its own compilation cache), a `cacheStores` wired behind a conditional so it is off in the case that matters, a compilation CAS left at the per-workspace default, a configured build-cache provider on the key this SDK ignores, an EAS session that cannot answer, `.rn-iso/` missing from `.gitignore`, and -- last, because it computes a real fingerprint twice via a temporary worktree of HEAD (removed again) -- a checkout that does not fingerprint like a fresh worktree. A clean run means nothing rn-iso cannot handle itself. Read-only, and always exits 0.                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `worktree create <name> [--base <ref>] [--label <name>] [--carry-ignored]`                                     | Create an isolated git worktree: carries over gitignored files, prints the worktree path (and, on stderr, what it branched from -- ref and short sha). `--base` takes `fresh` (origin/HEAD, the default), `head`, or any ref `git rev-parse` resolves; an unresolvable one is refused before anything is created. Does not install dependencies unless `--carry-ignored` clones the source's working state: its gitignored paths (node_modules, Pods, build output) plus its uncommitted tracked changes, applied when they fit the base and reported when they do not.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `worktree remove [<path>] [--force]`                                                                           | Remove a worktree, reclaiming its build artifacts, Metro port, and owned devices (deleted, not just freed). Defaults to the current workspace. Refuses if it has uncommitted or unpushed work unless `--force`, naming the right restore command per class (`git checkout --` for modified tracked files, `git clean -fd` for untracked ones). The workspace's own `.rn-iso/` never counts as dirt -- it dies with the worktree by design. On the main checkout it reclaims the environment only (devices deleted, port freed, `.rn-iso/` removed) and never touches the tree.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `guide [topic]`                                                                                                | Print reference docs for the installed version (topics: facts, metro, logs, errors, lifecycle, cleanup, settings). Generated by the binary, so it cannot drift.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -206,7 +238,7 @@ npx rn-iso logs --errors --json     # raw records, so stdout is valid NDJSON
 
 **Nothing matching is exit 0.** `logs --errors` returning nothing is the pass condition of a build loop, so an empty result must never read as a failure; the only exit-1 paths are a malformed query and no project. `--errors` means level `error` or `fatal` strictly after the most recent record carrying `marker: true`, and the marker is searched across every source, so a marker in one file closes the window for all of them. Markers are written when a bundle build finishes -- which is what stops an error you already fixed from being reported forever. `rn-iso status` reports the same count per workspace.
 
-The record is `{ ts, src, level, msg }` plus optional `event`, `stack`, `marker` and `raw`. `src` is one of `metro`, `client`, `device`, `build`: the supervisor writes `metro` (both modes) and `client` (bare only -- in `expo-child` mode Expo's client output arrives on the bundler stream), and `ios` / `android` write `build` (the transcript at level debug, the extracted diagnostics at level error) and `device` (via the `simctl log stream` / `logcat` collector they attach after launch). `.rn-iso/logs/supervisor.log` is deliberately _not_ part of the timeline: it is the supervisor's raw stdio, and it is what `start` quotes when a supervisor dies before it can write a structured record.
+The record is `{ ts, src, level, msg }` plus optional `event`, `stack`, `marker` and `raw`. `src` is one of `metro`, `client`, `device`, `build`: the supervisor writes `metro` (both modes) and `client` (bare only -- in `expo-child` mode Expo's client output arrives on the bundler stream), and `ios` / `android` write `build` (the transcript at level debug, the extracted diagnostics at level error) and `device` (via the `simctl log stream` / `logcat` collector they attach after launch). `.rn-iso/logs/supervisor.log` is deliberately _not_ part of the timeline: it is the supervisor's raw stdio, and it is what `start` quotes when a supervisor dies before it can write a structured record. `.rn-iso/logs/emulator.log` is outside the timeline for the same reason: it is the Android emulator's raw stdio, truncated on each boot, and it is what `android` quotes when a boot fails (the emulator's own `FATAL |` / `PANIC:` line becomes the `RN_ISO_NO_DEVICE` message and remedy).
 
 `rn-iso stop` is the inverse: it halts the supervisor (identity-verified: a pid is only signalled when it is alive, recorded for this workspace, and holding the port this project reserved), SIGTERMs the device-log collectors recorded in the same `state.json`, shuts the owned device down without deleting it, and frees the port. It never escalates to `SIGKILL` -- a supervisor mid-write on the log files is exactly what `SIGTERM` handling exists to finish -- so a supervisor that will not exit is reported with its pid instead.
 
@@ -322,10 +354,14 @@ for builds run _outside_ rn-iso (`expo run:ios` by hand, or EAS), so that the tw
 share artifacts instead of filling two caches with the same builds. Bare React
 Native has no provider hook at all and needs none.
 
-What every entry point does need is `@expo/fingerprint`, resolved from the
-project, to compute the key. It works on a project with no Expo in it at all.
-Without it `rn-iso ios` refuses with `RN_ISO_NO_FINGERPRINT` rather than
-compiling from scratch forever.
+What every entry point does need is `@expo/fingerprint` to compute the key. It
+works on a project with no Expo in it at all. It is resolved from the PROJECT
+first -- an Expo app already ships it, and its copy computes the hash the
+project's own tooling computes -- and rn-iso **depends on** `@expo/fingerprint`
+itself as the fallback, so a bare `@react-native-community/cli init` app needs
+no `package.json` change to use the build cache. When neither can produce a
+hash, `rn-iso ios` refuses with `RN_ISO_NO_FINGERPRINT` rather than compiling
+from scratch forever.
 
 Entries are keyed `<fingerprintHash>-<variant>-<target>`, identically by every
 entry point. The fingerprint covers what the project _is_, never how it was
@@ -417,23 +453,25 @@ Claude Code's `WorktreeCreate` hook fires when a session for a new worktree star
 }
 ```
 
-## Keeping the agent skills in sync
+## Keeping the agent skill in sync
 
-The skills other AI agents read ship inside the npm package. Because they are
-installed by copy, upgrading rn-iso does **not** refresh them -- a 0.14.0 CLI
+The skill other AI agents read ships inside the npm package. Because it is
+installed by copy, upgrading rn-iso does **not** refresh it -- a 0.14.0 CLI
 happily runs against a skill from 0.6.x, and the only symptom is an agent
 following instructions that no longer match the binary.
 
-After upgrading, refresh them the same way they were installed:
+After upgrading, refresh it the same way it was installed:
 
 ```bash
 npx skills add appandflow/rn-iso
 ```
 
-That installs both bundled skills: `rn-iso` (how to drive the CLI) and
-`rn-iso-init` (how to make a repo fast for parallel agents).
+That installs the one bundled skill, `rn-iso`: how to drive the CLI. There is
+no separate setup skill -- rn-iso needs no project changes, and the handful of
+things it cannot handle itself are what `rn-iso doctor` reports, at the moment
+they matter.
 
-The `rn-iso` skill is deliberately thin: it carries the rules that don't change
+The skill is deliberately thin: it carries the rules that don't change
 (the ownership model, the destructive-command rules, the parallel-agent rules)
 and defers everything version-specific to `npx rn-iso guide <topic>`, which is
 generated by the installed binary and so cannot drift.

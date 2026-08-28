@@ -1,7 +1,7 @@
 {
   "id": "getting-started",
   "title": "Getting started",
-  "description": "Install the skill, have the agent run /rn-iso-init, then describe what you want built",
+  "description": "Install the skill, then tell your agent what you want built.",
   "source": "@site/docs/getting-started.md",
   "sourceDirName": ".",
   "slug": "/getting-started",
@@ -15,7 +15,7 @@
   "frontMatter": {
     "title": "Getting started",
     "sidebar_position": 2,
-    "description": "Install the skill, have the agent run /rn-iso-init, then describe what you want built"
+    "description": "Install the skill, then tell your agent what you want built."
   },
   "sidebar": "docs",
   "previous": {

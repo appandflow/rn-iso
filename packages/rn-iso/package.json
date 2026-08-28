@@ -27,6 +27,7 @@
   },
   "files": [
     "dist",
+    "shim",
     "skill",
     "LICENSE",
     "README.md"
@@ -43,6 +44,7 @@
     "build": "tsdown"
   },
   "dependencies": {
+    "@expo/fingerprint": "^0.20.10",
     "@rn-iso/core": "^1.5.0",
     "@rn-iso/metro": "^1.2.0",
     "chalk": "^5.4.1",

@@ -17,7 +17,9 @@
 // file before changing anything here.
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
+import { metroStoreInjectionEnabled } from '../config.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
+import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
 
 // Every module in this file is resolved dynamically FROM THE PROJECT (metro,
@@ -162,6 +164,81 @@ export function loadNdjsonReporter(
   return null;
 }
 
+// metro-cache's FileStore, resolved FROM THE PROJECT like everything else this
+// file loads: the store class has to be the one belonging to the Metro being
+// hosted. Null rather than a throw -- a transform cache is an optimisation,
+// and a project whose metro-cache cannot be resolved still gets a dev server.
+export function loadFileStore(
+  root: string,
+  { requireFrom = projectRequire }: { requireFrom?: (root: string) => NodeJS.Require } = {},
+): (new (options: { root: string }) => { _root?: string }) | null {
+  try {
+    const Store = requireFrom(root)('metro-cache').FileStore;
+    return typeof Store === 'function' ? Store : null;
+  } catch {
+    return null;
+  }
+}
+
+// THE ZERO-CONFIG HALF OF `rn-iso start` ON A BARE PROJECT. rn-iso loads the
+// project's Metro config itself, so it can add the shared transform store
+// here instead of asking the repo for a metro.config.js edit. Everything the
+// project configured is kept: appendCacheStore appends.
+//
+// Every outcome is a log record and none of them is fatal, for the reason
+// above the reporter block: a workspace with no shared cache is slow, and a
+// workspace with no dev server is stopped.
+function installSharedCacheStore({
+  root,
+  config,
+  writer,
+  enabled,
+  FileStore,
+}: {
+  root: string;
+  config: BareModule;
+  writer?: NdjsonWriter | null;
+  enabled: boolean;
+  FileStore: (new (options: { root: string }) => { _root?: string }) | null;
+}): void {
+  if (!enabled) {
+    writer?.write({
+      src: 'metro',
+      level: 'debug',
+      event: 'cache_store_skipped',
+      msg: 'the shared Metro transform store is off (caches.injectMetroStore is false in ~/.rn-iso/config.json)',
+    });
+    return;
+  }
+  if (!FileStore) {
+    writer?.write({
+      src: 'metro',
+      level: 'warn',
+      event: 'cache_store_skipped',
+      msg: `metro-cache is not resolvable from ${root}, so this dev server runs on whatever transform cache the project configured`,
+    });
+    return;
+  }
+  const storeRoot = metroStoreRoot(root);
+  const result = appendCacheStore(config, { storeRoot, FileStore });
+  if (!result.added) {
+    writer?.write({
+      src: 'metro',
+      level: 'debug',
+      event: 'cache_store_present',
+      msg: `the shared Metro transform store at ${storeRoot} was already configured (${result.reason})`,
+    });
+    return;
+  }
+  registerMetroStore(storeRoot);
+  writer?.write({
+    src: 'metro',
+    level: 'debug',
+    event: 'cache_store_added',
+    msg: `appended the shared Metro transform store at ${storeRoot} to this project's cacheStores`,
+  });
+}
+
 // resolver.platforms comes from the project's own config, which through
 // @react-native/metro-config is ['android', 'ios']. The community CLI adds
 // 'native' to it before running the server (getCommunityCliDefaultConfig), and
@@ -240,6 +317,8 @@ export async function startBareServer({
   writer = null,
   deps = null,
   reporterFactory = undefined,
+  cacheStore = undefined,
+  fileStore = undefined,
   closeTimeoutMs = 5000,
 }: {
   root: string;
@@ -248,12 +327,25 @@ export async function startBareServer({
   writer?: NdjsonWriter | null;
   deps?: BareDeps | null;
   reporterFactory?: ((opts: { dir: string }) => BareModule) | null;
+  // Injectable so tests drive them and a caller can turn the store off:
+  // `cacheStore: false` adds nothing, and `fileStore` dictates the class
+  // instead of resolving metro-cache from the project. Left out, both are
+  // resolved (machine config, then the project's metro-cache).
+  cacheStore?: boolean;
+  fileStore?: (new (options: { root: string }) => { _root?: string }) | null;
   closeTimeoutMs?: number;
 }): Promise<BareServerHandle> {
   const { metro, devMiddleware, serverApi } = deps || resolveBareDeps(root);
   const makeReporter = reporterFactory === undefined ? loadNdjsonReporter(root) : reporterFactory;
 
   const config = await metro.loadConfig({ cwd: root, port });
+  installSharedCacheStore({
+    root,
+    config,
+    writer,
+    enabled: cacheStore === undefined ? metroStoreInjectionEnabled() : cacheStore,
+    FileStore: fileStore === undefined ? loadFileStore(root) : fileStore,
+  });
   if (ensureNativePlatform(config)) {
     writer?.write({
       src: 'metro',

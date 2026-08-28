@@ -12,7 +12,7 @@ export default function doctorCommand(program: Command): void {
   program
     .command('doctor')
     .description(
-      'Report configuration that makes a second workspace slower than it needs to be. Read-only; changes nothing.',
+      'Report what rn-iso cannot handle on its own: project configuration that will silently defeat rn-iso or the builds you run outside it. Read-only; changes nothing.',
     )
     .option('--json', 'print the findings as JSON')
     .action(async (opts: DoctorOptions) => {
@@ -43,7 +43,12 @@ export default function doctorCommand(program: Command): void {
         console.log(chalk.green('Nothing to flag.'));
         console.log(
           chalk.dim(
-            'Checked: dev client, Metro cache, compilation cache, Gradle build cache, ccache conflict, .gitignore entry, build cache provider key, EAS session, fingerprint parity.',
+            'Checked: dev client, ccache, a conditionally-wired Metro cacheStores, a compilation-cache CAS left per-workspace, the build cache provider key, the EAS session, the .gitignore entry, fingerprint parity.',
+          ),
+        );
+        console.log(
+          chalk.dim(
+            'Nothing to flag means nothing rn-iso cannot handle itself: it supplies the Metro transform store, the Xcode compilation cache and the Gradle build cache on its own command lines, so a project that configures none of them is clean here.',
           ),
         );
         return;
@@ -60,6 +65,10 @@ export default function doctorCommand(program: Command): void {
 
       // Deliberately exit 0: none of this is broken, and a non-zero exit would
       // make doctor unusable in the `&&` chain of a setup script.
-      console.log(chalk.dim(`\n${findings.length} finding(s). Nothing here fails a build; it only makes one slower.`));
+      console.log(
+        chalk.dim(
+          `\n${findings.length} finding(s). Nothing here fails a build -- these are the things rn-iso cannot supply or work around on its own.`,
+        ),
+      );
     });
 }

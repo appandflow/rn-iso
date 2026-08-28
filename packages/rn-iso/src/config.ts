@@ -247,6 +247,28 @@ export function getConcurrencyLimits({ env = process.env }: { env?: NodeJS.Proce
   };
 }
 
+// --- Machine-level cache switches -------------------------------------------
+//
+// `caches` in ~/.rn-iso/config.json already holds the two relocation keys
+// (`buildCache` / `metroCache`, read by @rn-iso/core so every process agrees).
+// `injectMetroStore` joins them as the KILL SWITCH for the Metro transform
+// store rn-iso installs on the dev servers it hosts.
+//
+// It is machine-level ON PURPOSE, and that is the whole point of the feature:
+// evaluating rn-iso in a real repo must need no change to that repo, so the
+// way to turn a piece of it off must not be a change to that repo either. A
+// committed .rn-iso.json would be exactly the PR this exists to avoid.
+//
+// Default ON. Only the literal `false` turns it off -- a malformed value must
+// not silently disable a cache, and the direction a broken config fails is
+// "behave as documented".
+export function metroStoreInjectionEnabled(): boolean {
+  const cfg = loadConfig();
+  const caches = cfg?.caches;
+  if (!caches || typeof caches !== 'object' || Array.isArray(caches)) return true;
+  return (caches as Record<string, unknown>).injectMetroStore !== false;
+}
+
 function resolveLimit(envVal: unknown, cfgVal: unknown): number {
   const hasEnv = envVal !== undefined && envVal !== null && envVal !== '';
   const raw = hasEnv ? Number(envVal) : typeof cfgVal === 'number' ? cfgVal : Number.NaN;

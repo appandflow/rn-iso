@@ -13,6 +13,7 @@
 // resolves toward creating an owned emulator instead.
 import chalk from 'chalk';
 import { allConsolePortsAndSerials, loadConfig, setDevice, type Config, type ProjectRecord } from '../config.ts';
+import { isPidAlive } from '../metro.ts';
 import { bootIosSim, createOwnedIosSim, listAllIosSims, listIosDeviceTypes, resolveOwnedIosSim } from '../sim/ios.ts';
 import {
   bootAndroidEmulator,
@@ -54,6 +55,19 @@ interface DeviceFlags {
 
 type Notify = (msg: string) => void;
 
+// The pid-liveness test the Android boot wait aborts on. Injectable for the
+// same reason waitForMetro's `aborted` is in commands/start.js: a test has to
+// be able to drive a process death without one.
+type Liveness = (pid: number) => boolean;
+
+// Where the emulator's stdout/stderr goes. The CALLER owns it -- `android`
+// passes paths.js's emulatorLogFile(root) -- and null keeps the old
+// stdio-dropped behaviour, which is what every iOS path here does.
+interface EmulatorLogging {
+  logFile?: string | null;
+  alive?: Liveness;
+}
+
 // Derived from the real functions rather than duplicated: sim/ios.ts and
 // sim/android.ts already carry the true shapes, and a hand-written copy here
 // would be one more place for the two to drift apart.
@@ -92,6 +106,8 @@ export async function ensureOwnedDevice({
   flags = {},
   note = () => {},
   out = () => {},
+  logFile = null,
+  alive = isPidAlive,
 }: {
   platform: string;
   project?: ProjectRecord | null;
@@ -101,12 +117,12 @@ export async function ensureOwnedDevice({
   flags?: DeviceFlags;
   note?: Notify;
   out?: Notify;
-}): Promise<OwnedDeviceRecord> {
+} & EmulatorLogging): Promise<OwnedDeviceRecord> {
   const record = (project?.platforms?.[platform] as OwnedDeviceRecord | undefined) ?? null;
   if (platform === 'ios') {
     return ensureOwnedIosDevice({ record, projectPath, label, settings, flags, note, out });
   }
-  return ensureOwnedAndroidDevice({ record, projectPath, label, settings, flags, note, out });
+  return ensureOwnedAndroidDevice({ record, projectPath, label, settings, flags, note, out, logFile, alive });
 }
 
 function ensureOwnedIosDevice({
@@ -221,6 +237,8 @@ async function ensureOwnedAndroidDevice({
   flags,
   note,
   out,
+  logFile,
+  alive,
 }: {
   record: OwnedDeviceRecord | null;
   projectPath: string;
@@ -229,7 +247,7 @@ async function ensureOwnedAndroidDevice({
   flags: DeviceFlags;
   note: Notify;
   out: Notify;
-}): Promise<OwnedDeviceRecord> {
+} & EmulatorLogging): Promise<OwnedDeviceRecord> {
   if (record?.avdName) {
     if (record.owned) {
       // Verify identity against the LIVE adb list before deciding "ours is
@@ -271,6 +289,8 @@ async function ensureOwnedAndroidDevice({
           projectPath,
           deviceName: record.deviceName,
           out,
+          logFile,
+          alive,
         });
       }
       // resolved.missing: AVD was deleted out from under the record --
@@ -342,7 +362,14 @@ async function ensureOwnedAndroidDevice({
     }
   }
   out(chalk.dim(`Created owned AVD ${created.avdName}`));
-  return bootOwnedAvdOnFreshPort({ avdName: created.avdName, projectPath, deviceName: created.avdName, out });
+  return bootOwnedAvdOnFreshPort({
+    avdName: created.avdName,
+    projectPath,
+    deviceName: created.avdName,
+    out,
+    logFile,
+    alive,
+  });
 }
 
 // Boots avdName on a freshly allocated console port and records ownership
@@ -355,12 +382,14 @@ async function bootOwnedAvdOnFreshPort({
   projectPath,
   deviceName,
   out,
+  logFile = null,
+  alive = isPidAlive,
 }: {
   avdName: string;
   projectPath: string;
   deviceName?: string;
   out: Notify;
-}): Promise<OwnedDeviceRecord> {
+} & EmulatorLogging): Promise<OwnedDeviceRecord> {
   // Union config-recorded console ports with ports adb currently sees in
   // use (live emulators, plus unhealthy entries that still carry a
   // console port) -- a foreign emulator (e.g. Android Studio's default on
@@ -375,14 +404,34 @@ async function bootOwnedAvdOnFreshPort({
   const consolePort = nextConsolePort(claimedPorts);
   const newRecord = { avdName, consolePort, owned: true, deviceName: deviceName ?? avdName };
   setDevice(projectPath, 'android', newRecord);
-  bootAndroidEmulator(avdName, consolePort);
+  const pid = bootAndroidEmulator(avdName, consolePort, { logFile });
   const serial = `emulator-${consolePort}`;
   out(chalk.dim(`Waiting for ${serial} to finish booting...`));
-  const result = await waitForBoot(serial, 120000);
+  const result = await waitForBoot(serial, 120000, { aborted: emulatorGone(pid, alive) });
   if (!result.ok) {
-    throw new Error(`Emulator ${serial} did not finish booting. Diagnostic: ${JSON.stringify(result.diagnostic)}`);
+    throw new Error(
+      `${bootFailurePrefix(serial, result.exited, 120000)} Diagnostic: ${JSON.stringify(result.diagnostic)}`,
+    );
   }
   return newRecord;
+}
+
+// A dead pid is a DEFINITE answer, so the wait stops on it instead of burning
+// the rest of a 2-4 minute cold-boot timeout on a process that no longer
+// exists. No pid (a spawn mock, an executor that returned nothing) means the
+// old behaviour: poll until the deadline.
+function emulatorGone(pid: number | null, alive: Liveness): () => boolean {
+  if (!pid) return () => false;
+  return () => !alive(pid);
+}
+
+// The two ways a boot ends badly read differently on purpose: "exited" is the
+// emulator refusing (and its log says why), "did not finish booting" is a
+// boot that is merely too slow.
+function bootFailurePrefix(serial: string, exited: boolean | undefined, timeoutMs: number): string {
+  return exited
+    ? `The emulator process for ${serial} exited before the device finished booting.`
+    : `Emulator ${serial} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`;
 }
 
 // --- the OPT-IN device concurrency cap -----------------------------------
@@ -572,15 +621,19 @@ export async function ensureBooted({
   timeoutMs = 240000,
   pollMs = BOOT_POLL_MS,
   out = () => {},
-}: Partial<{
-  platform: string;
-  device: OwnedDeviceRecord | null;
-  timeoutMs: number;
-  pollMs: number;
-  out: Notify;
-}> = {}): Promise<BootResult> {
+  logFile = null,
+  alive = isPidAlive,
+}: Partial<
+  {
+    platform: string;
+    device: OwnedDeviceRecord | null;
+    timeoutMs: number;
+    pollMs: number;
+    out: Notify;
+  } & EmulatorLogging
+> = {}): Promise<BootResult> {
   if (platform === 'ios') return ensureIosBooted({ device, timeoutMs, pollMs, out });
-  if (platform === 'android') return ensureAndroidBooted({ device, timeoutMs, out });
+  if (platform === 'android') return ensureAndroidBooted({ device, timeoutMs, out, logFile, alive });
   return { failed: true, reason: `Unknown platform "${platform}".` };
 }
 
@@ -652,11 +705,13 @@ async function ensureAndroidBooted({
   device,
   timeoutMs,
   out,
+  logFile = null,
+  alive = isPidAlive,
 }: {
   device?: OwnedDeviceRecord | null;
   timeoutMs: number;
   out: Notify;
-}): Promise<BootResult> {
+} & EmulatorLogging): Promise<BootResult> {
   // Every device this reaches is an owned AVD: ensureOwnedDevice creates one
   // rather than ever handing back a physical record. A record with no avdName
   // is therefore a bug or a legacy leftover, not a phone to go looking for.
@@ -699,19 +754,24 @@ async function ensureAndroidBooted({
   // one when that port is currently taken by something else.
   const serial = `emulator-${pickConsolePort(device.consolePort)}`;
   out(chalk.dim(`Booting owned AVD ${device.avdName} as ${serial}...`));
+  let pid: number | null = null;
   try {
-    bootAndroidEmulator(device.avdName, Number(serial.replace(/^emulator-/, '')));
+    pid = bootAndroidEmulator(device.avdName, Number(serial.replace(/^emulator-/, '')), { logFile });
   } catch (e) {
     return {
       failed: true,
       reason: `Could not start emulator for AVD ${device.avdName}: ${(e as Error)?.message || e}`,
     };
   }
-  const ready = await waitForBoot(serial, timeoutMs);
+  // The abort test: an emulator that has already exited is never going to
+  // register with adb, so the wait ends there rather than at 240s. That is
+  // the difference between a four-minute failure and a two-second one, and
+  // the emulator's log (above) is what says why it exited.
+  const ready = await waitForBoot(serial, timeoutMs, { aborted: emulatorGone(pid, alive) });
   if (!ready.ok) {
     return {
       failed: true,
-      reason: `Emulator ${serial} did not finish booting within ${Math.round(timeoutMs / 1000)}s. Diagnostic: ${JSON.stringify(ready.diagnostic)}`,
+      reason: `${bootFailurePrefix(serial, ready.exited, timeoutMs)} Diagnostic: ${JSON.stringify(ready.diagnostic)}`,
     };
   }
   return { ok: true, serial };

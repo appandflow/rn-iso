@@ -1,5 +1,6 @@
 import assert from 'node:assert';
-import { readFileSync } from 'fs';
+import { readdirSync, readFileSync } from 'fs';
+import { fileURLToPath } from 'node:url';
 import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
 
 test('every advertised topic renders non-empty content', () => {
@@ -165,6 +166,22 @@ test('the skill points at the guide command and the topics it advertises', () =>
   for (const name of topicNames()) {
     expect(skill.includes(`guide ${name}`)).toBeTruthy();
   }
+});
+
+// ONE skill ships. `rn-iso-init` is DELETED: once rn-iso started supplying the
+// compilation cache, the Gradle build cache and the shared Metro transform
+// store on the command lines it composes, there was no setup playbook left to
+// follow, and a second skill that mostly said "nothing to do" was worse than no
+// skill. Re-adding the directory would make `npx skills add appandflow/rn-iso`
+// install a page that contradicts this one.
+test('exactly one skill ships, and the deleted init skill has not come back', () => {
+  const dir = fileURLToPath(new URL('../../skill/', import.meta.url));
+  expect(readdirSync(dir).sort()).toEqual(['SKILL.md']);
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  expect(skill).toMatch(/no separate init skill/);
+  // And what the deleted playbook covered is reachable from where it matters.
+  expect(skill).toMatch(/rn-iso doctor/);
+  expect(skill).toMatch(/\.fingerprintignore/);
 });
 
 test('the skill still carries the rules an agent must not have to look up', () => {

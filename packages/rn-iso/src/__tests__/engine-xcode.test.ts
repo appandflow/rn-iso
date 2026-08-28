@@ -31,11 +31,16 @@ import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { createNdjsonWriter, parseNdjsonText } from '../ndjson.ts';
 import {
   buildIos,
+  ccacheEnabled,
+  COMPILATION_CACHE_MIN_XCODE,
+  compilationCacheSettings,
   discoverXcodeProject,
   findAppBundle,
   listSchemes,
   parseBundleId,
   parseSchemeList,
+  prefixMapping,
+  readPodfileProperties,
   pickAppBundle,
   pickScheme,
   pickXcodeProject,
@@ -425,6 +430,101 @@ describe('xcodebuildArgs', () => {
     });
     expect(args.slice(-2)).toEqual(['-quiet', 'build']);
   });
+
+  // Build settings are not options: xcodebuild's own usage line is
+  // `[action ...] [buildsetting=value ...]`, and the live build below proves
+  // the real tool takes them there.
+  test('build settings land AFTER the build action, and extra args still land before it', () => {
+    const args = xcodebuildArgs({
+      project,
+      scheme: 'App',
+      udid: 'u',
+      derivedDataPath: '/dd',
+      extraArgs: ['-quiet'],
+      buildSettings: ['A=1', 'B=2'],
+    });
+    expect(args.slice(-4)).toEqual(['-quiet', 'build', 'A=1', 'B=2']);
+  });
+
+  test('no build settings is exactly the argv rn-iso composed before they existed', () => {
+    const base = { project, scheme: 'App', udid: 'u', derivedDataPath: '/dd' };
+    expect(xcodebuildArgs(base)).toEqual(xcodebuildArgs({ ...base, buildSettings: [] }));
+  });
+});
+
+// --- the compilation cache rn-iso puts on its own argv ----------------------
+//
+// The whole point of these is that a project needs NO Podfile change to get a
+// cross-worktree compilation cache. That makes the guards the interesting
+// part: every one of them is a case where adding the settings would be wrong.
+describe('compilationCacheSettings', () => {
+  const base = { workspaceRoot: '/w/app-412', casPath: '/home/.rn-iso/compilation-cache' };
+
+  test('names the CAS, the prefix mapping and the Swift opt-out on an Xcode that has the cache', () => {
+    expect(compilationCacheSettings({ ...base, xcodeMajor: 26 })).toEqual([
+      'COMPILATION_CACHE_ENABLE_CACHING=YES',
+      'COMPILATION_CACHE_CAS_PATH=/home/.rn-iso/compilation-cache',
+      // Swift caching cannot hit across workspaces without a mapping that
+      // crashes swift-frontend, so it is turned off explicitly.
+      'SWIFT_ENABLE_COMPILE_CACHE=NO',
+      'CLANG_ENABLE_PREFIX_MAPPING=YES',
+      'CLANG_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src',
+    ]);
+  });
+
+  // Without the mapping every cache key contains this workspace's absolute
+  // path, so a second worktree of the same commit misses all of them -- which
+  // is the only reason the cache is worth turning on.
+  test('the prefix mapping is the workspace root, normalised, and the virtual prefix a committed Podfile block must match', () => {
+    expect(prefixMapping('/w/app-412')).toBe('/w/app-412=/^src');
+    expect(prefixMapping('/w/app-412/')).toBe('/w/app-412=/^src');
+    const settings = compilationCacheSettings({ workspaceRoot: '/a/b/', casPath: '/cas', xcodeMajor: 27 });
+    expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=/a/b=/^src');
+  });
+
+  test('carries nothing on an Xcode older than the one that shipped the cache', () => {
+    expect(COMPILATION_CACHE_MIN_XCODE).toBe(26);
+    expect(compilationCacheSettings({ ...base, xcodeMajor: 25 })).toEqual([]);
+    expect(compilationCacheSettings({ ...base, xcodeMajor: 15 })).toEqual([]);
+  });
+
+  // doctor hedges on an unreadable version and prints its advice anyway,
+  // because advice is free. This is the opposite trade: five build settings on
+  // a real four-minute build buy nothing on a version that ignores them.
+  test('carries nothing when the Xcode version could not be read at all', () => {
+    expect(compilationCacheSettings({ ...base, xcodeMajor: null })).toEqual([]);
+  });
+
+  test('carries nothing when the project configured ccache, which defeats it', () => {
+    expect(compilationCacheSettings({ ...base, xcodeMajor: 26, ccache: true })).toEqual([]);
+  });
+});
+
+describe('the ccache detection both the build and doctor read', () => {
+  test('only the string "true" under apple.ccacheEnabled counts', () => {
+    expect(ccacheEnabled({ 'apple.ccacheEnabled': 'true' })).toBe(true);
+    expect(ccacheEnabled({ 'apple.ccacheEnabled': 'false' })).toBe(false);
+    // Podfile.properties.json is a string-valued file; a boolean there is not
+    // what CocoaPods writes and is not what the property means.
+    expect(ccacheEnabled({ 'apple.ccacheEnabled': true })).toBe(false);
+    expect(ccacheEnabled({})).toBe(false);
+    expect(ccacheEnabled(null)).toBe(false);
+    expect(ccacheEnabled('nonsense')).toBe(false);
+  });
+
+  test('an absent or unreadable Podfile.properties.json reads as no ccache', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rn-iso-podprops-'));
+    try {
+      expect(readPodfileProperties(dir)).toBe(null);
+      mkdirSync(join(dir, 'ios'), { recursive: true });
+      writeFileSync(join(dir, 'ios', 'Podfile.properties.json'), '{ not json');
+      expect(readPodfileProperties(dir)).toBe(null);
+      writeFileSync(join(dir, 'ios', 'Podfile.properties.json'), JSON.stringify({ 'apple.ccacheEnabled': 'true' }));
+      expect(ccacheEnabled(readPodfileProperties(dir))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('locating the product', () => {
@@ -586,6 +686,93 @@ describe('buildIos with a mocked executor', () => {
     mkdirSync(join(dir, `${name}.app`), { recursive: true });
     return join(dir, `${name}.app`);
   }
+
+  // The mocked executor's runQuiet answers null for `xcodebuild -version`, so
+  // every other case in this describe block exercises the "version unknown ->
+  // no settings" guard for free. These three are the ones that drive it.
+  test('an injected set of settings lands on the argv, after the action', async () => {
+    const child = fakeChild();
+    const spawnCalls = harness(tmp, { child });
+    const promise = buildIos({
+      root: tmp,
+      udid: 'BF2A-1111-2222',
+      logWriter: recordingWriter(),
+      compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', 'COMPILATION_CACHE_CAS_PATH=/cas'],
+    });
+    expect(spawnCalls[0]?.args?.slice(-3)).toEqual([
+      'build',
+      'COMPILATION_CACHE_ENABLE_CACHING=YES',
+      'COMPILATION_CACHE_CAS_PATH=/cas',
+    ]);
+    makeProduct(join(tmp, '.rn-iso', 'derived-data'));
+    child.emit('close', 0, null);
+    await promise;
+  });
+
+  test('compilationCache: null is how a caller turns it off entirely', async () => {
+    const child = fakeChild();
+    const spawnCalls = harness(tmp, { child });
+    const promise = buildIos({
+      root: tmp,
+      udid: 'BF2A-1111-2222',
+      logWriter: recordingWriter(),
+      compilationCache: null,
+    });
+    expect(spawnCalls[0]?.args?.at(-1)).toBe('build');
+    makeProduct(join(tmp, '.rn-iso', 'derived-data'));
+    child.emit('close', 0, null);
+    await promise;
+  });
+
+  // A build that silently caches differently from the last one is exactly what
+  // an agent cannot debug from a transcript, so the CAS path is said once.
+  test('the resolved settings produce ONE stderr note naming the CAS path, and land on the argv', async () => {
+    const notes: string[] = [];
+    const child = fakeChild();
+    const spawnCalls = harness(tmp, { child });
+    // A version the mocked executor CAN read, so the settings resolve for real
+    // rather than through the "version unknown" guard every other case hits.
+    setExecutor({
+      run: () => '',
+      runQuiet: () => 'Xcode 26.1\nBuild version 17B55\n',
+      runFile: (file) => (file === 'xcodebuild' ? '{"project":{"name":"App","schemes":["App"]}}' : '{}'),
+      spawn: (cmd, args, opts) => {
+        spawnCalls.push({ cmd, args, opts });
+        return child as unknown as ChildProcess;
+      },
+    });
+    const promise = buildIos({
+      root: tmp,
+      udid: 'BF2A-1111-2222',
+      logWriter: recordingWriter(),
+      onNote: (line) => notes.push(line),
+    });
+    makeProduct(join(tmp, '.rn-iso', 'derived-data'));
+    child.emit('close', 0, null);
+    await promise;
+    expect(notes.length).toBe(1);
+    expect(notes[0]).toMatch(/compilation cache on for this build: CAS at .*compilation-cache/);
+    const args = spawnCalls[0]?.args ?? [];
+    expect(args).toContain('COMPILATION_CACHE_ENABLE_CACHING=YES');
+    expect(args).toContain(`CLANG_OTHER_PREFIX_MAPPINGS=${tmp}=/^src`);
+  });
+
+  test('a build that carries no settings says nothing at all', async () => {
+    const notes: string[] = [];
+    const child = fakeChild();
+    harness(tmp, { child });
+    const promise = buildIos({
+      root: tmp,
+      udid: 'BF2A-1111-2222',
+      logWriter: recordingWriter(),
+      compilationCache: null,
+      onNote: (line) => notes.push(line),
+    });
+    makeProduct(join(tmp, '.rn-iso', 'derived-data'));
+    child.emit('close', 0, null);
+    await promise;
+    expect(notes).toEqual([]);
+  });
 
   test('composes the production invocation: -destination id=<udid>, into the workspace derived data', async () => {
     // The live tests below build with a generic destination because they must
@@ -1237,14 +1424,21 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
 
     const records = parseNdjsonText(readFileSync(logFile, 'utf-8'));
     expect(records[0]?.event).toBe('build_start');
-    expect(records[0]?.msg).toMatch(/^xcodebuild -project .*-derivedDataPath .* build$/);
+    // The build settings rn-iso appends land AFTER the action, which is where
+    // xcodebuild's own usage line puts them -- and this real build proves the
+    // real tool accepts them there.
+    expect(records[0]?.msg).toMatch(/^xcodebuild -project .*-derivedDataPath .* build( [A-Z_]+=\S+)+$/);
+    expect(records[0]?.msg).toMatch(/ COMPILATION_CACHE_ENABLE_CACHING=YES /);
     const transcript = records.filter((r) => r.level === 'debug');
     expect(transcript.length > 20).toBeTruthy();
     expect(transcript.every((r) => r.src === 'build')).toBeTruthy();
     expect(transcript.some((r) => r.msg?.includes('BUILD SUCCEEDED'))).toBeTruthy();
     expect(records.at(-1)?.event).toBe('build_done');
     expect(records.filter((r) => r.level === 'error').length).toBe(0);
-  });
+    // A REAL xcodebuild, so vitest's 5s default is not the budget to measure
+    // it against: under full-suite parallel load this is the one case that
+    // loses that race, and it has flaked on CI for that reason alone.
+  }, 120_000);
 
   test('fails for real: a broken source file becomes one diagnostic with file, line and column', async () => {
     resetExecutor();

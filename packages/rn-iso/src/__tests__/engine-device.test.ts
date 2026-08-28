@@ -9,7 +9,7 @@
 // The rule under test throughout is the ownership rule: a device that is not
 // rn-iso's by name is never booted, only reported -- and, since v3 removed
 // physical-device support, no path here ever issues a command at hardware.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
@@ -252,6 +252,99 @@ describe('ensureBooted: android', () => {
     const call = spawned[0];
     assert(call);
     expect(call[4]).toBe(result.serial.replace('emulator-', ''));
+  });
+
+  // --- the abort seam (issue #64) ----------------------------------------
+  //
+  // A cold Android boot gets 240s. An emulator that REFUSED to start (no disk
+  // for the userdata partition, a broken system image) is gone in under a
+  // second, and polling adb for the remaining four minutes buys nothing: a
+  // dead process is a definite answer. `alive` is the injectable liveness
+  // seam, the same shape as waitForMetro's `aborted` in commands/start.js.
+  test('ensureBooted stops the moment the spawned emulator process is gone', async () => {
+    setExecutor({
+      run: (cmd) => {
+        if (cmd === 'emulator -list-avds') return 'rn-iso-app';
+        if (cmd === 'adb devices') return 'List of devices attached';
+        return '';
+      },
+      // Never boots: getprop keeps failing, exactly as it does against an
+      // emulator that died.
+      runQuiet: () => null,
+      runFile: () => '',
+      spawn: () => ({ pid: 987654, unref() {} }),
+    });
+    const started = Date.now();
+    const result = await ensureBooted({
+      platform: 'android',
+      device: { avdName: 'rn-iso-app', consolePort: 5556, owned: true },
+      timeoutMs: 240000,
+      alive: () => false,
+    });
+    expect(result.failed).toBe(true);
+    expect(result.reason).toMatch(/exited before the device finished booting/);
+    // The whole point: seconds, not the 240s timeout.
+    expect(Date.now() - started < 10000).toBeTruthy();
+  });
+
+  // The other half of the rule: while the process LIVES the wait is exactly
+  // what it was, so a genuinely slow cold boot is never cut short.
+  test('ensureBooted keeps polling while the emulator process is alive', async () => {
+    let probes = 0;
+    setExecutor({
+      run: (cmd) => {
+        if (cmd === 'emulator -list-avds') return 'rn-iso-app';
+        if (cmd === 'adb devices') return 'List of devices attached';
+        return '';
+      },
+      runQuiet: (cmd) => {
+        if (!cmd.includes('getprop')) return '';
+        probes++;
+        return probes >= 5 && cmd.includes('sys.boot_completed') ? '1' : null;
+      },
+      runFile: () => '',
+      spawn: () => ({ pid: 987654, unref() {} }),
+    });
+    const result = await ensureBooted({
+      platform: 'android',
+      device: { avdName: 'rn-iso-app', consolePort: 5556, owned: true },
+      timeoutMs: 20000,
+      alive: () => true,
+    });
+    expect(result).toEqual({ ok: true, serial: 'emulator-5556' });
+    expect(probes >= 5).toBeTruthy();
+  });
+
+  // The caller owns the emulator log path (commands/android.js passes
+  // paths.js's emulatorLogFile(root)); this pins that it reaches the spawn.
+  test('ensureBooted hands the caller log file to the emulator spawn', async () => {
+    const logFile = join(tmpHome, 'ws', '.rn-iso', 'logs', 'emulator.log');
+    const opts: Array<Record<string, unknown>> = [];
+    setExecutor({
+      run: (cmd) => {
+        if (cmd === 'emulator -list-avds') return 'rn-iso-app';
+        if (cmd === 'adb devices') return 'List of devices attached';
+        return '';
+      },
+      runQuiet: (cmd) => (cmd.includes('sys.boot_completed') ? '1' : ''),
+      runFile: () => '',
+      spawn: (_cmd: string, _args: string[], o: Record<string, unknown>) => {
+        opts.push(o);
+        return { pid: 4242, unref() {} };
+      },
+    });
+    const result = await ensureBooted({
+      platform: 'android',
+      device: { avdName: 'rn-iso-app', consolePort: 5556, owned: true },
+      timeoutMs: 5000,
+      logFile,
+    });
+    expect(result.ok).toBe(true);
+    const stdio = opts[0]?.stdio as [string, number, number];
+    expect(stdio[0]).toBe('ignore');
+    expect(typeof stdio[1]).toBe('number');
+    expect(stdio[2]).toBe(stdio[1]);
+    expect(existsSync(logFile)).toBe(true);
   });
 
   test('refuses an AVD that is not rn-iso-owned by name', async () => {

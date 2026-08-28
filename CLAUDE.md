@@ -33,19 +33,30 @@ There is no `up`, `device`, `release`, `shutdown`, `config`, `build-cache` or
 `worktree list`, no `--serial`, and no physical-device support. A project needing more wraps rn-iso in an npm script rather than
 rn-iso growing a flag.
 
-**`init` went too, and it is the most recent deletion — do not bring it back.**
-Repo setup is not a generator's job: every edit it would make lands in a file
-the project already owns (a `metro.config.js` with its own transformer, a
-`Podfile` with existing `post_install` logic, an app config that may be
-TypeScript), which is judgement, not templating. `doctor` reports the findings
-read-only and `skill/rn-iso-init/SKILL.md` is the playbook an agent follows to
-apply each one by hand. The generated `scripts/dev` went with it: rn-iso IS the
-build command, so there was no bundler or build command left to wrap. The one
-edit that never needed judgement — `.rn-iso/` in `.gitignore` — is now
+**`init` went too — do not bring it back.** Repo setup is not a generator's
+job: every edit it would make lands in a file the project already owns (a
+`metro.config.js` with its own transformer, a `Podfile` with existing
+`post_install` logic, an app config that may be TypeScript), which is
+judgement, not templating. The generated `scripts/dev` went with it: rn-iso IS
+the build command, so there was no bundler or build command left to wrap. The
+one edit that never needed judgement — `.rn-iso/` in `.gitignore` — is now
 SELF-ENSURED by the commands that create the directory
-(`ensureWorkspaceIgnored` in `src/engine/workspace.js`, called by `start`,
+(`ensureWorkspaceIgnored` in `src/engine/workspace.ts`, called by `start`,
 `ios` and `android`), which is what removed the setup step rather than moving
 it.
+
+**And the `rn-iso-init` SKILL went with it, which is the most recent deletion
+— do not bring that back either.** After #67 rn-iso supplies the compilation
+cache, the Gradle build cache and the shared Metro transform store on the
+command lines it composes itself, so there is no setup playbook left to
+follow: four of the old skill's ten sections had become "nothing to do", and a
+second skill that mostly says that is worse than no skill. ONE skill ships now
+(`skill/SKILL.md`). The three things rn-iso genuinely cannot do for a project
+did not disappear — they moved to where they are needed: `doctor` REPORTS each
+of them at the moment it matters, and its `fix` text carries the advice (the
+`expo-dev-client` install-and-rebuild, how to turn ccache off at the source
+that writes it, what belongs in a `.fingerprintignore`), with the fingerprint
+half also explained in `guide lifecycle`.
 
 State lives in `~/.rn-iso/config.json`, keyed by absolute project path, plus
 per-workspace `<root>/.rn-iso/state.json` (the supervisor record, the collector
@@ -236,8 +247,8 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
   test/
     *.test.js             # `node --test` (no framework)
   skill/
-    SKILL.md              # the always-on agent skill: how to drive the CLI
-    rn-iso-init/SKILL.md  # the task-shaped skill: making a repo fast for parallel agents
+    SKILL.md              # the ONE agent skill that ships: how to drive the CLI.
+                          # (rn-iso-init is deleted -- there is no setup playbook)
 
 packages/expo-build-cache/  # @rn-iso/expo-build-cache. CJS (see conventions above).
   index.js                  # the Expo build-cache provider: resolveBuildCache / uploadBuildCache
@@ -290,12 +301,13 @@ checklist:
 - Behavior change (e.g., a new `--json` field, a new destructive side effect)?
   Update both the relevant section and "When things go wrong".
 
-Two skills ship in the package, installed with `npx skills`:
-`skill/SKILL.md` (how to drive the CLI) and `skill/rn-iso-init/SKILL.md`
-(how to make a repo fast for parallel agents). The second one is the whole
-of repo setup -- it is a PLAYBOOK an agent applies by hand, not a description of
-a command -- so a change to caching or to `doctor` belongs there, not in the
-first.
+ONE skill ships in the package, installed with `npx skills`: `skill/SKILL.md`
+(how to drive the CLI). The second one, `rn-iso-init`, is deleted -- there is no
+setup playbook any more. A change to caching or to `doctor` therefore belongs
+in `doctor`'s own finding text (which is where a project reads it, at the
+moment it matters), in `guide`, and in this one skill's short "needs no project
+changes" paragraph -- which must stay SHORT, and must not grow the playbook
+back.
 Staleness breaks agent guidance, and the copy on a user's machine is a
 plain file copy that upgrading rn-iso does not refresh.
 
@@ -352,8 +364,9 @@ runs `expo start --port <n>` and NOTHING else, ever. `ios` / `android` drive
 `xcodebuild` / `gradlew` directly with a fixed argument list this codebase
 composes, never one it inferred from a package.json script. Nothing reads
 `scripts.start` or `scripts.ios`; there is no `init`, and no `bundlerCommand` /
-`runCommandFor` / `detectPackageManager` — repo setup is judgement (the
-`rn-iso-init` skill applying `doctor`'s findings by hand), not templating.
+`runCommandFor` / `detectPackageManager` — what little repo setup is left is
+judgement (`doctor` reports it, an agent applies it in the repo's own style),
+not templating.
 
 **The OPTION SURFACE is the second guard, and it is deliberately small:**
 
@@ -701,6 +714,78 @@ tools; anything a launchd-run daemon owns must live on the internal disk.
 
 Always wrap `simctl` in `timeout` regardless, so a future regression cannot
 wedge a session.
+
+### 10. The key an artifact is STORED under is not always the key that was looked up
+
+`expo prebuild` and `pod install` REWRITE fingerprinted inputs while a run is
+working — prebuild generates `ios/`/`android/` and rewrites `package.json`'s
+scripts and the app config; `pod install` writes `ios/Podfile.lock`. So the
+hash a cold tree computed at second zero is not the hash that tree has by the
+time there is an artifact to store, and storing under the lookup key writes an
+entry nothing in that tree will ever look up again (issue #59; field-measured
+as a 104 MB entry under a key no later run computes, with every run after it
+stable on a different one). Rock's `buildApp.ts` does the same re-keying after
+pods, for the same reason.
+
+The rule, and each half of it is deliberate:
+
+- **The LOOKUP stays pre-mutation.** It is what the tree honestly hashes when
+  the run starts, and on a warm tree — every run after the first — it is
+  already the post-mutation hash, so nothing changes there at all.
+- **The STORE moves** (`refingerprintAfterMutation` in `src/build-cache.js`,
+  called only when a mutating step actually ran). `fingerprint`, `cacheKey`,
+  `lastBuild` and the remote upload's hash all describe **what was stored**, and
+  the shift is reported as ONE dim stderr line naming both short hashes. No
+  mutating step means no second fingerprint and no line.
+- **A shift is followed by a SECOND resolve, under the new key**, before any
+  compile — the lookup the first one could not have made. Without it a fresh
+  worktree or clone of a CNG app (no native dir, so always cold) would compile
+  from scratch beside an entry that already matches it, which is the exact case
+  this tool exists for. A hit there is an ordinary local hit and goes through
+  the ORDINARY hit step: `installableCachedApp` / `installableCachedApk`, one
+  local function per command called from BOTH lookups, so the Release JS swap
+  and Android's asset gate (keyed on the entry that answered, never on the key
+  the run asked first) are not duplicated and not skipped. A refused or failed
+  swap falls back to a build exactly as a first-pass one does.
+- **We never double-store.** Storing under both keys would recreate the very
+  waste this fixes, in artifacts that are 100 MB and up. One artifact, one key,
+  and the second resolve is what makes the pre-mutation key unnecessary.
+- **The single-flight lock keeps the PRE-mutation key.** It is the key the
+  waiters took, and it cannot be re-keyed underneath them. A waiter on a cold
+  tree therefore finds nothing under it and builds — one redundant compile in
+  the rare case where two COLD trees race, which is the same "a redundant build
+  is the cheaper failure" call `build-lock.js`'s takeover path already makes.
+
+### 11. `launched` is FOUR-valued, and only one of the four is a problem
+
+The `--json` payload's `launched` (`iosFacts` / `androidFacts`, type
+`LaunchStatus` in `src/types.ts`) is a fact an agent branches on, which is why
+it was never allowed to be an unconditional `true`. It has four values:
+
+- **`true`** — a bundle request from this workspace's Metro was observed after
+  the launch (or, on a release build, the app PROCESS was still alive a moment
+  after it).
+- **`'bundling'`** — the app DID ask this workspace's port for its bundle and
+  Metro had not finished building it when the ~20s window closed. The wiring is
+  proven; the JS has simply not run yet. A cold bundle on a large graph outlives
+  the window (the field case: 37.8s for 9948 modules, reported as unverified
+  while everything was fine). **This state suppresses the alert/picker remedy
+  list** — printing "confirm the alert, tap the picker, re-send the deep link"
+  over a launch that demonstrably worked is what sent an agent chasing a fault
+  that did not exist. It prints one line saying Metro is still building, and
+  the timeline gets a `launch_bundling` record at info.
+- **`'unverified'`** — nothing was observed at all. This is the ambiguous one
+  and it keeps the numbered remedy list, in the order that clears it.
+- **`false`** — reserved by the type; nothing produces it today.
+
+The evidence for `'bundling'` is `isBundleRequestProof` in
+`engine/app-install.js`: a NON-error device-log record naming **this
+workspace's port** plus a bundle URL. Positive evidence only — a false answer
+means "cannot say" and leaves the old answer standing, another workspace's port
+is never proof, and an error-level line naming the same URL is a request that
+FAILED rather than one in flight. Keep any future evidence source to those
+rules: this value's whole worth is that it cannot be reached by a launch that
+did not work.
 
 ## Local development
 

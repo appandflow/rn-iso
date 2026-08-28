@@ -9,8 +9,9 @@ const quickStart = `# the only command a human runs:
 npx skills add appandflow/rn-iso
 
 # then tell your agent:
-#   /rn-iso-init
-#   "Build and run the app on the iOS simulator and fix anything that breaks."`;
+#   "Build and run the app on the iOS simulator and fix anything that breaks."
+
+# no setup step, nothing to commit -- rn-iso runs on a clean checkout.`;
 
 const features: Array<{ title: string; body: ReactNode }> = [
   {

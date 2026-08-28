@@ -31,13 +31,17 @@ import {
   fingerprintDiffRecord,
   fingerprintDiffSuffix,
   fingerprintProject,
+  refingerprintAfterMutation,
   resolveBuild,
   storeBuild,
+  untrackedMissLine,
+  untrackedNativeFiles,
   type FingerprintSourceLike,
 } from '../build-cache.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import {
   DEFAULT_METRO_PORT,
+  LAUNCH_BUNDLING,
   LAUNCH_UNVERIFIED,
   devClientUrl,
   installIosApp,
@@ -49,6 +53,7 @@ import {
 import {
   acquireBuildLock,
   releaseBuildLock,
+  takeoverLine,
   waitForBuild,
   type BuildLockHandle,
   type WaitForBuildResult,
@@ -163,6 +168,9 @@ interface BuildIosResultLike {
 interface VerifyLaunchResultLike {
   verified?: boolean;
   skipped?: boolean;
+  // The launch window closed while a bundle this workspace's Metro was asked
+  // for was still being built. See verifyLaunch in engine/app-install.ts.
+  requested?: boolean;
   waitedMs?: number;
 }
 
@@ -685,7 +693,7 @@ export function iosFacts({
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath,
     bundleId,
-    launched: launched === LAUNCH_UNVERIFIED ? LAUNCH_UNVERIFIED : Boolean(launched),
+    launched: launched === LAUNCH_UNVERIFIED || launched === LAUNCH_BUNDLING ? launched : Boolean(launched),
     metroPort,
     logs: { dir: logsDir },
     durationMs,
@@ -842,6 +850,7 @@ interface IosDeps {
   isPidAlive: typeof isPidAlive;
   getConcurrencyLimits: typeof getConcurrencyLimits;
   fingerprintProject: typeof fingerprintProject;
+  untrackedNativeFiles: typeof untrackedNativeFiles;
   resolveBuild: typeof resolveBuild;
   storeBuild: typeof storeBuild;
   acquireBuildLock: typeof acquireBuildLock;
@@ -896,6 +905,7 @@ const DEFAULT_DEPS: IosDeps = {
   isPidAlive,
   getConcurrencyLimits,
   fingerprintProject,
+  untrackedNativeFiles,
   resolveBuild,
   storeBuild,
   acquireBuildLock,
@@ -1317,9 +1327,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   if (!fingerprint) {
     return fail({
       code: 'RN_ISO_NO_FINGERPRINT',
-      message: `Could not fingerprint ${root}: @expo/fingerprint is not resolvable from the project or from rn-iso.`,
+      message: `Could not fingerprint ${root}: @expo/fingerprint produced no hash for it.`,
       remedy:
-        'Install it in the project (`npm i -D @expo/fingerprint`) so builds can be cached and shared between worktrees.',
+        'rn-iso ships its own @expo/fingerprint, so this is not a missing dependency: check that this install is complete, or install a copy in the project (`npm i -D @expo/fingerprint`) to override the one rn-iso falls back to.',
     });
   }
   // The same key the Expo provider derives. The configuration is part of it
@@ -1328,6 +1338,15 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // as `<hash>-release-sim` vs `<hash>-debug-sim`. Unset still keys as
   // "debug", unchanged.
   const cacheKey = buildCacheKey(PLATFORM, fingerprint, configuration ? { configuration } : {});
+
+  // What the artifact is STORED as, which is not always what was looked up:
+  // prebuild and pod install REWRITE fingerprinted inputs, so a build that ran
+  // either of them is keyed on the tree they left behind, not the one this run
+  // started in. Both stay equal to the lookup key until that happens (see the
+  // re-fingerprint after pods below), so a warm tree pays nothing for this.
+  let storeHash = fingerprint;
+  let storeKey = cacheKey;
+  let storeSources = fingerprintSources;
 
   // ---- level one: this machine's shared cache ----
   // Instant, offline, and shared by every worktree on the machine. Always
@@ -1339,6 +1358,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // lists can be diffed. Three names on the line; the full list (capped) in
   // the build log as a fingerprint_diff record.
   let missDiff = '';
+  let missUntracked: string | null = null;
   if (!cached) {
     const lastBuild = (d.readWorkspaceState(root)?.lastBuild ?? null) as Record<string, unknown> | null;
     const miss = describeFingerprintMiss({
@@ -1352,12 +1372,17 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       logWriter().write(
         fingerprintDiffRecord({ changed: miss.changed, previousHash: miss.previousHash, hash: fingerprint }),
       );
+    } else if (useBuildCache) {
+      // Nothing to diff against (the first miss in this workspace), so name
+      // the files that are most likely to be moving the hash instead.
+      missUntracked = untrackedMissLine(d.untrackedNativeFiles({ projectRoot: root }));
     }
   }
   phase(
     'fingerprint',
     `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}${missDiff}`,
   );
+  if (missUntracked) note(chalk.dim(phaseLine('fingerprint', missUntracked)));
 
   let appPath: string | null = cached;
   let bundleId: string | null = null;
@@ -1500,6 +1525,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
 
     if (attempt?.acquired) {
       buildLock = attempt;
+      // The lock was free because the last builder DIED holding it. Say so:
+      // this run is about to compile the same inputs that just failed.
+      if (attempt.tookOver) note(chalk.yellow(phaseLine('build', takeoverLine(attempt.tookOver))));
     } else if (attempt?.held) {
       const held = attempt.held;
       const who = held.projectRoot || 'another workspace';
@@ -1548,6 +1576,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         } catch {
           /* contained the same way as the first attempt */
         }
+        // The builder did not merely vanish -- it failed. An agent that reads
+        // only "building here" repeats the failure without ever looking at it.
+        note(chalk.yellow(phaseLine('build', takeoverLine(held))));
       }
     }
   }
@@ -1570,30 +1601,43 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // never installed silently. The fallback compiles without the single-flight
   // lock -- the lock section is behind us -- which is the same "a redundant
   // build is the cheaper failure" call the takeover path already makes.
+  //
+  // ONE step, called from BOTH lookups -- the one at the top of this run and
+  // the post-shift one after prebuild/pods below -- because the second lookup
+  // resolves the same kind of artifact and must treat it the same way. On a
+  // Debug run it is the identity function; on a Release run it is the swap.
+  // Null means the swap failed and the caller must BUILD.
   let swapDir: string | null = null;
-  if (release && appPath && cacheHit) {
+  const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
+    if (!release) return cachedPath;
     phase('js swap', `regenerating this workspace's JS for the cached ${configuration} app`);
-    const swap = await d.swapJsBundle({ root, isExpo, cachedAppPath: appPath, logWriter: logWriter() });
+    const swap = await d.swapJsBundle({ root, isExpo, cachedAppPath: cachedPath, logWriter: logWriter() });
     if (swap?.ok && swap.appPath) {
       if (swap.note) note(chalk.yellow(phaseLine('js swap', swap.note)));
       swapDir = swap.tmpDir ?? null;
-      appPath = swap.appPath;
       phase(
         'js swap',
         `${swap.hermes ? 'hermes bytecode' : 'plain JS'} + assets replaced, re-signed (${formatDuration(swap.durationMs ?? 0)})`,
       );
-    } else {
-      note(
-        chalk.yellow(
-          phaseLine(
-            'js swap',
-            `failed at ${swap?.step || 'unknown step'}: ${swap?.reason || 'unknown reason'} -- ` +
-              `building fresh instead (a cached ${configuration} app carries its builder's JS; it is never installed after a failed swap)`,
-          ),
+      return swap.appPath;
+    }
+    note(
+      chalk.yellow(
+        phaseLine(
+          'js swap',
+          `failed at ${swap?.step || 'unknown step'}: ${swap?.reason || 'unknown reason'} -- ` +
+            `building fresh instead (a cached ${configuration} app carries its builder's JS; it is never installed after a failed swap)`,
         ),
-      );
-      for (const line of swap?.lastLines ?? []) note(chalk.dim(phaseLine('', line)));
-      appPath = null;
+      ),
+    );
+    for (const line of swap?.lastLines ?? []) note(chalk.dim(phaseLine('', line)));
+    return null;
+  };
+
+  if (appPath && cacheHit) {
+    const prepared = await installableCachedApp(appPath);
+    appPath = prepared;
+    if (!prepared) {
       cacheHit = false;
       waitedForBuild = null;
     }
@@ -1601,22 +1645,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
 
   const buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache };
 
-  if (appPath) {
-    // A hit -- at either level -- skips prebuild, pods and xcodebuild
-    // ENTIRELY: that is the whole point of the cache, and it is what makes a
-    // second worktree install in seconds. The bundle id comes from the cached
-    // .app's own Info.plist rather than from the project config: the binary is
-    // the truth about what is being installed.
-    bundleId = d.readBundleId(appPath) || d.detectBundleId(root);
-    if (!bundleId) {
-      return fail({
-        code: 'RN_ISO_INSTALL_FAILED',
-        message: `Could not read a bundle identifier from the cached app at ${appPath}.`,
-        remedy: 'Remove the cache entry (`rn-iso gc`) and run again to rebuild it.',
-        build: { ...buildFailure, appPath },
-      });
-    }
-  } else {
+  // A hit -- at either level, and now at either LOOKUP -- skips prebuild, pods
+  // and xcodebuild ENTIRELY: that is the whole point of the cache, and it is
+  // what makes a second worktree install in seconds.
+  if (!appPath) {
     // Everything from here to the store is what the lock covers, and the
     // `finally` is the whole reason it is a try: a build that fails, or one
     // that throws, must free its waiters immediately. It releases BEFORE the
@@ -1645,6 +1677,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         }
       }
 
+      // The steps below that REWRITE fingerprinted inputs, named as they run:
+      // what they did is what the shift line reports, and an empty list is
+      // what says the key cannot have moved.
+      const mutatingSteps: string[] = [];
+
       // ---- prebuild (Expo, and only when ios/ is absent) ----
       if (d.needsPrebuild(root, PLATFORM, isExpo)) {
         const result = await d.runPrebuild(root, PLATFORM, logWriter());
@@ -1659,6 +1696,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           });
         }
         phase('prebuild', `ios/ absent -> generated (${formatDuration(result?.durationMs ?? 0)})`);
+        mutatingSteps.push('prebuild');
       }
 
       // ---- pods ----
@@ -1680,79 +1718,164 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           });
         }
         phase('pods', `${action.reason} -> installed (${formatDuration(result?.durationMs ?? 0)})`);
+        mutatingSteps.push('pod install');
       }
       // A project with no CocoaPods at all prints nothing: there is no decision
       // to report, and a "pods  none" line every run is noise.
 
+      // ---- re-fingerprint, and STORE under what the tree hashes NOW ----
+      //
+      // prebuild generated ios/ and rewrote package.json's scripts and the app
+      // config; pod install wrote ios/Podfile.lock. Those are fingerprint
+      // SOURCES, so the hash this run looked up no longer describes this tree
+      // -- and storing the artifact under it produces an entry the next run in
+      // this workspace can never hit, while every run after it misses forever.
+      // The lookup key stays what it was (a warm tree computes exactly that);
+      // only the STORE moves. Rock does the same thing after `pod install`.
+      //
+      // Nothing here runs when neither step did: no recompute, no line.
+      //
+      // The single-flight lock keeps the PRE-mutation key -- it is the key the
+      // waiters know -- so a waiter on a cold tree finds no artifact under it
+      // and builds its own. That costs one redundant compile in the rare case
+      // where two COLD trees race, and it is the same "a redundant build is the
+      // cheaper failure" call the takeover path makes.
+      if (mutatingSteps.length) {
+        const after = await refingerprintAfterMutation({
+          projectRoot: root,
+          platform: PLATFORM,
+          previousHash: fingerprint,
+          fingerprint: d.fingerprintProject,
+        });
+        if (after?.moved) {
+          storeHash = after.hash;
+          storeSources = after.sources;
+          storeKey = buildCacheKey(PLATFORM, after.hash, configuration ? { configuration } : {});
+          note(
+            chalk.dim(
+              phaseLine(
+                'fingerprint',
+                `${shortHash(fingerprint)} -> ${shortHash(storeHash)} after ${mutatingSteps.join(' + ')}; ` +
+                  'storing under the new key, which is the one the next run looks up',
+              ),
+            ),
+          );
+
+          // ---- the lookup the FIRST one could not have made ----
+          //
+          // This tree was COLD: it hashed before ios/ existed, so the entry a
+          // warm tree left behind is keyed on a hash this run only knows now.
+          // Without asking again, a fresh worktree of a CNG app -- the case
+          // this whole tool exists for -- would compile from scratch beside a
+          // cache entry that already matches it. It is an ordinary local hit,
+          // handled by the ordinary hit step (Release included: the swap and
+          // its fallback are the same one function), which is why nothing here
+          // is duplicated and nothing here is Debug-only.
+          const late = useBuildCache ? d.resolveBuild(PLATFORM, storeKey) : null;
+          if (late) {
+            const prepared = await installableCachedApp(late);
+            if (prepared) {
+              appPath = prepared;
+              cacheHit = 'local';
+              phase(
+                'cache',
+                `hit under the post-${mutatingSteps.join('/')} key (this tree was cold, so the first lookup could not find it)`,
+              );
+            }
+            // A swap that failed leaves appPath null and this run compiles,
+            // exactly as a first-pass swap failure does.
+          }
+        }
+      }
+
       // ---- build ----
+      //
+      // Only when neither LOOKUP answered: the post-shift resolve above can
+      // have filled appPath in, and then this whole section is skipped exactly
+      // as a first-pass hit skips it.
+      //
       // buildIos returns either the success shape or the failure shape (see
       // engine/xcode.ts); read through the flat, all-optional local interface
       // rather than the discriminated union so `result?.failed` narrows the way
       // the rest of this file's defensive checks expect.
-      // A LOCAL build targets the exact simulator that will run it, which is
-      // what makes the product architecture and the runtime match. A remote
-      // device is not on this machine, so `id=<udid>` names nothing xcodebuild
-      // can resolve and it fails with "Unable to find a device matching the
-      // provided destination specifier". The generic simulator destination is
-      // the build-only form the same function already supports.
-      const result: BuildIosResultLike = await d.buildIos({
-        root,
-        udid,
-        destination: remoteDevice ? GENERIC_SIM_DESTINATION : null,
-        logWriter: logWriter(),
-        // engine/xcode's own default is Debug; a fresh Release build embeds
-        // its JS via the normal xcodebuild phase, so the miss path needs no
-        // swap.
-        ...(configuration ? { configuration } : {}),
-      });
-      if (result?.failed) {
-        phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
-        printDiagnostics(note, result);
-        const report = xcodeFailureReport(result, logFile);
-        return fail({
-          code: result.code || 'RN_ISO_BUILD_FAILED',
-          message: report.message,
-          remedy: report.remedy,
-          logPath: logFile,
-          build: buildFailure,
-        });
-      }
-      phase('build', `ok (${formatDuration(result.durationMs)})`);
-      appPath = result.appPath ?? null;
-      bundleId = result.bundleId ?? null;
-
-      // Storing is best-effort on purpose: the app is built and installable
-      // either way, and a full disk must not turn a successful build into a
-      // failed command.
-      //
-      // `overwrite` only when --no-build-cache asked for a fresh build: the
-      // entry that is there is the one the run was told not to trust, and
-      // leaving it would mean the next run trusts it again.
-      try {
-        // appPath is provably set here: this branch only runs after a build that
-        // did not report `failed`, and buildIos's success shape always carries one.
-        d.storeBuild(PLATFORM, cacheKey, appPath!, { overwrite: !useBuildCache, sources: fingerprintSources });
-      } catch (e) {
-        note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
-      }
-
-      // The upload is STARTED here and collected after the launch, so it runs
-      // beside the install rather than being added to it. Nothing about this run
-      // depends on it.
-      if (remote) {
-        uploadPending = d.uploadRemote({
+      if (!appPath) {
+        const result: BuildIosResultLike = await d.buildIos({
+          root,
+          udid,
+          destination: remoteDevice ? GENERIC_SIM_DESTINATION : null,
           logWriter: logWriter(),
-          provider: remote.provider,
-          platform: PLATFORM,
-          projectRoot: root,
-          fingerprintHash: fingerprint,
-          buildPath: appPath!,
-          runOptions: configuration ? { configuration } : null,
+          // engine/xcode's own default is Debug; a fresh Release build embeds
+          // its JS via the normal xcodebuild phase, so the miss path needs no
+          // swap.
+          ...(configuration ? { configuration } : {}),
         });
+        if (result?.failed) {
+          phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
+          printDiagnostics(note, result);
+          const report = xcodeFailureReport(result, logFile);
+          return fail({
+            code: result.code || 'RN_ISO_BUILD_FAILED',
+            message: report.message,
+            remedy: report.remedy,
+            logPath: logFile,
+            build: buildFailure,
+          });
+        }
+        phase('build', `ok (${formatDuration(result.durationMs)})`);
+        appPath = result.appPath ?? null;
+        bundleId = result.bundleId ?? null;
+
+        // Storing is best-effort on purpose: the app is built and installable
+        // either way, and a full disk must not turn a successful build into a
+        // failed command.
+        //
+        // `overwrite` only when --no-build-cache asked for a fresh build: the
+        // entry that is there is the one the run was told not to trust, and
+        // leaving it would mean the next run trusts it again.
+        try {
+          // appPath is provably set here: this branch only runs after a build that
+          // did not report `failed`, and buildIos's success shape always carries one.
+          d.storeBuild(PLATFORM, storeKey, appPath!, { overwrite: !useBuildCache, sources: storeSources });
+        } catch (e) {
+          note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
+        }
+
+        // The upload is STARTED here and collected after the launch, so it runs
+        // beside the install rather than being added to it. Nothing about this run
+        // depends on it.
+        if (remote) {
+          uploadPending = d.uploadRemote({
+            logWriter: logWriter(),
+            provider: remote.provider,
+            platform: PLATFORM,
+            projectRoot: root,
+            // The hash the artifact was STORED under, so the provider names it
+            // the same way the local cache does.
+            fingerprintHash: storeHash,
+            buildPath: appPath!,
+            runOptions: configuration ? { configuration } : null,
+          });
+        }
       }
     } finally {
       releaseLock();
       releaseSlot();
+    }
+  }
+
+  // The bundle id of a CACHED app comes from the binary's own Info.plist
+  // rather than from the project config: the binary is the truth about what is
+  // being installed. A build sets it from its own result, so this only runs on
+  // a hit -- at either level, and from either lookup.
+  if (appPath && !bundleId) {
+    bundleId = d.readBundleId(appPath) || d.detectBundleId(root);
+    if (!bundleId) {
+      return fail({
+        code: 'RN_ISO_INSTALL_FAILED',
+        message: `Could not read a bundle identifier from the cached app at ${appPath}.`,
+        remedy: 'Remove the cache entry (`rn-iso gc`) and run again to rebuild it.',
+        build: { ...buildFailure, appPath },
+      });
     }
   }
 
@@ -1899,13 +2022,32 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     }
   } else {
     const verification: VerifyLaunchResultLike = metroCheck
-      ? await d.verifyLaunch({ logsDir, since: launchedAt, mode: isExpo ? MODE_EXPO : MODE_BARE })
+      ? await d.verifyLaunch({ logsDir, since: launchedAt, metroPort, mode: isExpo ? MODE_EXPO : MODE_BARE })
       : { verified: false, skipped: true };
     if (verification?.verified) {
       phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
     } else if (verification?.skipped) {
       launchState = LAUNCH_UNVERIFIED;
       phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
+    } else if (verification?.requested) {
+      // The request DID arrive: the app is talking to this workspace, and
+      // Metro is still building. Nothing here is a remedy list -- the wiring
+      // worked, and printing the alert/picker steps over a working launch is
+      // what sent an agent chasing a fault that did not exist.
+      launchState = LAUNCH_BUNDLING;
+      phase(
+        'verify',
+        `BUNDLING: the app asked port ${metroPort} for its bundle and Metro was still building it ` +
+          `after ${formatDuration(verification.waitedMs ?? 0)} (a cold bundle on a large graph outlasts this window)`,
+      );
+      note(
+        chalk.dim(
+          phaseLine(
+            '',
+            'Nothing to do: `rn-iso logs --source metro` shows the build finishing, usually within a minute.',
+          ),
+        ),
+      );
     } else {
       launchState = LAUNCH_UNVERIFIED;
       const lines = unverifiedLaunchLines({
@@ -1930,18 +2072,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // The outcome, in the timeline as well as on stderr: `rn-iso logs` is where
   // an agent looks when the app is not behaving, and "the launch was never
   // verified" is the first thing it should find there.
-  logWriter().write({
-    src: 'build',
-    level: launchState === LAUNCH_UNVERIFIED ? 'warn' : 'info',
-    event: launchState === LAUNCH_UNVERIFIED ? 'launch_unverified' : 'launch_verified',
-    msg: release
-      ? launchState === LAUNCH_UNVERIFIED
-        ? `${bundleId} could not be verified as running after its ${configuration} launch`
-        : `${bundleId} is running its embedded ${configuration} bundle`
-      : launchState === LAUNCH_UNVERIFIED
-        ? `no bundle request from ${bundleId} reached this workspace's Metro on port ${metroPort}`
-        : `${bundleId} fetched a bundle from this workspace's Metro on port ${metroPort}`,
-  });
+  logWriter().write(launchOutcomeRecord({ launchState, release, bundleId, configuration, metroPort }));
 
   // ---- the upload, collected (it has been running since the build) ----
   // uploadPending is only ever set inside `if (remote)` above, so remote is
@@ -1975,8 +2106,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   writeLastBuild(
     root,
     lastBuildRecord({
-      fingerprint,
-      cacheKey,
+      // What was STORED, not what was looked up: the next run's miss diff
+      // compares against this, and it reads the entry's stored sources by key.
+      fingerprint: storeHash,
+      cacheKey: storeKey,
       cacheHit,
       cacheSkipped: !useBuildCache,
       durationMs,
@@ -1995,9 +2128,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const facts = iosFacts({
     udid,
     deviceName: device?.deviceName ?? null,
-    fingerprint,
+    // The fingerprint and key this run's artifact actually lives under.
+    fingerprint: storeHash,
     configuration,
-    cacheKey,
+    cacheKey: storeKey,
     cacheHit,
     cacheSkipped: !useBuildCache,
     waitedForBuild,
@@ -2020,7 +2154,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     // The outcome line says which kind of OK this is. "OK" alone, over an app
     // that loaded nothing, is the claim this whole check exists to stop.
     console.log(
-      launchState === LAUNCH_UNVERIFIED ? chalk.yellow(`${summary} -- launch UNVERIFIED`) : chalk.green(summary),
+      launchState === LAUNCH_UNVERIFIED
+        ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
+        : launchState === LAUNCH_BUNDLING
+          ? chalk.green(`${summary} -- bundle requested, still building`)
+          : chalk.green(summary),
     );
     // Repeated after the outcome, not only when the session was created: by
     // now a build may have scrolled the earlier line away, and this is the
@@ -2034,6 +2172,47 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // waiting on a network call whose result nothing reads any more.
   if (abandonedRemote) exitAfterFlush(0);
   return facts;
+}
+
+// PURE. The Contract-1 record the launch outcome writes into the timeline.
+// THREE outcomes, not two: `rn-iso logs` is where an agent looks when the app
+// is not behaving, and "the request arrived, the bundle was still building" is
+// a materially different thing to find there than "nothing ever asked".
+export function launchOutcomeRecord({
+  launchState,
+  release,
+  bundleId,
+  configuration,
+  metroPort,
+}: {
+  launchState: boolean | string;
+  release: boolean;
+  bundleId: string | null;
+  configuration: string | null;
+  metroPort?: number | null;
+}): Record<string, unknown> {
+  const unverified = launchState === LAUNCH_UNVERIFIED;
+  const bundling = launchState === LAUNCH_BUNDLING;
+  let msg: string;
+  if (release) {
+    msg = unverified
+      ? `${bundleId} could not be verified as running after its ${configuration} launch`
+      : `${bundleId} is running its embedded ${configuration} bundle`;
+  } else if (unverified) {
+    msg = `no bundle request from ${bundleId} reached this workspace's Metro on port ${metroPort}`;
+  } else if (bundling) {
+    msg =
+      `${bundleId} requested a bundle from this workspace's Metro on port ${metroPort}; ` +
+      'it was still being built when the launch check ended';
+  } else {
+    msg = `${bundleId} fetched a bundle from this workspace's Metro on port ${metroPort}`;
+  }
+  return {
+    src: 'build',
+    level: unverified ? 'warn' : 'info',
+    event: unverified ? 'launch_unverified' : bundling ? 'launch_bundling' : 'launch_verified',
+    msg,
+  };
 }
 
 // PURE. How the outcome line describes where the app came from.

@@ -54,6 +54,16 @@ export function supervisorLogFile(projectRoot: string): string {
   return join(workspaceLogsDir(projectRoot), 'supervisor.log');
 }
 
+// The emulator's own stdout/stderr, raw rather than NDJSON, for the same
+// reason supervisorLogFile exists: an emulator that refuses to start says so
+// immediately and then exits, and with its stdio dropped that line was gone.
+// TRUNCATED per boot (the supervisor's is appended), because a boot's log
+// describes that boot -- the same doctrine as the per-run build transcript.
+// NOT .ndjson, so the k-way merge in logs-query never tries to parse it.
+export function emulatorLogFile(projectRoot: string): string {
+  return join(workspaceLogsDir(projectRoot), 'emulator.log');
+}
+
 // Shared caches derive from getConfigDir() rather than homedir() so that
 // RN_ISO_HOME redirects them along with the registry, which is what lets a
 // test run against a temp directory without touching the real machine.

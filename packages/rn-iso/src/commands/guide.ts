@@ -46,7 +46,21 @@ other line goes to stderr, so it is always safe to pipe.
   platform        "ios"
   udid            the owned simulator this workspace installed onto
   deviceName      its name, or null
-  fingerprint     the @expo/fingerprint hash of the native inputs
+  fingerprint     the @expo/fingerprint hash of the native inputs, AS STORED.
+                  A run that had to \`expo prebuild\` or \`pod install\`
+                  rewrote fingerprinted files while it worked (the generated
+                  native directory, package.json's scripts, the app config,
+                  Podfile.lock), so the hash it looked up is not the hash the
+                  tree has afterwards. The artifact is stored under the hash
+                  computed AFTER those steps -- the one the next run in this
+                  tree computes -- and this field reports that one. The shift
+                  is printed on stderr as one dim line naming both short
+                  hashes; no shift, no line, and no second fingerprint.
+                  A shift is RE-LOOKED-UP before anything compiles (\`cache
+                  hit under the post-prebuild key\`), so a cold tree -- a
+                  fresh worktree or clone of a CNG app -- installs an entry
+                  another workspace already built instead of compiling
+                  beside it
   configuration   the Xcode configuration that was built ("Release" from
                   --configuration or the ios.configuration setting); null for
                   the default Debug
@@ -75,18 +89,30 @@ other line goes to stderr, so it is always safe to pipe.
                   cheaper than a second build). Both commands carry it
   appPath         the .app that was installed
   bundleId        the iOS bundle id that was launched
-  launched        true, or "unverified" when no bundle request from this app
-                  reached this workspace's Metro within ~20s of the launch
-                  (an iOS 26 confirmation alert gating simctl openurl -- it
-                  appears on EVERY first launch on a fresh sim -- or a
-                  dev-client server picker awaiting a tap). The warning on
-                  stderr is a numbered list in the order that clears it:
-                  confirm the alert first, then the picker, and only with no
-                  alert showing, the openurl retry it prints. On ANDROID
-                  there is no alert, so the list leads with the dev-client
-                  deep link (\`am start -a android.intent.action.VIEW -d
-                  '<devClientUrl>'\`), which is the whole answer when the app
-                  has a scheme.
+  launched        true, "bundling", or "unverified". THE THREE ARE DIFFERENT
+                  FACTS and only the last one is a problem.
+                    true         a bundle request from this app reached this
+                                 workspace's Metro within ~20s of the launch
+                    "bundling"   the request DID arrive and Metro was still
+                                 building the bundle when the window closed.
+                                 The wiring is proven; the JS has simply not
+                                 run yet (a cold bundle of ~10k modules takes
+                                 longer than the window). Nothing to do --
+                                 no remedy list is printed for it -- and
+                                 \`logs --source metro\` shows the build
+                                 finishing
+                    "unverified" nothing was observed at all: an iOS 26
+                                 confirmation alert gating simctl openurl (it
+                                 appears on EVERY first launch on a fresh
+                                 sim), or a dev-client server picker awaiting
+                                 a tap
+                  The unverified warning on stderr is a numbered list in the
+                  order that clears it: confirm the alert first, then the
+                  picker, and only with no alert showing, the openurl retry it
+                  prints. On ANDROID there is no alert, so the list leads with
+                  the dev-client deep link (\`am start -a
+                  android.intent.action.VIEW -d '<devClientUrl>'\`), which is
+                  the whole answer when the app has a scheme.
   metroPort       the port the app was wired to; NULL on a non-Debug
                   configuration, whose JS is embedded and which is launched
                   with no dev server at all. There, \`launched\` is verified
@@ -264,9 +290,12 @@ Reads every *.ndjson file in <root>/.rn-iso/logs, merges them into one timeline
 ordered by timestamp, prints what matches, and EXITS. The file set is
 discovered, not enumerated.
 
-NOTHING MATCHING IS EXIT 0. \`rn-iso logs --errors\` printing nothing is the
+NOTHING MATCHING IS EXIT 0. \`rn-iso logs --errors\` finding nothing is the
 pass condition of a build loop, so an empty result must never read as a
-failure. The only exit-1 paths are a malformed query and no project.
+failure. Precisely what that looks like: STDOUT IS EMPTY, exit code 0, and
+one dim note on STDERR reading \`No matching log records in <logs dir>\`
+(human mode only -- \`--json\` prints nothing at all, on either stream).
+The only exit-1 paths are a malformed query and no project.
 
 FLAGS
   --source <s...>  metro, client, device, build (one or more), or all. An
@@ -399,11 +428,14 @@ RN_ISO_NO_METRO
   and run \`rn-iso start\` to get a fresh reservation.
 
 RN_ISO_NO_FINGERPRINT
-  \`@expo/fingerprint\` is not resolvable from the project or from rn-iso, so
-  the shared build cache cannot be addressed. Install it in the project:
-  \`npm i -D @expo/fingerprint\`. It works on a bare project too. This is a
-  refusal rather than a silent full build because an unaddressable cache means
-  every workspace on the commit compiles from scratch, forever.
+  \`@expo/fingerprint\` produced no hash, so the shared build cache cannot be
+  addressed. rn-iso DEPENDS on @expo/fingerprint, so a missing module is not
+  the usual cause any more -- a bare project needs no package.json change.
+  The project's own copy is still preferred when it has one (the hash then
+  matches what its own tooling computes) and rn-iso's is the fallback, so a
+  broken rn-iso install is the thing to check first. This is a refusal rather
+  than a silent full build because an unaddressable cache means every
+  workspace on the commit compiles from scratch, forever.
 
 RN_ISO_PREBUILD_FAILED
   \`expo prebuild\` could not generate the missing native directory. The
@@ -502,6 +534,14 @@ RN_ISO_NO_DEVICE
   state. \`rn-iso doctor\` checks the toolchain; \`rn-iso status\` says what
   rn-iso thinks it owns. Re-running the command creates a fresh owned device
   when the recorded one is gone.
+  On Android the emulator's own stdio is captured to
+  \`.rn-iso/logs/emulator.log\` (truncated per boot), and when it printed a
+  \`FATAL |\` / \`ERROR |\` / \`PANIC:\` line THAT is the message and the remedy
+  you get -- the disk-space refusal ("Not enough space to create userdata
+  partition") is the case this exists for. The generic toolchain remedy above
+  is only what you see when that log says nothing recognizable. A boot whose
+  emulator process exited is also reported at once rather than after the full
+  cold-boot timeout.
 
 RN_ISO_AT_CAPACITY
   Only when concurrency.maxDevices is set (it is UNSET by default, so this never
@@ -745,6 +785,32 @@ and produces an app that cannot load a bundle.
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for.
 
+NOTHING ABOVE NEEDS A CHANGE TO THE REPO
+rn-iso runs on a clean checkout. \`.rn-iso/\` is added to .gitignore by
+start/ios/android themselves, and the performance caches ride on the command
+lines rn-iso composes rather than on files the project owns:
+
+  ios      xcodebuild carries COMPILATION_CACHE_ENABLE_CACHING, a shared
+           COMPILATION_CACHE_CAS_PATH and a clang prefix mapping of this
+           workspace's root, so compiled output crosses worktrees with no
+           Podfile post_install block. Xcode 26+ only, and skipped entirely
+           when the project configured ccache (the two defeat each other).
+  android  gradlew carries --build-cache, so task outputs cross worktrees with
+           no org.gradle.caching=true in gradle.properties.
+  start    the dev server gets a shared Metro FileStore APPENDED to whatever
+           the project configured -- in-process on a bare project, and through
+           NODE_OPTIONS=--require <shim> on an Expo child. Turn it off machine
+           -wide with { "caches": { "injectMetroStore": false } } in
+           ~/.rn-iso/config.json; see \`guide settings\`.
+
+Each says so in one dim line. There is nothing to install, wire or commit, and
+no setup skill to run. \`rn-iso doctor\` is the read-only second opinion when
+something IS blocked or slow: it reports only what rn-iso cannot handle itself
+(a missing dev client, ccache, a fingerprint no fresh worktree reproduces, a
+provider on a key this SDK ignores) plus the project-side settings that matter
+solely for builds you make OUTSIDE rn-iso. A clean doctor means there is
+nothing rn-iso needs from this repo.
+
 THE BUILD CACHE HAS TWO LEVELS
   1. rn-iso's own, on this machine: a directory under ~/.rn-iso shared by
      every worktree, keyed on the @expo/fingerprint hash of the native inputs.
@@ -765,6 +831,26 @@ THE BUILD CACHE HAS TWO LEVELS
   stored its fingerprint sources beside the cache entry, the fingerprint line
   gains " -- N sources changed: <up to three paths>", and the full list
   (capped at 20 names) lands in the build log as a fingerprint_diff record.
+
+WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
+  Every entry is keyed on what the tree hashes, so two workspaces share an
+  entry only when they hash alike. A file that changes without changing the
+  BUILD is what breaks that, and it fails silently -- a cache that never hits
+  looks exactly like a cache that is not there.
+
+  \`.fingerprintignore\` at the project root (same syntax as .gitignore) is the
+  answer. Put in it only what genuinely cannot change the native build: a
+  generated report, a local env file, a lockfile whose checksums embed absolute
+  machine paths (\`ios/Podfile.lock\` is the usual one -- pod checksums can bake
+  in a machine path, and \`pod install\` rewrites it on a plain re-install).
+  Never ignore a real native input -- a Podfile, a gradle file, the app config
+  -- to force a hit: that trades a slow build for a wrong one.
+
+  \`rn-iso doctor\` measures this directly rather than reading the file: it
+  fingerprints HEAD in a temporary clean worktree, compares, and reports a
+  mismatch naming the differing sources. Untracked, non-gitignored files under
+  ios/ or android/ count too -- they are hashed like any other source, so a
+  stray file there moves the key on your machine and nowhere else.
 
 ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   The cache makes the SECOND workspace on a commit free -- but only once the
@@ -1158,6 +1244,49 @@ or via the environment, which overrides the file:
 
 Unset, 0, or any non-positive value means NO enforcement -- the default, where
 rn-iso limits nothing. See \`guide lifecycle\` for what each cap does.
+
+RN-ISO NEEDS NO PROJECT CHANGES TO RUN
+Nothing above is required to use rn-iso. The performance caches that used to
+be setup steps are supplied by rn-iso on the command lines it composes itself:
+
+  xcodebuild   COMPILATION_CACHE_ENABLE_CACHING / COMPILATION_CACHE_CAS_PATH /
+               SWIFT_ENABLE_COMPILE_CACHE / CLANG_ENABLE_PREFIX_MAPPING /
+               CLANG_OTHER_PREFIX_MAPPINGS -- so no Podfile post_install block
+               (Xcode 26+ only, and skipped when the project configured ccache,
+               which defeats it)
+  gradlew      --build-cache -- so no org.gradle.caching=true in a committed
+               gradle.properties
+  start        a shared Metro FileStore, APPENDED to whatever the project
+               configured -- so no metro.config.js. On a bare project rn-iso
+               hosts Metro itself and adds it to the config it loaded; on Expo
+               the child is spawned with NODE_OPTIONS extended by a --require
+               shim that does the same inside it.
+
+Each of those prints one dim line saying it happened. There is no setup skill
+and no init command; \`rn-iso doctor\` reports the project-side settings as
+things you need only if you ALSO build outside rn-iso.
+
+TURNING THE METRO STORE OFF (MACHINE-LEVEL)
+The Expo injection is the invasive one, so it has a switch -- and the switch is
+machine-level, because a committed file would be exactly the repo change this
+feature exists to avoid:
+
+  {
+    "caches": { "injectMetroStore": false }
+  }
+
+in ~/.rn-iso/config.json. It turns the store off on BOTH dev servers. Only the
+literal false does; anything else leaves it on. The shim also fails soft on its
+own: if it cannot resolve metro-config, or cannot substitute for it, it writes
+one line to stderr (which lands in the timeline) and the dev server runs with
+whatever cache it would have had.
+
+Reading the timeline for it: on Expo, \`cache_store_requested\` is rn-iso saying
+it asked (it set NODE_OPTIONS on a process it does not run, which is all this
+side can know), and \`cache_store_added\` is the SHIM reporting from inside that
+process that the store is in the config Metro loaded. Only the second one means
+transforms are being shared. A bare project writes \`cache_store_added\` directly,
+because there rn-iso adds the store itself.
 
 CACHE LOCATIONS ARE MACHINE-LEVEL TOO
 The shared build cache and Metro transform cache default to living under

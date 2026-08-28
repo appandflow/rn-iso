@@ -23,9 +23,17 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { dirname, join, parse } from 'node:path';
+import { metroStoreInjectionEnabled } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { resolvePackageJson } from '../project.ts';
+import {
+  metroShimPath,
+  metroStoreConfirmedRoot,
+  metroStoreEnv,
+  metroStoreRoot,
+  registerMetroStore,
+} from './metro-store.ts';
 import { supervisorError } from './errors.ts';
 
 // THE PROJECT'S OWN expo binary, found by NODE RESOLUTION rather than by path
@@ -239,6 +247,22 @@ export function cleanLine(line: unknown): string {
 export function recordFromLine(line: unknown, { stream = 'stdout' }: { stream?: string } = {}): NdjsonRecord | null {
   const msg = cleanLine(line);
   if (!msg.trim()) return null;
+  // THE ONE STRUCTURED LINE IN THIS STREAM. The cache shim runs inside this
+  // child, so its success line is the only evidence rn-iso can have that the
+  // shared transform store reached the config Metro loaded -- see
+  // resolveMetroStoreInjection below for why the record cannot be written on
+  // the way in. It is promoted out of the raw stream rather than stored as one
+  // more info line: `raw: true` would say the structure was inferred, and this
+  // one was reported.
+  const confirmed = metroStoreConfirmedRoot(msg);
+  if (confirmed) {
+    return {
+      src: 'metro',
+      level: 'debug',
+      event: 'cache_store_added',
+      msg: `sharing Metro transforms through ${confirmed} (the dev server process confirmed the store is in the config Metro loaded)`,
+    };
+  }
   const record: NdjsonRecord = {
     src: 'metro',
     level: inferLevel(msg),
@@ -338,6 +362,76 @@ export interface ExpoServerHandle {
   close(): Promise<void>;
 }
 
+// THE ZERO-CONFIG HALF OF `rn-iso start` ON AN EXPO PROJECT.
+//
+// The bare path can append a cache store to the config it loaded, because it
+// loads the config. Here the dev server is the project's own `expo start`, so
+// the only seam rn-iso has is the environment the child is spawned with:
+// NODE_OPTIONS gains `--require <shim>`, and the shim (packages/rn-iso/shim,
+// CJS, no dependencies) appends the store to whatever metro-config's
+// loadConfig returns inside that process.
+//
+// This is deliberately the more invasive of the two, so it is the one with a
+// kill switch and a fail-soft shim: `caches.injectMetroStore: false` in
+// ~/.rn-iso/config.json turns it off MACHINE-wide, which is the point --
+// evaluating rn-iso must need no change to the repo, so opting out of a piece
+// of it must not need one either.
+//
+// Every branch that does not inject is a log record and none is fatal.
+function resolveMetroStoreInjection(
+  root: string,
+  { log, env }: { log: NdjsonWriter; env: NodeJS.ProcessEnv },
+): Record<string, string> | null {
+  if (!metroStoreInjectionEnabled()) {
+    log.write({
+      src: 'metro',
+      level: 'debug',
+      event: 'cache_store_skipped',
+      msg: 'the shared Metro transform store is off (caches.injectMetroStore is false in ~/.rn-iso/config.json)',
+    });
+    return null;
+  }
+  const shimPath = metroShimPath();
+  if (!shimPath) {
+    log.write({
+      src: 'metro',
+      level: 'warn',
+      event: 'cache_store_skipped',
+      msg: "rn-iso's Metro cache shim is missing from this install, so the Expo dev server runs on whatever transform cache the project configured",
+    });
+    return null;
+  }
+  const storeRoot = metroStoreRoot(root);
+  const additions = metroStoreEnv({ root, storeRoot, shimPath, nodeOptions: env.NODE_OPTIONS });
+  if (!additions) {
+    log.write({
+      src: 'metro',
+      level: 'debug',
+      event: 'cache_store_skipped',
+      msg: `the shim at ${shimPath} could not be added to NODE_OPTIONS (already present, or a path NODE_OPTIONS cannot quote)`,
+    });
+    return null;
+  }
+  registerMetroStore(storeRoot);
+  // WHAT RN-ISO DID, NOT WHAT HAPPENED. This record used to claim the store
+  // was shared, and it was written HERE -- before the child existed, let alone
+  // before the shim inside it had tried anything. On tlon that made the
+  // timeline report a shared store through three bundles while the shim was
+  // failing on every one of them (issue #73). The only thing this side can
+  // honestly report is the request it is about to make; the outcome belongs to
+  // the process that has it, and arrives as the shim's own line, which
+  // recordFromLine turns into `cache_store_added`.
+  log.write({
+    src: 'metro',
+    level: 'debug',
+    event: 'cache_store_requested',
+    msg:
+      `asked this project's Expo dev server to share Metro transforms through ${storeRoot} ` +
+      '(NODE_OPTIONS=--require, no metro.config.js change); the shim in that process reports the outcome',
+  });
+  return additions;
+}
+
 export async function startExpoServer({
   root,
   port,
@@ -370,6 +464,11 @@ export async function startExpoServer({
   const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
 
   const args = tunnel ? ['start', '--port', String(port), '--tunnel'] : ['start', '--port', String(port)];
+  // APPENDED to the caller's environment, never substituted for it: the
+  // NODE_OPTIONS composition inside metroStoreEnv keeps whatever was already
+  // there (a profiler, a --max-old-space-size a big graph needs).
+  const storeEnv = resolveMetroStoreInjection(root, { log, env: process.env });
+
   const child = spawn(bin, args, {
     cwd: root,
     // stdin is ignored on purpose: a detached supervisor has no terminal, and
@@ -384,6 +483,7 @@ export async function startExpoServer({
       // Colour only makes the log harder to read; it is stripped either way.
       FORCE_COLOR: '0',
       ...expoProxyEnv(process.env),
+      ...storeEnv,
       // Without this, `--tunnel` uses the legacy ws-tunnel session, which is
       // hardcoded to port 8081 -- fatal here, since rn-iso's whole premise is
       // a collision-free port per workspace. With it, Expo signs a tunnel URL

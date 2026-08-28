@@ -56,6 +56,47 @@ export function metroCacheRoot(name?: string | null): string {
   return name === undefined || name === null || name === '' ? root : path.join(root, cacheNameSegment(name));
 }
 
+// ---- identifying a store rn-iso installed -----------------------------------
+//
+// Metro's FileStore kept its root on a PUBLIC `_root` until metro-cache
+// 0.83.0, which made it a private `#root`. Every "is our store already in this
+// list" check in this repo read `_root`, so all of them went silently false on
+// every current Metro -- measured on real installs: 0.81.5 and 0.82.5 expose
+// `_root`, 0.83.5 / 0.84.4 / 0.85.0 / 0.87.0 do not. A private field cannot be
+// read from outside at all, so the fix is not a better probe: it is to TAG the
+// instances we create with a root we can read back.
+//
+// It lives here because rn-iso and @rn-iso/metro both create these stores and
+// each must recognize the other's, which is the whole reason this package
+// exists. The shim (packages/rn-iso/shim) repeats the property NAME rather
+// than importing it, for the reason it repeats the env var names: it may have
+// no dependencies at all.
+export const STORE_ROOT_TAG = 'rnIsoStoreRoot';
+
+// Tag a freshly constructed store and hand it back, so a call site stays one
+// expression. Best-effort: a frozen store instance is still a working store.
+export function tagSharedStore<T extends object>(store: T, root: string): T {
+  try {
+    Object.defineProperty(store, STORE_ROOT_TAG, { value: root, enumerable: false, configurable: true });
+  } catch {
+    // Untaggable means undetectable, which costs a duplicate store entry at
+    // worst -- never a failed dev server.
+  }
+  return store;
+}
+
+// The root a store in a cacheStores list was created for, or null when it is
+// not one of ours. `_root` is read as well so a project still on metro-cache
+// 0.82 or older, where the field was public, is recognized the way it always
+// was.
+export function sharedStoreRoot(store: unknown): string | null {
+  if (store === null || typeof store !== 'object') return null;
+  const tagged = (store as Record<string, unknown>)[STORE_ROOT_TAG];
+  if (typeof tagged === 'string') return tagged;
+  const legacy = (store as { _root?: unknown })._root;
+  return typeof legacy === 'string' ? legacy : null;
+}
+
 // ---- the build cache key ---------------------------------------------------
 //
 // The fingerprint covers what the project IS, never how it was built. Keying

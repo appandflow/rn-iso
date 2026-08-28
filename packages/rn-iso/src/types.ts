@@ -111,6 +111,11 @@ export interface RnIsoConfig {
   projects: Record<string, ProjectRecord>;
   repos: Record<string, RepoRecord>;
   concurrency?: { maxBuilds?: unknown; maxDevices?: unknown };
+  // Machine-level cache keys. buildCache / metroCache relocate the shared
+  // roots and are read by @rn-iso/core (so the cache packages agree with the
+  // CLI); injectMetroStore is the kill switch for the Metro transform store
+  // rn-iso installs on the dev servers it hosts.
+  caches?: { buildCache?: unknown; metroCache?: unknown; injectMetroStore?: unknown };
   [key: string]: unknown;
 }
 export type Config = RnIsoConfig;
@@ -129,10 +134,13 @@ export type Settings = SettingsObject;
 // cacheLevel in engine/remote-cache.ts.
 export type CacheHitLevel = 'local' | 'remote' | false;
 
-// The launch fact is three-valued: true (a bundle request from this
-// workspace's Metro was observed), false, or 'unverified' (launched but no
-// request seen). Producers: iosFacts / androidFacts.
-type LaunchStatus = boolean | 'unverified';
+// The launch fact is FOUR-valued: true (a bundle request from this workspace's
+// Metro was observed, or -- on a release build -- the app process was alive
+// after launch), 'bundling' (the app asked this workspace's Metro for its
+// bundle and Metro was still building it when the window closed: the wiring is
+// proven, the JS has simply not run yet), 'unverified' (launched, and nothing
+// was observed at all) and false. Producers: iosFacts / androidFacts.
+type LaunchStatus = boolean | 'unverified' | 'bundling';
 
 // { pid, ms } when this run installed an artifact ANOTHER workspace compiled
 // while it waited; null when nothing was waited for. Producer: engine/build-lock.ts.

@@ -1,11 +1,10 @@
 ---
 title: 'Getting started'
 sidebar_position: 2
-description: 'Install the skill, have the agent run /rn-iso-init, then describe what you want built'
+description: 'Install the skill, then tell your agent what you want built.'
 ---
 
-rn-iso is a CLI **humans never run** — your coding agent does. Setup is one
-command, and it is the only one you type yourself.
+rn-iso is a CLI **humans never run** — your coding agent does.
 
 ## 1. Install the agent skill
 
@@ -13,31 +12,12 @@ command, and it is the only one you type yourself.
 npx skills add appandflow/rn-iso
 ```
 
-That installs two skills into your agent's skill directory (`~/.claude/skills`,
+That installs one skill into your agent's skill directory (`~/.claude/skills`,
 `~/.agents/skills`): **rn-iso** — how to drive the CLI (the lifecycle, the
-ownership model, the destructive-command rules) — and **rn-iso-init** — the
-playbook for setting a repo up. Re-run the same command after upgrading rn-iso
-to refresh them.
+ownership model, the destructive-command rules). Re-run the same command after
+upgrading rn-iso to refresh it.
 
-## 2. Have the agent set the project up
-
-In your app's repo, invoke the init skill:
-
-```
-/rn-iso-init
-```
-
-The agent runs `rn-iso doctor` (read-only), then applies each finding by hand
-in the files your project already owns: the shared Metro transform cache, the
-compiler caches (Xcode compilation caching, Gradle's build cache), the
-settings that silently prevent them from working. There is deliberately no
-`rn-iso init` generator — every edit lands in a file with existing project
-logic in it, which is judgement, not templating. The build cache itself needs
-no setup: rn-iso's own cache covers every build rn-iso drives, and an Expo
-build cache provider (`@rn-iso/expo-build-cache` for `expo run` outside
-rn-iso, EAS for team sharing) is optional and deliberately not part of setup.
-
-## 3. Describe what you want
+## 2. Tell your agent what you want
 
 ```
 Build and run the app on the iOS simulator and fix anything that breaks.
@@ -52,10 +32,30 @@ npx rn-iso logs --errors     # no output + exit 0 = nothing is broken
 npx rn-iso stop              # supervisor down, sim shut down, port freed
 ```
 
-— its own dev server on a reserved port, its own **owned** simulator,
-a native build that installs from the shared cache when nothing native
-changed, and a queryable log timeline to check its work. About ten lines of
-output for the whole cycle, `--json` everywhere.
+— its own dev server on a reserved port, its own **owned** simulator, a native
+build that installs from the shared cache when nothing native changed, and a
+queryable log timeline to check its work. About ten lines of output for the
+whole cycle, `--json` everywhere.
+
+Point it at a clean checkout and all of that works, caches included: the Xcode
+compilation cache, Gradle's build cache and a shared Metro transform store ride
+on the command lines rn-iso composes itself.
+
+## If something is blocked or slow
+
+```bash
+npx rn-iso doctor
+```
+
+Read-only, always exits 0, and it reports **only what rn-iso cannot handle on
+its own** — a missing `expo-dev-client` (a native dependency: without it a
+reserved port cannot reach the app), ccache (the one thing that makes rn-iso
+skip its own compilation cache), a checkout that does not fingerprint like a
+fresh worktree of HEAD (every worktree then misses the build cache), a
+`buildCacheProvider` on a key your SDK ignores, a broken EAS session. Anything
+else it prints is a note about builds you make _outside_ rn-iso (Xcode,
+`npx expo run:ios`, Android Studio, CI), and is optional. A clean run means
+there is nothing rn-iso needs from your repo.
 
 ## A second loop: a bug you can only see on screen
 

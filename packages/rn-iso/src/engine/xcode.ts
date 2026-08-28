@@ -19,11 +19,12 @@
 // output when stdout is a pipe rather than a terminal, which delivers the
 // whole transcript in one lump at exit and silently un-does the streaming.
 import type { ChildProcess } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import chalk from 'chalk';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { workspaceDerivedData } from '../paths.ts';
+import { sharedCompilationCache, workspaceDerivedData } from '../paths.ts';
 import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagnostics } from './errors-xcode.ts';
 // Borrowed rather than copied: these two are generic child-stdout plumbing
 // that happens to live next to the Expo server because that is what needed
@@ -233,6 +234,168 @@ export function resolveScheme(project: XcodeProject, { exec = null }: { exec?: E
   return { scheme, schemes: listing.schemes };
 }
 
+// --- Xcode's compilation cache, supplied on OUR OWN argv ------------------
+//
+// THE POINT: rn-iso needs no project changes to run. xcodebuild takes
+// `SETTING=value` overrides that apply to every target in the build, Pods
+// included, so the content-addressed compilation cache that used to require a
+// Podfile `post_install` block is expressible on the command line rn-iso
+// already composes. The project's Podfile is never read for this and never
+// written to; a repo that ALSO wants the setting for builds run outside rn-iso
+// still commits it, and gets the identical settings either way.
+//
+// The five settings are what an equivalent Podfile `post_install` block would
+// have to set, for a repo that also wants them outside rn-iso:
+//
+//   COMPILATION_CACHE_ENABLE_CACHING  turn the CAS on
+//   COMPILATION_CACHE_CAS_PATH        point it OUTSIDE DerivedData -- the
+//                                     default CAS lives at the DerivedData
+//                                     root, and rn-iso's DerivedData is
+//                                     workspace-local, so the default shares
+//                                     nothing between worktrees, which is the
+//                                     only reason to enable it
+//   SWIFT_ENABLE_COMPILE_CACHE=NO     Swift caching cannot hit across
+//                                     workspaces without SWIFT_OTHER_PREFIX_
+//                                     MAPPINGS, and that setting crashes
+//                                     swift-frontend whenever a compile batch
+//                                     mixes mapped and unmapped sources
+//                                     (swiftlang/swift#90698, fixed upstream,
+//                                     not yet in a released Xcode). Off
+//                                     explicitly, which also silences the
+//                                     per-target warning
+//   CLANG_ENABLE_PREFIX_MAPPING       let clang canonicalise absolute paths
+//   CLANG_OTHER_PREFIX_MAPPINGS       and map THIS workspace's root to a fixed
+//                                     virtual prefix, so a second worktree of
+//                                     the same commit computes the same cache
+//                                     keys instead of missing everything
+export const COMPILATION_CACHE_MIN_XCODE = 26;
+
+// The virtual prefix the workspace root is rewritten to. A repo that commits
+// the equivalent Podfile `post_install` block for its own builds must use this
+// exact string: committing one AND running rn-iso has to land on one set of
+// cache keys, not two.
+const PREFIX_MAP_TARGET = '/^src';
+
+// ONE mapping, not two. A Podfile block has to map $(DERIVED_DATA_DIR) as well,
+// because a project's DerivedData sits outside its source tree; rn-iso builds
+// with `-derivedDataPath <root>/.rn-iso/derived-data`, which is INSIDE the
+// root, so the root mapping already covers it at the identical relative path
+// in every worktree. Adding the second mapping here would also risk expanding
+// an undefined setting reference into an empty prefix.
+export function prefixMapping(workspaceRoot: string): string {
+  return `${String(workspaceRoot).replace(/\/+$/, '')}=${PREFIX_MAP_TARGET}`;
+}
+
+// PURE. Whether the project has ccache wired into its pod build. ccache and
+// compilation caching are mutually exclusive in practice -- the ccache
+// launcher script is what disables explicitly built modules, which compilation
+// caching requires -- so a project that chose ccache keeps ccache, and rn-iso
+// adds nothing. doctor's checkCcacheConflict reads the same predicate; this is
+// the one implementation of it.
+export function ccacheEnabled(podfileProperties: unknown): boolean {
+  if (!podfileProperties || typeof podfileProperties !== 'object') return false;
+  return (podfileProperties as Record<string, unknown>)['apple.ccacheEnabled'] === 'true';
+}
+
+// The thin fs half. Absent or unreadable is "no ccache", not an error: this
+// decides whether to ADD a setting, and the safe direction on doubt is to add
+// nothing.
+export function readPodfileProperties(root: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(root, IOS_DIR, 'Podfile.properties.json'), 'utf-8'));
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+// PURE. The build settings this invocation should carry, or [] when it must
+// carry none.
+//
+// THE FLOOR IS XCODE 26, AND AN UNREADABLE VERSION COUNTS AS BELOW IT. 26 is
+// the release that shipped the content-addressed compilation cache; on 25 and
+// older these settings do nothing at all. doctor hedges on a null major and
+// prints its advice anyway, because advice is free -- this is the opposite
+// trade: adding five build settings to a real four-minute build buys nothing
+// on a version that ignores them and is one more variable when that build
+// fails. So a version rn-iso could not read (no Xcode, command line tools
+// only, a localized or future `xcodebuild -version` format) leaves the argv
+// exactly as it was.
+export function compilationCacheSettings({
+  workspaceRoot,
+  casPath,
+  xcodeMajor,
+  ccache = false,
+}: {
+  workspaceRoot: string;
+  casPath: string;
+  xcodeMajor: number | null;
+  ccache?: boolean;
+}): string[] {
+  if (xcodeMajor === null || xcodeMajor === undefined) return [];
+  if (xcodeMajor < COMPILATION_CACHE_MIN_XCODE) return [];
+  if (ccache) return [];
+  return [
+    'COMPILATION_CACHE_ENABLE_CACHING=YES',
+    `COMPILATION_CACHE_CAS_PATH=${casPath}`,
+    'SWIFT_ENABLE_COMPILE_CACHE=NO',
+    'CLANG_ENABLE_PREFIX_MAPPING=YES',
+    `CLANG_OTHER_PREFIX_MAPPINGS=${prefixMapping(workspaceRoot)}`,
+  ];
+}
+
+// `xcodebuild -version` prints "Xcode 26.1" on its first line. Anything else --
+// no Xcode, command line tools only, a localized or future format -- is null,
+// which every caller treats as "version unknown" rather than as a number.
+//
+// This lives here rather than in doctor.ts because it parses xcodebuild's own
+// output and the BUILD is now its main consumer; doctor imports it from here.
+export function parseXcodeMajor(output: unknown): number | null {
+  const m = /^Xcode\s+(\d+)/m.exec(String(output || ''));
+  if (!m) return null;
+  const digits = m[1];
+  if (digits === undefined) return null;
+  const major = parseInt(digits, 10);
+  return Number.isFinite(major) ? major : null;
+}
+
+// The thin I/O half. Returns null on any failure: this is a hint that shapes
+// advice and argv, and a machine without Xcode must still be able to run
+// doctor. Bounded, so a wedged Xcode install cannot hang either caller.
+export function detectXcodeMajor(exec: Executor | null = null): number | null {
+  return parseXcodeMajor((exec || getExecutor()).runQuiet('xcodebuild -version', { timeoutMs: 10000 }));
+}
+
+// The I/O half of the decision, plus the ONE note that keeps it from being
+// invisible: a build that is silently caching differently from the last one is
+// exactly the kind of thing an agent cannot debug from a transcript.
+function resolveCompilationCacheSettings({
+  root,
+  exec = null,
+  casPath = sharedCompilationCache(),
+  onNote = (line: string) => console.error(line),
+}: {
+  root: string;
+  exec?: Executor | null;
+  casPath?: string;
+  onNote?: (line: string) => void;
+}): string[] {
+  const settings = compilationCacheSettings({
+    workspaceRoot: root,
+    casPath,
+    xcodeMajor: detectXcodeMajor(exec),
+    ccache: ccacheEnabled(readPodfileProperties(root)),
+  });
+  if (settings.length > 0) {
+    onNote(
+      chalk.dim(
+        `compilation cache on for this build: CAS at ${casPath} (rn-iso sets it on its own xcodebuild; the Podfile is not touched)`,
+      ),
+    );
+  }
+  return settings;
+}
+
 // Exactly the invocation the plan specifies, as data, so a test can assert the
 // shape without running anything. `id=<udid>` is the production destination:
 // building for the specific simulator that will run the app is what makes the
@@ -247,6 +410,7 @@ export function xcodebuildArgs({
   sdk = 'iphonesimulator',
   derivedDataPath,
   extraArgs = [],
+  buildSettings = [],
 }: {
   project: XcodeProject;
   scheme: string;
@@ -256,6 +420,9 @@ export function xcodebuildArgs({
   sdk?: string;
   derivedDataPath: string;
   extraArgs?: string[];
+  // `SETTING=value` overrides, injected rather than computed here so this
+  // stays pure and so a caller can pass none. See compilationCacheSettings.
+  buildSettings?: string[];
 }): string[] {
   return [
     project.flag as string,
@@ -272,6 +439,10 @@ export function xcodebuildArgs({
     derivedDataPath,
     ...extraArgs,
     'build',
+    // AFTER the action, which is where xcodebuild's own usage line puts build
+    // settings (`[action ...] [buildsetting=value ...]`). extraArgs are
+    // OPTIONS and stay before it; these are not options.
+    ...buildSettings,
   ];
 }
 
@@ -500,10 +671,12 @@ export async function buildIos({
   destination = null,
   derivedDataPath = null,
   extraArgs = [],
+  compilationCache = undefined,
   now = () => Date.now(),
   exec = null,
   heartbeatMs = HEARTBEAT_INTERVAL_MS,
   onHeartbeat = (line: string) => console.error(line),
+  onNote = (line: string) => console.error(line),
 }: {
   root: string;
   udid?: string | null;
@@ -515,10 +688,16 @@ export async function buildIos({
   destination?: string | null;
   derivedDataPath?: string | null;
   extraArgs?: string[];
+  // The compilation-cache build settings, INJECTABLE so tests drive them and
+  // so a caller can turn them off: `null` means carry none, an array dictates
+  // them exactly, and leaving it out resolves them from this machine's Xcode
+  // and this project (the default, and the whole point of the feature).
+  compilationCache?: string[] | null;
   now?: () => number;
   exec?: Executor | null;
   heartbeatMs?: number;
   onHeartbeat?: (line: string) => void;
+  onNote?: (line: string) => void;
 }): Promise<BuildIosResult> {
   if (!root || typeof root !== 'string') throw new TypeError('buildIos requires {root}');
   if (!logWriter || typeof logWriter.write !== 'function')
@@ -574,6 +753,11 @@ export async function buildIos({
   // one (the error branch already returned).
   const buildScheme = chosenScheme as string;
 
+  const buildSettings =
+    compilationCache === undefined
+      ? resolveCompilationCacheSettings({ root, exec: executor, onNote })
+      : compilationCache || [];
+
   const args = xcodebuildArgs({
     project: resolvedTarget,
     scheme: buildScheme,
@@ -583,6 +767,7 @@ export async function buildIos({
     sdk,
     derivedDataPath: dd,
     extraArgs,
+    buildSettings,
   });
 
   // The exact command, first line of the log. An agent debugging a build it

@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setProjectSetting, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
-import { workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { writeWorkspaceState } from '../supervisor/run.ts';
 import { resolveMetroWithRetry } from '../commands/ios.ts';
 import {
@@ -23,6 +23,7 @@ import {
   androidDevClientScheme,
   androidFacts,
   androidVariantSetting,
+  collectorLogFile,
   isReleaseVariant,
   resolveVariant,
   apkPackage,
@@ -34,6 +35,8 @@ import {
   formatDuration,
   killPreviousCollector,
   lastBuildRecord,
+  noDeviceDiagnostic,
+  startCollector,
   phaseLine,
   runAndroid,
   shortHash,
@@ -150,6 +153,7 @@ interface EasAuthArgs {
 interface VerifyArgs {
   logsDir?: string;
   since?: string | number;
+  metroPort?: string | number | null;
 }
 
 interface Calls {
@@ -157,6 +161,7 @@ interface Calls {
   booted: unknown[];
   metro: unknown[][];
   fingerprint: unknown[];
+  untracked: unknown[];
   resolveCached: unknown[][];
   storeCached: unknown[][];
   storedAssets: unknown[][];
@@ -190,6 +195,7 @@ function harness(overrides = {}) {
     booted: [],
     metro: [],
     fingerprint: [],
+    untracked: [],
     resolveCached: [],
     storeCached: [],
     storedAssets: [],
@@ -237,6 +243,12 @@ function harness(overrides = {}) {
     fingerprint: async (path: string) => {
       calls.fingerprint.push(path);
       return { hash: FINGERPRINT, sources: [] };
+    },
+    // Issue #60's miss diagnostic shells out to git; the default is a project
+    // with nothing untracked, so only the tests about it pay for it.
+    untracked: (args: { projectRoot: string }) => {
+      calls.untracked.push(args);
+      return [];
     },
     resolveCached: (platform: string, key: string) => {
       calls.order.push('resolveCached');
@@ -783,6 +795,88 @@ describe('the other refusals', () => {
     assert(result.error);
     expect(result.error.code).toBe(NO_DEVICE);
     expect(result.error.message).toMatch(/no longer exists/);
+  });
+
+  // --- issue #64: the emulator's own words, not a guess -------------------
+  //
+  // The field case: an AVD that could not be created because the disk was
+  // nearly full. rn-iso reported RN_ISO_NO_DEVICE with an empty adb
+  // diagnostic and a remedy about JAVA_HOME / ANDROID_HOME / system images --
+  // none of which was the cause -- while the emulator had printed the actual
+  // reason one second in. It now goes into the message and the remedy.
+  const DISK_FATAL =
+    'FATAL | Not enough space to create userdata partition. Available: 6341.54 MB at /Users/j/.android/avd, need 7372.80 MB';
+
+  function writeEmulatorLog(lines: string[]) {
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
+    writeFileSync(emulatorLogFile(root), `${lines.join('\n')}\n`);
+  }
+
+  test("a boot failure lifts the emulator's own FATAL line into the diagnostic", async () => {
+    writeEmulatorLog(['INFO    | Android emulator version 35.2.10.0', DISK_FATAL]);
+    const h = harness({
+      ensureDeviceBooted: async () => ({
+        failed: true,
+        reason: 'The emulator process for emulator-5584 exited before the device finished booting.',
+      }),
+      install: never('the install'),
+    });
+    const result = await h.run();
+    assert(result.error);
+    expect(result.error.code).toBe(NO_DEVICE);
+    // The --json payload carries only {code, message, remedy}, so the real
+    // cause has to be in one of them.
+    expect(result.error.message).toMatch(/Not enough space to create userdata partition/);
+    expect(result.error.remedy).toMatch(/Free disk space at the AVD directory/);
+    // ... and the generic guesses are GONE from the remedy.
+    expect(result.error.remedy).not.toMatch(/JAVA_HOME|rn-iso status/);
+    // The log that holds the rest is named, as `start` names supervisor.log.
+    expect(h.stderr.some((l) => /\.rn-iso\/logs\/emulator\.log/.test(l))).toBeTruthy();
+  });
+
+  // The same lift on the OTHER failure path: a create-or-boot that throws out
+  // of ensureOwnedDevice, which is where the field report actually landed.
+  test('an ensureDevice throw is diagnosed from emulator.log too', async () => {
+    writeEmulatorLog(["PANIC: Missing emulator engine program for 'arm64' CPU."]);
+    const h = harness({
+      ensureDevice: async () => {
+        throw new Error('Emulator emulator-5554 did not finish booting within 120s.');
+      },
+      build: never('the build'),
+    });
+    const result = await h.run();
+    assert(result.error);
+    expect(result.error.code).toBe(NO_DEVICE);
+    expect(result.error.message).toMatch(/Missing emulator engine program/);
+    expect(result.error.remedy).not.toMatch(/JAVA_HOME/);
+  });
+
+  // And when the log says nothing recognizable, today's diagnostic stands
+  // exactly as it was -- a wrong cause is worse than no cause. Only the log
+  // path is added.
+  test('the generic remedy stands when emulator.log has no severity markers', async () => {
+    writeEmulatorLog(['INFO    | Android emulator version 35.2.10.0', 'WARNING | System image is out of date']);
+    const h = harness({
+      ensureDeviceBooted: async () => ({ failed: true, reason: 'AVD rn-iso-app-412 no longer exists.' }),
+      install: never('the install'),
+    });
+    const result = await h.run();
+    assert(result.error);
+    expect(result.error.message).toBe('AVD rn-iso-app-412 no longer exists.');
+    expect(result.error.remedy).toMatch(/rn-iso status/);
+    expect(h.stderr.some((l) => /\.rn-iso\/logs\/emulator\.log/.test(l))).toBeTruthy();
+  });
+
+  // The emulator log is where the boot's stdio goes, so `android` has to be
+  // the one that names it: it owns the workspace path sim/android.js is told
+  // to write to.
+  test('the emulator log path is threaded into both device seams', async () => {
+    const h = harness({});
+    await h.run();
+    const ensured = h.calls.ensureDevice[0] as { logFile?: string };
+    const booted = h.calls.booted[0] as { logFile?: string };
+    expect(ensured.logFile).toBe(emulatorLogFile(root));
+    expect(booted.logFile).toBe(emulatorLogFile(root));
   });
 
   test('a prebuild failure carries its own code and transcript tail', async () => {
@@ -1403,7 +1497,11 @@ describe('Contract 5: the device-log collector', () => {
       'com.example.app',
     ]);
     expect(opts.detached).toBe(true);
-    expect(opts.stdio).toBe('ignore');
+    // stdin dropped, stdout+stderr into collector-android.log -- the same
+    // capture `ios` does, so a collector that cannot attach leaves evidence.
+    expect(Array.isArray(opts.stdio)).toBe(true);
+    expect((opts.stdio as unknown[])[0]).toBe('ignore');
+    expect(existsSync(collectorLogFile(root))).toBe(true);
     expect(opts.cwd).toBe(root);
     expect(unrefed).toBe(true);
   });
@@ -1453,6 +1551,46 @@ describe('Contract 1: the launch marker', () => {
 // --- the pure parts --------------------------------------------------------
 
 describe('the pure parts', () => {
+  // The composer, driven through its readLog seam so the three branches are
+  // pinned without a file on disk.
+  test('noDeviceDiagnostic prefers the emulator over the generic remedy, and names the log either way', () => {
+    const fatal = 'FATAL | Not enough space to create userdata partition. Available: 1 MB, need 2 MB';
+    const lifted = noDeviceDiagnostic({
+      reason: 'The emulator exited.',
+      logFile: '/ws/.rn-iso/logs/emulator.log',
+      remedy: 'Check JAVA_HOME.',
+      readLog: () => `INFO | starting\n${fatal}\nFATAL | giving up`,
+    });
+    expect(lifted.message).toBe(`The emulator exited. The emulator reported: ${fatal}`);
+    expect(lifted.remedy).toMatch(/Free disk space/);
+    // The first extracted line is folded into the message; the rest are the
+    // dim lines under it.
+    expect(lifted.lines).toEqual(['FATAL | giving up']);
+    expect(lifted.logPath).toBe('/ws/.rn-iso/logs/emulator.log');
+
+    const unrecognized = noDeviceDiagnostic({
+      reason: 'The emulator exited.',
+      logFile: '/ws/.rn-iso/logs/emulator.log',
+      remedy: 'Check JAVA_HOME.',
+      readLog: () => 'INFO | nothing to see',
+    });
+    expect(unrecognized.message).toBe('The emulator exited.');
+    expect(unrecognized.remedy).toBe('Check JAVA_HOME.');
+    expect(unrecognized.lines).toEqual([]);
+    expect(unrecognized.logPath).toBe('/ws/.rn-iso/logs/emulator.log');
+
+    // A missing or empty log names nothing: it would send the reader to a
+    // file with nothing in it.
+    const noLog = noDeviceDiagnostic({
+      reason: 'The emulator exited.',
+      logFile: '/ws/.rn-iso/logs/emulator.log',
+      remedy: 'Check JAVA_HOME.',
+      readLog: () => '',
+    });
+    expect(noLog.logPath).toBe(null);
+    expect(noLog.remedy).toBe('Check JAVA_HOME.');
+  });
+
   test('phaseLine lines the values up in one column', () => {
     expect(phaseLine('device', 'x')).toBe('  device      x');
     expect(phaseLine('fingerprint', 'x')).toBe('  fingerprint x');
@@ -2379,4 +2517,319 @@ describe('installing a re-signed release APK', () => {
     const log = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
     expect(log.some((r) => r.event === 'install_uninstalled_first')).toBe(true);
   });
+});
+
+// --- issue #59: the artifact is stored under the POST-prebuild key ----------
+//
+// `expo prebuild` generates android/ and rewrites package.json's scripts and
+// the app config -- all fingerprint SOURCES -- so a cold run's lookup hash is
+// not the hash its tree has when the APK exists. The field case: run 1 stored
+// 104 MB under 3c64263, and every run after it was stable at 7ea8b7c and
+// missed forever.
+describe('re-fingerprint after prebuild', () => {
+  const COLD = 'cccccc1111';
+  const WARM = 'wwwwww2222';
+
+  function shifting() {
+    let call = 0;
+    return async () => ({ hash: call++ === 0 ? COLD : WARM, sources: [{ type: 'dir', filePath: 'android' }] });
+  }
+
+  // A cold CNG tree: no android/, an Expo dependency, an app config -- the
+  // shape prebuild exists for.
+  function cngProject() {
+    rmSync(join(root, 'android'), { recursive: true, force: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '54.0.0' } }));
+    writeFileSync(
+      join(root, 'app.json'),
+      JSON.stringify({ expo: { name: 'app', android: { package: 'com.example.app' } } }),
+    );
+  }
+
+  test('the store key is the key the NEXT run looks up across a prebuild boundary', async () => {
+    cngProject();
+    const cold = harness({ fingerprint: shifting() });
+    const result = await cold.run();
+    expect(result.ok).toBe(true);
+    expect(cold.calls.prebuild.length).toBe(1);
+    const [, storedKey] = cold.calls.storeCached[0] ?? [];
+    const [, lookedUp] = cold.calls.resolveCached[0] ?? [];
+    expect(String(lookedUp)).toMatch(new RegExp(`^${COLD}`));
+    expect(String(storedKey)).toMatch(new RegExp(`^${WARM}`));
+
+    // The next run in this tree has android/, so it computes the warm hash and
+    // looks THAT up -- the key the cold run stored.
+    mkdirSync(join(root, 'android', 'app'), { recursive: true });
+    const warm = harness({ fingerprint: async () => ({ hash: WARM, sources: [] }) });
+    await warm.run();
+    expect(warm.calls.resolveCached[0]?.[1]).toBe(storedKey);
+  });
+
+  test('the shift is one dim line naming both short hashes, and the payload reports what was stored', async () => {
+    cngProject();
+    const h = harness({ fingerprint: shifting() });
+    const result = await h.run();
+    const shift = h.stderr.find((line) => /fingerprint\s+\S+ -> /.test(line));
+    assert(shift, 'expected a fingerprint shift line on stderr');
+    expect(shift).toMatch(/cccccc\.\. -> wwwwww\.\./);
+    expect(shift).toMatch(/after prebuild/);
+    expect(result.facts?.fingerprint).toBe(WARM);
+    expect(result.facts?.cacheKey).toBe(h.calls.storeCached[0]?.[1]);
+    expect(readState().lastBuild.cacheKey).toBe(h.calls.storeCached[0]?.[1]);
+  });
+
+  // The point of the whole feature: a fresh worktree or clone of a CNG app is
+  // COLD, so its first lookup uses a hash that predates android/. The entry
+  // another workspace stored is keyed on the hash this run only learns after
+  // prebuild -- and asking again is the difference between an install and a
+  // full gradle build.
+  test('a post-shift hit installs the cached APK and runs no gradle build', async () => {
+    cngProject();
+    const cachedApk = join(home, 'build-cache', 'android', `${WARM}-debug-sim`, 'app-debug.apk');
+    const h = harness({
+      fingerprint: shifting(),
+      // Cold key: nothing. Post-shift key: the entry a warm tree left.
+      resolveCached: (_platform: string, key: string) => (key.startsWith(WARM) ? cachedApk : null),
+      build: never('gradle'),
+      storeCached: never('the store'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    // prebuild still runs -- it is what produces the tree the new hash
+    // describes -- but nothing after it does.
+    expect(h.calls.prebuild.length).toBe(1);
+    expect(h.calls.install[0]?.apkPath).toBe(cachedApk);
+    expect(h.stderr.some((l) => /hit under the post-prebuild key \(this tree was cold/.test(l))).toBe(true);
+    expect(result.facts?.cacheHit).toBe('local');
+    expect(result.facts?.fingerprint).toBe(WARM);
+    expect(result.facts?.cacheKey).toBe(`${WARM}-debug-sim`);
+  });
+
+  // A release variant is not a special case: the post-shift hit goes through
+  // the SAME step a first-pass hit does -- the JS swap AND the asset gate,
+  // keyed on the entry the artifact actually came from.
+  test('a post-shift hit on a release variant swaps the APK, gated on THAT entry manifest', async () => {
+    cngProject();
+    const cachedApk = join(home, 'build-cache', 'android', `${WARM}-productionrelease-sim`, 'app.apk');
+    const h = harness({
+      variant: 'productionRelease',
+      resolveMetro: never('the metro probe'),
+      fingerprint: shifting(),
+      resolveCached: (_platform: string, key: string) => (key.startsWith(WARM) ? cachedApk : null),
+      build: never('gradle'),
+      storeCached: never('the store'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.swapApk[0]?.cachedApkPath).toBe(cachedApk);
+    // THE ASSET GATE reads the manifest of the entry that answered, which is
+    // the post-shift key, never the key the run looked up first.
+    expect(h.calls.storedAssets.at(-1)?.[1]).toBe(`${WARM}-productionrelease-sim`);
+    // The re-packed copy is what reaches the device, never the cache entry.
+    expect(h.calls.install[0]?.apkPath).toBe(join(root, 'apk-swap', 'app-production-release.apk'));
+  });
+
+  test('a post-shift hit the asset gate REFUSES falls back to gradle and replaces the entry', async () => {
+    cngProject();
+    const cachedApk = join(home, 'build-cache', 'android', `${WARM}-productionrelease-sim`, 'app.apk');
+    const h = harness({
+      variant: 'productionRelease',
+      resolveMetro: never('the metro probe'),
+      fingerprint: shifting(),
+      resolveCached: (_platform: string, key: string) => (key.startsWith(WARM) ? cachedApk : null),
+      swapApk: async () => ({
+        ok: false,
+        assetMismatch: true,
+        reason: 'the cached APK was built with a different asset set',
+        assetDiff: { added: ['drawable-mdpi/new.png'], removed: [], changed: [] },
+      }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.build.length).toBe(1);
+    const [, key, , opts] = h.calls.storeCached[0] ?? [];
+    expect(key).toBe(`${WARM}-productionrelease-sim`);
+    expect((opts as { overwrite?: boolean }).overwrite).toBe(true);
+  });
+
+  test('a post-shift MISS builds and stores under the new key', async () => {
+    cngProject();
+    const lookedUp: string[] = [];
+    const h = harness({
+      fingerprint: shifting(),
+      resolveCached: (_platform: string, key: string) => {
+        lookedUp.push(key);
+        return null;
+      },
+    });
+    await h.run();
+    expect(lookedUp.length).toBe(2);
+    expect(lookedUp[1]).toBe(`${WARM}-debug-sim`);
+    expect(h.calls.build.length).toBe(1);
+    expect(h.calls.storeCached[0]?.[1]).toBe(`${WARM}-debug-sim`);
+  });
+
+  test('a tree that needs no prebuild fingerprints exactly once and prints no shift line', async () => {
+    const h = harness();
+    await h.run();
+    expect(h.calls.fingerprint.length).toBe(1);
+    expect(h.stderr.some((line) => /fingerprint\s+\S+ -> /.test(line))).toBe(false);
+    expect(h.calls.storeCached[0]?.[1]).toBe(h.calls.resolveCached[0]?.[1]);
+    // And NO second lookup: there is no new key to ask about.
+    expect(h.calls.resolveCached.length).toBe(1);
+  });
+});
+
+// --- issue #60: a miss with no prior entry names the untracked native files -
+test('a first miss lists untracked files under the native dirs and points at .fingerprintignore', async () => {
+  const asked: unknown[] = [];
+  const h = harness({
+    untracked: (args: unknown) => {
+      asked.push(args);
+      return ['android/local.properties', 'ios/scratch.txt'];
+    },
+  });
+  await h.run();
+  expect(asked).toEqual([{ projectRoot: root }]);
+  const line = h.stderr.find((l) => l.includes('untracked'));
+  assert(line, 'expected the untracked-files note on stderr');
+  expect(line).toMatch(/android\/local\.properties, ios\/scratch\.txt/);
+  expect(line).toMatch(/\.fingerprintignore/);
+});
+
+// --- issue #53: a bundle that is still building is its own state ------------
+describe('launch verification: bundling vs unverified', () => {
+  test('a request that arrived reports launched: "bundling" and prints no remedy list', async () => {
+    const h = harness({
+      verifyLaunched: async () => ({ verified: false, timedOut: true, requested: true, waitedMs: 20000, mode: null }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(result.facts?.launched).toBe('bundling');
+    const text = h.stderr.join('\n');
+    expect(text).toMatch(/BUNDLING: the app asked port 8082 for its bundle/);
+    expect(text).not.toMatch(/DEVELOPMENT SERVERS picker/);
+    const record = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8')).find(
+      (r) => r.event === 'launch_bundling',
+    );
+    assert(record, 'expected a launch_bundling record in the build log');
+    expect(record.level).toBe('info');
+  });
+
+  test('no request at all is still "unverified", with the remedy list', async () => {
+    const h = harness({
+      verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000, mode: null }),
+    });
+    const result = await h.run();
+    expect(result.facts?.launched).toBe('unverified');
+    expect(h.stderr.join('\n')).toMatch(/DEVELOPMENT SERVERS picker/);
+  });
+
+  test("verifyLaunch is told this workspace's port, which is what the device log is matched on", async () => {
+    const h = harness();
+    await h.run();
+    expect(h.calls.verify[0]?.metroPort).toBe(8082);
+  });
+});
+
+// --- issue #54: a takeover after a builder that FAILED ----------------------
+test('taking the build lock over from a dead holder says this run repeats its inputs', async () => {
+  const h = harness({
+    acquireLock: () => ({
+      acquired: true as const,
+      path: join(home, 'build-locks', 'android-k.lock'),
+      lock: { pid: process.pid, projectRoot: root, startedAt: new Date().toISOString(), logFile: null },
+      tookOver: {
+        pid: 4242,
+        projectRoot: '/w/other',
+        startedAt: new Date(Date.now() - 60000).toISOString(),
+        logFile: '/w/other/.rn-iso/logs/build-android.ndjson',
+      },
+    }),
+  });
+  await h.run();
+  const line = h.stderr.find((l) => l.includes('RETRY:'));
+  assert(line, 'expected the takeover retry line on stderr');
+  expect(line).toMatch(/pid 4242/);
+  expect(line).toMatch(/SAME inputs/);
+  expect(line).toMatch(/build-android\.ndjson/);
+});
+
+test('a builder that died mid-wait produces the same line before this run rebuilds', async () => {
+  let attempt = 0;
+  const h = harness({
+    acquireLock: () =>
+      attempt++ === 0
+        ? { held: { pid: 999, projectRoot: '/w/other', startedAt: null, logFile: '/w/other/build.ndjson' } }
+        : {
+            acquired: true as const,
+            path: join(home, 'build-locks', 'android-k.lock'),
+            lock: { pid: process.pid, projectRoot: root, startedAt: new Date().toISOString(), logFile: null },
+          },
+    waitForBuild: async () => ({ builderFailed: 'the builder (pid 999) is gone', waitedMs: 1200 }),
+  });
+  await h.run();
+  expect(h.calls.build.length).toBe(1);
+  const line = h.stderr.find((l) => l.includes('RETRY:'));
+  assert(line, 'expected the takeover retry line on stderr');
+  expect(line).toMatch(/pid 999/);
+});
+
+// --- issue #54: the collector replaces its predecessor without losing it ----
+//
+// The dying collector unregisters ITSELF from state.json.collectors on SIGTERM,
+// so a replacement spawned before it exits can have its own registration
+// deleted by its predecessor -- which is exactly what made `stop` report
+// "collectors: none recorded" after a launch that printed a collector pid.
+test('a new android collector waits for the previous one to exit before it is spawned', async () => {
+  writeWorkspaceState(root, { collectors: { android: { pid: 4242, startedAt: 'then' } } });
+  const order: string[] = [];
+  let liveChecks = 0;
+  const pid = await startCollector({
+    root,
+    serial: 'emulator-5584',
+    packageName: 'com.example.app',
+    spawn: (_cmd, _args, _opts) => {
+      order.push('spawn');
+      return makeChildProcess({ pid: 9001 });
+    },
+    kill: (target: number, signal: NodeJS.Signals) => {
+      order.push(`kill ${target} ${signal}`);
+      return true;
+    },
+    // Alive for the first two polls, gone on the third: the spawn must be
+    // after that, never beside it.
+    alive: () => {
+      liveChecks += 1;
+      order.push('alive');
+      return liveChecks < 3;
+    },
+    sleep: async () => {},
+    out: () => {},
+  });
+  expect(pid).toBe(9001);
+  expect(order[0]).toBe('kill 4242 SIGTERM');
+  expect(order.at(-1)).toBe('spawn');
+  expect(order.filter((o) => o === 'alive').length).toBe(3);
+});
+
+test('nothing recorded means nothing to wait for: the collector starts immediately', async () => {
+  const order: string[] = [];
+  await startCollector({
+    root,
+    serial: 'emulator-5584',
+    packageName: 'com.example.app',
+    spawn: () => {
+      order.push('spawn');
+      return makeChildProcess({ pid: 9002 });
+    },
+    kill: () => true,
+    alive: () => {
+      order.push('alive');
+      return true;
+    },
+    sleep: async () => {},
+    out: () => {},
+  });
+  expect(order).toEqual(['spawn']);
 });

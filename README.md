@@ -8,30 +8,33 @@ simulator or emulator, native builds that install from a shared cache, and a
 queryable log timeline — so several agents can build the same app on one
 machine at the same time without stepping on each other.
 
+**rn-iso needs no project changes to run.** Point it at a clean checkout and
+the whole loop works, caches included — the Xcode compilation cache, Gradle's
+build cache and a shared Metro transform cache all ride on the command lines
+rn-iso composes itself, not on files your repo has to commit. Trying it out
+costs no PR.
+
 ## Getting started
 
-Install the agent skill. This is the only command a human runs:
+Install the agent skill:
 
 ```bash
 npx skills add appandflow/rn-iso
 ```
 
-Then, in your app's repo, have the agent set the project up:
-
-```
-/rn-iso-init
-```
-
-From then on, just describe what you want:
+Then tell your agent what you want:
 
 ```
 Build and run the app on the iOS simulator and fix anything that breaks.
 ```
 
-The agent drives the whole loop through rn-iso — a supervised dev server on a
-reserved port, an owned simulator, a build that installs from cache when
-nothing native changed, and `logs --errors` to check its own work — in about
-ten lines of output per cycle, `--json` everywhere.
+That's it. The agent drives the whole loop through rn-iso — a supervised dev
+server on a reserved port, an owned simulator, a build that installs from a
+shared cache when nothing native changed, and `logs --errors` to check its own
+work — in about ten lines of output per cycle, `--json` everywhere.
+
+If a build is ever blocked or slower than it should be, `npx rn-iso doctor`
+says why, read-only.
 
 ## What's in the box
 
