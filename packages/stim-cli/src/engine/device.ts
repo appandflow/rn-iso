@@ -310,7 +310,7 @@ async function bootOwnedAvdOnFreshPort({
       `${bootFailurePrefix(serial, result.exited, 120000)} Diagnostic: ${JSON.stringify(result.diagnostic)}`,
     );
   }
-  return newRecord;
+  return { ...newRecord, serial };
 }
 
 function emulatorGone(pid: number | null, alive: Liveness): () => boolean {
@@ -567,6 +567,16 @@ async function ensureAndroidBooted({
       };
     }
     return { ok: true, serial: resolved.serial };
+  }
+
+  const freshSerial = `emulator-${device.consolePort}`;
+  if (device.owned && device.serial === freshSerial) {
+    const ready = await waitForBoot(freshSerial, timeoutMs);
+    if (ready.ok) return { ok: true, serial: freshSerial };
+    return {
+      failed: true,
+      reason: `Emulator ${freshSerial} never reported boot completion. Diagnostic: ${JSON.stringify(ready.diagnostic)}`,
+    };
   }
 
   const serial = `emulator-${pickConsolePort(device.consolePort)}`;

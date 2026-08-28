@@ -189,6 +189,32 @@ describe('ensureBooted: android', () => {
     expect(spawned).toEqual([['emulator', '-avd', 'stim-cli-app', '-port', '5556']]);
   });
 
+  test('reuses the serial returned by a fresh owned AVD boot when adb listing briefly misses it', async () => {
+    setExecutor({
+      run: (cmd) => {
+        if (cmd === 'emulator -list-avds') return 'stim-cli-app';
+        if (cmd === 'adb devices') return 'List of devices attached';
+        return '';
+      },
+      runQuiet: (cmd) => (cmd.includes('sys.boot_completed') ? '1' : ''),
+      runFile: () => '',
+      spawn: () => {
+        throw new Error('must not boot the fresh AVD a second time');
+      },
+    });
+    const result = await ensureBooted({
+      platform: 'android',
+      device: {
+        avdName: 'stim-cli-app',
+        consolePort: 5556,
+        serial: 'emulator-5556',
+        owned: true,
+      },
+      timeoutMs: 5000,
+    });
+    expect(result).toEqual({ ok: true, serial: 'emulator-5556' });
+  });
+
   test('allocates a fresh console port when the recorded one is taken by a foreign emulator', async () => {
     const spawned: string[][] = [];
     let ourSerial: string | null = null;
