@@ -4,6 +4,7 @@ import { dirname, join, parse } from 'node:path';
 import { metroStoreInjectionEnabled } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
+import { createLineReader, stripAnsi } from '../process-output.ts';
 import { resolvePackageJson } from '../project.ts';
 import {
   expoMetroConfigPath,
@@ -96,13 +97,6 @@ export function expoBinRefusal(
   };
 }
 
-// oxlint-disable-next-line no-control-regex -- intentional ANSI escape match
-const ANSI = /\u001B\[[0-9;?]*[ -/]*[@-~]|\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g;
-
-export function stripAnsi(text: unknown): string {
-  return String(text).replace(ANSI, '');
-}
-
 const CROSS = '\u2716';
 const CROSS_MARK = '\u274C';
 const WARNING_SIGN = '\u26A0';
@@ -169,24 +163,6 @@ export function recordFromLine(line: unknown, { stream = 'stdout' }: { stream?: 
   };
   if (isBundleMarker(msg)) record.marker = true;
   return record;
-}
-
-export function createLineReader(onLine: (line: string) => void): { push(chunk: unknown): void; flush(): void } {
-  let buffered = '';
-  return {
-    push(chunk: unknown) {
-      buffered += String(chunk);
-      const parts = buffered.split('\n');
-      buffered = parts.pop() ?? '';
-      for (const part of parts) onLine(part);
-    },
-    flush() {
-      if (!buffered) return;
-      const rest = buffered;
-      buffered = '';
-      onLine(rest);
-    },
-  };
 }
 
 interface ExpoExitInfo {

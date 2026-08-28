@@ -4,16 +4,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { createLineReader, stripAnsi } from '../supervisor/server-expo.ts';
+import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
-
-interface ChildResult {
-  code?: number | null;
-  signal?: NodeJS.Signals | null;
-  error?: Error;
-}
 
 export const DEPS_ERROR = 'RN_ISO_DEPS_FAILED';
 
@@ -332,18 +326,4 @@ function missingPod(err: unknown) {
     remedy: 'Install CocoaPods (`brew install cocoapods`, or `gem install cocoapods`) and run again.',
     lastLines: [] as string[],
   };
-}
-
-export function waitForChild(child: ChildProcess): Promise<ChildResult> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = (value: ChildResult) => {
-      if (!settled) {
-        settled = true;
-        resolve(value);
-      }
-    };
-    child.on('exit', (code, signal) => done({ code, signal }));
-    child.on('error', (error) => done({ error }));
-  });
 }

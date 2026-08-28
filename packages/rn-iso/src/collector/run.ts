@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { Executor } from '../exec.ts';
 import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../paths.ts';
-import { createLineReader } from '../supervisor/server-expo.ts';
+import { createLineReader } from '../process-output.ts';
 import { appNameFromBundleId, parseLogStreamLine, startIosLogStream } from './ios.ts';
 import {
   type PidResolution,

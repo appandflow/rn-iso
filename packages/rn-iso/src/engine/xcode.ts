@@ -5,8 +5,9 @@ import chalk from 'chalk';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { sharedCompilationCache, workspaceDerivedData } from '../paths.ts';
+import { createLineReader } from '../process-output.ts';
 import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagnostics } from './errors-xcode.ts';
-import { cleanLine, createLineReader } from '../supervisor/server-expo.ts';
+import { cleanLine } from '../supervisor/server-expo.ts';
 
 const IOS_DIR = 'ios';
 

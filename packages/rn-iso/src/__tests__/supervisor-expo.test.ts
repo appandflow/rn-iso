@@ -6,14 +6,12 @@ import { join } from 'node:path';
 import { parseNdjsonText } from '../ndjson.ts';
 import {
   cleanLine,
-  createLineReader,
   expoBinPath,
   expoSdkMajor,
   inferLevel,
   isBundleMarker,
   recordFromLine,
   startExpoServer,
-  stripAnsi,
 } from '../supervisor/server-expo.ts';
 import {
   expoMetroConfigPath,
@@ -59,11 +57,6 @@ function fakeChild(pid = 999999) {
 }
 
 describe('line parsing', () => {
-  test('stripAnsi removes colour and OSC sequences', () => {
-    expect(stripAnsi(`${ESC}[32mStarting Metro${ESC}[39m`)).toBe('Starting Metro');
-    expect(stripAnsi(`${ESC}]0;expo${ESC}\\done`)).toBe('done');
-  });
-
   test('cleanLine keeps only what a terminal would show after a carriage return', () => {
     expect(cleanLine('Bundling 10%\rBundling 90%\rBundling 100%')).toBe('Bundling 100%');
     expect(cleanLine('plain line   ')).toBe('plain line');
@@ -145,29 +138,6 @@ describe('line parsing', () => {
   test('a blank line produces no record at all', () => {
     expect(recordFromLine('   ')).toBe(null);
     expect(recordFromLine(`${ESC}[2K`)).toBe(null);
-  });
-});
-
-describe('createLineReader', () => {
-  test('reassembles lines split across chunk boundaries', () => {
-    const lines: string[] = [];
-    const reader = createLineReader((l) => lines.push(l));
-    reader.push('Starting ');
-    reader.push('Metro\niOS Bun');
-    reader.push('dled 10ms\n');
-    expect(lines).toEqual(['Starting Metro', 'iOS Bundled 10ms']);
-  });
-
-  test('flush emits the trailing partial line, which is usually the interesting one', () => {
-    const lines: string[] = [];
-    const reader = createLineReader((l) => lines.push(l));
-    reader.push('Error: died mid-');
-    expect(lines).toEqual([]);
-    reader.push('sentence');
-    reader.flush();
-    expect(lines).toEqual(['Error: died mid-sentence']);
-    reader.flush();
-    expect(lines).toEqual(['Error: died mid-sentence']);
   });
 });
 

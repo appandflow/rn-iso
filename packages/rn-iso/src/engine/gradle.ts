@@ -4,9 +4,8 @@ import { join, relative } from 'node:path';
 import chalk from 'chalk';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
+import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { androidHome } from '../sim/android.ts';
-import { createLineReader, stripAnsi } from '../supervisor/server-expo.ts';
-import { waitForChild } from './deps.ts';
 import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './errors-gradle.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 
