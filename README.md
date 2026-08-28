@@ -16,32 +16,25 @@ costs no PR.
 
 ## Getting started
 
-Two steps. **There is no setup step and nothing to commit** — rn-iso runs on a
-clean checkout, caches included.
-
-**1. Install the agent skill.** This is the only command a human runs:
+Install the agent skill:
 
 ```bash
 npx skills add appandflow/rn-iso
 ```
 
-**2. Describe what you want:**
+Then tell your agent what you want:
 
 ```
 Build and run the app on the iOS simulator and fix anything that breaks.
 ```
 
-The agent drives the whole loop through rn-iso — a supervised dev server on a
-reserved port, an owned simulator, a build that installs from cache when
-nothing native changed, and `logs --errors` to check its own work — in about
-ten lines of output per cycle, `--json` everywhere.
+That's it. The agent drives the whole loop through rn-iso — a supervised dev
+server on a reserved port, an owned simulator, a build that installs from a
+shared cache when nothing native changed, and `logs --errors` to check its own
+work — in about ten lines of output per cycle, `--json` everywhere.
 
-If something is blocked or slow, `npx rn-iso doctor` is the read-only second
-opinion: it reports only what rn-iso cannot handle on its own (a missing
-`expo-dev-client`, ccache, a checkout that does not fingerprint like a fresh
-worktree) plus the settings that matter only for builds rn-iso does not drive
-(Xcode, `npx expo run:ios`, Android Studio, CI). A clean run means there is
-nothing rn-iso needs from your repo.
+If a build is ever blocked or slower than it should be, `npx rn-iso doctor`
+says why, read-only.
 
 ## What's in the box
 
