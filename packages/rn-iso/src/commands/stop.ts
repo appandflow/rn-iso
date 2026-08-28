@@ -35,7 +35,7 @@ import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel } from '../engine/tunnel.ts';
-import { readMetroTunnel } from '../supervisor/state.ts';
+import { clearRemoteSession, readMetroTunnel } from '../supervisor/state.ts';
 
 const DEFAULT_WAIT_MS = 10_000;
 const POLL_MS = 100;
@@ -568,7 +568,7 @@ export async function runStop({
       report(chalk.red(`remote: ${result.reason ?? `could not stop session ${sessionId}`}`));
     } else {
       report(chalk.dim(`remote: stopped session ${sessionId}`));
-      dropStateKeys(root, ['remoteDevice']);
+      clearRemoteSession(root, sessionId);
     }
   }
 

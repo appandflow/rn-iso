@@ -24,7 +24,6 @@ import {
   teardownRemote,
   withRemoteSessionLock,
 } from '../engine/device-remote.ts';
-import { stopSessionArgs } from '../engine/eas-simulator.ts';
 
 // The same-machine proxy: the simulator shares this host's loopback, so
 // localhost in the deep link reaches rn-iso's own Metro. Live-verified.
@@ -50,20 +49,31 @@ interface Call {
   args: string[];
   env?: Record<string, string>;
   cwd?: string;
+  omitEnv?: readonly string[];
+  timeoutMs?: number;
 }
 
 function mockExec({
   fail = null,
   outputs = {},
-}: { fail?: string | null; outputs?: Record<string, string>; existingDaemonMode?: boolean } = {}) {
+  errors = {},
+}: {
+  fail?: string | null;
+  outputs?: Record<string, string>;
+  errors?: Record<string, Error & { stderr?: string }>;
+  existingDaemonMode?: boolean;
+} = {}) {
   const calls: Call[] = [];
   const exec: Executor & { calls: Call[] } = {
     calls,
     runFile(file: string, args: string[] = [], opts = {}) {
-      const o = opts as { env?: Record<string, string>; cwd?: string };
-      calls.push({ file, args, env: o.env, cwd: o.cwd });
+      const o = opts as { env?: Record<string, string>; cwd?: string; omitEnv?: readonly string[]; timeoutMs?: number };
+      calls.push({ file, args, env: o.env, cwd: o.cwd, omitEnv: o.omitEnv, timeoutMs: o.timeoutMs });
       const key = [file, ...args].join(' ');
       if (fail && key.includes(fail)) throw new Error(`Command failed: ${key}`);
+      for (const [match, error] of Object.entries(errors)) {
+        if (key.includes(match)) throw error;
+      }
       for (const [match, value] of Object.entries(outputs)) {
         if (key.includes(match)) return value;
       }
@@ -491,31 +501,117 @@ describe('the local device cap does not apply', () => {
 
 describe('teardown', () => {
   test('disconnects first, then stops the session', () => {
-    const exec = mockExec();
-    const result = teardownRemote(ctx(), { sessionId: 'drs_42', stopArgs: stopSessionArgs('drs_42') });
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+        'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
+      },
+    });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('torn-down');
-    expect(exec.calls.map((c) => c.args[0])).toEqual(['disconnect', 'simulator:stop']);
+    expect(exec.calls.map((c) => c.args[0])).toEqual(['disconnect', 'simulator:get', 'simulator:stop']);
   });
 
   test('a failed disconnect does not prevent the stop, because the session is what bills', () => {
-    const exec = mockExec({ fail: 'disconnect' });
-    const result = teardownRemote(ctx(), { sessionId: 'drs_42', stopArgs: stopSessionArgs('drs_42') });
+    const exec = mockExec({
+      fail: 'disconnect',
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+        'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
+      },
+    });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('torn-down');
     expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(true);
   });
 
   test('a failed stop is reported, so the caller says leaked rather than torn down', () => {
-    mockExec({ fail: 'simulator:stop' });
-    const result = teardownRemote(ctx(), { sessionId: 'drs_42', stopArgs: stopSessionArgs('drs_42') });
+    mockExec({
+      fail: 'simulator:stop',
+      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }) },
+    });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('failed');
     expect(result.reason).toContain('drs_42');
   });
 
   test('an operator-owned daemon has no session to stop', () => {
     const exec = mockExec();
-    const result = teardownRemote(ctx(), { sessionId: null, stopArgs: [] });
+    const result = teardownRemote(ctx(), { sessionId: null });
     expect(result.status).toBe('torn-down');
     expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test.each([
+    {
+      name: 'unowned live session',
+      output: JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'IN_PROGRESS' }),
+    },
+    { name: 'malformed lookup output', output: 'not json' },
+    { name: 'unknown status', output: JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'PAUSED' }) },
+  ])('fails closed for $name', ({ output }) => {
+    const exec = mockExec({ outputs: { 'simulator:get': output } });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('failed');
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test.each([
+    'Authentication failed. Log in to EAS.',
+    'request failed: getaddrinfo ENOTFOUND api.expo.dev',
+    'The request timed out.',
+  ])('fails closed when lookup fails: %s', (stderr) => {
+    const error = Object.assign(new Error(stderr), { stderr });
+    const exec = mockExec({ errors: { 'simulator:get': error } });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('failed');
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test('treats a definitive missing session as already gone', () => {
+    const stderr = 'Device run session drs_42 was not found.';
+    const error = Object.assign(new Error(stderr), { stderr });
+    const exec = mockExec({ errors: { 'simulator:get': error } });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('torn-down');
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test.each(['STOPPED', 'ERRORED'])('treats verified terminal status %s as already stopped', (status) => {
+    const exec = mockExec({
+      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status }) },
+    });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('torn-down');
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+  });
+
+  test('fails closed when stop output does not verify completion', () => {
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+        'simulator:stop': 'not json',
+      },
+    });
+    const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('failed');
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(true);
+  });
+
+  test('isolates proxy credentials from both lookup and stop', () => {
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+        'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
+      },
+    });
+    teardownRemote(ctx(), { sessionId: 'drs_42' });
+    const easCalls = exec.calls.filter((call) => call.file === '/bin/eas');
+    expect(easCalls).toHaveLength(2);
+    for (const call of easCalls) {
+      expect(call.omitEnv).toEqual(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']);
+      expect(call.timeoutMs).toBe(30_000);
+    }
   });
 });
 
@@ -786,6 +882,7 @@ describe('a re-run does not orphan the session it already has', () => {
 
   const LIVE = JSON.stringify({
     id: 'drs_old',
+    name: 'rn-iso-wt',
     status: 'IN_PROGRESS',
     remoteConfig: {
       agentDeviceRemoteSessionUrl: 'https://old.eas.dev/daemon',
@@ -875,13 +972,52 @@ describe('a re-run does not orphan the session it already has', () => {
     expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(true);
   });
 
-  test('an unusable recorded session is STOPPED before another is created', async () => {
-    // Otherwise it keeps billing with nothing left pointing at it.
+  test('a verified terminal recorded session is replaced without another stop', async () => {
     recordSession('drs_dead');
-    const exec = mockExec({ outputs: { 'simulator:get': '{"status":"ERRORED"}', sim: CREATED } });
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'rn-iso-wt', status: 'ERRORED' }),
+        sim: CREATED,
+      },
+    });
     await remoteIosDeps(ctx()).ensureBooted({});
-    const stop = exec.calls.find((c) => c.args[0] === 'simulator:stop');
-    expect(stop?.args).toContain('drs_dead');
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(true);
+  });
+
+  test('an unowned live recorded session is neither stopped nor replaced', async () => {
+    recordSession('drs_other');
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_other', name: 'other-tool', status: 'IN_PROGRESS' }),
+        sim: CREATED,
+      },
+    });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
+    expect(JSON.parse(readFileSync(join(root, '.rn-iso', 'state.json'), 'utf-8')).remoteDevice.sessionId).toBe(
+      'drs_other',
+    );
+  });
+
+  test('a failed recorded-session lookup does not create a replacement', async () => {
+    recordSession('drs_old');
+    const stderr = 'request failed: getaddrinfo ENOTFOUND api.expo.dev';
+    const error = Object.assign(new Error(stderr), { stderr });
+    const exec = mockExec({ errors: { 'simulator:get': error }, outputs: { sim: CREATED } });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
+    expect(JSON.parse(readFileSync(join(root, '.rn-iso', 'state.json'), 'utf-8')).remoteDevice.sessionId).toBe(
+      'drs_old',
+    );
   });
 
   test('an operator-supplied daemon touches no recorded session at all', async () => {

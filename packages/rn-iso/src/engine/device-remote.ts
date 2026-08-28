@@ -25,7 +25,7 @@ import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceLogsDir } from '../paths.ts';
-import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
+import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import type { RemoteDeviceBackend } from '../types.ts';
 import {
   acceptAlertArgs,
@@ -44,9 +44,12 @@ import { INSTALL_ERROR, isBundleProof, LAUNCH_ERROR, readMetroRecords } from './
 import {
   createSessionArgs,
   getSessionArgs,
+  inspectSessionForTeardown,
+  isDefinitiveMissingSessionError,
   parseCreatedSession,
   remoteDaemonFrom,
   stopSessionArgs,
+  verifyStoppedSession,
   type RemoteDaemon,
 } from './eas-simulator.ts';
 import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
@@ -222,6 +225,16 @@ function easExecOptions(root: string): { cwd: string; omitEnv: typeof PROXY_CRED
   return { cwd: root, omitEnv: PROXY_CREDENTIAL_ENV };
 }
 
+const EAS_TEARDOWN_TIMEOUT_MS = 30_000;
+
+function easTeardownExecOptions(root: string): {
+  cwd: string;
+  omitEnv: typeof PROXY_CREDENTIAL_ENV;
+  timeoutMs: number;
+} {
+  return { ...easExecOptions(root), timeoutMs: EAS_TEARDOWN_TIMEOUT_MS };
+}
+
 function writeProfile(ctx: RemoteContext, daemon: RemoteDaemon): string {
   const path = remoteProfilePath(ctx.root);
   mkdirSync(dirname(path), { recursive: true });
@@ -293,8 +306,8 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       let id: string | null = null;
       let createdHere: string | null = null;
 
-      // A session this workspace already recorded is REUSED when it is still
-      // live, and STOPPED when it is not usable. Neither is optional.
+      // A live owned session with a daemon is reused. Any other recorded
+      // session is verified before replacement.
       //
       // `eas sim` defaults to --force, so every run would otherwise mint a
       // fresh session while the previous one stayed live, unrecorded (the id
@@ -320,15 +333,17 @@ function remoteDeviceDeps(ctx: RemoteContext) {
             daemon = existing;
             id = recorded.sessionId;
           } else {
-            // Not reachable any more (stopped, errored, or a type this cannot
-            // drive). Ending it is cheap and is the only way to be sure the
-            // one about to be created is the only live one.
-            note(`Recorded session ${recorded.sessionId} is not usable; stopping it before creating another.`);
-            try {
-              exec().runFile(ctx.easBin, stopSessionArgs(recorded.sessionId), easEnv);
-            } catch {
-              /* already gone, or unreachable: the create below still proceeds */
+            note(`Recorded session ${recorded.sessionId} is not usable; verifying it before replacement.`);
+            const cleanup = teardownRemote(ctx, { sessionId: recorded.sessionId });
+            if (cleanup.status === 'failed') {
+              return {
+                failed: true,
+                code: 'RN_ISO_REMOTE_SESSION_CLEANUP',
+                reason: cleanup.reason ?? `Could not verify recorded EAS session ${recorded.sessionId}.`,
+                remedy: 'Inspect the recorded session, then run `rn-iso stop` again.',
+              };
             }
+            clearRemoteSession(ctx.root, recorded.sessionId);
           }
         }
       }
@@ -828,8 +843,9 @@ function readLiveDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | n
     return null;
   }
   try {
-    const data = JSON.parse(stdout) as { status?: unknown; remoteConfig?: unknown };
-    if (typeof data.status !== 'string' || !LIVE_STATUSES.has(data.status)) return null;
+    const inspection = inspectSessionForTeardown(stdout, sessionId);
+    if (inspection.action !== 'stop' || !LIVE_STATUSES.has(inspection.status)) return null;
+    const data = JSON.parse(stdout) as { remoteConfig?: unknown };
     return remoteDaemonFrom(data.remoteConfig);
   } catch {
     return null;
@@ -978,7 +994,7 @@ export function endRecordedSession({
   }
   return teardownRemote(
     { root, label: '', backend: 'eas', easBin, agentDeviceBin: agentDeviceBin ?? '', existingDaemon: null },
-    { sessionId, stopArgs: stopSessionArgs(sessionId) },
+    { sessionId },
   );
 }
 
@@ -993,7 +1009,7 @@ export function endRecordedSession({
  */
 export function teardownRemote(
   ctx: RemoteContext,
-  { sessionId, stopArgs }: { sessionId: string | null; stopArgs: string[] },
+  { sessionId }: { sessionId: string | null },
 ): { status: 'torn-down' | 'failed'; reason?: string } {
   const profilePath = remoteProfilePath(ctx.root);
   try {
@@ -1003,12 +1019,34 @@ export function teardownRemote(
     // ordinary case here, and the session stop below is what matters.
   }
   if (!sessionId) return { status: 'torn-down' };
+  let sessionOutput: string;
   try {
-    getExecutor().runFile(ctx.easBin, stopArgs, easExecOptions(ctx.root));
-    return { status: 'torn-down' };
+    sessionOutput = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easTeardownExecOptions(ctx.root));
   } catch (err) {
-    return { status: 'failed', reason: `eas simulator:stop ${sessionId} failed: ${describe(err)}` };
+    if (isDefinitiveMissingSessionError(err, sessionId)) return { status: 'torn-down' };
+    return {
+      status: 'failed',
+      reason: `Could not verify EAS session ${sessionId}: ${describe(err)}. The session record was kept for retry.`,
+    };
   }
+  const inspection = inspectSessionForTeardown(sessionOutput, sessionId);
+  if (inspection.action === 'refused') {
+    return { status: 'failed', reason: `${inspection.reason} The session record was kept for retry.` };
+  }
+  if (inspection.action === 'already-stopped') return { status: 'torn-down' };
+
+  let stopOutput: string;
+  try {
+    stopOutput = getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), easTeardownExecOptions(ctx.root));
+  } catch (err) {
+    return {
+      status: 'failed',
+      reason: `eas simulator:stop ${sessionId} failed: ${describe(err)}. The session record was kept for retry.`,
+    };
+  }
+  const verified = verifyStoppedSession(stopOutput, sessionId);
+  if (!verified.ok) return { status: 'failed', reason: `${verified.reason} The session record was kept for retry.` };
+  return { status: 'torn-down' };
 }
 
 /**

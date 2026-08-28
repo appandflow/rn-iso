@@ -2,7 +2,12 @@ import { type ProjectRecord, getProject, removeProject } from './config.ts';
 import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.ts';
 import { readCollectors } from './collector/state.ts';
-import { readMetroTunnel, readRemoteSessionId, type ManagedTunnelRecord } from './supervisor/state.ts';
+import {
+  clearRemoteSession,
+  readMetroTunnel,
+  readRemoteSessionId,
+  type ManagedTunnelRecord,
+} from './supervisor/state.ts';
 import { endRecordedSession } from './engine/device-remote.ts';
 import { resolveEasCliBin } from './engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from './engine/tunnel.ts';
@@ -55,7 +60,10 @@ function reclaimRemoteSession(
     // would hit it forever.
     result = { status: 'failed', reason: String((err as Error)?.message ?? err) };
   }
-  if (result.status === 'torn-down') return { stopped: sessionId, failed: null };
+  if (result.status === 'torn-down') {
+    clearRemoteSession(root, sessionId);
+    return { stopped: sessionId, failed: null };
+  }
   return {
     stopped: null,
     failed: {

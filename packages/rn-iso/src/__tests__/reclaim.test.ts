@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, setDevice, getProject } from '../config.ts';
 import { describeDereferenced, reclaimProject } from '../reclaim.ts';
+import { endRecordedSession } from '../engine/device-remote.ts';
 
 let tmpHome: string;
 
@@ -232,6 +233,49 @@ test('a workspace with no session never reaches for eas', async () => {
   });
   expect(called).toBe(false);
   expect(r.stoppedSession).toBeNull();
+  rmSync(root, { recursive: true, force: true });
+});
+
+function realStoredSessionStop(sessionOutput: string, calls: string[]) {
+  setExecutor({
+    runFile: (_file: string, args: string[]) => {
+      calls.push(args[0] ?? '');
+      if (args[0] === 'simulator:get') return sessionOutput;
+      if (args[0] === 'simulator:stop') return JSON.stringify({ id: 'drs_42', status: 'STOPPED' });
+      return '';
+    },
+    run: () => '',
+    runQuiet: () => null,
+    spawn: () => {},
+  });
+  return (root: string, sessionId: string) =>
+    endRecordedSession({ root, sessionId, easBin: '/bin/eas', lookupAgentDevice: () => '/bin/agent-device' });
+}
+
+test.each([
+  ['unowned session', JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'IN_PROGRESS' })],
+  ['malformed output', 'not json'],
+  ['unknown status', JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'PAUSED' })],
+])('reclaim retains the session record after an unverifiable %s', async (_name, sessionOutput) => {
+  const root = workspaceWithSession('drs_42');
+  const calls: string[] = [];
+  const result = await reclaimProject(root, { stopSession: realStoredSessionStop(sessionOutput, calls) });
+  expect(result.keptEntry).toBe(true);
+  expect(calls).not.toContain('simulator:stop');
+  const state = JSON.parse(readFileSync(join(root, '.rn-iso', 'state.json'), 'utf-8'));
+  expect(state.remoteDevice.sessionId).toBe('drs_42');
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('reclaim clears a verified terminal record without issuing stop', async () => {
+  const root = workspaceWithSession('drs_42');
+  const calls: string[] = [];
+  const result = await reclaimProject(root, {
+    stopSession: realStoredSessionStop(JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'STOPPED' }), calls),
+  });
+  expect(result.keptEntry).toBe(false);
+  expect(calls).not.toContain('simulator:stop');
+  expect(existsSync(join(root, '.rn-iso', 'state.json'))).toBe(false);
   rmSync(root, { recursive: true, force: true });
 });
 

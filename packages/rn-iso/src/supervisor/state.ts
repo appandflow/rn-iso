@@ -130,6 +130,13 @@ export function readRemoteSessionId(root: string): string | null {
   return readRemoteSession(root)?.sessionId ?? null;
 }
 
+export function clearRemoteSession(root: string, expectedSessionId: string): void {
+  clearWorkspaceStateKey(root, 'remoteDevice', (value) => {
+    if (typeof value !== 'object' || value === null) return false;
+    return (value as { sessionId?: unknown }).sessionId === expectedSessionId;
+  });
+}
+
 // Runs `fn` with the state.json lock held (reentrant within this process).
 // EVERY read-modify-write of state.json goes through here so the whole cycle
 // is atomic: the supervisor patches `supervisor`, each collector patches its

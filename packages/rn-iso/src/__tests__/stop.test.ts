@@ -22,6 +22,8 @@ import {
   runStop,
 } from '../commands/stop.ts';
 import { makeConfig, makeError, makeMetroResolution } from './_factories.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
+import { endRecordedSession } from '../engine/device-remote.ts';
 
 // --- resolveSupervisorTarget: who may be signalled --------------------------
 
@@ -382,6 +384,7 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(tmpRoot, { recursive: true, force: true });
   delete process.env.RN_ISO_HOME;
+  resetExecutor();
 });
 
 test('readSupervisorState reads the supervisor block, and tolerates corruption', () => {
@@ -731,6 +734,63 @@ test('a successful stop drops the record but keeps lastBuild', async () => {
   expect(state.remoteDevice).toBeUndefined();
   // Taking the fingerprint away would make the next build a guaranteed miss.
   expect(state.lastBuild.hash).toBe('keepme');
+});
+
+function verifiedTeardown(sessionOutput: string, calls: string[]) {
+  setExecutor({
+    runFile: (_file: string, args: string[]) => {
+      calls.push(args[0] ?? '');
+      if (args[0] === 'simulator:get') return sessionOutput;
+      if (args[0] === 'simulator:stop') return JSON.stringify({ id: 'drs_42', status: 'STOPPED' });
+      return '';
+    },
+    run: () => '',
+    runQuiet: () => null,
+    spawn: () => {},
+  });
+  return (root: string, sessionId: string) =>
+    endRecordedSession({ root, sessionId, easBin: '/bin/eas', lookupAgentDevice: () => '/bin/agent-device' });
+}
+
+test.each([
+  ['unowned session', JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'IN_PROGRESS' })],
+  ['malformed output', 'not json'],
+  ['unknown status', JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'PAUSED' })],
+])('stop retains the session record after an unverifiable %s', async (_name, sessionOutput) => {
+  withRemoteSession('drs_42');
+  const calls: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: verifiedTeardown(sessionOutput, calls),
+    report: () => {},
+  });
+  expect(r.ok).toBe(false);
+  expect(calls).not.toContain('simulator:stop');
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice.sessionId).toBe('drs_42');
+});
+
+test('stop clears the record for a verified terminal session without issuing stop', async () => {
+  withRemoteSession('drs_42');
+  const calls: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: verifiedTeardown(
+      JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'STOPPED' }),
+      calls,
+    ),
+    report: () => {},
+  });
+  expect(r.ok).toBe(true);
+  expect(calls).not.toContain('simulator:stop');
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice).toBeUndefined();
 });
 
 test('a workspace with no remote session never calls the remote teardown', async () => {

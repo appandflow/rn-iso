@@ -12,6 +12,8 @@ import type { Executor } from '../exec.ts';
 import {
   createSessionArgs,
   getSessionArgs,
+  inspectSessionForTeardown,
+  isDefinitiveMissingSessionError,
   isOwnedSessionName,
   listOwnedSessionsArgs,
   ownedSessionName,
@@ -72,6 +74,72 @@ describe('ownership by session name', () => {
     expect(isOwnedSessionName('rn-iso-a')).toBe(true);
     expect(isOwnedSessionName('someone-elses-session')).toBe(false);
     expect(isOwnedSessionName(undefined)).toBe(false);
+  });
+});
+
+describe('stored-session teardown authorization', () => {
+  test('authorizes an owned live session', () => {
+    expect(
+      inspectSessionForTeardown(JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }), 'drs_42'),
+    ).toEqual({ action: 'stop', name: 'rn-iso-wt', status: 'IN_PROGRESS' });
+  });
+
+  test('refuses an unowned live session', () => {
+    const result = inspectSessionForTeardown(
+      JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'IN_PROGRESS' }),
+      'drs_42',
+    );
+    expect(result.action).toBe('refused');
+    if (result.action === 'refused') expect(result.reason).toContain('not owned by rn-iso');
+  });
+
+  test.each(['STOPPED', 'ERRORED'])('treats verified terminal status %s as already stopped', (status) => {
+    expect(inspectSessionForTeardown(JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status }), 'drs_42')).toEqual({
+      action: 'already-stopped',
+      name: 'rn-iso-wt',
+      status,
+    });
+  });
+
+  test('refuses malformed output', () => {
+    const result = inspectSessionForTeardown('not json', 'drs_42');
+    expect(result.action).toBe('refused');
+    if (result.action === 'refused') expect(result.reason).toContain('valid JSON');
+  });
+
+  test('refuses a response for a different session', () => {
+    const result = inspectSessionForTeardown(
+      JSON.stringify({ id: 'drs_other', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+      'drs_42',
+    );
+    expect(result.action).toBe('refused');
+    if (result.action === 'refused') expect(result.reason).toContain('drs_other');
+  });
+
+  test('refuses an unknown status', () => {
+    const result = inspectSessionForTeardown(
+      JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'PAUSED' }),
+      'drs_42',
+    );
+    expect(result.action).toBe('refused');
+    if (result.action === 'refused') expect(result.reason).toContain('PAUSED');
+  });
+});
+
+describe('definitive missing-session errors', () => {
+  test('accepts a simulator-specific not-found result', () => {
+    expect(isDefinitiveMissingSessionError({ stderr: 'Device run session drs_42 was not found.' }, 'drs_42')).toBe(
+      true,
+    );
+  });
+
+  test.each([
+    'request failed: getaddrinfo ENOTFOUND api.expo.dev',
+    'Authentication failed. Log in to EAS.',
+    'The request timed out.',
+    'Device run session drs_other was not found.',
+  ])('fails closed for %s', (stderr) => {
+    expect(isDefinitiveMissingSessionError({ stderr }, 'drs_42')).toBe(false);
   });
 });
 

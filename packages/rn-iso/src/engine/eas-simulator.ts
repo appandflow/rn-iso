@@ -57,6 +57,14 @@ export interface StoppedSession {
   status: string | null;
 }
 
+export type SessionTeardownInspection =
+  | { action: 'stop'; name: string; status: string }
+  | { action: 'already-stopped'; name: string | null; status: string }
+  | { action: 'refused'; reason: string };
+
+const LIVE_SESSION_STATUSES = new Set(['NEW', 'IN_PROGRESS']);
+const TERMINAL_SESSION_STATUSES = new Set(['STOPPED', 'ERRORED']);
+
 // PURE. The `rn-iso-` prefix is the ownership marker, so it is not optional.
 // A label that already carries it (a worktree literally named `rn-iso-test`)
 // would otherwise produce `rn-iso-rn-iso-test`, so strip one leading copy
@@ -69,7 +77,7 @@ export function ownedSessionName(label: string): string {
 // PURE. Defense in depth for every destructive path, exactly as
 // resolveOwnedIosSim's name check is: a session rn-iso did not name is a
 // session rn-iso must not stop.
-export function isOwnedSessionName(name: string | null | undefined): boolean {
+export function isOwnedSessionName(name: string | null | undefined): name is string {
   return typeof name === 'string' && name.startsWith(OWNED_PREFIX);
 }
 
@@ -194,6 +202,61 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function str(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+// PURE. Authorizes teardown from the current server record, not the stored id.
+export function inspectSessionForTeardown(stdout: string, sessionId: string): SessionTeardownInspection {
+  const data = parseJson(stdout);
+  if (!isRecord(data)) {
+    return { action: 'refused', reason: `Session ${sessionId} lookup did not return valid JSON.` };
+  }
+  const id = str(data.id);
+  if (!id) return { action: 'refused', reason: `Session ${sessionId} lookup returned no session id.` };
+  if (id !== sessionId) {
+    return { action: 'refused', reason: `Session ${sessionId} lookup returned different session ${id}.` };
+  }
+  const status = str(data.status);
+  if (!status) return { action: 'refused', reason: `Session ${sessionId} lookup returned no status.` };
+  const name = str(data.name);
+  if (TERMINAL_SESSION_STATUSES.has(status)) return { action: 'already-stopped', name, status };
+  if (!LIVE_SESSION_STATUSES.has(status)) {
+    return { action: 'refused', reason: `Session ${sessionId} has unknown status ${status}.` };
+  }
+  if (!isOwnedSessionName(name)) {
+    return {
+      action: 'refused',
+      reason: `Live session ${sessionId} is not owned by rn-iso (name: ${name ?? 'missing'}).`,
+    };
+  }
+  return { action: 'stop', name, status };
+}
+
+// PURE. Only a session-specific missing result proves the stored resource is gone.
+export function isDefinitiveMissingSessionError(error: unknown, sessionId: string): boolean {
+  const candidate = error as { stderr?: unknown; message?: unknown };
+  const stderr = typeof candidate?.stderr === 'string' ? candidate.stderr : '';
+  const message = typeof candidate?.message === 'string' ? candidate.message : '';
+  const text = `${stderr}\n${message}`;
+  return (
+    text.includes(sessionId) &&
+    /(?:device[\s-]*run[\s-]*session|simulator[\s-]*session)/i.test(text) &&
+    /(?:\bnot\s+found\b|\bdoes\s+not\s+exist\b)/i.test(text)
+  );
+}
+
+export function verifyStoppedSession(stdout: string, sessionId: string): { ok: true } | { ok: false; reason: string } {
+  const stopped = parseStoppedSession(stdout);
+  if (!stopped) return { ok: false, reason: `Stop for session ${sessionId} did not return valid JSON with an id.` };
+  if (stopped.id !== sessionId) {
+    return { ok: false, reason: `Stop for session ${sessionId} returned different session ${stopped.id}.` };
+  }
+  if (!stopped.status || !TERMINAL_SESSION_STATUSES.has(stopped.status)) {
+    return {
+      ok: false,
+      reason: `Stop for session ${sessionId} returned unknown status ${stopped.status ?? 'missing'}.`,
+    };
+  }
+  return { ok: true };
 }
 
 // PURE. `eas sim --json` stdout -> the session, or null if there is no id.
