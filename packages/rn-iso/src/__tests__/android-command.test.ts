@@ -697,6 +697,20 @@ describe('explicit remote backend behavior', () => {
     expect(readState().remoteDevice).toBeUndefined();
   });
 
+  test('a reused EAS session keeps its original ownership timestamp', async () => {
+    writeWorkspaceState(root, {
+      remoteDevice: { platform: 'android', sessionId: 'drs_old', startedAt: '2026-08-27T12:00:00.000Z' },
+    });
+    const { h } = remoteHarness('eas');
+
+    expect((await h.run()).ok).toBe(true);
+    expect(readState().remoteDevice).toEqual({
+      platform: 'android',
+      sessionId: 'drs_old',
+      startedAt: '2026-08-27T12:00:00.000Z',
+    });
+  });
+
   test('remote release skips Metro and launches with the remote adapter', async () => {
     const remoteLaunches: LaunchArgs[] = [];
     const h = harness({

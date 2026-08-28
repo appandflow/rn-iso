@@ -729,9 +729,31 @@ describe('a re-run does not orphan the session it already has', () => {
     const deps = remoteIosDeps(ctx());
     const booted = await deps.ensureBooted({});
     expect(booted.ok).toBe(true);
-    expect(deps.createdSessionId()).toBe('drs_old');
+    expect(deps.createdSessionId()).toBeNull();
     // The whole point: `eas sim` never ran.
     expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
+  });
+
+  test('creation ownership resets when a later boot reuses a session', async () => {
+    mockExec({ outputs: { 'simulator:get': LIVE, sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    expect((await deps.ensureBooted({})).ok).toBe(true);
+    expect(deps.createdSessionId()).toBe('drs_42');
+
+    recordSession('drs_old');
+    expect((await deps.ensureBooted({})).ok).toBe(true);
+    expect(deps.createdSessionId()).toBeNull();
+  });
+
+  test('creation ownership resets when a later boot fails', async () => {
+    mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    expect((await deps.ensureBooted({})).ok).toBe(true);
+    expect(deps.createdSessionId()).toBe('drs_42');
+
+    mockExec({ fail: 'sim' });
+    expect((await deps.ensureBooted({})).failed).toBe(true);
+    expect(deps.createdSessionId()).toBeNull();
   });
 
   test('a STOPPED session is not reused, even though it still reports a config', async () => {

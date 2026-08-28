@@ -238,6 +238,7 @@ function writeProfile(ctx: RemoteContext, daemon: RemoteDaemon): string {
  */
 function remoteDeviceDeps(ctx: RemoteContext) {
   let session: RemoteSession | null = null;
+  let createdSession: string | null = null;
 
   const exec = () => getExecutor();
   const easEnv = easExecOptions(ctx.root);
@@ -267,8 +268,11 @@ function remoteDeviceDeps(ctx: RemoteContext) {
     // agent-device's companion tunnel, which is how a cloud simulator reaches
     // a bundler on this laptop.
     ensureBooted: async ({ out = () => {} }: { out?: (msg: string) => void } = {}): Promise<BootResult> => {
+      session = null;
+      createdSession = null;
       let daemon = ctx.existingDaemon ?? null;
       let id: string | null = null;
+      let createdHere: string | null = null;
 
       // A session this workspace already recorded is REUSED when it is still
       // live, and STOPPED when it is not usable. Neither is optional.
@@ -323,6 +327,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
           return { failed: true, reason: 'eas sim returned no session; run it by hand to see what it reported.' };
         }
         id = created.id;
+        createdHere = created.id;
         // The session EXISTS from this line on, and it bills. Every failure
         // below therefore has to end it rather than return and forget it:
         // nothing else can, because the id is not recorded until this
@@ -366,6 +371,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       if (daemon.webPreviewUrl) out(`Watch this device: ${daemon.webPreviewUrl}`);
 
       session = { id, daemon, profilePath };
+      createdSession = createdHere;
       // `udid` is the field ios.ts reads and prints, and shortUdid truncates
       // it for the phase line. A session id shortens to something meaningful;
       // a base URL shortens to "http..", which is noise. So a daemon with no
@@ -468,9 +474,9 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       }
     },
 
-    // Not a dep override. The command layer calls this to record the session
-    // id in state.json, which is the only durable handle `stop` and `gc` get.
-    createdSessionId: (): string | null => session?.id ?? null,
+    // Not a dep override. The command layer records a session created by this
+    // boot attempt. A reused session already has its durable ownership record.
+    createdSessionId: (): string | null => createdSession,
 
     // Not a dep override either. The browser preview for this device, so the
     // --json payload can carry it and a caller can hand it to a person.

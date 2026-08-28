@@ -2206,7 +2206,7 @@ describe('--remote', () => {
 
   // A stand-in for engine/device-remote's return value. Records which device
   // calls went through the remote implementation rather than the local one.
-  function remoteStub() {
+  function remoteStub(createdSessionId: string | null = 'drs_42') {
     const hits: string[] = [];
     const backends: unknown[] = [];
     return {
@@ -2251,7 +2251,7 @@ describe('--remote', () => {
             hits.push('launchIosApp');
             return { ok: true, mode: 'launch' };
           },
-          createdSessionId: () => 'drs_42',
+          createdSessionId: () => createdSessionId,
           webPreviewUrl: () => null,
         }),
       },
@@ -2285,6 +2285,22 @@ describe('--remote', () => {
     expect(calls.order.includes('fingerprintProject')).toBeTruthy();
     expect(calls.order.includes('resolveBuild')).toBeTruthy();
     expect(calls.order.includes('buildIos')).toBeTruthy();
+  });
+
+  test('a reused EAS session keeps its original ownership timestamp', async () => {
+    writeWorkspaceState(root, {
+      remoteDevice: { platform: 'ios', sessionId: 'drs_old', startedAt: '2026-08-27T12:00:00.000Z' },
+    });
+    const remote = remoteStub(null);
+    reserve();
+
+    const { exitCode } = await run({ remote: 'eas' }, remote.deps);
+    expect(exitCode).toBeNull();
+    expect(readWorkspaceState(root)?.remoteDevice).toEqual({
+      platform: 'ios',
+      sessionId: 'drs_old',
+      startedAt: '2026-08-27T12:00:00.000Z',
+    });
   });
 
   test('the Metro gate still runs BEFORE the session is created', async () => {
