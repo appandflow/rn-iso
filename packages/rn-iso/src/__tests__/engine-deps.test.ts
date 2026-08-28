@@ -1,9 +1,3 @@
-// engine/deps.js -- CocoaPods staleness (pure) and `pod install` (mocked
-// executor: this suite never runs a real pod install).
-//
-// The three-outcome shape is the point of the pure half: "no CocoaPods in
-// this project at all" must not read as "stale", or every Expo build would
-// run a pod install with no Podfile to install from.
 import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,10 +13,8 @@ import {
 } from '../engine/deps.ts';
 import { makeChildProcess, makeError, makeWriter } from './_factories.ts';
 
-// The build-log records the collecting writer captures; only these fields are read.
 type WriteRecord = { src: string; level: string; msg: string };
 
-// The spawn invocation the test records to assert cmd/args/opts.
 type SpawnCall = { cmd: string; args: string[]; opts: Record<string, unknown> };
 
 let root: string;
@@ -60,17 +52,11 @@ describe('podsAreStale', () => {
     expect(result.reason).toMatch(/Podfile\.lock is missing/);
   });
 
-  // The case that has to be its own outcome: an Expo project before prebuild,
-  // or a project on Swift Package Manager, has neither file. Calling that
-  // stale would schedule a pod install that cannot work.
   test('neither file present means no CocoaPods here, which is NOT stale', () => {
     expect(podsAreStale(null, null)).toEqual({ noPods: true, stale: false });
     expect(podsAreStale(undefined, undefined)).toEqual({ noPods: true, stale: false });
   });
 
-  // CocoaPods writes both files itself, so a line-ending difference is a
-  // checkout artifact, not a dependency change -- and treating it as one
-  // reinstalls the sandbox on every single build, forever.
   test('line-ending and trailing-whitespace differences are not a dependency change', () => {
     expect(podsAreStale(LOCK, LOCK.replace(/\n/g, '\r\n'))).toEqual({ stale: false });
     expect(podsAreStale(LOCK, `${LOCK}\n\n`)).toEqual({ stale: false });
@@ -93,7 +79,6 @@ describe('readPodState', () => {
   });
 });
 
-// A child that streams the given lines and then exits with the given code.
 function fakePodChild({
   lines = [],
   code = 0,
@@ -227,9 +212,6 @@ describe('runPodInstall', () => {
     expect(result.lastLines.join('\n')).toMatch(/could not find compatible versions/);
   });
 
-  // The single most common cause, and it looks like a bare ENOENT unless it
-  // is named: an agent that reads "spawn pod ENOENT" retries, one that reads
-  // "install CocoaPods" stops.
   test('a missing `pod` binary is reported as a structured remedy, not an ENOENT', async () => {
     mkdirSync(join(root, 'ios'), { recursive: true });
     const err = makeError('spawn pod ENOENT', { code: 'ENOENT' });
@@ -263,9 +245,6 @@ describe('runPodInstall', () => {
     expect(result.reason).toMatch(/No ios\/ directory/);
   });
 
-  // The regression behind issue #9: the fatal `[!]` of a failed install is
-  // routinely mid-transcript (CocoaPods flushes deferred warnings after it),
-  // so a tail-based extract shows warnings and never the error.
   test('the anchored [!] diagnostic survives a transcript whose tail is all noise', async () => {
     mkdirSync(join(root, 'ios'), { recursive: true });
     const noise = Array.from({ length: 25 }, (_, i) => `Installing SomePod-${i} (1.0.${i})`);
@@ -284,8 +263,6 @@ describe('runPodInstall', () => {
     expect(result.diagnosticSource).toBe('cocoapods');
     assert(result.diagnosticLines);
     expect(result.diagnosticLines[0]).toMatch(/Unable to find a specification/);
-    // The tail alone -- what used to be all the caller got -- has already
-    // lost the error; the extraction is the only place it survives.
     assert(result.lastLines);
     expect(result.lastLines.join('\n')).not.toMatch(/Unable to find a specification/);
   });
@@ -303,10 +280,6 @@ describe('runPodInstall', () => {
   });
 });
 
-// The fixtures are the three transcripts from issue #9, reduced but
-// structurally faithful: the anchor position (mid-file fatal, deferred
-// warnings behind it, exception head above its frames) is the thing under
-// test, so it is the thing the fixtures preserve.
 describe('extractPodDiagnostics', () => {
   test('a fatal [!] mid-transcript beats the deferred warnings flushed after it (case 1)', () => {
     const warnings = ['expo-sensors', 'expo-splash-screen', 'expo-store-review', 'expo-system-ui', 'expo-video'].map(
@@ -326,9 +299,6 @@ describe('extractPodDiagnostics', () => {
     assert(extracted);
     expect(extracted.source).toBe('cocoapods');
     expect(extracted.lines[0]).toBe('[!] Unable to find a specification for `ExpoModulesCore` depended upon by `Expo`');
-    // Only anchored lines: the column-0 advice block between the error and
-    // the warnings is exactly the noise case 3 shows being printed instead
-    // of the answer.
     expect(extracted.lines.join('\n')).not.toMatch(/You have either/);
     expect(extracted.lines).toHaveLength(1 + warnings.length);
   });

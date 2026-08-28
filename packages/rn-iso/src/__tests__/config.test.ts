@@ -31,8 +31,6 @@ import assert from 'node:assert';
 
 let tmpHome: string;
 
-// Claims from nonexistent paths are filtered, so tests that want a claim to
-// be visible must register a directory that actually exists.
 function liveProjectDir(name: string) {
   const dir = join(tmpHome, name);
   mkdirSync(dir, { recursive: true });
@@ -71,11 +69,6 @@ test('saveConfig + loadConfig roundtrip', () => {
   expect(cfg.projects['/foo'].metroPort).toBe(8082);
 });
 
-// --- crash tolerance ---
-
-// The config records which devices rn-iso owns. Resetting a damaged one to {}
-// would orphan every owned sim, so a parse failure must be reported, not
-// swallowed.
 test('loadConfig reports a corrupt config by path instead of throwing a raw SyntaxError', () => {
   writeFileSync(join(tmpHome, 'config.json'), '{"projects": {"/a": ');
   let err: unknown;
@@ -97,16 +90,12 @@ test('loadConfig keeps a corrupt config on disk rather than resetting it', () =>
   expect(readFileSync(p, 'utf-8')).toBe('not json at all');
 });
 
-// An interrupted write must never leave a half-written config.json: the new
-// content lands in a temp file and is renamed over the target in one step.
 test('saveConfig writes through a temp file and leaves none behind', () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   const strays = readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'));
   expect(strays).toEqual([]);
   expect(loadConfig()).toEqual({ version: 2, projects: {}, repos: {} });
 });
-
-// --- write lock ---
 
 test('withConfigLock is reentrant, so nested mutators cannot deadlock', () => {
   const result = withConfigLock(() => {
@@ -127,13 +116,9 @@ test('withConfigLock releases the lock when the body throws', () => {
     }),
   ).toThrow(/boom/);
   expect(existsSync(join(tmpHome, 'config.lock'))).toBe(false);
-  // Still usable afterwards.
   expect(withConfigLock(() => 'ok')).toBe('ok');
 });
 
-// A process killed mid-mutation leaves its lock directory behind. Waiting on
-// it forever would wedge every later command, so a lock older than the stale
-// timeout is taken over.
 test('withConfigLock takes over a stale lock left by a dead process', () => {
   const lock = join(tmpHome, 'config.lock');
   mkdirSync(lock);
@@ -143,10 +128,6 @@ test('withConfigLock takes over a stale lock left by a dead process', () => {
   expect(existsSync(lock)).toBe(false);
 });
 
-// Cross-PROCESS on purpose, like the isPortFree test in test/ports.test.js.
-// Several rn-iso commands run at once on this machine, and each mutator is a
-// read-modify-write of one file: without the lock the last writer wins and the
-// other processes' records are simply gone.
 test('concurrent processes each keep their record', async () => {
   const script = join(tmpHome, 'writer.mjs');
   const configUrl = new URL('../config.ts', import.meta.url).href;
@@ -178,8 +159,6 @@ test('concurrent processes each keep their record', async () => {
   }
 });
 
-// --- port claims ---
-
 test('claimMetroPort records the port when nothing else holds it', () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   expect(claimMetroPort('/a', 8082)).toBe(8082);
@@ -188,8 +167,6 @@ test('claimMetroPort records the port when nothing else holds it', () => {
   expect(a.metroPort).toBe(8082);
 });
 
-// Two `up` runs probe the same free port at the same time; only one may keep
-// it. The loser is told so, instead of both recording 8082.
 test('claimMetroPort refuses a port another project claimed first', () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   upsertProject('/b', { bundleId: 'b', androidPackage: 'b', isExpo: false });
@@ -282,9 +259,6 @@ test('allConsolePortsAndSerials ignores entries from project paths that no longe
   expect(result.androidConsolePorts).toEqual([5554]);
 });
 
-// A path on an unplugged external volume only LOOKS gone. Its emulator may
-// still be running, so handing its console port to a second emulator would
-// collide. Same direction gc fails in.
 test('allConsolePortsAndSerials keeps the claim of a project on an unmounted volume', () => {
   const unmounted = '/Volumes/NotPluggedIn/worktree';
   upsertProject(unmounted, { bundleId: 'com.x', androidPackage: 'com.x', isExpo: false });
@@ -299,8 +273,6 @@ test('allConsolePortsAndSerials frees the claim of a dead project on a mounted v
   const result = allConsolePortsAndSerials({ isMounted: () => true });
   expect(result.androidConsolePorts).toEqual([]);
 });
-
-// --- Per-project settings ---
 
 test('setProjectSetting writes a top-level key', () => {
   upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
@@ -345,8 +317,6 @@ test('setProjectSetting throws when the project is not registered', () => {
   expect(() => setProjectSetting('/missing', 'packageManager', 'bun')).toThrow(/not registered/);
 });
 
-// --- Config schema v2 / repo settings ---
-
 test('ensureConfig creates a v2 config with a repos section', () => {
   const cfg = ensureConfig();
   expect(cfg.version).toBe(2);
@@ -384,8 +354,6 @@ test('getRepoSettings returns an empty object for an unknown repo', () => {
   expect(getRepoSettings('/nope/.git')).toEqual({});
 });
 
-// --- concurrency limits (opt-in, unlimited by default) ---
-
 test('getConcurrencyLimits is unlimited (0) when nothing is set', () => {
   const env = {};
   expect(getConcurrencyLimits({ env })).toEqual({ maxBuilds: 0, maxDevices: 0 });
@@ -411,12 +379,6 @@ test('a negative or garbage value reads as unlimited', () => {
   });
 });
 
-// --- the machine-level Metro-store kill switch ------------------------------
-//
-// It is machine-level for the same reason the concurrency caps are, and for
-// one more: the feature it turns off exists so that evaluating rn-iso needs no
-// change to the repo, so opting out of it must not need one either.
-
 test('the Metro store injection is ON by default, with no config at all', () => {
   expect(metroStoreInjectionEnabled()).toBe(true);
 });
@@ -426,8 +388,6 @@ test('only the literal false turns it off', () => {
   expect(metroStoreInjectionEnabled()).toBe(false);
 });
 
-// A broken value must not silently disable a cache: the direction this fails
-// is "behave as documented".
 test('a malformed or unrelated caches value leaves it on', () => {
   for (const caches of [{}, { metroCache: '/x' }, { injectMetroStore: 'false' }, { injectMetroStore: 0 }, ['/x']]) {
     saveConfig({ version: 2, projects: {}, repos: {}, caches } as never);

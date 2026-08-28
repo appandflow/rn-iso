@@ -6,9 +6,6 @@ import { resetExecutor } from '../exec.ts';
 import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort } from '../config.ts';
 import { computeNextPort, findReclaimablePort, allocatePort, reserveMetroPort } from '../ports.ts';
 
-// Every allocation test injects a deterministic freeness oracle: the real one
-// binds sockets, so leaving it in would make results depend on whatever else
-// this machine happens to be running.
 const allFree = async () => true;
 
 let tmpHome: string;
@@ -44,7 +41,6 @@ test('findReclaimablePort returns null when no projects', async () => {
 test('findReclaimablePort skips the excluded project path', async () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   claimMetroPort('/a', 8082);
-  // Mock isMetroRunning to always return false (port is dead)
   const r = await findReclaimablePort('/a', async () => false);
   expect(r).toBe(null);
 });
@@ -54,7 +50,6 @@ test('findReclaimablePort returns first dead port and its owner', async () => {
   upsertProject('/b', { bundleId: 'b', androidPackage: 'b', isExpo: false });
   claimMetroPort('/a', 8082);
   claimMetroPort('/b', 8083);
-  // 8082 alive, 8083 dead
   const probe = async (port: number) => port === 8082;
   const r = await findReclaimablePort('/c', probe);
   expect(r).toEqual({ port: 8083, ownerPath: '/b' });
@@ -66,7 +61,6 @@ test('allocatePort reclaims dead ports and removes the dead project', async () =
   const probe = async () => false;
   const port = await allocatePort('/new', probe, allFree);
   expect(port).toBe(8082);
-  // Caller should have removed /a -- verify via behavior
   expect(getProject('/a')).toBe(null);
 });
 
@@ -75,8 +69,6 @@ test('findReclaimablePort does not reclaim live-path projects even with dead Met
   mkdirSync(liveDir, { recursive: true });
   upsertProject(liveDir, { bundleId: 'a', androidPackage: 'a', isExpo: false });
   claimMetroPort(liveDir, 8082);
-  // Metro is dead, but the project directory exists: its entry (and device
-  // claim) must survive.
   const r = await findReclaimablePort('/new', async () => false);
   expect(r).toBe(null);
 });
@@ -84,16 +76,11 @@ test('findReclaimablePort does not reclaim live-path projects even with dead Met
 test('allocatePort assigns a fresh port when nothing is reclaimable', async () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   claimMetroPort('/a', 8082);
-  const probe = async () => true; // everything alive
+  const probe = async () => true;
   const port = await allocatePort('/new', probe, allFree);
   expect(port).toBe(8083);
 });
 
-// Reported from the field: three projects were each handed 8107. computeNextPort
-// was max(registry)+1 with NO liveness check, so a port held by anything not in
-// rn-iso's registry was invisible. The trap for the fix: isMetroRunning() only
-// answers for Metro, so a web server on the port would still look free -- the
-// check has to be a real bind.
 test('computeNextPort skips a port that is occupied by a foreign process', async () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   const occupied = new Set([8082, 8083]);
@@ -123,11 +110,6 @@ test('computeNextPort throws rather than returning an occupied port when the ran
   await expect(() => computeNextPort(async () => false)).rejects.toThrow(/no free Metro port/i);
 });
 
-// Cross-PROCESS on purpose. An in-process bind test passes even when the
-// implementation is wrong: Node sets SO_REUSEADDR, so binding 0.0.0.0 while a
-// separate process holds 127.0.0.1 succeeds and the port reads free. That
-// exact bug shipped and was caught only by a live squatter, not by the
-// same-process test that preceded this one.
 test('isPortFree detects a listener held by ANOTHER process', async () => {
   const { spawn } = await import('node:child_process');
   const { isPortFree } = await import('../ports.ts');
@@ -149,11 +131,6 @@ test('isPortFree detects a listener held by ANOTHER process', async () => {
   }
 });
 
-// An unplugged external volume makes a live project's path look gone.
-// Reclaiming its port removes the whole entry -- label, port, owned-device
-// record -- after which gc's orphan sweep would delete the sims it owned. The
-// mounted-volume guard is what stops that, the same way gc's dead-entry
-// sweep uses it.
 test('findReclaimablePort skips a project whose volume is not mounted', async () => {
   const unmounted = '/Volumes/NotPluggedIn/worktree';
   upsertProject(unmounted, { bundleId: 'a', androidPackage: 'a', isExpo: false });
@@ -169,8 +146,6 @@ test('findReclaimablePort still reclaims a dead project on a mounted volume', as
   expect(r).toEqual({ port: 8082, ownerPath: '/definitely/gone' });
 });
 
-// allocatePort removes the reclaimed project's entry, so a fail-open guard
-// here deletes a live project's device record on an unplugged volume.
 test('allocatePort does not delete the entry of a project on an unmounted volume', async () => {
   const unmounted = '/Volumes/NotPluggedIn/worktree';
   upsertProject(unmounted, { bundleId: 'a', androidPackage: 'a', isExpo: false });
@@ -181,11 +156,7 @@ test('allocatePort does not delete the entry of a project on an unmounted volume
   expect(getProject(unmounted)).toBeTruthy();
 });
 
-// Two `up` runs can probe the same free port before either records it. The
-// loser must allocate again rather than record a port that is already taken.
 test('reserveMetroPort moves on when another project claims the port first', async () => {
-  // Real directories: an entry whose path is gone is reclaimable, which would
-  // hand the same port back instead of exercising the claim conflict.
   const dirA = join(tmpHome, 'a');
   const dirB = join(tmpHome, 'b');
   mkdirSync(dirA, { recursive: true });
@@ -194,8 +165,6 @@ test('reserveMetroPort moves on when another project claims the port first', asy
   upsertProject(dirB, { bundleId: 'b', androidPackage: 'b', isExpo: false });
   let probes = 0;
   const isFree = async () => {
-    // The first allocation for B sees 8082 as free; by the time it tries to
-    // record it, A has claimed it.
     if (probes++ === 0) claimMetroPort(dirA, 8082);
     return true;
   };
@@ -218,13 +187,11 @@ test('reserveMetroPort records the port it hands back', async () => {
   expect(rec.metroPort).toBe(8082);
 });
 
-// A reclaimable port belongs to a dead project, but something unrelated may
-// have taken it since the project died -- it must pass the same bind check.
 test('allocatePort does not reuse a reclaimable port that is now occupied', async () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   claimMetroPort('/a', 8082);
-  const deadMetro = async () => false; // /a's Metro is gone
-  const isFree = async (p: number) => p !== 8082; // ...but 8082 is held by something else
+  const deadMetro = async () => false;
+  const isFree = async (p: number) => p !== 8082;
   const port = await allocatePort('/new', deadMetro, isFree);
   expect(port).not.toBe(8082);
   expect(port).toBe(8083);

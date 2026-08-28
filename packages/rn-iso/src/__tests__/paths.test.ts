@@ -44,8 +44,6 @@ describe('workspace paths', () => {
     expect(workspaceGradleBuild(root)).toBe(join(dir, 'gradle-build'));
     expect(supervisorPidFile(root)).toBe(join(dir, 'supervisor.pid'));
     expect(workspaceStateFile(root)).toBe(join(dir, 'state.json'));
-    // NOT .ndjson: the k-way merge in logs-query must never try to parse the
-    // emulator's raw stdio.
     expect(emulatorLogFile(root)).toBe(join(dir, 'logs', 'emulator.log'));
   });
 
@@ -112,10 +110,6 @@ describe('shared paths', () => {
   });
 });
 
-// The two cache packages honoured RN_ISO_BUILD_CACHE and RN_ISO_METRO_CACHE
-// before paths.ts existed. Taking over the resolution without them would
-// silently stop reading an override someone had already set, which reads as an
-// empty cache rather than as an error.
 describe('shared cache roots', () => {
   let tmpHome: string;
   beforeEach(() => {
@@ -135,8 +129,6 @@ describe('shared cache roots', () => {
 
     process.env.RN_ISO_METRO_CACHE = '/tmp/custom-metro';
     expect(sharedMetroCache()).toBe('/tmp/custom-metro');
-    // The override names one directory, so it wins for a named cache too --
-    // otherwise half the stores would move and half would not.
     expect(sharedMetroCache('demo')).toBe('/tmp/custom-metro');
   });
 

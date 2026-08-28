@@ -1,26 +1,3 @@
-// src/engine/gradle.js -- `./gradlew assembleDebug`, and where the APK it
-// produced ended up.
-//
-// The split CLAUDE.md asks for: every decision here (is there an android
-// project, which of these files is the debug APK, what does the transcript
-// say the output was) is a pure function of text or of a file list, and the
-// spawn around them is thin.
-//
-// Nothing throws for a build failure. A gradle build failing is the single
-// most ordinary thing this module does, and it comes back as
-//   { failed: true, code, reason, diagnostics, truncated, lastLines, durationMs }
-// so the command layer prints one extracted diagnostic and a log path rather
-// than catching an exception three frames up and printing a stack.
-//
-// THE GRADLE BUILD DIRECTORY IS NOT REDIRECTED. paths.js offers
-// workspaceGradleBuild(), and it is deliberately unused here: moving
-// `buildDir` out of the project breaks assumptions AGP makes about where its
-// intermediates, its merged manifests and its output listings live, and the
-// failures it produces are silent and late (an APK that builds but resolves
-// no resources). The workspace-local DerivedData that iOS gets has no safe
-// Android equivalent yet, so each checkout keeps its own android/app/build
-// and the SHARED artifact is the build cache entry, keyed on the fingerprint.
-// Revisit if AGP grows a supported way to relocate it.
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -31,21 +8,12 @@ import { androidHome } from '../sim/android.ts';
 import { createLineReader, stripAnsi } from '../supervisor/server-expo.ts';
 import { waitForChild } from './deps.ts';
 import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './errors-gradle.ts';
-// Borrowed rather than copied (the same reasoning as the line reader above):
-// the heartbeat is generic build-child plumbing that lives beside the iOS
-// build because that is what needed it first, and a second copy would drift.
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 
 export const BUILD_ERROR = 'RN_ISO_BUILD_FAILED';
 
-// The signature every spawnFn injection seam in this module accepts:
-// getExecutor().spawn's shape, loosened to a plain options bag so callers do
-// not have to import SpawnOptions.
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
-// discoverAndroidProject's result is either a refusal or the two paths a
-// build needs -- flat and all-optional, matching the defensive JS shape
-// (CLAUDE.md pattern 3), not a discriminated union.
 interface AndroidProjectResult {
   failed?: boolean;
   code?: string;
@@ -55,33 +23,16 @@ interface AndroidProjectResult {
   gradlew?: string;
 }
 
-// Debug only, per the spec's out-of-scope list: no release path ships, which
-// is what removes Android signing configuration from rn-iso entirely.
-// A project with PRODUCT FLAVORS still needs a flavored debug build though
-// (`assembleProductionDebug`), selected by the `--variant` flag (deliberate
-// surface growth, issue #52) or its repo-level default, the `android.variant`
-// setting.
 export const ASSEMBLE_TASK = 'assembleDebug';
 
-// PURE. The gradle task a variant selects. Gradle capitalizes the variant
-// name after `assemble` (`productionDebug` -> `assembleProductionDebug`);
-// unset means the default task, unchanged from before variants existed.
 export function assembleTaskFor(variant?: string | null): string {
   const name = typeof variant === 'string' ? variant.trim() : '';
   if (!name) return ASSEMBLE_TASK;
   return `assemble${name[0]!.toUpperCase()}${name.slice(1)}`;
 }
 
-// How many transcript lines a failure carries back for the caller to print
-// when nothing could be extracted from them.
 const LAST_LINES = 20;
 
-// The window the diagnostics are extracted from. Gradle prints the FAILURE
-// block, the failing task and the compiler output at the END of a build, so a
-// rolling window costs nothing in practice while keeping a multi-thousand-line
-// React Native transcript out of memory. The COMPLETE transcript is in
-// the global workspace logs/build-android.ndjson regardless -- every line goes to the
-// writer as it arrives.
 const TRANSCRIPT_LINES = 2000;
 
 function androidDir(root: string) {
@@ -100,9 +51,6 @@ export function debugApkDir(root: string): string {
   return join(apkOutputsDir(root), 'debug');
 }
 
-// Is there something to build here? Two failures, and the remedy for both
-// names prebuild, because on a CNG project that is exactly what is missing:
-// the native directory has not been generated yet.
 export function discoverAndroidProject(root: string): AndroidProjectResult {
   const dir = androidDir(root);
   if (!existsSync(dir)) {
@@ -127,13 +75,6 @@ export function discoverAndroidProject(root: string): AndroidProjectResult {
   return { androidDir: dir, gradlew };
 }
 
-// PURE. Whether the Android SDK is findable at all, given the resolved path
-// and what exists. Gradle's own answer to a missing SDK is "SDK location not
-// found" three minutes into configuration; answering at second zero with the
-// variable to set is worth the check.
-//
-// android/local.properties (sdk.dir=...) satisfies gradle on its own, so a
-// project carrying one is fine even with no environment variable set.
 export function androidSdkRefusal({
   sdkPath,
   sdkExists,
@@ -152,12 +93,6 @@ export function androidSdkRefusal({
   };
 }
 
-// PURE. Which of these files is the debug APK.
-//
-// `app-debug.apk` is what AGP names it, but the name is a product of the
-// module name and the flavour, so it is a preference and not an assumption:
-// a project with flavours produces app-staging-debug.apk and nothing else.
-// Intermediate outputs (-unsigned, -unaligned) are never the installable one.
 export function pickDebugApk(files: unknown): string | null | undefined {
   const list = (Array.isArray(files) ? files : [])
     .filter((f) => typeof f === 'string' && f.endsWith('.apk'))
@@ -167,18 +102,9 @@ export function pickDebugApk(files: unknown): string | null | undefined {
   if (named) return named;
   const debug = list.filter((f) => baseName(f).endsWith('-debug.apk'));
   const pool = debug.length ? debug : list;
-  // Shortest name first, then alphabetical: among app-debug.apk and
-  // app-debug-androidTest.apk the app itself is the shorter one, and the
-  // ordering is total so the answer does not depend on readdir order.
   return pool.toSorted((a, b) => baseName(a).length - baseName(b).length || baseName(a).localeCompare(baseName(b)))[0];
 }
 
-// PURE. The APK an output listing names. AGP writes
-// <apk dir>/output-metadata.json after every assemble:
-//   { "elements": [ { "outputFile": "app-debug.apk", ... } ] }
-// This is the listing the plan asks the APK be verified against rather than
-// hardcoded -- it is written by the build that just ran, so it is right about
-// flavours, splits and renames in a way a hardcoded name is not.
 export function parseOutputMetadata(text: unknown): string | null | undefined {
   let parsed;
   try {
@@ -193,12 +119,6 @@ export function parseOutputMetadata(text: unknown): string | null | undefined {
   return pickDebugApk(files);
 }
 
-// PURE. The APK the transcript names, when it names one.
-//
-// `assembleDebug` does not normally print the path -- the metadata file above
-// is the reliable source -- but several things in the React Native toolchain
-// do (the community CLI's install step, custom copy tasks, `installDebug`),
-// and a project whose build moves the APK somewhere else says so only here.
 const TRANSCRIPT_APK = [
   /(?:Wrote APK to|APK (?:written|generated|copied) (?:to|at)|Built the following APKs?:)\s*(\S+\.apk)/i,
   /Installing APK '([^']+\.apk)'/i,
@@ -216,11 +136,6 @@ export function parseApkFromTranscript(text: unknown): string | null | undefined
   return null;
 }
 
-// PURE. The gradle variant name a directory path under outputs/apk spells:
-// AGP writes `apk/<flavor>/<buildType>` (the flavor-combination directory
-// keeps its camelCase, the build type is lowercased), and the variant is the
-// camelCase join -- ['production', 'debug'] is `productionDebug`, ['debug']
-// alone is `debug`.
 export function variantNameOf(segments: unknown): string {
   return (Array.isArray(segments) ? segments : [])
     .filter((s) => typeof s === 'string' && s.trim())
@@ -228,8 +143,6 @@ export function variantNameOf(segments: unknown): string {
     .join('');
 }
 
-// The APK a single output directory holds: the metadata file AGP wrote there
-// if it names one that exists, the listing otherwise.
 function apkInDir(dir: string): string | null {
   const metadata = readOrNull(join(dir, 'output-metadata.json'));
   if (metadata) {
@@ -243,9 +156,6 @@ function apkInDir(dir: string): string | null {
   return listed ? join(dir, listed) : null;
 }
 
-// Every directory under outputs/apk, depth-first, as segments relative to it.
-// Depth-capped because outputs/apk is at most <flavor>/<buildType> deep and a
-// symlink cycle must not hang a build that already succeeded.
 function listApkSubdirs(base: string, prefix: string[] = [], depth = 0): string[][] {
   if (depth > 3) return [];
   const dirs: string[][] = [];
@@ -265,11 +175,6 @@ function listApkSubdirs(base: string, prefix: string[] = [], depth = 0): string[
   return dirs;
 }
 
-// The output directory of a configured variant: the subdirectory of
-// outputs/apk whose camelCase join names it. Matching the DIRECTORIES rather
-// than composing `<flavor>/<buildType>` from the variant string means a
-// multi-dimension flavor combination (`demoMinApi24Debug` ->
-// apk/demoMinApi24/debug) needs no guess about where the flavor part ends.
 function findVariantApkDir(root: string, variant: string): string | null {
   const base = apkOutputsDir(root);
   const wanted = variant.trim().toLowerCase();
@@ -279,9 +184,6 @@ function findVariantApkDir(root: string, variant: string): string | null {
   return null;
 }
 
-// Every installable `*-debug.apk` under outputs/apk, recursively. Intermediate
-// outputs and androidTest APKs fall out of the name filter the same way they
-// do in pickDebugApk.
 function findDebugApksUnder(base: string): string[] {
   const found: string[] = [];
   for (const segments of [[], ...listApkSubdirs(base)]) {
@@ -295,22 +197,12 @@ function findDebugApksUnder(base: string): string[] {
   return found.toSorted();
 }
 
-// What locateApk answers: the APK when exactly one candidate was found (with
-// a note when it took the recursive fallback to find it), the candidate list
-// when a flavored project left several and no variant setting picks one.
 export interface LocateApkResult {
   apkPath?: string | null;
   note?: string | null;
   candidates?: string[];
 }
 
-// Thin: the sources against the disk, in order of authority for THIS build. A
-// transcript path is what the build itself said it produced; with a variant
-// configured, the variant's own output directory (`apk/<flavor>/<buildType>`)
-// is the place AGP puts it; without one, the default `apk/debug` -- and when
-// THAT is empty, a recursive search, because a flavored project's
-// `assembleDebug` succeeds into `apk/<flavor>/debug/` and reporting that
-// successful build as failed is exactly the bug this fallback removes.
 export function locateApk(root: string, transcript = '', variant: string | null = null): LocateApkResult {
   const fromTranscript = parseApkFromTranscript(transcript);
   if (fromTranscript) {
@@ -343,10 +235,6 @@ export function locateApk(root: string, transcript = '', variant: string | null 
   return { apkPath: null };
 }
 
-// PURE. Whether an APK a just-finished build "produced" actually predates the
-// build -- a stale artifact carried into the workspace (a copied build/
-// directory, a worktree carry-over), which installs and then runs code that is
-// not this checkout's. The slop absorbs filesystem timestamp granularity.
 export function staleApkRefusal({
   task,
   apkPath,
@@ -370,8 +258,6 @@ export function staleApkRefusal({
   };
 }
 
-// The all-optional view of buildAndroid's outcomes: { ok, apkPath } on
-// success, the failure shape (with the diagnostics extract) otherwise.
 export type BuildAndroidResult = {
   ok?: boolean;
   apkPath?: string;
@@ -388,36 +274,10 @@ export type BuildAndroidResult = {
   durationMs: number;
 };
 
-// PURE. The gradlew argv: the assemble task, plus `--build-cache`.
-//
-// THE POINT: rn-iso needs no project changes to run. Gradle's task-output
-// cache is off by default and used to require `org.gradle.caching=true` in
-// android/gradle.properties -- a committed file, so asking for it is asking
-// for a PR. `--build-cache` is the same switch on the command line rn-iso
-// already composes, and the cache directory it fills lives under the Gradle
-// user home (~/.gradle unless something overrides it), which every worktree
-// on the machine already shares. So it is cross-worktree by construction and
-// there is nothing else to configure.
-//
-// Nothing else is added here. The file header's rule still holds: every
-// argument on this line is one more thing that can differ from what the
-// project's own `./gradlew assembleDebug` does, so this one is deliberate and
-// it is the only one.
 export function gradleArgs(task: string, { buildCache = true }: { buildCache?: boolean } = {}): string[] {
   return buildCache ? [task, '--build-cache'] : [task];
 }
 
-// `./gradlew assembleDebug --build-cache` (or `assemble<Variant>` when the
-// android.variant setting names a flavored variant) with cwd android/.
-//
-// Every line of the transcript reaches the writer as it arrives (Contract 1,
-// src "build", level debug, raw) rather than at the end: a four-minute build
-// that is followed with `rn-iso logs --follow` has to show progress while it
-// is happening, and a build killed halfway must still leave what it printed.
-//
-// No --console flag: gradle already drops its rich console when stdout is a
-// pipe, which it is here. The one argument beyond the task is `--build-cache`
-// (see gradleArgs), and `buildCache: false` turns it off.
 export async function buildAndroid(
   { root, logWriter, variant = null }: { root: string; logWriter?: NdjsonWriter | null; variant?: string | null },
   {
@@ -432,7 +292,6 @@ export async function buildAndroid(
     spawnFn?: SpawnFn | null;
     now?: () => number;
     env?: NodeJS.ProcessEnv;
-    // Injectable so tests drive it and a caller can turn it off.
     buildCache?: boolean;
     heartbeatMs?: number;
     onHeartbeat?: (line: string) => void;
@@ -455,8 +314,6 @@ export async function buildAndroid(
   const task = assembleTaskFor(variant);
   const args = gradleArgs(task, { buildCache });
   if (buildCache) {
-    // One dim line, so a flag rn-iso adds to somebody else's build tool is
-    // never invisible.
     onNote(
       chalk.dim(
         'gradle build cache on for this build: --build-cache (shared under the Gradle user home; gradle.properties is not touched)',
@@ -464,16 +321,6 @@ export async function buildAndroid(
     );
   }
 
-  // The exact command, first line of the log -- the same record xcode.ts
-  // writes for the same reason (issue #78). An agent debugging a build it did
-  // not compose needs to see what was actually run, and reconstructing it from
-  // this file's source is not the same thing as reading it. It is also the
-  // only honest way to assert that `--build-cache` reached gradle: the
-  // alternative is racing `ps` against a live build.
-  //
-  // level "info" and NOT `raw`, exactly as on iOS: this line was reported by
-  // rn-iso, not inferred from gradle's stdout, and the transcript records below
-  // stay debug/raw.
   logWriter?.write?.({
     src: 'build',
     level: 'info',
@@ -484,7 +331,6 @@ export async function buildAndroid(
   const startedAt = now();
   const tail: string[] = [];
   const window: string[] = [];
-  // The heartbeat's activity hint: the last non-blank line gradle printed.
   let lastTranscriptLine = '';
   const push = (line: unknown) => {
     const msg = stripAnsi(String(line)).trimEnd();
@@ -501,12 +347,7 @@ export async function buildAndroid(
   try {
     child = spawn(project.gradlew as string, args, {
       cwd: project.androidDir,
-      // stdin ignored: nothing in an assembleDebug should prompt, and a
-      // prompt in a detached agent loop is indistinguishable from a hang.
       stdio: ['ignore', 'pipe', 'pipe'],
-      // TERM=dumb keeps gradle off the rich console even when something
-      // downstream hands it a tty; the escape sequences would be unreadable
-      // inside a JSON string and unmatchable by `logs --grep`.
       env: { ...env, TERM: 'dumb', FORCE_COLOR: '0' },
     });
   } catch (err) {
@@ -520,9 +361,6 @@ export async function buildAndroid(
   child.stdout?.on('data', (chunk) => outReader.push(chunk));
   child.stderr?.on('data', (chunk) => errReader.push(chunk));
 
-  // One stderr line roughly every 30s while gradle runs -- see the heartbeat
-  // block in xcode.ts for why the silence between the fingerprint line and
-  // completion is worth breaking. stdout stays untouched.
   const stopHeartbeat = startBuildHeartbeat({
     intervalMs: heartbeatMs,
     elapsed: () => now() - startedAt,
@@ -555,9 +393,6 @@ export async function buildAndroid(
 
   const located = locateApk(root, transcript, variant);
   if (!located.apkPath && located.candidates?.length) {
-    // More than one debug APK and nothing configured to pick one: choosing by
-    // recency or by name here installs SOME flavor, silently, and the wrong
-    // one runs against the wrong applicationId. Refuse with the list instead.
     return {
       failed: true,
       code: BUILD_ERROR,
@@ -570,10 +405,6 @@ export async function buildAndroid(
     };
   }
   if (!located.apkPath) {
-    // Exit 0 with no artifact is a build that did nothing -- a task wired to
-    // a flavour that produces its output elsewhere, or one that was skipped
-    // entirely. Reporting success here would install a stale APK from a
-    // previous run, or nothing at all.
     return {
       failed: true,
       code: BUILD_ERROR,
@@ -591,16 +422,10 @@ export async function buildAndroid(
   }
   const apkPath = located.apkPath;
 
-  // The freshness guard: a build that just ran must hand back an APK that
-  // build wrote. An older one is a carried artifact -- the manual `cp` that
-  // papered over the flavored-output bug produced exactly this, and installing
-  // it reports success for code that never compiled.
   let mtimeMs = Number.NaN;
   try {
     mtimeMs = statSync(apkPath).mtimeMs;
-  } catch {
-    // Unstattable is unreadable; let the install step report it.
-  }
+  } catch {}
   const stale = staleApkRefusal({ task, apkPath, mtimeMs, buildStartMs: startedAt });
   if (stale) {
     return { failed: true, ...stale, diagnostics: [], truncated: 0, lastLines: tail.slice(), durationMs };
@@ -609,9 +434,6 @@ export async function buildAndroid(
   return { ok: true, apkPath, apkNote: located.note ?? null, durationMs, lastLines: tail.slice() };
 }
 
-// A gradlew that will not execute is almost always the permission bit -- git
-// on a machine with core.fileMode off, or an archive extracted without it --
-// and "spawn EACCES" alone sends an agent looking at the wrong thing.
 function spawnFailure(err: unknown, project: AndroidProjectResult, durationMs: number) {
   const nodeErr = err as NodeJS.ErrnoException;
   const message = String(nodeErr?.message || err || '');
@@ -632,8 +454,6 @@ function spawnFailure(err: unknown, project: AndroidProjectResult, durationMs: n
 
 function baseName(file: string) {
   const parts = String(file).split('/');
-  // split always yields >= 1 element, so the last index is present; the
-  // fallback only satisfies the index type and is never taken.
   return parts[parts.length - 1] ?? String(file);
 }
 

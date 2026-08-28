@@ -1,15 +1,5 @@
 'use strict';
 
-// Expo SDK 54+ reads EXPO_OVERRIDE_METRO_CONFIG before it starts Metro. rn-iso
-// points that variable here so it can append a shared FileStore without
-// editing the project's metro.config.js. Older Expo SDKs never load this file.
-//
-// This adapter deliberately uses only Node built-ins and the project's public
-// `expo/metro-config` API. It loads the config Expo would otherwise have found,
-// preserves its cache stores, and adds one more. Any failure specific to the
-// cache optimisation becomes a warning; errors in the project's own config
-// still surface normally, just as they would without rn-iso.
-
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -148,9 +138,7 @@ function appendStore(config, defaultConfig) {
         const store = new MetroCache.FileStore({ root: storeRoot });
         try {
           Object.defineProperty(store, STORE_ROOT_TAG, { value: storeRoot, configurable: true });
-        } catch {
-          // The tag only prevents duplicates; an untaggable store still works.
-        }
+        } catch {}
         announce();
         return [...stores, store];
       } catch (error) {

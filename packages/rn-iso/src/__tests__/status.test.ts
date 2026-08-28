@@ -1,10 +1,3 @@
-// test/status.test.js
-//
-// Black-box exercise of `rn-iso status`: seed config.json with device-owning
-// projects, run the command via Commander with a mocked executor, and assert
-// what the printed lines say -- the "(owned)" tag, and what is reported when
-// simctl itself cannot be read (pattern: test/shutdown.test.js).
-
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -116,9 +109,6 @@ test('status says nothing extra for a project that has only a Metro port', async
   expect(logs.some((l) => /!/.test(l))).toBe(false);
 });
 
-// "simctl did not answer" and "simctl answered with zero sims" are different
-// facts. Only the second one proves a recorded sim is gone, so a failing
-// simctl must not warn "no longer exists" once per project.
 test('status reports simctl as unreadable instead of warning that every sim is gone', async () => {
   setExecutor({
     run(cmd) {
@@ -151,8 +141,6 @@ test('status reports simctl as unreadable instead of warning that every sim is g
   expect(logs.some((l) => /ios:.*unknown/.test(l))).toBeTruthy();
 });
 
-// A simctl that DOES answer, with a listing that lacks the recorded sim, is
-// proof: the record outlived the device, and that still warns.
 test('status still warns about a recorded sim missing from a readable listing', async () => {
   saveConfig(
     makeConfig({
@@ -167,8 +155,6 @@ test('status still warns about a recorded sim missing from a readable listing', 
 
   expect(logs.some((l) => /recorded sim UDID-GONE no longer exists/.test(l))).toBeTruthy();
 });
-
-// --- v3: supervisor and logs ------------------------------------------------
 
 async function runStatusJson() {
   const program = new Command();
@@ -194,21 +180,12 @@ function writeState(root: string, supervisor: { pid: number; port: number; mode:
   writeFileSync(workspaceStateFile(root), JSON.stringify({ supervisor }));
 }
 
-// Health is Contract 3: the identity check, never a bare /status probe. This
-// stands up a real server on a real port and mocks only the process lookups, so
-// the HTTP half is genuinely exercised.
 test('status reports a supervisor whose port answers as this project as healthy', async () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
   const server = createServer((_req, res) => res.end('packager-status:running'));
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
   const port = (server.address() as AddressInfo).port;
   try {
-    // The LISTENER pid is deliberately a dead one: on Linux, processCwd reads
-    // /proc/<pid>/cwd before falling back to the mocked lsof, so a REAL pid
-    // (like process.pid) would resolve to the test runner's true cwd and never
-    // match `root`. A dead pid makes the /proc read fail and the lsof mock
-    // answer, on every platform. The SUPERVISOR pid stays process.pid -- its
-    // liveness check is real.
     const listenerPid = 999999901;
     setExecutor({
       run: () => '',
@@ -259,11 +236,6 @@ test('status reports a supervisor whose port answers as this project as healthy'
   }
 });
 
-// FIELD CASE. `status` reported "3004 errors since the last marker" on an app
-// that was working: every one of those records was iOS syslog from inside the
-// app's process. status counts with queryLogs({ errorsOnly: true }), the same
-// call `logs --errors` makes, so it inherits the same scope -- which is the
-// point: the two must never disagree about whether this workspace is failing.
 test('status counts a device-only noise storm as zero errors', async () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
   try {
@@ -328,7 +300,6 @@ test('a workspace with no supervisor and no logs reports both as null', async ()
   }
 });
 
-// The human output is what an agent reads when it does not ask for --json.
 test('the printed lines name the supervisor and the error count', async () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
   try {
@@ -344,12 +315,6 @@ test('the printed lines name the supervisor and the error count', async () => {
   }
 });
 
-// --- the monorepo double entry ----------------------------------------
-//
-// `worktree create` registers the worktree ROOT to reserve its label, and in
-// a monorepo the app registers its own entry -- two registry records for one
-// workspace. The human view relabels the root; the JSON view must flag it,
-// or a consumer counting environments double-counts the workspace.
 test('a label-only worktree root is flagged labelOnly in --json and relabelled in the human view', async () => {
   saveConfig(
     makeConfig({
@@ -379,8 +344,6 @@ test('a label-only worktree root is flagged labelOnly in --json and relabelled i
   expect(logs.some((l) => /worktree root \(holds the label/.test(l))).toBeTruthy();
 });
 
-// A worktree root that IS the app (no monorepo) must not be flagged: it has
-// the port/device/bundle facts of a real environment.
 test('a worktree root that is itself the app is not flagged labelOnly', async () => {
   saveConfig(
     makeConfig({
@@ -402,13 +365,6 @@ test('a worktree root that is itself the app is not flagged labelOnly', async ()
   expect('labelOnly' in payload.environments[0]).toBe(false);
 });
 
-// --- the disk report --------------------------------------------------
-//
-// It read `df -k /` and nothing else. On a machine whose repos live on an
-// external SSD that number describes a volume nothing is building on, while the
-// volume that can actually fill up -- build output is workspace-local -- went
-// unmentioned. `volumeRootFor` decides which volumes are in play, so this is
-// checked with an explicit path rather than against wherever the suite runs.
 function dfOutput({ totalKb, availableKb }: { totalKb: number; availableKb: number }) {
   const usedKb = totalKb - availableKb;
   const capacity = Math.round((usedKb / totalKb) * 100);
@@ -476,7 +432,6 @@ test('an RN_ISO_HOME on another volume is reported even when the project is on t
   }
 });
 
-// A df that cannot be read is a missing line, never a crash and never a zero.
 test('a volume df cannot answer for is dropped, not reported as empty', async () => {
   dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });
   const volumes = readVolumes('/Volumes/Unplugged/app');

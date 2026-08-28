@@ -1,11 +1,3 @@
-// engine/gradle.js -- `./gradlew assembleDebug` and where its APK ended up.
-//
-// No real gradle build runs here: every case uses a fake spawn, and the APK
-// files are written by the test. The transcripts in test/fixtures/gradle-*.txt
-// ARE real -- captured from a gradle 8.13 `assembleDebug` on a scratch java
-// project (one deliberately uncompilable source file), run through this
-// module's own line reader, using the distribution already on the machine so
-// nothing was downloaded and no emulator was involved.
 import assert from 'node:assert';
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
@@ -66,9 +58,6 @@ function writeApk(name = 'app-debug.apk', contents = 'apk') {
   return join(dir, name);
 }
 
-// A flavored output: outputs/apk/<flavor>/<buildType>/<name>, the layout AGP
-// writes for a project with product flavors (tlon-mobile's is
-// apk/production/debug/app-production-debug.apk).
 function writeFlavoredApk(flavor: string, buildType: string, name: string, contents = 'apk') {
   const dir = join(apkOutputsDir(root), flavor, buildType);
   mkdirSync(dir, { recursive: true });
@@ -138,7 +127,6 @@ describe('pickDebugApk', () => {
     expect(pickDebugApk(null)).toBe(null);
   });
 
-  // readdir order is not a contract; two orderings must give one answer.
   test('is deterministic whatever order the listing arrives in', () => {
     const files = ['b-debug.apk', 'a-debug.apk'];
     expect(pickDebugApk(files)).toBe(pickDebugApk(files.toReversed()));
@@ -212,8 +200,6 @@ describe('locateApk', () => {
       join(debugApkDir(root), 'output-metadata.json'),
       JSON.stringify({ elements: [{ outputFile: 'app-staging-debug.apk' }] }),
     );
-    // The listing names the flavoured APK this build actually produced, so
-    // the AGP-default name on disk (left by an earlier run) does not win.
     expect(locateApk(root, 'BUILD SUCCESSFUL in 3s').apkPath).toBe(flavoured);
   });
 
@@ -230,8 +216,6 @@ describe('locateApk', () => {
   test('no APK at all is null, not a throw', () => {
     expect(locateApk(root, '')).toEqual({ apkPath: null });
   });
-
-  // --- with a variant configured -------------------------------------------
 
   test("a variant resolves to the flavor's own output directory", () => {
     const apk = writeFlavoredApk('production', 'debug', 'app-production-debug.apk');
@@ -260,8 +244,6 @@ describe('locateApk', () => {
     writeFlavoredApk('preview', 'debug', 'app-preview-debug.apk');
     expect(locateApk(root, '', 'productionDebug').apkPath).toBe(null);
   });
-
-  // --- the recursive fallback (no variant configured) -----------------------
 
   test('exactly one flavored debug APK is used, with a note naming the directory and the variant to set', () => {
     const apk = writeFlavoredApk('production', 'debug', 'app-production-debug.apk');
@@ -327,8 +309,6 @@ describe('staleApkRefusal', () => {
   });
 });
 
-// --- buildAndroid ----------------------------------------------------------
-
 function fakeChild({
   lines = [],
   stderrLines = [],
@@ -376,9 +356,6 @@ function recordingWriter(): NdjsonWriter & { records: NdjsonRecord[] } {
   return Object.assign(writer, { records });
 }
 
-// buildAndroid returns a wide union (success vs several failure shapes); tests
-// reach for the field the case under test carries, so a permissive view keeps
-// them off `any` without asserting a single variant.
 type BuildAndroidResultLike = {
   ok?: boolean;
   apkPath?: string;
@@ -389,10 +366,6 @@ type BuildAndroidResultLike = {
   durationMs?: number;
 };
 
-// The gradle build cache, supplied on rn-iso's OWN argv so that a repo needs
-// no `org.gradle.caching=true` in a committed gradle.properties. The cache
-// directory is under the Gradle user home, which every worktree already
-// shares, so the flag is the whole of it.
 describe('gradleArgs', () => {
   test('is the assemble task plus --build-cache', () => {
     expect(gradleArgs('assembleDebug')).toEqual(['assembleDebug', '--build-cache']);
@@ -430,11 +403,6 @@ describe('buildAndroid', () => {
     const call = calls[0];
     assert(call);
     expect(call.cmd).toBe(join(root, 'android', 'gradlew'));
-    // The literal, not the constant: a test that reads the task name out of
-    // the module under test cannot notice the module changing it. --build-cache
-    // is rn-iso's own, on rn-iso's own argv: it is what makes a second worktree
-    // reuse the first one's task outputs without org.gradle.caching=true in a
-    // committed gradle.properties.
     expect(call.args).toEqual(['assembleDebug', '--build-cache']);
     expect(ASSEMBLE_TASK).toBe('assembleDebug');
     expect(call.opts.cwd).toBe(join(root, 'android'));
@@ -445,12 +413,10 @@ describe('buildAndroid', () => {
     expect((result as BuildAndroidResultLike).ok).toBe(true);
     expect((result as BuildAndroidResultLike).apkPath).toBe(join(debugApkDir(root), 'app-debug.apk'));
     expect(result.durationMs).toBe(41000);
-    // The first record is the COMMAND (issue #78), then the raw transcript.
     const [start, ...transcript] = writer.records;
     assert(start);
     expect(start.event).toBe('build_start');
     expect(start.msg).toBe(`${join(root, 'android', 'gradlew')} assembleDebug --build-cache`);
-    // Contract 1: the raw transcript is src "build", level debug.
     expect(transcript.map((r) => r.msg)).toEqual(['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s']);
     for (const record of transcript) {
       expect(record.src).toBe('build');
@@ -459,11 +425,6 @@ describe('buildAndroid', () => {
     }
   });
 
-  // The record exists so that "was --build-cache actually on the argv?" is a
-  // question the LOG answers -- test/e2e/native/run-cache-e2e.mjs reads exactly
-  // this record rather than racing `ps` against a live build. It is REPORTED,
-  // not inferred, so it carries level info and no `raw` flag, which is what
-  // distinguishes it from the transcript lines around it.
   test('writes a build_start record carrying the resolved gradlew path and its full argv', async () => {
     makeAndroidProject();
     const writer = recordingWriter();
@@ -521,7 +482,6 @@ describe('buildAndroid', () => {
     expect(result.diagnostics.length > 0).toBeTruthy();
     expect(result.diagnostics.some((d) => (d.file || '').endsWith('Broken.java'))).toBeTruthy();
     expect(result.truncated).toBe(0);
-    // The tail is what the command prints when nothing could be extracted.
     expect(result.lastLines.length > 0).toBeTruthy();
     expect(result.lastLines.every((l) => typeof l === 'string')).toBeTruthy();
   });
@@ -652,8 +612,6 @@ describe('buildAndroid', () => {
     utimesSync(apk, old, old);
     const result = await buildAndroid(
       { root, logWriter: recordingWriter() },
-      // Exit 0 without writing anything: the "successful" build left only the
-      // hour-old APK that was carried in.
       { spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'] }) },
     );
     expect(result.failed).toBe(true);
@@ -676,8 +634,6 @@ describe('buildAndroid', () => {
     expect((result as BuildAndroidResultLike).remedy).toMatch(/chmod \+x/);
   });
 
-  // A spawn that fails emits `error` and never `exit`; awaiting exit alone
-  // would hang here forever.
   test('a spawn that errors after starting still resolves', async () => {
     makeAndroidProject();
     const result = await buildAndroid(
@@ -726,15 +682,9 @@ describe('buildAndroid', () => {
     expect((result as BuildAndroidResultLike).remedy).toMatch(/ANDROID_HOME/);
   });
 
-  // The heartbeat: the same seam buildIos has (the helpers live in xcode.ts
-  // and gradle borrows them), exercised here because the wiring -- gradle's
-  // own push() feeding the activity hint, the stop after waitForChild -- is
-  // this module's.
   test('a slow gradle build emits heartbeats carrying the latest transcript line', async () => {
     makeAndroidProject();
     const beats: string[] = [];
-    // A hand-built child that stays running until the test ends it, unlike
-    // fakeChild's exit-on-setImmediate.
     const child = new EventEmitter() as EventEmitter & {
       stdout: EventEmitter & { setEncoding: (enc?: string) => void };
       stderr: EventEmitter & { setEncoding: (enc?: string) => void };

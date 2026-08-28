@@ -1,16 +1,3 @@
-// engine/app-install.js -- Contract 6, asserted as exact argv.
-//
-// The whole reason this module exists is that the build cache shares one
-// binary across workspaces, so the Metro port cannot be baked in. It is
-// applied at launch, and the mechanisms are only correct if the exact key,
-// the exact URL shape and the exact reverse pairs are right -- which is why
-// every test below asserts argv rather than "something was called".
-//
-// The two shapes were verified against real source and the citations are in
-// the module: RCT_jsLocation in react-native's RCTBundleURLProvider.mm
-// (kRCTJsLocationKey line 30, jsLocation line 554, serverRootWithHostPort
-// line 70), and the dev-client URL in expo's UrlCreator.ts line 88 plus
-// EXDevLauncherURLHelperTests.swift line 15.
 import assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -51,8 +38,6 @@ import {
   writeDebugHttpHost,
 } from '../engine/app-install.ts';
 
-// launchAndroidApp / launchIosApp return a union of success and failure shapes;
-// a permissive structural view lets a test read the branch it exercised.
 type LaunchResult = {
   ok?: boolean;
   failed?: boolean;
@@ -68,8 +53,6 @@ type LaunchResult = {
   [key: string]: unknown;
 };
 
-// Records every runFile call as a flat argv array, and lets a test make a
-// particular one fail.
 interface RecordingExec extends Executor {
   calls: string[][];
 }
@@ -106,9 +89,6 @@ function recordingExec({
 }
 
 describe('the two pure port-wiring shapes', () => {
-  // A host:port string, not a URL and not a bare port: serverRootWithHostPort
-  // interpolates it whole when it contains a colon, and appends the default
-  // 8081 when it does not.
   test('jsLocationValue is host:port', () => {
     expect(jsLocationValue(8082)).toBe('localhost:8082');
     expect(jsLocationValue(8082)).toMatch(/:/);
@@ -116,7 +96,6 @@ describe('the two pure port-wiring shapes', () => {
 
   test('devClientUrl matches the shape expo-dev-launcher asserts on', () => {
     expect(devClientUrl('myapp', 8082)).toBe('myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082');
-    // The exact string in EXDevLauncherURLHelperTests.swift line 15.
     expect(devClientUrl('scheme', 8081)).toBe('scheme://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081');
   });
 });
@@ -136,10 +115,6 @@ describe('ios', () => {
     expect(result.reason).toMatch(/device not booted/);
   });
 
-  // RCT_jsLocation is written FIRST and unconditionally. On the bare path it
-  // is the only wiring there is; on the dev-client path an in-app reload
-  // still goes through RCTBundleURLProvider, and a stale default there would
-  // send the reload at 8081 -- another workspace's bundler.
   test('launchIosApp writes RCT_jsLocation before launching, bare RN path', () => {
     const exec = recordingExec();
     const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
@@ -179,8 +154,6 @@ describe('ios', () => {
     );
   });
 
-  // metroPort: null is the RELEASE contract: the bundle is embedded, so there
-  // is no port to wire -- no defaults write, no deep link, one plain launch.
   test('launchIosApp with metroPort null is a plain launch: no RCT_jsLocation write, no openurl', () => {
     const exec = recordingExec({ outputs: { 'simctl launch': 'com.example.app: 4242' } });
     const result = launchIosApp(
@@ -243,9 +216,6 @@ describe('verifyReleaseLaunch', () => {
 });
 
 describe('android: resolve-activity parsing', () => {
-  // Captured verbatim from a live emulator (Android 16):
-  //   adb -s emulator-5554 shell cmd package resolve-activity --brief \
-  //     -c android.intent.category.LAUNCHER com.android.settings
   const REAL =
     'priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\ncom.android.settings/.Settings\n';
 
@@ -253,7 +223,6 @@ describe('android: resolve-activity parsing', () => {
     expect(parseResolvedActivity(REAL)).toBe('com.android.settings/.Settings');
   });
 
-  // Also captured from the same emulator, for a package that does not exist.
   test('returns null for "No activity found", which resolve-activity prints with exit 0', () => {
     expect(parseResolvedActivity('No activity found\n')).toBe(null);
   });
@@ -278,9 +247,6 @@ describe('android: install and launch', () => {
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'install', '-r', apkPath]]);
   });
 
-  // Contract 6: the app asks for its compiled-in 8081, and that request is
-  // mapped to THIS workspace's reservation. The same-port reverse is kept for
-  // tooling that asks for the real port by number.
   test('reverseMetroPorts maps 8081 to the reserved port AND keeps the same-port reverse', () => {
     const exec = recordingExec();
     const result = reverseMetroPorts({ serial: 'emulator-5554', metroPort: 8082 }, { exec });
@@ -309,8 +275,6 @@ describe('android: install and launch', () => {
     expect(exec.calls).toEqual([
       ['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8081', 'tcp:8082'],
       ['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:8082'],
-      // The debug_http_host write sits between the reverses and the launch:
-      // exact position pinned so neither mechanism can silently disappear.
       exec.calls[2],
       [
         'adb',
@@ -343,9 +307,6 @@ describe('android: install and launch', () => {
     expect(exec.calls.at(-1)).toEqual(['adb', '-s', 'emulator-5554', 'shell', 'monkey', '-p', 'com.example.app', '1']);
   });
 
-  // Wiring the port is not optional: launching an app whose 8081 goes nowhere
-  // produces "Could not connect to development server" three seconds later,
-  // which is a much worse diagnostic than the adb failure itself.
   test('a failed reverse stops the launch', () => {
     const exec = recordingExec({ fail: 'reverse' });
     const result: LaunchResult = launchAndroidApp(
@@ -382,7 +343,6 @@ describe('android: install and launch', () => {
   });
 });
 
-// --- debug_http_host (the react-native-worktree trick) ----------------------
 test('writeDebugHttpHost writes host:port via run-as and reports it', () => {
   const calls: string[][] = [];
   const exec = {
@@ -422,19 +382,6 @@ test('a failed prefs write does not fail the launch', () => {
   expect(r.debugHttpHostNote).toMatch(/relying on adb reverse/);
 });
 
-// --- launch verification ---------------------------------------------------
-//
-// `simctl launch` returning a pid proves a process started. It does NOT prove
-// the app loaded a bundle from this workspace's Metro: the observed failure
-// was an app sitting on expo-dev-launcher's DEVELOPMENT SERVERS picker,
-// listing every other workspace's bundler, while rn-iso reported
-// launched: true. These tests pin the three paths that matter -- verified,
-// the picker (nothing ever arrives), and the iOS 26 alert stall (something
-// arrives, but only after the deadline).
-
-// A fake clock, so a 20-second poll costs no wall time. `sleep` advances it
-// instead of waiting, which is the only reason these can assert real
-// timeouts.
 function fakeClock(start = 1000) {
   let t = start;
   return {
@@ -453,7 +400,6 @@ describe('isBundleProof', () => {
   test('a Metro reporter bundle event after the launch is proof', () => {
     expect(isBundleProof({ ts: 100, event: 'bundle_build_started', src: 'metro' }, 100)).toBe(true);
     expect(isBundleProof({ ts: 150, event: 'bundle_build_done', src: 'metro' }, 100)).toBe(true);
-    // A bundling error still proves the request reached THIS server.
     expect(isBundleProof({ ts: 150, event: 'bundling_error', src: 'metro' }, 100)).toBe(true);
   });
 
@@ -470,15 +416,11 @@ describe('isBundleProof', () => {
         100,
       ),
     ).toBe(true);
-    // The predicate the supervisor exports and the one this module keeps must
-    // not drift apart.
     expect(isBundleActivityLine('Android Bundling failed 91ms')).toBe(true);
     expect(isBundleProof({ ts: 150, src: 'metro', msg: 'Android Bundling failed 91ms' }, 100)).toBe(true);
   });
 
   test('a record from BEFORE the launch is not proof of this launch', () => {
-    // The previous run's bundle build is still in the same file. Trusting it
-    // would verify a launch that loaded nothing.
     expect(isBundleProof({ ts: 99, event: 'bundle_build_done' }, 100)).toBe(false);
     expect(isBundleProof({ event: 'bundle_build_done' }, 100)).toBe(false);
   });
@@ -505,7 +447,6 @@ describe('verifyLaunch', () => {
       sleep: clock.sleep,
       readRecords: () => {
         reads += 1;
-        // Nothing for the first two polls, then the bundle request.
         if (reads === 3) records.push({ ts: clock.at(), event: 'bundle_build_started' });
         return records;
       },
@@ -522,8 +463,6 @@ describe('verifyLaunch', () => {
       since: clock.at(),
       now: clock.now,
       sleep: clock.sleep,
-      // The dev launcher is showing its server list. The dev server logs its
-      // own startup and nothing else -- no bundle is ever requested.
       readRecords: () => [
         {
           ts: clock.at(),
@@ -539,8 +478,6 @@ describe('verifyLaunch', () => {
   });
 
   test('the alert stall: a bundle that arrives after the deadline does not retroactively verify', async () => {
-    // iOS 26 gates `simctl openurl` behind an "Open in <app>?" system alert.
-    // Somebody taps it 30 seconds later; the run has long since reported.
     const clock = fakeClock();
     const result = await verifyLaunch({
       since: clock.at(),
@@ -620,11 +557,6 @@ describe('unverifiedLaunchLines', () => {
   });
 });
 
-// Field-proven on a fresh simulator: the iOS 26 "Open in <app>?" alert fires on
-// EVERY first launch, and the only imperative this block used to carry was
-// "retry the deep link" -- which re-raises the same alert forever. The action
-// that actually works (confirm the alert) appeared as a CAUSE, three lines up
-// from the command an agent would run. Order is the fix.
 describe('unverifiedLaunchLines: the action comes first', () => {
   function iosLines() {
     return unverifiedLaunchLines({
@@ -674,26 +606,6 @@ describe('unverifiedLaunchLines: the action comes first', () => {
   });
 });
 
-// --- debug_http_host: the script is EXECUTED here, not pattern-matched -----
-//
-// The argv-regex test above passed for the entire life of a writeDebugHttpHost
-// that COULD NOT RUN. The script it built had three defects and any one of
-// them was fatal: `.join(' ')` put `if` and `then` on one line
-// (`sh: syntax error: unexpected 'then'`), the escaped inner double quotes
-// closed the outer quoting so `>10.0.2.2:8085` parsed as a REDIRECTION, and
-// the `\n` in the printf arguments went into a single-line command. A regex
-// over the argv cannot see any of that. Executing the thing can.
-//
-// The runner below is a faithful stand-in for what adb does with
-// `adb shell run-as <pkg> sh -c <arg>`: adb does NOT escape -- it joins the
-// argv with spaces and hands the STRING to the device's shell, which parses
-// it and hands the quoted script on to `sh -c`. So the outer `sh -c` here is
-// the device shell, and the inner one is the script's. (`run-as` itself adds
-// no parsing layer: it switches uid and execs its remaining argv.)
-//
-// Verified against the real thing as well, on a real emulator, with a real
-// debuggable app -- see the change's report. This is the part of it that can
-// run in CI.
 describe('the debug_http_host script, run for real under sh', () => {
   let dir: string;
   const PKG = 'com.example.app';
@@ -706,8 +618,6 @@ describe('the debug_http_host script, run for real under sh', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  // The device shell, then the script's shell. Throws (non-zero exit) exactly
-  // where adb would report a failure.
   const runScript = (port: number) =>
     execFileSync(
       '/bin/sh',
@@ -718,9 +628,6 @@ describe('the debug_http_host script, run for real under sh', () => {
       { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
 
-  // A strict-enough XML reader: it fails on unbalanced or unclosed tags, so
-  // "the file parses" is an assertion and not a grep. Returns the <map>'s
-  // string entries.
   const parsePrefs = (text: string) => {
     const entries: Record<string, string> = {};
     const stack: Array<{ name: string; attrs: Record<string, string> }> = [];
@@ -780,7 +687,6 @@ describe('the debug_http_host script, run for real under sh', () => {
     writeFileSync(
       prefsPath(),
       [
-        // Android's own writer: single-quoted declaration, four-space indent.
         "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>",
         '<map>',
         '    <string name="onboarding">done</string>',
@@ -815,23 +721,17 @@ describe('the debug_http_host script, run for real under sh', () => {
     const script = debugHttpHostScript({ packageName: PKG, host: '10.0.2.2:8085' });
     expect(script.split('\n').length >= 6).toBeTruthy();
     expect(script).toMatch(/^cd \/data\/data\/com\.example\.app \|\| exit 1$/m);
-    // The defect that made `>10.0.2.2:8085` a redirection: the XML's double
-    // quotes must never be escaped INSIDE a double-quoted shell word.
     expect(script).not.toMatch(/\\"/);
-    // Round-trip: what the device shell will hand to `sh -c` is byte for byte
-    // what was built.
     const roundTripped = execFileSync('/bin/sh', ['-c', `printf %s ${deviceShellArg(script)}`], { encoding: 'utf-8' });
     expect(roundTripped).toBe(script);
   });
 });
 
-// --- the dev-client deep link, Android half --------------------------------
 describe('the Android dev-client deep link', () => {
   test('the url is the iOS shape pointed at the emulator loopback', () => {
     expect(androidDevClientUrl('exp+app', 8085)).toBe(
       'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085',
     );
-    // Same builder, same shape, different host: iOS keeps localhost.
     expect(devClientUrl('exp+app', 8085)).toBe('exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085');
   });
 
@@ -852,27 +752,21 @@ describe('the Android dev-client deep link', () => {
       'start',
       '-a',
       'android.intent.action.VIEW',
-      // Quoted: adb hands the joined argv to the device's shell, and this url
-      // carries `?`.
       '-d',
       `'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082'`,
     ]);
     expect(!exec.calls.some((c: string[]) => c.includes('resolve-activity'))).toBeTruthy();
-    // The port wiring still ran first, both halves of it.
     expect(result.debugHttpHost).toBe('10.0.2.2:8082');
     expect(result.reversed).toEqual(['tcp:8081->tcp:8082', 'tcp:8082->tcp:8082']);
   });
 
   test('am start exits 0 on an intent it could not resolve, so the OUTPUT is read', () => {
-    // Captured shape from `am start` itself: it prints the error and returns
-    // 0, which is why the exit code cannot be the check.
     expect(
       amStartError(
         'Starting: Intent { act=android.intent.action.VIEW dat=exp+app://expo-development-client/... }\nError: Activity not started, unable to resolve Intent',
       ),
     ).toMatch(/unable to resolve Intent/);
     expect(amStartError('Starting: Intent { act=android.intent.action.VIEW dat=exp+app://... }')).toBe(null);
-    // An app already in the foreground: a Warning, and a success.
     expect(
       amStartError(
         'Starting: Intent { ... }\nWarning: Activity not started, its current task has been brought to the front',
@@ -893,8 +787,6 @@ describe('the Android dev-client deep link', () => {
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' },
       { exec },
     );
-    // The app is installed and a launcher start still gives the developer
-    // something: refusing the run here would be strictly worse.
     expect(result.ok).toBe(true);
     expect(result.mode).toBe('am-start');
     expect(result.devClientNote).toMatch(/unable to resolve Intent/);
@@ -921,19 +813,11 @@ describe('the Android dev-client deep link', () => {
   test('deviceShellArg quotes what adb will not', () => {
     expect(deviceShellArg('a b')).toBe(`'a b'`);
     expect(deviceShellArg("it's")).toBe(`'it'\\''s'`);
-    // The property that matters: one shell round trip returns the input.
     for (const raw of ['a b', "it's", 'x\ny', '?url=a&b=c', '$HOME `id`', '<map>']) {
       expect(execFileSync('/bin/sh', ['-c', `printf %s ${deviceShellArg(raw)}`], { encoding: 'utf-8' })).toBe(raw);
     }
   });
 });
-
-// --- android release: install robustness, plain launch, process proof ------
-//
-// A release run installs an APK this machine re-packed and re-signed with its
-// own debug keystore. The moment that meets a copy signed by CI, the install
-// is refused and only removing the package can resolve it -- so the refusal
-// is recognised by name and answered exactly once.
 
 describe('installConflictKind', () => {
   test('the signer conflict, which a locally re-signed APK guarantees', () => {
@@ -958,8 +842,6 @@ describe('installConflictKind', () => {
 describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
   const apkPath = '/tmp/rn-iso-apk-swap-1/app-production-release.apk';
 
-  // An executor whose first `install` fails with `text` and whose later ones
-  // succeed, so the retry is the thing under test rather than the mock.
   function conflictingExec(text: string, { alsoFailRetry = false } = {}) {
     const calls: string[][] = [];
     let installs = 0;
@@ -1141,15 +1023,6 @@ describe('the android release process proof', () => {
   });
 });
 
-// --- issue #53: a bundle in flight is not the same as no request at all -----
-//
-// The window is ~20s and a cold bundle of a large graph is not: the field case
-// was 37.8s for 9948 modules, reported as launched: "unverified" while
-// everything was fine. Metro says nothing about a build until it FINISHES
-// (Expo's child prints its progress with carriage returns, so no whole line
-// reaches the timeline either) -- but the app's own device log names the URL it
-// asked for, and that URL carries this workspace's port.
-
 describe('isBundleRequestProof', () => {
   test("a device log line naming a bundle URL on THIS workspace's port is proof of the request", () => {
     expect(
@@ -1205,7 +1078,6 @@ describe('verifyLaunch: still bundling', () => {
       metroPort: 8082,
       now: clock.now,
       sleep: clock.sleep,
-      // Metro has nothing to say yet: the bundle is still building.
       readRecords: () => [],
       readDeviceRecords: () => [
         { ts: since + 10, src: 'device', msg: 'Loading app from http://10.0.2.2:8082/index.bundle?platform=android' },

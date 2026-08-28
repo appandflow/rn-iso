@@ -120,9 +120,6 @@ test('parseOccupyingApps ignores apple system apps', () => {
 
 test('parseOccupyingApps fails open on unparseable output', () => {
   expect(parseOccupyingApps('')).toEqual([]);
-  // parseOccupyingApps is typed (launchctlOutput: string) but guards against a
-  // non-string at runtime; exercise that fail-open path. Matches the sibling
-  // convention (errors-gradle.test.ts's `null as any`, errors-xcode's `as unknown as string`).
   expect(parseOccupyingApps(null as unknown as string)).toEqual([]);
 });
 
@@ -171,10 +168,6 @@ test('pickDefaultIosCreation returns null when nothing matches', () => {
   expect(pickDefaultIosCreation(deviceTypes, runtimes, { deviceType: 'iPhone 99' })).toBe(null);
 });
 
-// Regression: every real Xcode install ships lettered models (SE, Air) beside
-// the numbered ones. localeCompare sorts letters after digits, so "iPhone SE"
-// beat "iPhone 17 Pro Max" and every default sim spawned as an SE. The fixture
-// above missed it by containing numbered models only.
 test('pickDefaultIosCreation prefers a numbered iPhone over lettered models (SE, Air)', () => {
   const deviceTypes = [
     { identifier: 'dt.se3', name: 'iPhone SE (3rd generation)' },
@@ -264,9 +257,6 @@ test('deleteIosSim deletes an rn-iso-owned sim', () => {
   expect(ran.some((c) => /xcrun simctl delete UDID-B/.test(c))).toBeTruthy();
 });
 
-// A failed simctl delete leaves the sim on disk. It must reach the caller as a
-// throw (teardown.js turns it into { status: 'failed' }), not be swallowed into
-// a report of a device that was never actually deleted.
 test('deleteIosSim propagates a simctl failure instead of swallowing it', () => {
   setExecutor({
     run: (cmd) => {
@@ -293,10 +283,6 @@ test('deleteIosSim no-ops quietly when the udid is already gone', () => {
   expect(ranQuiet).toBe(false);
 });
 
-// Fails CLOSED: an unanswerable occupancy probe must report "occupied", so a
-// teardown site skips the sim instead of deleting one that may still be driven
-// by a foreign UI-test runner. This failed OPEN until 0.9.0, on a rationale
-// (never block device selection) whose model was deleted in 0.7.
 test('occupyingApps returns null (doubt, read as occupied) when the probe cannot answer', async () => {
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
   expect(occupyingApps('UDID-X')).toBe(null);
@@ -315,10 +301,6 @@ test('occupyingApps returns the counted xctrunner bundles, and [] for a free sim
   resetExecutor();
 });
 
-// A shut-down device cannot be occupied, and `simctl spawn` cannot answer for
-// one -- it exits non-zero with "device is not booted", which the probe alone
-// reads as occupied. That left a shut-down orphan permanently unreapable: gc
-// reported it and skipped it every run. The state check has to come first.
 test('occupyingApps reports a shut-down device free without probing', async () => {
   const devices = JSON.stringify({
     devices: {
@@ -341,8 +323,6 @@ test('occupyingApps reports a shut-down device free without probing', async () =
   resetExecutor();
 });
 
-// The state check must not weaken the guard for a device that IS booted: an
-// unanswerable probe there is still doubt, and doubt still means occupied.
 test('occupyingApps still returns null (doubt) for a booted device whose probe cannot answer', async () => {
   const devices = JSON.stringify({
     devices: {
@@ -356,9 +336,6 @@ test('occupyingApps still returns null (doubt) for a booted device whose probe c
   resetExecutor();
 });
 
-// A worktree named `rn-iso-test-dialogue` used to become the simulator
-// `rn-iso-rn-iso-test-dialogue`. The prefix is the ownership marker, so it must
-// still be there exactly once.
 test('ownedSimName does not double the ownership prefix', () => {
   expect(ownedSimName('rn-iso-test-dialogue')).toBe('rn-iso-test-dialogue');
   expect(ownedSimName('test-dialogue')).toBe('rn-iso-test-dialogue');

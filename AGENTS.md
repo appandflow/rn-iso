@@ -58,6 +58,30 @@ commit. Run `npm run test:e2e` when a change affects an end-to-end workflow.
 - **Concurrency limits.** Build and device caps are opt-in through config or
   environment variables. Do not add a config command.
 
+## Comment policy
+
+Treat every code comment as removable. Keep a comment only when it is one of
+these exceptions:
+
+- A legal or license header.
+- A non-obvious constraint from an external dependency, platform, vendor, or
+  protocol. Name the external source and the concrete constraint.
+- A required formatter directive such as `prettier-ignore`.
+- A doc comment that defines a public API contract.
+- A direct issue or RFC link for a constraint that code cannot express.
+
+Delete narration, banners, commented-out code, workaround essays, and comments
+that restate the code. Words such as `IMPORTANT`, `do not remove`, and `fine for
+now` do not make a comment valid. Read the nearby code before judging a comment.
+When no keep rule clearly applies, delete the comment.
+
+Treat suppressions such as `eslint-disable`, `@ts-ignore`, and
+`@ts-expect-error` as code problems. Keep a suppression only for a faulty,
+pedantic, or style-only rule. If the rule protects correctness or safety, remove
+the suppression and report the exact symbol as `MUST KILL` for a later refactor.
+For a surprising behavior in this codebase, delete the explanation and report
+the exact symbol as `MUST KILL`. Do not add `MUST KILL` markers to source files.
+
 ## Required invariants
 
 ### 1. Keep agent guidance current

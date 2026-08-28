@@ -46,9 +46,6 @@ test('reclaimProject removes the config entry', async () => {
   expect(getProject('/proj')).toBe(null);
 });
 
-// Build output is workspace-local now, so reclaiming an entry has no external
-// artifacts to find or measure: it must not walk a global DerivedData tree
-// (one `plutil` per directory) or size anything (one `du` walk per match).
 test('reclaimProject scans and sizes no build output at all', async () => {
   const calls: string[] = [];
   setExecutor({
@@ -70,8 +67,6 @@ test('reclaimProject scans and sizes no build output at all', async () => {
   expect(calls.some((c) => c.startsWith('plutil'))).toBe(false);
 });
 
-// A device whose delete FAILED is still on the machine. Dropping the entry
-// that names it is what turns a failed teardown into a leaked simulator.
 test('reclaimProject keeps the config entry when an owned device delete fails', async () => {
   const listJson = JSON.stringify({
     devices: {
@@ -124,8 +119,6 @@ test('reclaimProject removes the entry when the owned device really is deleted',
 });
 
 test('reclaimProject refuses to kill an unidentified process on the port', async () => {
-  // A stale record plus a foreign listener must NOT be killed: this is the
-  // Metro analogue of the Android console-port Critical from the 0.7.0 review.
   setExecutor({
     run: () => '',
     runQuiet: (cmd) => (cmd.includes('-sTCP:LISTEN') ? '4242' : ''),

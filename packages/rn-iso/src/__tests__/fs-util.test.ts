@@ -29,19 +29,9 @@ test('isRealMount refuses to guess when either dev is missing', () => {
   expect(isRealMount(undefined, undefined)).toBe(false);
 });
 
-// Carried over from the symlink case test/artifacts.test.js used to cover
-// through listDerivedDataEntries. The producer is gone, but the symlink
-// resolution behind isOnMountedVolume is the whole reason this half of
-// artifacts.js survived, and findReclaimablePort and gc gate destructive
-// work on it -- so the coverage moves here rather than disappearing with the
-// DerivedData classifier.
 test('isOnMountedVolume resolves a symlinked ancestor instead of classifying the raw path text', () => {
   const homeDir = mkdtempSync(join(tmpdir(), 'rn-iso-fsutil-'));
   try {
-    // Simulate a home-folder path that is itself a symlink onto a volume that
-    // is not currently mounted: the symlink resolves, but its target does not
-    // exist. A naive volumeRootFor() on the textual path would call this the
-    // always-mounted boot volume.
     const symlinkedAncestor = join(homeDir, 'Developer');
     symlinkSync('/Volumes/UnmountedTestVolume/Developer', symlinkedAncestor);
     const projectPath = join(symlinkedAncestor, 'app');
@@ -58,8 +48,6 @@ test('isOnMountedVolume confirms a plain boot-volume path', () => {
   expect(isOnMountedVolume(tmpdir(), ['/'])).toBe(true);
 });
 
-// Fail closed: anything that cannot be proven mounted is reported as not
-// mounted, because every caller uses this to gate a destructive action.
 test('isOnMountedVolume returns false for a path it cannot resolve', () => {
   expect(isOnMountedVolume('relative/path/app', ['/'])).toBe(false);
   expect(isOnMountedVolume('~/Developer/app', ['/'])).toBe(false);

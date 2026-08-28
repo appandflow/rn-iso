@@ -1,10 +1,3 @@
-// The `logs` command. Two things matter beyond the plumbing:
-//
-// 1. Exit 0 when nothing matches. `logs --errors` returning empty IS the pass
-//    condition of an agent loop, so a non-zero exit there would report every
-//    healthy build as a failure.
-// 2. --json emits the raw records, one per line, so its stdout is itself
-//    valid NDJSON and can be piped straight back into a parser.
 import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -22,7 +15,6 @@ import logsCommand, {
   validateSources,
 } from '../commands/logs.ts';
 
-// The action callback commander invokes for `logs`: `(opts)`.
 type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
 
 interface CommandStub {
@@ -32,8 +24,6 @@ interface CommandStub {
   action(fn: ActionFn): CommandStub;
 }
 
-// Turns the merged NDJSON lines a --json run prints back into their record
-// messages, asserting each line parsed (parseNdjsonLine returns null on junk).
 function parsedMsgs(lines: string[]): unknown[] {
   return lines.map((l) => {
     const record = parseNdjsonLine(l);
@@ -42,8 +32,6 @@ function parsedMsgs(lines: string[]): unknown[] {
   });
 }
 
-// Same commander stub the other command tests use: capturing the action is the
-// only way to run it without commander's own argument parsing.
 function captureAction(register: (program: Command) => void) {
   let captured: ActionFn | undefined;
   const stub: CommandStub = {
@@ -136,8 +124,6 @@ describe('formatting', () => {
     expect(line).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3} info /);
   });
 
-  // The command colours the level; the formatter stays pure so the tests do
-  // not depend on whether chalk decided the test runner is a TTY.
   test('formatRecord paints only the level, and defaults to no colour', () => {
     const line = formatRecord({ ts: 0, src: 'metro', level: 'warn', msg: 'hm' }, { paint: (t) => `<${t}>` });
     expect(line).toMatch(/<warn >/);
@@ -159,9 +145,6 @@ describe('option validation', () => {
     }
   });
 
-  // A typo in --source must not silently return nothing: `logs --errors
-  // --source metrro` returning empty is indistinguishable from a clean build,
-  // which is the one answer this CLI must never get wrong.
   test('validateSources accepts the Contract-1 sources and rejects a typo', () => {
     expect(validateSources(['metro', 'client'])).toEqual({ sources: ['metro', 'client'] });
     expect(validateSources(undefined)).toEqual({ sources: undefined });
@@ -171,8 +154,6 @@ describe('option validation', () => {
     expect(r.error).toMatch(/metro, client, device, build/);
   });
 
-  // `all` exists because --errors has a default scope now: without a word for
-  // "everything", asking for the device stream back means typing the list.
   test('validateSources expands all to every Contract-1 source', () => {
     expect(validateSources(['all'])).toEqual({ sources: ['metro', 'client', 'device', 'build'] });
     expect(validateSources(['client', 'all'])).toEqual({ sources: ['metro', 'client', 'device', 'build'] });
@@ -336,7 +317,6 @@ describe('logs command', () => {
 
   test('outside a project it exits 1 and says so', () => {
     const bare = mkdtempSync(join(tmpdir(), 'rn-iso-logscmd-bare-'));
-    // A directory with no package.json anywhere above it: / has none either.
     process.chdir(bare);
     try {
       run({});
@@ -344,8 +324,6 @@ describe('logs command', () => {
       process.chdir(project);
       rmSync(bare, { recursive: true, force: true });
     }
-    // findProjectRoot walks to the filesystem root; on a dev machine tmpdir
-    // has no package.json ancestor, so this is the not-in-a-project path.
     expect(exitCode).toBe(1);
     expect(errOut.join('\n')).toMatch(/project/i);
   });
@@ -360,11 +338,6 @@ describe('logs command', () => {
     expect(parsedMsgs(out)).toEqual(['a second ago']);
   });
 
-  // --- the field case ------------------------------------------------------
-  //
-  // `rn-iso logs --errors` returned 3,004 iOS syslog lines on a healthy app.
-  // Two things had to change for that number to be 0: the device stream is not
-  // in the default scope of --errors, and what IS printed is bounded.
   describe('--errors, after the field test', () => {
     test('the device stream is out of scope by default', () => {
       writeLog('device.ndjson', [
@@ -403,13 +376,10 @@ describe('logs command', () => {
       writeLog('client.ndjson', many);
       run({ errors: true });
       expect(out.length).toBe(ERRORS_PRINT_CAP + 1);
-      // The HEAD survives: the first error in a window is usually the cause.
       expect(out[0]).toMatch(/boom 0$/);
       expect(out[ERRORS_PRINT_CAP - 1]).toMatch(/boom 19$/);
       const hidden = 3004 - ERRORS_PRINT_CAP;
       expect(out[ERRORS_PRINT_CAP]).toMatch(new RegExp(`and ${hidden} more`));
-      // The count in the trailer is exactly what --tail N would print, because
-      // what was hidden IS the tail.
       expect(out[ERRORS_PRINT_CAP]).toMatch(new RegExp(`--tail ${hidden}`));
       expect(out[ERRORS_PRINT_CAP]).toMatch(/--json/);
     });
@@ -437,8 +407,6 @@ describe('logs command', () => {
       expect(!out.join('\n').includes('more')).toBeTruthy();
     });
 
-    // The field sequence: the crash at 16:03:54 and the bundle_build_done
-    // marker that landed at 16:03:55 and used to swallow it.
     test('a bundle marker one second after a startup crash does not hide it', () => {
       const at = (sec: number) => Date.parse(`2026-08-24T16:03:${sec}Z`);
       writeLog('build-ios.ndjson', [{ ts: at(50), src: 'build', level: 'info', msg: 'launched', marker: true }]);

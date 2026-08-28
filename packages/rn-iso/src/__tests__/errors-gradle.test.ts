@@ -1,12 +1,3 @@
-// engine/errors-gradle.js -- a gradle transcript reduced to the lines that say
-// what broke.
-//
-// Everything here is pure, so the transcripts are the test. They are the real
-// shapes: the kotlinc K2 and pre-K2 diagnostics, javac's file:line: error:,
-// aapt2 through gradle, the FAILURE block gradle prints at the end of every
-// failed build, and dependency resolution. The `assembleDebug` transcripts
-// captured from a real gradle 8.13 run are in test/fixtures/gradle-*.txt --
-// see test/engine-gradle.test.js for how they were produced.
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -40,11 +31,7 @@ BUILD FAILED in 41s
 `);
     expect(diagnostics.length).toBe(1);
     expect(diagnostics[0]?.message).toMatch(/Execution failed for task ':app:compileDebugKotlin'/);
-    // The nested cause carries the useful half, so it is kept rather than
-    // dropped: "Execution failed for task X" alone says nothing.
     expect(diagnostics[0]?.message).toMatch(/Compilation error/);
-    // "* Try:" is gradle telling the user to re-run with --stacktrace, which
-    // is not a diagnostic.
     expect(diagnostics.filter((d) => /stacktrace/.test(d.message)).length).toBe(0);
   });
 
@@ -137,8 +124,6 @@ Could not determine the dependencies of task ':app:compileDebugJavaWithJavac'.
     expect(diagnostics[0]?.remedy).toMatch(/refresh-dependencies/);
   });
 
-  // The two environment failures rn-iso must name rather than let an agent
-  // retry into: a missing SDK and the wrong JDK.
   test('a missing Android SDK carries the ANDROID_HOME remedy', () => {
     const diagnostics = extractGradleDiagnostics(`
 FAILURE: Build failed with an exception.
@@ -266,13 +251,6 @@ describe('against transcripts captured from a real gradle run', () => {
   });
 });
 
-// --- issue #54: the CMake block that named the fix, and was clipped ---------
-//
-// AGP folds a failed C/C++ configure into gradle's "* What went wrong:"
-// section as one long [CXX1429] block. That section is joined into ONE message
-// and clipped at 300 characters -- and the `message(FATAL_ERROR ...)` line,
-// which is the only line in it that says what to do, sits at the end. It was
-// the repo's own fix (`npx install-skia`) and an agent never saw it.
 describe('CMake FATAL_ERROR lines survive the What-went-wrong clip', () => {
   const filler = 'x'.repeat(120);
   const transcript = [
@@ -295,8 +273,6 @@ describe('CMake FATAL_ERROR lines survive the What-went-wrong clip', () => {
     const fatal = diagnostics.find((d) => /FATAL_ERROR/.test(d.message));
     assert(fatal, 'expected the FATAL_ERROR line to survive as its own diagnostic');
     expect(fatal.message).toMatch(/npx install-skia/);
-    // The joined block is still there, and still clipped -- that is what makes
-    // the separate line necessary rather than redundant.
     const joined = diagnostics.find((d) => /CXX1429/.test(d.message));
     assert(joined);
     expect(joined.message.endsWith('...')).toBe(true);

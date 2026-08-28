@@ -1,19 +1,3 @@
-// src/engine/app-install.js -- artifact onto device, then launched against
-// THIS workspace's Metro port.
-//
-// Contract 6 is the whole point of this module: the build cache shares one
-// binary across every workspace on the machine, so the Metro port must never
-// be baked into a build. It is applied at LAUNCH time instead, per platform,
-// and each mechanism below is verified against the source that reads it.
-//
-// Nothing here throws on a tool failure. Every function returns
-//   { ok: true, ... }  or  { failed: true, reason, ... }
-// because a failed install is a diagnostic the command layer prints with a
-// log path, not an exception it has to catch three frames up.
-//
-// runFile (argv array, no shell) everywhere a path or a URL is involved: an
-// app path with a space in it, and a dev-client URL full of `&` and `%`, both
-// reach the tool as one literal argument that way. CLAUDE.md's exec rule.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
@@ -22,17 +6,12 @@ import { parseNdjsonText, type NdjsonRecord } from '../ndjson.ts';
 export const INSTALL_ERROR = 'RN_ISO_INSTALL_FAILED';
 export const LAUNCH_ERROR = 'RN_ISO_LAUNCH_FAILED';
 
-// The port a debug React Native app asks for when nothing tells it otherwise.
-// Android's reverse maps THIS to the workspace's reserved port; see below.
 export const DEFAULT_METRO_PORT = 8081;
 
-// The injected-executor seam every function in this module accepts.
 interface ExecOpt {
   exec?: Executor | null;
 }
 
-// The all-optional result views this module's contract promises: { ok, ... }
-// on success, { failed, code, reason } on failure.
 export type IosInstallResult = {
   ok?: boolean;
   appPath?: string;
@@ -46,9 +25,6 @@ export type IosLaunchResult = {
   mode?: string;
   url?: string;
   jsLocation?: string;
-  // The app's host process id, parsed from `simctl launch` output on the
-  // plain-launch path (a simulator app IS a host process). null when the
-  // launch went through openurl, which starts no process of its own.
   pid?: number | null;
   failed?: boolean;
   code?: string;
@@ -58,8 +34,6 @@ export type IosLaunchResult = {
 export type AndroidInstallResult = {
   ok?: boolean;
   apkPath?: string;
-  // Set when the install only succeeded after the existing copy was removed
-  // (see installConflictKind); `note` says why, and the caller prints it.
   uninstalled?: boolean;
   note?: string;
   failed?: boolean;
@@ -81,8 +55,6 @@ export type AndroidLaunchResult = {
   reason?: string;
 };
 
-// --- iOS ------------------------------------------------------------------
-
 export function installIosApp(
   { udid, appPath }: { udid: string; appPath: string },
   { exec = null }: ExecOpt = {},
@@ -96,67 +68,14 @@ export function installIosApp(
   }
 }
 
-// PURE. The value written to the app's RCT_jsLocation default.
-//
-// VERIFIED against react-native (checkout at /Volumes/ExternalSSD/Developer/
-// react-native), packages/react-native/React/Base/RCTBundleURLProvider.mm:
-//   line 30   static NSString *const kRCTJsLocationKey = @"RCT_jsLocation";
-//   line 554  - (NSString *)jsLocation
-//               { return [[NSUserDefaults standardUserDefaults]
-//                          stringForKey:kRCTJsLocationKey]; }
-//   line 267  packagerServerHostPort reads jsLocation and returns it verbatim
-//             when set, ahead of guessPackagerHost (line 278).
-//   line 70   serverRootWithHostPort(hostPort, scheme): when hostPort
-//             CONTAINS A COLON it is interpolated whole as
-//             "<scheme>://<hostPort>/"; without one, the default port
-//             (kRCTBundleURLProviderDefaultPort, 8081) is appended.
-// So the value is a host:port string -- "localhost:8082" -- NOT a URL and
-// not a bare port. The key lives in the APP's NSUserDefaults domain, which
-// is why the write below is scoped to the bundle id.
-//
-// One behaviour worth knowing (RCTBundleURLProvider.mm line 270): under
-// RCT_DEV_MENU the provider checks that a packager is actually running at
-// this location and falls back to guessing if not. A jsLocation pointed at a
-// dead port therefore degrades to 8081 rather than failing loudly -- which is
-// exactly why `ios` refuses to run at all without a healthy Metro on the
-// reserved port (RN_ISO_NO_METRO).
 export function jsLocationValue(metroPort: number | string): string {
   return `localhost:${metroPort}`;
 }
 
-// PURE. The expo-dev-client deep link.
-//
-// VERIFIED against expo (checkout at /Volumes/ExternalSSD/Developer/expo):
-//   packages/@expo/cli/src/start/server/UrlCreator.ts line 88
-//     const devClientUrl =
-//       `${protocol}://expo-development-client/?url=${manifestUrlEncoded}`;
-//     where manifestUrlEncoded = encodeURIComponent(manifestUrl) (line 87)
-//     and manifestUrl for a localhost host is "http://localhost:<port>"
-//     (joinUrlComponents, line 219: no trailing slash).
-//   packages/expo-dev-launcher/ios/EXDevLauncherURLHelper.swift line 34
-//     isDevLauncherURL is `url?.host == "expo-development-client"` --
-//     the host segment is what the launcher matches on, so the `//` and the
-//     trailing `/?` both matter.
-//   packages/expo-dev-launcher/ios/Tests/EXDevLauncherURLHelperTests.swift
-//     line 15 asserts exactly this shape, down to the percent-encoding:
-//     "scheme://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081"
-// The CLI delivers it with `simctl openurl` (packages/@expo/cli/src/start/
-// platforms/ios/simctl.ts line 191), which is what launchIosApp does below.
-//
-// `host` is the one thing that differs by platform: a simulator shares the
-// mac's loopback, an emulator does not (see EMULATOR_HOST_LOOPBACK below).
-// The shape is otherwise identical, and expo-dev-launcher parses it the same
-// way on both -- packages/expo-dev-launcher/android/src/debug/java/expo/
-// modules/devlauncher/helpers/DevLauncherURLHelper.kt line 7 is
-// `fun isDevLauncherUrl(uri: Uri) = uri.host == "expo-development-client"`,
-// the same host-segment match EXDevLauncherURLHelper.swift line 34 makes.
 export function devClientUrl(scheme: string, metroPort: number | string, host = 'localhost'): string {
   return `${scheme}://expo-development-client/?url=${encodeURIComponent(`http://${host}:${metroPort}`)}`;
 }
 
-// PURE. The pid from `simctl launch`'s one output line, `<bundleId>: <pid>`.
-// null on anything else -- an unparseable line is a launch whose process
-// cannot be verified, not a failed launch.
 export function parseLaunchedPid(text: unknown): number | null {
   if (typeof text !== 'string') return null;
   const match = text.trim().match(/:\s*(\d+)\s*$/);
@@ -165,16 +84,6 @@ export function parseLaunchedPid(text: unknown): number | null {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-// Order matters. RCT_jsLocation is written FIRST, unconditionally, even on
-// the dev-client path: the openurl carries the port for the launcher, but a
-// later in-app reload that goes through RCTBundleURLProvider reads the
-// default instead, and a stale one there sends the reload at 8081 -- another
-// workspace's bundler.
-//
-// `metroPort: null` is the RELEASE contract: the JS bundle is embedded in the
-// app, so there is no port to wire -- no RCT_jsLocation write (release builds
-// compile RCTBundleURLProvider's dev path out entirely) and no dev-client deep
-// link, just a plain `simctl launch`.
 export function launchIosApp(
   {
     udid,
@@ -226,21 +135,6 @@ export function launchIosApp(
   }
 }
 
-// --- Android --------------------------------------------------------------
-
-// PURE. The two install refusals that mean "this APK cannot REPLACE what is
-// on the device, but it could replace nothing".
-//
-//   INSTALL_FAILED_UPDATE_INCOMPATIBLE   the signers differ. GUARANTEED the
-//     moment a locally re-packed, debug-keystore-signed release APK meets one
-//     a CI job signed with the real key -- which is exactly what the release
-//     cache-hit path produces, so it is the normal case, not an exotic one.
-//   INSTALL_FAILED_VERSION_DOWNGRADE     the installed versionCode is higher.
-//     Same shape: the package has to go before this one can land.
-//
-// Both are answered the same way (uninstall, then install once more) and both
-// COST THE APP'S DATA, which is why the caller opts in and why the note says
-// what happened.
 export function installConflictKind(text: unknown): 'signature' | 'downgrade' | null {
   const out = String(text ?? '');
   if (
@@ -265,8 +159,6 @@ export function installAndroidApp(
 ): AndroidInstallResult {
   const e = exec || getExecutor();
   const install = () => {
-    // -r reinstalls over an existing copy, keeping data. Without it every
-    // second run fails with INSTALL_FAILED_ALREADY_EXISTS.
     e.runFile('adb', ['-s', serial, 'install', '-r', apkPath]);
   };
   try {
@@ -277,8 +169,6 @@ export function installAndroidApp(
     if (!conflict || !allowUninstall || !packageName) {
       return { failed: true, code: INSTALL_ERROR, reason: `adb install failed for ${apkPath}: ${describe(err)}` };
     }
-    // ONCE. A second conflict after the package is gone is a real failure,
-    // and a retry loop here would only hide it.
     try {
       e.runFile('adb', ['-s', serial, 'uninstall', packageName]);
     } catch (uninstallErr) {
@@ -311,23 +201,12 @@ export function installAndroidApp(
   }
 }
 
-// PURE. `cmd package resolve-activity --brief` prints a header line of
-// key=value pairs and then the component on its own line:
-//
-//   priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true
-//   com.android.settings/.Settings
-//
-// (captured verbatim from a live emulator-5554, Android 16). When nothing
-// matches, the whole output is "No activity found". Returns the component or
-// null; the caller falls back to monkey.
 export function parseResolvedActivity(text: unknown): string | null {
   if (typeof text !== 'string') return null;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
     if (!line) continue;
     if (/^No activity found/i.test(line)) return null;
-    // The header line is key=value pairs with no slash; a component always
-    // has exactly one, separating package from activity.
     if (line.includes('=')) continue;
     if (!line.includes('/')) continue;
     return line;
@@ -352,24 +231,10 @@ function resolveLaunchActivity(serial: string, packageName: string, { exec = nul
     ]);
     return parseResolvedActivity(out);
   } catch {
-    // resolve-activity exits 0 even for "No activity found", so a throw here
-    // means adb itself failed. Fall back to monkey rather than refusing:
-    // monkey resolves the launcher intent inside the device.
     return null;
   }
 }
 
-// Contract 6, Android half. TWO reverses, deliberately:
-//
-//   adb reverse tcp:8081 tcp:<metroPort>
-//     The binary is port-agnostic (see the module header), so the app asks
-//     for its compiled-in default, 8081. This maps that request to THIS
-//     workspace's reservation, which is what lets four worktrees run four
-//     bundlers and four apps at once from identical APKs.
-//   adb reverse tcp:<metroPort> tcp:<metroPort>
-//     Kept for tooling that asks for the real port by number -- a dev-client
-//     deep link, a manual `curl localhost:<port>` from an adb shell, the
-//     inspector proxy. Skipped when it would duplicate the first.
 export function reverseMetroPorts(
   { serial, metroPort }: { serial: string; metroPort: number | string },
   { exec = null }: ExecOpt = {},
@@ -391,70 +256,12 @@ export function reverseMetroPorts(
   return { ok: true, reversed: pairs.map(([device, host]) => `tcp:${device}->tcp:${host}`) };
 }
 
-// The Android analog of iOS's RCT_jsLocation, from react-native-worktree's
-// debug_http_host trick. PackagerConnectionSettings.kt reads the
-// "debug_http_host" key out of the app's default SharedPreferences and
-// returns it VERBATIM as host:port, ahead of every emulator-default fallback
-// (unlike the metro.host system property, which AndroidInfoHelpers uses as a
-// bare ip and then appends the BAKED dev-server port to -- it cannot carry a
-// workspace port). 10.0.2.2 is the emulator's route to the host loopback.
-//
-// VERIFIED against react-native (checkout at /Volumes/ExternalSSD/Developer/
-// react-native), packages/react-native/ReactAndroid/src/main/java/com/
-// facebook/react/packagerconnection/PackagerConnectionSettings.kt:
-//   line 20  PreferenceManager.getDefaultSharedPreferences(appContext)
-//            -- which is <pkg>_preferences.xml, hence the file name below.
-//   line 79  private const val PREFS_DEBUG_SERVER_HOST_KEY = "debug_http_host"
-//   line 35  getString(PREFS_DEBUG_SERVER_HOST_KEY, null) is returned as-is
-//            when non-empty, BEFORE AndroidInfoHelpers.getServerHost.
-//
-// Written via run-as, which works because this is always a debuggable build
-// on an owned emulator. Best-effort by design: any failure is reported and
-// launch proceeds -- the adb reverse mapping covers the 8081 path alone.
-
-// The emulator's fixed alias for the host loopback (qemu user-mode
-// networking). Everything rn-iso points AT the host from inside an emulator
-// uses this and not `localhost`, deliberately and in one place:
-// `adb reverse` would make localhost work too, but a reverse is per-adb-
-// connection state that dies with an adb server restart or a re-attach and is
-// only re-applied by the next `rn-iso android`, while 10.0.2.2 is routing the
-// emulator itself provides. It also keeps debug_http_host and the dev-client
-// deep link naming the SAME host, which matters because expo-dev-launcher
-// persists the url it was opened with in its recent-servers list.
 const EMULATOR_HOST_LOOPBACK = '10.0.2.2';
 
-// `adb shell` does NOT escape its arguments -- it joins them with spaces and
-// hands the resulting STRING to the device's shell, which parses it. So an
-// argv array does not protect anything on the far side: a multi-line script
-// passed as one element arrives as many device-shell commands.
-//
-// OBSERVED, on emulator-5556 running Android 16, with the very script below:
-// unquoted, `sh -c` took only the first word (`cd`) and the remaining lines
-// ran in the DEVICE shell, whose cwd is `/` --
-//   mkdir: 'shared_prefs': Read-only file system
-// while the same argv with the script quoted wrote the file correctly. Single
-// quotes, because they quote everything (the prefs XML is full of double
-// quotes), and `'\''` for the one character they cannot carry.
 export function deviceShellArg(text: unknown): string {
   return `'${String(text).replace(/'/g, "'\\''")}'`;
 }
 
-// PURE. The device-side script that lands debug_http_host in the app's
-// default SharedPreferences, whatever state that file is in. Exported so a
-// test can EXECUTE it (test/engine-app-install.test.js runs it under a local
-// `sh -c` against a temp dir): the previous version of this function was
-// asserted only by a regex over its argv, and shipped three separate shell
-// defects -- `if`/`then` collapsed onto one line by a `.join(' ')`, inner
-// double quotes that closed the outer quoting and turned `>10.0.2.2:8085`
-// into a redirection, and `\n` inside a single-line command. A test that
-// cannot fail on any of those is not a test of this.
-//
-// The file is REBUILT rather than patched, which is what removes the sed
-// expressions (and toybox's sed, which is what an emulator has, is not GNU
-// sed) and what makes one code path cover all four states: no file, a file
-// with the key, a file without it, and Android's empty-prefs form `<map />`.
-// Everything except the header, the closing tag and any existing
-// debug_http_host line is carried over verbatim.
 export function debugHttpHostScript({
   packageName,
   host,
@@ -467,8 +274,6 @@ export function debugHttpHostScript({
   const dir = dataDir || `/data/data/${packageName}`;
   const prefs = `shared_prefs/${packageName}_preferences.xml`;
   const tmp = `${prefs}.rn-iso.tmp`;
-  // Real newlines: this whole string is ONE argv element, quoted by
-  // deviceShellArg, so the device shell hands it to `sh -c` as one script.
   return [
     `cd ${dir} || exit 1`,
     'mkdir -p shared_prefs || exit 1',
@@ -476,10 +281,6 @@ export function debugHttpHostScript({
     `if [ -f ${prefs} ]; then grep -v 'debug_http_host' ${prefs} | grep -v '<?xml' | grep -v '<map' | grep -v '</map>' >> ${tmp}; fi`,
     `printf '%s\\n' '    <string name="debug_http_host">${host}</string>' '</map>' >> ${tmp} || exit 1`,
     `mv ${tmp} ${prefs} || exit 1`,
-    // The self-check is the whole difference between "adb exited 0" and "the
-    // value is in the file": a shell that mis-parses this script can still
-    // exit 0 having written nothing, which is exactly how the old one passed
-    // for months.
     `grep -q '>${host}<' ${prefs} || exit 1`,
   ].join('\n');
 }
@@ -499,40 +300,19 @@ export function writeDebugHttpHost(
   }
 }
 
-// PURE. The dev-client deep link for an emulator: the same shape iOS opens
-// with `simctl openurl`, pointed at 10.0.2.2 rather than localhost (see
-// EMULATOR_HOST_LOOPBACK).
 export function androidDevClientUrl(scheme: string, metroPort: number | string): string {
   return devClientUrl(scheme, metroPort, EMULATOR_HOST_LOOPBACK);
 }
 
-// PURE. `am start` is the one adb command whose EXIT CODE cannot be trusted:
-// it prints its diagnosis and still exits 0 for an intent nothing resolves
-// ("Error: Activity not started, unable to resolve Intent { ... }"). Expo's
-// own CLI reads the output for the same reason (packages/@expo/cli/src/start/
-// platforms/android/adb.ts, openAsync: it matches on the text, not the
-// status). Returns the error line, or null when the output looks like a
-// start.
 export function amStartError(text: unknown): string | null {
   const out = String(text ?? '');
   for (const raw of out.split('\n')) {
     const line = raw.trim();
     if (/^Error:/i.test(line)) return line;
-    // "Warning: Activity not started, its current task has been brought to
-    // the front" is the SUCCESS case for an app already running -- do not
-    // treat a Warning as a failure.
   }
   return null;
 }
 
-// The dev-client deep link, delivered with `am start -a VIEW -d <url>` --
-// which is what `expo run:android` sends too (packages/@expo/cli/src/start/
-// platforms/android/adb.ts line 139, openUrlAsync: `adbShellArgs(device.pid,
-// 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', url)`).
-//
-// The url is quoted for the DEVICE shell (deviceShellArg): adb hands the
-// joined argv to that shell, and the url carries `?` (a glob) and, for a
-// scheme carrying query parameters, `&`.
 export function openAndroidDevClientUrl(
   { serial, url }: { serial: string; url: string },
   { exec = null }: ExecOpt = {},
@@ -559,16 +339,6 @@ export function openAndroidDevClientUrl(
   return { ok: true, url };
 }
 
-// Order on Android mirrors iOS's: the port wiring FIRST (both mechanisms),
-// then the launch. The dev-client deep link is what makes a cold launch land
-// on this workspace's bundle instead of expo-dev-launcher's DEVELOPMENT
-// SERVERS picker -- the same bug iOS's openurl exists for, and the reason
-// every Android launch before this reported `unverified`.
-//
-// A deep link that does not resolve is NOT fatal: the app is installed and a
-// plain launcher start still gives the developer the picker, which is
-// strictly better than refusing the run. It comes back as `devClientNote`,
-// which commands/android.js prints.
 export function launchAndroidApp(
   {
     serial,
@@ -611,9 +381,6 @@ export function launchAndroidApp(
   }
 
   try {
-    // monkey with a count of 1 sends the launcher intent the device itself
-    // resolved, which covers apps whose manifest resolve-activity could not
-    // read (a disabled-by-default alias, a package just installed).
     e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1']);
     return { ok: true, mode: 'monkey', devClientNote, ...wiring };
   } catch (err) {
@@ -625,15 +392,6 @@ export function launchAndroidApp(
   }
 }
 
-// The RELEASE launch: a plain `am start` of the launcher activity, and
-// nothing else.
-//
-// Everything launchAndroidApp does BEFORE the start exists to point the app at
-// a dev server -- the two `adb reverse`s, the debug_http_host preference, the
-// expo-dev-client deep link. A release APK has its JS bundle inside it, reads
-// none of those, and is not a dev client at all, so wiring them would be three
-// commands issued at an app that ignores them and one deep link that cannot
-// resolve. The launcher activity is the whole launch.
 export function launchAndroidReleaseApp(
   { serial, packageName }: { serial: string; packageName: string },
   { exec = null }: ExecOpt = {},
@@ -664,78 +422,30 @@ export function launchAndroidReleaseApp(
   }
 }
 
-// execFileSync attaches the child's stderr to the thrown error; that text is
-// the actual diagnostic ("No such file or directory", "device offline"),
-// while err.message alone is just the command line.
 function describe(err: unknown) {
-  // execFileSync's thrown error is genuinely dynamic (child stderr attached
-  // by node, not by any type this module owns).
   const e = err as { stderr?: unknown; message?: unknown };
   const stderr = e?.stderr ? String(e.stderr).trim() : '';
   const message = e?.message ? String(e.message).trim() : String(err);
   return stderr ? `${message}: ${stderr}` : message;
 }
 
-// --- launch VERIFICATION (the launch is not the proof) --------------------
-//
-// The bug this exists for: rn-iso reported `launched: true` while the app sat
-// on expo-dev-launcher's DEVELOPMENT SERVERS picker, listing every OTHER
-// workspace's Metro on the machine. One tap there loads another project's
-// bundle onto this workspace's simulator -- the exact cross-workspace
-// contamination rn-iso exists to prevent -- and from the outside a picker looks
-// identical to a loaded app. `simctl launch` returning a pid proves a process
-// started, and nothing more.
-//
-// Two things make the picker likely rather than exotic:
-//   - a dev-client app with no deep link opens straight into it;
-//   - on iOS 26 `simctl openurl` is gated behind an "Open in <app>?" system
-//     alert, so even a CORRECT deep link stalls until somebody taps Open.
-//
-// So the launch is followed by a poll for PROOF: a record in this workspace's
-// own metro.ndjson, written after the launch, showing that a bundle was
-// requested from THIS Metro. It is the only evidence that names the right
-// server -- an app on the picker, or one that loaded a neighbour's bundle,
-// produces none of it.
-//
-// A timeout is NOT a failure: the app may well be fine, and refusing here
-// would break every legitimate slow launch. The run stays exit 0 and reports
-// `launched: 'unverified'` instead of `true`, with a warning that says what to
-// check. Saying "launched" when we did not see a bundle request is the thing
-// that must not happen.
-
 export type VerifyLaunchResult = {
   verified: boolean;
   record?: NdjsonRecord;
   timedOut?: boolean;
-  // Set on a TIMEOUT that still found evidence the app asked this workspace's
-  // Metro for its bundle -- the request arrived and the bundle was not built
-  // yet. A different fact from "nothing ever asked", and the caller reports it
-  // differently. See isBundleRequestProof.
   requested?: boolean;
   mode: string | null;
   waitedMs: number;
 };
 
-// How long a Release app gets to crash before its process is declared alive.
-// A bad embedded bundle takes the app down within a second or two of launch;
-// checking instantly would verify a process that is one frame from dying.
 const RELEASE_VERIFY_WAIT_MS = 3000;
 
 export type ReleaseVerifyResult = {
   verified: boolean;
-  // Why an unverified result could not be verified: 'no-pid' when the launch
-  // output carried no process id to check, 'exited' when the process was gone
-  // at check time.
   reason?: 'no-pid' | 'exited';
   waitedMs: number;
 };
 
-// The Release counterpart of verifyLaunch. A release build fetches nothing
-// from Metro -- its bundle is embedded -- so "did it load a bundle from us"
-// is not a question that exists. What CAN be proven is that the launched
-// process is still alive a moment later: a simulator app is a host process,
-// so `kill(pid, 0)` from here answers it. Weaker proof than a bundle request,
-// deliberately reported as such by the callers.
 export async function verifyReleaseLaunch({
   pid,
   waitMs = RELEASE_VERIFY_WAIT_MS,
@@ -756,10 +466,6 @@ export async function verifyReleaseLaunch({
   return alive(pid) ? { verified: true, waitedMs } : { verified: false, reason: 'exited', waitedMs };
 }
 
-// PURE. `pidof <package>` prints the pids of every process with that name,
-// space-separated, on one line -- and prints NOTHING (exit 1) when there are
-// none. An Android app's main process is named after its package, so this is
-// the cheapest "is it running" there is.
 export function parsePidof(text: unknown): number | null {
   const first = String(text ?? '')
     .trim()
@@ -768,10 +474,6 @@ export function parsePidof(text: unknown): number | null {
   return Number.isFinite(pid) && pid > 0 ? pid : null;
 }
 
-// PURE. The fallback, for a device whose toybox has no `pidof`: `ps -A`
-// prints a header and then one row per process, with the pid in column 2 and
-// the process NAME last. A package's own processes are `<package>` and
-// `<package>:<something>`; only the main one is proof the app launched.
 export function parsePsPid(text: unknown, packageName: string): number | null {
   for (const raw of String(text ?? '').split('\n')) {
     const cols = raw.trim().split(/\s+/);
@@ -783,12 +485,6 @@ export function parsePsPid(text: unknown, packageName: string): number | null {
   return null;
 }
 
-// The Android counterpart of verifyReleaseLaunch. iOS can check the pid
-// `simctl launch` printed because a simulator app is a host process; on
-// Android the app runs INSIDE the emulator, so the question has to be asked
-// of the device. Same weaker-proof contract, same short wait first: a bad
-// embedded bundle takes the app down within a second or two of launch, so
-// checking instantly would verify a process that is one frame from dying.
 export async function verifyAndroidReleaseLaunch({
   serial,
   packageName,
@@ -811,9 +507,6 @@ export async function verifyAndroidReleaseLaunch({
   try {
     pid = parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', packageName]));
   } catch {
-    // `pidof` exits 1 when nothing matches, which execFileSync throws on --
-    // indistinguishable from a device that has no pidof at all, so the ps
-    // fallback runs either way.
     pid = null;
   }
   if (pid === null) {
@@ -832,30 +525,17 @@ function isProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    // EPERM is a process that exists but is not ours -- alive, then. Only
-    // ESRCH (and anything else unexpected) reads as gone.
     return (err as NodeJS.ErrnoException)?.code === 'EPERM';
   }
 }
 
 export const LAUNCH_UNVERIFIED = 'unverified';
 
-// The third value of the launch fact: the app DID ask this workspace's Metro
-// for its bundle, and Metro had not finished building it when the window
-// closed. Not `true` -- nothing has run yet -- but not the ambiguous
-// 'unverified' either, because the wiring demonstrably worked.
 export const LAUNCH_BUNDLING = 'bundling';
 
-// ~20s: a cold dev-client fetches the manifest, then requests the bundle. On
-// the repos this was measured against the first bundle_build_started lands
-// 3-8s after launch; 20 is generous without being a wait anybody notices when
-// something is wrong.
 export const VERIFY_TIMEOUT_MS = 20000;
 const VERIFY_POLL_MS = 500;
 
-// Bare path (@rn-iso/metro's ndjsonReporter): Metro's own event names. Any of
-// them proves a client asked THIS server for a bundle -- including the
-// failures, because a bundling error is still a request that arrived here.
 const BUNDLE_EVENTS = new Set([
   'bundle_build_started',
   'bundle_build_done',
@@ -864,39 +544,18 @@ const BUNDLE_EVENTS = new Set([
   'transformer_error',
 ]);
 
-// PURE. Does this Contract-1 record prove a bundle was requested from this
-// workspace's dev server at or after `since`?
-//
-// Records with no usable timestamp are NOT proof: the whole question is
-// whether the fetch happened after THIS launch, and a previous run's bundle
-// build sitting in the same file would otherwise verify a launch that never
-// loaded anything.
 export function isBundleProof(record: unknown, since: number | string = 0): boolean {
   if (!record || typeof record !== 'object') return false;
   const rec = record as NdjsonRecord;
   const ts = Number(rec.ts);
   if (!Number.isFinite(ts) || ts < Number(since || 0)) return false;
   if (typeof rec.event === 'string' && BUNDLE_EVENTS.has(rec.event)) return true;
-  // Expo child: the structure is inferred from stdout (raw: true), so the
-  // line itself is the event. See isBundleActivityLine in server-expo.js.
   if (rec.src === 'metro' && typeof rec.msg === 'string' && expoBundleLine(rec.msg)) return true;
   return false;
 }
 
-// The bundle URL a client asks for, as it appears in a DEVICE log line. This
-// is the evidence that separates "still bundling" from "nothing ever asked":
-// a cold bundle of a big graph takes longer than the verify window (37.8s for
-// 9948 modules in the field case that opened issue #53), and Metro says
-// nothing about a build until it FINISHES -- Expo's child prints its progress
-// with carriage returns, so no whole line reaches the timeline either. What
-// does exist by then is the app's own log line naming the URL it is loading,
-// and that line carries this workspace's port.
 const BUNDLE_URL_PATH = /\.bundle\b|\/_expo\/|expo-development-client/i;
 
-// PURE. Does this record prove the app REQUESTED a bundle from `port` at or
-// after `since`? Positive evidence only: a false answer never means "the
-// launch failed", it means this cannot say, and the caller keeps the answer it
-// already had.
 export function isBundleRequestProof(
   record: unknown,
   since: number | string = 0,
@@ -907,46 +566,21 @@ export function isBundleRequestProof(
   const ts = Number(rec.ts);
   if (!Number.isFinite(ts) || ts < Number(since || 0)) return false;
   if (typeof rec.msg !== 'string') return false;
-  // An error-level line naming the same URL is a request that FAILED (a
-  // refused connection, a bundle that would not load), and "Metro is still
-  // building it" would be the wrong thing to say about it. `logs --errors`
-  // surfaces those on their own; this claim stays positive.
   if (rec.level === 'error' || rec.level === 'fatal') return false;
-  // The port has to be THIS workspace's, and it has to be a bundle URL: an
-  // app talking to another agent's Metro is exactly what this check exists to
-  // catch, and it must never be read as a pass.
   const digits = String(port).replace(/[^0-9]/g, '');
   if (!digits) return false;
   if (!new RegExp(`:${digits}\\b`).test(rec.msg)) return false;
   return BUNDLE_URL_PATH.test(rec.msg);
 }
 
-// Kept as a local copy of the ONE regex rather than an import, so this module
-// (which every install path loads) does not pull in the supervisor. The
-// predicate is exported from server-expo.js as isBundleActivityLine and a test
-// asserts the two agree.
 function expoBundleLine(msg: string) {
   return /\bBundl(?:ing|ed)\b/.test(msg);
 }
 
-// Poll <logsDir>/metro.ndjson for the proof above.
-//
-// Reading the file rather than subscribing: the dev server is a DETACHED
-// supervisor in another process, and its NDJSON timeline is the only channel
-// between it and this command. Contract 1 already promises reading never
-// throws on a half-written line (parseNdjsonText drops it), which is what
-// makes tailing a live file safe here.
 export async function verifyLaunch({
   logsDir,
   since,
-  // This workspace's Metro port. Only used AFTER the window closes, to tell a
-  // bundle that is still building from a request that never arrived (issue
-  // #53). Null keeps the old two-valued answer.
   metroPort = null,
-  // Which dev server produced the timeline. Carried through to the result
-  // (and into the warning) rather than used to choose a predicate: a bare
-  // workspace never writes expo stdout records and an expo one never writes
-  // Metro reporter events, so one predicate covers both without a branch.
   mode = null,
   timeoutMs = VERIFY_TIMEOUT_MS,
   pollMs = VERIFY_POLL_MS,
@@ -977,11 +611,6 @@ export async function verifyLaunch({
       }
     }
     if (now() >= deadline) {
-      // The window closed with no BUILD to point at. Before reporting the
-      // ambiguous "nothing fetched a bundle", ask the device log whether the
-      // app asked for one: a cold bundle on a large graph outlives this
-      // window, and "the request arrived, Metro is still building it" is a
-      // different fact for an agent than "the wiring did not work".
       const requested = findBundleRequest(readDevice(), since, metroPort);
       const waitedMs = now() - startedAt;
       if (requested) return { verified: false, timedOut: true, requested: true, record: requested, mode, waitedMs };
@@ -991,7 +620,6 @@ export async function verifyLaunch({
   }
 }
 
-// PURE. The first record proving a bundle request for `port`, or null.
 function findBundleRequest(
   records: NdjsonRecord[],
   since: number | string | undefined,
@@ -1012,24 +640,10 @@ function readNdjson(logsDir: string | undefined, name: string): NdjsonRecord[] {
   try {
     return parseNdjsonText(readFileSync(join(logsDir, name), 'utf-8'));
   } catch {
-    // No dev-server log yet is the ordinary case in the first second of a
-    // poll, and an unreadable one is not worth failing a launched app over.
     return [];
   }
 }
 
-// PURE. The warning printed when the poll timed out. It is the whole value of
-// the check: an agent that reads "unverified" has to know what to do next.
-//
-// It is a NUMBERED LIST OF ACTIONS, in the order they resolve the state, and
-// that ordering is the field-tested part. It used to be a list of "likely
-// causes" whose only imperative was `Retry the deep link with: simctl openurl`
-// -- and on a fresh simulator iOS 26 raises the "Open in <app>?" alert on EVERY
-// first launch, in front of that exact command. So the one instruction the
-// block gave re-raised the alert it was stuck behind, forever, while the action
-// that clears it (confirm the alert) sat above it as a passive cause. Leading
-// with the confirmation, and conditioning the retry on there being no alert, is
-// what turns this from a loop into a sequence that terminates.
 export function unverifiedLaunchLines({
   platform,
   metroPort,
@@ -1068,12 +682,6 @@ export function unverifiedLaunchLines({
       push(`Only if no alert is showing, re-launch: xcrun simctl launch --console ${udid} ${bundleId}`);
     }
   } else {
-    // The deep link goes FIRST on Android, and it is the whole answer when
-    // it is available: there is no confirmation alert in front of `am start`
-    // (that is an iOS 26 thing), so re-sending it is a command that either
-    // loads this workspace's bundle or says why it did not. The picker is
-    // only what you are looking at when there is no scheme to deep-link
-    // with, and the plain re-launch only ever reopens the same picker.
     if (url && serial) {
       push(
         `Re-send the dev-client deep link -- this is the command that points the app at THIS workspace's Metro: adb -s ${serial} shell am start -a android.intent.action.VIEW -d '${url}'`,

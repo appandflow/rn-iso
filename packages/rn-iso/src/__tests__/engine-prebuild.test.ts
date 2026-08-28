@@ -1,7 +1,3 @@
-// engine/prebuild.js -- when CNG generation runs, and what it runs.
-//
-// No real prebuild is executed here: `expo prebuild` writes a native project
-// into the repo it is pointed at, so every case below uses a fake spawn.
 import assert from 'node:assert';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,10 +12,8 @@ import {
 } from '../engine/prebuild.ts';
 import { makeChildProcess, makeWriter } from './_factories.ts';
 
-// The build-log records the collecting writer captures; only these fields are read.
 type WriteRecord = { src: string; level: string; msg: string };
 
-// The spawn invocation the test records to assert cmd/args/opts.
 type SpawnCall = { cmd: string; args: string[]; opts: Record<string, unknown> };
 
 let root: string;
@@ -45,7 +39,6 @@ function installFakeExpoBin() {
 describe('the decision', () => {
   test('shouldPrebuild is expo AND no native directory, nothing else', () => {
     expect(shouldPrebuild({ isExpo: true, nativeDirExists: false })).toBe(true);
-    // Regenerating over committed native sources overwrites hand edits.
     expect(shouldPrebuild({ isExpo: true, nativeDirExists: true })).toBe(false);
     expect(shouldPrebuild({ isExpo: false, nativeDirExists: false })).toBe(false);
     expect(shouldPrebuild({ isExpo: false, nativeDirExists: true })).toBe(false);
@@ -64,9 +57,6 @@ describe('the decision', () => {
     expect(needsPrebuild(root, 'android', false)).toBe(false);
   });
 
-  // A bare project with no ios/ has no config-plugin pipeline to generate one
-  // from; `expo prebuild` there would invent a native project unrelated to
-  // the app. Refusing with a remedy is the honest answer.
   test('prebuildRefusal names the bare-project case and nothing else', () => {
     const refusal = prebuildRefusal({ isExpo: false, platform: 'ios', nativeDirExists: false });
     assert(refusal);
@@ -131,8 +121,6 @@ describe('runPrebuild', () => {
       },
     });
     expect(result.ok).toBe(true);
-    // Never `npx expo`: npx would download whatever version is newest and
-    // generate a native project that does not match the app's SDK.
     const spawned = spawnCalls[0];
     assert(spawned);
     expect(spawned.cmd).toBe(bin);
@@ -156,9 +144,6 @@ describe('runPrebuild', () => {
     expect(result.lastLines.join('\n')).toMatch(/package name/);
   });
 
-  // A prebuild that exits 0 without producing the directory is a silent
-  // no-op; the build that follows would fail minutes later with a far worse
-  // message.
   test('an exit-0 prebuild that produced no native directory is still a failure', async () => {
     installFakeExpoBin();
     const result = await runPrebuild(root, 'ios', collectingWriter(), {
@@ -193,8 +178,6 @@ describe('runPrebuild', () => {
     });
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/not resolvable/);
-    // Never "run npm install" again: on a hoisted monorepo the dependencies
-    // ARE installed and that remedy is a wrong answer stated confidently.
     expect(result.remedy).not.toMatch(/^Run `npm install`/);
     expect(result.remedy).toMatch(/workspace root/);
   });

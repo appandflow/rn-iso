@@ -1,13 +1,3 @@
-// `rn-iso start`.
-//
-// The behaviours pinned here are the ones an agent loop depends on:
-//   - idempotence: a healthy dev server on the reserved port is a no-op exit 0,
-//     never a second bundler;
-//   - honesty about who is serving: a dev server the agent started itself is
-//     reported with supervisor null rather than fought;
-//   - identity: health is resolveProjectMetro, so a FOREIGN listener on the
-//     reserved port moves the reservation instead of counting as success;
-//   - a failure prints the supervisor log's tail and its path, not a stack.
 import assert from 'node:assert';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { SpawnOptions } from 'node:child_process';
@@ -37,9 +27,6 @@ let root: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
   process.env.RN_ISO_HOME = tmpHome;
-  // realpath: findProjectRoot canonicalizes, and on macOS /var is a symlink
-  // to /private/var, so an uncanonicalized root registers under a different key
-  // than the command computes.
   root = realpathSync(mkdtempSync(join(tmpdir(), 'rn-iso-ws-')));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws' }));
 });
@@ -52,12 +39,8 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-// The action callback commander invokes: `(opts)`.
 type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
 
-// The subset of commander's Command that registerStart chains off of. A real
-// Command is assignable to this, so `stub as Command` is a plain widening cast
-// (no `as unknown` needed) that lets the stub stand in for the real object.
 interface CommandStub {
   command(nameAndArgs?: string): CommandStub;
   description(str?: string): CommandStub;
@@ -65,7 +48,6 @@ interface CommandStub {
   action(fn: ActionFn): CommandStub;
 }
 
-// The same commander stub the other command tests use.
 function captureAction(register: (cmd: Command) => void) {
   let captured: ActionFn | undefined;
   const stub: CommandStub = {
@@ -90,9 +72,6 @@ function captureAction(register: (cmd: Command) => void) {
   };
 }
 
-// The child `start` spawns and then wires listeners onto: a minimal stand-in
-// for the ChildProcess `getExecutor().spawn` returns. `on` carries the
-// (event, cb) shape so a test can drive the 'exit' listener.
 interface ChildStub {
   pid: number | undefined;
   unref(): void;
@@ -114,15 +93,6 @@ interface MetroExecutorMock {
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions): ChildStub;
 }
 
-// resolveProjectMetro asks lsof who listens, probes /status for real, then
-// reads that pid's cwd and process group. This mock answers the three shell
-// calls; the /status half is a real listener started by the test.
-// The mocked listener's pid must be one that CANNOT exist: metro.ts resolves a
-// listener's identity through processCwd, which on Linux reads /proc/<pid>/cwd
-// FIRST and only falls back to the lsof this mock intercepts. A plausible pid
-// (4242) sometimes exists on a CI runner, whose real cwd is not this project --
-// the dev server then reads as someone else's and `start` fails, which is
-// exactly how this suite flaked twice on ubuntu and never once on macOS.
 const DEAD_LISTENER_PID = 999999901;
 
 function metroExecutor({
@@ -159,8 +129,6 @@ function metroExecutor({
   };
 }
 
-// Every listener is registered for teardown: one left open by a test whose
-// assertion failed first would keep the test runner's process alive.
 const openServers: Server[] = [];
 
 function metroListener(port: number): Promise<Server> {
@@ -370,7 +338,6 @@ describe('action: already running', () => {
     const server = await metroListener(port);
     setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
-    // A pid that is definitely alive: this test process.
     writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
 
     let result;
@@ -437,13 +404,8 @@ describe('action: spawning the supervisor', () => {
     const port = 8154;
     const exec = metroExecutor({ listeners: {} });
     const held: { server: Server | null } = { server: null };
-    // The fake supervisor: spawning it is what makes the port answer, exactly
-    // as the real one does.
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
-      // The real supervisor records itself and then serves; both are faked
-      // here, and the pid has to be a live one or `start` correctly concludes
-      // the supervisor is already gone.
       writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
       metroListener(port).then((s) => {
         held.server = s;
@@ -491,8 +453,6 @@ describe('action: spawning the supervisor', () => {
   test('a supervisor that never answers exits 1 with the log tail and the log path', async () => {
     const port = 8155;
     const exec = metroExecutor({ listeners: {} });
-    // A live pid, so this is the genuine "still running, not serving" timeout
-    // rather than the "already dead" path tested below.
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
       return { pid: process.pid, unref() {}, on() {} };
@@ -516,9 +476,6 @@ describe('action: spawning the supervisor', () => {
     const result = await runAction({ json: true, wait: '1' });
 
     expect(result.exitCode).toBe(1);
-    // The error contract, not an empty stdout. A caller doing
-    // `facts=$(rn-iso start --json)` got an empty string on every failure and
-    // had to scrape stderr prose, which `guide facts` promises it never has to.
     expect(result.logs.length).toBe(1);
     expect(JSON.parse(result.logs[0] ?? '')).toEqual({
       code: 'RN_ISO_METRO_TIMEOUT',
@@ -546,7 +503,6 @@ describe('action: spawning the supervisor', () => {
           handlers[event] = cb;
         },
       };
-      // Dead before the first poll.
       setTimeout(() => handlers.exit?.(1, null), 5);
       return child;
     };
@@ -560,8 +516,6 @@ describe('action: spawning the supervisor', () => {
     expect(result.exitCode).toBe(1);
     expect(elapsed < 5000).toBeTruthy();
     expect(result.errs.join('\n')).toMatch(/supervisor exited \(code 1\) before the dev server came up/);
-    // A supervisor that DIED and one that is merely slow need different next
-    // steps, so they carry different codes rather than one generic failure.
     const lastLog = result.logs.at(-1);
     assert(lastLog);
     const facts = JSON.parse(lastLog);
@@ -614,7 +568,6 @@ describe('action: the reserved port', () => {
   test('a FOREIGN holder of the reserved port moves the reservation instead of counting as healthy', async () => {
     const port = 8157;
     const server = await metroListener(port);
-    // Answers /status, but runs from somewhere else: not this project's.
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, cwd: '/somewhere/else' });
     exec.spawn = (cmd, args, opts) => {
       exec.calls.spawn.push({ cmd, args, opts });
@@ -635,7 +588,6 @@ describe('action: the reserved port', () => {
     const reserved = project.metroPort;
     expect(reserved).not.toBe(port);
     expect(result.errs.join('\n')).toMatch(/is held by something else/);
-    // It then tries to start on the new port, and fails to come up within 1s.
     expect(result.exitCode).toBe(1);
     expect(exec.calls.spawn[0]?.args[4]).toBe(String(reserved));
   });
@@ -735,7 +687,6 @@ describe('output contract', () => {
     }
 
     expect(result.exitCode).toBe(null);
-    // The OK line carries the total wait, in formatDuration's shape.
     expect(result.logs.join('\n')).toMatch(/OK: dev server on port 8160.* \(\d+m?\d*s\)/);
     expect(result.logs.join('\n')).toMatch(/expo-child/);
     expect(result.logs.join('\n')).toMatch(new RegExp(workspaceLogsDir(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));

@@ -15,13 +15,8 @@ import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, getProject } from '../config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../paths.ts';
 
-// The action callback commander invokes: `(target, opts)`. `target` is
-// undefined when `worktree remove` is run without its positional argument.
 type ActionFn = (target: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
 
-// The subset of commander's Command that registerRemove chains off of. A real
-// Command is assignable to this, so `stub as Command` is a plain widening cast
-// (no `as unknown` needed) that lets the stub stand in for the real object.
 interface CommandStub {
   command(nameAndArgs?: string): CommandStub;
   description(str?: string): CommandStub;
@@ -49,17 +44,11 @@ test('reports both when both apply', async () => {
   expect(removalBlockers({ dirty: true, unpushed: ['abc one'] }).length).toBe(2);
 });
 
-// dirty/unpushed are null (not false/[]) when the underlying git call itself
-// failed -- see hasUncommittedWork/unpushedCommits in src/worktree.js. A
-// destructive command must fail CLOSED on that: treat "could not determine"
-// as its own blocker rather than let it fall through to "clean".
 test('reports an indeterminate-status blocker instead of treating it as clean', async () => {
   expect(removalBlockers({ dirty: null, unpushed: [] }).length).toBe(1);
   expect(removalBlockers({ dirty: false, unpushed: null }).length).toBe(1);
   expect(removalBlockers({ dirty: null, unpushed: null })[0]).toMatch(/could not determine/i);
 });
-
-// --- the dirty listing: what counts, and what to do about it ----------
 
 test('porcelainPath reads the path out of each status form', () => {
   expect(porcelainPath(' M ios/Podfile.lock')).toBe('ios/Podfile.lock');
@@ -68,9 +57,6 @@ test('porcelainPath reads the path out of each status form', () => {
   expect(porcelainPath('   ')).toBe(null);
 });
 
-// The refusal used to offer `git checkout -- <path>` whatever the dirt was.
-// That does nothing to an untracked file, so following it produced the identical
-// refusal and taught the reader that --force was the only way out.
 test('the remedy names the right command for each class of dirt', () => {
   const untracked = removalRemedy(['?? scratch.txt']).join('\n');
   expect(untracked).toMatch(/clean -fd/);
@@ -87,9 +73,6 @@ test('the remedy names the right command for each class of dirt', () => {
   expect(removalRemedy([])).toEqual([]);
 });
 
-// The one case where "restore and retry" is a complete instruction keeps its
-// own lead-in -- but the command under it is built from the paths git named,
-// like every other class of dirt.
 test('pod-install churn keeps its exact restore command', () => {
   const lines = removalRemedy([' M ios/Podfile.lock', ' M ios/App.xcodeproj/project.pbxproj']).join('\n');
   expect(lines).toMatch(/pod install` rewrites/);
@@ -97,12 +80,6 @@ test('pod-install churn keeps its exact restore command', () => {
   expect(lines).not.toMatch(/clean -fd/);
 });
 
-// A monorepo's pods do not live at `ios/`. The remedy used to print a
-// hardcoded `ios/Podfile.lock ios/*.xcodeproj/project.pbxproj` whatever the
-// paths actually were, so in a monorepo it printed a command that fails --
-// `error: pathspec 'ios/Podfile.lock' did not match any file(s) known to git` --
-// which reads like rn-iso being broken and sends the reader to --force. The
-// paths are already in hand and already repo-relative; print those.
 test('pod-install churn names the paths git actually reported, not an ios/ example', () => {
   const lines = removalRemedy([' M apps/mobile/ios/Podfile.lock', ' M apps/mobile/ios/App.xcodeproj/project.pbxproj'], {
     worktree: '/tmp/wt',
@@ -119,8 +96,6 @@ test('the remedy names the worktree when it is given one', () => {
   expect(removalRemedy(['?? x'], { worktree: '/tmp/wt' }).join('\n')).toMatch(/git -C \/tmp\/wt clean -fd/);
 });
 
-// A remedy is a command to run, so it carries the paths it is about rather than
-// a `<path>...` the reader has to fill in from the listing above it.
 test('the remedy carries the paths themselves, capped, quoting what needs it', () => {
   expect(removalRemedy([' M src/app.js', '?? scratch.txt'], { worktree: '/tmp/wt' }).join('\n')).toMatch(
     /checkout -- src\/app\.js/,
@@ -131,17 +106,6 @@ test('the remedy carries the paths themselves, capped, quoting what needs it', (
   expect(!many.includes('<path>')).toBeTruthy();
 });
 
-// --- action-level tests -----------------------------------------------
-//
-// The pure removalBlockers tests above cover the refusal *decision*, but not
-// the wiring: that the action refuses BEFORE reclaimProject runs, and that
-// reclaimProject runs BEFORE removeWorktree. Those two orderings are the
-// entire point of this task, and nothing above would catch a future
-// reordering that broke them -- both tests would still pass unchanged. The
-// harness mirrors test/worktree.test.js:53-90 (setExecutor + RN_ISO_HOME);
-// registerRemove is driven directly with a stub commander object rather
-// than going through bin/cli.js.
-
 function canon(p: string) {
   try {
     return realpathSync(resolve(p));
@@ -150,11 +114,6 @@ function canon(p: string) {
   }
 }
 
-// Stub of the commander `Command` API: registerRemove chains
-// .command().description().option().action(fn) off of whatever it is
-// handed, exactly like the real `worktree` subcommand does in
-// bin/cli.js. Capturing `fn` is the only way to invoke the action in
-// isolation from commander's own arg-parsing.
 function captureAction(register: (cmd: Command) => void) {
   let captured: ActionFn | undefined;
   const stub: CommandStub = {
@@ -193,18 +152,7 @@ function porcelain(entries: PorcelainEntry[]) {
     .join('\n');
 }
 
-// `dirty`/`unpushed`/`worktrees` are the raw runQuiet return values (a
-// string, or null to simulate the underlying git call failing outright).
-// `simctlList` backs `xcrun simctl list devices --json` -- deleteIosSim
-// looks a udid up there before it will delete it (the rn-iso- name-prefix
-// guard), so any test that expects an owned iOS device to actually be
-// deleted must list it here.
-// `occupied` maps udid -> true to simulate a foreign .xctrunner UI-test
-// runner still attached (isSimOccupied's `xcrun simctl spawn <udid>
-// launchctl list` probe -- see parseOccupyingApps in src/sim/ios.js).
 interface MakeExecutorOptions {
-  // dirty/unpushed/worktrees are raw runQuiet returns: a string, or null when
-  // the underlying git call itself failed outright.
   dirty?: string | null;
   unpushed?: string | null;
   remote?: string;
@@ -212,10 +160,6 @@ interface MakeExecutorOptions {
   simctlList?: string;
   occupied?: Record<string, boolean>;
   diffs?: Record<string, string>;
-  // Paths isMainWorkingTree should report as the MAIN working tree: the
-  // `rev-parse --git-dir --git-common-dir` probe answers with two equal lines
-  // for them, and fails (null) for everything else -- which is also what real
-  // git does for a directory that is not a repo at all.
   mainTrees?: string[];
 }
 
@@ -236,14 +180,9 @@ function makeExecutor({
     run(cmd: string) {
       runCalls.push(cmd);
       if (/simctl list devices --json/.test(cmd)) return simctlList;
-      // deleteIosSim/deleteAvd go through the throwing run() so a failed
-      // delete surfaces as { status: 'failed' } instead of a false success.
       if (/simctl delete|delete avd/.test(cmd)) return '';
       throw new Error(`unexpected run: ${cmd}`);
     },
-    // `git worktree remove` now goes through runFile (no shell) since it is a
-    // destructive command with an interpolated path. Reconstruct the command
-    // into the same runCalls log so the assertions below match either form.
     runFile(file: string, args: string[] = []) {
       const cmd = [file, ...args].join(' ');
       runCalls.push(cmd);
@@ -276,8 +215,6 @@ function makeExecutor({
   return exec;
 }
 
-// One iOS runtime bucket with the given sims, matching parseSimctlList's
-// expected shape (src/sim/ios.js).
 function simctlJson(sims: unknown[]) {
   return JSON.stringify({ devices: { 'com.apple.CoreSimulator.SimRuntime.iOS-17-0': sims } });
 }
@@ -299,15 +236,6 @@ afterEach(() => {
   rmSync(wtDir, { recursive: true, force: true });
   delete process.env.RN_ISO_HOME;
 });
-
-// --- the main checkout: reclaim the environment, never touch the tree -------
-//
-// `git worktree remove` cannot remove the main working tree, and deleting the
-// source tree is not what anyone meant. So on the main checkout (detected by
-// `rev-parse --git-dir --git-common-dir` resolving to the same place) `remove`
-// does everything the normal removal does to rn-iso's global state -- devices
-// deleted, port freed, registry entries and workspace state dropped -- and
-// leaves every project file in the tree alone.
 
 test('action: on the main checkout, reclaims the environment with the owned device deleted and the tree untouched', async () => {
   upsertProject(mainDir, {
@@ -337,21 +265,15 @@ test('action: on the main checkout, reclaims the environment with the owned devi
   }
 
   expect(process.exitCode).not.toBe(1);
-  // The reclaim ran with deleteOwnedDevices: the owned sim is actually gone.
   expect(exec.calls.run.some((c) => /xcrun simctl delete U9/.test(c))).toBeTruthy();
-  // The registry entry is dropped and the state dir deleted...
   expect(getProject(mainDir)).toBe(null);
   expect(existsSync(join(mainDir, '.rn-iso'))).toBe(true);
   expect(existsSync(workspaceDir(mainDir))).toBe(false);
-  // ...while the tree itself is untouched: the marker survives and no
-  // `git worktree remove` was ever issued.
   expect(readFileSync(join(mainDir, 'keep.txt'), 'utf-8')).toBe('source file');
   expect(![...exec.calls.run, ...exec.calls.runQuiet].some((c) => /worktree remove/.test(c))).toBeTruthy();
   expect(errs.join('\n')).toMatch(/working tree stays \(it is the main checkout\)/);
 });
 
-// The dirty-tree/unpushed guards protect work in a tree about to be deleted.
-// Nothing is deleted here, so they do not apply -- and dirt is not mentioned.
 test('action: a dirty main checkout still reclaims, without a refusal and without mentioning the dirt', async () => {
   upsertProject(mainDir, { metroPort: 8084 });
   writeFileSync(join(mainDir, 'uncommitted.txt'), 'not yet committed');
@@ -378,7 +300,6 @@ test('action: a dirty main checkout still reclaims, without a refusal and withou
   const text = errs.join('\n');
   expect(text).not.toMatch(/Refusing/);
   expect(text).not.toMatch(/uncommitted/);
-  // The guards were never even consulted: nothing asked git for status.
   expect(!exec.calls.runQuiet.some((c) => /status --porcelain/.test(c))).toBeTruthy();
   expect(text).toMatch(/working tree stays/);
 });
@@ -409,9 +330,6 @@ test('action: --force changes nothing on the main checkout -- reclaim only, tree
   expect(errs.join('\n')).toMatch(/working tree stays/);
 });
 
-// The exit-code rule is the normal removal's: a failed device teardown keeps
-// the record (dropping it is what turns a failed teardown into a simulator
-// nothing references) and exits 1.
 test('action: a failed device teardown on the main checkout keeps the record and exits 1', async () => {
   upsertProject(mainDir, {
     metroPort: 8086,
@@ -444,9 +362,6 @@ test('action: a failed device teardown on the main checkout keeps the record and
   expect(errs.join('\n')).toMatch(/still tracks/);
 });
 
-// A registered directory that is not a git repo at all: there is no worktree
-// to hand to git and no git status to guard, so environment reclaim is the
-// only thing `remove` can mean there -- and it gets exactly that.
 test('action: a registered project directory that is not a git repo gets the same environment reclaim', async () => {
   upsertProject(wtDir, {
     metroPort: 8087,
@@ -455,8 +370,6 @@ test('action: a registered project directory that is not a git repo gets the sam
   writeFileSync(join(wtDir, 'keep.txt'), 'source file');
   mkdirSync(join(wtDir, '.rn-iso'), { recursive: true });
   writeFileSync(join(wtDir, '.rn-iso', 'state.json'), '{}');
-  // Every git probe fails: `worktrees: null` is `git worktree list` failing
-  // outright, and the mock answers no rev-parse for wtDir.
   const exec = makeExecutor({
     worktrees: null,
     simctlList: simctlJson([{ udid: 'U8', name: 'rn-iso-plain', state: 'Shutdown', isAvailable: true }]),
@@ -485,7 +398,7 @@ test('action: refuses when git cannot answer the status check, leaving config un
   upsertProject(wtDir, { metroPort: 8082 });
   const before = getProject(wtDir);
   const exec = makeExecutor({
-    dirty: null, // simulates hasUncommittedWork's runQuiet failing outright
+    dirty: null,
     worktrees: porcelain([
       { path: mainDir, branch: 'main' },
       { path: wtDir, branch: 'feat-x' },
@@ -509,11 +422,6 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
       { path: wtDir, branch: 'feat-x' },
     ]),
   });
-  // The property this whole task exists to guarantee: by the time `git
-  // worktree remove` runs, reclaimProject must already have dropped the
-  // config entry. A future reorder (removeWorktree before reclaimProject)
-  // would leave the entry present here and fail this assertion, even though
-  // every pure removalBlockers test above would still pass unchanged.
   let trackedWhenRemoved = true;
   const originalRunFile = exec.runFile.bind(exec);
   exec.runFile = (file, args = []) => {
@@ -533,12 +441,6 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
   expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });
 
-// Regression: in a monorepo, `rn-iso ios` registers a nested app dir (e.g.
-// `<worktree>/apps/mobile`) as its own config key -- a different key from
-// the worktree root that `worktree create` registers. That nested key is
-// where metroPort and the device claim actually live. Reclaiming only the
-// exact `path` argument (the old behaviour) leaves the nested entry, its
-// Metro process, and its port claim to leak until `gc --delete` runs.
 test('action: reclaims a nested monorepo app-dir project registered under the worktree root, not just the root itself', async () => {
   const nestedDir = join(wtDir, 'apps', 'mobile');
   upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
@@ -559,8 +461,6 @@ test('action: reclaims a nested monorepo app-dir project registered under the wo
   expect(getProject(nestedDir)).toBe(null);
 });
 
-// The environment dies whole: `worktree remove` must reap the owned devices
-// registered under it, not just clear rn-iso's tracking for them.
 test('action: on success, deletes an owned iOS sim via simctl', async () => {
   upsertProject(wtDir, {
     metroPort: 8090,
@@ -583,9 +483,6 @@ test('action: on success, deletes an owned iOS sim via simctl', async () => {
   expect(getProject(wtDir)).toBe(null);
 });
 
-// The environment dies whole even in a monorepo: two nested app-dir keys
-// under one worktree root, each with their own owned sim, must both be
-// reaped by a single `worktree remove` -- not just the first one found.
 test('action: reaps owned sims under two nested monorepo app-dir keys, both of them', async () => {
   const nestedDir1 = join(wtDir, 'apps', 'mobile1');
   const nestedDir2 = join(wtDir, 'apps', 'mobile2');
@@ -620,10 +517,6 @@ test('action: reaps owned sims under two nested monorepo app-dir keys, both of t
   expect(getProject(nestedDir2)).toBe(null);
 });
 
-// An occupied owned sim (a foreign UI-test runner still attached) must not
-// block anything else: the worktree removal still proceeds, the OTHER
-// nested project's owned sim is still reaped, and the occupied one comes
-// back as a skip rather than aborting the whole command.
 test('action: an occupied owned sim is deleted with the rest -- the environment dies whole', async () => {
   const nestedDir1 = join(wtDir, 'apps', 'mobile1');
   const nestedDir2 = join(wtDir, 'apps', 'mobile2');
@@ -659,25 +552,15 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
     console.log = originalLog;
   }
 
-  // The worktree itself was still removed.
   expect(process.exitCode).not.toBe(1);
   expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 
-  // Both sims go, occupied or not: they are rn-iso's own, created for a project
-  // that is being removed, and the holder is almost always the caller's own
-  // UI-test runner. Sparing U5 here is what used to leak a booted sim and a
-  // live runner out of `worktree remove`.
   expect(exec.calls.run.some((c) => /xcrun simctl delete U5/.test(c))).toBeTruthy();
   expect(exec.calls.run.some((c) => /xcrun simctl delete U6/.test(c))).toBeTruthy();
 
-  // Both config entries are cleared either way -- reclaiming rn-iso's own
-  // tracking does not depend on whether the device itself could be torn
-  // down.
   expect(getProject(nestedDir1)).toBe(null);
   expect(getProject(nestedDir2)).toBe(null);
 
-  // Nothing is reported as kept: there is no occupied-skip path left for a
-  // device being deleted, so no "kept ..." line should appear at all.
   expect(!logs.some((l) => /kept/i.test(l))).toBeTruthy();
 });
 
@@ -749,8 +632,6 @@ test('action: rn-iso never deletes a project-local .rn-iso directory', async () 
   expect(process.exitCode).toBe(1);
 });
 
-// Containment: a path out of `git status` is relative to the worktree, and
-// anything that resolves outside it is left alone whatever it says.
 test('action: a dirty path escaping the worktree is never removed', async () => {
   upsertProject(wtDir, { metroPort: 8093 });
   const outside = join(mainDir, '.rn-iso');
@@ -770,8 +651,6 @@ test('action: a dirty path escaping the worktree is never removed', async () => 
 
   expect(existsSync(outside)).toBe(true);
 });
-
-// --- item 2: the default path, the remedy placeholders, the dead reference --
 
 test('matchWorktreeEntry walks up to the enclosing worktree root', () => {
   const entries = [{ path: '/repo' }, { path: '/repo-worktrees/feat-x' }];
@@ -859,14 +738,6 @@ test('action: the dirty-tree remedy names the real worktree, not a placeholder',
   expect(text).toMatch(new RegExp(`git -C ${wtDir} clean -fd`));
 });
 
-// --- against real git (CLAUDE.md item 9) -------------------------------------
-//
-// Everything above runs on a mocked executor, which can prove we composed a
-// git-shaped command but not that git accepts it -- and this change turns on
-// The main-checkout branch turns on a rev-parse comparison only real git can
-// settle (`--git-dir` == `--git-common-dir` in the main tree, and only there).
-// A real repo, registered, with uncommitted work: remove must reclaim the
-// environment and leave every file -- committed or not -- exactly where it was.
 test('against a real repo: remove on the main checkout reclaims the environment and leaves the repo intact', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-main-')));
@@ -883,7 +754,6 @@ test('against a real repo: remove on the main checkout reclaims the environment 
     writeFileSync(join(repo, 'package.json'), '{}');
     git('git add -A');
     git('git commit -q -m init');
-    // Uncommitted work on purpose: the dirty guard must not apply here.
     writeFileSync(join(repo, 'marker.txt'), 'still here');
 
     upsertProject(repo, { metroPort: null });
@@ -898,11 +768,9 @@ test('against a real repo: remove on the main checkout reclaims the environment 
     console.log = originalLog;
 
     expect(process.exitCode).not.toBe(1);
-    // The repo survives, files and git registration both...
     expect(readFileSync(join(repo, 'package.json'), 'utf-8')).toBe('{}');
     expect(readFileSync(join(repo, 'marker.txt'), 'utf-8')).toBe('still here');
     expect(execSync('git rev-parse --is-inside-work-tree', { cwd: repo, encoding: 'utf-8' }).trim()).toBe('true');
-    // ...while only global rn-iso state is reclaimed; project files survive.
     expect(existsSync(join(repo, '.rn-iso'))).toBe(true);
     expect(getProject(repo)).toBe(null);
     expect(errs.join('\n')).toMatch(/working tree stays \(it is the main checkout\)/);
@@ -913,21 +781,6 @@ test('against a real repo: remove on the main checkout reclaims the environment 
     rmSync(base, { recursive: true, force: true });
   }
 });
-
-// --- pod-install churn is restored, not refused over ------------------------
-//
-// GATE PROVENANCE (2026-08-24): every `worktree remove` in the release gate
-// needed a hand-run `git checkout -- apps/app/ios/Podfile.lock` first. The
-// repo's own postinstall runs `pod install`, and th3rdwave's hermes-engine
-// podspec bakes the absolute worktree path into Podfile.lock, so the file is
-// modified in every worktree the moment dependencies are installed -- before
-// any rn-iso command runs. The refusal already NAMED this class (removalRemedy
-// prints the checkout command for it); it just made a human paste it.
-//
-// The refusal exists to protect uncommitted WORK. These files are not work:
-// they are about to be destroyed with the worktree either way, and lockfile
-// changes anyone intended would have been committed. So the same reasoning
-// that restores rn-iso's own .gitignore append applies one file over.
 
 test('excludePodChurn takes the whole set when every dirty path is pod churn', () => {
   const { lines, restore } = excludePodChurn([
@@ -943,9 +796,6 @@ test('excludePodChurn handles a bare project whose ios/ is at the repo root', ()
   expect(restore).toEqual(['ios/Podfile.lock']);
 });
 
-// FAIL CLOSED. One file that is not churn and the whole set stays dirty: this
-// is the guard against discarding real uncommitted work, and it only holds if
-// "mostly churn" is refused exactly like "not churn at all".
 test('excludePodChurn restores nothing when anything else is dirty alongside', () => {
   const dirty = [' M apps/app/ios/Podfile.lock', ' M apps/app/src/App.tsx'];
   const { lines, restore } = excludePodChurn(dirty);
@@ -958,18 +808,12 @@ test('excludePodChurn refuses an untracked Podfile.lock: checkout cannot restore
   expect(excludePodChurn(dirty)).toEqual({ lines: dirty, restore: [] });
 });
 
-// `git checkout -- <file>` restores from the INDEX, so a staged change would
-// survive it and the tree would still be dirty. Same rule excludeSelfHealedIgnores
-// applies to a modified .gitignore.
 test('excludePodChurn refuses a staged change, which checkout would not undo', () => {
   for (const line of ['M  apps/app/ios/Podfile.lock', 'MM apps/app/ios/Podfile.lock', 'A  apps/app/ios/Podfile.lock']) {
     expect(excludePodChurn([line])).toEqual({ lines: [line], restore: [] });
   }
 });
 
-// The class is named by the two files `pod install` rewrites, under an `ios/`
-// directory. A Podfile.lock somewhere else, or any other lockfile, is not this
-// class and is not restored.
 test('excludePodChurn does not reach beyond the two files pod install rewrites', () => {
   for (const line of [
     ' M apps/app/android/Podfile.lock',
@@ -991,13 +835,6 @@ test('excludePodChurn on a clean listing restores nothing', () => {
   expect(excludePodChurn([])).toEqual({ lines: [], restore: [] });
 });
 
-// --- pod churn against real git (CLAUDE.md item 9) --------------------------
-//
-// The mocked cases above prove the CLASSIFICATION. Only real git settles the
-// two things that actually decide whether the gate's hand-run checkout goes
-// away: that `git checkout -- <path>` restores the file rn-iso named, and that
-// `git worktree remove` -- which runs its OWN cleanliness check and refuses
-// over "modified or untracked files" -- is satisfied afterwards.
 function podChurnRepo(base: string, { extraDirt = false }: { extraDirt?: boolean } = {}) {
   const repo = join(base, 'repo');
   const bareRemote = join(base, 'remote.git');
@@ -1019,9 +856,6 @@ function podChurnRepo(base: string, { extraDirt = false }: { extraDirt?: boolean
   const wt = join(base, 'wt');
   git(`git worktree add -q "${wt}" -b feat-pods`);
 
-  // What the repo's own postinstall `pod install` does to a fresh worktree:
-  // the hermes-engine podspec bakes the absolute path in, so the lockfile is
-  // modified before any rn-iso command has run.
   writeFileSync(
     join(wt, 'apps', 'app', 'ios', 'Podfile.lock'),
     `PODS:\n  - hermes-engine (from \`${wt}/node_modules\`)\n`,
@@ -1087,8 +921,6 @@ test('against a real repo: pod churn PLUS a modified source file is refused exac
     expect(text).toMatch(/Refusing to remove/);
     expect(text).toMatch(/App\.tsx/);
     expect(text).not.toMatch(/restored/);
-    // ...and the churn is still on disk, unrestored: the refusal is the same
-    // fail-closed one it has always been.
     expect(readFileSync(join(wt, 'apps', 'app', 'ios', 'Podfile.lock'), 'utf-8')).toMatch(/node_modules/);
   } finally {
     console.error = originalError;

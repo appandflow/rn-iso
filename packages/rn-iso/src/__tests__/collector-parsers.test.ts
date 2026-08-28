@@ -1,20 +1,3 @@
-// The two device-log parsers, against REAL captured output.
-//
-// test/fixtures/ios-log-stream.ndjson was captured on 2026-08-25 from a
-// simulator that was ALREADY booted, with the exact command this collector
-// runs:
-//   xcrun simctl spawn <udid> log stream --style ndjson \
-//     --predicate 'processImagePath CONTAINS[c] "/"'
-// (the predicate is widened to "/" only so that a sim with no app installed
-// still produces events; the shape of every line is identical). It keeps the
-// non-JSON banner `log stream` opens with, one activityCreateEvent, and one
-// logEvent each of messageType Default, Fault and Error.
-//
-// test/fixtures/android-logcat-time.txt was captured the same day from a live
-// emulator-5554 with `adb -s emulator-5554 logcat -v time -d`, and holds the
-// real buffer banner plus one line each of V/D/I/W/E. There was no F(atal)
-// line in that buffer, so the fatal case below is SYNTHESIZED in the same
-// format (documented in `man logcat`) and marked as such.
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -41,8 +24,6 @@ import {
 } from '../collector/android.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 
-// Narrows out the nulls the parsers return for non-record lines, so a filtered
-// list is a list of records rather than `(record | null)[]`.
 function isNotNull<T>(value: T | null): value is T {
   return value !== null;
 }
@@ -56,7 +37,6 @@ describe('ios: log stream ndjson', () => {
 
   test('the real capture yields Contract-1 records for the log events only', () => {
     const records = lines.map((l) => parseLogStreamLine(l)).filter(isNotNull);
-    // 5 captured lines: the banner and the activityCreateEvent are dropped.
     expect(lines.length).toBe(5);
     expect(records.length).toBe(3);
     for (const record of records) {
@@ -70,8 +50,6 @@ describe('ios: log stream ndjson', () => {
     }
   });
 
-  // The very first thing a live `log stream` writes is not JSON. A parser
-  // that threw here would take the collector down before it recorded a line.
   test('the real non-JSON banner line is skipped, not thrown on', () => {
     const banner = lines[0];
     assert(banner);
@@ -79,8 +57,6 @@ describe('ios: log stream ndjson', () => {
     expect(parseLogStreamLine(banner)).toBe(null);
   });
 
-  // activityCreateEvent / activityTransitionEvent are tracing scaffolding
-  // with no messageType; in the real capture they were a third of the volume.
   test('activity events are dropped: they carry a message but no level', () => {
     const activity = lines.find((l) => l.includes('"activityCreateEvent"'));
     expect(activity).toBeTruthy();
@@ -106,9 +82,6 @@ describe('ios: log stream ndjson', () => {
     expect(records.map((r) => r.proc).toSorted()).toEqual(['gamecontrollerd', 'locationd', 'pairedsyncd']);
   });
 
-  // Apple's stamp is "2026-08-25 13:18:05.196749-0400": a space separator and
-  // six fractional digits. `now` is pinned to 0 so a fallback would be
-  // obvious rather than plausible.
   test("Apple's timestamp is parsed rather than replaced by the read time", () => {
     const logEvent = lines.find((l) => l.includes('"logEvent"'));
     assert(logEvent);
@@ -125,8 +98,6 @@ describe('ios: log stream ndjson', () => {
     expect(levelFromMessageType('Default')).toBe('info');
     expect(levelFromMessageType('Error')).toBe('error');
     expect(levelFromMessageType('Fault')).toBe('fatal');
-    // The unified log has no warning level at all, so warn is unreachable
-    // here; inventing one from the message text would misclassify.
     expect(levelFromMessageType('Warning')).toBe('info');
     expect(levelFromMessageType(undefined)).toBe('info');
   });
@@ -164,17 +135,6 @@ describe('ios: log stream ndjson', () => {
   });
 });
 
-// --- the demotion list ---------------------------------------------------
-//
-// FIELD CASE. On a healthy Expo app on an iOS 26.5 simulator, `rn-iso logs
-// --errors` returned 3,004 records and `status` said "3004 errors since the
-// last marker". None of them were the app's: they were Apple's own frameworks
-// logging at messageType Error from inside the app's process, plus the UIScene
-// deprecation notice, which ships as a Fault and was therefore reported as
-// FATAL on an app that was working.
-//
-// The events below are written in the log-stream ndjson shape, with the
-// subsystem/category/message combinations the capture actually carried.
 describe('ios: demoting device noise', () => {
   const app =
     '/Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/ABC/MyApp.app/MyApp';
@@ -188,8 +148,6 @@ describe('ios: demoting device noise', () => {
     ...over,
   });
 
-  // The flood: ~2/3 of the 3,004 lines. An RN app holds a websocket to Metro
-  // and HTTP to the dev server, so com.apple.network never stops complaining.
   test('the nw_socket flood is captured at info, not reported as an error', () => {
     const flood = [
       event({
@@ -203,8 +161,6 @@ describe('ios: demoting device noise', () => {
         eventMessage:
           'boringssl_context_handle_fatal_alert(1938) [C4.1.1:2][0x10c0a4b60] read alert, level: fatal, description: certificate unknown',
       }),
-      // The same emitter through CFNetwork's legacy path: no subsystem at all,
-      // so there is nothing but the message to match on.
       event({
         eventMessage:
           'nw_connection_copy_connected_local_endpoint_block_invoke [C2] Client called nw_connection_copy_connected_local_endpoint on unconnected nw_connection',
@@ -215,14 +171,12 @@ describe('ios: demoting device noise', () => {
       const record = parseLogStreamLine(JSON.stringify(e));
       assert(record);
       expect(record.level).toBe('info');
-      // Captured, not dropped: `logs` still shows it, `--errors` does not.
       expect(record.msg).toBe(e.eventMessage);
       expect(record.src).toBe('device');
       expect(record.proc).toBe('MyApp');
     }
   });
 
-  // The one record the field capture classified FATAL on a healthy app.
   test('the UIScene deprecation notice is a notice, not a fatal', () => {
     const record = parseLogStreamLine(
       JSON.stringify(
@@ -284,7 +238,6 @@ describe('ios: demoting device noise', () => {
       expect(noiseRuleId(e)).toBe(id);
       expect(levelForEvent(e)).toBe('info');
     }
-    // Every rule in the list is exercised above or in the tests around it.
     const covered = new Set([
       ...cases.map(([id]) => id),
       'network',
@@ -294,8 +247,6 @@ describe('ios: demoting device noise', () => {
     expect(NOISE_RULES.map((r) => r.id).filter((id) => !covered.has(id))).toEqual([]);
   });
 
-  // The direction that matters: the list is an allowlist for DEMOTION, not a
-  // filter for what counts as an error. Anything not on it keeps its level.
   test("the app's own error is untouched, and so is an unlisted system one", () => {
     const own = event({ eventMessage: '[Error: Exception in HostFunction]' });
     expect(noiseRuleId(own)).toBe(null);
@@ -303,7 +254,6 @@ describe('ios: demoting device noise', () => {
     assert(ownRecord);
     expect(ownRecord.level).toBe('error');
 
-    // From the real fixture: pairedsync and locationd are not on the list.
     const unlisted = event({
       subsystem: 'com.apple.pairedsync',
       category: 'daemon',
@@ -313,8 +263,6 @@ describe('ios: demoting device noise', () => {
     expect(levelForEvent({ ...unlisted, messageType: 'Fault' })).toBe('fatal');
   });
 
-  // A rule can only ever demote. A subsystem on the list that logs at Default
-  // must not be pushed up, and a demotion must not change anything else.
   test('demotion never promotes, and never fires below error', () => {
     const chatty = event({
       messageType: 'Default',
@@ -325,9 +273,6 @@ describe('ios: demoting device noise', () => {
     expect(levelForEvent({ ...chatty, messageType: 'Debug' })).toBe('debug');
   });
 
-  // A subsystem rule matches the subsystem and its children, not a prefix that
-  // merely starts the same way -- com.apple.networkextension is a different
-  // component and keeps its errors.
   test('a subsystem rule matches dotted children, not lookalike names', () => {
     expect(noiseRuleId(event({ subsystem: 'com.apple.network.tcp' }))).toBe('network');
     expect(
@@ -383,8 +328,6 @@ describe('android: logcat -v time', () => {
     );
   });
 
-  // SYNTHESIZED: the emulator's buffer held no F(atal) line at capture time.
-  // The format is the same `-v time` layout documented in `man logcat`.
   test('a fatal line maps to fatal (synthesized: no F line was in the captured buffer)', () => {
     const record = parseLogcatLine(
       '08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182 (com.example.app)',
@@ -407,9 +350,6 @@ describe('android: logcat -v time', () => {
     expect(levelFromLogcatLetter('?')).toBe('info');
   });
 
-  // `-v time` carries no year. A December line read in January must not land
-  // eleven months in the future, where it would sort to the end of the merged
-  // timeline and be the first thing `logs` shows.
   test('the missing year comes from the reference clock, and a future stamp rolls back', () => {
     const jan = Date.parse('2027-01-02T10:00:00Z');
     const dec = parseLogcatTimestamp({ month: 12, day: 28, hour: 23, minute: 0, second: 0, millis: 0 }, jan);
@@ -424,21 +364,14 @@ describe('android: logcat -v time', () => {
     expect(logcatArgs('emulator-5554', 3132)).toEqual(['-s', 'emulator-5554', 'logcat', '--pid', '3132', '-v', 'time']);
   });
 
-  // Captured from a live emulator: `adb shell pidof -s com.android.settings`
-  // printed "3132" and exited 0; an unknown package printed nothing.
   test('parsePidof reads the single pid, and nothing from empty output', () => {
     expect(parsePidof('3132\n')).toBe(3132);
     expect(parsePidof('')).toBe(null);
     expect(parsePidof('\r\n')).toBe(null);
     expect(parsePidof(null)).toBe(null);
-    // Without -s, pidof can print several; the first is still a real pid.
     expect(parsePidof('3132 3155\n')).toBe(3132);
   });
 
-  // Android never produced the iOS storm, because --pid already excludes the
-  // system daemons. What it does let through is the system code running INSIDE
-  // the app process: the emulator's graphics stack and the zip loader, at E,
-  // on a launch that worked.
   describe('demoting device noise', () => {
     test('the emulator graphics and loader tags are captured at info', () => {
       const noisy = [
@@ -462,7 +395,6 @@ describe('android: logcat -v time', () => {
       const rnjs = parseLogcatLine('08-21 17:51:19.669 E/ReactNativeJS( 9182): [Error: Exception in HostFunction]');
       assert(rnjs);
       expect(rnjs.level).toBe('error');
-      // From the real fixture.
       const keystore = parseLogcatLine(
         '08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183',
       );
@@ -470,8 +402,6 @@ describe('android: logcat -v time', () => {
       expect(keystore.level).toBe('error');
     });
 
-    // There is no benign F inside an app process: it is libc reporting a
-    // signal or ART aborting. A noisy tag does not buy an exemption from that.
     test('F is never demoted, even from a listed tag', () => {
       expect(levelForLogcat('F', 'libEGL')).toBe('fatal');
       const libc = parseLogcatLine(
@@ -491,16 +421,10 @@ describe('android: logcat -v time', () => {
   });
 });
 
-// --- watchAppPid: the app restart the collector used to sleep through ------
 describe('watchAppPid', () => {
-  // A hand-driven timer, so a 3-second poll costs nothing and every tick is
-  // deliberate.
   function driver() {
     const queue: Array<() => void> = [];
     return {
-      // watchAppPid only ever hands the handle back to clearTimer, which here
-      // ignores it. Return a real, immediately-cleared Timeout so the type is
-      // honest without a cast; it never fires, the hand-driven `tick` does.
       setTimer: (fn: () => void): ReturnType<typeof setTimeout> => {
         queue.push(fn);
         const handle = setTimeout(() => {}, 0);

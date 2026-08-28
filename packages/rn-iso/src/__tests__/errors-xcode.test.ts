@@ -1,22 +1,3 @@
-// Transcript -> diagnostics. This file is the reason `rn-iso ios` can print a
-// compiler error instead of a build log, so it is tested against transcripts
-// that a real xcodebuild really produced rather than against strings written
-// from memory.
-//
-// Every REAL_* fixture below was captured from Xcode 26.6 (build 17F113) on
-// macOS 26.5 by building a scratch iOS app project created for this purpose:
-// a single Objective-C target, deliberately broken one way per capture, built
-// with the same argv src/engine/xcode.js composes. They are trimmed to the
-// interesting window, and the two places where a 1300-to-2300 character clang
-// argv sat are marked `[argv elided]` -- nothing else is edited, including the
-// indentation, which is load-bearing: xcodebuild indents echoed commands by
-// four spaces and that is what separates a compiler's output from a
-// compiler's argv.
-//
-// Recording them matters because the formats are not documented and DO move:
-// the linker's undefined-symbol header changed spelling in Xcode 15, and
-// "error:" arrives with a file, with a project path, with a tool name in
-// front, or with nothing at all depending on who is speaking.
 import {
   MAX_DIAGNOSTICS,
   capDiagnostics,
@@ -148,19 +129,11 @@ describe('real transcripts', () => {
   });
 
   test('the CompileC command line repeated in the failure recap is not a diagnostic', () => {
-    // xcodebuild quotes whole build commands back after ** BUILD FAILED **.
-    // In this capture they are tab-indented, so rule 1 already excludes them;
-    // the terminator below is the second line of defence, because that
-    // indentation is not a documented format.
     expect(REAL_COMPILE_FAILURE.includes('The following build commands failed:')).toBeTruthy();
     expect(extractXcodeDiagnostics(REAL_COMPILE_FAILURE).length).toBe(2);
   });
 
   test('nothing after ** BUILD FAILED ** is extracted, whatever its indentation', () => {
-    // Everything past the terminator is a recap of diagnostics already
-    // reported. Depending on the recap staying tab-indented forever would put
-    // one Xcode release between this module and reporting every failed
-    // build's own command line back as an error.
     const transcript = [
       '/a/b.m:1:1: error: the real one',
       '** BUILD FAILED **',
@@ -172,18 +145,12 @@ describe('real transcripts', () => {
   });
 
   test('a link failure reports the missing symbol ONCE across both simulator slices', () => {
-    // The transcript carries the identical undefined symbol twice, under
-    // "for architecture arm64" and "for architecture x86_64". An agent has one
-    // symbol to add, not two.
     const found = extractXcodeDiagnostics(REAL_LINK_FAILURE);
     expect(found.map((d) => d.message)).toEqual([
       'Undefined symbol: _rnIsoMissingFunction',
       'ld: symbol(s) not found for architecture arm64',
       'linker command failed with exit code 1 (use -v to see invocation)',
     ]);
-    // The clang line names the project rather than a source file, so the
-    // project path is the only location there is -- and it is a path, so it
-    // survives, where the "Scratch: clang:" that follows it does not.
     expect(found[2]?.file).toBe('/tmp/rn-iso-xc/Scratch.xcodeproj');
     expect(found[0]?.file).toBe(undefined);
   });
@@ -197,8 +164,6 @@ describe('real transcripts', () => {
   });
 
   test('the run-script warning in that same transcript is not promoted to an error', () => {
-    // It sits between the error and ** BUILD FAILED ** and starts at column 0
-    // exactly like the error does. Only the word tells them apart.
     expect(REAL_PODS_FAILURE.includes('warning: Run script build phase')).toBeTruthy();
     expect(extractXcodeDiagnostics(REAL_PODS_FAILURE).length).toBe(1);
   });
@@ -212,10 +177,6 @@ describe('real transcripts', () => {
   });
 
   test('an xcodebuild invocation error survives its own timestamped log line', () => {
-    // `xcodebuild: error:` has no file and no line, and the transcript around
-    // it contains an NSLog-formatted line ("... xcodebuild[94932:16893065]
-    // Writing error result bundle ...") that contains the word error and must
-    // not be picked up.
     const found = extractXcodeDiagnostics(REAL_SCHEME_FAILURE);
     expect(found.length).toBe(1);
     expect(found[0]?.message).toMatch(/does not contain a scheme named "NoSuchScheme"/);
@@ -230,11 +191,6 @@ describe('real transcripts', () => {
 
 describe('what is and is not a diagnostic', () => {
   test('an indented command line is never one, however much it says error', () => {
-    // Synthetic, because the scratch project's own clang argv happens not to
-    // contain the substring -- a real RN build's does (a -Werror flag, a
-    // source path with "error" in its name, a --serialize-diagnostics target).
-    // This is rule 1 of the module: promoting noise sends an agent to edit a
-    // file that compiles.
     const transcript = [
       'CompileC /dd/Foo.o /src/Foo.m normal arm64 objective-c',
       '    cd /project',
@@ -250,8 +206,6 @@ describe('what is and is not a diagnostic', () => {
   });
 
   test('the Xcode 15+ linker spelling of an undefined symbol is recognized too', () => {
-    // "ld: Undefined symbols:" rather than "Undefined symbols for
-    // architecture arm64:". A machine mid-Xcode-upgrade produces both.
     const transcript = [
       'ld: Undefined symbols:',
       '  _RCTRegisterModule, referenced from:',
@@ -294,8 +248,6 @@ describe('what is and is not a diagnostic', () => {
   test('nothing recognizable returns [], so a caller knows to fall back to the log tail', () => {
     expect(extractXcodeDiagnostics('note: Building targets in dependency order\nSome prose.')).toEqual([]);
     expect(extractXcodeDiagnostics('')).toEqual([]);
-    // Invalid-input validation: the signature is `string`, but the guard must
-    // tolerate these, so the calls use the same documented cast as `42` below.
     expect(extractXcodeDiagnostics(null as unknown as string)).toEqual([]);
     expect(extractXcodeDiagnostics(undefined as unknown as string)).toEqual([]);
     expect(extractXcodeDiagnostics(42 as unknown as string)).toEqual([]);
@@ -309,7 +261,6 @@ describe('what is and is not a diagnostic', () => {
 
 describe('dedupe and order', () => {
   test('the same message at two different sites is two diagnostics', () => {
-    // Dedupe is on the location, not the text: two call sites are two edits.
     const transcript = [
       "/a/One.m:10:5: error: use of undeclared identifier 'x'",
       "/a/Two.m:20:5: error: use of undeclared identifier 'x'",
@@ -370,8 +321,6 @@ describe('capDiagnostics', () => {
   });
 
   test('a non-array is the empty result, not a throw', () => {
-    // Invalid-input validation: the signature is `Diagnostic[]`, but the guard
-    // must tolerate a non-array, so the calls cast the same way as above.
     expect(capDiagnostics(null as unknown as Diagnostic[])).toEqual({ diagnostics: [], truncated: 0 });
     expect(capDiagnostics(undefined as unknown as Diagnostic[])).toEqual({ diagnostics: [], truncated: 0 });
   });

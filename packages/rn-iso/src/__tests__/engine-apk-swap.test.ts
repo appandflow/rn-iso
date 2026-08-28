@@ -1,16 +1,3 @@
-// engine/apk-swap: fresh JS into a cached release APK.
-//
-// The pure pieces (the hermes decision, the hermesc probe order, the bundle
-// argv, zipalign's version-gated argv, keystore resolution) are asserted as
-// data. swapApkBundle itself is asserted for ORDER through injected seams --
-// copy aside, bundle, hermesc, asset gate, zip -d, zip -0, zipalign,
-// apksigner -- and for the guarantee every non-ok shape shares: a return
-// value naming what happened, never a throw, because the caller's answer to
-// all of them is the same safe fallback (build fresh).
-//
-// THE ASSET GATE's own comparison lives in engine/asset-manifest.ts and is
-// tested there; what is asserted here is the gate's POSITION in the flow and
-// its two refusals (no stored manifest, a manifest that does not match).
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -35,8 +22,6 @@ import {
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
 import type { BuildToolsEntry } from '../sim/android.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
-
-// --- hermes ----------------------------------------------------------------
 
 describe('hermesEnabledFromGradleProperties', () => {
   test('default is enabled: no file, no key, an unrelated file', () => {
@@ -116,8 +101,6 @@ describe('the hermesc probe order', () => {
   });
 });
 
-// --- the bundle command ----------------------------------------------------
-
 describe('androidBundleCommand', () => {
   test("expo: the project's own `expo export:embed`, fixed argv, --platform android --dev false", () => {
     expect(
@@ -177,8 +160,6 @@ describe('androidBundleCommand', () => {
   });
 });
 
-// --- zip, align, sign ------------------------------------------------------
-
 describe('zip surgery, alignment and signing', () => {
   test('"nothing to do" from zip -d is tolerated, every other zip failure is not', () => {
     expect(isNothingToDelete('zip error: Nothing to do! (app.apk)')).toBe(true);
@@ -206,7 +187,6 @@ describe('zip surgery, alignment and signing', () => {
       '/t/in.apk',
       '/t/out.apk',
     ]);
-    // An unparseable version takes the older branch, which every zipalign has.
     expect(zipalignArgs({ buildToolsMajor: 0, input: '/t/in.apk', output: '/t/out.apk' })[0]).toBe('-p');
   });
 
@@ -249,8 +229,6 @@ describe('keystore resolution', () => {
   });
 });
 
-// --- swapApkBundle orchestration -------------------------------------------
-
 let root: string;
 let tmp: string;
 const cachedApk = '/cache/android/k-productionrelease-sim/app-production-release.apk';
@@ -273,7 +251,6 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-// A bundle child that streams a line and exits with `code`.
 function makeBundleChild(code = 0): ChildProcess {
   const child = makeChildProcess();
   setImmediate(() => {
@@ -290,8 +267,6 @@ interface Call {
   opts?: Record<string, unknown>;
 }
 
-// A manifest, as both sides of the gate carry it: the paths React Native
-// emitted under --assets-dest, and the sha256 of each file AS EMITTED.
 function manifest(assets: Record<string, string>): AssetManifest {
   return {
     version: ASSET_MANIFEST_VERSION,
@@ -303,8 +278,6 @@ function manifest(assets: Record<string, string>): AssetManifest {
 
 const LOGO = 'a'.repeat(64);
 const SOUND = 'b'.repeat(64);
-// What the build behind the cache entry recorded, and what this workspace
-// emits now -- identical, which is the case that swaps.
 const STORED = manifest({ 'drawable-mdpi/logo.png': LOGO, 'raw/sound.mp3': SOUND });
 
 function harness({
@@ -370,28 +343,20 @@ describe('swapApkBundle', () => {
 
     expect(calls.map((c) => c.file)).toEqual(['cp', 'npx', hermesc, 'mv', 'zip', 'zip', buildTools.path, apksigner]);
 
-    // The copy aside clones first, and it is the ONLY call that names the
-    // cache entry: everything after it works on the temp copy.
     expect(calls[0]?.args).toEqual(['-c', cachedApk, work]);
     for (const call of calls.slice(1)) expect(call.args ?? []).not.toContain(cachedApk);
 
-    // The bundle is this workspace's, exported for android, staged in the
-    // ARCHIVE LAYOUT so `zip -r assets` puts it back where the runtime looks.
     const bundle = calls[1];
     expect(bundle?.args?.slice(0, 4)).toEqual(['expo', 'export:embed', '--platform', 'android']);
     expect(bundle?.args).toContain(join(stage, 'assets', ANDROID_BUNDLE_NAME));
     expect(bundle?.args).toContain(join(stage, 'res'));
 
-    // The gate reads no archive at all any more: it compares this run's
-    // emitted assets against the manifest the cached build recorded.
     expect(calls.some((c) => c.file === 'unzip')).toBe(false);
 
-    // zip -d out, then zip -0 (STORE, mandatory) in from the staging dir.
     expect(calls[4]?.args).toEqual(['-d', work, ANDROID_BUNDLE_ENTRY]);
     expect(calls[5]?.args).toEqual(['-0', '-r', work, 'assets']);
     expect(calls[5]?.opts).toEqual({ cwd: stage });
 
-    // Align BEFORE sign, and the signature covers the aligned file.
     expect(calls[6]?.args).toEqual(['-P', '16', '-f', '-v', '4', work, final]);
     expect(calls[7]?.args).toEqual(['sign', '--ks', keystore.path, '--ks-pass', 'pass:android', final]);
   });
@@ -420,7 +385,6 @@ describe('swapApkBundle', () => {
     expect(result.hermes).toBe(false);
     expect(result.note).toMatch(/hermesc not found/);
     expect(calls.some((c) => c.file === hermesc)).toBe(false);
-    // The plain bundle still lands in the copy and the copy is still signed.
     expect(calls.at(-1)?.file).toBe(apksigner);
   });
 
@@ -438,7 +402,6 @@ describe('swapApkBundle', () => {
     expect(result.assetMismatch).toBe(true);
     expect(result.assetDiff?.added).toEqual(['drawable-mdpi/brand_new.png']);
     expect(result.reason).toMatch(/added drawable-mdpi\/brand_new\.png/);
-    // Not one byte was written into the archive.
     expect(calls.some((c) => c.file === 'zip')).toBe(false);
     expect(calls.some((c) => c.file === buildTools.path)).toBe(false);
     expect(calls.some((c) => c.file === apksigner)).toBe(false);
@@ -468,8 +431,6 @@ describe('swapApkBundle', () => {
     const { calls, run } = harness({ stored: null });
     const result = await run();
     expect(result.assetMismatch).toBe(true);
-    // No diff: there was nothing to diff against, which is a different fact
-    // from "the sets differ" and the note says so.
     expect(result.assetDiff).toBeUndefined();
     expect(result.reason).toMatch(/predates asset tracking/);
     expect(calls.some((c) => c.file === 'zip')).toBe(false);

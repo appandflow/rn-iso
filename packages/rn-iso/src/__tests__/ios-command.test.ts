@@ -1,17 +1,3 @@
-// `rn-iso ios`.
-//
-// The engine modules are tested elsewhere (engine-xcode, engine-deps,
-// engine-prebuild, engine-app-install, build-cache). What is pinned HERE is
-// the thing only the command can get wrong: the ORDER of the steps, and what
-// reaches the two output streams.
-//
-// The order is the product:
-//   - the Metro gate fires BEFORE fingerprinting and before any build work,
-//     so "no dev server" costs a second rather than four minutes;
-//   - a cache hit skips prebuild, pods and xcodebuild ENTIRELY -- that is the
-//     whole reason a second worktree is fast;
-//   - the collector is REPLACED, never duplicated, and the state file is
-//     MERGED, never overwritten, so `stop` can still find the supervisor.
 import assert from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -53,26 +39,16 @@ import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroReso
 const UDID = 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9';
 const FINGERPRINT = 'a3f9b1c2d3e4f5';
 
-// The seam registerIos accepts: Partial<typeof DEFAULT_DEPS>. Deriving it from
-// the exported function lets every override object be contextually typed
-// without DEFAULT_DEPS itself being exported.
 type IosDeps = NonNullable<Parameters<typeof registerIos>[1]>;
 
-// The mocks intentionally return partial shapes (the command reads only the
-// fields it needs), so the seam's real RETURN types must not be enforced. This
-// keeps each mock's parameter types (from the real signature, so a callback
-// like `(platform, key, path)` is typed) while leaving returns free.
 type LooseDeps = {
   [K in keyof Required<IosDeps>]?: Required<IosDeps>[K] extends (...args: infer A) => unknown
     ? (...args: A) => unknown
     : Required<IosDeps>[K];
 };
 
-// The replaceCollector seam, derived from the exported function so its spawn/
-// kill callbacks are typed without ReplaceCollectorArgs being exported.
 type ReplaceCollectorArgs = Parameters<typeof replaceCollector>[0];
 
-// Argument shapes for the seams the tests below record, derived the same way.
 type CheckEasAuthArgs = Parameters<NonNullable<IosDeps['checkEasAuth']>>[0];
 type CheckDeviceCapacityArgs = Parameters<NonNullable<IosDeps['checkDeviceCapacity']>>[0];
 type AcquireBuildSlotArgs = Parameters<NonNullable<IosDeps['acquireBuildSlot']>>[0];
@@ -83,8 +59,6 @@ let root: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
   process.env.RN_ISO_HOME = tmpHome;
-  // realpath: every path rn-iso records is canonical, and on macOS /var is a
-  // symlink to /private/var.
   root = realpathSync(mkdtempSync(join(tmpdir(), 'rn-iso-ws-')));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture' }));
 });
@@ -95,9 +69,6 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-// The same commander stub the other command tests use. `register` is the real
-// registerIos, but the stub is a partial commander mock; typing register as its
-// exact signature would demand a full Command here, so it stays loose.
 function captureAction(register: typeof registerIos, deps: LooseDeps) {
   let captured: ((opts: Record<string, unknown>) => unknown) | undefined;
   const stub = {
@@ -115,8 +86,6 @@ function captureAction(register: typeof registerIos, deps: LooseDeps) {
       return stub;
     },
   };
-  // The stub is a partial commander mock and deps are partial engine seams;
-  // registerIos wants a full Command and full deps, so cast at this one seam.
   register(stub as unknown as Parameters<typeof registerIos>[0], deps as unknown as IosDeps);
   return (opts: Record<string, unknown> = {}) => {
     assert(captured);
@@ -124,20 +93,12 @@ function captureAction(register: typeof registerIos, deps: LooseDeps) {
   };
 }
 
-// Every engine call is a seam. The defaults describe the happy path with a
-// cache MISS; each test overrides the one fact it is about.
-// The first NDJSON payload a --json command put on stdout, parsed. Asserts it
-// is present (noUncheckedIndexedAccess) then parses; the parsed value stays
-// JSON.parse-shaped, read one field at a time by the caller.
 function parseFirst(lines: string[]) {
   const [first] = lines;
   assert(first);
   return JSON.parse(first);
 }
 
-// The seam arguments each recorded call carries. Every field the assertions
-// read is modelled as `unknown` (compared one at a time); the index signature
-// keeps the recorder's `args[name] = value` write untyped.
 interface RecordedArgs {
   [key: string]: unknown;
   installIosApp: { appPath?: unknown };
@@ -190,8 +151,6 @@ function harness(overrides: LooseDeps = {}) {
       record('fingerprintProject', path);
       return { hash: FINGERPRINT, sources: [] };
     },
-    // Issue #60's miss diagnostic shells out to git; the default is a project
-    // with nothing untracked, so only the tests that are about it pay for it.
     untrackedNativeFiles: (args) => {
       record('untrackedNativeFiles', args);
       return [];
@@ -204,14 +163,10 @@ function harness(overrides: LooseDeps = {}) {
       record('storeBuild', { platform, key, path, options });
       return path;
     },
-    // Level two. The default is the ordinary case: a project with no provider
-    // configured, which asks nothing and calls nothing.
     loadProjectProvider: async (projectRoot, opts) => {
       record('loadProjectProvider', { projectRoot, ...opts });
       return { none: true };
     },
-    // Never the real one: it shells out to `eas whoami`, which is a network
-    // call. The EAS-session tests below override it with the state they are about.
     checkEasAuth: (args) => {
       record('checkEasAuth', args);
       return { ok: true, account: 'janic' };
@@ -220,9 +175,6 @@ function harness(overrides: LooseDeps = {}) {
       record('resolveRemote', args);
       return null;
     },
-    // Single flight. The default is the ordinary case: nothing else on this
-    // machine is building this fingerprint, so the lock is free and this run
-    // is the one builder.
     acquireBuildLock: (args) => {
       record('acquireBuildLock', args);
       return { acquired: true, path: join(tmpHome, 'build-locks', 'ios-k.lock'), lock: { pid: process.pid } };
@@ -245,9 +197,6 @@ function harness(overrides: LooseDeps = {}) {
       return { ok: true, durationMs: 42000 };
     },
     readPodState: () => ({ hasPodfile: false, lockText: null, manifestText: null }),
-    // podsAreStale is deliberately NOT stubbed: it is the real pure decision,
-    // fed by readPodState above, so these tests exercise the composition the
-    // command actually ships.
     runPodInstall: async (...args) => {
       record('runPodInstall', args);
       return { ok: true, durationMs: 18000 };
@@ -272,17 +221,12 @@ function harness(overrides: LooseDeps = {}) {
       record('replaceCollector', args);
       return { killed: null, pid: 5150 };
     },
-    // The gate's retry is REAL here (it is the thing under test in one case
-    // below); only its sleep is removed, so a refusal costs no wall time.
     resolveMetroWithRetry: (resolve, port, path, opts) =>
       resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
-    // The default is a launch that verified: the app fetched a bundle from
-    // this workspace's Metro. The unverified path has its own tests.
     verifyLaunch: async (args) => {
       record('verifyLaunch', args);
       return { verified: true, waitedMs: 2500, record: { event: 'bundle_build_started' } };
     },
-    // Release-only seams; a Debug run must never reach either.
     swapJsBundle: async (args) => {
       record('swapJsBundle', args);
       return {
@@ -338,12 +282,7 @@ function buildRecords() {
   return existsSync(file) ? parseNdjsonText(readFileSync(file, 'utf-8')) : [];
 }
 
-// --- the order ------------------------------------------------------------
-
 describe('the Metro gate', () => {
-  // The gate sits between ensureOwnedDevice (whose record the rest of the
-  // command reads) and ensureBooted (the first expensive step). So a dead port
-  // costs the device RECORD, and not the ~10s boot poll behind it.
   test('fires before the boot and before fingerprinting: a dead port costs a second, not a build', async () => {
     reserve();
     const { errs, exitCode, calls } = await run(
@@ -404,11 +343,6 @@ describe('the Metro gate', () => {
   });
 });
 
-// The start -> ios race, seen on a yarn-workspaces monorepo: `start` returns
-// when the server is LISTENING, and the bare in-process Metro then blocks its
-// event loop for ~20s crawling the file map. The single 2s /status probe timed
-// out inside that window and the gate refused with "run rn-iso start first" --
-// about a supervisor `start` had just spawned.
 describe('the Metro gate retries an indexing Metro', () => {
   test('a port that verifies on the third attempt is not refused', async () => {
     reserve();
@@ -418,7 +352,6 @@ describe('the Metro gate retries an indexing Metro', () => {
       {
         resolveProjectMetro: async () => {
           attempts += 1;
-          // Listening, event loop blocked by the file-map crawl.
           if (attempts < 3)
             return { notOurs: "pid 42 on port 8082 does not answer Metro's /status", kind: 'unresponsive' };
           return { metro: { pid: 42, leader: 42, cwd: root } };
@@ -471,7 +404,6 @@ describe('the Metro gate retries an indexing Metro', () => {
     const text = errs.join('\n');
     expect(text).toMatch(/A supervisor record exists for port 8082/);
     expect(text).toMatch(/still be indexing/);
-    // And the remedy is the one that helps: wait, do not start a second one.
     expect(text).toMatch(/rn-iso start --wait/);
     expect(text).not.toMatch(/Run `rn-iso start` first/);
   });
@@ -498,10 +430,6 @@ describe('the Metro gate retries an indexing Metro', () => {
   });
 });
 
-// The launch is not the proof. rn-iso reported launched: true while the app
-// sat on expo-dev-launcher's DEVELOPMENT SERVERS picker listing every other
-// workspace's Metro -- one tap from loading another project's bundle onto
-// this device.
 describe('launch verification', () => {
   test('a verified launch reports launched: true and says what it saw', async () => {
     reserve();
@@ -509,7 +437,6 @@ describe('launch verification', () => {
     expect(exitCode).toBe(null);
     expect(parseFirst(logs).launched).toBe(true);
     expect(errs.join('\n')).toMatch(/verify.*bundle requested from Metro port 8082/);
-    // It polls THIS workspace's timeline, from the launch onwards.
     expect(calls.args.verifyLaunch.logsDir).toBe(workspaceLogsDir(root));
     expect(Number.isFinite(calls.args.verifyLaunch.since)).toBeTruthy();
   });
@@ -523,8 +450,6 @@ describe('launch verification', () => {
         detectIsExpo: () => true,
       },
     );
-    // Exit 0: the app IS launched, and refusing here would break every slow
-    // launch. What changes is the FACT, which is what an agent branches on.
     expect(exitCode).toBe(null);
     expect(parseFirst(logs).launched).toBe('unverified');
     const text = errs.join('\n');
@@ -572,7 +497,6 @@ describe('launch verification', () => {
     expect(record.level).toBe('warn');
     expect(record.msg).toMatch(/no bundle request .* reached this workspace's Metro on port 8082/);
 
-    // And the verified case says so at info.
     const fresh = await run({});
     expect(fresh.exitCode).toBe(null);
     expect(buildRecords().some((r) => r.event === 'launch_verified' && r.level === 'info')).toBeTruthy();
@@ -665,9 +589,6 @@ describe('the cache', () => {
       'fingerprintProject',
       'runPrebuild',
       'runPodInstall',
-      // The second fingerprint is issue #59: prebuild and pod install rewrite
-      // fingerprinted inputs, so what the artifact is STORED under is computed
-      // after them, never before.
       'fingerprintProject',
       'buildIos',
       'storeBuild',
@@ -710,8 +631,6 @@ describe('the cache', () => {
     expect(!facts.appPath.startsWith(cachedApp)).toBeTruthy();
   });
 
-  // The whole reason to opt out is a cache entry you no longer trust. Keeping
-  // the old entry would mean the very next run trusts it again.
   test('--no-build-cache still STORES -- over the entry it was told not to trust -- and still uploads', async () => {
     reserve();
     const { exitCode, calls } = await run(
@@ -747,14 +666,6 @@ describe('the cache', () => {
   });
 });
 
-// --- level two: the project's own build cache provider --------------------
-//
-// rn-iso's local cache is level one. The project's OWN configured provider --
-// `"buildCacheProvider": "eas"`, or a module of its own -- is level two, and a
-// hit there is copied into level one on the way past so the NEXT worktree does
-// not pay for it either. The engine module is tested in
-// engine-remote-cache.test.js; what is pinned here is that the command asks in
-// the right order, and that nothing a provider does can fail or stall the run.
 describe('the remote cache', () => {
   const provider = (name = 'eas') => ({ provider: { plugin: {}, options: {} }, name });
 
@@ -850,8 +761,6 @@ describe('the remote cache', () => {
     expect(errs.join('\n')).toMatch(/^cache {7}uploaded \(eas\)$/m);
   });
 
-  // Containment is the product here: a provider is someone else's network call
-  // running inside an agent's dev loop.
   test('a provider that THROWS degrades to a local-only run with a note', async () => {
     reserve();
     const { exitCode, calls, errs } = await run(
@@ -885,7 +794,6 @@ describe('the remote cache', () => {
           resolveRemote: async () => ({ timedOut: true }),
         },
       ));
-      // The exit is scheduled behind a stdout flush.
       await new Promise((r) => setTimeout(r, 20));
     } finally {
       process.exit = originalExit;
@@ -936,10 +844,6 @@ describe('the remote cache', () => {
     expect(errs.join('\n')).toMatch(/could not be stored locally/);
   });
 
-  // The EAS provider is the one that cannot report its own failures:
-  // eas-build-cache-provider catches every error from `npx eas-cli` and returns
-  // null, so a logged-out machine gets a clean MISS on every build and no line
-  // anywhere says why. The pre-flight is what turns that into one line.
   test('a logged-out EAS session skips the remote tier and says so, once', async () => {
     reserve();
     const { exitCode, calls, errs } = await run(
@@ -1003,8 +907,6 @@ describe('the remote cache', () => {
     expect(calls.order.includes('resolveRemote')).toBeTruthy();
   });
 
-  // Offline is not logged out. whoami reaches the network whenever a session
-  // exists, so an unknown answer has to leave the run exactly as it was.
   test('a session that could not be established changes nothing', async () => {
     reserve();
     const { calls, errs } = await run(
@@ -1038,8 +940,6 @@ describe('the remote cache', () => {
     expect(line).toMatch(/anyway/);
   });
 
-  // The other half: when a provider DOES surface an error, an auth one gets the
-  // same specific note rather than the generic "could not be used".
   test('a provider failure that reads as auth gets the auth note, not the generic one', async () => {
     reserve();
     const { errs } = await run(
@@ -1071,14 +971,6 @@ describe('the remote cache', () => {
   });
 });
 
-// --- single-flight builds -------------------------------------------------
-//
-// Level one misses, level two missed or is not there, and the run is about to
-// spend nineteen minutes in xcodebuild. If another workspace on this machine
-// is ALREADY spending them on the same fingerprint, the answer is to wait for
-// its artifact, not to compile the same thing beside it. What is pinned here
-// is the wiring: WHEN the lock is attempted, that a loser never builds, that a
-// winner always releases, and that --no-build-cache is outside all of it.
 describe('single-flight builds', () => {
   const heldBy = (pid = 41233, projectRoot = '/w/app-999') => ({
     held: {
@@ -1123,8 +1015,6 @@ describe('single-flight builds', () => {
     expect(!calls.order.includes('waitForBuild')).toBeTruthy();
   });
 
-  // A remote hit is an artifact in hand. Queueing behind someone else's
-  // compile of the same fingerprint would be slower than what we already have.
   test('a remote hit never takes the lock either', async () => {
     reserve();
     const { calls } = await run(
@@ -1138,10 +1028,6 @@ describe('single-flight builds', () => {
     expect(!calls.order.includes('acquireBuildLock')).toBeTruthy();
   });
 
-  // --no-build-cache means "compile this yourself, now". Waiting for another
-  // workspace's artifact is exactly what it was passed to avoid -- and taking
-  // the lock would make every other workspace wait on a build whose result
-  // they were not asking for.
   test('--no-build-cache neither waits nor acquires', async () => {
     reserve();
     const { calls } = await run(
@@ -1220,9 +1106,6 @@ describe('single-flight builds', () => {
     expect(logs.length).toBe(1);
   });
 
-  // The builder died, or its build failed and it released without storing.
-  // Waiting longer would be waiting for nothing, so this run becomes the
-  // builder -- and takes the lock, so a third workspace waits on IT.
   test('a builder that failed makes the waiter take over and build', async () => {
     reserve();
     let acquires = 0;
@@ -1244,9 +1127,6 @@ describe('single-flight builds', () => {
     expect(stderr).toMatch(/without an artifact/);
   });
 
-  // Losing the takeover race too means a third workspace is now building. One
-  // wait is a good bet; queueing again after a failure could repeat forever,
-  // so this run just builds. A redundant build is the cheap failure here.
   test('losing the takeover race builds anyway rather than queueing again', async () => {
     reserve();
     let waits = 0;
@@ -1266,9 +1146,6 @@ describe('single-flight builds', () => {
     expect(!calls.order.includes('releaseBuildLock')).toBeTruthy();
   });
 
-  // The rule that keeps a machine from deadlocking: whatever happens to the
-  // build, the lock goes. A failed build that kept it would leave every other
-  // workspace on the fingerprint waiting for an artifact nobody is making.
   test('a FAILED build releases the lock', async () => {
     reserve();
     const { exitCode, calls } = await run(
@@ -1281,8 +1158,6 @@ describe('single-flight builds', () => {
     expect(calls.order.includes('releaseBuildLock')).toBeTruthy();
   });
 
-  // An exception is not a failure the command formats -- it propagates -- so
-  // `fail` never sees it and only the `finally` can free the waiters.
   test('a build that THROWS releases the lock on the way out', async () => {
     reserve();
     const released: { handle?: { lock?: { pid?: number | null } } | null } = {};
@@ -1320,8 +1195,6 @@ describe('single-flight builds', () => {
     expect(calls.order.includes('releaseBuildLock')).toBeTruthy();
   });
 
-  // A wedged builder is the one thing pid-liveness cannot see, so the wait has
-  // a ceiling. It surfaces as an ordinary refusal with a code, not a stack.
   test('a wait that hits its ceiling is a refusal with a code, not a crash', async () => {
     reserve();
     const { exitCode, errs, logs, calls } = await run(
@@ -1342,8 +1215,6 @@ describe('single-flight builds', () => {
     expect(parseFirst(logs).code).toBe('RN_ISO_BUILD_WAIT_TIMEOUT');
   });
 
-  // Same containment rule the cache store and the provider follow: this is an
-  // optimisation, and an optimisation that cannot run must not stop a build.
   test('a lock that cannot be created is a note, and the build proceeds', async () => {
     reserve();
     const { exitCode, calls, errs } = await run(
@@ -1442,14 +1313,7 @@ describe('failure output', () => {
       },
     );
     expect(exitCode).toBe(1);
-    // --json is a contract about stdout in BOTH directions: exactly one
-    // parseable line, whether the run succeeded or failed. A caller capturing
-    // it with `$(...)` and parsing the result got an empty string here, which
-    // is the one answer a JSON parser cannot act on.
     expect(logs.length).toBe(1);
-    // The shape is `android`'s, and BOTH fields are populated: a payload
-    // carrying only a code made `ios --json` the one command whose failure a
-    // caller could not report without also parsing stderr prose.
     const payload = parseFirst(logs);
     expect(payload.code).toBe('RN_ISO_BUILD_FAILED');
     expect(payload.message).toMatch(/xcodebuild` failed/);
@@ -1465,9 +1329,6 @@ describe('failure output', () => {
     expect(text).toMatch(/^failed {6}RN_ISO_BUILD_FAILED/m);
   });
 
-  // The same contract every other --json failure has, on the step an agent hits
-  // most often. `ios` printed NOTHING on stdout here, so a caller could not
-  // tell a failed build from a crashed CLI without reading stderr prose.
   test('--json puts one parseable {code, message, remedy} line on stdout when the gate refuses', async () => {
     const { logs, exitCode } = await run({ json: true });
     expect(exitCode).toBe(1);
@@ -1478,8 +1339,6 @@ describe('failure output', () => {
     expect(payload.remedy).toMatch(/rn-iso start/);
   });
 
-  // Without --json stdout stays untouched: the human path prints its diagnosis
-  // on stderr and nothing captures stdout.
   test('without --json a failure still writes nothing to stdout', async () => {
     const { logs, exitCode } = await run({});
     expect(exitCode).toBe(1);
@@ -1531,12 +1390,6 @@ describe('failure output', () => {
   });
 
   test('a device that will not boot is refused at install, after the build has been stored', async () => {
-    // Boot runs BESIDE the fingerprint/cache/build work, not ahead of it: a
-    // cold boot used to add its whole duration in front of a multi-minute
-    // compile, and install is the first step that needs a live device. The
-    // trade on this rare failure is deliberate -- the build that ran anyway
-    // went into the shared cache, so the retry after fixing the device
-    // installs it instead of compiling again.
     reserve();
     const { errs, exitCode, calls } = await run(
       {},
@@ -1575,7 +1428,6 @@ describe('success output', () => {
     expect(logs.length).toBe(1);
     expect(logs[0]).toMatch(/^OK: com\.example\.app on rn-iso-fixture \(BF2A\.\.\), Metro port 8082/);
     const text = errs.join('\n');
-    // Every phase line carries its own duration, in formatDuration's shape.
     expect(text).toMatch(/^device {6}rn-iso-fixture \(BF2A\.\.\) booted \(\d+m?\d*s\)$/m);
     expect(text).toMatch(/^fingerprint a3f9b1\.\. miss \(\d+m?\d*s\)$/m);
     expect(text).toMatch(/^build {7}ok \(2m41s\)$/m);
@@ -1649,8 +1501,6 @@ describe('Contract 6: the dev-client scheme', () => {
     expect(calls.args.launchIosApp.devClientScheme).toBe(undefined);
   });
 });
-
-// --- Contract 5 -----------------------------------------------------------
 
 describe('the collector', () => {
   function collectorHarness({
@@ -1775,8 +1625,6 @@ describe('Contract 4: the state file', () => {
   });
 });
 
-// --- pure helpers ---------------------------------------------------------
-
 describe('formatting', () => {
   test('durations read the way a build feels', () => {
     expect(formatDuration(0)).toBe('0s');
@@ -1862,9 +1710,6 @@ describe('devClientScheme', () => {
     expect(devClientScheme(project({ expo: { scheme: 'myapp' } }, { name: 'x' }))).toBe(undefined);
   });
 
-  // The BUILT app is the truth. app.json alone was the source, and a project
-  // with a dynamic config (app.config.ts) has no scheme there at all -- so the
-  // deep link was skipped and the app opened the dev-launcher's server picker.
   test("prefers the built app's Info.plist over app.json", () => {
     const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
     const exec = makeExecutor({
@@ -1908,9 +1753,6 @@ describe('devClientScheme', () => {
     });
 
     test('drops third-party callback schemes rather than deep-linking through them', () => {
-      // Verbatim from a real app's Info.plist. Expo's rule (longest wins)
-      // picks the Google one; `fb...` is also declared by the Facebook app, so
-      // which app iOS opens depends on what else is installed.
       const real = [
         'th3rdwave',
         'fb555544564655381',
@@ -1978,18 +1820,12 @@ describe('iosFacts', () => {
     });
   });
 
-  // A wait is reported ALONGSIDE cacheHit: 'local', never instead of it. The
-  // artifact really did come from the local cache; what this adds is that it
-  // was not there when the run started, and what it cost to get it.
   test('waitedForBuild names the builder waited on and what the wait cost', () => {
     const facts = iosFacts({ udid: UDID, cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } });
     expect(facts.cacheHit).toBe('local');
     expect(facts.waitedForBuild).toEqual({ pid: 41233, ms: 761000 });
   });
 
-  // The enum is the point: an agent that reads `true` cannot tell a free
-  // install from one that cost a download, and those are not the same thing to
-  // plan around. Anything that is not a level rendered as `false`.
   test('cacheHit is a LEVEL, and an unknown value is a miss rather than a truthy string', () => {
     expect(iosFacts({ udid: UDID, cacheHit: 'remote' }).cacheHit).toBe('remote');
     expect(iosFacts({ udid: UDID, cacheHit: true }).cacheHit).toBe(false);
@@ -2011,9 +1847,6 @@ describe('cacheDescription', () => {
   });
 });
 
-// The fingerprint is scoped to iOS, so a change under android/ cannot move the
-// iOS cache key. See the field note above fingerprintProject in
-// src/build-cache.js for why this is not cosmetic.
 test('ios fingerprints with platforms scoped to ios', async () => {
   reserve();
   const seen: { path: unknown; options?: { platform?: unknown } }[] = [];
@@ -2033,9 +1866,6 @@ test('ios fingerprints with platforms scoped to ios', async () => {
   expect(seenEntry.options?.platform).toBe('ios');
 });
 
-// The generic half of the same contract: nothing recognizable in the
-// transcript still has to produce a sentence and a next step, because the
-// `--json` payload is all an unattended caller sees.
 test('--json says so when a build failed with no recognizable diagnostic', async () => {
   reserve();
   const { logs, exitCode } = await run(
@@ -2058,7 +1888,6 @@ test('--json says so when a build failed with no recognizable diagnostic', async
   expect(payload.remedy).toMatch(/build-ios\.ndjson/);
 });
 
-// --- opt-in concurrency (unlimited by default) ---
 describe('concurrency limits', () => {
   test('unset limits change nothing: no slot is taken, no capacity check refuses', async () => {
     reserve();
@@ -2140,8 +1969,6 @@ describe('concurrency limits', () => {
       },
     );
     expect(exitCode).toBe(null);
-    // Slot comes after the single-flight lock, before the compile, and is
-    // released with the lock once the artifact is stored.
     expect(seq).toEqual(['lock', 'slot', 'build', 'releaseLock', 'releaseSlot']);
     assert(slot.args);
     expect(slot.args.max).toBe(2);
@@ -2179,15 +2006,8 @@ describe('concurrency limits', () => {
   });
 });
 
-// --- a diagnosed MISS: what changed since this workspace's previous build ---
-//
-// The fingerprint line alone says only "the hash moved". When the previous
-// build's cache entry stored its sources (fingerprint-sources.json, written by
-// storeBuild), a miss can NAME the inputs that moved: up to three on the phase
-// line, the capped full list in the build log as a fingerprint_diff record.
 test('a miss with a prior stored entry appends the changed-sources suffix and logs fingerprint_diff', async () => {
   reserve();
-  // The previous build (Contract 4), pointing at an entry in the shared cache.
   writeWorkspaceState(root, {
     lastBuild: { platform: 'ios', fingerprint: 'oldhash', cacheKey: 'old-key' },
   });
@@ -2237,16 +2057,6 @@ test('a miss with no prior entry (or a first build) prints the plain miss line, 
   expect(buildRecords().some((r) => r.event === 'fingerprint_diff')).toBe(false);
 });
 
-// --- release builds (--configuration, issue #57 phase 1) --------------------
-//
-// A non-Debug configuration is a different product: the JS is embedded by the
-// xcodebuild phase, so Metro is not part of the run at all -- and a
-// native-keyed cache hit is an app carrying its BUILDER's JS, which is why
-// the hit path swaps a fresh bundle in rather than installing the artifact
-// as-is. What is pinned here is the command's side of that: the gate that
-// does not run, the key that differs, the swap-then-install order, and the
-// fallback that never installs stale JS.
-
 describe('configuration resolution', () => {
   test('flag > setting > default', () => {
     expect(resolveConfiguration('Release', { ios: { configuration: 'Staging' } })).toBe('Release');
@@ -2276,19 +2086,15 @@ describe('configuration resolution', () => {
 
 describe('release skips Metro entirely', () => {
   test('no gate, no reservation needed, no port wiring, plain launch', async () => {
-    // Deliberately NO reserve(): a release run must not care.
     const { exitCode, calls, errs } = await run({ configuration: 'Release' });
     expect(exitCode).toBe(null);
     expect(!calls.order.includes('resolveProjectMetro')).toBeTruthy();
     expect(errs.join('\n')).not.toMatch(/RN_ISO_NO_METRO/);
     expect(errs.join('\n')).toMatch(/skipped \(Release: the JS bundle is embedded/);
-    // A plain simctl launch: no port, no dev-client deep link.
     expect(calls.args.launchIosApp.metroPort).toBe(null);
     expect(calls.args.launchIosApp.devClientScheme).toBeUndefined();
-    // Verification is process-alive, not bundle-fetch.
     expect(!calls.order.includes('verifyLaunch')).toBeTruthy();
     expect(calls.order.includes('verifyReleaseLaunch')).toBeTruthy();
-    // The collector still attaches, so `logs --errors` works in release.
     expect(calls.order.includes('replaceCollector')).toBeTruthy();
   });
 
@@ -2315,13 +2121,10 @@ describe('release skips Metro entirely', () => {
   });
 
   test('the ios.configuration setting is the repo default, and the flag overrides it back to Debug', async () => {
-    // Setting alone: release-shaped.
     const settings = { ios: { configuration: 'Release' } };
     const first = await run({}, { resolveSettings: () => settings });
     expect(!first.calls.order.includes('resolveProjectMetro')).toBeTruthy();
     expect(first.calls.args.launchIosApp.metroPort).toBe(null);
-    // Flag Debug beats the setting: the ordinary gated flow, which refuses
-    // here because nothing is reserved.
     const second = await run({ configuration: 'Debug' }, { resolveSettings: () => settings });
     expect(second.exitCode).toBe(1);
     expect(second.stderr).toMatch(/RN_ISO_NO_METRO/);
@@ -2335,7 +2138,6 @@ describe('the release cache key and the JS swap', () => {
     expect(debugRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-debug-sim`);
     const releaseRun = await run({ configuration: 'Release' });
     expect(releaseRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-release-sim`);
-    // And the fresh release artifact stores under it, exactly like Debug ones.
     expect(releaseRun.calls.args.storeBuild.platform).toBe('ios');
     expect((releaseRun.calls.args.storeBuild as { key?: unknown }).key).toBe(`${FINGERPRINT}-release-sim`);
   });
@@ -2350,17 +2152,13 @@ describe('the release cache key and the JS swap', () => {
     const cached = '/cache/ios/entry/Fixture.app';
     const { exitCode, calls, errs } = await run({ configuration: 'Release' }, { resolveBuild: () => cached });
     expect(exitCode).toBe(null);
-    // Order: resolve the cache, swap, then install -- never a build.
     const order = calls.order;
     expect(order.indexOf('swapJsBundle')).toBeGreaterThan(order.indexOf('resolveBuild'));
     expect(order.indexOf('installIosApp')).toBeGreaterThan(order.indexOf('swapJsBundle'));
     expect(!order.includes('buildIos')).toBeTruthy();
     expect(!order.includes('runPodInstall')).toBeTruthy();
-    // The swap starts from the cached artifact and the INSTALL gets the
-    // re-signed temp copy, never the cache entry itself.
     expect(calls.args.swapJsBundle.cachedAppPath).toBe(cached);
     expect(calls.args.installIosApp.appPath).toBe(join(root, 'js-swap', 'Fixture.app'));
-    // The bundle id is read from the copy that will be installed.
     expect(calls.args.readBundleId).toBe(join(root, 'js-swap', 'Fixture.app'));
     expect(errs.join('\n')).toMatch(/js swap/);
   });
@@ -2385,28 +2183,16 @@ describe('the release cache key and the JS swap', () => {
     expect(exitCode).toBe(null);
     expect(errs.join('\n')).toMatch(/js swap/);
     expect(errs.join('\n')).toMatch(/building fresh instead/);
-    // The fallback compiled, stored, and installed ITS artifact.
     expect(calls.order.includes('buildIos')).toBeTruthy();
     expect(calls.args.installIosApp.appPath).toBe(appPath);
-    // The payload reports what actually happened: not a cache hit.
     expect(parseFirst(logs).cacheHit).toBe(false);
   });
 });
 
-// --- issue #59: the artifact is stored under the POST-mutation key ----------
-//
-// `expo prebuild` generates ios/ and rewrites package.json's scripts and the
-// app config; `pod install` writes ios/Podfile.lock. All of them are
-// fingerprint SOURCES, so the hash a cold run looked up is not the hash its
-// tree has by the time there is an artifact. Storing under the lookup key
-// produced an entry no later run in that tree could ever hit -- field-measured
-// as 104 MB of cache nothing would ever look up.
 describe('re-fingerprint after the steps that rewrite fingerprinted files', () => {
   const COLD = 'aaaaaa1111';
   const WARM = 'bbbbbb2222';
 
-  // Two hashes, in the order the run computes them: the cold tree's, then the
-  // one the same tree has once prebuild and pod install have run.
   function shifting() {
     let call = 0;
     return async () => ({ hash: call++ === 0 ? COLD : WARM, sources: [{ type: 'dir', filePath: 'ios' }] });
@@ -2430,13 +2216,9 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     );
     expect(cold.exitCode).toBe(null);
     const storedKey = cold.calls.args.storeBuild.key;
-    // The FIRST lookup was the cold hash (the second is the post-shift one
-    // below); the store is the warm one.
     expect(lookedUp[0]).toMatch(new RegExp(`^${COLD}`));
     expect(String(storedKey)).toMatch(new RegExp(`^${WARM}`));
 
-    // The next run in this tree: prebuild is done, pods are current, so it
-    // computes the warm hash and looks THAT up. Same key, so it is a hit.
     const warm = await run({}, { fingerprintProject: async () => ({ hash: WARM, sources: [] }) });
     expect(warm.calls.args.resolveBuild.key).toBe(storedKey);
   });
@@ -2461,18 +2243,11 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     expect(facts.fingerprint).toBe(WARM);
     expect(facts.cacheKey).toBe(calls.args.storeBuild.key);
 
-    // Contract 4 records the same thing, because the next run's miss diff
-    // reads the entry by that key.
     const state = readWorkspaceState(root) as WorkspaceState;
     expect((state.lastBuild as Record<string, unknown>).fingerprint).toBe(WARM);
     expect((state.lastBuild as Record<string, unknown>).cacheKey).toBe(calls.args.storeBuild.key);
   });
 
-  // The point of the whole feature: a fresh worktree or clone of a CNG app is
-  // COLD, so its first lookup uses a hash that predates ios/. The entry another
-  // workspace stored is keyed on the hash this run only learns after prebuild
-  // -- and asking again is the difference between an install and a full
-  // xcodebuild.
   test('a post-shift hit installs the cached app and compiles nothing', async () => {
     reserve();
     const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-debug-sim`, 'Fixture.app');
@@ -2482,12 +2257,9 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
         detectIsExpo: () => true,
         needsPrebuild: () => true,
         fingerprintProject: shifting(),
-        // Cold key: nothing. Post-shift key: the entry a warm tree left.
         resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
       },
     );
-    // prebuild still runs -- it is what produces the tree the new hash
-    // describes -- but nothing after it does.
     expect(calls.order.includes('runPrebuild')).toBe(true);
     expect(calls.order.includes('buildIos')).toBe(false);
     expect(calls.order.includes('storeBuild')).toBe(false);
@@ -2500,9 +2272,6 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     expect(facts.cacheKey).toBe(`${WARM}-debug-sim`);
   });
 
-  // Release is not a special case: the post-shift hit goes through the SAME
-  // step a first-pass hit does, so the cached app's JS is replaced with this
-  // tree's before it is installed.
   test('a post-shift hit on a Release build swaps the JS in, exactly as a first-pass hit does', async () => {
     reserve();
     const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-release-sim`, 'Fixture.app');
@@ -2517,7 +2286,6 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     );
     expect(calls.args.swapJsBundle.cachedAppPath).toBe(cachedApp);
     expect(calls.order.includes('buildIos')).toBe(false);
-    // The SWAPPED copy is what reaches the device, never the cache entry.
     expect(calls.args.installIosApp.appPath).toBe(join(root, 'js-swap', 'Fixture.app'));
   });
 
@@ -2571,7 +2339,6 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     );
     expect(errs.some((line) => /^fingerprint\s+\S+ -> /.test(line))).toBe(false);
     expect(calls.args.storeBuild.key).toBe(calls.args.resolveBuild.key);
-    // And NO second lookup: there is no new key to ask about.
     expect(calls.order.filter((c) => c === 'resolveBuild').length).toBe(1);
   });
 
@@ -2582,7 +2349,6 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
   });
 });
 
-// --- issue #60: a miss with no prior entry names the untracked native files -
 test('a first miss lists untracked files under the native dirs and points at .fingerprintignore', async () => {
   reserve();
   const asked: unknown[] = [];
@@ -2623,7 +2389,6 @@ test('a miss that CAN be diffed says what changed instead of guessing at untrack
   expect(errs.some((e) => e.includes('untracked'))).toBe(false);
 });
 
-// --- issue #53: a bundle that is still building is its own state ------------
 describe('launch verification: bundling vs unverified', () => {
   test('a request that arrived reports launched: "bundling" and prints no remedy list', async () => {
     reserve();
@@ -2635,8 +2400,6 @@ describe('launch verification: bundling vs unverified', () => {
     expect(parseFirst(logs).launched).toBe('bundling');
     const text = errs.join('\n');
     expect(text).toMatch(/BUNDLING: the app asked port 8082 for its bundle/);
-    // The alert/picker list is for a launch that did NOT work. Printing it
-    // over one that demonstrably did is what sent an agent chasing a fault.
     expect(text).not.toMatch(/DEVELOPMENT SERVERS picker/);
     expect(text).not.toMatch(/Open in <app>\?/);
 
@@ -2664,7 +2427,6 @@ describe('launch verification: bundling vs unverified', () => {
   });
 });
 
-// --- issue #54: a takeover after a builder that FAILED ----------------------
 describe('single-flight takeover says the previous build failed', () => {
   test('taking the lock over from a dead holder names it and says the inputs are the same', async () => {
     reserve();

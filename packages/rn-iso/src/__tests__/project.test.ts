@@ -33,8 +33,6 @@ test('detectIsExpo false when expo is not in dependencies', () => {
 });
 
 test('detectIsExpo trusts the ios script: react-native script wins even with expo dep', async () => {
-  // Mimics rainbow: `expo` in deps for prebuild/modules, but the ios script
-  // invokes react-native run-ios. Should NOT be flagged as Expo.
   const tmp = mkdtempSync(join((await import('os')).tmpdir(), 'rn-iso-detect-'));
   try {
     writeFileSync(
@@ -71,9 +69,6 @@ test('detectBundleId reads ios.bundleIdentifier from app.json', () => {
 });
 
 test('detectBundleId falls back to pbxproj when app config has no bundle id', () => {
-  // BARE_PROJ has no app.json; the fixture pbxproj has main app id "me.sample"
-  // alongside an extension target with a longer suffix. Picks the most-common
-  // concrete value, tie-breaking by shortest length.
   expect(detectBundleId(BARE_PROJ)).toBe('me.sample');
 });
 
@@ -85,7 +80,6 @@ test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', 
   expect(detectAndroidPackage(BARE_PROJ)).toBe('me.sample');
 });
 
-// resolveRegisteredProject -- needs an isolated config home.
 let tmpHome: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-resolve-'));
@@ -115,11 +109,6 @@ test('resolveRegisteredProject matches by an explicit --label', () => {
 });
 
 test('resolveRegisteredProject prefers a project label over a colliding basename', () => {
-  // /a/agent-x has basename agent-x; /b/other has explicit label agent-x.
-  // Only `other` (with the explicit label) matches the shortcut "agent-x"
-  // when the basename isn't a label, because projectShortcut returns label
-  // if set and otherwise falls back to basename -- both projects' shortcuts
-  // resolve to "agent-x", which is a collision.
   upsertProject('/a/agent-x', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   upsertProject('/b/other', { bundleId: 'b', androidPackage: 'b', isExpo: false, label: 'agent-x' });
   const r = resolveRegisteredProject('agent-x');
@@ -149,9 +138,6 @@ test('resolveRegisteredProject errors when path does not match anything', () => 
   expect(r.error).toMatch(/No registered project/);
 });
 
-// projectShortcut inheriting the enclosing worktree's label: without this,
-// two worktrees of the same monorepo each have an app dir with the same
-// basename (e.g. "tlon-mobile"), so their shortcuts would collide.
 test('projectShortcut inherits the enclosing worktree label so same-basename app dirs stay unique', () => {
   upsertProject('/repo-worktrees/feat-a', { label: 'feat-a', worktreeRoot: true });
   upsertProject('/repo-worktrees/feat-b', { label: 'feat-b', worktreeRoot: true });

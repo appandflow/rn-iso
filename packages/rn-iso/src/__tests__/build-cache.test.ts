@@ -68,9 +68,6 @@ test('resolveBuild returns null for a fingerprint nothing was built for', () => 
   expect(resolveBuild('ios', 'nope', root)).toBe(null);
 });
 
-// A hit reads the entry without rewriting it, so without an explicit touch the
-// entries earning their keep look exactly like the ones nothing has used in
-// months -- and age-based trimming would evict the wrong ones.
 test('resolveBuild touches the entry it returns, so trimming can tell it is in use', () => {
   const app = seedEntry('ios', 'abc');
   const longAgo = new Date(Date.now() - 90 * 24 * 3600 * 1000);
@@ -84,9 +81,6 @@ test('resolveBuild touches the entry it returns, so trimming can tell it is in u
   expect(after > before).toBeTruthy();
 });
 
-// A copy interrupted halfway must never be readable as a complete entry by a
-// worktree building in parallel, so the copy happens in a sibling and only the
-// rename publishes it.
 test('storeBuild stages elsewhere and renames, so a partial copy is never visible', () => {
   const build = join(root, 'build', 'MyApp.app');
   mkdirSync(build, { recursive: true });
@@ -99,7 +93,6 @@ test('storeBuild stages elsewhere and renames, so a partial copy is never visibl
     },
     runFile: (file, args) => {
       calls.push({ file, args });
-      // Stand in for `cp -c -R`: create the destination the real command would.
       const dest = args[args.length - 1];
       mkdirSync(dest, { recursive: true });
       writeFileSync(join(dest, 'bin'), 'x');
@@ -116,7 +109,6 @@ test('storeBuild stages elsewhere and renames, so a partial copy is never visibl
   const call = calls[0];
   assert(call);
   expect(call.file).toBe('cp');
-  // -c first (APFS clone; the mock accepts it, standing in for same-volume APFS).
   expect(call.args.slice(0, 3)).toEqual(['-c', '-R', build]);
   expect(call.args[3]).toMatch(/\.staging-\d+/);
   expect(existsSync(`${entryDir('ios', 'fp1', root)}.staging-${process.pid}`)).toBe(false);
@@ -137,10 +129,6 @@ test('storeBuild is idempotent: an entry that already exists is returned, not re
   expect(storeBuild('android', 'fp2', existing, root)).toBe(existing);
 });
 
-// `--no-build-cache` exists for an entry you no longer trust, and keeping the
-// old one would mean the very next run trusts it again. The replacement is
-// atomic for the same reason the first write is: staging directory, then
-// rename over the destination.
 test('storeBuild with { overwrite } REPLACES an existing entry, so a poisoned one can be got rid of', () => {
   const existing = seedEntry('ios', 'fp-overwrite', 'MyApp.app');
   expect(readFileSync(existing, 'utf-8')).toBe('binary');
@@ -153,7 +141,6 @@ test('storeBuild with { overwrite } REPLACES an existing entry, so a poisoned on
       throw new Error('the copy must not go through a shell');
     },
     runFile: (_file, args) => {
-      // Stand in for `cp -R`, which copies a file here.
       writeFileSync(args[2], readFileSync(args[1], 'utf-8'));
       return '';
     },
@@ -167,8 +154,6 @@ test('storeBuild with { overwrite } REPLACES an existing entry, so a poisoned on
   expect(existsSync(`${entryDir('ios', 'fp-overwrite', root)}.staging-${process.pid}`)).toBe(false);
 });
 
-// The fourth argument stayed a plain root string for every caller that already
-// passed one; options are the new form. Both must address the same directory.
 test('storeBuild accepts the cache root as a string or as { root }', () => {
   const existing = seedEntry('android', 'fp-root-form', 'App.apk');
   expect(storeBuild('android', 'fp-root-form', existing, root)).toBe(existing);
@@ -180,10 +165,6 @@ test('storeBuild refuses a path that is not there rather than creating an empty 
   expect(existsSync(entryDir('ios', 'fp3', root))).toBe(false);
 });
 
-// A path the caller chose can contain a space or a quote. Through a shell
-// string, `cp -R "/tmp/My App.app" ...` was fine but `cp -R "/tmp/a"b.app"` was
-// not, and the failure mode is an entry copied to the wrong place rather than
-// an error.
 test('storeBuild passes the build path as one argument, never through a shell', () => {
   const build = join(root, 'build', 'My App "quoted".app');
   mkdirSync(build, { recursive: true });
@@ -209,8 +190,6 @@ test('storeBuild passes the build path as one argument, never through a shell', 
   expect(seen[2]).toBe(build);
 });
 
-// Against the real `cp`, not a mock: a mock proves the argument list was built,
-// never that cp accepts it.
 test('storeBuild copies a real .app whose name contains a space', () => {
   resetExecutor();
   const build = join(root, 'build real', 'My App.app');
@@ -223,9 +202,6 @@ test('storeBuild copies a real .app whose name contains a space', () => {
   expect(existsSync(join(stored, 'Contents', 'bin'))).toBe(true);
 });
 
-// The fingerprint describes the project, not the build. Keying on it alone let a
-// Release build answer a Debug resolve, which installs a binary that is not the
-// one that was asked for.
 test('the cache key separates Debug from Release and a simulator from real hardware', () => {
   const hash = 'abc123';
   const debugSim = buildCacheKey('ios', hash, {});
@@ -238,9 +214,6 @@ test('the cache key separates Debug from Release and a simulator from real hardw
   );
 });
 
-// rn-iso hands `expo run:ios` the udid of the simulator it owns, so a udid must
-// classify as a simulator. Bucketing on the identifier instead would give every
-// worktree its own entry and there would be no shared cache left.
 test('two workspaces on different owned simulators share one entry', () => {
   const hash = 'abc123';
   const a = buildCacheKey('ios', hash, { device: 'A1B2C3D4-1111-2222-3333-444455556666' });
@@ -257,9 +230,6 @@ test('android keys on the gradle variant rather than the Xcode configuration', (
   expect(buildCacheKey('android', hash, { configuration: 'Release' })).toBe(`${hash}-debug-sim`);
 });
 
-// Both entry points write into the same directory tree, so a project that moves
-// from the CLI to the Expo provider (or runs both) has to keep hitting the
-// entries it already has.
 test('the CLI and the Expo provider compute the same key', () => {
   for (const [platform, options] of [
     ['ios', {}],
@@ -273,9 +243,6 @@ test('the CLI and the Expo provider compute the same key', () => {
   }
 });
 
-// gc reads the depth from the manifest, so the registration is where the build
-// cache says its entries are two levels down. Registered at depth 1, one `gc`
-// removal would take every iOS build on the machine.
 test('storing a build registers the cache root at the depth its entries actually sit', async () => {
   const build = join(root, 'depth', 'MyApp.app');
   mkdirSync(build, { recursive: true });
@@ -290,17 +257,6 @@ test('storing a build registers the cache root at the depth its entries actually
   expect(record.entriesDepth).toBe(2);
 });
 
-// --- the fingerprint is platform-scoped -------------------------------------
-//
-// Gate provenance (2026-08-24): `rn-iso android` NEVER hit the shared cache
-// across two worktrees of th3rdwave/tlon-apps, while `ios` did. The cause was
-// not Android at all -- th3rdwave's hermes-engine podspec bakes the absolute
-// worktree path into ios/Podfile.lock, so the iOS tree differs between
-// worktrees by construction, and an UNSCOPED fingerprint hashes ios/ into the
-// android key. With platforms scoped to the platform being built, both
-// worktrees fingerprinted identically (b5a268e6...).
-// The import above is a REAL dependency, not a hope that the target project
-// happens to hoist a copy into place.
 test('@expo/fingerprint is a declared dependency of the rn-iso package', () => {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as {
     dependencies?: Record<string, string>;
@@ -319,9 +275,6 @@ test('fingerprintProject scopes the hash to the platform being built', async () 
   expect(seen.map((s) => s.options?.platforms)).toEqual([['ios'], ['android']]);
 });
 
-// No platform means no scoping: the option is omitted entirely rather than
-// passed as an empty array, which @expo/fingerprint would read as "hash
-// nothing native".
 test('fingerprintProject without a platform passes no platforms option', async () => {
   let options: FingerprintOptions | undefined | 'unset' = 'unset';
   const createFingerprint = async (_dir: string, opts?: FingerprintOptions) => {
@@ -333,8 +286,6 @@ test('fingerprintProject without a platform passes no platforms option', async (
   expect(typeof seen === 'object' ? seen?.platforms : undefined).toBe(undefined);
 });
 
-// An unknown platform is not silently turned into a scope: `platforms: ['web']`
-// would hash nothing and produce one key for every project on the machine.
 test('fingerprintProject ignores a platform it does not know', async () => {
   let options: FingerprintOptions | undefined | 'unset' = 'unset';
   const createFingerprint = async (_dir: string, opts?: FingerprintOptions) => {
@@ -346,8 +297,6 @@ test('fingerprintProject ignores a platform it does not know', async () => {
   expect(typeof seen === 'object' ? seen?.platforms : undefined).toBe(undefined);
 });
 
-// --- fingerprint sources: stored on store, read back, diffed on a miss ------
-
 test('storeBuild writes fingerprint-sources.json beside the artifact, and storedSources reads it back', () => {
   resetExecutor();
   const build = join(root, 'build', 'MyApp.app');
@@ -358,7 +307,6 @@ test('storeBuild writes fingerprint-sources.json beside the artifact, and stored
   storeBuild('ios', 'k1', build, { root, sources });
 
   expect(storedSources('ios', 'k1', root)).toEqual(sources);
-  // The artifact lookup is unaffected: the JSON is never mistaken for the app.
   expect(artifactIn(entryDir('ios', 'k1', root))).toBe(join(entryDir('ios', 'k1', root), 'MyApp.app'));
 });
 
@@ -372,12 +320,9 @@ test('storedSources is null for an entry stored without sources, or with unreada
 
   writeFileSync(join(entryDir('ios', 'k2', root), 'fingerprint-sources.json'), 'not json');
   expect(storedSources('ios', 'k2', root)).toBe(null);
-  // An object where an array belongs is a shape this refuses, not a crash.
   writeFileSync(join(entryDir('ios', 'k2', root), 'fingerprint-sources.json'), '{"hash":"x"}');
   expect(storedSources('ios', 'k2', root)).toBe(null);
 });
-
-// --- the asset manifest: the RELEASE gate's stored side ---------------------
 
 test('storeBuild writes assets-manifest.json beside the artifact, and storedAssetManifest reads it back', () => {
   resetExecutor();
@@ -392,8 +337,6 @@ test('storeBuild writes assets-manifest.json beside the artifact, and storedAsse
   storeBuild('android', 'ak1', build, { root, assetManifest });
 
   expect(storedAssetManifest('android', 'ak1', root)).toEqual(assetManifest);
-  // One mechanism, two files: both land in the same entry, and neither is
-  // ever mistaken for the artifact.
   expect(artifactIn(entryDir('android', 'ak1', root))).toBe(join(entryDir('android', 'ak1', root), 'App.apk'));
 });
 
@@ -416,15 +359,11 @@ test('storedAssetManifest is null for an entry stored without one, or with unrea
   const build = join(root, 'build3', 'App.apk');
   mkdirSync(join(root, 'build3'), { recursive: true });
   writeFileSync(build, 'apk');
-  // The pre-#62 entry: stored before asset tracking existed. Null here is
-  // what makes the release gate refuse to swap it.
   storeBuild('android', 'ak3', build, { root });
   expect(storedAssetManifest('android', 'ak3', root)).toBe(null);
 
   writeFileSync(join(entryDir('android', 'ak3', root), 'assets-manifest.json'), 'not json');
   expect(storedAssetManifest('android', 'ak3', root)).toBe(null);
-  // A version this build does not understand reads as no manifest, never as
-  // an empty asset set.
   writeFileSync(join(entryDir('android', 'ak3', root), 'assets-manifest.json'), '{"version":99,"assets":[]}');
   expect(storedAssetManifest('android', 'ak3', root)).toBe(null);
 });
@@ -434,7 +373,6 @@ test('{ overwrite } REPLACES the manifest too, so a refusing entry stops refusin
   const build = join(root, 'build4', 'App.apk');
   mkdirSync(join(root, 'build4'), { recursive: true });
   writeFileSync(build, 'apk');
-  // The entry that caused a swap refusal: no manifest at all.
   storeBuild('android', 'ak4', build, { root });
   expect(storedAssetManifest('android', 'ak4', root)).toBe(null);
 
@@ -453,9 +391,9 @@ test('compareSourceLists reports changed, added and removed names, current order
     { type: 'dir', filePath: 'ios/App', hash: 'cc' },
   ];
   const current = [
-    { type: 'file', filePath: 'ios/Podfile.lock', hash: 'a2' }, // changed
-    { type: 'contents', id: 'expoConfig', hash: 'bb' }, // same
-    { type: 'file', filePath: 'ios/New.swift', hash: 'dd' }, // added
+    { type: 'file', filePath: 'ios/Podfile.lock', hash: 'a2' },
+    { type: 'contents', id: 'expoConfig', hash: 'bb' },
+    { type: 'file', filePath: 'ios/New.swift', hash: 'dd' },
   ];
   expect(compareSourceLists(previous, current)).toEqual(['ios/Podfile.lock', 'ios/New.swift', 'ios/App']);
 });
@@ -469,7 +407,6 @@ test('diffFingerprintSources prefers the project differ and falls back when it t
   const previous = [fpFile('a', '1')];
   const current = { hash: 'h2', sources: [fpFile('a', '2')] };
 
-  // The project's own diffFingerprints answers, in the new item shape.
   const seen: unknown[] = [];
   const differ: typeof expoFingerprint.diffFingerprints = (fp1, fp2) => {
     seen.push([fp1, fp2]);
@@ -478,7 +415,6 @@ test('diffFingerprintSources prefers the project differ and falls back when it t
   expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ })).toEqual(['a']);
   expect(seen.length).toBe(1);
 
-  // A differ that throws (or returns garbage) falls back to the comparison.
   const throwing = () => {
     throw new Error('old @expo/fingerprint');
   };
@@ -517,14 +453,13 @@ test('describeFingerprintMiss only speaks for the same platform, a different has
 
   const current = { hash: 'new-hash', sources: [fpFile('ios/Podfile.lock', 'a2')] };
   const lastBuild = { platform: 'ios', fingerprint: 'old-hash', cacheKey: 'old-key' };
-  const differ = null; // exercise the plain source-list fallback
+  const differ = null;
 
   const miss = describeFingerprintMiss({ platform: 'ios', current, lastBuild, root, differ });
   assert(miss);
   expect(miss.previousHash).toBe('old-hash');
   expect(miss.changed).toEqual(['ios/Podfile.lock']);
 
-  // Wrong platform, same hash, no record, no stored sources: all null.
   expect(describeFingerprintMiss({ platform: 'android', current, lastBuild, root, differ })).toBe(null);
   expect(
     describeFingerprintMiss({
@@ -546,13 +481,6 @@ test('describeFingerprintMiss only speaks for the same platform, a different has
     }),
   ).toBe(null);
 });
-
-// --- issue #59: the key an artifact is STORED under -------------------------
-//
-// prebuild and pod install rewrite fingerprinted files WHILE the run works, so
-// the hash a run looked up is not the hash its tree has by the time there is an
-// artifact to store. Storing under the lookup key writes an entry nothing in
-// that tree ever looks up again.
 
 describe('refingerprintAfterMutation', () => {
   test('reports the shift when the mutating steps moved the hash', async () => {
@@ -595,8 +523,6 @@ describe('refingerprintAfterMutation', () => {
     expect(nothing).toBe(null);
   });
 });
-
-// --- issue #60: a miss with nothing to diff against -------------------------
 
 describe('untracked native files on a first miss', () => {
   test('runs git without a shell and returns one name per line', () => {

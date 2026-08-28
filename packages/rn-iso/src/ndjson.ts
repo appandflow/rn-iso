@@ -1,27 +1,6 @@
-// src/ndjson.ts -- Contract 1: the log record, and the two ends that touch it.
-//
-// One JSON object per line:
-//   { ts, src: metro|client|device|build, level: debug|info|warn|error|fatal, msg }
-// optional: event, stack[{file,line,column,fn}], proc, raw, marker.
-//
-// Two rules drive the shape of this file.
-//
-// 1. WRITING NEVER THROWS. The supervisor calls write() from inside a Metro
-//    reporter, on every event. If a full disk, an EACCES, or a log directory
-//    deleted by a concurrent `worktree remove` threw from there, the throw
-//    would land in Metro's reporter call and take the dev server with it --
-//    a logging failure would become a bundler outage. So every failure is a
-//    counted drop and the count surfaces in close(), where a caller can
-//    report it once instead of on every event.
-// 2. READING NEVER THROWS. The last line of a file being appended to by a
-//    live supervisor is routinely half written, so a corrupt line is skipped,
-//    not fatal.
 import { closeSync, mkdirSync, openSync, writeSync } from 'fs';
 import { dirname } from 'path';
 
-// A Contract-1 record. The required fields describe every log line; the index
-// signature carries the optional ones (event, stack, proc, raw, marker) without
-// pinning a shape a future producer has not invented yet.
 export interface NdjsonRecord {
   ts?: number;
   src?: string;
@@ -30,7 +9,6 @@ export interface NdjsonRecord {
   [key: string]: unknown;
 }
 
-// A live NDJSON writer. Appends whole lines; every failure is a counted drop.
 export interface NdjsonWriter {
   readonly file: string;
   write(record: unknown): boolean;
@@ -40,18 +18,10 @@ export interface NdjsonWriter {
   readonly lastError: Error | null;
 }
 
-// Ordered lowest to highest; index is the rank used by --level filtering.
 export const LEVELS: string[] = ['debug', 'info', 'warn', 'error', 'fatal'];
 
-// The `src` values Contract 1 defines. Records are not validated against this
-// on the way in -- a producer that invents a source still gets written -- but
-// `logs --source` validates against it, so a typo fails loudly instead of
-// returning an empty result that reads as a clean build.
 export const SOURCES: string[] = ['metro', 'client', 'device', 'build'];
 
-// An unrecognized level ranks at the bottom rather than being dropped: a
-// record with a level we do not know is still a record, and hiding it behind
-// `--level debug` is the least surprising place to put it.
 export function levelRank(level?: string): number {
   const i = LEVELS.indexOf(level as string);
   return i < 0 ? 0 : i;
@@ -71,9 +41,6 @@ export function parseNdjsonLine(line: unknown): NdjsonRecord | null {
   return value as NdjsonRecord;
 }
 
-// The trailing element of the split is whatever follows the last newline --
-// an empty string for a complete file, a partial record for one being written
-// right now. Either way it is not a finished line, so it is dropped.
 export function parseNdjsonText(text: unknown): NdjsonRecord[] {
   if (typeof text !== 'string' || text === '') return [];
   const out: NdjsonRecord[] = [];
@@ -86,9 +53,6 @@ export function parseNdjsonText(text: unknown): NdjsonRecord[] {
   return out;
 }
 
-// Returns null rather than throwing on a record that will not serialize (a
-// circular object reached through some reporter event's payload). The caller
-// counts it as a drop like any other failure.
 export function formatNdjsonLine(record: unknown): string | null {
   try {
     return `${JSON.stringify(record)}\n`;
@@ -97,23 +61,6 @@ export function formatNdjsonLine(record: unknown): string | null {
   }
 }
 
-// Appends by default. The fd is opened lazily on the first write, in append
-// mode, so a writer costs nothing until something is actually logged and two
-// writers on one file interleave whole lines rather than overwriting each
-// other.
-//
-// `truncate: true` starts the file over on the first successful open instead.
-// The build transcript wants this -- it is a per-run log, and a reader sent to
-// it by "see ... for the transcript" must find THIS run's errors first, not a
-// previous attempt's. The multi-writer logs (device.ndjson, metro.ndjson) must
-// never pass it: two writers on one file only interleave safely in append
-// mode. Only the FIRST open truncates -- the retry-after-failure reopen below
-// appends, so a transient write failure never wipes what this writer already
-// recorded.
-//
-// A failed open clears the fd, so the NEXT write retries it: a log directory
-// that comes back (recreated by a later mkdir, a volume remounted) starts
-// recording again instead of staying dead for the life of the supervisor.
 export function createNdjsonWriter(file: string, { truncate = false }: { truncate?: boolean } = {}): NdjsonWriter {
   let fd: number | null = null;
   let freshFile = truncate;
@@ -145,13 +92,10 @@ export function createNdjsonWriter(file: string, { truncate = false }: { truncat
       written += 1;
       return true;
     } catch (err) {
-      // Drop the fd so a transient failure is retried on the next record.
       if (fd !== null) {
         try {
           closeSync(fd);
-        } catch {
-          /* already gone */
-        }
+        } catch {}
         fd = null;
       }
       dropped += 1;
@@ -164,9 +108,7 @@ export function createNdjsonWriter(file: string, { truncate = false }: { truncat
     if (fd !== null) {
       try {
         closeSync(fd);
-      } catch {
-        /* already gone */
-      }
+      } catch {}
       fd = null;
     }
     closed = true;
@@ -189,9 +131,6 @@ export function createNdjsonWriter(file: string, { truncate = false }: { truncat
   };
 }
 
-// ts is stamped at write time when the producer did not supply one. Producers
-// that replay buffered output (an expo child's stdout, a build transcript)
-// carry their own and must keep it, or the merge in logs-query reorders them.
 function stamp(record: unknown): NdjsonRecord {
   const base: NdjsonRecord =
     record && typeof record === 'object' && !Array.isArray(record) ? (record as NdjsonRecord) : { msg: String(record) };

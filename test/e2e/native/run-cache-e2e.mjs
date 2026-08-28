@@ -1,52 +1,4 @@
 #!/usr/bin/env node
-// CACHE E2E DRIVER (the CACHE suite) -- the executable replacement for the
-// hand-written cache field passes.
-//
-// WHY IT EXISTS. rn-iso's whole value is the caches it supplies without asking
-// a repo to change: the Metro transform store, Xcode's compilation cache, the
-// Gradle build cache, the fingerprint build cache, carried Pods, and the
-// single-flight lock that keeps two workspaces from compiling the same thing
-// twice. Every one of them is INVISIBLE when it breaks: the flag is still on
-// the command line, the build still succeeds, and the only symptom is time.
-// Manual passes kept drifting -- one Android pass never checked Gradle caching
-// at all, a zero-config pass ran iOS-only and left `--build-cache` unproven,
-// and a broken Expo Metro store shipped through green CI (#73) because nothing
-// measured the directory it was supposed to be filling.
-//
-// THE THREE-PART RULE. For every cache, this suite proves three separate
-// things, and refuses to accept one as evidence of another:
-//
-//   ENGAGED   the flag / setting / record is really there, read back from the
-//             REAL command line or the REAL log -- never re-derived from this
-//             file's idea of what rn-iso should have done.
-//   STORES    the cache directory actually GREW: a file count before and a
-//             file count after. This is the one that matters. An engaged cache
-//             that stores nothing is exactly the shape of the old hook bug, and it
-//             is indistinguishable from a working one by every other means.
-//   REUSED    a SECOND workspace got the stored work back.
-//
-// HONESTY RULES, which are the point of the whole file:
-//   - every assertion prints the evidence it checked: numbers, and quoted lines;
-//   - a check that cannot run SKIPS with the reason spelled out ("no Android
-//     SDK on this runner"), and a skip is never a pass;
-//   - nothing passes silently. A check that reports nothing is a failure.
-//
-// USAGE
-//   node run-cache-e2e.mjs --framework <bare|expo> --platform <ios|android> [opts]
-//     --app-dir <path>    use an existing checkout instead of creating a fixture
-//     --home <path>       reuse an RN_ISO_HOME instead of a throwaway one
-//     --keep              skip teardown (leave worktrees/sims for inspection)
-//     --skip-race         skip the single-flight phase (it costs one full
-//                         compile); the check reports SKIP with that reason
-//     --summary <file>    also write the machine-readable summary here
-//     --dry-run           print the plan and exit (no side effects)
-//
-// OUTPUT. Every human line goes to STDERR. STDOUT carries exactly one line: the
-// machine-readable summary, the same shape `rn-iso <platform> --json` uses --
-// one parseable object, nothing else.
-//
-// It talks to rn-iso ONLY through its CLI and the filesystem, like the loop
-// suite beside it, so it is also a black-box check of the published surface.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -76,8 +28,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
 const CLI = join(REPO, 'packages', 'rn-iso', 'dist', 'cli.js');
 
-// ---- args -------------------------------------------------------------------
-
 const args = parseArgs(process.argv.slice(2));
 const FRAMEWORK = args.framework;
 const PLATFORM = args.platform;
@@ -88,19 +38,6 @@ const ARTIFACT_EXT = PLATFORM === 'ios' ? '.app' : '.apk';
 const HOME_DIR = args.dryRun ? '<dry-run>' : args.home || mkdtempSync(join(tmpdir(), `rn-iso-cache-${VARIANT}-home-`));
 const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `rn-iso-cache-${VARIANT}-`));
 
-// THE CACHE ROOTS. Laid out under the throwaway home, and the two env overrides
-// are FORCED rather than honoured -- the one place this suite deliberately
-// differs from the loop suite beside it.
-//
-// The loop suite lets CI persist RN_ISO_BUILD_CACHE across runs on purpose, so
-// the cross-run cache path is exercised; it has RN_ISO_E2E_WARM_CACHE to relax
-// its cold-miss assertion when that happens. This suite cannot: EVERY number it
-// reports is a before/after around a cold compile, and a warm inherited cache
-// turns "the CAS gained 4,000 files" into "the CAS gained 0 files and the build
-// was a hit", which is a measurement of nothing. Inheriting a developer's real
-// RN_ISO_BUILD_CACHE / RN_ISO_METRO_CACHE would also write this fixture's
-// entries into their machine's shared caches, which the throwaway home exists
-// to prevent. So both are overridden, and the plan prints where they landed.
 const BUILD_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(HOME_DIR, 'build-cache');
 const METRO_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(HOME_DIR, 'metro-cache');
 const CAS_DIR = join(HOME_DIR, 'compilation-cache');
@@ -112,25 +49,13 @@ const ENV = {
   CI: '1',
 };
 process.env.RN_ISO_HOME = HOME_DIR;
-// Gradle's LOCAL build cache. It lives under the Gradle user home, which is
-// what makes `--build-cache` cross-worktree with nothing else configured.
 const GRADLE_CACHE_DIR = join(process.env.GRADLE_USER_HOME || join(homedir(), '.gradle'), 'caches', 'build-cache-1');
-// A build-cache root the racers alone address, so "the same fingerprint, not in
-// the cache" needs no source mutation: the fingerprint is IDENTICAL to the one
-// wt1 stored, and the only reason it misses is that this root is empty. That
-// keeps the single-flight check about the LOCK and nothing else.
 const RACE_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(WORK_DIR, 'race-build-cache');
 
 const h = createHarness({ env: ENV, cliPath: CLI, label: `cache-e2e ${VARIANT}` });
 const { cli, cliJson, sh, log, banner, die } = h;
 
-const created = []; // worktree paths we made, for cleanup + diagnostics
-
-// ---- the check ledger -------------------------------------------------------
-//
-// Each of the eight checks records its own evidence and exactly one verdict.
-// Nothing else may write a verdict, and a check that finishes without one is a
-// failure -- "nothing said no" is not a pass.
+const created = [];
 
 const CHECK_TITLES = {
   'zero-config': 'the repo is untouched by rn-iso runtime state',
@@ -153,8 +78,6 @@ function openCheck(id) {
   banner(`CHECK ${id}: ${title}`);
   return {
     id,
-    // One line of evidence. Printed as it is recorded so a CI log reads in
-    // order, and kept so the summary can carry it.
     ev(line) {
       entry.evidence.push(String(line));
       log(`  | ${line}`);
@@ -180,11 +103,6 @@ function finish(entry, status, reason) {
   return entry;
 }
 
-// Runs one check's body. A throw inside is that check's FAILURE, not the run's:
-// the remaining caches are still worth measuring, and a suite that stops at the
-// first red tells you about one cache instead of eight. Only the setup phases
-// outside this (fixture, wt1's build) are fatal, because nothing downstream of
-// them means anything.
 async function runCheck(id, fn) {
   const c = openCheck(id);
   try {
@@ -198,21 +116,13 @@ async function runCheck(id, fn) {
   return entry;
 }
 
-// A check whose preconditions never happened. Used when an earlier phase means
-// there is nothing to measure -- and it says which phase.
 function skipCheck(id, reason) {
   openCheck(id).skip(reason);
 }
 
-// ---- the run ----------------------------------------------------------------
-
 async function main() {
   preflight(h, PLATFORM);
 
-  // ---- phase 0: the fixture and the untouched-repo baseline ----------------
-  //
-  // The fixture and every worktree must remain project-tree clean: runtime state
-  // is written to the isolated global RN_ISO_HOME.
   const appDir = args.appDir ? resolve(args.appDir) : createFixture({ framework: FRAMEWORK, workDir: WORK_DIR, h });
   const expoSdk = FRAMEWORK === 'expo' ? readExpoSdkMajor(appDir) : null;
   log(`app: ${appDir}`);
@@ -222,11 +132,8 @@ async function main() {
   log(`baseline: .gitignore ${baseline.gitignoreExists ? `${baseline.gitignore.length} bytes` : 'ABSENT'}`);
   mkdirSync(RACE_CACHE_ROOT, { recursive: true });
 
-  // Snapshots of every worktree's dirty state, taken immediately before that
-  // worktree is removed. The zero-config check reads them at the end.
   const dirtyByWorktree = [];
 
-  // ---- phase 1: wt1, the cold build that fills every cache -----------------
   const wt1 = worktreeCreate('e2e-cache-1', appDir);
   const start1 = startAndAssertMode(wt1);
   log(`wt1 start mode=${start1.mode} port=${start1.port}`);
@@ -243,23 +150,16 @@ async function main() {
   );
   assertArtifact(build1.appPath);
 
-  // The store fills WHILE the app launches and asks this workspace's Metro for
-  // a bundle, which outlives the command that started it. Wait for the count to
-  // stop moving rather than sampling once and hoping.
   const metroAfter1 = await settle(storeRoot1 || METRO_CACHE_ROOT, 'wt1 Metro store');
   const casAfter1 = dirStats(CAS_DIR);
   const gradleAfter1 = dirStats(GRADLE_CACHE_DIR);
 
-  // ---- phase 2: wt2, the second workspace ----------------------------------
   const wt2 = worktreeCreate('e2e-cache-2', appDir);
   const start2 = startAndAssertMode(wt2);
   log(`wt2 start mode=${start2.mode} port=${start2.port}`);
   const storeRoot2 = metroStoreRootFrom(wt2);
   const metroBefore2 = dirStats(storeRoot2 || METRO_CACHE_ROOT);
   const build2 = build(wt2, 'wt2 (expect HIT)');
-  // Not a check of its own -- the loop suite already owns this one -- but every
-  // measurement below assumes wt2 got its artifact from the cache rather than
-  // compiling a second copy, so it is asserted before anything reads it.
   assert(
     build2.cacheHit === 'local' || build2.cacheHit === 'remote',
     `wt2 must HIT the build cache, got ${JSON.stringify(build2.cacheHit)}`,
@@ -267,7 +167,6 @@ async function main() {
   assertArtifact(build2.appPath);
   const metroAfter2 = await settle(storeRoot2 || METRO_CACHE_ROOT, 'wt2 Metro store');
 
-  // ---- check 2: the Metro transform store ----------------------------------
   await runCheck('metro-store', (c) => {
     if (FRAMEWORK === 'expo' && (expoSdk === null || expoSdk < 54)) {
       return c.skip(
@@ -279,20 +178,8 @@ async function main() {
     const rec1 = metroStoreRecords(wt1);
     const rec2 = metroStoreRecords(wt2);
 
-    // EVERY MEASUREMENT FIRST, THEN THE VERDICT. An earlier version asserted as
-    // it went and returned on the first failure, which meant a run that failed
-    // on the record never printed the file counts -- and the counts are the
-    // half that says whether the store is merely unreported or genuinely empty.
-    // So the problems are collected and reported together.
     const problems = [];
 
-    // (1) ENGAGED, per dev-server mode. For expo the confirming
-    // `cache_store_added` can only be written when the config adapter reports back from
-    // inside the child; for bare it is the in-process append. rn-iso's own
-    // `cache_store_requested` is explicitly NOT evidence: it records what
-    // rn-iso ASKED for, before the process that has to honour it even exists.
-    // That distinction IS #73's fix, and this is the check that makes having it
-    // worth something.
     const expectPhrase =
       FRAMEWORK === 'expo'
         ? 'the dev server process confirmed the store is in the config Metro loaded'
@@ -316,8 +203,6 @@ async function main() {
           `${label}'s record is not the ${EXPECTED_MODE} confirmation (wanted ${JSON.stringify(expectPhrase)}): ${JSON.stringify(rec.added.msg)}`,
         );
       }
-      // The adapter fails SOFT by design, so its warning means a working dev
-      // server with no shared cache -- green CI, no cache.
       if (rec.couldNotShare) {
         problems.push(`${label} logged the adapter's fail-soft warning, so the store never reached Metro`);
       }
@@ -333,7 +218,6 @@ async function main() {
       c.ev(`no store root in a record; the configured root ${METRO_CACHE_ROOT} was measured instead`);
     }
 
-    // (2) STORES and (3) REUSED, printed whatever the records said above.
     const g1 = growth('wt1 Metro store', metroBefore1, metroAfter1);
     const g2 = growth('wt2 Metro store', metroBefore2, metroAfter2);
     c.ev(describeGrowth(g1));
@@ -355,12 +239,8 @@ async function main() {
     return c.pass(`store shared at ${storeRoot1}; wt1 +${g1.added} files, wt2 +${g2.added} (${reusePct}% reused)`);
   });
 
-  // ---- check 3 / 4: the compiler-level caches ------------------------------
   if (PLATFORM === 'ios') {
     await runCheck('xcode-cas', (c) => {
-      // ENGAGED, read VERBATIM off the argv rn-iso actually ran. engine/xcode.ts
-      // writes it as the build log's first record precisely so this is readable
-      // rather than reconstructable.
       const argv = buildStartArgv(wt1);
       assert(argv, `no build_start record in ${buildLog(wt1)}`);
       c.ev(`xcodebuild argv: ${argv}`);
@@ -373,8 +253,6 @@ async function main() {
       ];
       const missing = required.filter((s) => !argv.includes(s));
       if (missing.length) {
-        // Below the floor the settings do nothing at all, and rn-iso adds none
-        // on purpose. That is a SKIP with the version in it, not a pass.
         const xc = sh('xcodebuild', ['-version'], { allowFail: true }).stdout.trim().split('\n')[0] || 'unknown';
         const major = /^Xcode\s+(\d+)/.exec(xc);
         if (!major || Number(major[1]) < 26) {
@@ -386,7 +264,6 @@ async function main() {
       }
       c.ev(`all 5 compilation-cache settings present verbatim on the argv (CAS at ${CAS_DIR})`);
 
-      // STORES.
       const g = growth('Xcode CAS', casBefore1, casAfter1);
       c.ev(describeGrowth(g));
       assert(
@@ -403,9 +280,6 @@ async function main() {
 
   if (PLATFORM === 'android') {
     await runCheck('gradle-cache', (c) => {
-      // ENGAGED, off the real argv -- engine/gradle.ts writes the same
-      // build_start record engine/xcode.ts does (issue #78), so this reads what
-      // ran instead of racing `ps` against a live build.
       const argv = buildStartArgv(wt1);
       assert(argv, `no build_start record in ${buildLog(wt1)}`);
       c.ev(`gradlew argv: ${argv}`);
@@ -416,7 +290,6 @@ async function main() {
       );
       c.ev('--build-cache present on the argv rn-iso composed');
 
-      // STORES.
       const g = growth('Gradle build cache', gradleBefore1, gradleAfter1);
       c.ev(describeGrowth(g));
       assert(
@@ -424,9 +297,6 @@ async function main() {
         `${GRADLE_CACHE_DIR} gained no entries across a cold assemble. Gradle only creates and fills it when --build-cache is on, so this is engaged-but-not-storing.`,
       );
 
-      // REUSED. rn-iso's own fingerprint cache would short-circuit gradle
-      // entirely in wt2, so --no-build-cache turns THAT lookup off (and only
-      // that one) to force gradle to run and show its FROM-CACHE outcomes.
       log('forcing gradle to execute in wt2 with --no-build-cache so its task cache can be observed...');
       const forced = cliJson([PLATFORM, '--json', '--no-build-cache'], { cwd: wt2, timeout: 40 * 60 * 1000 });
       c.ev(`wt2 forced run: cacheSkipped=${JSON.stringify(forced.cacheSkipped)} durationMs=${forced.durationMs}`);
@@ -446,18 +316,12 @@ async function main() {
     skipCheck('gradle-cache', `platform is ${PLATFORM}: the Gradle build cache is an Android-only cache`);
   }
 
-  // ---- check 5: the fingerprint build cache --------------------------------
   await runCheck('fingerprint-cache', (c) => {
     const platformDir = join(BUILD_CACHE_ROOT, PLATFORM);
     const keys = existsSync(platformDir) ? readdirSync(platformDir) : [];
     c.ev(`entries under ${platformDir}: ${keys.length} (${keys.join(', ') || 'none'})`);
     assert(keys.length > 0, 'the cold build stored no cache entry at all');
 
-    // THE POST-MUTATION KEY. prebuild and pod install REWRITE fingerprinted
-    // inputs, so the key the cold run looked up is not the key it stored under.
-    // The only honest way to prove the entry landed under the right one is to
-    // ask the same tree again: a second run in wt1 must HIT what the first
-    // stored.
     log('re-running the build in the SAME tree: it must hit what the cold run stored');
     const again = build(wt1, 'wt1 (second run, same tree)');
     c.ev(`wt1 looked up ${build1.cacheKey} when cold; the same tree now looks up ${again.cacheKey}`);
@@ -472,10 +336,6 @@ async function main() {
         : 'the key SHIFTED between lookup and store (prebuild / pod install rewrote fingerprint sources), and the entry is under the POST-mutation key',
     );
 
-    // The entry itself, complete. The artifact alone is not a complete entry:
-    // fingerprint-sources.json is what lets a later MISS say what moved, and on
-    // an Android RELEASE entry assets-manifest.json is what lets the APK swap
-    // refuse an asset it cannot package.
     const entry = join(platformDir, again.cacheKey);
     assert(existsSync(entry), `no entry directory at ${entry}`);
     const files = readdirSync(entry);
@@ -507,7 +367,6 @@ async function main() {
     return c.pass(`entry complete under the post-mutation key ${again.cacheKey}; the same-tree re-run hit it`);
   });
 
-  // ---- check 8: gc's view, taken while every cache is warm -----------------
   await runCheck('gc-view', (c) => {
     const gc = cli(['gc'], { cwd: appDir, allowFail: true });
     assert(gc.code === 0, `gc exited ${gc.code}`);
@@ -523,9 +382,6 @@ async function main() {
       if (/^\s*total:/.test(line)) break;
     }
 
-    // The rows must actually cover the caches this run filled. A cache absent
-    // from gc is an unbounded directory nothing will ever trim -- the exact
-    // hazard registerMetroStore's own comment names.
     const expected = [
       { name: 'the fingerprint build cache', dir: BUILD_CACHE_ROOT },
       { name: 'the shared Metro transform store', dir: storeRoot1 || METRO_CACHE_ROOT },
@@ -557,17 +413,12 @@ async function main() {
     return c.pass(`gc reports ${expected.length} live cache(s) with sizes and calls none of them garbage`);
   });
 
-  // wt2 has said everything it can; free its simulator before the race adds two
-  // more workspaces to this machine.
   stopWorkspace(wt2);
 
-  // ---- phase 3: the race, which also proves pods reuse and CAS reuse -------
   let raceOutcome = null;
   if (args.skipRace) {
     log('--skip-race: the single-flight phase (one full compile) is being skipped');
   } else {
-    // From wt1, NOT from the main checkout: --carry-ignored then clones wt1's
-    // ios/ and its installed Pods, which is what the pods-reuse check needs.
     const wt3 = worktreeCreate('e2e-cache-3', wt1);
     const wt4 = worktreeCreate('e2e-cache-4', wt1);
     startAndAssertMode(wt3);
@@ -635,17 +486,12 @@ async function main() {
   await runCheck('pods-reuse', (c) => {
     if (PLATFORM !== 'ios') return c.skip(`platform is ${PLATFORM}: CocoaPods is an iOS-only step`);
     if (!raceOutcome) return c.skip('--skip-race was passed, and the carried-Pods worktrees are created by that phase');
-    // The WAITER never reaches the pods step at all (it is on the cache path),
-    // so only the BUILDER can prove this: it missed the cache, ran the build
-    // path, and had to decide about pods with Pods/ already carried in.
     const { r3, r4 } = raceOutcome;
     const builder = [r3, r4].find((r) => !r.facts.waitedForBuild);
     assert(builder, 'no racer took the build path, so nothing decided about pods');
     const phases = builder.stderr
       .split('\n')
       .map((l) => stripAnsi(l).trimEnd())
-      // phaseLine pads the name to 11 characters and adds one space, so an
-      // 11-character name like `fingerprint` is followed by a SINGLE space.
       .filter((l) => /^(prebuild|pods|fingerprint|build|cache|install|launch)\s+\S/.test(l));
     for (const p of phases) c.ev(`builder phase: ${p}`);
     const podsLines = phases.filter((l) => /^pods\s/.test(l));
@@ -668,21 +514,12 @@ async function main() {
     return c.pass('a --carry-ignored worktree with matching Pods ran no pod install');
   });
 
-  // The REUSED half of check 3, measured on the race's compile: a compile in a
-  // workspace that has never compiled anything, against a CAS wt1 filled. It is
-  // appended to the xcode-cas entry rather than being its own check, because
-  // "reused" is one third of one cache's verdict, not a ninth cache.
   if (PLATFORM === 'ios') annotateCasReuse(raceOutcome, casBefore1, casAfter1);
 
-  // ---- phase 4: teardown, and the zero-config verdict ----------------------
   banner('teardown');
   for (const wt of created.toReversed()) {
     if (!existsSync(wt)) continue;
     stopWorkspace(wt);
-    // The diff PER DIRTY PATH, captured before the worktree goes away: a
-    // verdict of "rn-iso changed a file it had no business changing" is worth
-    // nothing without the lines it changed, and this directory is about to be
-    // deleted.
     const entries = porcelain(wt).split('\n').filter(Boolean);
     const diffs = {};
     for (const line of entries) diffs[porcelainPath(line)] = fileDiff(wt, porcelainPath(line));
@@ -726,7 +563,6 @@ async function main() {
     }
     if (unexplained > 0) return c.fail(`${unexplained} change(s) rn-iso cannot account for`);
 
-    // Worktree removal ran without --force and the main checkout remains exact.
     const after = snapshotRepo(appDir);
     c.ev(
       `main checkout after the run: porcelain ${after.porcelain === '' ? 'CLEAN' : JSON.stringify(after.porcelain)}`,
@@ -742,14 +578,8 @@ async function main() {
   });
 }
 
-// The three files a repo owns that rn-iso is never allowed to write, because
-// supplying the cache on its own command line instead of editing them is the
-// entire zero-config claim.
 const CRITICAL_PATHS = [/(^|\/)metro\.config\.[cm]?[jt]s$/, /(^|\/)Podfile$/, /(^|\/)gradle\.properties$/];
 
-// CocoaPods rewrites these itself when it installs; they are the project's own
-// build tool doing its job, not rn-iso authoring a file. Named explicitly so
-// anything ELSE that shows up is a failure rather than a shrug.
 const POD_CHURN_PATHS = [
   /\.xcodeproj\/project\.pbxproj$/,
   /Info\.plist$/,
@@ -758,16 +588,7 @@ const POD_CHURN_PATHS = [
   /\.xcworkspace/,
 ];
 
-// `expo prebuild` writes these itself on a MANAGED app: it stamps the resolved
-// bundleIdentifier / package into the app config and repoints package.json's
-// ios/android scripts at `expo run:*`. rn-iso only INVOKES prebuild, and only
-// when the native directory is absent -- the generator's own output is not an
-// rn-iso edit. Allowed for the expo framework only (a bare app runs no
-// prebuild, so the same change there IS unexplained), and the diff is printed
-// either way so a reviewer sees exactly what landed.
 const PREBUILD_CHURN_PATHS = [/(^|\/)package\.json$/, /(^|\/)app\.(json|config\.[cm]?[jt]s)$/];
-
-// ---- steps ------------------------------------------------------------------
 
 function worktreeCreate(name, sourceDir) {
   const r = cli(['worktree', 'create', name, '--base', 'head', '--carry-ignored'], { cwd: sourceDir });
@@ -816,8 +637,6 @@ function stopWorkspace(cwd) {
   cli(['stop'], { cwd, allowFail: true });
 }
 
-// Removal WITHOUT --force. Restore fixture-induced tracked churn first, then
-// let rn-iso remove a genuinely clean worktree; no project file is exempt.
 function worktreeRemove(path) {
   sh('git', ['-C', path, 'checkout', '--', '.'], { allowFail: true });
   sh('git', ['-C', path, 'clean', '-fdq', 'ios', 'android'], { allowFail: true });
@@ -826,9 +645,6 @@ function worktreeRemove(path) {
   log(`removed worktree ${path}`);
 }
 
-// Appends the CAS "REUSED" third to the xcode-cas verdict, or says in the
-// evidence why it could not be measured. Never upgrades a verdict: it can only
-// confirm a pass or turn it into a failure.
 function annotateCasReuse(raceOutcome, casBefore1, casAfter1) {
   const entry = ledger.get('xcode-cas');
   if (!entry) return;
@@ -855,19 +671,11 @@ function annotateCasReuse(raceOutcome, casBefore1, casAfter1) {
   log(`  (xcode-cas REUSED confirmed: ${pct}%)`);
 }
 
-// ---- evidence readers -------------------------------------------------------
-
-// The metro.ndjson records that say what happened to the shared transform
-// store: the confirmation, and the adapter's fail-soft warning.
 function metroStoreRecords(cwd) {
   const file = join(workspaceLogsDir(cwd), 'metro.ndjson');
   const records = readNdjson(file);
   return {
     file,
-    // WHAT RN-ISO ASKED FOR, kept separate from what happened. `requested` is
-    // written by rn-iso itself before the dev-server child exists; only `added`
-    // can report that the store reached the config Metro loaded. Reading them
-    // as one thing is the bug #73 was, so this suite names them apart.
     requested: records.find((r) => r.event === 'cache_store_requested') || null,
     added: records.find((r) => r.event === 'cache_store_added') || null,
     present: records.find((r) => r.event === 'cache_store_present') || null,
@@ -892,9 +700,6 @@ function readExpoSdkMajor(cwd) {
   }
 }
 
-// The store root a workspace's own record names. Read from the record rather
-// than recomputed, so a product that changes where the store lives is caught
-// here instead of being silently followed.
 function metroStoreRootFrom(cwd) {
   const rec = metroStoreRecords(cwd).added;
   if (!rec) return null;
@@ -902,21 +707,11 @@ function metroStoreRootFrom(cwd) {
   return m ? m[1] : null;
 }
 
-// The build log's build_start record: the literal argv rn-iso ran. iOS has
-// written it since engine/xcode.ts existed; Android got the matching record in
-// issue #78, which is what lets the Gradle check read a flag instead of racing
-// `ps` against a live build.
 function buildStartArgv(cwd) {
   const rec = readNdjson(buildLog(cwd)).find((r) => r.event === 'build_start');
   return rec ? String(rec.msg) : null;
 }
 
-// ---- git --------------------------------------------------------------------
-
-// TRAILING newlines only. `.trim()` here ate the LEADING SPACE of the first
-// line -- porcelain's status field is two columns wide, so ` M .gitignore`
-// became `M .gitignore` and every path was then read one character short
-// (`gitignore`). Found by the first real run of this suite.
 function porcelain(dir) {
   return sh('git', ['-C', dir, 'status', '--porcelain'], { allowFail: true }).stdout.replace(/\n+$/, '');
 }
@@ -925,9 +720,6 @@ function fileDiff(dir, path) {
   return sh('git', ['-C', dir, 'diff', '--', path], { allowFail: true }).stdout;
 }
 
-// PURE. The path out of one `git status --porcelain` line: two status columns,
-// a space, then the path -- quoted when it needs escaping, and `old -> new` for
-// a rename, of which the destination is the one that exists.
 function porcelainPath(line) {
   const raw = String(line).slice(3).trim();
   const renamed = raw.includes(' -> ') ? raw.slice(raw.lastIndexOf(' -> ') + 4) : raw;
@@ -943,10 +735,6 @@ function snapshotRepo(dir) {
   };
 }
 
-// ---- async process ----------------------------------------------------------
-
-// The race needs two rn-iso runs in flight at once, which spawnSync cannot do.
-// Same capture-and-echo contract as harness.sh, plus the parsed --json line.
 function cliAsync(argv, { cwd, env = ENV, timeout = 40 * 60 * 1000 } = {}) {
   return new Promise((resolveP) => {
     const child = spawn(process.execPath, [CLI, ...argv], { cwd, env });
@@ -968,23 +756,14 @@ function cliAsync(argv, { cwd, env = ENV, timeout = 40 * 60 * 1000 } = {}) {
       let facts = {};
       try {
         facts = JSON.parse(stdout.trim().split('\n').findLast(Boolean));
-      } catch {
-        // A run that failed before its JSON line still has a stderr worth
-        // reporting; the caller asserts on the exit code first.
-      }
+      } catch {}
       resolveP({ code: code ?? 1, stdout, stderr, facts, cwd });
     });
   });
 }
 
-// ---- measurement ------------------------------------------------------------
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// A cache filled by a process we do not own (Metro serving a bundle to an app
-// that just launched) is still filling when the command returns. Sample until
-// the count stops moving, then report -- and say so if it never settled, rather
-// than pretending the first sample was the answer.
 async function settle(dir, label, { firstGrowthMs = 90000, quietMs = 6000, timeoutMs = 240000, stepMs = 1500 } = {}) {
   const startedAtMs = Date.now();
   const baseline = dirStats(dir);
@@ -1000,12 +779,6 @@ async function settle(dir, label, { firstGrowthMs = 90000, quietMs = 6000, timeo
       stableSince = Date.now();
       continue;
     }
-    // A DIRECTORY THAT HAS NOT MOVED YET IS NOT A SETTLED ONE. The first
-    // version of this returned after six quiet seconds, which on a cold graph
-    // is just "Metro has not written anything yet" -- an unfilled cache and a
-    // fast one then read identically, and telling those two apart is the whole
-    // job. So a sample run that has seen NO change waits out firstGrowthMs
-    // before reporting, and says which of the two it is.
     if (!moved) {
       if (Date.now() - startedAtMs >= firstGrowthMs) {
         log(
@@ -1026,19 +799,12 @@ async function settle(dir, label, { firstGrowthMs = 90000, quietMs = 6000, timeo
   return last;
 }
 
-// The phase lines rn-iso prints can be coloured, and the assertions match on
-// their TEXT. The escape byte is built with fromCharCode rather than written
-// into the regex literal so this file stays ASCII (CLAUDE.md).
 const ANSI = new RegExp(String.fromCharCode(27) + String.raw`\[[0-9;]*m`, 'g');
 
 function stripAnsi(s) {
   return String(s).replace(ANSI, '');
 }
 
-// ---- summary ----------------------------------------------------------------
-
-// ONE parseable line on stdout, the same contract the CLI's own --json output
-// keeps. Everything human went to stderr.
 function emitSummary(durationMs, fatal) {
   const checks = [...ledger.values()].map((e) => ({
     id: e.id,
@@ -1049,7 +815,6 @@ function emitSummary(durationMs, fatal) {
   }));
   const counts = { pass: 0, skip: 0, fail: 0 };
   for (const c of checks) counts[c.status] = (counts[c.status] || 0) + 1;
-  // A check that never ran at all is not silently absent from the tally.
   const missing = Object.keys(CHECK_TITLES).filter((id) => !ledger.has(id));
   const summary = {
     suite: 'caches',
@@ -1080,8 +845,6 @@ function emitSummary(durationMs, fatal) {
   }
   return summary;
 }
-
-// ---- args / plan ------------------------------------------------------------
 
 function parseArgs(argv) {
   const out = {
@@ -1128,8 +891,6 @@ function plan() {
   log(`checks: ${Object.keys(CHECK_TITLES).join(', ')}`);
 }
 
-// ---- entry ------------------------------------------------------------------
-
 if (!['bare', 'expo'].includes(FRAMEWORK) || !['ios', 'android'].includes(PLATFORM)) {
   die(
     'usage: run-cache-e2e.mjs --framework <bare|expo> --platform <ios|android> [--app-dir P] [--home P] [--keep] [--skip-race] [--summary F] [--dry-run]',
@@ -1151,9 +912,6 @@ main().then(
     return process.exit(summary.ok ? 0 : 1);
   },
   (err) => {
-    // A fatal setup failure (no fixture, no cold build) is not a check verdict:
-    // it means the checks never got a chance, and the summary says exactly that
-    // rather than reporting seven silent passes.
     log(`FATAL: ${err?.message || err}`);
     dumpDiagnostics(h, created);
     emitSummary(Date.now() - startedAt, String(err?.message || err));

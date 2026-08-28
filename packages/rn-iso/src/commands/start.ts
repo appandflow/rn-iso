@@ -1,19 +1,3 @@
-// src/commands/start.js -- reserve the port, spawn the detached supervisor,
-// wait until the dev server is verifiably THIS project's, print the facts.
-//
-// `start` is the one command that blocks on purpose: waiting for health is its
-// contract, because everything an agent does next (build, install, launch)
-// fails slowly and confusingly if the bundler is not up yet.
-//
-// Health is `resolveProjectMetro`, never a bare /status probe. A port is not
-// identity: a foreign bundler answering /status on our reserved port would
-// send the agent's build at someone else's dev server, which is exactly what
-// the identity check exists to prevent -- and the reserved port moves instead
-// of being reported as a conflict the caller can do nothing about.
-//
-// Two flags, and only ever two: --json and --wait. Anything a project needs
-// beyond that is the project's own bundler command, which is not rn-iso's
-// judgment to make.
 import chalk from 'chalk';
 import { mkdirSync, openSync, readFileSync } from 'node:fs';
 import type { Command } from 'commander';
@@ -28,8 +12,6 @@ import { reserveMetroPort } from '../ports.ts';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
 import { readWorkspaceState } from '../supervisor/state.ts';
 import { spawnEntry } from '../spawn-entry.ts';
-// The same stopwatch the build commands stamp their phase lines with, so the
-// OK line's total wait reads the same way ("4s", "1m4s").
 import { stepTimer } from './ios.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
@@ -59,10 +41,6 @@ export function parseWait(value: unknown): WaitResult {
   return { seconds };
 }
 
-// A loose, defensive read of whatever `state.supervisor` / `project.supervisor`
-// carries -- state.json's `supervisor` block is a Record<string, unknown> (see
-// supervisor/state.ts) and config.ts's ProjectRecord.supervisor does not
-// declare `mode`, so this names only the fields liveSupervisor actually reads.
 interface SupervisorCandidate {
   pid?: unknown;
   port?: unknown;
@@ -83,14 +61,6 @@ interface ChildExitInfo {
   error?: Error;
 }
 
-// Pure. The workspace state file is the primary record -- it is the only one
-// that carries the mode -- and the global config entry is the fallback for a
-// workspace whose global state directory was removed under a running supervisor.
-//
-// "Live" is pid alive AND the recorded port is the port we are about to use.
-// Both halves matter: a pid alone is not proof (pids are reused, and a stale
-// state.json outlives its process), and a supervisor recorded on a different
-// port is not the one that would answer here.
 export function liveSupervisor({
   state,
   project,
@@ -118,13 +88,6 @@ export function liveSupervisor({
   return null;
 }
 
-// Pure shaping of the --json payload, under the contract every rn-iso command
-// with a --json flag follows: one line on stdout, everything else on stderr.
-//
-// supervisorPid and mode are null when a dev server answers on the port but
-// rn-iso did not start it -- an agent that ran the project's own `npm start`
-// first. That is reported rather than fought: the port has what it needs, and
-// starting a second bundler over it would be the actual failure.
 export function startFacts({
   port,
   supervisor,
@@ -145,13 +108,6 @@ export function startFacts({
   };
 }
 
-// Pure shaping of the FAILURE payload, the other half of the same contract:
-// one parseable line on stdout either way. `start --json` used to print nothing
-// at all when it failed, so a caller doing `facts=$(rn-iso start --json)` got an
-// empty string and had to fall back to scraping stderr prose -- exactly what
-// `guide facts` promises the build commands never make you do. The shape is
-// theirs: a stable code to branch on, a message, and a remedy (null when there
-// is nothing to suggest beyond what was already printed).
 export function startError({
   code,
   message,
@@ -201,19 +157,12 @@ export function registerStart(program: Command): void {
     .option('--wait <seconds>', `How long to wait for the dev server to answer (default ${DEFAULT_WAIT_SECONDS})`)
     .action(async (opts: StartOptions) => {
       const json = Boolean(opts.json);
-      // Total wait, command start to the OK line: `start` blocks on health by
-      // contract, and how long that took is part of the report.
       const waitTimer = stepTimer();
       const out = (line: string) => {
         if (json) console.error(line);
         else console.log(line);
       };
       const note = writeNote;
-      // Every failure exits the same way: the diagnostic, whatever evidence
-      // there is for it, the remedy, and -- under --json -- the error contract
-      // as the single line on stdout. Same shape `ios` / `android` use, because
-      // an agent branching on `code` must not have to know which command it
-      // called.
       const fail = ({
         code,
         message,
@@ -241,7 +190,6 @@ export function registerStart(program: Command): void {
           remedy: 'Pass a whole number of seconds, e.g. --wait 90.',
         });
       }
-      // parseWait's contract: exactly one of `error` / `seconds` is set.
       const waitSeconds = wait.seconds as number;
 
       const root = findProjectRoot(process.cwd());
@@ -276,8 +224,6 @@ export function registerStart(program: Command): void {
       let resolution = await resolveProjectMetro(port, root);
       let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
 
-      // Already up: the whole point of an idempotent start. Two `start` runs in
-      // a row must leave one supervisor, not two bundlers fighting for a port.
       if (resolution.metro) {
         if (!supervisor) {
           note(chalk.dim(`A dev server for this project already answers on port ${port}, started outside rn-iso.`));
@@ -287,10 +233,6 @@ export function registerStart(program: Command): void {
         return;
       }
 
-      // A live supervisor that is not answering yet is either still starting
-      // (the common case, when two `start` runs race) or wedged. Either way,
-      // spawning a second one would leave the workspace with two supervisors
-      // and one port, so we wait on the one that exists instead.
       if (supervisor) {
         note(
           chalk.dim(
@@ -311,19 +253,11 @@ export function registerStart(program: Command): void {
         return;
       }
 
-      // ---- spawn the supervisor ----
       mkdirSync(logsDir, { recursive: true });
-      // Appended, never truncated, and shared by stdout and stderr so the two
-      // interleave in the order they were written. This file is the ONLY
-      // record of a supervisor that died before it could write a structured
-      // one, which is why the failure path below quotes it.
       const fd = openSync(logFile, 'a');
       const spawnedTs = Date.now();
       const child = getExecutor().spawn(process.execPath, [supervisorEntry(), '--root', root, '--port', String(port)], {
         cwd: root,
-        // detached: the supervisor leads its own process group, so it
-        // survives this command exiting and `stop` can signal that group
-        // without reaching the caller's shell.
         detached: true,
         stdio: ['ignore', fd, fd],
         env: process.env,
@@ -344,21 +278,11 @@ export function registerStart(program: Command): void {
         root,
         port,
         seconds: waitSeconds,
-        // A supervisor that has already exited is never going to answer, so
-        // the wait ends at second one instead of at sixty.
         aborted: () => childExit !== null || (child.pid ? !isPidAlive(child.pid) : false),
       });
 
       if (!healthy) {
-        // A supervisor that is GONE and one that is merely slow need different
-        // next steps, so the two are distinguished rather than both reported
-        // as a timeout. The exit event is the better evidence; the liveness
-        // check catches the case where the process died without us seeing it.
         const gone = childExit !== null || (child.pid ? !isPidAlive(child.pid) : false);
-        // Cast rather than rely on narrowing: childExit is only ever
-        // reassigned inside the 'exit'/'error' listeners above, and TS's flow
-        // analysis does not see through those closures back to its declared
-        // type here.
         const exitInfo = childExit as ChildExitInfo | null;
         const how = exitInfo
           ? exitInfo.signal
@@ -383,18 +307,16 @@ export function registerStart(program: Command): void {
         );
       }
 
-      supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) ||
-        // child.pid is only undefined if the spawn itself failed, which the
-        // health check above would already have turned into a failure.
-        { pid: child.pid as number, port, mode: null, startedAt: null };
+      supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) || {
+        pid: child.pid as number,
+        port,
+        mode: null,
+        startedAt: null,
+      };
       report({ json, out, port, supervisor, logsDir, alreadyRunning: false, waited: waitTimer() });
     });
 }
 
-// The reserved port, re-reserved when a FOREIGN process holds it. Reporting
-// the conflict instead would strand the project on a port it can never use,
-// while our own dev server answering there is the healthy case and must not
-// move.
 async function resolvePort(root: string, note: (line: string) => void): Promise<number> {
   const project = getProject(root);
   const recorded = project?.metroPort;
@@ -433,21 +355,10 @@ async function waitForMetro({
   return Boolean(last.metro);
 }
 
-// The evidence a start failure carries: the last lines of the supervisor's raw
-// stdio, then the path to the rest of it. That file is the ONLY record of a
-// supervisor that died before it could write a structured one, which is why
-// every failure quotes it.
 function logTailLines(logFile: string): string[] {
   return [...readLogTail(logFile), `Supervisor log: ${logFile}`];
 }
 
-// The evidence for a spawn-path failure. The supervisor's own log is quoted
-// when it has anything to say -- but the death cry is usually NOT there: an
-// expo child's output is parsed into the workspace timeline as records, so a
-// child that dies before serving (a config PluginError, a bad app config)
-// leaves supervisor.log EMPTY while the actual error sits in metro.ndjson.
-// Pointing at the empty file was issue #24; the timeline's error records from
-// THIS attempt are the part of the answer that was always on disk.
 export function failureEvidence({
   logFile,
   logsDir,
@@ -464,16 +375,10 @@ export function failureEvidence({
   try {
     errors = queryLogs({ dir: logsDir, minLevel: 'error' });
     all = queryLogs({ dir: logsDir });
-  } catch {
-    // An unreadable timeline must not mask the failure being reported.
-  }
+  } catch {}
   const since = (rs: ReturnType<typeof queryLogs>) =>
     rs.filter((r) => typeof r.ts === 'number' && r.ts >= sinceTs).slice(-ERROR_EVIDENCE_RECORDS);
   let recent = since(errors);
-  // Level inference on a child's raw output is best-effort, so a death cry
-  // can sit in the timeline at info (#30). When nothing made it to error
-  // level, the last raw lines of THIS attempt are still the best evidence
-  // there is -- the same reasoning as quoting supervisor.log's tail.
   const fellBack = recent.length === 0;
   if (fellBack) recent = since(all);
   for (const r of recent) {
@@ -498,14 +403,8 @@ function report({
   supervisor: LiveSupervisor | null;
   logsDir: string;
   alreadyRunning: boolean;
-  // Pre-rendered "(4s)": the total wait, stamped by the caller's stepTimer.
-  // The --json payload does not carry it -- one contract, unchanged.
   waited: string;
 }): StartFacts {
-  // LiveSupervisor is a closed, non-null shape (see above); SupervisorRecord
-  // is the loose index-signature bag startFacts (and the wider --json
-  // contract) is written against. Structurally compatible, cast for the
-  // index signature and the null-vs-undefined difference on mode/startedAt.
   const facts = startFacts({
     port,
     supervisor: supervisor as unknown as SupervisorRecord | null,

@@ -1,15 +1,3 @@
-// The two cache packages are CommonJS on purpose: an Expo config and a
-// metro.config.js both `require()` them. rn-iso is an ES module, so the bridge
-// between them is the one line most likely to break silently -- `require` of an
-// ESM module throws ERR_REQUIRE_ESM on Node before 20.19, and registration is
-// best-effort, so the throw was swallowed and the caches simply never appeared
-// in gc's cache report on those versions.
-//
-// These tests exercise the real packages, from this Node, through the real
-// manifest. Each package is imported exactly once per process (CommonJS caches
-// the module), but its cache root is resolved per call rather than at load
-// time -- which is what lets a test set the environment after importing, and
-// what keeps an override from being frozen into a long-lived Metro process.
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,8 +9,6 @@ import { hasStoreAt } from '../supervisor/metro-store.ts';
 
 const PACKAGES = join(fileURLToPath(import.meta.url), '..', '..', '..', '..');
 
-// Registration is deliberately fire-and-forget, so the caller returns before the
-// import resolves. Poll rather than sleep: it lands within a tick or two.
 async function waitForRegistration(dir: string, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -42,7 +28,6 @@ test('the Expo build cache provider registers itself on this Node, at the right 
     const provider = await import('@rn-iso/expo-build-cache');
     expect(provider.cacheRoot()).toBe(cacheRoot);
 
-    // A miss is enough: registration happens on every resolve, hit or not.
     await provider.resolveBuildCache({ platform: 'ios', fingerprintHash: 'nothing', runOptions: {} });
 
     const record = await waitForRegistration(cacheRoot);
@@ -66,8 +51,6 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
   process.env.RN_ISO_METRO_CACHE = cacheRoot;
   try {
     const { sharedCacheStores } = await import('@rn-iso/metro');
-    // Metro's own FileStore is not a dependency of rn-iso, and the store object
-    // is not what is under test here.
     class FakeStore {
       root: string;
       constructor(options: { root: string }) {
@@ -76,12 +59,6 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
     }
     const stores = sharedCacheStores('demo', { FileStore: FakeStore });
     expect((stores[0] as { root: string }).root).toBe(cacheRoot);
-    // THE THIRD THING THE PACKAGES MUST AGREE ON. A project that wires this
-    // function into its metro.config.js by hand and then runs `rn-iso start`
-    // must not end up with the same store twice, and since metro-cache 0.83.0
-    // made FileStore's root private there is nothing on the instance to
-    // compare -- so the store carries @rn-iso/core's tag and rn-iso's own
-    // predicate reads it.
     expect(hasStoreAt(stores, cacheRoot)).toBe(true);
 
     const record = await waitForRegistration(cacheRoot);
@@ -97,11 +74,6 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
   }
 });
 
-// Reaching rn-iso at all was the bug. `require` of it throws ERR_REQUIRE_ESM on
-// Node before 20.19, and a dynamic import fixes only that half: the documented
-// way to use the CLI is `npx rn-iso`, so it is usually not a dependency of the
-// project and the specifier does not resolve on any Node version. Both packages
-// write the manifest themselves, so neither may name rn-iso as a module.
 test('neither package reaches rn-iso as a module; the shared primitives live in @rn-iso/core', () => {
   for (const pkg of ['expo-build-cache', 'metro']) {
     const source = readFileSync(join(PACKAGES, pkg, 'index.ts'), 'utf-8');
@@ -109,18 +81,11 @@ test('neither package reaches rn-iso as a module; the shared primitives live in 
     expect(source).not.toMatch(/import\(\s*['"]rn-iso/);
     expect(source).toMatch(/@rn-iso\/core/);
   }
-  // The direct manifest write moved to core with everything else the three
-  // packages must agree on; core itself must not import rn-iso either.
   const core = readFileSync(join(PACKAGES, 'core', 'index.ts'), 'utf-8');
   expect(core).toMatch(/caches\.json/);
   expect(core).not.toMatch(/require\(\s*['"]rn-iso/);
 });
 
-// The three implementations of the cache-root resolution are duplicated on
-// purpose -- both packages have to work with no rn-iso installed, so neither
-// may import src/paths.js. Nothing but this test holds them together, and the
-// failure when they drift is silent: the CLI stores a build in one directory
-// and the provider looks in another, and neither says so.
 test('both packages resolve the same cache roots the CLI does', async () => {
   const home = mkdtempSync(join(tmpdir(), 'rn-iso-pkg-home3-'));
   process.env.RN_ISO_HOME = home;
@@ -134,8 +99,6 @@ test('both packages resolve the same cache roots the CLI does', async () => {
     expect(metro.cacheRoot('demo')).toBe(sharedMetroCache('demo'));
     expect(metro.cacheRoot('demo')).toBe(join(home, 'metro-cache', 'demo'));
 
-    // The machine-config override has to move all three together, and the
-    // env override has to beat it.
     writeFileSync(
       join(home, 'config.json'),
       JSON.stringify({ caches: { buildCache: join(home, 'cfg-build'), metroCache: join(home, 'cfg-metro') } }),
@@ -144,11 +107,9 @@ test('both packages resolve the same cache roots the CLI does', async () => {
     expect(provider.cacheRoot()).toBe(join(home, 'cfg-build'));
     expect(metro.cacheRoot('demo')).toBe(sharedMetroCache('demo'));
     expect(metro.cacheRoot('demo')).toBe(join(home, 'cfg-metro'));
-    // A relative path in the config is ignored, never joined into nonsense.
     writeFileSync(join(home, 'config.json'), JSON.stringify({ caches: { buildCache: 'relative/nope' } }));
     expect(provider.cacheRoot()).toBe(join(home, 'build-cache'));
 
-    // The env overrides have to move all three together too.
     process.env.RN_ISO_BUILD_CACHE = join(home, 'elsewhere-build');
     process.env.RN_ISO_METRO_CACHE = join(home, 'elsewhere-metro');
     expect(provider.cacheRoot()).toBe(sharedBuildCache());

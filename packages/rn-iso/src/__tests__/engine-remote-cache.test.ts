@@ -1,17 +1,3 @@
-// engine/remote-cache.js -- the project's OWN Expo build-cache provider, used
-// as level two behind rn-iso's local cache.
-//
-// What is pinned here is the part that is easy to get wrong in a way nobody
-// notices: WHICH key the provider is read from (the SDK 53 experiments key is
-// still a fallback), WHERE the plugin is loaded from (the project, never
-// rn-iso), and -- the whole reason this module exists -- that a provider which
-// throws, lies about a path, or never answers degrades to a local-only run
-// with a note instead of failing the command or hanging the loop.
-//
-// A real provider is a real module on disk in these tests (a fixture .cjs
-// written into a temp project), because the thing being asserted is that
-// `createRequire` from the PROJECT resolves it. A stub object could not fail
-// that way.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -61,9 +47,6 @@ function writeAppJson(config: unknown) {
   writeFileSync(join(root, 'app.json'), JSON.stringify(config, null, 2));
 }
 
-// A provider module the way a project would ship one: CommonJS, exported on
-// `default` (which is what a compiled TypeScript provider produces, and what
-// the Expo CLI unwraps).
 function writeProviderModule(file: string, body: string) {
   writeFileSync(join(root, file), body);
   return file;
@@ -79,8 +62,6 @@ module.exports.default = {
 };
 `;
 
-// --- pure: which key, which shape -----------------------------------------
-
 describe('providerFromConfig', () => {
   test('reads the top-level key out of an app.json (nested under expo)', () => {
     expect(providerFromConfig({ expo: { buildCacheProvider: 'eas' } })).toBe('eas');
@@ -90,9 +71,6 @@ describe('providerFromConfig', () => {
     expect(providerFromConfig({ name: 'app', buildCacheProvider: 'eas' })).toBe('eas');
   });
 
-  // SDK 53 read ONLY experiments.buildCacheProvider, and the Expo CLI still
-  // falls back to it (run/ios/options/resolveOptions.ts:52). A project pinned
-  // there must not read as "no provider".
   test('falls back to the SDK 53 experiments key', () => {
     const raw = providerFromConfig({ expo: { experiments: { buildCacheProvider: { plugin: './p.cjs' } } } });
     expect(raw).toEqual({ plugin: './p.cjs' });
@@ -137,8 +115,6 @@ describe('normalizeProvider', () => {
 });
 
 describe('runOptionsFor', () => {
-  // Not decoration: eas-build-cache-provider reads these to decide whether to
-  // ask EAS for a dev-client build.
   test('describes the debug simulator/emulator build rn-iso actually makes', () => {
     expect(runOptionsFor('ios')).toEqual({ configuration: 'Debug' });
     expect(runOptionsFor('android')).toEqual({ variant: 'debug' });
@@ -156,8 +132,6 @@ describe('isProviderPlugin', () => {
     expect(isProviderPlugin(null)).toBe(false);
   });
 });
-
-// --- the config read -------------------------------------------------------
 
 describe('readProjectConfig', () => {
   test('a static app.json is parsed directly, with no child process at all', () => {
@@ -213,11 +187,6 @@ describe('readProjectConfig', () => {
     expect(read.unavailable).toMatch(/`expo` package is not resolvable/);
   });
 
-  // The bug this pins was live on a real pnpm workspace: the app directory's
-  // own node_modules holds no .bin/expo, so the ONLY check that existed here
-  // ("does <root>/node_modules/.bin/expo exist?") said no on every hoisted
-  // monorepo -- and the entire remote cache tier was dead there, behind a note
-  // that read like a missing install. The binary is found by walking UP.
   test('a HOISTED monorepo evaluates the config with the workspace-root expo', () => {
     const app = join(root, 'apps', 'mobile');
     mkdirSync(join(app, 'node_modules'), { recursive: true });
@@ -261,8 +230,6 @@ describe('readProjectConfig', () => {
     expect(readProjectConfig(root).unavailable).toMatch(/app\.json could not be parsed/);
   });
 });
-
-// --- loading the plugin ----------------------------------------------------
 
 describe('loadPlugin', () => {
   test('resolves a relative module reference against the PROJECT, and unwraps .default', async () => {
@@ -320,8 +287,6 @@ describe('loadProjectProvider', () => {
     expect(result.unavailable).toMatch(/not installed/);
   });
 
-  // rn-iso's own provider addresses the same directory with the same keys as
-  // the local cache that just missed. Consulting it can only miss again.
   test("rn-iso's own provider package is treated as level one, not as a remote", async () => {
     writeAppJson({ expo: { buildCacheProvider: { plugin: LOCAL_PROVIDER_PACKAGE } } });
     expect(await loadProjectProvider(root)).toEqual({ none: true });
@@ -339,8 +304,6 @@ describe('loadProjectProvider', () => {
     expect(result.unavailable).toMatch(/not "eas" or \{ plugin/);
   });
 });
-
-// --- calling it ------------------------------------------------------------
 
 function plugin(overrides: Partial<ProviderPlugin> = {}) {
   return {
@@ -440,8 +403,6 @@ describe('resolveRemote', () => {
     expect(result.failed).toMatch(/does not exist/);
   });
 
-  // The failure this module exists for: an agent loop must not stall on a
-  // network call that will never answer.
   test('a provider that never answers times out instead of hanging the loop', async () => {
     const { provider } = plugin({ resolveBuildCache: () => new Promise(() => {}) });
     const started = Date.now();
@@ -543,8 +504,6 @@ describe('uploadRemote', () => {
 });
 
 describe('the budgets', () => {
-  // Constants, not settings (see the module header). Pinned so a change is a
-  // deliberate one.
   test('are bounded and ordered: a resolve blocks the loop, an upload runs beside it', () => {
     expect(RESOLVE_TIMEOUT_MS).toBe(30_000);
     expect(UPLOAD_TIMEOUT_MS).toBe(60_000);
@@ -560,20 +519,6 @@ describe('dynamicConfigFile', () => {
   });
 });
 
-// --- the provider's stdout is not ours to give away ------------------------
-//
-// The provider plugin runs IN-PROCESS: `resolveBuildCache` is a function call,
-// not a subprocess, so its `console.log` writes to the same fd 1 that carries
-// `ios --json`'s single payload line. eas-build-cache-provider prints
-// "Searching builds with matching fingerprint on EAS servers" on every lookup
-// and "Uploading build to EAS" on every store, and both landed INTERLEAVED
-// with the JSON payload -- one unparseable stdout on every cache miss, on both
-// platforms. So while a provider function runs, rn-iso catches everything it
-// writes to stdout and puts it where progress belongs.
-
-// Replaces process.stdout.write and process.stderr.write with recorders BEFORE
-// the call, so what is asserted is what would have reached the terminal: the
-// capture installs itself over these, and a leak shows up as a line in `out`.
 function tapStreams(fn: (streams: { out: string[]; err: string[] }) => unknown) {
   const out: string[] = [];
   const err: string[] = [];
@@ -612,9 +557,6 @@ function tapStreams(fn: (streams: { out: string[]; err: string[] }) => unknown) 
 }
 
 function records() {
-  // makeWriter's write receives `record: unknown` (the NdjsonWriter contract),
-  // and the captured frames are read structurally below (r.src / written[1].msg);
-  // `any[]` keeps those reads working without a per-read cast.
   const written: NdjsonRecord[] = [];
   return {
     written,
@@ -692,11 +634,8 @@ describe('provider output containment', () => {
           timeoutMs: 30,
           logWriter: records().writer,
         });
-        // The command's own payload, written the moment the call is over.
         console.log('{"payload":true}');
       });
-      // The tap sees every stdout write in the process, and node --test's own
-      // reporter is one of them, so this is about the two lines that matter.
       expect(out.join('').includes('{"payload":true}')).toBeTruthy();
       expect(!out.join('').includes(LEAK)).toBeTruthy();
     }
@@ -838,18 +777,6 @@ describe('uploadDestination', () => {
   });
 });
 
-// --- EAS authentication ------------------------------------------------------
-//
-// The outputs below are VERBATIM from `eas whoami` on this machine
-// (eas-cli 18.0.3, 2026-08-25), captured both ways: logged in, and logged out
-// by pointing HOME at an empty directory rather than by logging anybody out.
-//
-//   logged in   exit 0, stdout:  "janic\n\nAccounts:\n<bullet> janic (Role: Owner)\n
-//                                 <bullet> fin-tech (Role: Viewer)\n<bullet> th3rd-wave (Role: Owner)\n"
-//                (the bullet is U+2022; it is written as an escape below,
-//                 because these files are ASCII)
-//               stderr held only the "eas-cli@22.4.0 is now available" upgrade notice.
-//   logged out  exit 1, stdout:  "Not logged in\n", stderr empty.
 describe('parseWhoami', () => {
   const LOGGED_IN =
     'janic\n\nAccounts:\n\u2022 janic (Role: Owner)\n' +
@@ -863,9 +790,6 @@ describe('parseWhoami', () => {
     expect(parsed.viaToken).toBe(false);
   });
 
-  // account/view.js only prints the Accounts block when the actor belongs to an
-  // account that is NOT its personal one, so a single-account user's whole
-  // output is the username -- which IS the one account they have.
   test('a user with only a personal account still yields that account', () => {
     const parsed = parseWhoami({ stdout: 'janic\n', exitCode: 0 });
     expect(parsed.accounts).toEqual(['janic']);
@@ -877,9 +801,6 @@ describe('parseWhoami', () => {
     expect(parsed.viaToken).toBe(true);
   });
 
-  // getActorDisplayName prints "robot" / "Name (robot)" for a robot actor, and
-  // a robot has no username at all -- so the display name is not an account
-  // name, and enumeration is UNKNOWN rather than "one account called robot".
   test('a robot actor with no Accounts block leaves the accounts unknown', () => {
     const parsed = parseWhoami({ stdout: 'CI (robot) (authenticated using EXPO_TOKEN)\n', exitCode: 0 });
     expect(parsed.loggedIn).toBe(true);
@@ -891,9 +812,6 @@ describe('parseWhoami', () => {
     expect(parsed.loggedOut).toBe(true);
   });
 
-  // The whole point of the distinction: whoami hits the network when a session
-  // exists, so a failure that is not "Not logged in" may be a plane, a VPN or a
-  // DNS hiccup, and none of those mean the user has to log in.
   test('any other failure is unknown, never logged out', () => {
     const parsed = parseWhoami({
       stdout: '',
@@ -981,9 +899,6 @@ describe('checkEasAuth', () => {
     expect(status.owner).toBe('th3rd-wave');
   });
 
-  // Enumeration is only as good as what whoami prints, and for a robot it
-  // prints a display name that is not an account. Guessing there would fail a
-  // build that was configured perfectly well.
   test('an owner is never contradicted by an account list that could not be read', () => {
     const status = checkEasAuth({
       projectRoot: root,
@@ -1042,10 +957,6 @@ describe('checkEasAuth', () => {
 });
 
 describe('resolveEasCliBin', () => {
-  // Same hoisting bug as the expo binary, and the same fix: an app directory in
-  // a pnpm/yarn workspace has an EMPTY node_modules of its own, and the eas
-  // shim is at the workspace root. Joining <root>/node_modules/.bin would find
-  // nothing and report a CLI that is installed as missing.
   test('finds a hoisted eas shim by walking up, never by joining', () => {
     const app = join(root, 'apps', 'mobile');
     mkdirSync(join(app, 'node_modules'), { recursive: true });
@@ -1089,8 +1000,6 @@ describe('easAuthNote', () => {
     expect(note).toMatch(/anyway/);
   });
 
-  // The upload is collected AFTER the build and the launch, so "building with
-  // the local cache only" would be describing something that already happened.
   test('the same failure at upload time says what it cost instead', () => {
     const note = easAuthNote({ code: 'logged-out', reason: '403', phase: 'upload' });
     assert(note);

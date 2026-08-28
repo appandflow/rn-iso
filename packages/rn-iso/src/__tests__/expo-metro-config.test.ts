@@ -1,6 +1,3 @@
-// The Expo SDK 54+ config adapter runs inside the project's own Expo child.
-// Exercise it in real Node processes so config discovery, module resolution,
-// promises and stderr confirmation all cross the same boundary as production.
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

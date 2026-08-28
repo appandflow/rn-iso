@@ -1,29 +1,3 @@
-// FAST CROSS-PLATFORM E2E -- the cache machinery, end to end, with no compiler.
-//
-// This is the one e2e that runs on Ubuntu with no Xcode and no Android SDK. It
-// drives the REAL library and the REAL CLI everywhere they are OS-portable and
-// asserts the whole cross-worktree cache story the native jobs prove again with
-// an actual build:
-//
-//   1. `rn-iso worktree create` makes two real git worktrees at one commit, and
-//      honours the stdout-is-only-the-path contract.
-//   2. Two worktrees of one commit FINGERPRINT IDENTICALLY when scoped to a
-//      platform (the cross-worktree cache premise) -- and differ under ios/ when
-//      a worktree-local path leaks in, which is exactly why the hash is scoped.
-//   3. A build stored under wt1's key RESOLVES from wt2's key: a cross-worktree
-//      cache HIT with no compiler in sight. Change a native input in wt2 and the
-//      key changes and the hit becomes a MISS.
-//   4. Two real processes racing the single-flight lock: exactly one builds; the
-//      other waits and resolves the artifact the first one stored.
-//   5. `rn-iso worktree remove` leaves nothing behind -- no dirs, no config
-//      entries, a clean `git worktree list`.
-//
-// Everything runs under a throwaway RN_ISO_HOME and a throwaway TMPDIR-rooted
-// repo, so it never touches the real machine's caches, registry or checkouts.
-//
-// The leaf hash function is injected so this fast cross-platform suite does not
-// spend minutes on native discovery. Production itself imports
-// @expo/fingerprint directly; the seam here only verifies option threading.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
@@ -51,9 +25,6 @@ const CACHE_URL = pathToFileURL(join(REPO, 'packages', 'rn-iso', 'src', 'build-c
 const ctx = {};
 
 before(() => {
-  // One throwaway home for the registry + the shared build cache, one throwaway
-  // tmp root for the repo and its worktrees. realpath so macOS's /var -> /private
-  // symlink cannot make a config key written at create time miss at remove time.
   ctx.home = realpathSync(mkdtempSync(join(tmpdir(), 'rn-iso-e2e-home-')));
   ctx.tmp = realpathSync(mkdtempSync(join(tmpdir(), 'rn-iso-e2e-')));
   process.env.RN_ISO_HOME = ctx.home;
@@ -71,8 +42,6 @@ after(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-// --- 1. worktree create: two worktrees at one commit, stdout is the path -----
-
 test('worktree create prints only the worktree path, and makes a real worktree', () => {
   ctx.wt1 = createWorktree('e2e-wt1');
   ctx.wt2 = createWorktree('e2e-wt2');
@@ -84,13 +53,10 @@ test('worktree create prints only the worktree path, and makes a real worktree',
   }
   assert.notEqual(ctx.wt1, ctx.wt2);
 
-  // Registered in the config as worktree roots (this is what remove must undo).
   const projects = loadConfig()?.projects || {};
   assert.ok(projects[ctx.wt1]?.worktreeRoot, 'wt1 registered as a worktree root');
   assert.ok(projects[ctx.wt2]?.worktreeRoot, 'wt2 registered as a worktree root');
 });
-
-// --- 2. the cross-worktree fingerprint premise -------------------------------
 
 test('two worktrees of one commit fingerprint identically when scoped', async () => {
   const a = (await fingerprintProject(ctx.wt1, { platform: 'android', createFingerprint: createFingerprintAsync }))
@@ -103,9 +69,6 @@ test('two worktrees of one commit fingerprint identically when scoped', async ()
 });
 
 test('a worktree-local path under ios/ changes the ios hash but NOT the android one', async () => {
-  // Simulate the documented hermes-podspec problem: something under ios/ bakes
-  // the absolute worktree path in, so two worktrees of one commit differ under
-  // ios/ by construction. This is exactly why fingerprintProject scopes.
   writeFileSync(join(ctx.wt1, 'ios', 'Podfile.lock'), `PODS:\n  - hermes-engine (from \`${ctx.wt1}/ios\`)\n`);
   writeFileSync(join(ctx.wt2, 'ios', 'Podfile.lock'), `PODS:\n  - hermes-engine (from \`${ctx.wt2}/ios\`)\n`);
 
@@ -115,9 +78,6 @@ test('a worktree-local path under ios/ changes the ios hash but NOT the android 
     ?.hash;
   assert.notEqual(iosA, iosB, 'the ios hash differs across worktrees -- an UNSCOPED hash would poison android too');
 
-  // ... and the android hash is untouched by the ios/ divergence: still equal,
-  // still what it was before. This is the property that makes the cross-worktree
-  // android cache hit at all.
   const androidA = (
     await fingerprintProject(ctx.wt1, { platform: 'android', createFingerprint: createFingerprintAsync })
   )?.hash;
@@ -128,8 +88,6 @@ test('a worktree-local path under ios/ changes the ios hash but NOT the android 
   assert.equal(androidA, ctx.androidHash1, 'and the android hash did not move');
 });
 
-// --- 3. cross-worktree cache hit, then a miss on a native change -------------
-
 test('a build stored under wt1 key resolves from wt2 key: a cross-worktree HIT', async () => {
   const hash1 = (await fingerprintProject(ctx.wt1, { platform: 'android', createFingerprint: createFingerprintAsync }))
     ?.hash;
@@ -139,8 +97,6 @@ test('a build stored under wt1 key resolves from wt2 key: a cross-worktree HIT',
   const key2 = buildCacheKey('android', hash2, {});
   assert.equal(key1, key2, 'same fingerprint, same options -> same cache key across worktrees');
 
-  // A synthetic artifact -- storeBuild copies it into the shared cache with the
-  // same atomic staging path a real .apk/.app takes. No compiler runs.
   const synthetic = join(ctx.tmp, 'synthetic', 'Foo.app');
   mkdirSync(synthetic, { recursive: true });
   writeFileSync(join(synthetic, 'Foo'), 'not a real binary, but a real file');
@@ -148,8 +104,6 @@ test('a build stored under wt1 key resolves from wt2 key: a cross-worktree HIT',
   assert.ok(stored && existsSync(stored), 'stored into the shared cache');
   assert.equal(stored, join(entryDir('android', key1), 'Foo.app'), 'landed at the fingerprint-keyed path');
 
-  // The wt2 process, on the same commit, resolves the SAME entry -- without
-  // ever building. This is the cache doing its whole job.
   const hit = resolveBuild('android', key2);
   assert.equal(hit, stored, 'wt2 resolves exactly what wt1 stored');
   assert.ok(existsSync(join(hit, 'Foo')), 'and the artifact is real');
@@ -157,8 +111,6 @@ test('a build stored under wt1 key resolves from wt2 key: a cross-worktree HIT',
 });
 
 test('changing a native input in wt2 changes the key and turns the hit into a MISS', async () => {
-  // A genuine native input: append to android/app/build.gradle. The fingerprint
-  // must move, the key with it, and resolveBuild must now find nothing.
   const gradle = join(ctx.wt2, 'android', 'app', 'build.gradle');
   writeFileSync(gradle, readFileSync(gradle, 'utf-8') + '\n// native input changed by the e2e\n');
 
@@ -172,8 +124,6 @@ test('changing a native input in wt2 changes the key and turns the hit into a MI
   assert.equal(resolveBuild('android', changedKey), null, 'and it is a MISS -- exactly the rebuild trigger');
 });
 
-// --- 4. single-flight: exactly one builds; the other waits and resolves ------
-
 test('exactly one of four racing processes acquires the lock', async () => {
   const key = 'race-debug-sim';
   const racer = writeScript('racer.mjs', [
@@ -182,7 +132,6 @@ test('exactly one of four racing processes acquires the lock', async () => {
     '  platform: "ios", key: process.argv[2], root: `/worktree/${process.argv[3]}`,',
     '  logFile: `/worktree/${process.argv[3]}/build.ndjson`,',
     '});',
-    // Hold long enough that every sibling has certainly reached its own mkdir.
     'await new Promise(r => setTimeout(r, 1200));',
     'process.stdout.write(JSON.stringify({ pid: process.pid, ...got }));',
   ]);
@@ -213,7 +162,7 @@ test('the loser of a race waits and resolves the artifact the winner stores', as
     `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: process.argv[2], logFile: join(process.argv[2], "build.ndjson") });`,
     'if (!got.acquired) { process.stdout.write(JSON.stringify({ raced: true })); process.exit(0); }',
     'try {',
-    '  await new Promise(r => setTimeout(r, 900));', // the "build"
+    '  await new Promise(r => setTimeout(r, 900));',
     '  const app = join(process.argv[2], "Fixture.app");',
     '  mkdirSync(app, { recursive: true });',
     '  writeFileSync(join(app, "Fixture"), "binary");',
@@ -237,7 +186,6 @@ test('the loser of a race waits and resolves the artifact the winner stores', as
   mkdirSync(waitRoot, { recursive: true });
 
   const started = runNode(builder, [buildRoot]);
-  // Give the builder the lock first: this assertion is about the WAITER's path.
   await delay(300);
   const [built, waited] = await Promise.all([started, runNode(waiter, [waitRoot])]);
 
@@ -247,25 +195,16 @@ test('the loser of a race waits and resolves the artifact the winner stores', as
   assert.equal(waiterOut.wonInstead, undefined, 'the waiter must not have taken the lock');
   assert.equal(waiterOut.hit, builderOut.stored, 'the waiter resolves exactly the entry the builder stored');
   assert.ok(existsSync(join(waiterOut.hit, 'Fixture')), 'the resolved artifact is real');
-  // Released in the builder's finally: the next build on this fingerprint is
-  // not stuck behind a lock nobody holds.
   assert.equal(existsSync(buildLockPath('ios', key)), false, 'the lock was released');
 });
 
-// --- 5. teardown leaves nothing behind ---------------------------------------
-
 test('worktree remove refuses a dirty tree, then removes a clean one leaving nothing behind', () => {
-  // Steps 2 and 4 dirtied both worktrees on purpose (an untracked ios/Podfile.lock,
-  // a modified android/app/build.gradle). remove must REFUSE that without --force
-  // -- protecting work the tester did not mean to throw away.
   assert.throws(
     () => removeWorktree(ctx.wt1),
     /Refusing to remove|uncommitted/i,
     'a dirty worktree is not silently deleted',
   );
 
-  // Follow the tool's own remedy: drop the untracked file, restore the tracked
-  // change. Now the tree is clean and removal is the routine no-force path.
   for (const wt of [ctx.wt1, ctx.wt2]) {
     rmSync(join(wt, 'ios', 'Podfile.lock'), { force: true });
     execFileSync('git', ['-C', wt, 'checkout', '--', '.'], { encoding: 'utf-8' });
@@ -286,12 +225,7 @@ test('worktree remove refuses a dirty tree, then removes a clean one leaving not
   assert.ok(!list.includes('-worktrees'), `only the main checkout remains:\n${list}`);
 });
 
-// --- helpers -----------------------------------------------------------------
-
 function createWorktree(name) {
-  // stdout is ONLY the path, per the documented contract; everything else
-  // ("Branched ...", "Worktree ready.") goes to stderr. --base head keeps this
-  // deterministic in a repo whose origin/HEAD we control.
   const out = execFileSync(process.execPath, [CLI, 'worktree', 'create', name, '--base', 'head'], {
     cwd: ctx.repo,
     env: { ...process.env, RN_ISO_HOME: ctx.home },
@@ -338,10 +272,6 @@ function delay(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// A minimal but RN-shaped project: a package.json plus ios/ and android/ trees
-// with enough real files that a fingerprint has something to hash. Deliberately
-// bare RN (a `react-native run-ios` ios script, no `expo` dep) so detectIsExpo
-// is unambiguous -- the native jobs cover the Expo path with a real template.
 function makeMinimalRnProject(root) {
   mkdirSync(join(root, 'ios', 'App.xcodeproj'), { recursive: true });
   mkdirSync(join(root, 'android', 'app'), { recursive: true });
@@ -364,11 +294,9 @@ function makeMinimalRnProject(root) {
   write(join(root, 'app.json'), JSON.stringify({ name: 'App', displayName: 'App' }, null, 2) + '\n');
   write(join(root, 'index.js'), "import { AppRegistry } from 'react-native';\n");
 
-  // ios/ native inputs.
   write(join(root, 'ios', 'Podfile'), "platform :ios, '15.1'\ntarget 'App' do\nend\n");
   write(join(root, 'ios', 'App.xcodeproj', 'project.pbxproj'), '// minimal pbxproj fixture\n');
 
-  // android/ native inputs.
   write(join(root, 'android', 'build.gradle'), 'buildscript { ext { minSdkVersion = 24 } }\n');
   write(join(root, 'android', 'settings.gradle'), "rootProject.name = 'App'\n");
   write(join(root, 'android', 'app', 'build.gradle'), "apply plugin: 'com.android.application'\n");
@@ -385,8 +313,6 @@ function initGitRepoWithRemote(repo, remote) {
   git(['config', 'commit.gpgsign', 'false']);
   git(['add', '-A']);
   git(['commit', '-m', 'minimal RN fixture']);
-  // A bare remote so `worktree remove` sees the branch tip as pushed and does
-  // not refuse over "unpushed commits" -- this exercises the real no-force path.
   execFileSync('git', ['init', '--bare', '-b', 'main', remote], { encoding: 'utf-8' });
   git(['remote', 'add', 'origin', remote]);
   git(['push', '-u', 'origin', 'main']);

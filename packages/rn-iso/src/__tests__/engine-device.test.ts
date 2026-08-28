@@ -1,14 +1,3 @@
-// engine/device.js -- the owned-device guarantee and the booted guarantee.
-//
-// Both halves live here now. `ensureOwnedDevice` used to be covered through
-// commands/up.js and test/up.test.js; when v3 deleted that command, the
-// ownership behaviours it pinned (CLAUDE.md item 2) were re-pinned here
-// against the function directly, which is both the real home of the rule and
-// a far smaller harness than driving a command was.
-//
-// The rule under test throughout is the ownership rule: a device that is not
-// rn-iso's by name is never booted, only reported -- and, since v3 removed
-// physical-device support, no path here ever issues a command at hardware.
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,16 +17,10 @@ let savedDisplay: string | undefined;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
   process.env.RN_ISO_HOME = tmpHome;
-  // Pin Android tool resolution to the bare-name fallback: the machine's
-  // real SDK (if any) must not leak absolute paths into the command strings
-  // the executor mocks below match exactly.
   savedAndroidHome = process.env.ANDROID_HOME;
   savedSdkRoot = process.env.ANDROID_SDK_ROOT;
   process.env.ANDROID_HOME = join(tmpHome, 'no-sdk-here');
   delete process.env.ANDROID_SDK_ROOT;
-  // Pin a display so the exact-argv emulator-boot assertions hold on a
-  // headless CI runner too (displayless linux appends the headless flags;
-  // that behaviour has its own pure test in sim-android.test.ts).
   savedDisplay = process.env.DISPLAY;
   process.env.DISPLAY = ':0';
 });
@@ -88,7 +71,6 @@ describe('ensureBooted: ios', () => {
         commands.push(cmd);
         if (cmd.includes('list devices')) {
           listCalls += 1;
-          // Shutdown on the pre-boot resolve and the first poll, Booted after.
           const state = listCalls >= 3 ? 'Booted' : 'Shutdown';
           return simList([{ udid: 'U1', name: 'rn-iso-app', state, isAvailable: true }]);
         }
@@ -108,9 +90,6 @@ describe('ensureBooted: ios', () => {
     expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
   });
 
-  // The ownership rule: a sim renamed away from the rn-iso- prefix is
-  // somebody's real simulator. Booting it would be exactly the mistake
-  // resolveOwnedIosSim exists to prevent on the teardown side.
   test('refuses to boot a sim that is no longer rn-iso-owned by name', async () => {
     setExecutor({
       run: () => simList([{ udid: 'U1', name: 'My iPhone', state: 'Shutdown', isAvailable: true }]),
@@ -153,9 +132,6 @@ describe('ensureBooted: ios', () => {
 });
 
 describe('ensureBooted: android', () => {
-  // "adb sees it" is not "the framework is up": `adb install` against an
-  // emulator mid-boot fails with "Can't find service: package", so a running
-  // emulator is still waited on.
   test('waits for boot completion on an already-running owned AVD', async () => {
     const commands: string[] = [];
     setExecutor({
@@ -213,9 +189,6 @@ describe('ensureBooted: android', () => {
     expect(spawned).toEqual([['emulator', '-avd', 'rn-iso-app', '-port', '5556']]);
   });
 
-  // A console port is a slot, not an identity: Android Studio's default
-  // emulator starts at 5554 too. Booting onto an occupied port silently
-  // attaches this workspace to a foreign emulator.
   test('allocates a fresh console port when the recorded one is taken by a foreign emulator', async () => {
     const spawned: string[][] = [];
     let ourSerial: string | null = null;
@@ -254,13 +227,6 @@ describe('ensureBooted: android', () => {
     expect(call[4]).toBe(result.serial.replace('emulator-', ''));
   });
 
-  // --- the abort seam (issue #64) ----------------------------------------
-  //
-  // A cold Android boot gets 240s. An emulator that REFUSED to start (no disk
-  // for the userdata partition, a broken system image) is gone in under a
-  // second, and polling adb for the remaining four minutes buys nothing: a
-  // dead process is a definite answer. `alive` is the injectable liveness
-  // seam, the same shape as waitForMetro's `aborted` in commands/start.js.
   test('ensureBooted stops the moment the spawned emulator process is gone', async () => {
     setExecutor({
       run: (cmd) => {
@@ -268,8 +234,6 @@ describe('ensureBooted: android', () => {
         if (cmd === 'adb devices') return 'List of devices attached';
         return '';
       },
-      // Never boots: getprop keeps failing, exactly as it does against an
-      // emulator that died.
       runQuiet: () => null,
       runFile: () => '',
       spawn: () => ({ pid: 987654, unref() {} }),
@@ -283,12 +247,9 @@ describe('ensureBooted: android', () => {
     });
     expect(result.failed).toBe(true);
     expect(result.reason).toMatch(/exited before the device finished booting/);
-    // The whole point: seconds, not the 240s timeout.
     expect(Date.now() - started < 10000).toBeTruthy();
   });
 
-  // The other half of the rule: while the process LIVES the wait is exactly
-  // what it was, so a genuinely slow cold boot is never cut short.
   test('ensureBooted keeps polling while the emulator process is alive', async () => {
     let probes = 0;
     setExecutor({
@@ -315,8 +276,6 @@ describe('ensureBooted: android', () => {
     expect(probes >= 5).toBeTruthy();
   });
 
-  // The caller owns the emulator log path (commands/android.js passes
-  // paths.js's emulatorLogFile(root)); this pins that it reaches the spawn.
   test('ensureBooted hands the caller log file to the emulator spawn', async () => {
     const logFile = join(tmpHome, 'ws', '.rn-iso', 'logs', 'emulator.log');
     const opts: Array<Record<string, unknown>> = [];
@@ -360,10 +319,6 @@ describe('ensureBooted: android', () => {
     expect(result.reason).toMatch(/not rn-iso-owned/);
   });
 
-  // Hardware cannot be spawned: a physical record is reported, never booted.
-  // v3 removed physical-device support entirely. A legacy record that names a
-  // serial instead of an AVD must resolve to a refusal, and -- the part that
-  // matters -- must issue NOTHING at that serial: no adb probe, no boot.
   test('refuses a legacy physical record without issuing a single command at it', async () => {
     setExecutor({
       run: (cmd) => {
@@ -379,8 +334,6 @@ describe('ensureBooted: android', () => {
         throw new Error('rn-iso must never try to boot hardware');
       },
     });
-    // A legacy physical record still carries `kind` (CLAUDE.md item 2); bind it
-    // to a local so the extra field is structurally accepted without a cast.
     const physical = { serial: 'R5CT10', kind: 'physical', owned: false };
     const result = await ensureBooted({ platform: 'android', device: physical });
     expect(result.failed).toBe(true);
@@ -391,12 +344,6 @@ describe('ensureBooted: android', () => {
 test('ensureBooted reports an unknown platform rather than throwing', async () => {
   expect((await ensureBooted({ platform: 'web', device: {} })).reason).toMatch(/Unknown platform/);
 });
-
-// --- deviceTypeMismatch: pure --------------------------------------------
-//
-// Honouring the requested device type on REUSE, not just on creation: before
-// this existed, asking for a different model against an existing environment
-// silently booted the old one and the setting looked broken.
 
 const TYPES = [
   { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', name: 'iPhone 17 Pro' },
@@ -427,8 +374,6 @@ test('deviceTypeMismatch returns null when the requested type is unknown, leavin
 test('deviceTypeMismatch returns null when the recorded type is unknown', () => {
   expect(deviceTypeMismatch(undefined, 'iPhone 17 Pro', TYPES)).toBe(null);
 });
-
-// --- ensureOwnedDevice: the ownership rule --------------------------------
 
 const DEVICE_TYPES_JSON = JSON.stringify({ devicetypes: TYPES });
 const RUNTIMES_JSON = JSON.stringify({
@@ -542,8 +487,6 @@ describe('ensureOwnedDevice: android', () => {
 
   beforeEach(() => {
     androidHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-sdk-'));
-    // Both architectures, so image resolution succeeds whatever the host
-    // running this suite is (the pick matches the host arch).
     mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'arm64-v8a'), { recursive: true });
     mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'x86_64'), { recursive: true });
     prevAndroidHome = process.env.ANDROID_HOME;
@@ -597,9 +540,6 @@ describe('ensureOwnedDevice: android', () => {
     };
   }
 
-  // v3 removed physical-device support. A legacy `--serial` assignment must
-  // resolve toward creating an owned emulator -- never toward a command aimed
-  // at the hardware the record names.
   test('a legacy physical assignment is reported and replaced by an owned AVD, with nothing issued at the serial', async () => {
     const root = projectDir();
     try {
@@ -650,9 +590,6 @@ describe('ensureOwnedDevice: android', () => {
   });
 });
 
-// --- device concurrency cap (opt-in) ---
-// maxDevices refuses a NEW device once the machine is at the cap, but never
-// refuses a workspace that already has a live device of its own (idempotent).
 describe('deviceCapacityRefusal', () => {
   const booted = (udid: string, name: string) => makeIosSim({ udid, name, state: 'Booted' });
   const shutdown = (udid: string, name: string) => makeIosSim({ udid, name, state: 'Shutdown' });
@@ -703,7 +640,6 @@ describe('deviceCapacityRefusal', () => {
 
   test('only BOOTED rn-iso sims count toward the cap', () => {
     const sims = [booted('u1', 'rn-iso-a'), shutdown('u2', 'rn-iso-b'), booted('u3', 'someone-else')];
-    // One booted rn-iso sim, cap of 2 -> under cap, a fresh workspace is allowed.
     expect(
       deviceCapacityRefusal({
         platform: 'ios',

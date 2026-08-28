@@ -1,24 +1,6 @@
-// src/commands/guide.js
-//
-// Version-matched reference documentation, printed by the binary itself.
-//
-// Why this exists: skill/SKILL.md ships through `npx skills add` (GitHub) while
-// the CLI ships through npm, with no version relationship between them. A user
-// reported running a newer CLI against an older skill and not noticing. Docs
-// that live only in the skill drift silently.
-//
-// The split is by VOLATILITY, not by length. The skill keeps what makes an
-// agent trigger correctly and behave safely -- the ownership model, the
-// destructive-command rules, the parallel-agent rules. Everything that changes
-// per release -- exact flags, payload shape, error remedies -- lives here, so
-// `npx rn-iso@latest guide facts` always describes the binary the agent is
-// about to run.
 import chalk from 'chalk';
 import type { Command } from 'commander';
 
-// One reference topic: a one-line summary for the index and a lazy body
-// renderer. Typed as a Record so `TOPICS[name]` is a keyed lookup (returns
-// undefined for an unknown topic, which renderTopic/renderIndex guard).
 interface GuideTopic {
   summary: string;
   body: () => string;

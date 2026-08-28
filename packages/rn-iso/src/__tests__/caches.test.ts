@@ -14,9 +14,6 @@ function age(path: string, when = LONG_AGO) {
   utimesSync(path, when, when);
 }
 
-// discoverCaches reads the cache manifest, which lives under the config dir --
-// so these tests must redirect it like every other config-touching test, or
-// they see whatever this machine has actually registered.
 let tmpHome: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-home-'));
@@ -28,8 +25,6 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-// Declared caches are the ones rn-iso cannot detect: a Metro FileStore or an
-// Expo build-cache directory is chosen by a project's own config.
 test('discoverCaches includes declared paths and expands a leading ~', () => {
   const dir = mkdtempSync(join(tmpdir(), 'rn-iso-declared-'));
   try {
@@ -44,9 +39,6 @@ test('discoverCaches includes declared paths and expands a leading ~', () => {
   }
 });
 
-// The Metro entry's `dir` is the SYSTEM TEMP DIRECTORY, which this cache does
-// not own. It must carry an explicit file list so a caller deleting it can
-// never recurse into the directory itself.
 test('metro file maps are reported as an explicit file list, never as a directory to remove', () => {
   const stray = join(tmpdir(), `metro-file-map-rn-iso-test-${process.pid}`);
   writeFileSync(stray, 'x'.repeat(1024));
@@ -64,8 +56,6 @@ test('metro file maps are reported as an explicit file list, never as a director
   }
 });
 
-// sizeCaches must not re-walk an entry that already counted itself, and must
-// measure the ones that did not.
 test('sizeCaches keeps a precounted size and measures the rest', () => {
   const dir = mkdtempSync(join(tmpdir(), 'rn-iso-size-'));
   try {
@@ -86,9 +76,6 @@ test('sizeCaches keeps a precounted size and measures the rest', () => {
   }
 });
 
-// "Used" has to mean read-or-written. A cache hit reads an entry without
-// rewriting it, so pruning on mtime alone would evict exactly the entries that
-// are earning their keep.
 test('pruneCache keeps a recently READ entry whose mtime is old', () => {
   const dir = mkdtempSync(join(tmpdir(), 'rn-iso-prune-'));
   try {
@@ -98,7 +85,6 @@ test('pruneCache keeps a recently READ entry whose mtime is old', () => {
     writeFileSync(read, 'b');
     const longAgo = new Date(Date.now() - 90 * 24 * 3600 * 1000);
     utimesSync(old, longAgo, longAgo);
-    // Written long ago, read just now -- a cache hit looks exactly like this.
     utimesSync(read, new Date(), longAgo);
 
     const r = pruneCache(makeCacheDescriptor({ dir, prune: 'entries' }), { olderThanDays: 30 });
@@ -110,8 +96,6 @@ test('pruneCache keeps a recently READ entry whose mtime is old', () => {
   }
 });
 
-// The CAS indexes its own data files; removing leaves would leave the index
-// pointing at data that no longer exists.
 test('pruneCache refuses to trim an index-backed cache, and says why', () => {
   const dir = mkdtempSync(join(tmpdir(), 'rn-iso-atomic-'));
   try {
@@ -128,9 +112,6 @@ test('pruneCache refuses to trim an index-backed cache, and says why', () => {
   }
 });
 
-// The rn-iso build cache registers its ROOT, whose top-level children are ios/
-// and android/. Treating those as entries means one removal takes every iOS
-// build on the machine, including the ones built five minutes ago.
 test('pruneCache trims one build at a time in the real build-cache layout', () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-bcprune-'));
   try {
@@ -143,8 +124,6 @@ test('pruneCache trims one build at a time in the real build-cache layout', () =
     }
     age(cold);
     age(android);
-    // The parent is as old as its oldest child, which is exactly the trap: at
-    // depth 1 this stale-looking ios/ takes the fresh build inside it too.
     age(join(root, 'ios'));
 
     const r = pruneCache(makeCacheDescriptor({ dir: root, prune: 'entries', entriesDepth: 2 }), { olderThanDays: 30 });
@@ -160,14 +139,9 @@ test('pruneCache trims one build at a time in the real build-cache layout', () =
   }
 });
 
-// Metro's FileStore shards on the first byte of the key: <root>/<byte>/<rest>,
-// 256 directories. A shard holds thousands of unrelated transforms, so removing
-// one is never the right granularity.
 test('pruneCache trims one transform at a time in a sharded FileStore tree', () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-fsprune-'));
   try {
-    // Two keys landing in the same shard is the case that matters: one is cold,
-    // one is hot, and at depth 1 they share a fate.
     mkdirSync(join(root, '0a'), { recursive: true });
     mkdirSync(join(root, '1f'), { recursive: true });
     const cold = join(root, '0a', 'deadbeef');
@@ -190,8 +164,6 @@ test('pruneCache trims one transform at a time in a sharded FileStore tree', () 
   }
 });
 
-// A child of the root that is not a directory is something gc has no account
-// of, and the fail-closed direction is to leave it alone.
 test('pruneCache leaves a stray file sitting above the entry depth alone', () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-strayprune-'));
   try {
@@ -212,8 +184,6 @@ test('pruneCache leaves a stray file sitting above the entry depth alone', () =>
   }
 });
 
-// Metro's file maps live loose in the system temp dir, so pruning must walk the
-// explicit list and never the directory.
 test('pruneCache trims only the listed files when a cache does not own its directory', () => {
   const mine = join(tmpdir(), `metro-file-map-rn-iso-prunetest-${process.pid}`);
   const notMine = join(tmpdir(), `rn-iso-bystander-${process.pid}`);
@@ -235,9 +205,6 @@ test('pruneCache trims only the listed files when a cache does not own its direc
   }
 });
 
-// The `caches` setting is the no-code way to tell rn-iso about a cache it
-// cannot detect, and gc's cache report resolved settings with no project path
-// at all -- so the setting existed, was documented, and reached nothing.
 test('declaredCachePaths reads the caches setting of the project it is run in', () => {
   const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'rn-iso-declproj-')));
   const declared = mkdtempSync(join(tmpdir(), 'rn-iso-declcache-'));
@@ -245,7 +212,6 @@ test('declaredCachePaths reads the caches setting of the project it is run in', 
     writeFileSync(join(projectRoot, 'package.json'), JSON.stringify({ name: 'demo' }));
     upsertProject(projectRoot, {});
     setProjectSetting(projectRoot, 'caches', [declared]);
-    // git is not involved: the project layer alone has to carry the setting.
     setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
 
     expect(declaredCachePaths(projectRoot)).toEqual([declared]);
@@ -268,8 +234,6 @@ test('declaredCachePaths is empty outside a project rather than an error', () =>
   }
 });
 
-// gc's report prints the tag, so a machine carrying gigabytes of Xcode CAS is
-// never described as having no caches.
 test('discoverCaches says of each cache whether a project registered it', () => {
   const registeredDir = mkdtempSync(join(tmpdir(), 'rn-iso-src-reg-'));
   const declaredDir = mkdtempSync(join(tmpdir(), 'rn-iso-src-decl-'));
@@ -290,9 +254,6 @@ test('discoverCaches says of each cache whether a project registered it', () => 
   }
 });
 
-// The manifest stores resolved paths. A declared path that resolves to the same
-// directory has to dedup against it, or the same cache is reported twice and
-// counted twice in the total.
 test('a declared path that only differs in spelling dedups against the registration', () => {
   const dir = mkdtempSync(join(tmpdir(), 'rn-iso-dedup-'));
   try {

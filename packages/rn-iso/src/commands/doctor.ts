@@ -27,10 +27,6 @@ export default function doctorCommand(program: Command): void {
         xcodeMajor: detectXcodeMajor(),
       });
 
-      // LAST, because it is the expensive one: it computes a real fingerprint
-      // twice (once in a temporary clean worktree of HEAD, removed on every
-      // exit path). Every failure mode inside it is a silent skip -- doctor
-      // always exits 0.
       const parity = await detectFingerprintParity(root);
       if (parity) findings.push(parity);
 
@@ -54,7 +50,6 @@ export default function doctorCommand(program: Command): void {
         return;
       }
 
-      // Costs first: those are the ones silently spending time.
       const ordered = findings.toSorted((a, b) => (a.level === b.level ? 0 : a.level === 'cost' ? -1 : 1));
       for (const f of ordered) {
         const tag = f.level === 'cost' ? chalk.yellow('costs time') : chalk.dim('note');
@@ -63,8 +58,6 @@ export default function doctorCommand(program: Command): void {
         if (f.fix) console.log(chalk.dim(`  -> ${f.fix}`));
       }
 
-      // Deliberately exit 0: none of this is broken, and a non-zero exit would
-      // make doctor unusable in the `&&` chain of a setup script.
       console.log(
         chalk.dim(
           `\n${findings.length} finding(s). Nothing here fails a build -- these are the things rn-iso cannot supply or work around on its own.`,

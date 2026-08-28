@@ -22,15 +22,6 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
-// --- port-to-process identity ------------------------------------------------
-//
-// rn-iso no longer starts Metro, so a recorded port is no longer proof of who
-// holds it. Everything below exists to re-establish that proof at teardown
-// time, before anything is killed.
-
-// lsof -t prints one pid per line. Several processes can hold the same
-// listening socket (a package-manager wrapper and the node child it spawned),
-// so this returns all of them and the caller decides which one matters.
 export function parseLsofPids(out: unknown): number[] {
   if (!out) return [];
   return String(out)
@@ -39,8 +30,6 @@ export function parseLsofPids(out: unknown): number[] {
     .filter((n) => Number.isFinite(n));
 }
 
-// lsof -Fn field output looks like "p<pid>\nfcwd\nn<path>". Only the n-line
-// following fcwd carries the directory.
 export function parseLsofCwd(out: unknown): string | null {
   if (!out) return null;
   const lines = String(out).split('\n');
@@ -57,19 +46,10 @@ export function parsePsPgid(out: unknown): number | null {
 }
 
 export function processCwd(pid: number): string | null {
-  // Linux first: /proc/<pid>/cwd is a symlink the kernel maintains, readable
-  // for same-user processes with no child process at all. This is not just an
-  // optimization -- GitHub's ubuntu runners return nothing for
-  // `lsof -d cwd` (observed live: Metro listening and healthy, yet its cwd
-  // unreadable, so identity verification never passed and every `start` on
-  // Linux CI timed out). lsof stays as the fallback there and the path on
-  // macOS, where /proc does not exist.
   if (process.platform === 'linux') {
     try {
       return readlinkSync(`/proc/${pid}/cwd`);
-    } catch {
-      /* fall through to lsof: not our process, or it just exited */
-    }
+    } catch {}
   }
   return parseLsofCwd(getExecutor().runQuiet(`lsof -a -p ${pid} -d cwd -Fn`));
 }
@@ -86,8 +66,6 @@ function canonicalPath(path: string): string {
   }
 }
 
-// Canonicalize both sides before comparing: worktrees, and this machine's
-// /Users -> /Volumes symlink, both make a plain textual prefix check wrong.
 export function isInsideProject(cwd: string | null | undefined, projectPath: string | null | undefined): boolean {
   if (!cwd || !projectPath) return false;
   const a = canonicalPath(cwd);
@@ -95,32 +73,10 @@ export function isInsideProject(cwd: string | null | undefined, projectPath: str
   return a === b || a.startsWith(b.endsWith(sep) ? b : b + sep);
 }
 
-// Three outcomes, mirroring resolveOwnedIosSim. A port is NOT identity:
-// Android teardown that trusts a console port a foreign emulator could occupy
-// is a known hazard. Killing by port alone repeats that mistake, so identity
-// is proven before anything dies.
-//   { metro: {pid, leader, cwd} }  proven to be this project's Metro
-//   { missing: true }              nothing listening; already gone, not an error
-//   { notOurs: <reason>, kind }    listening but unproven; report, never kill
-//
-// `kind` exists so callers branch on data rather than on the prose of
-// `notOurs` (the same reason teardown.js's skips carry one):
-//   'unresponsive'   holds the port but did not answer /status. TRANSIENT --
-//                    a bare Metro blocks its event loop for ~20s crawling the
-//                    file map right after it starts listening, which is
-//                    exactly when `rn-iso start` returns and `rn-iso ios`
-//                    probes. The build gate retries this one.
-//   'unreadable-cwd' answered, but its working directory could not be read
-//   'foreign-cwd'    answered from OUTSIDE this project. Terminal: another
-//                    workspace's bundler will not become ours by waiting.
 export const NOT_OURS_UNRESPONSIVE = 'unresponsive';
 const NOT_OURS_UNREADABLE_CWD = 'unreadable-cwd';
 export const NOT_OURS_FOREIGN_CWD = 'foreign-cwd';
 
-// A flat interface rather than a discriminated union: every consumer today
-// reads these fields defensively (a port that vanished mid-teardown is normal),
-// and a union would force an `in`/narrowing dance at every read site for no
-// added safety here. Exactly one group of fields is ever populated at a time.
 export interface MetroResolution {
   missing?: true;
   notOurs?: string;
@@ -160,28 +116,13 @@ export async function resolveProjectMetro(
   return { metro: { pid, leader, cwd } };
 }
 
-// The process group rn-iso itself runs in. A Metro backgrounded by a
-// non-interactive script (`npm start & rn-iso ios`) shares its shell's
-// process group with rn-iso, so signalling that group would kill the shell
-// and rn-iso along with it.
 function ownProcessGroup(): number | null {
   return processGroupLeader(process.pid);
 }
 
-// Kills the process GROUP. lsof reports whoever holds the socket, which for a
-// bundler started through a package manager is the node child, not the wrapper
-// (observed on member-app: `npm exec react-native start` as pid 59806 with the
-// node child 59914 actually holding the port). Killing only the listener
-// orphans the wrapper. The one exception is a group rn-iso is itself a member
-// of: there the bare pid is signalled instead.
 export function killMetroTree(leader: number | null | undefined, listenerPid?: number | null): boolean {
   if (!leader) return false;
   if (leader === ownProcessGroup()) {
-    // The process-group leader IS rn-iso's own group -- this is a Metro that a
-    // non-interactive script backgrounded into rn-iso's group. Signalling the
-    // group (`-leader`) would take rn-iso and the shell down too, and the
-    // leader itself is that shell, not Metro. Signal the listener directly:
-    // it is the process actually holding the port.
     const target = listenerPid ?? leader;
     try {
       process.kill(target, 'SIGTERM');

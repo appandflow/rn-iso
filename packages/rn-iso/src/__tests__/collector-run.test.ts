@@ -1,17 +1,3 @@
-// The collector daemon: argument parsing, Contract 5's registration, and the
-// lifecycle -- exercised BY SPAWNING IT FOR REAL against fake `xcrun` / `adb`
-// shims on PATH.
-//
-// Why for real rather than with an injected spawn: the two rules that matter
-// here are only observable across a process boundary. The registration has to
-// carry the collector's OWN pid (a `stop` that kills the wrong pid is worse
-// than one that kills nothing), and the SIGTERM path has to actually run to
-// completion inside a dying process. A mocked executor proves neither, and
-// CLAUDE.md item 9 says as much about anything that shells out.
-//
-// No simulator or emulator is touched: the shims are shell scripts that print
-// canned lines (taken from the real captures in test/fixtures/) and then
-// sleep.
 import assert from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -26,12 +12,8 @@ import { makeChildProcess } from './_factories.ts';
 
 const ENTRY = fileURLToPath(new URL('../collector/run.ts', import.meta.url));
 
-// The registration entry readCollectors returns is Record<string, unknown>; this
-// structural view lets a test read the two fields it asserts on, matching the
-// narrowing the android reattach test already does inline below.
 type CollectorEntry = { pid?: number; startedAt?: string };
 
-// A spawned child always has a pid; assert it so process.kill takes a number.
 function childPid(child: ChildProcess): number {
   assert(child.pid !== undefined, 'spawned child has no pid');
   return child.pid;
@@ -55,9 +37,7 @@ afterEach(() => {
   for (const child of running) {
     try {
       process.kill(childPid(child), 'SIGKILL');
-    } catch {
-      /* already gone */
-    }
+    } catch {}
   }
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
@@ -178,9 +158,6 @@ describe('parseArgs', () => {
   });
 });
 
-// Contract 5 lives in the SAME state.json the supervisor writes. Each writer
-// read-modify-writes, so the test that matters is that a collector's entry
-// and exit leave everything that is not its own key alone.
 describe('Contract 5: the registration', () => {
   test('registers under collectors.<platform> without disturbing the supervisor record', () => {
     writeWorkspaceState(root, { supervisor: { pid: 123, port: 8082 } });
@@ -212,8 +189,6 @@ describe('Contract 5: the registration', () => {
   });
 });
 
-// The real captured lines from test/fixtures/ios-log-stream.ndjson, minus the
-// banner, so the shim emits exactly what a live `log stream` emits.
 function iosShimLines() {
   const text = readFileSync(fileURLToPath(new URL('./fixtures/ios-log-stream.ndjson', import.meta.url)), 'utf-8');
   return text.split('\n').filter((l) => l.startsWith('{'));
@@ -225,15 +200,12 @@ describe('the ios collector, spawned for real against a fake xcrun', () => {
     writeShim(
       'xcrun',
       [
-        // Prove the collector passed the argv logStreamArgs builds.
         `case "$*" in`,
         `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath CONTAINS[c] "MyApp"') ;;`,
         `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
         `esac`,
         `echo "${banner}" >&2`,
         ...iosShimLines().map((l) => `cat <<'LINE'\n${l}\nLINE`),
-        // exec so the shim's pid IS the sleeping process: a SIGTERM at the
-        // recorded pid must actually end the stream.
         'exec sleep 30',
       ].join('\n'),
     );
@@ -277,9 +249,6 @@ describe('the ios collector, spawned for real against a fake xcrun', () => {
     expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
   });
 
-  // The app being killed, the sim being shut down: the stream simply ends.
-  // That is the normal end of a collector's life, not a failure -- but it
-  // must say so, or `logs` just stops having device lines with no reason.
   test('survives the stream ending: a record, and exit 0', async () => {
     writeShim(
       'xcrun',
@@ -317,8 +286,6 @@ describe('the android collector, spawned for real against a fake adb', () => {
       'adb',
       [
         `case "$*" in`,
-        // Two-phase: the app "starts" only on the second pidof, so the retry
-        // loop is what makes this pass.
         `  '-s emulator-5554 shell pidof -s com.example.app')`,
         `    if [ -f "${join(shimDir, 'started')}" ]; then echo 3132; else touch "${join(shimDir, 'started')}"; fi ;;`,
         `  '-s emulator-5554 logcat --pid 3132 -v time')`,
@@ -358,7 +325,6 @@ describe('the android collector, spawned for real against a fake adb', () => {
     assert(firstError);
     expect(firstError.msg).toMatch(/undefined is not a function/);
     expect(firstError.proc).toBe('ReactNativeJS(3132)');
-    // The banner is skipped, not recorded raw.
     expect(deviceLog().some((r) => r.msg?.includes('beginning of main'))).toBe(false);
 
     process.kill(childPid(child), 'SIGTERM');
@@ -366,11 +332,6 @@ describe('the android collector, spawned for real against a fake adb', () => {
     expect('collectors' in (state() || {})).toBe(false);
   });
 
-  // Rule 1, at the point where it is load-bearing: the registration is
-  // written BEFORE the pid resolves, so a collector still waiting on an app
-  // that never starts is findable. An unrecorded process is the one nothing
-  // will ever clean up. (The pid-timeout branch itself runs through the seams
-  // below -- a suite must not sit through the 30s wait.)
   test('is registered while it is still waiting for the app pid to appear', async () => {
     writeShim('adb', 'exit 1\n');
     const child = spawnCollector([
@@ -392,11 +353,6 @@ describe('the android collector, spawned for real against a fake adb', () => {
     await exited(child);
   });
 
-  // The other half of the same window: `stop` signals a collector that is
-  // still waiting for a pid. At the default disposition that kills the
-  // process outright and strands the registration rule 1 just wrote --
-  // pointing at a pid nothing will ever clear. So the handlers are attached
-  // before the wait, not after the stream starts.
   test('a SIGTERM during the pid wait still clears the registration', async () => {
     writeShim('adb', 'exit 1\n');
     const child = spawnCollector([
@@ -417,8 +373,6 @@ describe('the android collector, spawned for real against a fake adb', () => {
   });
 });
 
-// The pid-timeout path with the seams injected: a 30s wait is not something a
-// suite should sit through, and the branch is the same one either way.
 describe('runCollector seams', () => {
   test('an app whose pid never appears is an error record, exit 1, and no registration left behind', async () => {
     let code = null;
@@ -468,18 +422,7 @@ describe('runCollector seams', () => {
   });
 });
 
-// --- rule 3: an app restart is not the end of the collector ----------------
-//
-// The failure this closes: `--pid` pins logcat to ONE process, so restarting
-// the app -- the most common thing anyone does between two log reads -- left
-// the collector streaming for a pid that would never write another line.
-// Nothing failed, nothing exited, `rn-iso logs --source device` simply had no
-// more lines and said nothing about why.
 describe('the android collector follows the app across a restart', () => {
-  // A fake adb whose `pidof` answers 3132 until a marker file appears and
-  // 4200 afterwards -- an app restart, from the only angle the collector can
-  // see one. Each logcat prints a line that names its own pid, so the device
-  // log says which stream produced what.
   const restartingShim = () =>
     writeShim(
       'adb',
@@ -502,7 +445,6 @@ describe('the android collector follows the app across a restart', () => {
     restartingShim();
     const child = spawnCollector(
       ['--platform', 'android', '--root', root, '--serial', 'emulator-5554', '--package', 'com.example.app'],
-      // The real watch is every 3s; a suite must not sit through it.
       { RN_ISO_PID_WATCH_MS: '100' },
     );
     await until(() => deviceLog().some((r) => /before the restart/.test(r.msg || '')), { label: 'the first stream' });
@@ -516,8 +458,6 @@ describe('the android collector follows the app across a restart', () => {
     expect(reattached.msg).toMatch(/was 3132/);
     await until(() => deviceLog().some((r) => /after the restart/.test(r.msg || '')), { label: 'the second stream' });
 
-    // Still one collector, still registered under this pid, still alive: a
-    // restart is not an exit.
     expect((readCollectors(root).android as { pid?: number }).pid).toBe(child.pid);
     expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBe(false);
 
@@ -544,19 +484,14 @@ describe('the android collector follows the app across a restart', () => {
       { RN_ISO_PID_WATCH_MS: '50' },
     );
     await until(() => deviceLog().some((r) => /steady/.test(r.msg || '')), { label: 'the stream' });
-    await new Promise((r) => setTimeout(r, 400)); // several polls
+    await new Promise((r) => setTimeout(r, 400));
     expect(deviceLog().filter((r) => r.event === 'collector_reattached').length).toBe(0);
     process.kill(childPid(child), 'SIGKILL');
     await exited(child);
   });
 });
 
-// The same rule through the seams, where the edges are reachable: a stream
-// that ends on its own while the app is back under a new pid, and a watcher
-// that must not outlive the collector.
 describe('runCollector reattach seams', () => {
-  // startStream hands back the stream pid, typed `number | null` on the seam;
-  // at runtime it is always the resolved number, so a null collapses to undefined.
   const fakeChild = (pid: number | null | undefined) => makeChildProcess({ pid: pid ?? undefined });
 
   test('a stream that ends while the app is back under a new pid reattaches instead of exiting', async () => {
@@ -570,8 +505,6 @@ describe('runCollector reattach seams', () => {
       packageName: 'com.example.app',
       resolvePid: async () => ({ ok: true, pid: 3132 }),
       pidOf: () => pid,
-      // Long enough that the timer never fires: the exit probe is the path
-      // under test.
       pidWatchMs: 60000,
       startStream: ({ pid: streamPid }) => {
         const c = fakeChild(streamPid);

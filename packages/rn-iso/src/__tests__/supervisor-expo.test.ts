@@ -1,9 +1,3 @@
-// Hosting an Expo dev server as a child, and the stdout parsing that is the
-// only structure this path gets.
-//
-// The parsing rules are pure functions because they carry the whole risk: a
-// line classified as an error that is not one makes `logs --errors` -- the
-// query an agent loop branches on -- report a healthy build as broken.
 import assert from 'node:assert';
 import type { SpawnOptions } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -31,14 +25,9 @@ import { makeChildProcess } from './_factories.ts';
 
 const ESC = '\u001B';
 
-// Mirrors the (unexported) ExpoExitInfo shape onExit hands back.
 type ExpoExitInfo = { code: number | null; signal: NodeJS.Signals | null; error?: Error };
 
 let root: string;
-// RN_ISO_HOME is redirected for every case here, not just the config-touching
-// ones: startExpoServer now REGISTERS the Metro store it injects, and an
-// unredirected run would rewrite the caches.json on the machine running the
-// suite (CLAUDE.md item 5).
 let tmpHome: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'rn-iso-expo-'));
@@ -54,9 +43,6 @@ afterEach(() => {
   delete process.env.EXPO_OVERRIDE_METRO_CONFIG;
 });
 
-// The .bin shim, where a NON-hoisted install puts it. expoBinPath has to find
-// this one by walking up (it is in the project itself here), and the hoisted
-// case is covered in the monorepo-resolution suite.
 function fakeBin(dir = root, sdk = 54) {
   const bin = join(dir, 'node_modules', '.bin', 'expo');
   mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true });
@@ -110,19 +96,6 @@ describe('line parsing', () => {
     expect(inferLevel('Logs for your project will appear below, including errors')).toBe('info');
   });
 
-  // --- the dev-client NAVIGATE demotion ------------------------------------
-  //
-  // FIELD PROVENANCE (release gate, 2026-08-24). On EVERY cold Android launch
-  // -- a perfect one -- `rn-iso logs --errors` returned one record and
-  // `status` reported "1 error since the last marker". It is rn-iso's own
-  // launch doing it: Contract 6 opens the expo-dev-client deep link
-  // (`<scheme>://expo-development-client/?url=...`, engine/app-install.js),
-  // expo-dev-launcher forwards it into the app as a link, and React Navigation
-  // logs at console.error that no navigator handled a NAVIGATE to a route
-  // named `expo-development-client` -- because there is no such screen, and
-  // there is not meant to be. The app is loaded and working.
-  //
-  // The record below is the verbatim line as it arrived in the metro stream.
   const NAVIGATE_ERROR = `ERROR  The action 'NAVIGATE' with payload {"name":"expo-development-client","params":{"url":"http://10.0.2.2:8082"}} was not handled by any navigator.`;
 
   test('the dev-client NAVIGATE record is demoted: rn-iso own deep link is not an app error', () => {
@@ -133,8 +106,6 @@ describe('line parsing', () => {
     expect(record.msg).toBe(NAVIGATE_ERROR);
   });
 
-  // BOTH halves must match in the SAME record, or the demotion starts hiding
-  // real navigation bugs -- which is the only thing this rule could break.
   test('the demotion needs both halves, so real navigation bugs still surface', () => {
     expect(
       inferLevel(`ERROR  The action 'NAVIGATE' with payload {"name":"Settings"} was not handled by any navigator.`),
@@ -149,16 +120,10 @@ describe('line parsing', () => {
     expect(isBundleMarker('Starting Metro Bundler')).toBe(false);
   });
 
-  // A FAILED bundle is an attempt boundary too (appandflow/rn-iso#13): its
-  // marker is what stops back-to-back failures from accumulating in
-  // `logs --errors`. The failed line is BOTH error and marker -- Expo prints
-  // it before the detail lines, and logs-query's strict (<) bundle cutoff
-  // keeps the line itself and its details reported.
   test('the "Bundling failed" line is a marker AND an error', () => {
     const line = 'iOS Bundling failed 893ms index.js (4173 modules)';
     expect(isBundleMarker(line)).toBe(true);
     expect(isBundleMarker('Android Bundling failed 91ms')).toBe(true);
-    // In-flight progress is not a boundary: the attempt has not finished.
     expect(isBundleMarker('iOS Bundling index.js')).toBe(false);
     const record = recordFromLine(line);
     assert(record);
@@ -214,9 +179,6 @@ describe('startExpoServer', () => {
     );
     expect(err.code).toBe('RN_ISO_EXPO_BIN');
     expect(err.message).toMatch(/not resolvable/);
-    // The remedy must NOT be the old "run npm install": it was printed at two
-    // monorepos whose dependencies were fully installed, and it sent the
-    // reader looking in the wrong place.
     expect(err.remedy).toMatch(/workspace root/);
   });
 
@@ -238,8 +200,6 @@ describe('startExpoServer', () => {
     expect(seen.args).toEqual(['start', '--port', '8111']);
     expect(seen.opts.cwd).toBe(root);
     expect(seen.opts.stdio).toEqual(['ignore', 'pipe', 'pipe']);
-    // detached:false is what keeps the child in the supervisor's process
-    // group, so it can never outlive it.
     expect(seen.opts.detached).toBe(false);
   });
 
@@ -251,8 +211,6 @@ describe('startExpoServer', () => {
     child.stdout!.emit('data', 'PluginError: Failed to resolve plugin\n');
     child.stderr!.emit('data', 'PluginError: Failed to resolve plugin\n');
     child.stdout!.emit('data', 'a different line\n');
-    // The injection record start writes is dropped here: this case is about
-    // the two child streams, and the cache note is not one of them.
     const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8')).filter(
       (r) => !String(r.event).startsWith('cache_store_'),
     );
@@ -372,8 +330,6 @@ describe('startExpoServer', () => {
     } finally {
       process.kill = realKill;
     }
-    // A negative pid would signal the group -- which contains the supervisor
-    // itself, killing it before it can write its final record.
     expect(signals).toEqual([[4242, 'SIGTERM']]);
   });
 
@@ -425,9 +381,6 @@ describe('startExpoServer', () => {
   });
 });
 
-// The tlon field test: a failed bundle was stored at info and logs --errors
-// returned empty against a genuinely broken build. Expo's failure vocabulary
-// has no bullet and no leading "error".
 test('inferLevel classifies Expo bundling failures as errors', () => {
   expect(inferLevel('iOS Bundling failed 6566ms apps/tlon-mobile/index.tsx (1 module)')).toBe('error');
   expect(inferLevel('Unable to resolve "./tailwind.json" from "index.tsx"')).toBe('error');
@@ -436,11 +389,6 @@ test('inferLevel classifies Expo bundling failures as errors', () => {
   expect(inferLevel('Bundling 100%')).toBe('info');
 });
 
-// --- the shared transform store, supplied through Expo's config override ---
-//
-// The bare path appends a store to the config it hosts. Here the dev server is
-// the project's own `expo start`, so SDK 54+'s EXPO_OVERRIDE_METRO_CONFIG is
-// the supported seam. SDK 53 and older simply keep Expo's normal cache.
 describe('the Metro store supplied to an Expo child', () => {
   const adapter = '/pkg/rn-iso/shim/expo-metro-config.cjs';
 
@@ -488,7 +436,6 @@ describe('the Metro store supplied to an Expo child', () => {
     expect(env.RN_ISO_EXPO_METRO_CONFIG).toBe('/w/app/custom-metro.cjs');
     expect(env.RN_ISO_METRO_STORE).toBe(metroStoreRoot(root));
     expect(env.RN_ISO_PROJECT_ROOT).toBe(root);
-    // Still the project's own `expo start --port N`, unchanged.
     expect(env.FORCE_COLOR).toBe('0');
     delete process.env.EXPO_OVERRIDE_METRO_CONFIG;
   });
@@ -540,14 +487,6 @@ describe('the Metro store supplied to an Expo child', () => {
   });
 });
 
-// --- the record that used to lie (issue #73) --------------------------------
-//
-// rn-iso wrote `cache_store_injected` -- "sharing Metro transforms through
-// ..." -- before the child was even spawned, so on tlon the timeline reported
-// a shared store through three bundles while the old shim inside that child was
-// failing on every one of them. Nothing on this side CAN know the outcome: it
-// happens in another process. So this side reports the REQUEST, and the config
-// adapter reports the outcome in a line only a working adapter writes.
 describe('the honest record of the Metro store injection', () => {
   test('what rn-iso writes on the way in is the request, not a claim of success', async () => {
     fakeBin();
@@ -558,8 +497,6 @@ describe('the honest record of the Metro store injection', () => {
     expect(requested.length).toBe(1);
     expect(String(requested[0]?.msg)).toContain('asked this project');
     expect(String(requested[0]?.msg)).toContain(metroStoreRoot(root));
-    // The claim itself is gone: nothing says the store IS shared until the
-    // process that would know says so.
     expect(records.some((r) => r.event === 'cache_store_injected')).toBe(false);
     expect(records.some((r) => r.event === 'cache_store_added')).toBe(false);
   });
@@ -570,8 +507,6 @@ describe('the honest record of the Metro store injection', () => {
     expect(record.event).toBe('cache_store_added');
     expect(record.level).toBe('debug');
     expect(String(record.msg)).toContain('/cache/app');
-    // Reported, not inferred: this is the one line in this stream with
-    // structure behind it, so it does not carry Contract 1's `raw`.
     expect(record.raw).toBe(undefined);
   });
 
@@ -584,17 +519,12 @@ describe('the honest record of the Metro store injection', () => {
     expect(metroStoreConfirmedRoot('iOS Bundled 812ms index.js (1150 modules)')).toBe(null);
   });
 
-  // The line arrives on the child's stderr, which the supervisor reads with
-  // the same reader as stdout -- a confirmation that landed in the timeline as
-  // an ordinary info line would be no better than the claim it replaced.
   test('the confirmation is promoted on either stream', () => {
     const line = 'rn-iso-metro-store: sharing Metro transforms through /cache/app';
     expect(recordFromLine(line, { stream: 'stderr' })?.event).toBe('cache_store_added');
     expect(recordFromLine(line, { stream: 'stdout' })?.event).toBe('cache_store_added');
   });
 
-  // And the failure half still reads as a warning, so `logs --errors` and
-  // `status` see an adapter that could not apply.
   test("the adapter's failure line is still an ordinary warn record", () => {
     const record = recordFromLine(
       "warning: rn-iso could not share this project's Metro transform cache (metro-cache exports no FileStore); the dev server is running with the cache it would have had anyway.",
