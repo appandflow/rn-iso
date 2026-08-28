@@ -736,6 +736,9 @@ test('a configured remote with no agent-device is a cost, not a note', () => {
   assert(f);
   expect(f.level).toBe('cost');
   expect(f.fix).toContain('agent-device');
+  expect(f.detail).toContain('rn-iso ios --remote eas');
+  expect(f.detail).toContain('rn-iso android --remote eas');
+  expect(f.detail).not.toContain('`rn-iso ios --remote`');
 });
 
 test('the proxy backend reports that the operator owns the daemon', () => {
@@ -770,4 +773,56 @@ test('a fully configured remote says what it will do, including the log gap', ()
   assert(f);
   expect(f.level).toBe('note');
   expect(f.detail).toContain('Native device logs are not captured');
+});
+
+test.each([
+  ['proxy', 'eas'],
+  ['eas', 'proxy'],
+] as const)('runDoctor checks mixed %s and %s platform backends', (iosBackend, androidBackend) => {
+  const project = mkdtempSync(join(tmpdir(), 'rn-iso-doc-remote-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(
+      join(project, '.rn-iso.json'),
+      JSON.stringify({ ios: { remote: iosBackend }, android: { remote: androidBackend } }),
+    );
+    const findings = runDoctor(project, {
+      concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      remoteEnv: {
+        AGENT_DEVICE_DAEMON_BASE_URL: 'https://proxy.example/agent-device',
+        AGENT_DEVICE_DAEMON_AUTH_TOKEN: 'tok_proxy',
+      },
+      lookupAgentDevice: () => true,
+      lookupEasCli: () => false,
+    });
+
+    expect(findings.filter((finding) => finding.title === 'This project uses a remote proxy')).toHaveLength(1);
+    expect(findings.filter((finding) => finding.title.includes('no eas-cli'))).toHaveLength(1);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('runDoctor checks one shared backend once', () => {
+  const project = mkdtempSync(join(tmpdir(), 'rn-iso-doc-remote-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(
+      join(project, '.rn-iso.json'),
+      JSON.stringify({ ios: { remote: 'proxy' }, android: { remote: 'proxy' } }),
+    );
+    const findings = runDoctor(project, {
+      concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      remoteEnv: {
+        AGENT_DEVICE_DAEMON_BASE_URL: 'https://proxy.example/agent-device',
+        AGENT_DEVICE_DAEMON_AUTH_TOKEN: 'tok_proxy',
+      },
+      lookupAgentDevice: () => true,
+      lookupEasCli: () => false,
+    });
+
+    expect(findings.filter((finding) => finding.title === 'This project uses a remote proxy')).toHaveLength(1);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
 });

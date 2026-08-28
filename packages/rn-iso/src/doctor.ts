@@ -462,7 +462,7 @@ export function checkRemoteDevice({
     return finding(
       'cost',
       'A remote device is configured, but agent-device is missing',
-      'agent-device is what drives a remote simulator: rn-iso creates the session and then installs, launches and connects through it. Without it `rn-iso ios --remote` refuses at the device step -- which is after the build, so the whole compile is paid for before anything says why.',
+      `agent-device drives the selected remote backend. Without it, \`rn-iso ios --remote ${configured}\` and \`rn-iso android --remote ${configured}\` refuse before device work.`,
       'npm i -g agent-device',
     );
   }
@@ -514,6 +514,7 @@ export function runDoctor(
     activeBuilds = null,
     remoteEnv = process.env,
     lookupAgentDevice = null,
+    lookupEasCli = null,
   }: {
     readFile?: typeof readFileSync;
     xcodeMajor?: number | null;
@@ -523,6 +524,7 @@ export function runDoctor(
     activeBuilds?: (() => number) | null;
     remoteEnv?: NodeJS.ProcessEnv;
     lookupAgentDevice?: (() => boolean) | null;
+    lookupEasCli?: (() => boolean) | null;
   } = {},
 ): Finding[] {
   const read = (rel: string): string | null => {
@@ -595,16 +597,30 @@ export function runDoctor(
   // one of them says this project actually uses one, so an ordinary project
   // pays a settings read and nothing else.
   const projectSettings = resolveSettings({ projectPath: projectRoot, repoRoot: projectRoot });
-  const remoteConfigured = remoteIosSetting(projectSettings) ?? remoteAndroidSetting(projectSettings);
+  const remoteBackends = [
+    ...new Set([remoteIosSetting(projectSettings), remoteAndroidSetting(projectSettings)]),
+  ].filter((backend): backend is RemoteDeviceBackend => backend !== null);
   const daemonInEnv = Boolean(remoteEnv.AGENT_DEVICE_DAEMON_BASE_URL && remoteEnv.AGENT_DEVICE_DAEMON_AUTH_TOKEN);
-  const remoteFinding = remoteConfigured
-    ? checkRemoteDevice({
-        configured: remoteConfigured,
+  const agentDeviceOnPath = remoteBackends.length
+    ? lookupAgentDevice
+      ? lookupAgentDevice()
+      : agentDeviceIsOnPath()
+    : false;
+  const easCliResolvable = remoteBackends.includes('eas')
+    ? lookupEasCli
+      ? lookupEasCli()
+      : Boolean(resolveEasCliBin(projectRoot))
+    : false;
+  const remoteFindings = remoteBackends
+    .map((backend) =>
+      checkRemoteDevice({
+        configured: backend,
         daemonInEnv,
-        agentDeviceOnPath: lookupAgentDevice ? lookupAgentDevice() : agentDeviceIsOnPath(),
-        easCliResolvable: Boolean(resolveEasCliBin(projectRoot)),
-      })
-    : null;
+        agentDeviceOnPath,
+        easCliResolvable,
+      }),
+    )
+    .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
 
   return [
     checkDevClient(pkg, isExpo),
@@ -615,7 +631,7 @@ export function runDoctor(
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
     easFinding,
     concurrencyFinding,
-    remoteFinding,
+    ...remoteFindings,
   ].filter((f): f is Finding => Boolean(f));
 }
 
