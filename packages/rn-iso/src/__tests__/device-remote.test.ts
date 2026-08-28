@@ -560,6 +560,7 @@ describe('teardown', () => {
     'Authentication failed. Log in to EAS.',
     'request failed: getaddrinfo ENOTFOUND api.expo.dev',
     'The request timed out.',
+    'Failed to fetch simulator session drs_42.\nProject project_9 was not found.',
   ])('fails closed when lookup fails: %s', (stderr) => {
     const error = Object.assign(new Error(stderr), { stderr });
     const exec = mockExec({ errors: { 'simulator:get': error } });
@@ -816,6 +817,14 @@ describe('a session rn-iso created is never abandoned', () => {
     expect(booted.reason).toContain('The session was stopped.');
     const stop = exec.calls.find((c) => c.args[0] === 'simulator:stop');
     expect(stop?.args).toContain('drs_9');
+    expect(stop?.timeoutMs).toBe(30_000);
+    expect(stop?.omitEnv).toEqual(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']);
+    const gets = exec.calls.filter((c) => c.args[0] === 'simulator:get');
+    expect(gets.length).toBeGreaterThan(0);
+    for (const get of gets) {
+      expect(get.timeoutMs).toBe(30_000);
+      expect(get.omitEnv).toEqual(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']);
+    }
   });
 
   test('when the stop also fails, the id and the manual command are reported', async () => {
@@ -899,6 +908,9 @@ describe('a re-run does not orphan the session it already has', () => {
     expect(deps.createdSessionId()).toBeNull();
     // The whole point: `eas sim` never ran.
     expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
+    const get = exec.calls.find((c) => c.args[0] === 'simulator:get');
+    expect(get?.timeoutMs).toBe(30_000);
+    expect(get?.omitEnv).toEqual(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']);
   });
 
   test('ios refuses an Android session without stopping or replacing it', async () => {
@@ -959,6 +971,7 @@ describe('a re-run does not orphan the session it already has', () => {
     recordSession('drs_dead');
     const dead = JSON.stringify({
       id: 'drs_dead',
+      name: 'rn-iso-wt',
       status: 'STOPPED',
       remoteConfig: {
         agentDeviceRemoteSessionUrl: 'https://dead.eas.dev/daemon',

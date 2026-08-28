@@ -754,6 +754,8 @@ function verifiedTeardown(sessionOutput: string, calls: string[]) {
 
 test.each([
   ['unowned session', JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'IN_PROGRESS' })],
+  ['unowned terminal session', JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'STOPPED' })],
+  ['unnamed terminal session', JSON.stringify({ id: 'drs_42', status: 'STOPPED' })],
   ['malformed output', 'not json'],
   ['unknown status', JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'PAUSED' })],
 ])('stop retains the session record after an unverifiable %s', async (_name, sessionOutput) => {

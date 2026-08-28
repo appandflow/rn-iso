@@ -218,15 +218,15 @@ export function inspectSessionForTeardown(stdout: string, sessionId: string): Se
   const status = str(data.status);
   if (!status) return { action: 'refused', reason: `Session ${sessionId} lookup returned no status.` };
   const name = str(data.name);
-  if (TERMINAL_SESSION_STATUSES.has(status)) return { action: 'already-stopped', name, status };
-  if (!LIVE_SESSION_STATUSES.has(status)) {
-    return { action: 'refused', reason: `Session ${sessionId} has unknown status ${status}.` };
-  }
   if (!isOwnedSessionName(name)) {
     return {
       action: 'refused',
-      reason: `Live session ${sessionId} is not owned by rn-iso (name: ${name ?? 'missing'}).`,
+      reason: `Session ${sessionId} is not owned by rn-iso (name: ${name ?? 'missing'}).`,
     };
+  }
+  if (TERMINAL_SESSION_STATUSES.has(status)) return { action: 'already-stopped', name, status };
+  if (!LIVE_SESSION_STATUSES.has(status)) {
+    return { action: 'refused', reason: `Session ${sessionId} has unknown status ${status}.` };
   }
   return { action: 'stop', name, status };
 }
@@ -236,12 +236,15 @@ export function isDefinitiveMissingSessionError(error: unknown, sessionId: strin
   const candidate = error as { stderr?: unknown; message?: unknown };
   const stderr = typeof candidate?.stderr === 'string' ? candidate.stderr : '';
   const message = typeof candidate?.message === 'string' ? candidate.message : '';
-  const text = `${stderr}\n${message}`;
-  return (
-    text.includes(sessionId) &&
-    /(?:device[\s-]*run[\s-]*session|simulator[\s-]*session)/i.test(text) &&
-    /(?:\bnot\s+found\b|\bdoes\s+not\s+exist\b)/i.test(text)
+  const escapedSessionId = sessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const missingSession = new RegExp(
+    `(?:device[\\s-]*run[\\s-]*session|simulator[\\s-]*session)[^\\r\\n]*?\\b${escapedSessionId}\\b[^\\r\\n]*?(?:\\bnot\\s+found\\b|\\bdoes\\s+not\\s+exist\\b)`,
+    'i',
   );
+  return `${stderr}\n${message}`
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .some((line) => missingSession.test(line));
 }
 
 export function verifyStoppedSession(stdout: string, sessionId: string): { ok: true } | { ok: false; reason: string } {

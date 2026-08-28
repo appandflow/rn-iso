@@ -101,6 +101,15 @@ describe('stored-session teardown authorization', () => {
     });
   });
 
+  test.each([
+    ['another tool', 'other-tool'],
+    ['no name', undefined],
+  ])('refuses a terminal session owned by %s', (_owner, name) => {
+    const result = inspectSessionForTeardown(JSON.stringify({ id: 'drs_42', name, status: 'STOPPED' }), 'drs_42');
+    expect(result.action).toBe('refused');
+    if (result.action === 'refused') expect(result.reason).toContain('not owned by rn-iso');
+  });
+
   test('refuses malformed output', () => {
     const result = inspectSessionForTeardown('not json', 'drs_42');
     expect(result.action).toBe('refused');
@@ -138,6 +147,9 @@ describe('definitive missing-session errors', () => {
     'Authentication failed. Log in to EAS.',
     'The request timed out.',
     'Device run session drs_other was not found.',
+    'Device run session drs_other was not found. Command: eas simulator:get --id drs_42',
+    'Failed to fetch simulator session drs_42.\nProject project_9 was not found.',
+    'Command target: device run session drs_42.\nRequested resource does not exist.',
   ])('fails closed for %s', (stderr) => {
     expect(isDefinitiveMissingSessionError({ stderr }, 'drs_42')).toBe(false);
   });

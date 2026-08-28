@@ -225,14 +225,14 @@ function easExecOptions(root: string): { cwd: string; omitEnv: typeof PROXY_CRED
   return { cwd: root, omitEnv: PROXY_CREDENTIAL_ENV };
 }
 
-const EAS_TEARDOWN_TIMEOUT_MS = 30_000;
+const EAS_OPERATION_TIMEOUT_MS = 30_000;
 
-function easTeardownExecOptions(root: string): {
+function easBoundedExecOptions(root: string): {
   cwd: string;
   omitEnv: typeof PROXY_CREDENTIAL_ENV;
   timeoutMs: number;
 } {
-  return { ...easExecOptions(root), timeoutMs: EAS_TEARDOWN_TIMEOUT_MS };
+  return { ...easExecOptions(root), timeoutMs: EAS_OPERATION_TIMEOUT_MS };
 }
 
 function writeProfile(ctx: RemoteContext, daemon: RemoteDaemon): string {
@@ -716,7 +716,7 @@ function defaultSleep(ms: number): Promise<void> {
  */
 function stopCreatedSession(ctx: RemoteContext, sessionId: string): AbandonCreatedSessionResult {
   try {
-    getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), easExecOptions(ctx.root));
+    getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
     return { ok: true, sessionId };
   } catch (err) {
     return {
@@ -838,7 +838,7 @@ const LIVE_STATUSES = new Set(['NEW', 'IN_PROGRESS']);
 function readLiveDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null {
   let stdout: string;
   try {
-    stdout = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easExecOptions(ctx.root));
+    stdout = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
   } catch {
     return null;
   }
@@ -855,7 +855,7 @@ function readLiveDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | n
 function readDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null {
   let stdout: string;
   try {
-    stdout = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easExecOptions(ctx.root));
+    stdout = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
   } catch {
     return null;
   }
@@ -1021,7 +1021,7 @@ export function teardownRemote(
   if (!sessionId) return { status: 'torn-down' };
   let sessionOutput: string;
   try {
-    sessionOutput = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easTeardownExecOptions(ctx.root));
+    sessionOutput = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
   } catch (err) {
     if (isDefinitiveMissingSessionError(err, sessionId)) return { status: 'torn-down' };
     return {
@@ -1037,7 +1037,7 @@ export function teardownRemote(
 
   let stopOutput: string;
   try {
-    stopOutput = getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), easTeardownExecOptions(ctx.root));
+    stopOutput = getExecutor().runFile(ctx.easBin, stopSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
   } catch (err) {
     return {
       status: 'failed',
