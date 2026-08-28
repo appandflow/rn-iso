@@ -11,6 +11,7 @@
 import type { Executor } from '../exec.ts';
 import {
   createSessionArgs,
+  findOrphanedOwnedSessions,
   getSessionArgs,
   inspectSessionForTeardown,
   isDefinitiveMissingSessionError,
@@ -268,6 +269,93 @@ describe('parseSessionList', () => {
   test('a session with no id is dropped rather than carried as a partial record', () => {
     const stdout = JSON.stringify({ sessions: [{ name: 'rn-iso-x' }, { id: 'ok', name: 'rn-iso-y' }] });
     expect(parseSessionList(stdout).map((s) => s.id)).toEqual(['ok']);
+  });
+});
+
+describe('findOrphanedOwnedSessions', () => {
+  const scope = '/work/current-expo-project';
+
+  test('returns only active owned sessions without recorded workspace IDs', () => {
+    const result = findOrphanedOwnedSessions({
+      sessions: [
+        { id: 'orphan', name: 'rn-iso-orphan', status: 'in_progress', platform: 'ios' },
+        { id: 'recorded', name: 'rn-iso-live', status: 'NEW', platform: 'ANDROID' },
+        { id: 'foreign', name: 'manual-session', status: 'IN_PROGRESS', platform: 'IOS' },
+      ],
+      recordedSessionIds: ['recorded'],
+      projectScope: scope,
+    });
+
+    expect(result.orphaned).toEqual([
+      {
+        id: 'orphan',
+        name: 'rn-iso-orphan',
+        status: 'IN_PROGRESS',
+        platform: 'ios',
+        projectScope: scope,
+      },
+    ]);
+    expect(result.notices).toEqual([]);
+  });
+
+  test('deduplicates a repeated listed session ID', () => {
+    const session = { id: 'same', name: 'rn-iso-same', status: 'IN_PROGRESS', platform: 'IOS' };
+    const result = findOrphanedOwnedSessions({
+      sessions: [session, session],
+      recordedSessionIds: [],
+      projectScope: scope,
+    });
+    expect(result.orphaned.map((entry) => entry.id)).toEqual(['same']);
+  });
+
+  test('does not classify terminal or unknown statuses as orphan candidates', () => {
+    const result = findOrphanedOwnedSessions({
+      sessions: [
+        { id: 'stopped', name: 'rn-iso-stopped', status: 'STOPPED', platform: 'IOS' },
+        { id: 'paused', name: 'rn-iso-paused', status: 'PAUSED', platform: 'IOS' },
+      ],
+      recordedSessionIds: [],
+      projectScope: scope,
+    });
+    expect(result.orphaned).toEqual([]);
+    expect(result.notices.join('\n')).toMatch(/PAUSED/);
+  });
+
+  test('reports malformed owned entries and refuses to infer their identity', () => {
+    const result = findOrphanedOwnedSessions({
+      sessions: [
+        { name: 'rn-iso-missing-id', status: 'IN_PROGRESS' },
+        { id: 'missing-name', status: 'IN_PROGRESS' },
+        null,
+      ],
+      recordedSessionIds: [],
+      projectScope: scope,
+    });
+    expect(result.orphaned).toEqual([]);
+    expect(result.notices.length).toBeGreaterThan(0);
+  });
+
+  test('a malformed duplicate blocks the same session ID from becoming a candidate', () => {
+    const result = findOrphanedOwnedSessions({
+      sessions: [
+        { id: 'same', name: 'rn-iso-same', status: 'IN_PROGRESS', platform: 'IOS' },
+        { id: 'same', status: 'IN_PROGRESS', platform: 'IOS' },
+      ],
+      recordedSessionIds: [],
+      projectScope: scope,
+    });
+    expect(result.orphaned).toEqual([]);
+    expect(result.notices.join('\n')).toMatch(/no name/i);
+  });
+
+  test('requires an explicit current-project scope', () => {
+    const result = findOrphanedOwnedSessions({
+      sessions: [{ id: 'a', name: 'rn-iso-a', status: 'IN_PROGRESS' }],
+      recordedSessionIds: [],
+      projectScope: '',
+    });
+    expect(result.orphaned).toEqual([]);
+    expect(result.notices.join('\n')).toMatch(/project scope/i);
   });
 });
 

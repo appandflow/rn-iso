@@ -52,6 +52,12 @@ export interface SessionSummary {
   platform: string | null;
 }
 
+export interface ScopedSessionSummary extends SessionSummary {
+  name: string;
+  status: string;
+  projectScope: string;
+}
+
 export interface StoppedSession {
   id: string;
   status: string | null;
@@ -64,6 +70,7 @@ export type SessionTeardownInspection =
 
 const LIVE_SESSION_STATUSES = new Set(['NEW', 'IN_PROGRESS']);
 const TERMINAL_SESSION_STATUSES = new Set(['STOPPED', 'ERRORED']);
+const SESSION_PLATFORMS = new Set(['ios', 'android']);
 
 // PURE. The `rn-iso-` prefix is the ownership marker, so it is not optional.
 // A label that already carries it (a worktree literally named `rn-iso-test`)
@@ -291,6 +298,109 @@ export function parseSessionList(stdout: string): SessionSummary[] {
     out.push({ id, name: str(raw.name), status: str(raw.status), platform: str(raw.platform) });
   }
   return out;
+}
+
+export function parseSessionListEntries(
+  stdout: string,
+): { ok: true; sessions: unknown[] } | { ok: false; reason: string } {
+  const data = parseJson(stdout);
+  if (!isRecord(data) || !Array.isArray(data.sessions)) {
+    return { ok: false, reason: 'EAS session list did not return valid JSON with a sessions array.' };
+  }
+  return { ok: true, sessions: data.sessions };
+}
+
+// PURE. Selects active sessions carrying rn-iso's ownership prefix that no
+// readable workspace state references. The EAS list is scoped by its cwd, so
+// every returned row carries that project directory as its explicit scope.
+export function findOrphanedOwnedSessions({
+  sessions,
+  recordedSessionIds,
+  projectScope,
+}: {
+  sessions: unknown[];
+  recordedSessionIds: readonly string[];
+  projectScope: string;
+}): { orphaned: ScopedSessionSummary[]; notices: string[] } {
+  const scope = typeof projectScope === 'string' ? projectScope.trim() : '';
+  if (!scope) return { orphaned: [], notices: ['EAS session list has no current-project scope.'] };
+
+  const recorded = new Set(recordedSessionIds.filter((id) => typeof id === 'string' && id.length > 0));
+  const candidates = new Map<string, ScopedSessionSummary>();
+  const conflicts = new Set<string>();
+  const blocked = new Set<string>();
+  const notices: string[] = [];
+
+  for (const raw of sessions) {
+    if (!isRecord(raw)) {
+      notices.push('EAS session list contains a malformed entry.');
+      continue;
+    }
+    const id = str(raw.id);
+    const name = str(raw.name);
+    if (!id) {
+      if (isOwnedSessionName(name)) notices.push('EAS session list contains an owned entry with no session id.');
+      continue;
+    }
+    if (!name) {
+      blocked.add(id);
+      candidates.delete(id);
+      notices.push(`EAS session ${id} has no name and cannot be classified as rn-iso-owned.`);
+      continue;
+    }
+    if (!isOwnedSessionName(name)) continue;
+
+    const statusValue = str(raw.status);
+    const status = statusValue?.toUpperCase().replace(/-/g, '_') ?? null;
+    if (!status) {
+      blocked.add(id);
+      candidates.delete(id);
+      notices.push(`Owned EAS session ${id} has no status.`);
+      continue;
+    }
+    if (TERMINAL_SESSION_STATUSES.has(status)) continue;
+    if (!LIVE_SESSION_STATUSES.has(status)) {
+      blocked.add(id);
+      candidates.delete(id);
+      notices.push(`Owned EAS session ${id} has unknown status ${status}.`);
+      continue;
+    }
+
+    const platformValue = str(raw.platform);
+    const normalizedPlatform = platformValue?.toLowerCase() ?? null;
+    if (normalizedPlatform && !SESSION_PLATFORMS.has(normalizedPlatform)) {
+      blocked.add(id);
+      candidates.delete(id);
+      notices.push(`Owned EAS session ${id} has unknown platform ${platformValue}.`);
+      continue;
+    }
+    if (recorded.has(id) || blocked.has(id)) continue;
+
+    const candidate: ScopedSessionSummary = {
+      id,
+      name,
+      status,
+      platform: normalizedPlatform,
+      projectScope: scope,
+    };
+    const previous = candidates.get(id);
+    if (!previous) {
+      candidates.set(id, candidate);
+      continue;
+    }
+    if (
+      previous.name !== candidate.name ||
+      previous.status !== candidate.status ||
+      previous.platform !== candidate.platform
+    ) {
+      conflicts.add(id);
+      candidates.delete(id);
+      notices.push(`EAS session list contains conflicting entries for session ${id}.`);
+    }
+  }
+
+  for (const id of [...conflicts, ...blocked]) candidates.delete(id);
+  return { orphaned: [...candidates.values()], notices };
 }
 
 // PURE. `eas simulator:stop --json` stdout -> what eas confirmed.

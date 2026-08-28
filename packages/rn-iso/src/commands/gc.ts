@@ -1,7 +1,7 @@
 // `gc` is the machine-hygiene command: it reports what rn-iso has left behind
 // and, with --delete, reclaims it.
 //
-// Five things still orphan, and none of them is a build artifact any more --
+// Six things still orphan, and none of them is a build artifact any more --
 // build output lives inside the workspace (`<root>/.rn-iso/`) and dies with the
 // directory that holds it, so the DerivedData sweep and its reverse-mapping
 // ambiguity are gone:
@@ -16,12 +16,14 @@
 //                             builder is no longer running: a reboot or a
 //                             SIGKILL in the middle of a compile
 //   5. shared caches          alive by design, never dead, only bigger
+//   6. EAS sessions           an rn-iso-owned session whose workspace state
+//                             disappeared
 //
 // The cache paths are prescribed, so there is nothing to register or forget by
 // hand; gc just reports them, and there is no separate register / forget / list
 // verb. The programmatic `rn-iso/cache-manifest` export stays --
 // that is how @rn-iso/metro and src/build-cache.js self-register.
-import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
@@ -30,12 +32,27 @@ import { clearDevice, getConfigDir, loadConfig } from '../config.ts';
 import { formatBytes, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
 import { listBuildLocks, readBuildLock } from '../engine/build-lock.ts';
 import { listBuildSlots, readBuildSlot } from '../engine/build-slots.ts';
+import {
+  findOrphanedOwnedSessions,
+  getSessionArgs,
+  inspectSessionForTeardown,
+  isDefinitiveMissingSessionError,
+  listOwnedSessionsArgs,
+  parseSessionListEntries,
+  stopSessionArgs,
+  verifyStoppedSession,
+  type ScopedSessionSummary,
+} from '../engine/eas-simulator.ts';
+import { resolveEasCliBin } from '../engine/remote-cache.ts';
+import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
+import { detectIsExpo, findProjectRoot } from '../project.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { listAllIosSims, type IosSimRecord } from '../sim/ios.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 import { listAvds } from '../sim/android.ts';
 import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches, type CacheDescriptor } from '../caches.ts';
+import { workspaceStateFile } from '../paths.ts';
 import type { BuildLockInfo, BuildSlotInfo, Config, GcSkip, OrphanedDevice } from '../types.ts';
 
 // --- local report shapes ---------------------------------------------------
@@ -82,6 +99,13 @@ interface GcCache extends CacheDescriptor {
   emptySkipped?: string | null;
 }
 
+interface EasSessionSweep {
+  projectScope: string | null;
+  orphaned: ScopedSessionSummary[];
+  notices: string[];
+  deletionSafe: boolean;
+}
+
 // Everything gc knows, gathered by collectGcReport without writing anything.
 interface GcReport {
   skipped: GcSkip[];
@@ -92,6 +116,7 @@ interface GcReport {
   buildLocks: { stale: BuildLockInfo[]; live: BuildLockInfo[] };
   buildSlots: { stale: BuildSlotInfo[]; live: BuildSlotInfo[] };
   deviceSweepNotices: string[];
+  easSessionSweep: EasSessionSweep;
   caches: GcCache[];
   olderThan: number | null;
   all: boolean;
@@ -112,6 +137,17 @@ interface RunGcOptions {
   unsafeAllowScopedDeviceSweep?: boolean;
 }
 
+interface GcDependencies {
+  findProjectRoot?: typeof findProjectRoot;
+  detectIsExpo?: typeof detectIsExpo;
+  resolveEasCliBin?: typeof resolveEasCliBin;
+  runEasFile?: (
+    file: string,
+    args: string[],
+    options: { cwd: string; timeoutMs: number; omitEnv: readonly string[] },
+  ) => string;
+}
+
 // Bounds each device listing so a wedged simctl/emulator daemon can't hang
 // `gc` forever -- see the comment above the listAllIosSims/listAvds calls
 // in collectGcReport below.
@@ -120,6 +156,8 @@ interface RunGcOptions {
 // than 10s to answer, and a premature skip means an orphaned emulator holding
 // gigabytes never surfaces. A real hang still bounds out and prints the notice.
 const DEVICE_LIST_TIMEOUT_MS = 30000;
+const EAS_OPERATION_TIMEOUT_MS = 30000;
+const PROXY_CREDENTIAL_ENV = ['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN'] as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -368,6 +406,99 @@ export function describeUnverifiableDevices(
   ];
 }
 
+function describeError(error: unknown): string {
+  const candidate = error as { stderr?: unknown; message?: unknown };
+  if (typeof candidate?.stderr === 'string' && candidate.stderr.trim()) return candidate.stderr.trim();
+  if (typeof candidate?.message === 'string' && candidate.message.trim()) return candidate.message.trim();
+  return String(error);
+}
+
+function readRecordedRemoteSessionIds(roots: string[]): {
+  ids: string[];
+  notices: string[];
+  safe: boolean;
+} {
+  const ids = new Set<string>();
+  const notices: string[] = [];
+  let safe = true;
+
+  for (const root of new Set(roots)) {
+    const path = workspaceStateFile(root);
+    if (!existsSync(path)) continue;
+    let state: unknown;
+    try {
+      state = JSON.parse(readFileSync(path, 'utf-8')) as unknown;
+    } catch (error) {
+      safe = false;
+      notices.push(`${path} could not be read as valid JSON: ${describeError(error)}`);
+      continue;
+    }
+    if (!state || typeof state !== 'object' || Array.isArray(state)) {
+      safe = false;
+      notices.push(`${path} does not contain a valid workspace state object.`);
+      continue;
+    }
+    const remote = (state as { remoteDevice?: unknown }).remoteDevice;
+    if (remote === undefined) continue;
+    if (!remote || typeof remote !== 'object' || Array.isArray(remote)) {
+      safe = false;
+      notices.push(`${path} has a malformed remote session record.`);
+      continue;
+    }
+    const id = (remote as { sessionId?: unknown }).sessionId;
+    if (typeof id !== 'string' || id.length === 0) {
+      safe = false;
+      notices.push(`${path} has a remote session record with no valid session id.`);
+      continue;
+    }
+    ids.add(id);
+  }
+  return { ids: [...ids], notices, safe };
+}
+
+function collectEasSessionSweep(config: Config | null, deps: GcDependencies): EasSessionSweep {
+  const projectRoot = (deps.findProjectRoot ?? findProjectRoot)(process.cwd());
+  const empty = (notices: string[] = []): EasSessionSweep => ({
+    projectScope: projectRoot,
+    orphaned: [],
+    notices,
+    deletionSafe: notices.length === 0,
+  });
+  if (!projectRoot || !(deps.detectIsExpo ?? detectIsExpo)(projectRoot)) return empty();
+
+  const eas = (deps.resolveEasCliBin ?? resolveEasCliBin)(projectRoot);
+  if (!eas) return empty(['EAS session sweep skipped: eas-cli is not available for the current Expo project.']);
+
+  const workspaceRoots = [...Object.keys(config?.projects ?? {}), projectRoot];
+  const recorded = readRecordedRemoteSessionIds(workspaceRoots);
+  const run = deps.runEasFile ?? ((file, args, options) => getExecutor().runFile(file, args, options));
+  let stdout: string;
+  try {
+    stdout = run(eas.file, listOwnedSessionsArgs(), {
+      cwd: projectRoot,
+      timeoutMs: EAS_OPERATION_TIMEOUT_MS,
+      omitEnv: PROXY_CREDENTIAL_ENV,
+    });
+  } catch (error) {
+    return empty([...recorded.notices, `EAS session list failed for ${projectRoot}: ${describeError(error)}`]);
+  }
+
+  const parsed = parseSessionListEntries(stdout);
+  if (!parsed.ok) return empty([...recorded.notices, parsed.reason]);
+  const compared = findOrphanedOwnedSessions({
+    sessions: parsed.sessions,
+    recordedSessionIds: recorded.ids,
+    projectScope: projectRoot,
+  });
+  const notices = [...recorded.notices, ...compared.notices];
+  return {
+    projectScope: projectRoot,
+    orphaned: recorded.safe ? compared.orphaned : [],
+    notices,
+    deletionSafe: recorded.safe,
+  };
+}
+
 // A cache key is a 64-char fingerprint plus its variant and target. The whole
 // thing in a report line is noise; enough of it to match against a build's own
 // `fingerprint <hash>` line is not. Same rule, and the same shape, as
@@ -386,6 +517,7 @@ export function formatGcReport({
   buildLocks = { stale: [], live: [] },
   buildSlots = { stale: [], live: [] },
   deviceSweepNotices = [],
+  easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
   caches = [],
   olderThan = null,
 }: Partial<GcReport>): string[] {
@@ -400,7 +532,8 @@ export function formatGcReport({
     staleDevices.length === 0 &&
     staleDeviceRecords.length === 0 &&
     staleLocks.length === 0 &&
-    staleSlots.length === 0
+    staleSlots.length === 0 &&
+    easSessionSweep.orphaned.length === 0
   ) {
     const reasons = [];
     if (skipped.length > 0) {
@@ -408,6 +541,9 @@ export function formatGcReport({
     }
     if (deviceSweepNotices.length > 0) {
       reasons.push('device sweep incomplete');
+    }
+    if (easSessionSweep.notices.length > 0) {
+      reasons.push('EAS session sweep incomplete');
     }
     if (reasons.length > 0) {
       lines.push(`Nothing to reclaim (${reasons.join('; ')}; see below).`);
@@ -445,6 +581,16 @@ export function formatGcReport({
       lines.push(`              recorded by ${r.project}`);
     }
     lines.push('              --delete clears the RECORD only; there is no device left to touch.');
+  }
+
+  if (easSessionSweep.orphaned.length) {
+    lines.push(`Orphaned EAS sessions (${easSessionSweep.orphaned.length}) - current EAS project only:`);
+    for (const session of easSessionSweep.orphaned) {
+      const details = [session.platform, session.status].filter(Boolean).join(', ');
+      lines.push(`  ${session.name} (${session.id})${details ? ` [${details}]` : ''}`);
+      lines.push(`              project scope: ${session.projectScope}`);
+      lines.push(`              remedy: eas simulator:stop --id ${session.id}`);
+    }
   }
 
   // A lock whose builder is gone. Harmless -- the next build takes it over on
@@ -487,6 +633,11 @@ export function formatGcReport({
   if (deviceSweepNotices.length) {
     lines.push(`Device sweep notices (${deviceSweepNotices.length}):`);
     for (const notice of deviceSweepNotices) lines.push(`  ${notice}`);
+  }
+
+  if (easSessionSweep.notices.length) {
+    lines.push(`EAS session sweep notices (${easSessionSweep.notices.length}):`);
+    for (const notice of easSessionSweep.notices) lines.push(`  ${notice}`);
   }
 
   if (skipped.length) {
@@ -714,13 +865,16 @@ function emptyCache(cache: CacheDescriptor): {
 
 // Everything gc knows, gathered without writing anything. `runGc` prints this
 // and then, only with --delete, acts on it.
-export async function collectGcReport({
-  olderThan = null,
-  all = false,
-  now = Date.now(),
-  lastTouched = projectLastTouched,
-  unsafeAllowScopedDeviceSweep = false,
-}: CollectGcReportOptions = {}): Promise<GcReport> {
+export async function collectGcReport(
+  {
+    olderThan = null,
+    all = false,
+    now = Date.now(),
+    lastTouched = projectLastTouched,
+    unsafeAllowScopedDeviceSweep = false,
+  }: CollectGcReportOptions = {},
+  deps: GcDependencies = {},
+): Promise<GcReport> {
   // Reported on every run: the cache paths are prescribed and there is no
   // `cache list`, so this report is the only way to see a registered cache. Sizing walks
   // the directories, which is the cost of the report being complete.
@@ -740,6 +894,17 @@ export async function collectGcReport({
   // textually starts under "/".
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
+  let easSessionSweep: EasSessionSweep;
+  try {
+    easSessionSweep = collectEasSessionSweep(cfg, deps);
+  } catch (error) {
+    easSessionSweep = {
+      projectScope: null,
+      orphaned: [],
+      notices: [`EAS session sweep failed: ${describeError(error)}`],
+      deletionSafe: false,
+    };
+  }
   const deadProjects: string[] = [];
   const skipped: GcSkip[] = [];
   for (const path of Object.keys(cfg?.projects || {})) {
@@ -871,6 +1036,7 @@ export async function collectGcReport({
       live: slots.filter((s) => s.alive),
     },
     deviceSweepNotices,
+    easSessionSweep,
     caches,
     olderThan,
     all,
@@ -880,20 +1046,32 @@ export async function collectGcReport({
 // Report, then (only with --delete) act. Exported so the suite can drive the
 // device sweep with `unsafeAllowScopedDeviceSweep`; commander supplies only
 // the flags declared below.
-export async function runGc(opts: RunGcOptions = {}): Promise<void> {
+export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
   const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
   // --all reaches CACHES ONLY. It is not "delete everything gc knows about":
   // devices and project entries are reached by --delete alone, exactly as
   // before, so this flag's blast radius is disk rather than live environments.
   const all = Boolean(opts.all);
-  const report = await collectGcReport({
-    olderThan,
-    all,
-    unsafeAllowScopedDeviceSweep: opts.unsafeAllowScopedDeviceSweep,
-  });
+  const report = await collectGcReport(
+    {
+      olderThan,
+      all,
+      unsafeAllowScopedDeviceSweep: opts.unsafeAllowScopedDeviceSweep,
+    },
+    deps,
+  );
   for (const line of formatGcReport(report)) console.log(line);
 
-  const { deadProjects, orphanedDevices, staleDevices, staleDeviceRecords, buildLocks, buildSlots, caches } = report;
+  const {
+    deadProjects,
+    orphanedDevices,
+    staleDevices,
+    staleDeviceRecords,
+    buildLocks,
+    buildSlots,
+    easSessionSweep,
+    caches,
+  } = report;
   // Caches only count as actionable with --older-than: emptying one whole is a
   // performance decision aimed at a specific cache, not something a sweep
   // should do on the way past.
@@ -904,6 +1082,7 @@ export async function runGc(opts: RunGcOptions = {}): Promise<void> {
     staleDeviceRecords.length > 0 ||
     buildLocks.stale.length > 0 ||
     buildSlots.stale.length > 0 ||
+    easSessionSweep.orphaned.length > 0 ||
     ((olderThan !== null || all) && caches.length > 0);
 
   if (!opts.delete) {
@@ -1046,6 +1225,79 @@ export async function runGc(opts: RunGcOptions = {}): Promise<void> {
     }
   }
 
+  if (easSessionSweep.orphaned.length && easSessionSweep.deletionSafe && easSessionSweep.projectScope) {
+    const currentConfig = loadConfig();
+    const currentRecords = readRecordedRemoteSessionIds([
+      ...Object.keys(currentConfig?.projects ?? {}),
+      easSessionSweep.projectScope,
+    ]);
+    if (!currentRecords.safe) {
+      deleteFailures += easSessionSweep.orphaned.length;
+      for (const notice of currentRecords.notices) {
+        console.log(chalk.red(`EAS session deletion refused: ${notice}`));
+      }
+    } else {
+      const recorded = new Set(currentRecords.ids);
+      const eas = (deps.resolveEasCliBin ?? resolveEasCliBin)(easSessionSweep.projectScope);
+      const run = deps.runEasFile ?? ((file, args, options) => getExecutor().runFile(file, args, options));
+      for (const session of easSessionSweep.orphaned) {
+        if (recorded.has(session.id)) {
+          console.log(chalk.dim(`EAS session ${session.id} has a workspace record and was left running.`));
+          continue;
+        }
+        if (!eas) {
+          deleteFailures++;
+          console.log(chalk.red(`Could not verify EAS session ${session.id}: eas-cli is not available.`));
+          continue;
+        }
+        const options = {
+          cwd: session.projectScope,
+          timeoutMs: EAS_OPERATION_TIMEOUT_MS,
+          omitEnv: PROXY_CREDENTIAL_ENV,
+        };
+        let live: string;
+        try {
+          live = run(eas.file, getSessionArgs(session.id), options);
+        } catch (error) {
+          if (isDefinitiveMissingSessionError(error, session.id)) {
+            console.log(chalk.dim(`EAS session ${session.id} is already gone.`));
+          } else {
+            deleteFailures++;
+            console.log(chalk.red(`Could not verify EAS session ${session.id}: ${describeError(error)}`));
+          }
+          continue;
+        }
+
+        const inspection = inspectSessionForTeardown(live, session.id);
+        if (inspection.action === 'already-stopped') {
+          console.log(chalk.dim(`EAS session ${session.id} is already stopped (${inspection.status}).`));
+          continue;
+        }
+        if (inspection.action === 'refused') {
+          deleteFailures++;
+          console.log(chalk.red(`Could not stop EAS session ${session.id}: ${inspection.reason}`));
+          continue;
+        }
+
+        let stopped: string;
+        try {
+          stopped = run(eas.file, stopSessionArgs(session.id), options);
+        } catch (error) {
+          deleteFailures++;
+          console.log(chalk.red(`Could not stop EAS session ${session.id}: ${describeError(error)}`));
+          continue;
+        }
+        const verified = verifyStoppedSession(stopped, session.id);
+        if (!verified.ok) {
+          deleteFailures++;
+          console.log(chalk.red(`Could not verify EAS session ${session.id} stopped: ${verified.reason}`));
+          continue;
+        }
+        console.log(chalk.green(`Stopped EAS session ${session.id} (${session.name})`));
+      }
+    }
+  }
+
   if (deleteFailures) {
     console.log(
       chalk.red(`\n${deleteFailures} entr${deleteFailures === 1 ? 'y' : 'ies'} could not be deleted; see above.`),
@@ -1143,7 +1395,7 @@ export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(
-      'Report what rn-iso has left behind: dead project entries, orphaned owned devices, records of devices that no longer exist, build locks whose builder is gone, and the shared build caches. Reports by default; pass --delete to act.',
+      'Report what rn-iso has left behind: dead project entries, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, and the shared build caches. Reports by default; pass --delete to act.',
     )
     .option('--delete', 'actually prune the reported entries and reap the reported devices')
     .option(
