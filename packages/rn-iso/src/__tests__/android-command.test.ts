@@ -465,6 +465,7 @@ describe('explicit remote backend behavior', () => {
           },
         };
       },
+      ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend, easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
         checkCapacity: () => null,
@@ -547,6 +548,184 @@ describe('explicit remote backend behavior', () => {
     expect(result.ok).toBe(true);
     expect(resolved).toBe(false);
     expect(h.calls.ensureDevice.length).toBe(1);
+  });
+
+  test('remote debug validates local and public Metro before creating a session', async () => {
+    const order: string[] = [];
+    const h = harness({
+      remoteDevice: 'eas',
+      resolveMetroRetrying: async () => {
+        order.push('localMetro');
+        return { metro: { pid: 41233, leader: 41233, cwd: root } };
+      },
+      resolveRemoteDeviceContext: async () => {
+        order.push('resolveBackend');
+        return {
+          ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        };
+      },
+      ensureMetroReachable: async () => {
+        order.push('publicMetro');
+        return { ok: true as const };
+      },
+      remoteDeviceDeps: () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        checkCapacity: () => null,
+        ensureDevice: async () => {
+          order.push('ensureDevice');
+          return { deviceName: 'EAS Simulator', owned: true, remote: true };
+        },
+        ensureDeviceBooted: async () => {
+          order.push('ensureDeviceBooted');
+          return { ok: true, serial: 'drs_42' };
+        },
+        install: (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
+        launch: () => ({ ok: true, mode: 'remote' }),
+        createdSessionId: () => 'drs_42',
+        webPreviewUrl: () => null,
+      }),
+      resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
+      fingerprint: async () => {
+        order.push('fingerprint');
+        return { hash: FINGERPRINT, sources: [] };
+      },
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(order.slice(0, 6)).toEqual([
+      'localMetro',
+      'resolveBackend',
+      'publicMetro',
+      'ensureDevice',
+      'ensureDeviceBooted',
+      'fingerprint',
+    ]);
+  });
+
+  test('a failed public Metro gate starts no remote session or device operation', async () => {
+    const remoteCalls: string[] = [];
+    const h = harness({
+      remoteDevice: 'eas',
+      resolveRemoteDeviceContext: async () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+      }),
+      ensureMetroReachable: async () => ({
+        failed: 'The public Metro origin is unavailable.',
+        remedy: 'Run `rn-iso start --remote`.',
+        code: 'RN_ISO_REMOTE_METRO_UNREACHABLE',
+      }),
+      remoteDeviceDeps: () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        checkCapacity: () => null,
+        ensureDevice: async () => {
+          remoteCalls.push('ensureDevice');
+          return { deviceName: 'EAS Simulator', owned: true, remote: true };
+        },
+        ensureDeviceBooted: async () => {
+          remoteCalls.push('ensureDeviceBooted');
+          return { ok: true, serial: 'drs_42' };
+        },
+        install: () => {
+          remoteCalls.push('install');
+          return { ok: true };
+        },
+        launch: () => {
+          remoteCalls.push('launch');
+          return { ok: true, mode: 'remote' };
+        },
+        createdSessionId: () => 'drs_42',
+        webPreviewUrl: () => null,
+      }),
+      resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
+      fingerprint: never('fingerprint'),
+    });
+
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('RN_ISO_REMOTE_METRO_UNREACHABLE');
+    expect(remoteCalls).toEqual([]);
+    expect(existsSync(workspaceStateFile(root)) ? readState().remoteDevice : undefined).toBeUndefined();
+  });
+
+  test('an EAS session is recorded after boot and survives a later build failure', async () => {
+    const order: string[] = [];
+    const h = harness({
+      remoteDevice: 'eas',
+      resolveRemoteDeviceContext: async () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+      }),
+      ensureMetroReachable: async () => ({ ok: true as const }),
+      remoteDeviceDeps: () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        checkCapacity: () => null,
+        ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
+        ensureDeviceBooted: async () => {
+          order.push('boot');
+          return { ok: true, serial: 'drs_42' };
+        },
+        install: never('install'),
+        launch: never('launch'),
+        createdSessionId: () => {
+          order.push('sessionId');
+          return 'drs_42';
+        },
+        webPreviewUrl: () => null,
+      }),
+      resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
+      writeState: (projectRoot: string, patch: Record<string, unknown>) => {
+        if ('remoteDevice' in patch) order.push('writeSession');
+        return writeWorkspaceState(projectRoot, patch);
+      },
+      fingerprint: async () => {
+        order.push('fingerprint');
+        return { hash: FINGERPRINT, sources: [] };
+      },
+      build: async () => {
+        order.push('build');
+        return { failed: true, code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] };
+      },
+    });
+
+    expect((await h.run()).ok).toBe(false);
+    expect(order.slice(0, 5)).toEqual(['boot', 'sessionId', 'writeSession', 'fingerprint', 'build']);
+    expect(readState().remoteDevice).toMatchObject({ platform: 'android', sessionId: 'drs_42' });
+  });
+
+  test('the proxy backend creates no owned EAS session record', async () => {
+    const { h } = remoteHarness('proxy');
+    expect((await h.run()).ok).toBe(true);
+    expect(readState().remoteDevice).toBeUndefined();
+  });
+
+  test('remote release skips Metro and launches with the remote adapter', async () => {
+    const remoteLaunches: LaunchArgs[] = [];
+    const h = harness({
+      remoteDevice: 'eas',
+      variant: 'productionRelease',
+      resolveMetro: never('the local Metro gate'),
+      ensureMetroReachable: never('the public Metro gate'),
+      resolveRemoteDeviceContext: async () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+      }),
+      remoteDeviceDeps: () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        checkCapacity: () => null,
+        ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
+        ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
+        install: (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
+        launch: (args: LaunchArgs = {}) => {
+          remoteLaunches.push(args);
+          return { ok: true, mode: 'remote' };
+        },
+        createdSessionId: () => 'drs_42',
+        webPreviewUrl: () => null,
+      }),
+      resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
+      launchRelease: never('the local release launcher'),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(remoteLaunches).toEqual([{ serial: 'drs_42', packageName: 'com.example.app', metroPort: null }]);
   });
 });
 
