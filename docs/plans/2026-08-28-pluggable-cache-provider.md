@@ -218,7 +218,7 @@ Add tests that prove:
 Use this target helper:
 
 ```ts
-resolveCacheProviderConfig({ projectPath, gitCommonDir, repoRoot })
+resolveCacheProviderConfig({ projectPath, gitCommonDir, repoRoot });
 // -> { provider, options, baseDir } | null
 ```
 
@@ -315,11 +315,11 @@ test('the queue enforces item and byte limits', async () => {});
 Pin constants in tests:
 
 ```ts
-METRO_READ_TIMEOUT_MS = 2_000
-METRO_WRITE_TIMEOUT_MS = 10_000
-METRO_UPLOAD_CONCURRENCY = 4
-METRO_UPLOAD_MAX_ITEMS = 128
-METRO_UPLOAD_MAX_BYTES = 32 * 1024 * 1024
+METRO_READ_TIMEOUT_MS = 2_000;
+METRO_WRITE_TIMEOUT_MS = 10_000;
+METRO_UPLOAD_CONCURRENCY = 4;
+METRO_UPLOAD_MAX_ITEMS = 128;
+METRO_UPLOAD_MAX_BYTES = 32 * 1024 * 1024;
 ```
 
 Use injected limits in saturation tests so the test does not allocate 32 MB.
@@ -434,8 +434,8 @@ test('provider timeout and failure return a miss', async () => {});
 Pin these constants:
 
 ```ts
-BUILD_RESOLVE_TIMEOUT_MS = 30_000
-BUILD_UPLOAD_TIMEOUT_MS = 60_000
+BUILD_RESOLVE_TIMEOUT_MS = 30_000;
+BUILD_UPLOAD_TIMEOUT_MS = 60_000;
 ```
 
 **Step 2: Run tests and verify failure**
@@ -470,10 +470,10 @@ Keep `resolveBuild()` and `storeBuild()` exported for compatibility and focused 
 Export:
 
 ```ts
-resolveTieredBuild({ local, provider, context, destinationDir, skipRead, warn })
+resolveTieredBuild({ local, provider, context, destinationDir, skipRead, warn });
 // -> { path: string; tier: 'local' | 'provider'; providerName?: string } | null
 
-storeTieredBuild({ local, provider, context, sourcePath, overwrite, warn })
+storeTieredBuild({ local, provider, context, sourcePath, overwrite, warn });
 // -> { localPath: string | null; providerUpload: Promise<ProviderCallResult<void>> | null }
 ```
 
