@@ -6,12 +6,12 @@ import CodeBlock from '@theme/CodeBlock';
 import Heading from '@theme/Heading';
 
 const quickStart = `# the only command a human runs:
-npx skills add appandflow/rn-iso
+npx skills add appandflow/stim-cli
 
 # then tell your agent:
 #   "Build and run the app on the iOS simulator and fix anything that breaks."
 
-# no setup step, nothing to commit -- rn-iso runs on a clean checkout.`;
+# no setup step, nothing to commit -- stim-cli runs on a clean checkout.`;
 
 const features: Array<{ title: string; body: ReactNode }> = [
   {
@@ -48,7 +48,7 @@ const features: Array<{ title: string; body: ReactNode }> = [
     body: (
       <>
         A killed agent leaves a booted simulator, a Metro squatting on a port, a stale lock. <code>stop</code>,{' '}
-        <code>worktree remove</code> and <code>gc</code> reclaim all of it — and rn-iso never touches a device it did
+        <code>worktree remove</code> and <code>gc</code> reclaim all of it — and stim-cli never touches a device it did
         not create.
       </>
     ),
@@ -77,7 +77,7 @@ export default function Home(): ReactNode {
               Get started
             </Link>
             <Link className="button button--secondary button--lg" to="/docs/why">
-              Why rn-iso
+              Why stim-cli
             </Link>
           </div>
         </div>

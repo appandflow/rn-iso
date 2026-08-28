@@ -1,11 +1,11 @@
 {
-  "name": "@rn-iso/metro",
+  "name": "@stim-cli/metro",
   "version": "1.5.0",
-  "description": "Metro integration for rn-iso: one transform cache shared by every worktree, plus an NDJSON reporter for structured logs.",
+  "description": "Metro integration for stim-cli: one transform cache shared by every worktree, plus an NDJSON reporter for structured logs.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/appandflow/rn-iso.git",
+    "url": "git+https://github.com/appandflow/stim-cli.git",
     "directory": "packages/metro"
   },
   "files": [
@@ -27,7 +27,7 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@rn-iso/core": "^1.5.0"
+    "@stim-cli/core": "^1.5.0"
   },
   "peerDependencies": {
     "metro-cache": "*"

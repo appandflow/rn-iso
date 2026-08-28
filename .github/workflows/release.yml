@@ -1,4 +1,4 @@
-# Publishes the three packages to npm via OIDC trusted publishing when a
+# Publishes the four packages to npm via OIDC trusted publishing when a
 # version tag is pushed. There is NO token: npm trusts a short-lived OIDC
 # credential minted for exactly this repo + workflow + environment, and the
 # `release` environment requires a manual approval, which replaces the OTP.
@@ -37,28 +37,28 @@ jobs:
       - name: Tag matches the package versions
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          for p in core rn-iso expo-build-cache metro; do
+          for p in core stim-cli expo-build-cache metro; do
             v=$(node -p "require('./packages/$p/package.json').version")
             if [ "$v" != "$tag" ]; then
               echo "packages/$p is $v but the tag is $tag"; exit 1
             fi
           done
-      - name: Publish @rn-iso/core
+      - name: Publish @stim-cli/core
         run: npm publish --provenance --access public
         working-directory: packages/core
-      - name: Publish rn-iso
-        run: npm publish --provenance --access public
-        working-directory: packages/rn-iso
-      - name: Publish @rn-iso/expo-build-cache
-        run: npm publish --provenance --access public
-        working-directory: packages/expo-build-cache
-      - name: Publish @rn-iso/metro
+      - name: Publish @stim-cli/metro
         run: npm publish --provenance --access public
         working-directory: packages/metro
+      - name: Publish @stim-cli/expo-build-cache
+        run: npm publish --provenance --access public
+        working-directory: packages/expo-build-cache
+      - name: Publish stim-cli
+        run: npm publish --provenance --access public
+        working-directory: packages/stim-cli
       - name: Smoke-test the registry
         run: |
           sleep 10
-          for p in @rn-iso/core rn-iso @rn-iso/expo-build-cache @rn-iso/metro; do
+          for p in @stim-cli/core stim-cli @stim-cli/expo-build-cache @stim-cli/metro; do
             v=$(npm view "$p" version)
             echo "$p -> $v"
             [ "$v" = "${GITHUB_REF_NAME#v}" ] || exit 1

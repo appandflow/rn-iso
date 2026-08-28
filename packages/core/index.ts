@@ -52,9 +52,9 @@ function acquireDirLock(
     if (Date.now() >= deadline) {
       const error = new Error(
         `Timed out waiting for the lock at ${lockPath}. ` +
-          'Another rn-iso process is holding it; if none is running, remove that directory.',
+          'Another stim-cli process is holding it; if none is running, remove that directory.',
       );
-      (error as Error & { code?: string; lockPath?: string }).code = 'RN_ISO_LOCK_TIMEOUT';
+      (error as Error & { code?: string; lockPath?: string }).code = 'STIM_CLI_LOCK_TIMEOUT';
       (error as Error & { code?: string; lockPath?: string }).lockPath = lockPath;
       throw error;
     }
@@ -98,7 +98,7 @@ export function withDirLock<T>(
 }
 
 export function configDir(): string {
-  return process.env.RN_ISO_HOME || path.join(os.homedir(), '.rn-iso');
+  return process.env.STIM_CLI_HOME || path.join(os.homedir(), '.stim-cli');
 }
 
 export function workspaceSlug(projectRoot: string): string {
@@ -149,17 +149,17 @@ export function cacheNameSegment(name: string | null | undefined): string {
 }
 
 export function buildCacheRoot(): string {
-  return process.env.RN_ISO_BUILD_CACHE || cachePathSetting('buildCache') || path.join(configDir(), 'build-cache');
+  return process.env.STIM_CLI_BUILD_CACHE || cachePathSetting('buildCache') || path.join(configDir(), 'build-cache');
 }
 
 export function metroCacheRoot(name?: string | null): string {
-  const override = process.env.RN_ISO_METRO_CACHE || cachePathSetting('metroCache');
+  const override = process.env.STIM_CLI_METRO_CACHE || cachePathSetting('metroCache');
   if (override) return override;
   const root = path.join(configDir(), 'metro-cache');
   return name === undefined || name === null || name === '' ? root : path.join(root, cacheNameSegment(name));
 }
 
-export const STORE_ROOT_TAG = 'rnIsoStoreRoot';
+export const STORE_ROOT_TAG = 'stimCliStoreRoot';
 
 export function tagSharedStore<T extends object>(store: T, root: string): T {
   try {

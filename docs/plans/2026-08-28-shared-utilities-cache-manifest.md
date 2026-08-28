@@ -4,7 +4,7 @@
 
 **Goal:** Remove duplicated output and process helpers, make iOS and Android output consistent, and serialize cache manifest updates without adding dependencies.
 
-**Architecture:** Keep presentation helpers and process helpers inside the CLI. Put the filesystem lock and cache manifest transaction in `@rn-iso/core`, because cache packages must work without `rn-iso` installed. Keep command, Metro, build-engine, and CLI cache validation behavior in their current domains.
+**Architecture:** Keep presentation helpers and process helpers inside the CLI. Put the filesystem lock and cache manifest transaction in `@stim-cli/core`, because cache packages must work without `stim-cli` installed. Keep command, Metro, build-engine, and CLI cache validation behavior in their current domains.
 
 **Tech Stack:** TypeScript, Node.js 22 built-ins, Vitest, pnpm workspaces, tsdown
 
@@ -14,12 +14,12 @@
 
 **Files:**
 
-- Create: `packages/rn-iso/src/command-output.ts`
-- Create: `packages/rn-iso/src/__tests__/command-output.test.ts`
-- Modify: `packages/rn-iso/src/commands/ios.ts`
-- Modify: `packages/rn-iso/src/commands/android.ts`
-- Modify: `packages/rn-iso/src/__tests__/ios-command.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/android-command.test.ts`
+- Create: `packages/stim-cli/src/command-output.ts`
+- Create: `packages/stim-cli/src/__tests__/command-output.test.ts`
+- Modify: `packages/stim-cli/src/commands/ios.ts`
+- Modify: `packages/stim-cli/src/commands/android.ts`
+- Modify: `packages/stim-cli/src/__tests__/ios-command.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/android-command.test.ts`
 
 **Step 1: Write the failing shared output tests**
 
@@ -55,7 +55,7 @@ test('shortHash keeps short values and abbreviates long values', () => {
 
 **Step 2: Run the new test and verify RED**
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/command-output.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/command-output.test.ts`
 
 Expected: FAIL because `command-output.ts` does not exist.
 
@@ -65,7 +65,7 @@ Implement `formatDuration`, `phaseLine`, and `shortHash`. Round to the nearest m
 
 **Step 4: Run the shared output test and verify GREEN**
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/command-output.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/command-output.test.ts`
 
 Expected: PASS.
 
@@ -75,14 +75,14 @@ Import the shared helpers in both commands. Re-export them from each command mod
 
 **Step 6: Run command tests**
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/command-output.test.ts packages/rn-iso/src/__tests__/ios-command.test.ts packages/rn-iso/src/__tests__/android-command.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/command-output.test.ts packages/stim-cli/src/__tests__/ios-command.test.ts packages/stim-cli/src/__tests__/android-command.test.ts`
 
 Expected: PASS.
 
 **Step 7: Commit**
 
 ```bash
-git add packages/rn-iso/src/command-output.ts packages/rn-iso/src/__tests__/command-output.test.ts packages/rn-iso/src/commands/ios.ts packages/rn-iso/src/commands/android.ts packages/rn-iso/src/__tests__/ios-command.test.ts packages/rn-iso/src/__tests__/android-command.test.ts
+git add packages/stim-cli/src/command-output.ts packages/stim-cli/src/__tests__/command-output.test.ts packages/stim-cli/src/commands/ios.ts packages/stim-cli/src/commands/android.ts packages/stim-cli/src/__tests__/ios-command.test.ts packages/stim-cli/src/__tests__/android-command.test.ts
 git -c commit.gpgsign=false commit -m "refactor: share command output helpers"
 ```
 
@@ -90,18 +90,18 @@ git -c commit.gpgsign=false commit -m "refactor: share command output helpers"
 
 **Files:**
 
-- Create: `packages/rn-iso/src/process-output.ts`
-- Create: `packages/rn-iso/src/__tests__/process-output.test.ts`
-- Modify: `packages/rn-iso/src/supervisor/server-expo.ts`
-- Modify: `packages/rn-iso/src/engine/deps.ts`
-- Modify: `packages/rn-iso/src/engine/prebuild.ts`
-- Modify: `packages/rn-iso/src/engine/gradle.ts`
-- Modify: `packages/rn-iso/src/engine/xcode.ts`
-- Modify: `packages/rn-iso/src/engine/js-swap.ts`
-- Modify: `packages/rn-iso/src/engine/apk-swap.ts`
-- Modify: `packages/rn-iso/src/engine/remote-cache.ts`
-- Modify: `packages/rn-iso/src/collector/run.ts`
-- Modify: `packages/rn-iso/src/__tests__/supervisor-expo.test.ts`
+- Create: `packages/stim-cli/src/process-output.ts`
+- Create: `packages/stim-cli/src/__tests__/process-output.test.ts`
+- Modify: `packages/stim-cli/src/supervisor/server-expo.ts`
+- Modify: `packages/stim-cli/src/engine/deps.ts`
+- Modify: `packages/stim-cli/src/engine/prebuild.ts`
+- Modify: `packages/stim-cli/src/engine/gradle.ts`
+- Modify: `packages/stim-cli/src/engine/xcode.ts`
+- Modify: `packages/stim-cli/src/engine/js-swap.ts`
+- Modify: `packages/stim-cli/src/engine/apk-swap.ts`
+- Modify: `packages/stim-cli/src/engine/remote-cache.ts`
+- Modify: `packages/stim-cli/src/collector/run.ts`
+- Modify: `packages/stim-cli/src/__tests__/supervisor-expo.test.ts`
 
 **Step 1: Write the failing process helper tests**
 
@@ -109,7 +109,7 @@ Test Node ANSI and OSC removal, split line reconstruction, final line flushing, 
 
 **Step 2: Run the new test and verify RED**
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/process-output.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/process-output.test.ts`
 
 Expected: FAIL because `process-output.ts` does not exist.
 
@@ -119,7 +119,7 @@ Use `stripVTControlCharacters(String(text ?? ''))` for ANSI removal. Move the cu
 
 **Step 4: Run the new test and verify GREEN**
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/process-output.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/process-output.test.ts`
 
 Expected: PASS.
 
@@ -129,14 +129,14 @@ Import neutral helpers from `process-output.ts`. Keep `cleanLine` in `server-exp
 
 **Step 6: Run affected tests**
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/process-output.test.ts packages/rn-iso/src/__tests__/supervisor-expo.test.ts packages/rn-iso/src/__tests__/engine-deps.test.ts packages/rn-iso/src/__tests__/engine-prebuild.test.ts packages/rn-iso/src/__tests__/engine-gradle.test.ts packages/rn-iso/src/__tests__/engine-xcode.test.ts packages/rn-iso/src/__tests__/engine-js-swap.test.ts packages/rn-iso/src/__tests__/engine-apk-swap.test.ts packages/rn-iso/src/__tests__/engine-remote-cache.test.ts packages/rn-iso/src/__tests__/collector-run.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/process-output.test.ts packages/stim-cli/src/__tests__/supervisor-expo.test.ts packages/stim-cli/src/__tests__/engine-deps.test.ts packages/stim-cli/src/__tests__/engine-prebuild.test.ts packages/stim-cli/src/__tests__/engine-gradle.test.ts packages/stim-cli/src/__tests__/engine-xcode.test.ts packages/stim-cli/src/__tests__/engine-js-swap.test.ts packages/stim-cli/src/__tests__/engine-apk-swap.test.ts packages/stim-cli/src/__tests__/engine-remote-cache.test.ts packages/stim-cli/src/__tests__/collector-run.test.ts`
 
 Expected: PASS.
 
 **Step 7: Commit**
 
 ```bash
-git add packages/rn-iso/src/process-output.ts packages/rn-iso/src/__tests__/process-output.test.ts packages/rn-iso/src/supervisor/server-expo.ts packages/rn-iso/src/engine packages/rn-iso/src/collector/run.ts packages/rn-iso/src/__tests__/supervisor-expo.test.ts
+git add packages/stim-cli/src/process-output.ts packages/stim-cli/src/__tests__/process-output.test.ts packages/stim-cli/src/supervisor/server-expo.ts packages/stim-cli/src/engine packages/stim-cli/src/collector/run.ts packages/stim-cli/src/__tests__/supervisor-expo.test.ts
 git -c commit.gpgsign=false commit -m "refactor: share process output helpers"
 ```
 
@@ -146,7 +146,7 @@ git -c commit.gpgsign=false commit -m "refactor: share process output helpers"
 
 - Modify: `packages/core/index.ts`
 - Create: `packages/core/__tests__/cache-manifest.test.ts`
-- Modify: `packages/rn-iso/src/dir-lock.ts`
+- Modify: `packages/stim-cli/src/dir-lock.ts`
 
 **Step 1: Write the failing lock regression test**
 
@@ -162,7 +162,7 @@ Expected: FAIL because cache registration does not honor the manifest lock.
 
 **Step 3: Move the directory lock into core**
 
-Move the current synchronous, reentrant `withDirLock` implementation from `packages/rn-iso/src/dir-lock.ts` into `packages/core/index.ts`. Keep the same timeout error code and stale lock behavior. Change the CLI module to re-export the core function so current CLI imports remain stable.
+Move the current synchronous, reentrant `withDirLock` implementation from `packages/stim-cli/src/dir-lock.ts` into `packages/core/index.ts`. Keep the same timeout error code and stale lock behavior. Change the CLI module to re-export the core function so current CLI imports remain stable.
 
 **Step 4: Add the manifest transaction**
 
@@ -194,14 +194,14 @@ Expected: PASS.
 
 **Step 6: Run existing lock consumers**
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/config.test.ts packages/rn-iso/src/__tests__/paths.test.ts packages/rn-iso/src/__tests__/supervisor-run.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/config.test.ts packages/stim-cli/src/__tests__/paths.test.ts packages/stim-cli/src/__tests__/supervisor-run.test.ts`
 
 Expected: PASS.
 
 **Step 7: Commit**
 
 ```bash
-git add packages/core/index.ts packages/core/__tests__/cache-manifest.test.ts packages/rn-iso/src/dir-lock.ts
+git add packages/core/index.ts packages/core/__tests__/cache-manifest.test.ts packages/stim-cli/src/dir-lock.ts
 git -c commit.gpgsign=false commit -m "fix: serialize cache manifest updates"
 ```
 
@@ -209,34 +209,34 @@ git -c commit.gpgsign=false commit -m "fix: serialize cache manifest updates"
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/cache-manifest.ts`
-- Modify: `packages/rn-iso/src/__tests__/cache-manifest.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/cache-packages.test.ts`
+- Modify: `packages/stim-cli/src/cache-manifest.ts`
+- Modify: `packages/stim-cli/src/__tests__/cache-manifest.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/cache-packages.test.ts`
 
 **Step 1: Write a failing CLI concurrency test**
 
-Add a test that starts one core cache registration and one CLI registration against the same temporary `RN_ISO_HOME`. Verify that both distinct entries remain. The test must execute real child processes.
+Add a test that starts one core cache registration and one CLI registration against the same temporary `STIM_CLI_HOME`. Verify that both distinct entries remain. The test must execute real child processes.
 
 **Step 2: Run the CLI manifest test and verify RED**
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/cache-manifest.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/cache-manifest.test.ts`
 
 Expected: FAIL because the CLI writer does not use the core manifest lock.
 
 **Step 3: Replace the CLI writer**
 
-Import `readCacheManifest` and `updateCacheManifest` from `@rn-iso/core`. Preserve `CacheEntry`, tilde expansion, prune normalization, depth normalization, corrupt-file handling, and thrown validation errors. Remove the duplicate temporary-file writer.
+Import `readCacheManifest` and `updateCacheManifest` from `@stim-cli/core`. Preserve `CacheEntry`, tilde expansion, prune normalization, depth normalization, corrupt-file handling, and thrown validation errors. Remove the duplicate temporary-file writer.
 
 **Step 4: Run cache tests and verify GREEN**
 
-Run: `pnpm build && pnpm vitest run packages/core/__tests__/cache-manifest.test.ts packages/expo-build-cache/__tests__/register.test.ts packages/rn-iso/src/__tests__/cache-manifest.test.ts packages/rn-iso/src/__tests__/cache-packages.test.ts`
+Run: `pnpm build && pnpm vitest run packages/core/__tests__/cache-manifest.test.ts packages/expo-build-cache/__tests__/register.test.ts packages/stim-cli/src/__tests__/cache-manifest.test.ts packages/stim-cli/src/__tests__/cache-packages.test.ts`
 
 Expected: PASS.
 
 **Step 5: Commit**
 
 ```bash
-git add packages/rn-iso/src/cache-manifest.ts packages/rn-iso/src/__tests__/cache-manifest.test.ts packages/rn-iso/src/__tests__/cache-packages.test.ts
+git add packages/stim-cli/src/cache-manifest.ts packages/stim-cli/src/__tests__/cache-manifest.test.ts packages/stim-cli/src/__tests__/cache-packages.test.ts
 git -c commit.gpgsign=false commit -m "refactor: share cache manifest transaction"
 ```
 
@@ -244,7 +244,7 @@ git -c commit.gpgsign=false commit -m "refactor: share cache manifest transactio
 
 **Files:**
 
-- Modify: `packages/rn-iso/skill/SKILL.md`
+- Modify: `packages/stim-cli/skill/SKILL.md`
 
 **Step 1: Update user guidance**
 
@@ -274,6 +274,6 @@ Expected: No whitespace errors. Only planned files are changed. Generated `dist`
 **Step 4: Commit documentation and formatting**
 
 ```bash
-git add packages/rn-iso/skill/SKILL.md
+git add packages/stim-cli/skill/SKILL.md
 git -c commit.gpgsign=false commit -m "docs: describe consistent command output"
 ```

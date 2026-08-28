@@ -6,7 +6,7 @@ Remove duplicated utility code without adding dependencies. Make iOS and Android
 
 ## Command output
 
-Add `packages/rn-iso/src/command-output.ts` for helpers shared by command implementations.
+Add `packages/stim-cli/src/command-output.ts` for helpers shared by command implementations.
 
 - `formatDuration` prints milliseconds below one second. It prints compact seconds below one minute. It prints zero-padded seconds with minutes. Invalid or negative values print `unknown`.
 - `phaseLine` uses the same two-space indentation and label width for iOS and Android.
@@ -16,7 +16,7 @@ The iOS and Android commands import these helpers. Existing helper exports remai
 
 ## Process output
 
-Add `packages/rn-iso/src/process-output.ts` for process helpers shared by supervisors, collectors, and build engines.
+Add `packages/stim-cli/src/process-output.ts` for process helpers shared by supervisors, collectors, and build engines.
 
 - `stripAnsi` wraps Node's `stripVTControlCharacters`.
 - `createLineReader` buffers partial lines and flushes the final line.
@@ -28,9 +28,9 @@ Metro-specific parsing stays in `supervisor/server-expo.ts`. Dependency-specific
 
 The cache manifest has two read-modify-write implementations. Neither locks the complete update. Atomic rename prevents partial files, but it does not prevent one process from replacing another process's update.
 
-Add a synchronous cache manifest update primitive to `@rn-iso/core`. The primitive takes a directory lock, reads the current manifest, applies one mutation, and writes through a temporary file and atomic rename. The lock path is derived from the manifest path.
+Add a synchronous cache manifest update primitive to `@stim-cli/core`. The primitive takes a directory lock, reads the current manifest, applies one mutation, and writes through a temporary file and atomic rename. The lock path is derived from the manifest path.
 
-`@rn-iso/core` cache registration uses the primitive and keeps its non-throwing contract. The rn-iso cache manifest API uses the same primitive and keeps its current validation and error behavior.
+`@stim-cli/core` cache registration uses the primitive and keeps its non-throwing contract. The stim-cli cache manifest API uses the same primitive and keeps its current validation and error behavior.
 
 ## Tests
 

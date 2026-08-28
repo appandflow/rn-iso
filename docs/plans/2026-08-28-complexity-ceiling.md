@@ -44,12 +44,12 @@ Expected:
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/commands/ios.ts:1122`
-- Test: `packages/rn-iso/src/__tests__/ios-command.test.ts`
+- Modify: `packages/stim-cli/src/commands/ios.ts:1122`
+- Test: `packages/stim-cli/src/__tests__/ios-command.test.ts`
 
 **Step 1: Run the iOS behavior suite**
 
-Run: `npx vitest run packages/rn-iso/src/__tests__/ios-command.test.ts`
+Run: `npx vitest run packages/stim-cli/src/__tests__/ios-command.test.ts`
 
 Expected: all tests pass before the refactor.
 
@@ -88,7 +88,7 @@ new error handling.
 
 **Step 3: Verify the iOS behavior and complexity**
 
-Run: `npx vitest run packages/rn-iso/src/__tests__/ios-command.test.ts`
+Run: `npx vitest run packages/stim-cli/src/__tests__/ios-command.test.ts`
 
 Expected: all tests pass.
 
@@ -101,12 +101,12 @@ error.
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/commands/android.ts:1064`
-- Test: `packages/rn-iso/src/__tests__/android-command.test.ts`
+- Modify: `packages/stim-cli/src/commands/android.ts:1064`
+- Test: `packages/stim-cli/src/__tests__/android-command.test.ts`
 
 **Step 1: Run the Android behavior suite**
 
-Run: `npx vitest run packages/rn-iso/src/__tests__/android-command.test.ts`
+Run: `npx vitest run packages/stim-cli/src/__tests__/android-command.test.ts`
 
 Expected: all tests pass before the refactor.
 
@@ -145,7 +145,7 @@ existing deployment helper contracts. Do not add comments or suppressions.
 
 **Step 3: Verify the Android behavior and complexity**
 
-Run: `npx vitest run packages/rn-iso/src/__tests__/android-command.test.ts`
+Run: `npx vitest run packages/stim-cli/src/__tests__/android-command.test.ts`
 
 Expected: all tests pass.
 
@@ -202,16 +202,16 @@ Expected: no added comments.
 **Files:**
 
 - Commit: `.oxlintrc.json`
-- Commit: `packages/rn-iso/src/commands/ios.ts`
-- Commit: `packages/rn-iso/src/commands/android.ts`
+- Commit: `packages/stim-cli/src/commands/ios.ts`
+- Commit: `packages/stim-cli/src/commands/android.ts`
 - Commit: both complexity plan documents
 
 **Step 1: Stage the exact files**
 
 ```bash
 git add .oxlintrc.json \
-  packages/rn-iso/src/commands/ios.ts \
-  packages/rn-iso/src/commands/android.ts \
+  packages/stim-cli/src/commands/ios.ts \
+  packages/stim-cli/src/commands/android.ts \
   docs/plans/2026-08-28-complexity-ceiling-design.md \
   docs/plans/2026-08-28-complexity-ceiling.md
 ```

@@ -14,11 +14,11 @@
 
 **Files:**
 
-- Resolve: `packages/rn-iso/src/__tests__/ios-command.test.ts`
-- Resolve: `packages/rn-iso/src/__tests__/supervisor-expo.test.ts`
-- Resolve: `packages/rn-iso/src/commands/ios.ts`
-- Resolve: `packages/rn-iso/src/engine/app-install.ts`
-- Resolve: `packages/rn-iso/src/supervisor/server-expo.ts`
+- Resolve: `packages/stim-cli/src/__tests__/ios-command.test.ts`
+- Resolve: `packages/stim-cli/src/__tests__/supervisor-expo.test.ts`
+- Resolve: `packages/stim-cli/src/commands/ios.ts`
+- Resolve: `packages/stim-cli/src/engine/app-install.ts`
+- Resolve: `packages/stim-cli/src/supervisor/server-expo.ts`
 
 **Step 1: Merge the current base**
 
@@ -46,10 +46,10 @@ Expected: one merge commit with no unrelated edits.
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/commands/start.ts`
-- Modify: `packages/rn-iso/src/__tests__/start.test.ts`
-- Modify: `packages/rn-iso/src/commands/guide.ts`
-- Modify: `packages/rn-iso/src/__tests__/guide.test.ts`
+- Modify: `packages/stim-cli/src/commands/start.ts`
+- Modify: `packages/stim-cli/src/__tests__/start.test.ts`
+- Modify: `packages/stim-cli/src/commands/guide.ts`
+- Modify: `packages/stim-cli/src/__tests__/guide.test.ts`
 
 **Step 1: Write failing tests**
 
@@ -62,7 +62,7 @@ Add tests that prove:
 - an `ios.remote` or `android.remote` backend setting gives `start` remote intent;
 - `start --remote` refuses when a healthy local Expo supervisor cannot gain a tunnel.
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/start.test.ts packages/rn-iso/src/__tests__/guide.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/start.test.ts packages/stim-cli/src/__tests__/guide.test.ts`
 
 Expected: the new tests fail because `start` has no remote option and `auto` tunnels local starts.
 
@@ -88,22 +88,22 @@ Run: `git commit -am "fix(start): tunnel only for remote devices"`
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/settings.ts`
-- Modify: `packages/rn-iso/src/commands/start.ts`
-- Modify: `packages/rn-iso/src/engine/metro-reach.ts`
-- Modify: `packages/rn-iso/src/engine/tunnel.ts`
-- Modify: `packages/rn-iso/src/engine/device-remote.ts`
-- Modify: `packages/rn-iso/src/__tests__/settings.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/start.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/metro-reach.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/tunnel.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/device-remote.test.ts`
+- Modify: `packages/stim-cli/src/settings.ts`
+- Modify: `packages/stim-cli/src/commands/start.ts`
+- Modify: `packages/stim-cli/src/engine/metro-reach.ts`
+- Modify: `packages/stim-cli/src/engine/tunnel.ts`
+- Modify: `packages/stim-cli/src/engine/device-remote.ts`
+- Modify: `packages/stim-cli/src/__tests__/settings.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/start.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/metro-reach.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/tunnel.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/device-remote.test.ts`
 
 **Step 1: Write failing provider and URL tests**
 
 Prove `metro.tunnel` accepts `auto`, `expo`, `ngrok`, `cloudflared`, and `off`. Prove `metro.ngrokUrl` requires explicit ngrok mode and a valid HTTPS URL. Prove the ngrok argv contains `--url <url>` only when configured.
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/settings.test.ts packages/rn-iso/src/__tests__/metro-reach.test.ts packages/rn-iso/src/__tests__/tunnel.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/settings.test.ts packages/stim-cli/src/__tests__/metro-reach.test.ts packages/stim-cli/src/__tests__/tunnel.test.ts`
 
 Expected: the URL setting and argv assertions fail because the setting does not exist.
 
@@ -111,7 +111,7 @@ Expected: the URL setting and argv assertions fail because the setting does not 
 
 Prove `start --remote` starts and records a managed provider before the dev server. Prove the device command reuses that record. Under `auto`, make ngrok exit before it returns a URL and prove cloudflared starts next. Prove explicit ngrok returns its error without fallback.
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/start.test.ts packages/rn-iso/src/__tests__/device-remote.test.ts packages/rn-iso/src/__tests__/tunnel.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/start.test.ts packages/stim-cli/src/__tests__/device-remote.test.ts packages/stim-cli/src/__tests__/tunnel.test.ts`
 
 Expected: managed providers start only during the device command, and auto stops after the ngrok failure.
 
@@ -127,21 +127,21 @@ Run both focused commands, then commit with `feat(tunnel): configure managed pro
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/types.ts`
-- Modify: `packages/rn-iso/src/settings.ts`
-- Modify: `packages/rn-iso/src/commands/ios.ts`
-- Modify: `packages/rn-iso/src/commands/android.ts`
-- Modify: `packages/rn-iso/src/engine/device-remote.ts`
-- Modify: `packages/rn-iso/src/__tests__/settings.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/device-remote.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/ios-command.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/android-command.test.ts`
+- Modify: `packages/stim-cli/src/types.ts`
+- Modify: `packages/stim-cli/src/settings.ts`
+- Modify: `packages/stim-cli/src/commands/ios.ts`
+- Modify: `packages/stim-cli/src/commands/android.ts`
+- Modify: `packages/stim-cli/src/engine/device-remote.ts`
+- Modify: `packages/stim-cli/src/__tests__/settings.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/device-remote.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/ios-command.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/android-command.test.ts`
 
 **Step 1: Write failing interface tests**
 
 Add tests that prove `--remote proxy` and `--remote eas` parse for both device commands. Add refusal tests for a missing or unknown backend. Prove settings accept only `"proxy"` or `"eas"`.
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/ios-command.test.ts packages/rn-iso/src/__tests__/android-command.test.ts packages/rn-iso/src/__tests__/settings.test.ts packages/rn-iso/src/__tests__/device-remote.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/ios-command.test.ts packages/stim-cli/src/__tests__/android-command.test.ts packages/stim-cli/src/__tests__/settings.test.ts packages/stim-cli/src/__tests__/device-remote.test.ts`
 
 Expected: the parser and settings tests fail because remote is boolean and backend selection reads environment state.
 
@@ -161,16 +161,16 @@ Run the focused command, then commit with `feat(remote): require an explicit bac
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/commands/android.ts`
-- Modify: `packages/rn-iso/src/engine/device-remote.ts`
-- Modify: `packages/rn-iso/src/__tests__/android-command.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/device-remote.test.ts`
+- Modify: `packages/stim-cli/src/commands/android.ts`
+- Modify: `packages/stim-cli/src/engine/device-remote.ts`
+- Modify: `packages/stim-cli/src/__tests__/android-command.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/device-remote.test.ts`
 
 **Step 1: Write failing command tests**
 
 Add tests that prove a debug remote run gates its public Metro origin before session creation, records the created session immediately after boot, and keeps that record when a later build fails. Add a release test that proves launch uses the remote adapter and requires no Metro origin.
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/android-command.test.ts packages/rn-iso/src/__tests__/device-remote.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/android-command.test.ts packages/stim-cli/src/__tests__/device-remote.test.ts`
 
 Expected: the gate and state assertions fail, and release launch calls the local launcher.
 
@@ -192,24 +192,24 @@ Run: `git commit -am "fix(remote): preserve Android session ownership"`
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/engine/eas-simulator.ts`
-- Modify: `packages/rn-iso/src/engine/device-remote.ts`
-- Modify: `packages/rn-iso/src/__tests__/eas-simulator.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/device-remote.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/stop.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/reclaim.test.ts`
+- Modify: `packages/stim-cli/src/engine/eas-simulator.ts`
+- Modify: `packages/stim-cli/src/engine/device-remote.ts`
+- Modify: `packages/stim-cli/src/__tests__/eas-simulator.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/device-remote.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/stop.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/reclaim.test.ts`
 
 **Step 1: Write failing ownership tests**
 
-Cover an owned live session, an unowned live session, a stopped session, malformed output, and a failed lookup. Assert that only the verified `rn-iso-` session receives `simulator:stop`.
+Cover an owned live session, an unowned live session, a stopped session, malformed output, and a failed lookup. Assert that only the verified `stim-cli-` session receives `simulator:stop`.
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/eas-simulator.test.ts packages/rn-iso/src/__tests__/device-remote.test.ts packages/rn-iso/src/__tests__/stop.test.ts packages/rn-iso/src/__tests__/reclaim.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/eas-simulator.test.ts packages/stim-cli/src/__tests__/device-remote.test.ts packages/stim-cli/src/__tests__/stop.test.ts packages/stim-cli/src/__tests__/reclaim.test.ts`
 
 Expected: the unowned and failed-lookup cases currently call stop or report success.
 
 **Step 2: Add fail-closed live verification**
 
-Read the session with `simulator:get --id`. Require an `rn-iso-` name before stop. Treat a confirmed terminal session as already stopped. Keep the state record after every unverifiable result.
+Read the session with `simulator:get --id`. Require an `stim-cli-` name before stop. Treat a confirmed terminal session as already stopped. Keep the state record after every unverifiable result.
 
 **Step 3: Run focused tests and commit**
 
@@ -219,16 +219,16 @@ Run the focused command, then commit with `fix(remote): verify EAS session owner
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/engine/tunnel.ts`
-- Modify: `packages/rn-iso/src/__tests__/tunnel.test.ts`
-- Modify: `packages/rn-iso/src/commands/stop.ts`
-- Modify: `packages/rn-iso/src/reclaim.ts`
+- Modify: `packages/stim-cli/src/engine/tunnel.ts`
+- Modify: `packages/stim-cli/src/__tests__/tunnel.test.ts`
+- Modify: `packages/stim-cli/src/commands/stop.ts`
+- Modify: `packages/stim-cli/src/reclaim.ts`
 
 **Step 1: Write failing PID-reuse tests**
 
 Add cases where the PID is alive but its command does not match the recorded provider or port. Assert that no signal is sent and that the state remains. Keep owned, missing, and timeout cases.
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/tunnel.test.ts packages/rn-iso/src/__tests__/stop.test.ts packages/rn-iso/src/__tests__/reclaim.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/tunnel.test.ts packages/stim-cli/src/__tests__/stop.test.ts packages/stim-cli/src/__tests__/reclaim.test.ts`
 
 Expected: the PID-reuse test fails because `stopTunnel` signals every live recorded PID.
 
@@ -244,16 +244,16 @@ Run the focused command, then commit with `fix(tunnel): verify process identity 
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/engine/eas-simulator.ts`
-- Modify: `packages/rn-iso/src/commands/gc.ts`
-- Modify: `packages/rn-iso/src/__tests__/eas-simulator.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/gc.test.ts`
+- Modify: `packages/stim-cli/src/engine/eas-simulator.ts`
+- Modify: `packages/stim-cli/src/commands/gc.ts`
+- Modify: `packages/stim-cli/src/__tests__/eas-simulator.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/gc.test.ts`
 
 **Step 1: Write failing report and deletion tests**
 
 Test the pure comparison between listed owned sessions and recorded workspace IDs. Test dry-run output, verified orphan deletion, lookup notices, and an individual stop failure.
 
-Run: `pnpm vitest run packages/rn-iso/src/__tests__/eas-simulator.test.ts packages/rn-iso/src/__tests__/gc.test.ts`
+Run: `pnpm vitest run packages/stim-cli/src/__tests__/eas-simulator.test.ts packages/stim-cli/src/__tests__/gc.test.ts`
 
 Expected: no remote session rows or stop calls exist.
 
@@ -269,8 +269,8 @@ Run the focused command, then commit with `feat(gc): reclaim orphaned EAS sessio
 
 **Files:**
 
-- Modify: `packages/rn-iso/skill/SKILL.md`
-- Modify: `packages/rn-iso/src/commands/guide.ts`
+- Modify: `packages/stim-cli/skill/SKILL.md`
+- Modify: `packages/stim-cli/src/commands/guide.ts`
 
 **Step 1: Run a baseline skill scenario**
 
@@ -304,11 +304,11 @@ Expected: every command exits 0. Existing lint warnings are allowed only when th
 
 **Step 2: Run local Expo field proof**
 
-Start the scratch Expo app with plain `rn-iso start --json`. Verify no tunnel is requested or recorded. Stop it.
+Start the scratch Expo app with plain `stim-cli start --json`. Verify no tunnel is requested or recorded. Stop it.
 
 **Step 3: Run remote iOS field proof**
 
-Confirm EAS Simulator access. Run `rn-iso start --remote --json`, then `rn-iso ios --remote eas --json`. Verify one session, a bundle request through the public origin, and an empty `logs --errors` result. Stop the workspace and confirm no live `rn-iso-` session remains.
+Confirm EAS Simulator access. Run `stim-cli start --remote --json`, then `stim-cli ios --remote eas --json`. Verify one session, a bundle request through the public origin, and an empty `logs --errors` result. Stop the workspace and confirm no live `stim-cli-` session remains.
 
 **Step 4: Request full-diff review**
 

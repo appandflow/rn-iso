@@ -4,18 +4,18 @@ sidebar_position: 2
 description: 'Install the skill, then tell your agent what you want built.'
 ---
 
-rn-iso is a CLI **humans never run** — your coding agent does.
+stim-cli is a CLI **humans never run** — your coding agent does.
 
 ## 1. Install the agent skill
 
 ```bash
-npx skills add appandflow/rn-iso
+npx skills add appandflow/stim-cli
 ```
 
 That installs one skill into your agent's skill directory (`~/.claude/skills`,
-`~/.agents/skills`): **rn-iso** — how to drive the CLI (the lifecycle, the
+`~/.agents/skills`): **stim-cli** — how to drive the CLI (the lifecycle, the
 ownership model, the destructive-command rules). Re-run the same command after
-upgrading rn-iso to refresh it.
+upgrading stim-cli to refresh it.
 
 ## 2. Tell your agent what you want
 
@@ -26,10 +26,10 @@ Build and run the app on the iOS simulator and fix anything that breaks.
 That's the whole interface. Under the hood the agent drives:
 
 ```bash
-npx rn-iso start             # dev server on a reserved port, under a supervisor
-npx rn-iso ios               # owned simulator, cached native build, launch
-npx rn-iso logs --errors     # no output + exit 0 = nothing is broken
-npx rn-iso stop              # supervisor down, sim shut down, port freed
+npx stim-cli start             # dev server on a reserved port, under a supervisor
+npx stim-cli ios               # owned simulator, cached native build, launch
+npx stim-cli logs --errors     # no output + exit 0 = nothing is broken
+npx stim-cli stop              # supervisor down, sim shut down, port freed
 ```
 
 — its own dev server on a reserved port, its own **owned** simulator, a native
@@ -39,46 +39,46 @@ whole cycle, `--json` everywhere.
 
 Point it at a clean checkout and all of that works, caches included: the Xcode
 compilation cache, Gradle's build cache and a shared Metro transform store ride
-on the command lines rn-iso composes itself.
+on the command lines stim-cli composes itself.
 
 ## If something is blocked or slow
 
 ```bash
-npx rn-iso doctor
+npx stim-cli doctor
 ```
 
-Read-only, always exits 0, and it reports **only what rn-iso cannot handle on
+Read-only, always exits 0, and it reports **only what stim-cli cannot handle on
 its own** — a missing `expo-dev-client` (a native dependency: without it a
-reserved port cannot reach the app), ccache (the one thing that makes rn-iso
+reserved port cannot reach the app), ccache (the one thing that makes stim-cli
 skip its own compilation cache), a checkout that does not fingerprint like a
 fresh worktree of HEAD (every worktree then misses the build cache), a
 `buildCacheProvider` on a key your SDK ignores, a broken EAS session. Anything
-else it prints is a note about builds you make _outside_ rn-iso (Xcode,
+else it prints is a note about builds you make _outside_ stim-cli (Xcode,
 `npx expo run:ios`, Android Studio, CI), and is optional. A clean run means
-there is nothing rn-iso needs from your repo.
+there is nothing stim-cli needs from your repo.
 
 ## A second loop: a bug you can only see on screen
 
 The cycle above ends at "it runs". Most tickets need one more thing — looking at
-the app. rn-iso deliberately stops at the glass: it reports what built, what
+the app. stim-cli deliberately stops at the glass: it reports what built, what
 launched and what errored, and nothing about what is drawn. Pair it with a
 device tool for that half. The examples below use
 [agent-device](https://agent-device.dev), which drives the simulator from the
 same kind of small, JSON-shaped surface.
 
-The join between the two is one field. `rn-iso ios --json` reports the **owned**
+The join between the two is one field. `stim-cli ios --json` reports the **owned**
 simulator it installed onto — as `udid`, and as `deviceName`, the
-`rn-iso-<label>` name it created the device under. Pass whichever the device
+`stim-cli-<label>` name it created the device under. Pass whichever the device
 tool addresses devices by, explicitly, every time:
 
 ```bash
-device=$(npx rn-iso ios --json | jq -r .deviceName)
+device=$(npx stim-cli ios --json | jq -r .deviceName)
 agent-device open com.example.app --device "$device" --foreground
 ```
 
 Never let a device tool pick "the booted one". On a machine running three
 agents, three simulators are booted and only one is yours — that is the whole
-reason rn-iso reports the device instead of letting anything assume it.
+reason stim-cli reports the device instead of letting anything assume it.
 
 ### The loop, on a real ticket
 
@@ -92,9 +92,9 @@ None of that is visible from a log. The build succeeds, nothing throws,
 **1. Get an isolated app running.**
 
 ```bash
-cd "$(npx rn-iso worktree create history-order --carry-ignored)"
-npx rn-iso start
-device=$(npx rn-iso ios --json | jq -r .deviceName)
+cd "$(npx stim-cli worktree create history-order --carry-ignored)"
+npx stim-cli start
+device=$(npx stim-cli ios --json | jq -r .deviceName)
 ```
 
 On a second worktree of the same commit this costs a boot, not a build:
@@ -119,7 +119,7 @@ date:
 +  sections.sort((a, b) => b.data[0].startedAt.localeCompare(a.data[0].startedAt));
 ```
 
-There is no rn-iso command in this step. Nothing native changed, so nothing
+There is no stim-cli command in this step. Nothing native changed, so nothing
 rebuilds — Fast Refresh has the new code on the simulator before you have
 switched windows.
 
@@ -127,7 +127,7 @@ switched windows.
 
 ```bash
 agent-device snapshot            # headers now read newest-first
-npx rn-iso logs --errors         # empty, exit 0 — the fix broke nothing
+npx stim-cli logs --errors         # empty, exit 0 — the fix broke nothing
 ```
 
 Two different questions. The device tool answers "is the screen right now
@@ -139,8 +139,8 @@ bug at all.
 **5. Tear it down.**
 
 ```bash
-npx rn-iso stop
-npx rn-iso worktree remove
+npx stim-cli stop
+npx stim-cli worktree remove
 ```
 
 `stop` shuts the owned simulator down and frees the port, so coming back to the
@@ -151,7 +151,7 @@ and the build artifacts along with the tree.
 
 Each git worktree is its own environment — own port, own device — so two
 agents build the same app side by side without fighting. Agents create and
-tear these down themselves (`rn-iso worktree create` / `remove`); teardown
+tear these down themselves (`stim-cli worktree create` / `remove`); teardown
 reclaims the device, the port and the build artifacts with the tree.
 
 ## Where next

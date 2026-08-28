@@ -33,12 +33,13 @@ export function createHarness({ env, cliPath, label }) {
 
   const cliJson = (argv, opts = {}) => {
     const r = cli(argv, opts);
-    if (r.code !== 0) throw new Error(`rn-iso ${argv.join(' ')} failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
+    if (r.code !== 0)
+      throw new Error(`stim-cli ${argv.join(' ')} failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
     const line = r.stdout.trim().split('\n').findLast(Boolean);
     try {
       return JSON.parse(line);
     } catch {
-      throw new Error(`rn-iso ${argv.join(' ')} did not emit a JSON line on stdout:\n${r.stdout}`);
+      throw new Error(`stim-cli ${argv.join(' ')} did not emit a JSON line on stdout:\n${r.stdout}`);
     }
   };
 
@@ -54,8 +55,8 @@ export function createHarness({ env, cliPath, label }) {
 
 export function preflight(h, platform) {
   const v = h.cli(['--version'], { allowFail: true });
-  assert(v.code === 0, `rn-iso CLI does not run: ${v.stderr}`);
-  h.log(`rn-iso ${v.stdout.trim()}`);
+  assert(v.code === 0, `stim-cli CLI does not run: ${v.stderr}`);
+  h.log(`stim-cli ${v.stdout.trim()}`);
   if (platform === 'ios') {
     if (process.platform !== 'darwin') h.die('ios variant requires macOS + Xcode; this is not a macOS host.', 2);
     h.requireTool('xcrun', ['--version']);
@@ -68,13 +69,13 @@ export function preflight(h, platform) {
 
 export const FIXTURE_COMMANDS = {
   bare(appDir) {
-    if (process.env.RN_ISO_E2E_BARE_INIT) return withDir(process.env.RN_ISO_E2E_BARE_INIT, appDir);
+    if (process.env.STIM_CLI_E2E_BARE_INIT) return withDir(process.env.STIM_CLI_E2E_BARE_INIT, appDir);
     return [
       'npx',
       '--yes',
       '@react-native-community/cli@latest',
       'init',
-      'RnIsoE2E',
+      'StimCliE2E',
       '--directory',
       appDir,
       '--skip-git-init',
@@ -85,7 +86,7 @@ export const FIXTURE_COMMANDS = {
     ];
   },
   expo(appDir) {
-    if (process.env.RN_ISO_E2E_EXPO_INIT) return withDir(process.env.RN_ISO_E2E_EXPO_INIT, appDir);
+    if (process.env.STIM_CLI_E2E_EXPO_INIT) return withDir(process.env.STIM_CLI_E2E_EXPO_INIT, appDir);
     return ['npx', '--yes', 'create-expo-app@latest', appDir, '--template', 'blank', '--no-install'];
   },
 };
@@ -124,7 +125,7 @@ export function gitInitWithRemote({ appDir, workDir, framework, h }) {
   h.sh('git', ['init', '-b', 'main', appDir]);
   const g = (a) => h.sh('git', ['-C', appDir, ...a]);
   g(['config', 'user.email', 'e2e@example.com']);
-  g(['config', 'user.name', 'rn-iso native e2e']);
+  g(['config', 'user.name', 'stim-cli native e2e']);
   g(['config', 'commit.gpgsign', 'false']);
   ensureGitignore({ appDir, framework });
   g(['add', '-A']);
@@ -148,7 +149,7 @@ export function ensureGitignore({ appDir, framework }) {
         .includes(n.replace(/\/$/, '')) && !text.includes(n),
   );
   if (missing.length) {
-    const add = `\n# rn-iso native e2e\n${missing.join('\n')}\n`;
+    const add = `\n# stim-cli native e2e\n${missing.join('\n')}\n`;
     spawnSync('sh', ['-c', `printf '%s' ${quote(add)} >> ${quote(gi)}`], { stdio: 'inherit' });
   }
 }
@@ -158,15 +159,15 @@ export function verifyCleanup({ h, platform, appDir, created }) {
 
   if (platform === 'ios') {
     const out = h.sh('xcrun', ['simctl', 'list', 'devices']).stdout;
-    assert(!/rn-iso-/.test(out), 'an rn-iso-* simulator was left behind');
+    assert(!/stim-cli-/.test(out), 'an stim-cli-* simulator was left behind');
   } else {
     const out = h.sh('emulator', ['-list-avds'], { allowFail: true }).stdout;
-    assert(!/rn-iso-/.test(out), 'an rn-iso-* AVD was left behind');
+    assert(!/stim-cli-/.test(out), 'an stim-cli-* AVD was left behind');
   }
-  h.log('(1) no rn-iso-* devices remain');
+  h.log('(1) no stim-cli-* devices remain');
 
   const ps = h.sh('ps', ['ax'], { allowFail: true }).stdout;
-  assert(!/rn-iso.*supervisor|supervisor\/run\.js/.test(ps), 'a supervisor process is still running');
+  assert(!/stim-cli.*supervisor|supervisor\/run\.js/.test(ps), 'a supervisor process is still running');
   h.log('(2) no supervisor/collector processes');
 
   const status = h.cli(['status'], { allowFail: true }).stdout;
@@ -203,7 +204,7 @@ export function workspaceLogsDir(cwd) {
       .toLowerCase()
       .slice(0, 48) || 'workspace';
   const id = createHash('sha256').update(canonical).digest('hex').slice(0, 16);
-  const home = process.env.RN_ISO_HOME || join(process.env.HOME || '', '.rn-iso');
+  const home = process.env.STIM_CLI_HOME || join(process.env.HOME || '', '.stim-cli');
   return join(home, 'workspaces', `${slug}--${id}`, 'logs');
 }
 

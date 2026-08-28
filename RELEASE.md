@@ -1,16 +1,16 @@
 # Release process
 
-How to cut a new version of `rn-iso` to npm and GitHub. Keep this in sync with
+How to cut a new version of `stim-cli` to npm and GitHub. Keep this in sync with
 what we actually do — when something changes, update both this file and the
 real workflow at the same time.
 
-## 0. The three packages
+## 0. The four packages
 
 ```
-packages/core                @rn-iso/core                shared primitives (cache roots, cache key, registration)
-packages/rn-iso              rn-iso                      the CLI
-packages/expo-build-cache    @rn-iso/expo-build-cache    Expo build cache provider
-packages/metro               @rn-iso/metro               shared Metro transform cache + log reporter
+packages/core                @stim-cli/core                shared primitives (cache roots, cache key, registration)
+packages/stim-cli              stim-cli                      the CLI
+packages/expo-build-cache    @stim-cli/expo-build-cache    Expo build cache provider
+packages/metro               @stim-cli/metro               shared Metro transform cache + log reporter
 ```
 
 **Every package in this repo carries the same version and is published
@@ -24,7 +24,7 @@ a compatibility matrix nobody maintains.
 Run every command from the repo root unless a step says otherwise. Each package
 has its own README, and each README ships in its own tarball -- npm reads a
 package's README from that package's directory and nowhere else, which is why
-`packages/rn-iso/README.md` exists rather than only the root one. The root
+`packages/stim-cli/README.md` exists rather than only the root one. The root
 `README.md` is a landing page pointing at the packages; it does not need to be
 copied anywhere.
 
@@ -37,7 +37,7 @@ since the matching tag:
 
 ```bash
 git fetch --tags
-last=$(npm view rn-iso version)
+last=$(npm view stim-cli version)
 echo "Last published: v$last"
 git log "v$last..HEAD" --oneline
 ```
@@ -62,8 +62,8 @@ From `main`, fully up to date with `origin/main`:
 
 ```bash
 pnpm test                                          # all tests pass
-node packages/rn-iso/bin/cli.js --help            # CLI loads cleanly
-node packages/rn-iso/bin/cli.js --version         # matches package.json (0.2.0 shipped with 0.1.0 once)
+node packages/stim-cli/bin/cli.js --help            # CLI loads cleanly
+node packages/stim-cli/bin/cli.js --version         # matches package.json (0.2.0 shipped with 0.1.0 once)
 git status --short                                # working tree clean
 ```
 
@@ -71,7 +71,7 @@ If `git status` isn't clean, commit / discard before tagging.
 
 ## 3. Cut the release
 
-1. **Bump the version in lockstep.** All three `package.json` files carry the
+1. **Bump the version in lockstep.** All four `package.json` files carry the
    same number, and `bin/cli.js` reads it from its own `package.json`, so no
    source file needs editing:
 
@@ -80,34 +80,33 @@ If `git status` isn't clean, commit / discard before tagging.
    pnpm install --lockfile-only
    ```
 
-   The filtered `exec` bumps all three; `--no-git-tag-version` keeps the commit and
+   The filtered `exec` bumps all four; `--no-git-tag-version` keeps the commit and
    the tag as their own later steps, where the ordering is deliberate. The
    `pnpm install` refreshes `pnpm-lock.yaml`, which duplicates every
    workspace's version -- a stale lockfile breaks nothing functionally, but is
    confusing to publish alongside a bumped manifest.
 
-   Then confirm all three moved, and that the peer ranges in the two cache
-   packages still name a version of `rn-iso` that exists:
+   Then confirm all four moved, and that the dependency ranges between the
+   packages still name versions that exist:
 
    ```bash
    grep -H '"version"' packages/*/package.json
-   grep -H '"rn-iso"' packages/expo-build-cache/package.json packages/metro/package.json
+   grep -H '"@stim-cli/' packages/stim-cli/package.json packages/expo-build-cache/package.json packages/metro/package.json
    ```
 
-   The cache packages declare `rn-iso` as an OPTIONAL peer, so a range naming
-   an unpublished version does not break an install -- it only misleads. Widen
-   it (`>=X.Y.Z`) when a release adds something the caches depend on, such as a
-   new field in the cache manifest.
+   Internal workspace dependencies are published as ordinary semver ranges, so
+   every referenced `@stim-cli/*` version must exist in the registry by the time
+   the release finishes.
 
 2. **Refresh the skill's version stamp.** The last line of
-   `packages/rn-iso/skill/SKILL.md` names the version it was synced with;
-   update it to X.Y.Z (agents compare it against `npx rn-iso --version` to
+   `packages/stim-cli/skill/SKILL.md` names the version it was synced with;
+   update it to X.Y.Z (agents compare it against `npx stim-cli --version` to
    detect a stale skill copy).
 3. **Verify each npm tarball** ships only what should ship, and that each one
    carries its own README (a package with no `README.md` in its own directory
    publishes with "No README data found" on npm):
    ```bash
-   for p in core rn-iso expo-build-cache metro; do
+   for p in core stim-cli expo-build-cache metro; do
      echo "== $p"; (cd "packages/$p" && npm pack --dry-run 2>&1 | grep -E 'README|Tarball|total files')
    done
    ```
@@ -122,7 +121,7 @@ If `git status` isn't clean, commit / discard before tagging.
    git push --tags
    ```
    One tag for the repo, not one per package: the packages share a version, so
-   a per-package tag would only say the same thing three times.
+   a per-package tag would only say the same thing four times.
 6. **Write the release notes in `docs/releases/X.Y.Z.md`** -- the single
    source of truth: the website's changelog page is GENERATED from these files
    at site build (`website/scripts/gen-changelog.mjs`, triggered by the Docs
@@ -132,7 +131,7 @@ If `git status` isn't clean, commit / discard before tagging.
    tail -n +2 docs/releases/X.Y.Z.md > /tmp/notes.md
    gh release create vX.Y.Z --title "vX.Y.Z" --notes-file /tmp/notes.md
    ```
-   Sections: `New`, `Removed (breaking)`, `Fixes`, `Docs`, `Migration notes` (if any). Skip empty sections. Link prior commits with `[<short-sha>](https://github.com/janicduplessis/rn-iso/commit/<sha>)`. Say which package a line is about when it is not the CLI.
+   Sections: `New`, `Removed (breaking)`, `Fixes`, `Docs`, `Migration notes` (if any). Skip empty sections. Link prior commits with `[<short-sha>](https://github.com/appandflow/stim-cli/commit/<sha>)`. Say which package a line is about when it is not the CLI.
 7. **Publish to npm.** Pushing the tag (previous step) triggers the
    `Release` workflow, which publishes all FOUR packages via OIDC trusted
    publishing (no token, `--provenance`) once you APPROVE the run in the
@@ -150,37 +149,38 @@ If `git status` isn't clean, commit / discard before tagging.
    package.json must carry a `repository` field matching this repo (a
    provenance publish is REJECTED without it, E422), and a NEW package must
    be published once by hand first -- npm's trusted-publisher settings live
-   on the package page, which does not exist until then. Manual fallback,
-   `@rn-iso/core` first: The two cache packages name it as a peer
-   and their READMEs link to it, so a registry that has a cache package but not
-   the CLI version it points at is the wrong order to be interrupted in:
+   on the package page, which does not exist until then. For the first
+   `stim-cli` release, create the `@stim-cli` npm organization, publish all four
+   packages manually in dependency order, then configure each package's trusted
+   publisher for `appandflow/stim-cli`, workflow `release.yml`, environment
+   `release`. The same commands are the manual fallback for later releases:
 
    ```bash
    npm whoami                                          # confirm login; if 401, `npm login` first
-   pnpm --filter @rn-iso/core publish --otp <code>       # first: the others depend on it
-   pnpm --filter rn-iso publish --otp <code>
-   pnpm --filter @rn-iso/expo-build-cache publish --otp <code>
-   pnpm --filter @rn-iso/metro publish --otp <code>
+   pnpm --filter @stim-cli/core publish --access public --otp <code>
+   pnpm --filter @stim-cli/metro publish --access public --otp <code>
+   pnpm --filter @stim-cli/expo-build-cache publish --access public --otp <code>
+   pnpm --filter stim-cli publish --access public --otp <code>
    ```
 
    2FA is on for this account, so each `npm publish` will prompt for an OTP.
-   Both scoped packages are already published as public, so they need no
-   `--access` flag; a brand-new scoped package would need `--access public` on
-   its first publish. If publishing from CI later, switch to an automation token.
+   Keeping `--access public` on every scoped publish is harmless and makes the
+   first release explicit. OIDC trusted publishing replaces tokens and OTPs in
+   CI after the package-level trusted publishers are configured.
 
    If one publish fails after another succeeded, do NOT bump the version to
    retry — re-run only the failed publish at the same version.
 
 8. **Smoke-test the published versions** from a scratch directory:
    ```bash
-   cd /tmp && npx rn-iso@latest --version
-   npm view rn-iso readme | head -c 200        # NOT "No README data found!"
-   npm view @rn-iso/expo-build-cache version   # same number as rn-iso
-   npm view @rn-iso/metro version              # same number as rn-iso
+   cd /tmp && npx stim-cli@latest --version
+   npm view stim-cli readme | head -c 200        # NOT "No README data found!"
+   npm view @stim-cli/expo-build-cache version   # same number as stim-cli
+   npm view @stim-cli/metro version              # same number as stim-cli
    ```
-   `npm view rn-iso` reported "No README data found" for every release up to
+   `npm view stim-cli` reported "No README data found" for every release up to
    0.14.0, because the only README lived at the repo root while the package
-   publishes from `packages/rn-iso`. Check it, rather than assuming a README in
+   publishes from `packages/stim-cli`. Check it, rather than assuming a README in
    the repo means a README on npm.
 
 ## 4. After the release

@@ -14,13 +14,13 @@ public entry points and output order.
 
 **Files:**
 
-- Test: `packages/rn-iso/src/__tests__/worktree-remove.test.ts`
-- Test: `packages/rn-iso/src/__tests__/ios-command.test.ts`
-- Test: `packages/rn-iso/src/__tests__/android-command.test.ts`
+- Test: `packages/stim-cli/src/__tests__/worktree-remove.test.ts`
+- Test: `packages/stim-cli/src/__tests__/ios-command.test.ts`
+- Test: `packages/stim-cli/src/__tests__/android-command.test.ts`
 
 **Step 1:** Run the three suites.
 
-Run: `npx vitest run packages/rn-iso/src/__tests__/worktree-remove.test.ts packages/rn-iso/src/__tests__/ios-command.test.ts packages/rn-iso/src/__tests__/android-command.test.ts`
+Run: `npx vitest run packages/stim-cli/src/__tests__/worktree-remove.test.ts packages/stim-cli/src/__tests__/ios-command.test.ts packages/stim-cli/src/__tests__/android-command.test.ts`
 
 Expected: all tests pass.
 
@@ -28,8 +28,8 @@ Expected: all tests pass.
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/commands/worktree.ts`
-- Test: `packages/rn-iso/src/__tests__/worktree-remove.test.ts`
+- Modify: `packages/stim-cli/src/commands/worktree.ts`
+- Test: `packages/stim-cli/src/__tests__/worktree-remove.test.ts`
 
 **Step 1:** Extract removal path resolution, blocker inspection and output,
 pod-churn restoration, and cleanup result output.
@@ -45,8 +45,8 @@ Expected: all tests pass with unchanged output assertions.
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/commands/ios.ts`
-- Test: `packages/rn-iso/src/__tests__/ios-command.test.ts`
+- Modify: `packages/stim-cli/src/commands/ios.ts`
+- Test: `packages/stim-cli/src/__tests__/ios-command.test.ts`
 
 **Step 1:** Extract deployment, upload completion, launch verification, and
 final output helpers.
@@ -61,8 +61,8 @@ Expected: all tests pass with unchanged facts and output.
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/commands/android.ts`
-- Test: `packages/rn-iso/src/__tests__/android-command.test.ts`
+- Modify: `packages/stim-cli/src/commands/android.ts`
+- Test: `packages/stim-cli/src/__tests__/android-command.test.ts`
 
 **Step 1:** Extract deployment, upload completion, launch verification, and
 final output helpers.

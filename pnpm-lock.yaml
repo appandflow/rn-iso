@@ -34,28 +34,28 @@ importers:
 
   packages/expo-build-cache:
     dependencies:
-      '@rn-iso/core':
+      '@stim-cli/core':
         specifier: ^1.5.0
         version: link:../core
 
   packages/metro:
     dependencies:
-      '@rn-iso/core':
+      '@stim-cli/core':
         specifier: ^1.5.0
         version: link:../core
       metro-cache:
         specifier: '*'
         version: 0.87.0
 
-  packages/rn-iso:
+  packages/stim-cli:
     dependencies:
       '@expo/fingerprint':
         specifier: ^0.20.10
         version: 0.20.10
-      '@rn-iso/core':
+      '@stim-cli/core':
         specifier: ^1.5.0
         version: link:../core
-      '@rn-iso/metro':
+      '@stim-cli/metro':
         specifier: ^1.2.0
         version: link:../metro
       chalk:
@@ -65,7 +65,7 @@ importers:
         specifier: ^13.1.0
         version: 13.1.0
     devDependencies:
-      '@rn-iso/expo-build-cache':
+      '@stim-cli/expo-build-cache':
         specifier: '*'
         version: link:../expo-build-cache
 

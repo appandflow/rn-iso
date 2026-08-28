@@ -26,7 +26,7 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
-const CLI = join(REPO, 'packages', 'rn-iso', 'dist', 'cli.js');
+const CLI = join(REPO, 'packages', 'stim-cli', 'dist', 'cli.js');
 
 const args = parseArgs(process.argv.slice(2));
 const FRAMEWORK = args.framework;
@@ -35,20 +35,22 @@ const VARIANT = `${FRAMEWORK}-${PLATFORM}`;
 const EXPECTED_MODE = FRAMEWORK === 'expo' ? 'expo-child' : 'bare-inproc';
 const ARTIFACT_EXT = PLATFORM === 'ios' ? '.app' : '.apk';
 
-const HOME_DIR = args.dryRun ? '<dry-run>' : args.home || mkdtempSync(join(tmpdir(), `rn-iso-cache-${VARIANT}-home-`));
-const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `rn-iso-cache-${VARIANT}-`));
+const HOME_DIR = args.dryRun
+  ? '<dry-run>'
+  : args.home || mkdtempSync(join(tmpdir(), `stim-cli-cache-${VARIANT}-home-`));
+const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `stim-cli-cache-${VARIANT}-`));
 
 const BUILD_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(HOME_DIR, 'build-cache');
 const METRO_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(HOME_DIR, 'metro-cache');
 const CAS_DIR = join(HOME_DIR, 'compilation-cache');
 const ENV = {
   ...process.env,
-  RN_ISO_HOME: HOME_DIR,
-  RN_ISO_BUILD_CACHE: BUILD_CACHE_ROOT,
-  RN_ISO_METRO_CACHE: METRO_CACHE_ROOT,
+  STIM_CLI_HOME: HOME_DIR,
+  STIM_CLI_BUILD_CACHE: BUILD_CACHE_ROOT,
+  STIM_CLI_METRO_CACHE: METRO_CACHE_ROOT,
   CI: '1',
 };
-process.env.RN_ISO_HOME = HOME_DIR;
+process.env.STIM_CLI_HOME = HOME_DIR;
 const GRADLE_CACHE_DIR = join(process.env.GRADLE_USER_HOME || join(homedir(), '.gradle'), 'caches', 'build-cache-1');
 const RACE_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(WORK_DIR, 'race-build-cache');
 
@@ -58,7 +60,7 @@ const { cli, cliJson, sh, log, banner, die } = h;
 const created = [];
 
 const CHECK_TITLES = {
-  'zero-config': 'the repo is untouched by rn-iso runtime state',
+  'zero-config': 'the repo is untouched by stim-cli runtime state',
   'metro-store': 'the shared Metro transform store is engaged, stores, and is reused',
   'xcode-cas': 'Xcode compilation caching is on the real xcodebuild argv, stores, and is reused',
   'gradle-cache': 'the Gradle build cache is on the real gradlew argv, stores, and is reused',
@@ -171,8 +173,8 @@ async function main() {
     if (FRAMEWORK === 'expo' && (expoSdk === null || expoSdk < 54)) {
       return c.skip(
         expoSdk === null
-          ? 'the Expo SDK could not be determined; rn-iso intentionally leaves its Metro cache unchanged'
-          : `Expo SDK ${expoSdk} predates the config override added in SDK 54; rn-iso intentionally leaves its Metro cache unchanged`,
+          ? 'the Expo SDK could not be determined; stim-cli intentionally leaves its Metro cache unchanged'
+          : `Expo SDK ${expoSdk} predates the config override added in SDK 54; stim-cli intentionally leaves its Metro cache unchanged`,
       );
     }
     const rec1 = metroStoreRecords(wt1);
@@ -257,7 +259,7 @@ async function main() {
         const major = /^Xcode\s+(\d+)/.exec(xc);
         if (!major || Number(major[1]) < 26) {
           return c.skip(
-            `compilation caching needs Xcode 26+; this runner reports ${JSON.stringify(xc)}, and rn-iso adds no settings below that floor`,
+            `compilation caching needs Xcode 26+; this runner reports ${JSON.stringify(xc)}, and stim-cli adds no settings below that floor`,
           );
         }
         return c.fail(`the xcodebuild argv is missing ${missing.length} setting(s): ${missing.join(' ')}`);
@@ -288,7 +290,7 @@ async function main() {
         /\s--build-cache(\s|$)/.test(argv),
         `--build-cache is NOT on the gradlew argv, so gradle ran with its task-output cache off: ${argv}`,
       );
-      c.ev('--build-cache present on the argv rn-iso composed');
+      c.ev('--build-cache present on the argv stim-cli composed');
 
       const g = growth('Gradle build cache', gradleBefore1, gradleAfter1);
       c.ev(describeGrowth(g));
@@ -425,8 +427,8 @@ async function main() {
     startAndAssertMode(wt4);
     const casBeforeRace = dirStats(CAS_DIR);
     banner('racing two workspaces at ONE uncached fingerprint');
-    log(`both address an empty build cache at ${RACE_CACHE_ROOT}; the build LOCK is shared through RN_ISO_HOME`);
-    const raceEnv = { ...ENV, RN_ISO_BUILD_CACHE: RACE_CACHE_ROOT };
+    log(`both address an empty build cache at ${RACE_CACHE_ROOT}; the build LOCK is shared through STIM_CLI_HOME`);
+    const raceEnv = { ...ENV, STIM_CLI_BUILD_CACHE: RACE_CACHE_ROOT };
     const [r3, r4] = await Promise.all([
       cliAsync([PLATFORM, '--json'], { cwd: wt3, env: raceEnv }),
       cliAsync([PLATFORM, '--json'], { cwd: wt4, env: raceEnv }),
@@ -541,13 +543,13 @@ async function main() {
           for (const dl of diff.split('\n').filter((l) => /^[+-][^+-]/.test(l))) c.ev(`    ${dl}`);
         };
         if (CRITICAL_PATHS.some((re) => re.test(path))) {
-          c.ev(`  CRITICAL: rn-iso modified ${path}`);
+          c.ev(`  CRITICAL: stim-cli modified ${path}`);
           showDiff();
           critical += 1;
         } else if (POD_CHURN_PATHS.some((re) => re.test(path))) {
-          c.ev(`  ${path} -- CocoaPods' own install output, not an rn-iso edit`);
+          c.ev(`  ${path} -- CocoaPods' own install output, not an stim-cli edit`);
         } else if (FRAMEWORK === 'expo' && PREBUILD_CHURN_PATHS.some((re) => re.test(path))) {
-          c.ev(`  ${path} -- \`expo prebuild\` output, not an rn-iso edit; the lines it wrote:`);
+          c.ev(`  ${path} -- \`expo prebuild\` output, not an stim-cli edit; the lines it wrote:`);
           showDiff();
         } else {
           c.ev(`  UNEXPLAINED: ${path}`);
@@ -558,10 +560,10 @@ async function main() {
     }
     if (critical > 0) {
       return c.fail(
-        `${critical} CRITICAL edit(s): rn-iso supplies every cache on its own command line and must touch none of metro.config.js / Podfile / gradle.properties`,
+        `${critical} CRITICAL edit(s): stim-cli supplies every cache on its own command line and must touch none of metro.config.js / Podfile / gradle.properties`,
       );
     }
-    if (unexplained > 0) return c.fail(`${unexplained} change(s) rn-iso cannot account for`);
+    if (unexplained > 0) return c.fail(`${unexplained} change(s) stim-cli cannot account for`);
 
     const after = snapshotRepo(appDir);
     c.ev(
@@ -604,7 +606,7 @@ function startAndAssertMode(cwd) {
   if (r.code !== 0) {
     const supLog = join(workspaceLogsDir(cwd), 'supervisor.log');
     if (existsSync(supLog)) log(`--- supervisor.log (tail) ---\n${lastLines(readFileSync(supLog, 'utf-8'), 80)}`);
-    die(`rn-iso start failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
+    die(`stim-cli start failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
   }
   const facts = JSON.parse(r.stdout.trim().split('\n').findLast(Boolean));
   assert(
@@ -877,16 +879,16 @@ function parseArgs(argv) {
 
 function plan() {
   log(`framework=${FRAMEWORK} platform=${PLATFORM} expectedMode=${EXPECTED_MODE} artifact=*${ARTIFACT_EXT}`);
-  log(`RN_ISO_HOME=${HOME_DIR}`);
+  log(`STIM_CLI_HOME=${HOME_DIR}`);
   log(`work dir=${WORK_DIR}`);
-  log(`build cache=${BUILD_CACHE_ROOT} (forced; any inherited RN_ISO_BUILD_CACHE is ignored)`);
-  log(`metro cache=${METRO_CACHE_ROOT} (forced; any inherited RN_ISO_METRO_CACHE is ignored)`);
+  log(`build cache=${BUILD_CACHE_ROOT} (forced; any inherited STIM_CLI_BUILD_CACHE is ignored)`);
+  log(`metro cache=${METRO_CACHE_ROOT} (forced; any inherited STIM_CLI_METRO_CACHE is ignored)`);
   log(PLATFORM === 'ios' ? `xcode CAS=${CAS_DIR}` : `gradle build cache=${GRADLE_CACHE_DIR}`);
   log(`race build cache=${RACE_CACHE_ROOT}`);
   log(
     args.appDir
       ? `using existing app: ${resolve(args.appDir)}`
-      : `fixture: ${FIXTURE_COMMANDS[FRAMEWORK]('<appDir>').map(quote).join(' ')} (runtime state stays under RN_ISO_HOME)`,
+      : `fixture: ${FIXTURE_COMMANDS[FRAMEWORK]('<appDir>').map(quote).join(' ')} (runtime state stays under STIM_CLI_HOME)`,
   );
   log(`checks: ${Object.keys(CHECK_TITLES).join(', ')}`);
 }

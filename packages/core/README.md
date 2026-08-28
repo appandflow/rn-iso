@@ -1,11 +1,11 @@
-# @rn-iso/core
+# @stim-cli/core
 
-The primitives [`rn-iso`](https://www.npmjs.com/package/rn-iso),
-[`@rn-iso/metro`](https://www.npmjs.com/package/@rn-iso/metro) and
-[`@rn-iso/expo-build-cache`](https://www.npmjs.com/package/@rn-iso/expo-build-cache)
-must agree on, implemented once: where the rn-iso config dir and the two
+The primitives [`stim-cli`](https://www.npmjs.com/package/stim-cli),
+[`@stim-cli/metro`](https://www.npmjs.com/package/@stim-cli/metro) and
+[`@stim-cli/expo-build-cache`](https://www.npmjs.com/package/@stim-cli/expo-build-cache)
+must agree on, implemented once: where the stim-cli config dir and the two
 shared caches live (env override > machine config > default), how a build
-cache key is derived, and how a cache registers itself for `rn-iso gc`.
+cache key is derived, and how a cache registers itself for `stim-cli gc`.
 
 This is an internal dependency of those packages, not a user-facing API --
 install one of them instead. It is deliberately CJS with no dependencies, so

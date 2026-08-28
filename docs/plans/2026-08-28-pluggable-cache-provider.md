@@ -4,7 +4,7 @@
 
 **Goal:** Add one project-selected cache provider for Metro transforms and native build artifacts while preserving the local filesystem as tier one.
 
-**Architecture:** A new `@rn-iso/cache` package owns the public capability contract, provider loading, bounded calls, and tier helpers. `@rn-iso/metro` adapts the Metro capability, while the rn-iso CLI adapts the build capability and keeps Expo `buildCacheProvider` as a later independent tier.
+**Architecture:** A new `@stim-cli/cache` package owns the public capability contract, provider loading, bounded calls, and tier helpers. `@stim-cli/metro` adapts the Metro capability, while the stim-cli CLI adapts the build capability and keeps Expo `buildCacheProvider` as a later independent tier.
 
 **Tech Stack:** TypeScript, Node.js 22, Metro `CacheStore`, Commander, Vitest, Node test runner
 
@@ -66,7 +66,7 @@ Run:
 npx vitest run packages/cache/__tests__/provider.test.ts
 ```
 
-Expected: FAIL because `@rn-iso/cache` and `loadCacheProvider` do not exist.
+Expected: FAIL because `@stim-cli/cache` and `loadCacheProvider` do not exist.
 
 **Step 3: Add the workspace package**
 
@@ -74,9 +74,9 @@ Use this package shape:
 
 ```json
 {
-  "name": "@rn-iso/cache",
+  "name": "@stim-cli/cache",
   "version": "1.2.0",
-  "description": "Cache provider contract and tier coordination for rn-iso",
+  "description": "Cache provider contract and tier coordination for stim-cli",
   "license": "MIT",
   "files": ["dist", "README.md", "LICENSE"],
   "main": "dist/index.js",
@@ -197,10 +197,10 @@ git commit -m "feat(cache): add provider contract"
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/settings.ts`
-- Modify: `packages/rn-iso/src/commands/start.ts:214-300`
-- Modify: `packages/rn-iso/src/__tests__/settings.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/start.test.ts`
+- Modify: `packages/stim-cli/src/settings.ts`
+- Modify: `packages/stim-cli/src/commands/start.ts:214-300`
+- Modify: `packages/stim-cli/src/__tests__/settings.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/start.test.ts`
 - Modify: `packages/cache/index.ts`
 - Modify: `packages/cache/__tests__/provider.test.ts`
 
@@ -213,7 +213,7 @@ Add tests that prove:
 - Repository settings override committed settings.
 - Provider options use the current nested merge rules.
 - The returned `baseDir` belongs to the layer that supplied `cache.provider`.
-- A relative committed provider resolves from the directory containing `.rn-iso.json`.
+- A relative committed provider resolves from the directory containing `.stim-cli.json`.
 
 Use this target helper:
 
@@ -240,7 +240,7 @@ Add `start` tests that assert the detached supervisor receives the encoded provi
 Run:
 
 ```bash
-npx vitest run packages/rn-iso/src/__tests__/settings.test.ts packages/rn-iso/src/__tests__/start.test.ts packages/cache/__tests__/provider.test.ts
+npx vitest run packages/stim-cli/src/__tests__/settings.test.ts packages/stim-cli/src/__tests__/start.test.ts packages/cache/__tests__/provider.test.ts
 ```
 
 Expected: FAIL because the cache settings and environment helpers do not exist.
@@ -253,10 +253,10 @@ Implement `resolveCacheProviderConfig()` beside `resolveSettings()`. Inspect the
 
 **Step 5: Implement the supervisor environment handoff**
 
-In `@rn-iso/cache`, export a private-looking but public transport constant and helpers:
+In `@stim-cli/cache`, export a private-looking but public transport constant and helpers:
 
 ```ts
-export const CACHE_PROVIDER_ENV = 'RN_ISO_CACHE_PROVIDER_CONFIG';
+export const CACHE_PROVIDER_ENV = 'STIM_CLI_CACHE_PROVIDER_CONFIG';
 export function cacheProviderEnv(config: CacheProviderConfig): string;
 export function cacheProviderConfigFromEnv(env?: NodeJS.ProcessEnv): CacheProviderConfig | null;
 ```
@@ -280,7 +280,7 @@ Run the command from Step 3. Expected: all tests pass.
 **Step 7: Commit**
 
 ```bash
-git add packages/cache packages/rn-iso/src/settings.ts packages/rn-iso/src/commands/start.ts packages/rn-iso/src/__tests__/settings.test.ts packages/rn-iso/src/__tests__/start.test.ts
+git add packages/cache packages/stim-cli/src/settings.ts packages/stim-cli/src/commands/start.ts packages/stim-cli/src/__tests__/settings.test.ts packages/stim-cli/src/__tests__/start.test.ts
 git commit -m "feat(cache): resolve project providers"
 ```
 
@@ -294,7 +294,7 @@ git commit -m "feat(cache): resolve project providers"
 - Modify: `packages/cache/tsdown.config.ts`
 - Modify: `packages/metro/index.ts:32-166`
 - Modify: `packages/metro/package.json`
-- Modify: `packages/rn-iso/src/__tests__/cache-packages.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/cache-packages.test.ts`
 - Modify: `packages/metro/README.md`
 
 **Step 1: Write failing tier tests**
@@ -329,7 +329,7 @@ Use injected limits in saturation tests so the test does not allocate 32 MB.
 Run:
 
 ```bash
-npx vitest run packages/cache/__tests__/metro.test.ts packages/rn-iso/src/__tests__/cache-packages.test.ts
+npx vitest run packages/cache/__tests__/metro.test.ts packages/stim-cli/src/__tests__/cache-packages.test.ts
 ```
 
 Expected: FAIL because `createTieredMetroStore` does not exist.
@@ -374,14 +374,14 @@ Implement these exact rules:
 
 Export a `flush()` method only on the richer return type for tests and bounded supervisor shutdown. Metro ignores this extra method.
 
-**Step 5: Wire `@rn-iso/metro`**
+**Step 5: Wire `@stim-cli/metro`**
 
-Add `@rn-iso/cache` as a workspace dependency.
+Add `@stim-cli/cache` as a workspace dependency.
 
 Keep `sharedCacheStores(name, options)` synchronous. Construct the existing `FileStore` first. Read provider configuration in this order:
 
-1. `RN_ISO_CACHE_PROVIDER_CONFIG` from the supervisor.
-2. The nearest committed `.rn-iso.json` when Metro runs outside rn-iso.
+1. `STIM_CLI_CACHE_PROVIDER_CONFIG` from the supervisor.
+2. The nearest committed `.stim-cli.json` when Metro runs outside stim-cli.
 3. No second tier.
 
 Pass a lazy provider loader to `createTieredMetroStore()`. Return one composite store in the array. Preserve `cacheRoot(name)` and cache registration unchanged.
@@ -393,7 +393,7 @@ Keep the existing `FileStore` injection option. Add loader and warning injection
 Run:
 
 ```bash
-npx vitest run packages/cache/__tests__/metro.test.ts packages/rn-iso/src/__tests__/cache-packages.test.ts
+npx vitest run packages/cache/__tests__/metro.test.ts packages/stim-cli/src/__tests__/cache-packages.test.ts
 npm run typecheck
 ```
 
@@ -402,7 +402,7 @@ Expected: all tests pass. The existing path-equality tests still pass.
 **Step 7: Commit**
 
 ```bash
-git add packages/cache packages/metro packages/rn-iso/src/__tests__/cache-packages.test.ts package-lock.json
+git add packages/cache packages/metro packages/stim-cli/src/__tests__/cache-packages.test.ts package-lock.json
 git commit -m "feat(metro): add provider cache tier"
 ```
 
@@ -414,9 +414,9 @@ git commit -m "feat(metro): add provider cache tier"
 - Create: `packages/cache/__tests__/builds.test.ts`
 - Modify: `packages/cache/index.ts`
 - Modify: `packages/cache/tsdown.config.ts`
-- Modify: `packages/rn-iso/src/build-cache.ts:198-260`
-- Modify: `packages/rn-iso/src/__tests__/build-cache.test.ts`
-- Modify: `packages/rn-iso/package.json`
+- Modify: `packages/stim-cli/src/build-cache.ts:198-260`
+- Modify: `packages/stim-cli/src/__tests__/build-cache.test.ts`
+- Modify: `packages/stim-cli/package.json`
 
 **Step 1: Write failing build-tier tests**
 
@@ -443,7 +443,7 @@ BUILD_UPLOAD_TIMEOUT_MS = 60_000;
 Run:
 
 ```bash
-npx vitest run packages/cache/__tests__/builds.test.ts packages/rn-iso/src/__tests__/build-cache.test.ts
+npx vitest run packages/cache/__tests__/builds.test.ts packages/stim-cli/src/__tests__/build-cache.test.ts
 ```
 
 Expected: FAIL because the build coordinator and filesystem capability do not exist.
@@ -486,7 +486,7 @@ Run the command from Step 2 and `npm run typecheck`. Expected: all checks pass.
 **Step 6: Commit**
 
 ```bash
-git add packages/cache packages/rn-iso/src/build-cache.ts packages/rn-iso/src/__tests__/build-cache.test.ts packages/rn-iso/package.json package-lock.json
+git add packages/cache packages/stim-cli/src/build-cache.ts packages/stim-cli/src/__tests__/build-cache.test.ts packages/stim-cli/package.json package-lock.json
 git commit -m "feat(cache): coordinate build cache tiers"
 ```
 
@@ -494,9 +494,9 @@ git commit -m "feat(cache): coordinate build cache tiers"
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/commands/ios.ts:929-1174`
-- Modify: `packages/rn-iso/src/commands/ios.ts:1360-1425`
-- Modify: `packages/rn-iso/src/__tests__/ios-command.test.ts`
+- Modify: `packages/stim-cli/src/commands/ios.ts:929-1174`
+- Modify: `packages/stim-cli/src/commands/ios.ts:1360-1425`
+- Modify: `packages/stim-cli/src/__tests__/ios-command.test.ts`
 
 **Step 1: Write failing iOS command tests**
 
@@ -519,7 +519,7 @@ Add tests that prove:
 Run:
 
 ```bash
-npx vitest run packages/rn-iso/src/__tests__/ios-command.test.ts
+npx vitest run packages/stim-cli/src/__tests__/ios-command.test.ts
 ```
 
 Expected: the new-provider tests fail because iOS only knows the local and Expo tiers.
@@ -561,7 +561,7 @@ Run the command from Step 2. Expected: all iOS command tests pass.
 **Step 7: Commit**
 
 ```bash
-git add packages/rn-iso/src/commands/ios.ts packages/rn-iso/src/__tests__/ios-command.test.ts
+git add packages/stim-cli/src/commands/ios.ts packages/stim-cli/src/__tests__/ios-command.test.ts
 git commit -m "feat(ios): use project cache provider"
 ```
 
@@ -569,9 +569,9 @@ git commit -m "feat(ios): use project cache provider"
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/commands/android.ts:853-1080`
-- Modify: `packages/rn-iso/src/commands/android.ts` build-store and completion sections
-- Modify: `packages/rn-iso/src/__tests__/android-command.test.ts`
+- Modify: `packages/stim-cli/src/commands/android.ts:853-1080`
+- Modify: `packages/stim-cli/src/commands/android.ts` build-store and completion sections
+- Modify: `packages/stim-cli/src/__tests__/android-command.test.ts`
 
 **Step 1: Write failing Android command tests**
 
@@ -588,7 +588,7 @@ Also prove that a bare React Native Android app uses the new provider without re
 Run:
 
 ```bash
-npx vitest run packages/rn-iso/src/__tests__/android-command.test.ts
+npx vitest run packages/stim-cli/src/__tests__/android-command.test.ts
 ```
 
 Expected: the new-provider tests fail.
@@ -604,7 +604,7 @@ Do not copy the coordinator implementation into `android.ts`. Only command-speci
 Run:
 
 ```bash
-npx vitest run packages/rn-iso/src/__tests__/android-command.test.ts packages/rn-iso/src/__tests__/ios-command.test.ts packages/cache/__tests__/builds.test.ts
+npx vitest run packages/stim-cli/src/__tests__/android-command.test.ts packages/stim-cli/src/__tests__/ios-command.test.ts packages/cache/__tests__/builds.test.ts
 ```
 
 Expected: all tests pass.
@@ -612,7 +612,7 @@ Expected: all tests pass.
 **Step 5: Commit**
 
 ```bash
-git add packages/rn-iso/src/commands/android.ts packages/rn-iso/src/__tests__/android-command.test.ts
+git add packages/stim-cli/src/commands/android.ts packages/stim-cli/src/__tests__/android-command.test.ts
 git commit -m "feat(android): use project cache provider"
 ```
 
@@ -623,11 +623,11 @@ git commit -m "feat(android): use project cache provider"
 - Create: `packages/cache/README.md`
 - Create: `packages/cache/LICENSE`
 - Modify: `README.md`
-- Modify: `packages/rn-iso/README.md`
+- Modify: `packages/stim-cli/README.md`
 - Modify: `packages/metro/README.md`
-- Modify: `packages/rn-iso/src/commands/guide.ts`
-- Modify: `packages/rn-iso/src/__tests__/guide.test.ts`
-- Modify: `packages/rn-iso/skill/SKILL.md`
+- Modify: `packages/stim-cli/src/commands/guide.ts`
+- Modify: `packages/stim-cli/src/__tests__/guide.test.ts`
+- Modify: `packages/stim-cli/skill/SKILL.md`
 
 **Step 1: Write failing guide tests**
 
@@ -645,7 +645,7 @@ Add guide assertions for:
 Run:
 
 ```bash
-npx vitest run packages/rn-iso/src/__tests__/guide.test.ts
+npx vitest run packages/stim-cli/src/__tests__/guide.test.ts
 ```
 
 Expected: FAIL because the guide and doctor do not describe the new provider.
@@ -675,7 +675,7 @@ State that the provider owns transport, serialization, archive format, authentic
 
 **Step 4: Update user documentation**
 
-Add `@rn-iso/cache` to the root package table. Update the shared-cache section and command guide. Keep Expo provider documentation, but place it after the new provider order.
+Add `@stim-cli/cache` to the root package table. Update the shared-cache section and command guide. Keep Expo provider documentation, but place it after the new provider order.
 
 Update the shipped skill because agents use it as the operational contract. State that provider failures remain cache misses and that `gc` does not delete remote objects.
 
@@ -686,7 +686,7 @@ Run the command from Step 2. Expected: all tests pass.
 **Step 6: Commit**
 
 ```bash
-git add README.md packages/cache packages/metro/README.md packages/rn-iso/README.md packages/rn-iso/src/commands/guide.ts packages/rn-iso/src/__tests__/guide.test.ts packages/rn-iso/skill/SKILL.md
+git add README.md packages/cache packages/metro/README.md packages/stim-cli/README.md packages/stim-cli/src/commands/guide.ts packages/stim-cli/src/__tests__/guide.test.ts packages/stim-cli/skill/SKILL.md
 git commit -m "docs(cache): document provider API"
 ```
 
@@ -701,16 +701,16 @@ git commit -m "docs(cache): document provider API"
 
 Create a temporary bare React Native project with:
 
-- `.rn-iso.json` containing one relative provider module;
+- `.stim-cli.json` containing one relative provider module;
 - a provider that records factory input and capability calls as NDJSON;
 - a fake local Metro store;
 - a synthetic `.app` or `.apk` artifact.
 
 The test must prove:
 
-1. `@rn-iso/metro` loads the committed provider and passes its options.
+1. `@stim-cli/metro` loads the committed provider and passes its options.
 2. A provider Metro hit backfills the fake local store.
-3. rn-iso settings resolve the same provider reference and options.
+3. stim-cli settings resolve the same provider reference and options.
 4. The build coordinator uses the provider artifact and backfills the real temporary filesystem cache.
 5. The provider record contains the same project root for both capabilities.
 6. No provider deletion call exists.
@@ -794,7 +794,7 @@ Run:
 npm run build
 ```
 
-Expected: `@rn-iso/cache`, `@rn-iso/metro`, `@rn-iso/expo-build-cache`, and `rn-iso` build successfully with declarations.
+Expected: `@stim-cli/cache`, `@stim-cli/metro`, `@stim-cli/expo-build-cache`, and `stim-cli` build successfully with declarations.
 
 **Step 5: Inspect the final diff**
 

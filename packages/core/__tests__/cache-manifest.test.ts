@@ -7,7 +7,7 @@ const CORE_URL = new URL('../index.ts', import.meta.url).href;
 const CHILD_SCRIPT = `
 import fs from 'node:fs';
 const { registerCache } = await import(process.argv[1]);
-if (process.env.RN_ISO_DELAY_MANIFEST_READ === '1') {
+if (process.env.STIM_CLI_DELAY_MANIFEST_READ === '1') {
   const readFileSync = fs.readFileSync.bind(fs);
   fs.readFileSync = (...args) => {
     const value = readFileSync(...args);
@@ -17,8 +17,8 @@ if (process.env.RN_ISO_DELAY_MANIFEST_READ === '1') {
     return value;
   };
 }
-fs.writeFileSync(process.env.RN_ISO_READY_FILE, '');
-while (process.env.RN_ISO_GO_FILE && !fs.existsSync(process.env.RN_ISO_GO_FILE)) {
+fs.writeFileSync(process.env.STIM_CLI_READY_FILE, '');
+while (process.env.STIM_CLI_GO_FILE && !fs.existsSync(process.env.STIM_CLI_GO_FILE)) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
 }
 registerCache({ dir: process.argv[2], name: process.argv[3], prune: 'entries', note: 'test' });
@@ -27,7 +27,7 @@ registerCache({ dir: process.argv[2], name: process.argv[3], prune: 'entries', n
 let home: string;
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'rn-iso-core-manifest-'));
+  home = mkdtempSync(join(tmpdir(), 'stim-cli-core-manifest-'));
 });
 
 afterEach(() => {
@@ -64,10 +64,10 @@ function registerInChild({
     const child = spawn(process.execPath, ['--input-type=module', '-e', CHILD_SCRIPT, CORE_URL, dir, name], {
       env: {
         ...process.env,
-        RN_ISO_HOME: home,
-        RN_ISO_READY_FILE: readyFile,
-        ...(goFile ? { RN_ISO_GO_FILE: goFile } : {}),
-        ...(delayRead ? { RN_ISO_DELAY_MANIFEST_READ: '1' } : {}),
+        STIM_CLI_HOME: home,
+        STIM_CLI_READY_FILE: readyFile,
+        ...(goFile ? { STIM_CLI_GO_FILE: goFile } : {}),
+        ...(delayRead ? { STIM_CLI_DELAY_MANIFEST_READ: '1' } : {}),
       },
       stdio: ['ignore', 'ignore', 'pipe'],
     });

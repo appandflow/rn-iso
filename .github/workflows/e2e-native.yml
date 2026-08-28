@@ -7,7 +7,7 @@
 #   loop    test/e2e/native/run-native-e2e.mjs -- docs/field-test-protocol.md as
 #           code: create -> start -> build -> second worktree hits the cache ->
 #           teardown. THE DEFAULT, and what the nightly has always run.
-#   caches  test/e2e/native/run-cache-e2e.mjs -- for every cache rn-iso supplies,
+#   caches  test/e2e/native/run-cache-e2e.mjs -- for every cache stim-cli supplies,
 #           prove it is ENGAGED (read off the real argv/log), that it STORES (the
 #           directory gained files), and that a second workspace REUSED it. It
 #           costs two extra cold compiles per variant, so it is ON DEMAND ONLY:
@@ -31,7 +31,7 @@
 # its own owned simulator and its own build-cache key). iOS and Android are
 # separate jobs by necessity: iOS needs macOS+Xcode, Android needs a Linux host
 # with KVM. The bare-vs-expo split matters because they exercise different
-# rn-iso code paths -- bare hosts Metro in-process (start mode "bare-inproc"),
+# stim-cli code paths -- bare hosts Metro in-process (start mode "bare-inproc"),
 # expo spawns `expo start` as a child (mode "expo-child") and prebuilds first;
 # the driver asserts the mode explicitly per variant.
 name: Native E2E
@@ -62,7 +62,7 @@ env:
   # `inputs` is empty on schedule and on pull_request, so both fall through to
   # `loop` -- the nightly's behaviour is preserved by construction rather than by
   # a second code path.
-  RN_ISO_E2E_SUITE: ${{ inputs.suite || 'loop' }}
+  STIM_CLI_E2E_SUITE: ${{ inputs.suite || 'loop' }}
 
 permissions:
   contents: read
@@ -89,8 +89,8 @@ jobs:
       # persisted across runs here, so the cross-run cache path is itself
       # exercised. Kept per-variant so bare and expo never address one another's
       # entries.
-      RN_ISO_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/ios-${{ matrix.framework }}
-      # Keep the throwaway RN_ISO_HOME under the workspace so the failure
+      STIM_CLI_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/ios-${{ matrix.framework }}
+      # Keep the throwaway STIM_CLI_HOME under the workspace so the failure
       # artifact step can find global workspace logs.
       TMPDIR: ${{ github.workspace }}/.e2e-tmp
     steps:
@@ -117,34 +117,34 @@ jobs:
       - name: Build (dist/cli.js is what the native e2e drives)
         run: pnpm run build
 
-      - run: mkdir -p "$TMPDIR" "$RN_ISO_BUILD_CACHE"
+      - run: mkdir -p "$TMPDIR" "$STIM_CLI_BUILD_CACHE"
 
       - name: Restore cross-run build cache
         id: cache
         uses: actions/cache@v4
         with:
-          path: ${{ env.RN_ISO_BUILD_CACHE }}
+          path: ${{ env.STIM_CLI_BUILD_CACHE }}
           # Invalidated when the lockfile changes (a dep bump can move the
           # fingerprint); restore-keys let an older cache warm-start a new key.
-          key: rn-iso-buildcache-ios-${{ matrix.framework }}-${{ hashFiles('package-lock.json') }}
+          key: stim-cli-buildcache-ios-${{ matrix.framework }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
-            rn-iso-buildcache-ios-${{ matrix.framework }}-
+            stim-cli-buildcache-ios-${{ matrix.framework }}-
 
       # Any restored content -- exact key or restore-keys prefix -- means the first
       # build may be a legitimate cross-run HIT rather than a cold miss. The
       # combined cache action only reports exact matches, so ask the filesystem.
       - name: Detect a warmed cross-run cache
-        run: echo "RN_ISO_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$RN_ISO_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+        run: echo "STIM_CLI_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_CLI_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
       - name: Loop suite (ios, ${{ matrix.framework }})
-        if: env.RN_ISO_E2E_SUITE == 'loop' || env.RN_ISO_E2E_SUITE == 'all'
+        if: env.STIM_CLI_E2E_SUITE == 'loop' || env.STIM_CLI_E2E_SUITE == 'all'
         # --keep leaves the temp worktrees in place on this ephemeral runner so
         # the artifact step below can collect their build logs.
-        run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep --home "$TMPDIR/rn-iso-home"
+        run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep --home "$TMPDIR/stim-cli-home"
 
       - name: Cache suite (ios, ${{ matrix.framework }})
-        if: env.RN_ISO_E2E_SUITE == 'caches' || env.RN_ISO_E2E_SUITE == 'all'
-        # It forces its own RN_ISO_BUILD_CACHE / RN_ISO_METRO_CACHE under a
+        if: env.STIM_CLI_E2E_SUITE == 'caches' || env.STIM_CLI_E2E_SUITE == 'all'
+        # It forces its own STIM_CLI_BUILD_CACHE / STIM_CLI_METRO_CACHE under a
         # throwaway home ON PURPOSE (see the file header): every number it
         # reports is a before/after around a COLD compile, and the persisted
         # cross-run cache above would turn each of them into a measurement of
@@ -153,13 +153,13 @@ jobs:
         # can pick it up whether the run passed or failed.
         run: >-
           node test/e2e/native/run-cache-e2e.mjs
-          --framework ${{ matrix.framework }} --platform ios --keep --home "$TMPDIR/rn-iso-home"
+          --framework ${{ matrix.framework }} --platform ios --keep --home "$TMPDIR/stim-cli-home"
           --summary "$GITHUB_WORKSPACE/cache-summary-ios-${{ matrix.framework }}.json"
 
       - name: Upload the cache-suite summary
         # `always()`: a FAILING cache run is exactly when the per-check evidence
         # is worth reading, and the summary carries it.
-        if: always() && (env.RN_ISO_E2E_SUITE == 'caches' || env.RN_ISO_E2E_SUITE == 'all')
+        if: always() && (env.STIM_CLI_E2E_SUITE == 'caches' || env.STIM_CLI_E2E_SUITE == 'all')
         uses: actions/upload-artifact@v4
         with:
           name: cache-summary-ios-${{ matrix.framework }}
@@ -172,7 +172,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-ios-${{ matrix.framework }}
-          path: ${{ env.TMPDIR }}/rn-iso-home/workspaces/**/logs/*
+          path: ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
@@ -192,7 +192,7 @@ jobs:
       matrix:
         framework: [bare, expo]
     env:
-      RN_ISO_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/android-${{ matrix.framework }}
+      STIM_CLI_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/android-${{ matrix.framework }}
       TMPDIR: ${{ github.workspace }}/.e2e-tmp
     steps:
       - uses: actions/checkout@v4
@@ -218,16 +218,16 @@ jobs:
       - name: Build (dist/cli.js is what the native e2e drives)
         run: pnpm run build
 
-      - run: mkdir -p "$TMPDIR" "$RN_ISO_BUILD_CACHE"
+      - run: mkdir -p "$TMPDIR" "$STIM_CLI_BUILD_CACHE"
 
       - name: Restore cross-run build cache
         id: cache
         uses: actions/cache@v4
         with:
-          path: ${{ env.RN_ISO_BUILD_CACHE }}
-          key: rn-iso-buildcache-android-${{ matrix.framework }}-${{ hashFiles('package-lock.json') }}
+          path: ${{ env.STIM_CLI_BUILD_CACHE }}
+          key: stim-cli-buildcache-android-${{ matrix.framework }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
-            rn-iso-buildcache-android-${{ matrix.framework }}-
+            stim-cli-buildcache-android-${{ matrix.framework }}-
 
       # Expose /dev/kvm to the emulator (the standard incantation the
       # android-emulator-runner README recommends).
@@ -239,15 +239,15 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Detect a warmed cross-run cache
-        run: echo "RN_ISO_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$RN_ISO_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+        run: echo "STIM_CLI_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_CLI_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
       - name: Native e2e (android, ${{ matrix.framework }}) -- runs the selected suite(s)
         # reactivecircus/android-emulator-runner installs the SDK + system image,
-        # enables acceleration, and runs `script` once an emulator is up. rn-iso
+        # enables acceleration, and runs `script` once an emulator is up. stim-cli
         # then creates and boots its OWN owned AVD (the ownership rule forbids it
         # from touching a device it did not create -- see CLAUDE.md item 2), so
         # the action's emulator is only there to guarantee the SDK/KVM
-        # environment; rn-iso does the device work itself.
+        # environment; stim-cli does the device work itself.
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -256,25 +256,25 @@ jobs:
           # A fast, headless boot; the assertions do not need a window.
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
           # The action's own emulator only proved the SDK/KVM environment; kill it
-          # before the driver runs so rn-iso's owned emulator gets the runner's
+          # before the driver runs so stim-cli's owned emulator gets the runner's
           # full memory and CPU (two emulators on a 7 GB runner starve the boot).
           script: |
             adb -s emulator-5554 emu kill || true
             sleep 3
-            case "$RN_ISO_E2E_SUITE" in
+            case "$STIM_CLI_E2E_SUITE" in
               loop|all)
-                node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/rn-iso-home"
+                node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home"
                 ;;
             esac
-            case "$RN_ISO_E2E_SUITE" in
+            case "$STIM_CLI_E2E_SUITE" in
               caches|all)
-                node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/rn-iso-home" \
+                node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home" \
                   --summary "$GITHUB_WORKSPACE/cache-summary-android-${{ matrix.framework }}.json"
                 ;;
             esac
 
       - name: Upload the cache-suite summary
-        if: always() && (env.RN_ISO_E2E_SUITE == 'caches' || env.RN_ISO_E2E_SUITE == 'all')
+        if: always() && (env.STIM_CLI_E2E_SUITE == 'caches' || env.STIM_CLI_E2E_SUITE == 'all')
         uses: actions/upload-artifact@v4
         with:
           name: cache-summary-android-${{ matrix.framework }}
@@ -287,7 +287,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-android-${{ matrix.framework }}
-          path: ${{ env.TMPDIR }}/rn-iso-home/workspaces/**/logs/*
+          path: ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7

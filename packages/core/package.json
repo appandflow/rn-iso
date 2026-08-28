@@ -1,11 +1,11 @@
 {
-  "name": "@rn-iso/core",
+  "name": "@stim-cli/core",
   "version": "1.5.0",
-  "description": "Shared primitives for rn-iso and its cache packages: config-dir and cache-root resolution, the build cache key, and cache self-registration. Not a user-facing API.",
+  "description": "Shared primitives for stim-cli and its cache packages: config-dir and cache-root resolution, the build cache key, and cache self-registration. Not a user-facing API.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/appandflow/rn-iso.git",
+    "url": "git+https://github.com/appandflow/stim-cli.git",
     "directory": "packages/core"
   },
   "files": [

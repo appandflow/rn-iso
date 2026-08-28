@@ -12,6 +12,6 @@ linkWorkspacePackages: true
 #   exempt so a release does not lock the repo out of itself
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
-  - rn-iso
-  - '@rn-iso/*'
+  - stim-cli
+  - '@stim-cli/*'
 onlyBuiltDependencies: []

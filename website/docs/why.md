@@ -1,14 +1,14 @@
 ---
-title: 'Why rn-iso exists'
+title: 'Why stim-cli exists'
 sidebar_position: 1
-description: 'What breaks when coding agents share one machine, and what rn-iso does about it'
+description: 'What breaks when coding agents share one machine, and what stim-cli does about it'
 ---
 
-The React Native / Expo CLI for AI agents. One isolated dev environment per project or worktree: `rn-iso start` runs the dev server on a reserved, collision-free Metro port under a detached supervisor; `rn-iso ios` / `rn-iso android` boot a dedicated, **owned** simulator/emulator, install a build from a shared fingerprint cache when nothing native changed, and launch the app wired to that port; `rn-iso logs --errors` answers "did that work" from a captured timeline instead of a scraped terminal. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
+The React Native / Expo CLI for AI agents. One isolated dev environment per project or worktree: `stim-cli start` runs the dev server on a reserved, collision-free Metro port under a detached supervisor; `stim-cli ios` / `stim-cli android` boot a dedicated, **owned** simulator/emulator, install a build from a shared fingerprint cache when nothing native changed, and launch the app wired to that port; `stim-cli logs --errors` answers "did that work" from a captured timeline instead of a scraped terminal. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
 
 It never prompts, prints on the order of ten lines, takes `--json` everywhere, and reports a failing build as the _extracted_ compiler diagnostic plus a log path rather than four thousand lines of transcript.
 
-> **Experimental.** APIs, flags, and on-disk state may change. [File issues](https://github.com/appandflow/rn-iso/issues) if anything breaks.
+> **Experimental.** APIs, flags, and on-disk state may change. [File issues](https://github.com/appandflow/stim-cli/issues) if anything breaks.
 
 ## The problem
 
@@ -36,7 +36,7 @@ server, which every agent otherwise backgrounds by hand and then scrapes a log
 file for: `start` runs it on the reserved port and captures its output as
 structured records, so `logs --errors` replaces the scraping. What stays out is
 the build -- which command, which flags, when to install -- because that is
-judgment a coding agent already has from reading the repo, and rn-iso
+judgment a coding agent already has from reading the repo, and stim-cli
 deliberately does not take it back.
 
 ### Where local honestly loses
@@ -51,4 +51,4 @@ deliberately does not take it back.
 - **Disk grows without bound.** Simulators and the shared caches that make any
   of this fast all accumulate. `gc` exists for that reason.
 
-State lives in `~/.rn-iso/config.json`, keyed by absolute project path. Worktrees count as separate projects. There is no shared mutex -- each project gets its own port and its own device.
+State lives in `~/.stim-cli/config.json`, keyed by absolute project path. Worktrees count as separate projects. There is no shared mutex -- each project gets its own port and its own device.

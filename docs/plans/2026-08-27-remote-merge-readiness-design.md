@@ -11,8 +11,8 @@ path.
 `--remote` remains an explicit choice. It is accepted by `start`, `ios`, and
 `android`.
 
-- `rn-iso start` starts a local dev server and does not create a tunnel.
-- `rn-iso start --remote` prepares a dev server for a later remote device run.
+- `stim-cli start` starts a local dev server and does not create a tunnel.
+- `stim-cli start --remote` prepares a dev server for a later remote device run.
 - An `ios.remote` or `android.remote` backend setting also gives `start` remote
   intent.
 - `metro.tunnel` selects the tunnel provider only after remote intent exists.
@@ -34,14 +34,14 @@ the public origin in its manifest. The later device command reuses the
 recorded tunnel.
 
 Provider readiness requires a tunnel URL, not only a binary on `PATH`.
-For bare React Native under `auto`, rn-iso tries ngrok first. If ngrok exits
-before it returns a URL, including an authentication refusal, rn-iso cleans up
+For bare React Native under `auto`, stim-cli tries ngrok first. If ngrok exits
+before it returns a URL, including an authentication refusal, stim-cli cleans up
 that attempt and tries cloudflared when available. An explicit
 `metro.tunnel: "ngrok"` never falls back to a different provider.
 
-A configured ngrok URL is passed with `ngrok http <port> --url <url>`. rn-iso
+A configured ngrok URL is passed with `ngrok http <port> --url <url>`. stim-cli
 still owns and stops that process. `metro.publicUrl` remains different: it
-describes an already-running tunnel that rn-iso never stops.
+describes an already-running tunnel that stim-cli never stops.
 
 A plain `start` against an existing remote-ready supervisor leaves it running.
 The command does not restart a healthy server only to remove a tunnel.
@@ -50,20 +50,20 @@ The command does not restart a healthy server only to remove a tunnel.
 
 `start --remote` prepares Metro only. The device command chooses the backend.
 
-- `rn-iso ios --remote proxy` and `rn-iso android --remote proxy` connect to an
+- `stim-cli ios --remote proxy` and `stim-cli android --remote proxy` connect to an
   existing agent-device daemon. They require
   `AGENT_DEVICE_DAEMON_BASE_URL` and `AGENT_DEVICE_DAEMON_AUTH_TOKEN`. The
-  daemon can run on another machine. rn-iso sends authenticated device
-  operations to that URL. rn-iso creates no EAS session and owns no session
+  daemon can run on another machine. stim-cli sends authenticated device
+  operations to that URL. stim-cli creates no EAS session and owns no session
   teardown.
-- `rn-iso ios --remote eas` and `rn-iso android --remote eas` use `eas-cli` to
-  create an EAS Simulator session. rn-iso records the session ID and owns its
+- `stim-cli ios --remote eas` and `stim-cli android --remote eas` use `eas-cli` to
+  create an EAS Simulator session. stim-cli records the session ID and owns its
   teardown. Daemon environment variables do not change this selection.
 - `ios.remote` and `android.remote` accept `"proxy"` or `"eas"` as the
   settings equivalent of the command argument.
 
 A missing backend, an unknown backend, or incomplete proxy credentials is an
-error. rn-iso does not infer a backend from environment variables.
+error. stim-cli does not infer a backend from environment variables.
 
 ## Android lifecycle
 
@@ -72,7 +72,7 @@ The Android remote path follows the same order as iOS:
 1. Verify the local Metro server.
 2. Resolve and gate the public Metro origin for debug builds.
 3. Create or connect to the remote device.
-4. Record an rn-iso-created EAS session immediately after boot.
+4. Record an stim-cli-created EAS session immediately after boot.
 5. Build, install, and launch through the remote adapter.
 
 The session record is written before any later build or launch failure can
@@ -86,17 +86,17 @@ adapter because the device is remote.
 
 A stored identifier is not proof of ownership.
 
-Before an EAS stop, rn-iso reads the live session and requires its name to
-start with `rn-iso-`. A missing, unauthenticated, or unparseable lookup does
+Before an EAS stop, stim-cli reads the live session and requires its name to
+start with `stim-cli-`. A missing, unauthenticated, or unparseable lookup does
 not authorize a stop. The state record remains so the operator can retry.
 
-Before a managed tunnel receives `SIGTERM`, rn-iso reads the live process
+Before a managed tunnel receives `SIGTERM`, stim-cli reads the live process
 command and requires it to match the recorded provider and port. A reused PID
 does not authorize a signal. A mismatch remains recorded and is reported.
 
 ## Orphan EAS sessions
 
-`gc` lists live `rn-iso-` sessions for the current EAS project. It compares
+`gc` lists live `stim-cli-` sessions for the current EAS project. It compares
 their IDs with every readable workspace session record.
 
 - A dry run reports unmatched live sessions.
@@ -109,7 +109,7 @@ unrelated EAS projects.
 
 ## Skill and documentation
 
-The shipped rn-iso skill documents:
+The shipped stim-cli skill documents:
 
 - `start --remote` before a remote debug run;
 - plain `start` as the local path;
@@ -117,7 +117,7 @@ The shipped rn-iso skill documents:
 - the agent-device daemon URL and token contract for proxy mode;
 - explicit ngrok and cloudflared provider settings;
 - stable managed ngrok URLs versus operator-owned `metro.publicUrl`;
-- rn-iso ownership only for sessions it creates;
+- stim-cli ownership only for sessions it creates;
 - the required teardown and billing warning.
 
 The generated guide and PR description use the same command sequence.

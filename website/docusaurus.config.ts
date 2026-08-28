@@ -3,7 +3,7 @@ import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
-  title: 'rn-iso',
+  title: 'stim-cli',
   tagline: 'The React Native / Expo CLI for AI agents',
   favicon: 'img/favicon.svg',
 
@@ -12,10 +12,10 @@ const config: Config = {
   },
 
   url: 'https://appandflow.github.io',
-  baseUrl: '/rn-iso/',
+  baseUrl: '/stim-cli/',
 
   organizationName: 'appandflow',
-  projectName: 'rn-iso',
+  projectName: 'stim-cli',
   trailingSlash: false,
 
   onBrokenLinks: 'throw',
@@ -32,7 +32,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/appandflow/rn-iso/tree/main/website/',
+          editUrl: 'https://github.com/appandflow/stim-cli/tree/main/website/',
         },
         blog: false,
         theme: {
@@ -48,7 +48,7 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'rn-iso',
+      title: 'stim-cli',
       items: [
         {
           type: 'docSidebar',
@@ -58,12 +58,12 @@ const config: Config = {
         },
         { to: '/docs/changelog', label: 'Changelog', position: 'left' },
         {
-          href: 'https://www.npmjs.com/package/rn-iso',
+          href: 'https://www.npmjs.com/package/stim-cli',
           label: 'npm',
           position: 'right',
         },
         {
-          href: 'https://github.com/appandflow/rn-iso',
+          href: 'https://github.com/appandflow/stim-cli',
           label: 'GitHub',
           position: 'right',
         },
@@ -83,19 +83,19 @@ const config: Config = {
         {
           title: 'Packages',
           items: [
-            { label: 'rn-iso', href: 'https://www.npmjs.com/package/rn-iso' },
-            { label: '@rn-iso/metro', href: 'https://www.npmjs.com/package/@rn-iso/metro' },
+            { label: 'stim-cli', href: 'https://www.npmjs.com/package/stim-cli' },
+            { label: '@stim-cli/metro', href: 'https://www.npmjs.com/package/@stim-cli/metro' },
             {
-              label: '@rn-iso/expo-build-cache',
-              href: 'https://www.npmjs.com/package/@rn-iso/expo-build-cache',
+              label: '@stim-cli/expo-build-cache',
+              href: 'https://www.npmjs.com/package/@stim-cli/expo-build-cache',
             },
           ],
         },
         {
           title: 'More',
           items: [
-            { label: 'GitHub', href: 'https://github.com/appandflow/rn-iso' },
-            { label: 'Issues', href: 'https://github.com/appandflow/rn-iso/issues' },
+            { label: 'GitHub', href: 'https://github.com/appandflow/stim-cli' },
+            { label: 'Issues', href: 'https://github.com/appandflow/stim-cli/issues' },
           ],
         },
       ],

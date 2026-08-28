@@ -1,6 +1,6 @@
 # website
 
-The rn-iso documentation site, built with [Docusaurus](https://docusaurus.io/).
+The stim-cli documentation site, built with [Docusaurus](https://docusaurus.io/).
 
 ```bash
 npm install

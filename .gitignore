@@ -3,9 +3,9 @@ node_modules/
 .DS_Store
 .superpowers/
 dist/
-.rn-iso/
+.stim-cli/
 
 # stray tsc/tsdown declaration output next to sources (real types ship from dist/)
 packages/*/index.d.ts
 packages/*/bin/*.d.ts
-packages/rn-iso/src/**/*.d.ts
+packages/stim-cli/src/**/*.d.ts

@@ -1,11 +1,11 @@
-# rn-iso agent guide
+# stim-cli agent guide
 
 Use this guide when you change this repository. User documentation lives in
-[`packages/rn-iso/README.md`](./packages/rn-iso/README.md).
+[`packages/stim-cli/README.md`](./packages/stim-cli/README.md).
 
 ## Project
 
-rn-iso gives each React Native or Expo workspace an isolated Metro port and an
+stim-cli gives each React Native or Expo workspace an isolated Metro port and an
 owned simulator or emulator. It caches native builds and captures structured
 logs.
 
@@ -17,12 +17,12 @@ worktree create -> start -> ios|android -> logs --errors -> stop -> worktree rem
 
 The command surface is `doctor`, `worktree create|remove`, `start`, `stop`,
 `ios`, `android`, `logs`, `status`, `gc`, and `guide`. Do not add commands or
-flags without an explicit product decision. Projects can wrap rn-iso when they
+flags without an explicit product decision. Projects can wrap stim-cli when they
 need custom behavior.
 
-Runtime state belongs under `$RN_ISO_HOME/workspaces/`, not in the project
+Runtime state belongs under `$STIM_CLI_HOME/workspaces/`, not in the project
 tree. Do not restore `init`, project setup mutations, or the deleted
-`rn-iso-init` skill. `doctor` reports setup that requires project judgment.
+`stim-cli-init` skill. `doctor` reports setup that requires project judgment.
 
 ## Development
 
@@ -44,12 +44,12 @@ commit. Run `npm run test:e2e` when a change affects an end-to-end workflow.
 ## Architecture rules
 
 - **Single exec wrapper.** Route all child processes through
-  `packages/rn-iso/src/exec.ts`. Use `runFile` for user-controlled paths.
+  `packages/stim-cli/src/exec.ts`. Use `runFile` for user-controlled paths.
 - **Pure parsing and decision logic.** Keep parsers and selectors separate from
   thin I/O wrappers. Unit-test the pure functions.
 - **Locked state.** Lock every read-modify-write to global config or workspace
   state. Use atomic writes. Long-lived build locks use PID liveness, not mtime.
-- **Cache contracts.** The cache packages must work without `rn-iso` installed.
+- **Cache contracts.** The cache packages must work without `stim-cli` installed.
   Keep their config path, cache root, cache key, and registration behavior
   aligned with the CLI. Resolution order is environment, machine config, then
   default. Update `cache-packages.test.ts` when those rules change.
@@ -86,13 +86,13 @@ the exact symbol as `MUST KILL`. Do not add `MUST KILL` markers to source files.
 
 ### 1. Keep agent guidance current
 
-Update `packages/rn-iso/skill/SKILL.md` when user-facing behavior changes.
+Update `packages/stim-cli/skill/SKILL.md` when user-facing behavior changes.
 Update `guide` output and its contract tests when commands, flags, defaults, or
-remedies change. Only one skill ships; do not restore `rn-iso-init`.
+remedies change. Only one skill ships; do not restore `stim-cli-init`.
 
 ### 2. Use only owned devices
 
-rn-iso can use only devices it created, named `rn-iso-<label>` and recorded with
+stim-cli can use only devices it created, named `stim-cli-<label>` and recorded with
 `owned: true`. Never operate on physical or user-created devices. Keep a device
 record when teardown fails so `gc` can find the device later.
 
@@ -119,7 +119,7 @@ can continue. `stop` shuts down devices; it never deletes them.
 
 ### 5. Redirect test state
 
-Set `RN_ISO_HOME` to a temporary directory in every test that reads or writes
+Set `STIM_CLI_HOME` to a temporary directory in every test that reads or writes
 global state. Delete the directory and environment variable after each test.
 
 ### 6. Compare canonical paths

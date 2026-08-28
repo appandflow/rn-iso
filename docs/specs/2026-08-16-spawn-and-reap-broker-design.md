@@ -1,17 +1,17 @@
-# rn-iso — spawn-and-reap ownership, broker-only commands
+# stim-cli — spawn-and-reap ownership, broker-only commands
 
 Date: 2026-08-16
 Status: draft
-Supersedes: the device-allocation model of `2026-04-25-rn-iso-design.md` and
+Supersedes: the device-allocation model of `2026-04-25-stim-cli-design.md` and
 amends `2026-08-15-worktrees-and-cache-reclamation-design.md`. The worktree,
 settings, and gc machinery from the latter is the foundation this builds on.
 
 ## Purpose
 
-Two linked pivots, both consequences of the same shift in who rn-iso serves.
+Two linked pivots, both consequences of the same shift in who stim-cli serves.
 
 The original design assumed two long-lived peers — a human and an agent —
-sharing one machine's fixed pool of simulators, with rn-iso brokering claims
+sharing one machine's fixed pool of simulators, with stim-cli brokering claims
 so neither stepped on the other. The tool's center of gravity has moved:
 agents get **disposable environments** (a worktree, created unattended, often
 from a phone), work in them, and tear them down. For that consumer:
@@ -19,10 +19,10 @@ from a phone), work in them, and tear them down. For that consumer:
 1. **Spawn-and-reap replaces claim-and-lock.** An environment _creates_ its
    simulator/emulator rather than claiming one from a shared pool. Locking
    machinery exists because resources are shared; owned resources need none.
-2. **rn-iso becomes a pure environment broker.** The `ios`/`android` build
+2. **stim-cli becomes a pure environment broker.** The `ios`/`android` build
    wrappers encode judgment about how to build a project (which script, which
    CLI, which flags) — judgment a coding agent has natively from repo
-   context. rn-iso stops wrapping builds and instead provisions resources and
+   context. stim-cli stops wrapping builds and instead provisions resources and
    hands over facts. The build itself belongs to the agent.
 
 Concrete motivators, all observed:
@@ -39,8 +39,8 @@ Concrete motivators, all observed:
 
 ## The ownership rule
 
-> Every simulator or emulator rn-iso uses is one rn-iso created, named
-> `rn-iso-<label>`, recorded with `owned: true` in config. rn-iso never
+> Every simulator or emulator stim-cli uses is one stim-cli created, named
+> `stim-cli-<label>`, recorded with `owned: true` in config. stim-cli never
 > allocates, boots, or destroys a device it did not create. Teardown of the
 > owner destroys the resource.
 
@@ -52,11 +52,11 @@ same hazard. The rewritten invariant is stronger than the old one: ownership
 is provable (name prefix + config record), where claims and occupancy probes
 were heuristics about other people's processes.
 
-The rule also simplifies the safety story: rn-iso cannot stomp a foreign
+The rule also simplifies the safety story: stim-cli cannot stomp a foreign
 tool's simulator because it never touches devices it didn't create.
 Occupancy detection (the `.xctrunner` probe) survives, demoted from primary
 mechanism to a guard: even owned-sim shutdown/delete checks it first, since
-an external tool may legitimately be driving an rn-iso-owned sim.
+an external tool may legitimately be driving an stim-cli-owned sim.
 
 **The one exception: physical devices.** Hardware cannot be spawned.
 Serial-based assignment survives only for physical Android devices, and is
@@ -64,7 +64,7 @@ documented as the exception it is.
 
 ## Command surface
 
-### `rn-iso up <ios|android> [--json] [--device-type <name>] [--runtime <ver>]`
+### `stim-cli up <ios|android> [--json] [--device-type <name>] [--runtime <ver>]`
 
 The single "make my environment ready" command, replacing the `ios` /
 `android` build wrappers. It:
@@ -78,7 +78,7 @@ The single "make my environment ready" command, replacing the `ios` /
    runtime by default; overridable via flags or the `ios.deviceType` /
    `ios.runtime` / `android.systemImage` settings keys. Android creates an
    AVD via `avdmanager create avd` against the newest installed arm64
-   system image, erroring with instructions if none is installed (rn-iso
+   system image, erroring with instructions if none is installed (stim-cli
    still never installs system images).
 3. Allocates the Metro port (unchanged logic) and ensures **managed Metro**
    is running on it — detached, PID-tracked, logged. Managed is now the
@@ -94,7 +94,7 @@ The single "make my environment ready" command, replacing the `ios` /
   "metroPort": 8082,
   "metroPid": 123,
   "metroHealthy": true,
-  "metroLog": "~/.rn-iso/logs/….log",
+  "metroLog": "~/.stim-cli/logs/….log",
   "bundleId": "io.tlon.groups",
   "setup": { "complete": true, "commands": [] }
 }
@@ -109,7 +109,7 @@ against these facts (see SKILL.md section below). Both expo and the RN CLI
 probe the port and skip spawning a second bundler when Metro already answers
 `/status`, which is what makes managed-only safe.
 
-`rn-iso device` remains as the read-only facts query (no ensure side
+`stim-cli device` remains as the read-only facts query (no ensure side
 effects); `up --json` is a superset.
 
 ### Changed semantics
@@ -123,7 +123,7 @@ effects); `up --json` is a superset.
 - **`shutdown`** — shuts down (never deletes) owned devices; end-of-day
   semantics unchanged. Gains the occupancy guard `release --shutdown`
   already has, closing the known inconsistency.
-- **`gc`** — new sweep: any `rn-iso-*` sim or AVD not referenced by a live
+- **`gc`** — new sweep: any `stim-cli-*` sim or AVD not referenced by a live
   config entry is an orphan (report by default, `--delete` to act). The
   fail-closed rules apply unchanged: devices referenced by a project on an
   unmounted volume are kept.
@@ -145,8 +145,8 @@ effects); `up --json` is a superset.
 
 ## Config schema
 
-`platforms.<p>` gains `owned: true` and `deviceName` (`rn-iso-<label>`) on
-devices rn-iso creates. New allocations always create owned devices. No
+`platforms.<p>` gains `owned: true` and `deviceName` (`stim-cli-<label>`) on
+devices stim-cli creates. New allocations always create owned devices. No
 version bump is needed beyond v2.
 
 ## SKILL.md restructure
@@ -176,8 +176,8 @@ Structure:
    | Monorepo                         | run from the app directory (`apps/<app>`), not the repo root                                    |
    | Custom variants/flavors          | prefer the project's own script (it bakes in the right flags); append device/port               |
 
-4. **Metro rules:** Metro is managed by rn-iso; never start your own; check
-   `rn-iso logs` first on a blank screen or red box (unchanged advice).
+4. **Metro rules:** Metro is managed by stim-cli; never start your own; check
+   `stim-cli logs` first on a blank screen or red box (unchanged advice).
 5. **Destructive-command rules:** unchanged (`gc --delete` and
    `worktree remove --force` require asking the user), plus: `release`
    now deletes the device — don't release an env you intend to keep using.
@@ -204,7 +204,7 @@ server and dedicated simulator".
 - Carried from the worktree branch's open items: an action-level test for
   `worktree create`'s stdout contract, and a real-git test for
   `unpushedCommits`.
-- Sweep test: `gc` proposes only `rn-iso-*` devices absent from config,
+- Sweep test: `gc` proposes only `stim-cli-*` devices absent from config,
   and keeps devices referenced from unmounted-volume projects.
 
 ## What this does NOT change
@@ -216,7 +216,7 @@ server and dedicated simulator".
   decision).
 - No system-image or runtime installation.
 - The `WorktreeCreate` hook contract and machine-side wiring
-  (launcher `--spawn=worktree`, hooks, `.worktreeinclude`, `.rn-iso.json`,
+  (launcher `--spawn=worktree`, hooks, `.worktreeinclude`, `.stim-cli.json`,
   a Node version manager) — still required, still outside this spec.
 
 ## Release

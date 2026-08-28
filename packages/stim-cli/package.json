@@ -1,0 +1,59 @@
+{
+  "name": "stim-cli",
+  "version": "1.5.0",
+  "description": "Isolated React Native dev environments per project/worktree",
+  "keywords": [
+    "agent",
+    "emulator",
+    "expo",
+    "metro",
+    "react-native",
+    "simulator",
+    "worktree"
+  ],
+  "homepage": "https://github.com/appandflow/stim-cli#readme",
+  "bugs": {
+    "url": "https://github.com/appandflow/stim-cli/issues"
+  },
+  "license": "MIT",
+  "author": "Janic Duplessis",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appandflow/stim-cli.git",
+    "directory": "packages/stim-cli"
+  },
+  "bin": {
+    "stim-cli": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "shim",
+    "skill",
+    "LICENSE",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    "./cache-manifest": {
+      "types": "./dist/cache-manifest.d.ts",
+      "default": "./dist/cache-manifest.js"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@expo/fingerprint": "^0.20.10",
+    "@stim-cli/core": "^1.5.0",
+    "@stim-cli/metro": "^1.2.0",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "@stim-cli/expo-build-cache": "*"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

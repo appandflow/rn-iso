@@ -53,12 +53,12 @@ jobs:
       - name: Format check (oxfmt)
         run: pnpm run format:check
 
-      # Build every package with tsdown (rn-iso -> dist ESM, the two cache
+      # Build every package with tsdown (stim-cli -> dist ESM, the two cache
       # packages -> dist CJS). Proves the published artifacts compile.
       #
       # BEFORE typecheck, and that order is load-bearing. The two cache
-      # packages are CJS and are consumed by rn-iso's suite as
-      # `@rn-iso/expo-build-cache` and `@rn-iso/metro`; their .d.ts files are
+      # packages are CJS and are consumed by stim-cli's suite as
+      # `@stim-cli/expo-build-cache` and `@stim-cli/metro`; their .d.ts files are
       # build OUTPUT, so a typecheck that runs first cannot resolve either
       # module and fails with TS2307 on a tree that is perfectly fine.
       - name: Build (tsdown, all packages)
@@ -72,14 +72,14 @@ jobs:
       - name: Dead code (knip)
         run: pnpm run knip
 
-      # The unit suite on vitest (rolldown-vite): rn-iso + both cache packages,
+      # The unit suite on vitest (rolldown-vite): stim-cli + both cache packages,
       # 52 files. Real processes, real ports, real git; fakes for xcrun/adb.
       - name: Unit tests (vitest)
         run: pnpm test
 
       # The fast cross-platform e2e: real git worktrees, the real CLI, the real
       # fingerprint/buildCacheKey/store/resolve cache machinery, and a real
-      # single-flight race between real node processes -- throwaway RN_ISO_HOME,
+      # single-flight race between real node processes -- throwaway STIM_CLI_HOME,
       # no Xcode, no Android SDK.
       - name: Cross-platform e2e
         run: pnpm run test:e2e

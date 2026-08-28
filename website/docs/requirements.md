@@ -1,7 +1,7 @@
 ---
 title: 'Requirements'
 sidebar_position: 4
-description: 'What rn-iso needs from the machine'
+description: 'What stim-cli needs from the machine'
 ---
 
 - macOS (iOS); macOS or Linux (Android)

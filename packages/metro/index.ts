@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { metroCacheRoot, registerCache, tagSharedStore, workspaceLogDir } from '@rn-iso/core';
+import { metroCacheRoot, registerCache, tagSharedStore, workspaceLogDir } from '@stim-cli/core';
 
 type FileStoreCtor = new (options: { root: string }) => object;
 

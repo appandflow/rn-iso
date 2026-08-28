@@ -81,24 +81,24 @@ Expected: PASS with only the approved policy changes.
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/__tests__/collector-parsers.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/collector-run.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/config.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/engine-gradle.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/engine-xcode.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/gc.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/guide.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/sim-android.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/sim-ios.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/worktree.test.ts`
-- Modify: `packages/rn-iso/src/commands/doctor.ts`
-- Modify: `packages/rn-iso/src/commands/ios.ts`
-- Modify: `packages/rn-iso/src/engine/asset-manifest.ts`
-- Modify: `packages/rn-iso/src/engine/gradle.ts`
-- Modify: `packages/rn-iso/src/engine/xcode.ts`
-- Modify: `packages/rn-iso/src/logs-query.ts`
-- Modify: `packages/rn-iso/src/sim/android.ts`
-- Modify: `packages/rn-iso/src/sim/ios.ts`
+- Modify: `packages/stim-cli/src/__tests__/collector-parsers.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/collector-run.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/config.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/engine-gradle.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/engine-xcode.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/gc.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/guide.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/sim-android.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/sim-ios.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/worktree.test.ts`
+- Modify: `packages/stim-cli/src/commands/doctor.ts`
+- Modify: `packages/stim-cli/src/commands/ios.ts`
+- Modify: `packages/stim-cli/src/engine/asset-manifest.ts`
+- Modify: `packages/stim-cli/src/engine/gradle.ts`
+- Modify: `packages/stim-cli/src/engine/xcode.ts`
+- Modify: `packages/stim-cli/src/logs-query.ts`
+- Modify: `packages/stim-cli/src/sim/android.ts`
+- Modify: `packages/stim-cli/src/sim/ios.ts`
 - Modify: `test/e2e/fixtures/fingerprint-stub.mjs`
 - Modify: `test/e2e/native/run-native-e2e.mjs`
 - Modify: `website/scripts/gen-changelog.mjs`
@@ -117,7 +117,7 @@ Expected: no findings from these three rules.
 
 **Step 3: Run affected tests**
 
-Run: `pnpm test -- packages/rn-iso/src/__tests__/collector-parsers.test.ts packages/rn-iso/src/__tests__/engine-gradle.test.ts packages/rn-iso/src/__tests__/engine-xcode.test.ts`
+Run: `pnpm test -- packages/stim-cli/src/__tests__/collector-parsers.test.ts packages/stim-cli/src/__tests__/engine-gradle.test.ts packages/stim-cli/src/__tests__/engine-xcode.test.ts`
 
 Expected: PASS.
 
@@ -125,17 +125,17 @@ Expected: PASS.
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/__tests__/engine-remote-cache.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/gc.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/ios-command.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/ports.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/project.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/sim-ios.test.ts`
-- Modify: `packages/rn-iso/src/engine/prebuild.ts`
-- Modify: `packages/rn-iso/src/build-cache.ts`
-- Modify: `packages/rn-iso/src/engine/remote-cache.ts`
-- Modify: `packages/rn-iso/src/supervisor/server-bare.ts`
-- Modify: `packages/rn-iso/src/__tests__/supervisor-bare.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/engine-remote-cache.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/gc.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/ios-command.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/ports.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/project.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/sim-ios.test.ts`
+- Modify: `packages/stim-cli/src/engine/prebuild.ts`
+- Modify: `packages/stim-cli/src/build-cache.ts`
+- Modify: `packages/stim-cli/src/engine/remote-cache.ts`
+- Modify: `packages/stim-cli/src/supervisor/server-bare.ts`
+- Modify: `packages/stim-cli/src/__tests__/supervisor-bare.test.ts`
 - Modify: `test/e2e/native/run-native-e2e.mjs`
 
 **Step 1: Rename shadowed bindings**
@@ -160,15 +160,15 @@ Expected: no findings from these three rules.
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/collector/run.ts`
-- Modify: `packages/rn-iso/src/commands/gc.ts`
-- Modify: `packages/rn-iso/src/commands/ios.ts`
-- Modify: `packages/rn-iso/src/commands/logs.ts`
-- Modify: `packages/rn-iso/src/commands/start.ts`
-- Modify: `packages/rn-iso/src/commands/status.ts`
-- Modify: `packages/rn-iso/src/metro.ts`
-- Modify: `packages/rn-iso/src/supervisor/server-expo.ts`
-- Modify: `packages/rn-iso/src/caches.ts`
+- Modify: `packages/stim-cli/src/collector/run.ts`
+- Modify: `packages/stim-cli/src/commands/gc.ts`
+- Modify: `packages/stim-cli/src/commands/ios.ts`
+- Modify: `packages/stim-cli/src/commands/logs.ts`
+- Modify: `packages/stim-cli/src/commands/start.ts`
+- Modify: `packages/stim-cli/src/commands/status.ts`
+- Modify: `packages/stim-cli/src/metro.ts`
+- Modify: `packages/stim-cli/src/supervisor/server-expo.ts`
+- Modify: `packages/stim-cli/src/caches.ts`
 
 **Step 1: Move stateless helpers to module scope**
 
@@ -180,13 +180,13 @@ Replace the reported map spreads with direct object construction that lists the 
 
 **Step 3: Verify the targeted rules**
 
-Run: `pnpm exec oxlint packages/rn-iso/src -D unicorn/consistent-function-scoping -D oxc/no-map-spread`
+Run: `pnpm exec oxlint packages/stim-cli/src -D unicorn/consistent-function-scoping -D oxc/no-map-spread`
 
 Expected: no findings from these two rules.
 
 **Step 4: Run affected tests**
 
-Run: `pnpm test -- packages/rn-iso/src/__tests__/caches.test.ts packages/rn-iso/src/__tests__/collector-run.test.ts packages/rn-iso/src/__tests__/logs-command.test.ts packages/rn-iso/src/__tests__/start.test.ts`
+Run: `pnpm test -- packages/stim-cli/src/__tests__/caches.test.ts packages/stim-cli/src/__tests__/collector-run.test.ts packages/stim-cli/src/__tests__/logs-command.test.ts packages/stim-cli/src/__tests__/start.test.ts`
 
 Expected: PASS.
 
@@ -194,13 +194,13 @@ Expected: PASS.
 
 **Files:**
 
-- Modify: `packages/rn-iso/src/__tests__/config.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/engine-app-install.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/gc.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/logs-command.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/start.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/worktree-remove.test.ts`
-- Modify: `packages/rn-iso/src/__tests__/worktree.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/config.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/engine-app-install.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/gc.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/logs-command.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/start.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/worktree-remove.test.ts`
+- Modify: `packages/stim-cli/src/__tests__/worktree.test.ts`
 
 **Step 1: Make conditional assertions unconditional**
 
@@ -222,7 +222,7 @@ Expected: no findings from these rules.
 
 **Step 5: Run affected tests**
 
-Run: `pnpm test -- packages/rn-iso/src/__tests__/config.test.ts packages/rn-iso/src/__tests__/engine-app-install.test.ts packages/rn-iso/src/__tests__/logs-command.test.ts packages/rn-iso/src/__tests__/start.test.ts packages/rn-iso/src/__tests__/worktree-remove.test.ts`
+Run: `pnpm test -- packages/stim-cli/src/__tests__/config.test.ts packages/stim-cli/src/__tests__/engine-app-install.test.ts packages/stim-cli/src/__tests__/logs-command.test.ts packages/stim-cli/src/__tests__/start.test.ts packages/stim-cli/src/__tests__/worktree-remove.test.ts`
 
 Expected: PASS.
 

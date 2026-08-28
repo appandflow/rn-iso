@@ -20,7 +20,7 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
-const CLI = join(REPO, 'packages', 'rn-iso', 'dist', 'cli.js');
+const CLI = join(REPO, 'packages', 'stim-cli', 'dist', 'cli.js');
 
 const args = parseArgs(process.argv.slice(2));
 const FRAMEWORK = args.framework;
@@ -31,11 +31,13 @@ const ARTIFACT_EXT = PLATFORM === 'ios' ? '.app' : '.apk';
 const COMPILE_SIGNS =
   PLATFORM === 'ios' ? [/xcodebuild/i, /CompileC\b/i, /Ld /] : [/gradlew/i, /:app:compile/i, /Task :app:/i];
 
-const HOME_DIR = args.dryRun ? '<dry-run>' : args.home || mkdtempSync(join(tmpdir(), `rn-iso-native-${VARIANT}-home-`));
-const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `rn-iso-native-${VARIANT}-`));
-const ENV = { ...process.env, RN_ISO_HOME: HOME_DIR, CI: '1' };
-process.env.RN_ISO_HOME = HOME_DIR;
-const WARM_CACHE = process.env.RN_ISO_E2E_WARM_CACHE === '1';
+const HOME_DIR = args.dryRun
+  ? '<dry-run>'
+  : args.home || mkdtempSync(join(tmpdir(), `stim-cli-native-${VARIANT}-home-`));
+const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `stim-cli-native-${VARIANT}-`));
+const ENV = { ...process.env, STIM_CLI_HOME: HOME_DIR, CI: '1' };
+process.env.STIM_CLI_HOME = HOME_DIR;
+const WARM_CACHE = process.env.STIM_CLI_E2E_WARM_CACHE === '1';
 
 const h = createHarness({ env: ENV, cliPath: CLI, label: `native-e2e ${VARIANT}` });
 const { cli, cliJson, sh, log, banner, die } = h;
@@ -103,7 +105,7 @@ function startAndAssertMode(cwd) {
     if (existsSync(supLog)) {
       log(`--- supervisor.log (tail) ---\n${lastLines(readFileSync(supLog, 'utf-8'), 80)}`);
     }
-    die(`rn-iso start failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
+    die(`stim-cli start failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
   }
   const line = r.stdout.trim().split('\n').findLast(Boolean);
   const facts = JSON.parse(line);
@@ -199,7 +201,7 @@ function parseArgs(argv) {
 
 function plan() {
   log(`framework=${FRAMEWORK} platform=${PLATFORM} expectedMode=${EXPECTED_MODE} artifact=*${ARTIFACT_EXT}`);
-  log(`RN_ISO_HOME=${HOME_DIR}`);
+  log(`STIM_CLI_HOME=${HOME_DIR}`);
   log(`work dir=${WORK_DIR}`);
   log(
     args.appDir

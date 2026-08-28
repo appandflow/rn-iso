@@ -12,22 +12,22 @@ import {
   storeBuild,
   resolveBuild,
   entryDir,
-} from '../../packages/rn-iso/src/build-cache.ts';
-import { buildLockPath } from '../../packages/rn-iso/src/engine/build-lock.ts';
-import { loadConfig } from '../../packages/rn-iso/src/config.ts';
+} from '../../packages/stim-cli/src/build-cache.ts';
+import { buildLockPath } from '../../packages/stim-cli/src/engine/build-lock.ts';
+import { loadConfig } from '../../packages/stim-cli/src/config.ts';
 import { createFingerprintAsync } from './fixtures/fingerprint-stub.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
-const CLI = join(REPO, 'packages', 'rn-iso', 'bin', 'cli.ts');
-const LOCK_URL = pathToFileURL(join(REPO, 'packages', 'rn-iso', 'src', 'engine', 'build-lock.ts')).href;
-const CACHE_URL = pathToFileURL(join(REPO, 'packages', 'rn-iso', 'src', 'build-cache.ts')).href;
+const CLI = join(REPO, 'packages', 'stim-cli', 'bin', 'cli.ts');
+const LOCK_URL = pathToFileURL(join(REPO, 'packages', 'stim-cli', 'src', 'engine', 'build-lock.ts')).href;
+const CACHE_URL = pathToFileURL(join(REPO, 'packages', 'stim-cli', 'src', 'build-cache.ts')).href;
 
 const ctx = {};
 
 before(() => {
-  ctx.home = realpathSync(mkdtempSync(join(tmpdir(), 'rn-iso-e2e-home-')));
-  ctx.tmp = realpathSync(mkdtempSync(join(tmpdir(), 'rn-iso-e2e-')));
-  process.env.RN_ISO_HOME = ctx.home;
+  ctx.home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-e2e-home-')));
+  ctx.tmp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-e2e-')));
+  process.env.STIM_CLI_HOME = ctx.home;
 
   ctx.repo = join(ctx.tmp, 'app');
   ctx.remote = join(ctx.tmp, 'remote.git');
@@ -39,7 +39,7 @@ after(() => {
   for (const dir of [ctx.home, ctx.tmp]) {
     if (dir) rmSync(dir, { recursive: true, force: true });
   }
-  delete process.env.RN_ISO_HOME;
+  delete process.env.STIM_CLI_HOME;
 });
 
 test('worktree create prints only the worktree path, and makes a real worktree', () => {
@@ -228,7 +228,7 @@ test('worktree remove refuses a dirty tree, then removes a clean one leaving not
 function createWorktree(name) {
   const out = execFileSync(process.execPath, [CLI, 'worktree', 'create', name, '--base', 'head'], {
     cwd: ctx.repo,
-    env: { ...process.env, RN_ISO_HOME: ctx.home },
+    env: { ...process.env, STIM_CLI_HOME: ctx.home },
     encoding: 'utf-8',
   });
   const lines = out.trim().split('\n').filter(Boolean);
@@ -240,7 +240,7 @@ function createWorktree(name) {
 
 function removeWorktree(path) {
   execFileSync(process.execPath, [CLI, 'worktree', 'remove', path], {
-    env: { ...process.env, RN_ISO_HOME: ctx.home },
+    env: { ...process.env, STIM_CLI_HOME: ctx.home },
     encoding: 'utf-8',
   });
 }
@@ -257,7 +257,7 @@ function runNode(scriptPath, args = []) {
       process.execPath,
       [scriptPath, ...args],
       {
-        env: { ...process.env, RN_ISO_HOME: ctx.home },
+        env: { ...process.env, STIM_CLI_HOME: ctx.home },
         timeout: 60000,
       },
       (err, stdout, stderr) => {
@@ -280,7 +280,7 @@ function makeMinimalRnProject(root) {
     join(root, 'package.json'),
     JSON.stringify(
       {
-        name: 'rn-iso-e2e-fixture',
+        name: 'stim-cli-e2e-fixture',
         version: '1.0.0',
         private: true,
         scripts: { ios: 'react-native run-ios', android: 'react-native run-android' },
@@ -309,7 +309,7 @@ function initGitRepoWithRemote(repo, remote) {
   const git = (args, cwd = repo) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
   execFileSync('git', ['init', '-b', 'main', repo], { encoding: 'utf-8' });
   git(['config', 'user.email', 'e2e@example.com']);
-  git(['config', 'user.name', 'rn-iso e2e']);
+  git(['config', 'user.name', 'stim-cli e2e']);
   git(['config', 'commit.gpgsign', 'false']);
   git(['add', '-A']);
   git(['commit', '-m', 'minimal RN fixture']);

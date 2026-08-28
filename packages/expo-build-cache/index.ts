@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { buildCacheRoot, buildCacheKey, registerCache } from '@rn-iso/core';
-import type { BuildRunOptions as RunOptions } from '@rn-iso/core';
+import { buildCacheRoot, buildCacheKey, registerCache } from '@stim-cli/core';
+import type { BuildRunOptions as RunOptions } from '@stim-cli/core';
 
 export { buildCacheKey };
 
