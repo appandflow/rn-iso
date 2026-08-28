@@ -53,6 +53,7 @@ import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 import { listAvds } from '../sim/android.ts';
 import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches, type CacheDescriptor } from '../caches.ts';
 import { workspaceStateFile } from '../paths.ts';
+import { withRemoteSessionLock } from '../engine/device-remote.ts';
 import type { BuildLockInfo, BuildSlotInfo, Config, GcSkip, OrphanedDevice } from '../types.ts';
 
 // --- local report shapes ---------------------------------------------------
@@ -146,6 +147,14 @@ interface GcDependencies {
     args: string[],
     options: { cwd: string; timeoutMs: number; omitEnv: readonly string[] },
   ) => string;
+  withRemoteSessionLock?: typeof withRemoteSessionLock;
+  easMaxPages?: number;
+  easCollectionTimeoutMs?: number;
+  easNow?: () => number;
+  easLockWaitMs?: number;
+  easLockSnapshotRetries?: number;
+  easSweepBlockedNotice?: string;
+  easLockedRoots?: readonly string[];
 }
 
 // Bounds each device listing so a wedged simctl/emulator daemon can't hang
@@ -157,6 +166,10 @@ interface GcDependencies {
 // gigabytes never surfaces. A real hang still bounds out and prints the notice.
 const DEVICE_LIST_TIMEOUT_MS = 30000;
 const EAS_OPERATION_TIMEOUT_MS = 30000;
+const EAS_COLLECTION_TIMEOUT_MS = 60000;
+const EAS_MAX_LIST_PAGES = 100;
+const EAS_LOCK_WAIT_MS = 0;
+const EAS_LOCK_SNAPSHOT_RETRIES = 3;
 const PROXY_CREDENTIAL_ENV = ['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN'] as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -487,6 +500,7 @@ function collectEasSessionSweep(config: Config | null, deps: GcDependencies): Ea
     deletionSafe: notices.length === 0,
   });
   if (!projectRoot || !(deps.detectIsExpo ?? detectIsExpo)(projectRoot)) return empty();
+  if (deps.easSweepBlockedNotice) return empty([deps.easSweepBlockedNotice]);
 
   const eas = (deps.resolveEasCliBin ?? resolveEasCliBin)(projectRoot);
   if (!eas) return empty(['EAS session sweep skipped: eas-cli is not available for the current Expo project.']);
@@ -496,17 +510,37 @@ function collectEasSessionSweep(config: Config | null, deps: GcDependencies): Ea
   const run = deps.runEasFile ?? ((file, args, options) => getExecutor().runFile(file, args, options));
   const sessions: unknown[] = [];
   const seenCursors = new Set<string>();
+  const now = deps.easNow ?? Date.now;
+  const collectionTimeoutMs = deps.easCollectionTimeoutMs ?? EAS_COLLECTION_TIMEOUT_MS;
+  const maxPages = deps.easMaxPages ?? EAS_MAX_LIST_PAGES;
+  const deadline = now() + collectionTimeoutMs;
+  let pageCount = 0;
   let after: string | null = null;
   while (true) {
+    if (pageCount >= maxPages) {
+      return empty([
+        ...recorded.notices,
+        `EAS session list exceeded the maximum page limit of ${maxPages} for ${projectRoot}.`,
+      ]);
+    }
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) {
+      return empty([...recorded.notices, `EAS session list exceeded its total time limit for ${projectRoot}.`]);
+    }
+
     let stdout: string;
     try {
       stdout = run(eas.file, listOwnedSessionsArgs(after), {
         cwd: projectRoot,
-        timeoutMs: EAS_OPERATION_TIMEOUT_MS,
+        timeoutMs: Math.min(EAS_OPERATION_TIMEOUT_MS, remainingMs),
         omitEnv: PROXY_CREDENTIAL_ENV,
       });
     } catch (error) {
       return empty([...recorded.notices, `EAS session list failed for ${projectRoot}: ${describeError(error)}`]);
+    }
+    pageCount++;
+    if (now() > deadline) {
+      return empty([...recorded.notices, `EAS session list exceeded its total time limit for ${projectRoot}.`]);
     }
 
     const parsed = parseSessionListPage(stdout);
@@ -525,6 +559,17 @@ function collectEasSessionSweep(config: Config | null, deps: GcDependencies): Ea
     after = cursor;
   }
 
+  const lockedRoots = deps.easLockedRoots;
+  if (lockedRoots) {
+    const currentRoots = easLockRoots(projectRoot, loadConfig());
+    if (currentRoots.some((root) => !lockedRoots.includes(root))) {
+      return empty([
+        ...recorded.notices,
+        'EAS session sweep skipped: registered workspace roots changed after remote-session locks were acquired.',
+      ]);
+    }
+  }
+
   const compared = findOrphanedOwnedSessions({
     sessions,
     recordedSessionIds: recorded.ids,
@@ -537,6 +582,86 @@ function collectEasSessionSweep(config: Config | null, deps: GcDependencies): Ea
     notices,
     deletionSafe: recorded.safe,
   };
+}
+
+function easLockRoots(projectRoot: string, config: Config | null): string[] {
+  return [...new Set([...Object.keys(config?.projects ?? {}), projectRoot].map(canonicalPath))].toSorted();
+}
+
+function unavailableLockRootNotice(roots: readonly string[]): string | null {
+  for (const root of roots) {
+    try {
+      if (!statSync(root).isDirectory()) throw new Error('path is not a directory');
+      readdirSync(root);
+    } catch (error) {
+      return `EAS session sweep skipped: ${root} is not available for remote-session lock inspection: ${describeError(error)}`;
+    }
+  }
+  return null;
+}
+
+function malformedRemoteSessionLockNotice(roots: readonly string[]): string | null {
+  for (const root of roots) {
+    const lockPath = join(root, '.rn-iso', 'remote-session.lock');
+    if (!existsSync(lockPath)) continue;
+    try {
+      const owner = JSON.parse(readFileSync(join(lockPath, 'owner.json'), 'utf-8')) as Record<string, unknown>;
+      if (typeof owner.pid === 'number' && typeof owner.token === 'string') continue;
+    } catch {
+      if (!existsSync(lockPath)) continue;
+    }
+    return `EAS session sweep skipped: the remote-session lock at ${lockPath} has a malformed owner record.`;
+  }
+  return null;
+}
+
+async function withRemoteSessionGcLocks<T>(
+  projectRoot: string,
+  deps: GcDependencies,
+  fn: (coordinatedDeps: GcDependencies) => Promise<T>,
+): Promise<T> {
+  const withLock = deps.withRemoteSessionLock ?? withRemoteSessionLock;
+  const waitMs = deps.easLockWaitMs ?? EAS_LOCK_WAIT_MS;
+  const maxSnapshots = deps.easLockSnapshotRetries ?? EAS_LOCK_SNAPSHOT_RETRIES;
+
+  for (let attempt = 0; attempt < maxSnapshots; attempt++) {
+    const roots = easLockRoots(projectRoot, loadConfig());
+    const unavailable = unavailableLockRootNotice(roots);
+    if (unavailable) return fn({ ...deps, easSweepBlockedNotice: unavailable });
+    const malformed = malformedRemoteSessionLockNotice(roots);
+    if (malformed) return fn({ ...deps, easSweepBlockedNotice: malformed });
+
+    let expanded = false;
+    let coreStarted = false;
+    const acquire = (index: number): Promise<T | null> =>
+      index === roots.length
+        ? (async () => {
+            const rescannedRoots = easLockRoots(projectRoot, loadConfig());
+            if (rescannedRoots.some((root) => !roots.includes(root))) {
+              expanded = true;
+              return null;
+            }
+            coreStarted = true;
+            return fn({ ...deps, easSweepBlockedNotice: undefined, easLockedRoots: roots });
+          })()
+        : withLock(roots[index]!, () => acquire(index + 1), { waitMs });
+
+    try {
+      const result = await acquire(0);
+      if (!expanded) return result as T;
+    } catch (error) {
+      if (coreStarted) throw error;
+      return fn({
+        ...deps,
+        easSweepBlockedNotice: `EAS session sweep skipped: remote-session lock acquisition failed: ${describeError(error)}`,
+      });
+    }
+  }
+
+  return fn({
+    ...deps,
+    easSweepBlockedNotice: `EAS session sweep skipped: registered workspace roots kept changing during remote-session lock acquisition.`,
+  });
 }
 
 // A cache key is a 64-char fingerprint plus its variant and target. The whole
@@ -1087,6 +1212,21 @@ export async function collectGcReport(
 // device sweep with `unsafeAllowScopedDeviceSweep`; commander supplies only
 // the flags declared below.
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
+  let projectRoot: string | null = null;
+  try {
+    projectRoot = (deps.findProjectRoot ?? findProjectRoot)(process.cwd());
+    if (!projectRoot || !(deps.detectIsExpo ?? detectIsExpo)(projectRoot)) {
+      return runGcWithRemoteSessionLocksHeld(opts, deps);
+    }
+  } catch {
+    return runGcWithRemoteSessionLocksHeld(opts, deps);
+  }
+  return withRemoteSessionGcLocks(projectRoot, deps, (coordinatedDeps) =>
+    runGcWithRemoteSessionLocksHeld(opts, coordinatedDeps),
+  );
+}
+
+async function runGcWithRemoteSessionLocksHeld(opts: RunGcOptions, deps: GcDependencies): Promise<void> {
   const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
   // --all reaches CACHES ONLY. It is not "delete everything gc knows about":
   // devices and project entries are reached by --delete alone, exactly as
@@ -1267,13 +1407,17 @@ export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}):
 
   if (easSessionSweep.orphaned.length && easSessionSweep.deletionSafe && easSessionSweep.projectScope) {
     const currentConfig = loadConfig();
-    const currentRecords = readRecordedRemoteSessionIds([
-      ...Object.keys(currentConfig?.projects ?? {}),
-      easSessionSweep.projectScope,
-    ]);
-    if (!currentRecords.safe) {
+    const currentRoots = easLockRoots(easSessionSweep.projectScope, currentConfig);
+    const registryExpanded = deps.easLockedRoots && currentRoots.some((root) => !deps.easLockedRoots!.includes(root));
+    const currentRecords = registryExpanded
+      ? null
+      : readRecordedRemoteSessionIds([...Object.keys(currentConfig?.projects ?? {}), easSessionSweep.projectScope]);
+    if (registryExpanded) {
       deleteFailures += easSessionSweep.orphaned.length;
-      for (const notice of currentRecords.notices) {
+      console.log(chalk.red('EAS session deletion refused: registered workspace roots changed after classification.'));
+    } else if (!currentRecords?.safe) {
+      deleteFailures += easSessionSweep.orphaned.length;
+      for (const notice of currentRecords?.notices ?? []) {
         console.log(chalk.red(`EAS session deletion refused: ${notice}`));
       }
     } else {

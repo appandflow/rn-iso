@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -15,6 +16,7 @@ import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { saveConfig, loadConfig } from '../config.ts';
 import { register } from '../cache-manifest.ts';
+import { withRemoteSessionLock } from '../engine/device-remote.ts';
 import gcCommand, {
   collectGcReport,
   describeUnverifiableDevices,
@@ -429,11 +431,16 @@ function easGcHarness({
   stop = {},
 }: {
   project: string;
-  list: string | Error | Record<string, string | Error>;
+  list:
+    | string
+    | Error
+    | Record<string, string | Error>
+    | ((after: string, page: number, options: EasCall['options']) => string | Error);
   get?: Record<string, string | Error>;
   stop?: Record<string, string | Error>;
 }) {
   const calls: EasCall[] = [];
+  let page = 0;
   return {
     calls,
     deps: {
@@ -444,7 +451,12 @@ function easGcHarness({
         calls.push({ args, options });
         const id = args[args.indexOf('--id') + 1] ?? '';
         const after = args.includes('--after') ? (args[args.indexOf('--after') + 1] ?? '') : 'first';
-        const listValue = typeof list === 'object' && !(list instanceof Error) ? list[after] : list;
+        const listValue =
+          typeof list === 'function'
+            ? list(after, page++, options)
+            : typeof list === 'object' && !(list instanceof Error)
+              ? list[after]
+              : list;
         const value = args[0] === 'simulator:list' ? listValue : args[0] === 'simulator:get' ? get[id] : stop[id];
         if (value instanceof Error) throw value;
         return value ?? '';
@@ -582,7 +594,7 @@ describe('EAS orphan session sweep', () => {
     });
 
     expect(output).toMatch(/unavailable-workspace.*not available|unavailable-workspace.*not readable/i);
-    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+    expect(harness.calls).toEqual([]);
   });
 
   test('an existing registered workspace with no state file does not block deletion', async () => {
@@ -606,6 +618,186 @@ describe('EAS orphan session sweep', () => {
     await captureLog(() => runGc({ delete: true }, harness.deps));
 
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list', 'simulator:get', 'simulator:stop']);
+  });
+
+  test('an active remote session creation lock disables deletion while local cleanup continues', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_creating', name: 'rn-iso-creating', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: {
+        drs_creating: JSON.stringify({ id: 'drs_creating', name: 'rn-iso-creating', status: 'IN_PROGRESS' }),
+      },
+      stop: { drs_creating: JSON.stringify({ id: 'drs_creating', status: 'STOPPED' }) },
+    });
+
+    const output = await withRemoteSessionLock(project, () => captureLog(() => runGc({ delete: true }, harness.deps)));
+
+    expect(output).toMatch(/remote-session|remote session.*lock/i);
+    expect(harness.calls).toEqual([]);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('dry run does not wait behind an active remote session creation lock', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_creating', name: 'rn-iso-creating', status: 'IN_PROGRESS', platform: 'IOS' }]),
+    });
+    const startedAt = Date.now();
+
+    const output = await withRemoteSessionLock(project, () => captureLog(() => runGc({}, harness.deps)));
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(output).toMatch(/remote-session|remote session.*lock/i);
+    expect(harness.calls).toEqual([]);
+  });
+
+  test('a malformed remote session lock disables the EAS sweep', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const lockDir = join(project, '.rn-iso', 'remote-session.lock');
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(join(lockDir, 'owner.json'), '{not valid json');
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lockDir, old, old);
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_hidden', name: 'rn-iso-hidden', status: 'IN_PROGRESS', platform: 'IOS' }]),
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/remote-session|remote session.*lock/i);
+    expect(harness.calls).toEqual([]);
+    expect(existsSync(lockDir)).toBe(true);
+  });
+
+  test('registry expansion releases and retries the sorted remote session lock set', async () => {
+    const project = join(fakeHome, 'z-expo-app');
+    const added = join(fakeHome, 'a-expo-workspace');
+    registerExpoProject(project);
+    mkdirSync(added, { recursive: true });
+    installExecutor();
+    const harness = easGcHarness({ project, list: easList() });
+    const acquisitions: string[] = [];
+    let depth = 0;
+    let expanded = false;
+    const deps = {
+      ...harness.deps,
+      withRemoteSessionLock: async <T>(root: string, fn: () => Promise<T>): Promise<T> => {
+        acquisitions.push(root);
+        depth++;
+        try {
+          if (!expanded) {
+            expanded = true;
+            saveConfig({
+              version: 2,
+              projects: { [project]: { isExpo: true }, [added]: { isExpo: true } },
+              repos: {},
+            });
+          }
+          return await fn();
+        } finally {
+          depth--;
+        }
+      },
+    } as unknown as Parameters<typeof runGc>[1];
+
+    await captureLog(() => runGc({}, deps));
+
+    expect(acquisitions).toEqual([realpathSync(project), realpathSync(added), realpathSync(project)]);
+    expect(depth).toBe(0);
+  });
+
+  test('an error from the GC core is not retried as a lock acquisition failure', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const harness = easGcHarness({ project, list: easList() });
+    const failure = new Error('report output failed');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {
+      throw failure;
+    });
+
+    await expect(runGc({}, harness.deps)).rejects.toBe(failure);
+
+    expect(log).toHaveBeenCalledTimes(1);
+    log.mockRestore();
+  });
+
+  test('a workspace registered during the EAS list cannot hide a pending state write', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const added = join(fakeHome, 'new-expo-workspace');
+    registerExpoProject(project);
+    mkdirSync(added, { recursive: true });
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: () => {
+        saveConfig({
+          version: 2,
+          projects: { [project]: { isExpo: true }, [added]: { isExpo: true } },
+          repos: {},
+        });
+        return easList([{ id: 'drs_registering', name: 'rn-iso-registering', status: 'IN_PROGRESS', platform: 'IOS' }]);
+      },
+      get: {
+        drs_registering: JSON.stringify({
+          id: 'drs_registering',
+          name: 'rn-iso-registering',
+          status: 'IN_PROGRESS',
+        }),
+      },
+      stop: { drs_registering: JSON.stringify({ id: 'drs_registering', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/registered workspace roots.*changed|new.*remote-session lock/i);
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('the final state rescan rejects a workspace registered after classification', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const added = join(fakeHome, 'late-expo-workspace');
+    registerExpoProject(project);
+    mkdirSync(added, { recursive: true });
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: () => {
+        queueMicrotask(() => {
+          saveConfig({
+            version: 2,
+            projects: { [project]: { isExpo: true }, [added]: { isExpo: true } },
+            repos: {},
+          });
+        });
+        return easList([{ id: 'drs_registering', name: 'rn-iso-registering', status: 'IN_PROGRESS', platform: 'IOS' }]);
+      },
+      get: {
+        drs_registering: JSON.stringify({
+          id: 'drs_registering',
+          name: 'rn-iso-registering',
+          status: 'IN_PROGRESS',
+        }),
+      },
+      stop: { drs_registering: JSON.stringify({ id: 'drs_registering', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/deletion refused.*registered workspace roots.*changed/i);
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
   });
 
   test('collects every page before comparing current-project sessions', async () => {
@@ -642,6 +834,67 @@ describe('EAS orphan session sweep', () => {
         expect.arrayContaining(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']),
       );
     }
+  });
+
+  test('a unique-cursor sequence stops at the configured page limit', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: (_after, page) => {
+        if (page > 10) throw new Error('test safety bound reached');
+        return easList([], { hasNextPage: true, endCursor: `cursor-${page + 1}` });
+      },
+    });
+    const deps = { ...harness.deps, easMaxPages: 3 } as unknown as Parameters<typeof runGc>[1];
+
+    const output = await captureLog(() => runGc({ delete: true }, deps));
+
+    expect(output).toMatch(/EAS session sweep notice/i);
+    expect(output).toMatch(/page limit|maximum.*pages/i);
+    expect(harness.calls.filter((call) => call.args[0] === 'simulator:list')).toHaveLength(3);
+    expect(harness.calls.some((call) => call.args[0] === 'simulator:get')).toBe(false);
+    expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('a slow page sequence stops at the total deadline and shortens the final page timeout', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    let clock = 0;
+    const harness = easGcHarness({
+      project,
+      list: (_after, page) => {
+        clock += 40_000;
+        return easList(
+          page === 2 ? [{ id: 'drs_too_late', name: 'rn-iso-too-late', status: 'IN_PROGRESS', platform: 'IOS' }] : [],
+          { hasNextPage: page < 2, endCursor: `cursor-${page + 1}` },
+        );
+      },
+      get: {
+        drs_too_late: JSON.stringify({ id: 'drs_too_late', name: 'rn-iso-too-late', status: 'IN_PROGRESS' }),
+      },
+      stop: { drs_too_late: JSON.stringify({ id: 'drs_too_late', status: 'STOPPED' }) },
+    });
+    const deps = {
+      ...harness.deps,
+      easNow: () => clock,
+      easCollectionTimeoutMs: 60_000,
+    } as unknown as Parameters<typeof runGc>[1];
+
+    const output = await captureLog(() => runGc({ delete: true }, deps));
+
+    expect(output).toMatch(/EAS session sweep notice/i);
+    expect(output).toMatch(/deadline|time limit/i);
+    const listCalls = harness.calls.filter((call) => call.args[0] === 'simulator:list');
+    expect(listCalls.map((call) => call.options.timeoutMs)).toEqual([30_000, 20_000]);
+    expect(harness.calls.some((call) => call.args[0] === 'simulator:get')).toBe(false);
+    expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
+    expect(existsSync(staleLock)).toBe(false);
   });
 
   test.each([
