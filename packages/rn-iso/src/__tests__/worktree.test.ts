@@ -8,7 +8,6 @@ import {
   defaultWorktreeDir,
   worktreePath,
   matchesInclude,
-  isWorkspaceArtifact,
   isCarrySkipped,
   unpushedCommits,
   hasUncommittedWork,
@@ -81,10 +80,6 @@ test('unpushedCommits returns empty when git reports nothing', () => {
   expect(unpushedCommits('/wt')).toEqual([]);
 });
 
-// The protection set must carve out exactly one branch: the worktree's own,
-// whose tip IS HEAD -- protecting it would protect everything and turn the
-// check off. `--exclude` must precede the `--branches` it scopes, and
-// `--remotes` must sit outside its reach.
 test('unpushedCommits excludes only the worktree own branch from the local-branch protection', () => {
   const calls: string[] = [];
   setExecutor({
@@ -101,9 +96,6 @@ test('unpushedCommits excludes only the worktree own branch from the local-branc
   expect(log).toContain('log --oneline HEAD --not --remotes --exclude="worktree-ws" --branches');
 });
 
-// Fail closed, twice over: a detached HEAD (symbolic-ref exits nonzero ->
-// null) and a branch name unsafe to interpolate both fall back to the
-// remotes-only count, which can only refuse MORE, never less.
 test('unpushedCommits falls back to the remotes-only count on a detached HEAD or an unsafe branch name', () => {
   for (const branch of [null, 'evil"; touch PWNED; "']) {
     const calls: string[] = [];
@@ -122,12 +114,6 @@ test('unpushedCommits falls back to the remotes-only count on a detached HEAD or
   }
 });
 
-// A mocked test cannot protect this: the naive command form (`git log
-// --oneline --not --remotes`, no explicit HEAD) silently returns empty
-// output even when unpushed commits exist, once any revision argument is
-// present git stops defaulting to HEAD on its own. Only a real git process
-// against a real repo + real remote catches that. Drives the real executor
-// (resetExecutor) over a scratch repo with a bare "remote" on disk.
 test('unpushedCommits against a real repo: empty right after push, reports a commit made only locally', () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-unpushed-'));
@@ -162,13 +148,6 @@ test('unpushedCommits against a real repo: empty right after push, reports a com
   }
 });
 
-// Issue #8, against real git: a worktree cut from a LOCAL-ONLY base ref
-// inherits that ref's unpushed commits, but the base branch still reaches
-// them, so removing the worktree loses nothing -- the count must be 0. A
-// commit the worktree then ADDS is reachable from nowhere else and must
-// count. A mocked test cannot protect the `--exclude`/`--branches` composed
-// form (a misplaced --exclude is silently ignored by real git), so this
-// drives the real executor over a scratch repo, like the test above.
 test('unpushedCommits against a real repo: commits inherited from a local-only base ref do not count; a commit the worktree adds does', () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-inherited-'));
@@ -182,8 +161,6 @@ test('unpushedCommits against a real repo: commits inherited from a local-only b
     git('git init -q -b main');
     git('git config user.email test@example.com');
     git('git config user.name test');
-    // A remote exists but has never seen any of these commits: the base
-    // branch's tip is local-only, exactly the shape the issue reproduced.
     git(`git remote add origin "${bareRemote}"`);
     writeFileSync(join(repo, 'README.md'), 'hello');
     git('git add README.md');
@@ -191,11 +168,8 @@ test('unpushedCommits against a real repo: commits inherited from a local-only b
     const wt = join(base, 'wt');
     git(`git worktree add -q "${wt}" -b worktree-ws main`);
 
-    // The worktree added nothing: every commit it reaches, main reaches too.
     expect(unpushedCommits(wt)).toEqual([]);
 
-    // A commit made IN the worktree is on no remote and no other local
-    // branch tip -- the one class removal could actually strand.
     writeFileSync(join(wt, 'work.txt'), 'work');
     execSync('git add work.txt', { cwd: wt });
     execSync('git commit -q -m "worktree-only commit"', { cwd: wt });
@@ -235,9 +209,6 @@ test('resolveBaseRef("fresh") returns origin/HEAD\'s branch when it resolves, no
   expect(errs).toEqual([]);
 });
 
-// Silent before this task: a repo with no `origin` remote (or one where
-// `origin/HEAD` was never set) made every "fresh" worktree branch from
-// local HEAD with no indication anything had fallen back.
 test('resolveBaseRef("fresh") falls back to HEAD and warns on stderr when origin/HEAD is missing', () => {
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
   const errs: string[] = [];
@@ -291,13 +262,8 @@ test('carryOverFiles copies only files that are both gitignored and pattern-matc
         throw new Error(`unexpected run: ${cmd}`);
       },
       runQuiet: (cmd) => {
-        // The carry asks the DESTINATION what it tracks before it copies
-        // anything; this fixture target is an empty directory, so: nothing.
         if (cmd.includes('ls-files -z')) return '';
         capturedCmd = cmd;
-        // Simulates the real `git ls-files --others --ignored` output: only
-        // untracked, gitignored files ever appear here. A tracked file
-        // cannot be in this list no matter what patterns say.
         return 'apps/mobile/.env\ndist/build.log';
       },
       spawn: () => {},
@@ -324,8 +290,6 @@ test('carryOverFiles reports per-file failures instead of swallowing them', () =
   try {
     mkdirSync(join(root, 'apps/mobile'), { recursive: true });
     writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
-    // Listed as gitignored+matched by the mocked `git ls-files` output, but
-    // never actually created on disk -- copyFileSync must fail on this one.
     setExecutor({
       run: (cmd) => {
         throw new Error(`unexpected run: ${cmd}`);
@@ -352,8 +316,6 @@ test('listGitignoredEntries keeps collapsed directories and does not exclude nod
     run: (cmd) => {
       throw new Error(`unexpected run: ${cmd}`);
     },
-    // The trailing slashes are what `--directory` emits for a wholly-ignored
-    // directory; listGitignoredFiles drops these entries, this one must not.
     runQuiet: (cmd) => {
       capturedCmd = cmd;
       return 'node_modules/\nios/Pods/\nios/.xcode.env.local';
@@ -377,9 +339,6 @@ test('cloneIgnoredEntries skips excluded paths and reports a clone that fell bac
       },
       runFile: (file, args) => {
         fileCalls.push([file, args]);
-        // `cp -Rc` is the APFS-clone probe; throwing is how the real executor
-        // surfaces a refused clonefile (different volume / not APFS), which the
-        // fallback `cp -R` then handles.
         if (file === 'cp' && args[0] === '-Rc') throw new Error('clonefile refused');
         return '';
       },
@@ -400,7 +359,6 @@ test('cloneIgnoredEntries skips excluded paths and reports a clone that fell bac
     expect(copied).toEqual(['node_modules']);
     expect(failed).toEqual([]);
     expect(cloned).toBe(false);
-    // No shell string; `from`/`to` reach cp as literal argv elements.
     expect(fileCalls.some(([f, a]) => f === 'cp' && a[0] === '-Rc')).toBeTruthy();
     expect(fileCalls.some(([f, a]) => f === 'cp' && a[0] === '-R')).toBeTruthy();
   } finally {
@@ -421,8 +379,6 @@ test('carryOverFiles against a real git repo copies only the gitignored+matched 
     git('git config user.email test@example.com');
     git('git config user.name test');
 
-    // Tracked file that happens to match a carry-over pattern: must never
-    // be copied, because it is already tracked (not gitignored).
     mkdirSync(join(root, 'config'), { recursive: true });
     writeFileSync(join(root, 'config/secrets.json'), '{"tracked": true}');
     writeFileSync(join(root, 'README.md'), 'hello');
@@ -430,11 +386,9 @@ test('carryOverFiles against a real git repo copies only the gitignored+matched 
     git('git add README.md config/secrets.json .gitignore');
     git('git commit -q -m init');
 
-    // Untracked, gitignored, and pattern-matched: must be copied.
     mkdirSync(join(root, 'apps/mobile'), { recursive: true });
     writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
 
-    // Untracked and gitignored, but not pattern-matched: must not be copied.
     mkdirSync(join(root, 'dist'), { recursive: true });
     writeFileSync(join(root, 'dist/build.log'), 'log output');
 
@@ -451,17 +405,6 @@ test('carryOverFiles against a real git repo copies only the gitignored+matched 
   }
 });
 
-// Regression for the bug where `git ls-files --others --ignored
-// --exclude-standard` output past execSync's default 1MB maxBuffer made
-// listGitignoredFiles (and therefore carryOverFiles) silently return
-// nothing -- `copied` and `failed` both empty, so `worktree create` never
-// even warned. A mocked executor cannot catch this class of bug (the whole
-// failure is inside execSync's real buffering), so this drives real git
-// over a real, oversized ignored-file set. The bloat files sit at the repo
-// root next to a tracked README so the directory can never collapse to a
-// single `--directory` entry -- this is what keeps raw ls-files output
-// large even after the node_modules-scoping fix, so the test still
-// exercises the maxBuffer path it exists to guard.
 test('listGitignoredFiles and carryOverFiles still find the target file when raw ls-files output exceeds 1MB', () => {
   const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-bigignore-'));
   const root = join(base, 'repo');
@@ -479,16 +422,11 @@ test('listGitignoredFiles and carryOverFiles still find the target file when raw
     git('git add README.md .gitignore');
     git('git commit -q -m init');
 
-    // ~1.3MB of untracked, ignored, irrelevant filenames -- stands in for
-    // the real-world case (a multi-GB node_modules), just scattered instead
-    // of collapsible into one directory entry.
     const padding = 'x'.repeat(200);
     for (let i = 0; i < 6000; i++) {
       writeFileSync(join(root, `bloat-${i}-${padding}.ignoreme`), '');
     }
 
-    // The actual file carry-over exists to find, buried in the same
-    // oversized, ignored listing.
     mkdirSync(join(root, 'apps/mobile'), { recursive: true });
     writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
 
@@ -530,9 +468,6 @@ test('addWorktree runs git via runFile (no shell) with a `--` terminator, path a
     const result = addWorktree({ path, branch: 'feat-x', baseRef: 'origin/main', cwd: tmp });
 
     expect(result).toBe(path);
-    // No shell string anywhere; the space-bearing path is a single literal argv
-    // element, and `--` terminates options so neither path nor baseRef can be
-    // read as a flag.
     expect(calls).toEqual([['git', ['worktree', 'add', '-b', 'feat-x', '--', path, 'origin/main']]]);
     expect(existsSync(dirname(path))).toBe(true);
   } finally {
@@ -540,10 +475,6 @@ test('addWorktree runs git via runFile (no shell) with a `--` terminator, path a
   }
 });
 
-// Regression for `create -> remove -> create` with the same name: `git
-// worktree remove` deletes the worktree directory but never the branch, so
-// a second create with the same name used to hit git's "branch already
-// exists" error on `-b`. addWorktree must detect that and attach instead.
 test('addWorktree attaches to an existing branch instead of erroring on -b', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'rn-iso-test-add-reuse-'));
   try {
@@ -557,8 +488,6 @@ test('addWorktree attaches to an existing branch instead of erroring on -b', () 
         calls.push([file, args]);
         return '';
       },
-      // Simulate the branch already existing (left behind by an earlier
-      // `worktree remove`): rev-parse --verify succeeds and prints a sha.
       runQuiet: (cmd) => (/rev-parse --verify --quiet/.test(cmd) ? 'deadbeef' : ''),
       spawn: () => {},
     });
@@ -566,7 +495,6 @@ test('addWorktree attaches to an existing branch instead of erroring on -b', () 
     const result = addWorktree({ path, branch: 'worktree-fix-login', baseRef: 'origin/main', cwd: tmp });
 
     expect(result).toBe(path);
-    // Attach path: no `-b`, and `--` still terminates options before the path.
     expect(calls).toEqual([['git', ['worktree', 'add', '--', path, 'worktree-fix-login']]]);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -586,7 +514,7 @@ test('addWorktree uses -b for a genuinely new branch name', () => {
         calls.push([file, args]);
         return '';
       },
-      runQuiet: () => null, // branch does not exist
+      runQuiet: () => null,
       spawn: () => {},
     });
 
@@ -613,19 +541,12 @@ test('removeWorktree runs git via runFile (no shell) and includes --force only w
   removeWorktree(path);
   removeWorktree(path, { force: true });
 
-  // No shell: the path -- which may contain a space, quote, or `$(...)` -- is a
-  // single argv element, and `--` ends option parsing before it.
   expect(calls).toEqual([
     ['git', '-C', path, 'worktree', 'remove', '--', path],
     ['git', '-C', path, 'worktree', 'remove', '--force', '--', path],
   ]);
 });
 
-// `ios/Pods/` is gitignored and gets cloned; `ios/Podfile.lock` is tracked and
-// comes from the branch. When the source worktree's two disagree, the clone
-// imports the contradiction and xcodebuild reports it only after every pod has
-// compiled ("sandbox is not in sync"). Catching it at create time is a file
-// comparison; catching it at build time cost 25 minutes on a real project.
 function podsFixture({
   manifest,
   podfileLock,
@@ -679,8 +600,6 @@ test('carried Pods with no Podfile.lock beside them are reported as missing', ()
   rmSync(root, { recursive: true, force: true });
 });
 
-// A monorepo keeps the app -- and its Pods -- under e.g. apps/mobile, so the
-// check cannot be hardcoded to a top-level `ios/`.
 test('a monorepo app directory is checked at its own path', () => {
   const root = podsFixture({ manifest: 'a\n', podfileLock: 'b\n', dir: 'apps/mobile/ios' });
   expect(podsOutOfSync(root, ['apps/mobile/ios/Pods'])).toEqual([{ dir: 'apps/mobile/ios', reason: 'mismatch' }]);
@@ -693,17 +612,12 @@ test('entries that are not Pods directories are ignored, including lookalikes', 
   rmSync(root, { recursive: true, force: true });
 });
 
-// No Manifest.lock means nothing was ever installed into that directory, so
-// there is no claim to contradict. Warning there would be noise.
 test('a Pods directory with no Manifest.lock is not reported', () => {
   const root = podsFixture({ manifest: null, podfileLock: 'a\n' });
   expect(podsOutOfSync(root, ['ios/Pods'])).toEqual([]);
   rmSync(root, { recursive: true, force: true });
 });
 
-// The removal refusal used to print the CocoaPods restore command
-// unconditionally. On member-app the dirty files are brand assets a shell
-// script rewrites, so following that command cleared nothing.
 test('pod-install churn is recognised so the restore advice only fires when it works', () => {
   expect(isPodInstallChurn([' M ios/Podfile.lock', ' M ios/PatientApp.xcodeproj/project.pbxproj'])).toBe(true);
   expect(isPodInstallChurn([' M ios/Podfile.lock', ' M config.json'])).toBe(false);
@@ -711,34 +625,13 @@ test('pod-install churn is recognised so the restore advice only fires when it w
   expect(isPodInstallChurn([])).toBe(false);
 });
 
-// --- .rn-iso/ is never carried, and that is not configurable -----------------
-//
-// It holds this workspace's derived data, its logs and the supervisor pidfile:
-// build output keyed to a path the new worktree does not have, and a pidfile
-// for a process that is not running. There is no repo for which carrying that
-// is right, so it is code rather than a line in a file someone has to remember
-// to write. A monorepo has one per app directory, hence the depth cases.
-test('isWorkspaceArtifact matches the workspace dir at any depth, and nothing else', () => {
-  for (const rel of [
-    '.rn-iso',
-    '.rn-iso/logs/metro.ndjson',
-    'apps/mobile/.rn-iso',
-    'apps/mobile/.rn-iso/derived-data',
-  ]) {
-    expect(isWorkspaceArtifact(rel)).toBe(true);
-  }
-  for (const rel of ['node_modules', 'apps/mobile/.rn-isotope', 'docs/rn-iso.md', 'apps/.rn-iso-old']) {
-    expect(isWorkspaceArtifact(rel)).toBe(false);
-  }
-});
-
-test('cloneIgnoredEntries skips every .rn-iso with no pattern file anywhere', () => {
+test('cloneIgnoredEntries treats .rn-iso like any other gitignored project directory', () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
   const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
   try {
     setExecutor({
       run: () => '',
-      runFile: () => '', // cp -Rc / cp -R now go through runFile; '' = clone ok
+      runFile: () => '',
       runQuiet: (cmd) => {
         if (cmd.includes('ls-files -z')) return '';
         if (cmd.startsWith('git ')) return 'node_modules/\n.rn-iso/\napps/mobile/.rn-iso/\napps/mobile/ios/Pods/';
@@ -749,23 +642,20 @@ test('cloneIgnoredEntries skips every .rn-iso with no pattern file anywhere', ()
 
     const { copied } = cloneIgnoredEntries({ root, target, patterns: [] });
 
-    expect(copied).toEqual(['node_modules', 'apps/mobile/ios/Pods']);
+    expect(copied).toEqual(['node_modules', '.rn-iso', 'apps/mobile/.rn-iso', 'apps/mobile/ios/Pods']);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
   }
 });
 
-// The pattern file extends the built-in list. It cannot shorten it: a pattern
-// that names .rn-iso -- or a negation someone hopes will re-include it -- has
-// no effect, because the exclusion is not implemented with patterns at all.
-test('.worktreeexclude patterns add to the built-in exclusion and cannot undo it', () => {
+test('.worktreeexclude can skip a project-owned .rn-iso directory normally', () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
   const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
   try {
     setExecutor({
       run: () => '',
-      runFile: () => '', // cp -Rc / cp -R now go through runFile; '' = clone ok
+      runFile: () => '',
       runQuiet: (cmd) => {
         if (cmd.includes('ls-files -z')) return '';
         if (cmd.startsWith('git ')) return 'node_modules/\ncoverage/\napps/mobile/.rn-iso/';
@@ -774,21 +664,15 @@ test('.worktreeexclude patterns add to the built-in exclusion and cannot undo it
       spawn: () => {},
     });
 
-    const extended = cloneIgnoredEntries({ root, target, patterns: ['coverage'] });
-    expect(extended.copied).toEqual(['node_modules']);
-
-    const attemptedReinclude = cloneIgnoredEntries({ root, target, patterns: ['!.rn-iso', '!**/.rn-iso'] });
-    expect(attemptedReinclude.copied).toEqual(['node_modules', 'coverage']);
+    const excluded = cloneIgnoredEntries({ root, target, patterns: ['coverage', '**/.rn-iso'] });
+    expect(excluded.copied).toEqual(['node_modules']);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
   }
 });
 
-// The file-by-file half of carry-over (.worktreeinclude) reaches individual
-// gitignored files, which is how a `**/*.json`-shaped pattern could otherwise
-// pick up a workspace's own state.json.
-test('carryOverFiles never carries a file from inside a workspace directory', () => {
+test('carryOverFiles treats files inside .rn-iso like ordinary project files', () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
   const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
   try {
@@ -804,28 +688,14 @@ test('carryOverFiles never carries a file from inside a workspace directory', ()
 
     const { copied } = carryOverFiles({ root, target, patterns: ['**/*.json'] });
 
-    expect(copied).toEqual(['config/local.json']);
-    expect(existsSync(join(target, 'apps/mobile/.rn-iso/state.json'))).toBe(false);
+    expect(copied).toEqual(['apps/mobile/.rn-iso/state.json', 'config/local.json']);
+    expect(existsSync(join(target, 'apps/mobile/.rn-iso/state.json'))).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
   }
 });
 
-// Ignore state is a PER-WORKTREE fact: git computes it from the `.gitignore`
-// files that worktree has checked out, and those are themselves tracked,
-// branch-varying files. So "ignored and untracked over in the source" says
-// nothing about the destination -- `worktree create --base` exists precisely
-// to let the two sit on different branches.
-//
-// Observed on tlon-apps, whose apps/tlon-mobile/.gitignore ignores
-// `*.keystore` and then re-includes `!android/app/debug.keystore` so the team
-// shares one debug signing identity. A source worktree whose branch predates
-// that re-include has the keystore ignored+untracked, so the carry-over
-// enumerated it and copied that machine's own copy over the tracked one the
-// new worktree had just checked out. Silent tracked-file corruption, and by
-// tlon's own comment the exact file whose drift poisons their EAS build cache
-// and breaks APK installs across machines with a signature mismatch.
 test('cloneIgnoredEntries against a real git repo never overwrites a path the destination tracks', () => {
   const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-tracked-clone-'));
   const root = join(base, 'repo');
@@ -842,8 +712,6 @@ test('cloneIgnoredEntries against a real git repo never overwrites a path the de
     git('git add -A');
     git('git commit -q -m "main: every keystore ignored"');
 
-    // The branch the new worktree is cut from re-includes the keystore and
-    // tracks it, exactly as tlon-apps does.
     git('git checkout -q -b feature');
     writeFileSync(join(root, '.gitignore'), '*.keystore\n!android/app/debug.keystore\nbuild/\n');
     writeFileSync(join(root, 'android/app/debug.keystore'), 'BRANCH-VERSION');
@@ -851,8 +719,6 @@ test('cloneIgnoredEntries against a real git repo never overwrites a path the de
     git('git commit -q -m "feature: track debug.keystore through a negation"');
     git('git checkout -q main');
 
-    // The source worktree, sitting on the older branch: its keystore is
-    // ignored, untracked, and drifted from what the branch carries.
     writeFileSync(join(root, 'android/app/debug.keystore'), 'SOURCE-MACHINE-LOCAL');
     mkdirSync(join(root, 'build'), { recursive: true });
     writeFileSync(join(root, 'build/artifact.txt'), 'output');
@@ -866,8 +732,6 @@ test('cloneIgnoredEntries against a real git repo never overwrites a path the de
     expect(readFileSync(join(target, 'android/app/debug.keystore'), 'utf-8')).toBe('BRANCH-VERSION');
     expect(!copied.includes('android/app/debug.keystore')).toBeTruthy();
     expect(skipped).toEqual([{ file: 'android/app/debug.keystore', reason: 'tracked' }]);
-    // The genuinely ignored build output still comes across -- the guard is a
-    // scalpel, not a switch that turns carry-over off.
     expect(copied).toEqual(['build']);
     expect(readFileSync(join(target, 'build/artifact.txt'), 'utf-8')).toBe('output');
   } finally {
@@ -904,9 +768,6 @@ test('carryOverFiles against a real git repo never overwrites a path the destina
 
     git(`git worktree add -q "${target}" feature`);
 
-    // A `.worktreeinclude` wide enough to name both files: the include list is
-    // a filter over what git says is ignored, and it must not be able to reach
-    // a file the destination tracks.
     const { copied, skipped } = carryOverFiles({ root, target, patterns: ['*.keystore', '.env'] });
 
     expect(copied).toEqual(['apps/mobile/.env']);
@@ -918,16 +779,6 @@ test('carryOverFiles against a real git repo never overwrites a path the destina
   }
 });
 
-// The negation case that motivated all of this, kept as its own test because
-// it is the one a hand-rolled matcher gets wrong: a matcher that honours
-// `dir/` but ignores the `!dir/keep.txt` line under it would enumerate the
-// tracked file and carry it. git's own enumeration gets it right (a tracked
-// path is never an "other"), and the destination-side guard backs it up.
-//
-// `git add -f` is not incidental: gitignore cannot re-include a file whose
-// PARENT directory is excluded, so `dir/` + `!dir/keep.txt` leaves keep.txt
-// ignored, and force-adding is how a repo ends up with a tracked file under
-// an ignored directory in the first place.
 test('carry against a real git repo leaves a tracked file under an ignored directory alone', () => {
   const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-negation-'));
   const root = join(base, 'repo');
@@ -949,7 +800,6 @@ test('carry against a real git repo leaves a tracked file under an ignored direc
 
     git(`git worktree add -q "${target}" -b other main`);
 
-    // Source-side drift: the tracked file differs from what the branch holds.
     writeFileSync(join(root, 'dir/keep.txt'), 'SOURCE-MACHINE-LOCAL');
 
     const { copied, skipped, failed } = cloneIgnoredEntries({ root, target, patterns: [] });
@@ -957,8 +807,7 @@ test('carry against a real git repo leaves a tracked file under an ignored direc
     expect(failed).toEqual([]);
     expect(skipped).toEqual([]);
     expect(readFileSync(join(target, 'dir/keep.txt'), 'utf-8')).toBe('BRANCH-VERSION');
-    // Everything else under the ignored directory still carries.
-    expect(copied.sort()).toEqual(['dir/junk.txt', 'dir/sub']);
+    expect(copied.toSorted()).toEqual(['dir/junk.txt', 'dir/sub']);
     expect(readFileSync(join(target, 'dir/junk.txt'), 'utf-8')).toBe('junk');
     expect(readFileSync(join(target, 'dir/sub/deep.txt'), 'utf-8')).toBe('deep');
 
@@ -984,20 +833,12 @@ test('listTrackedPaths asks git for a NUL-delimited list and reports an unanswer
   });
   expect(listTrackedPaths('/wt')).toEqual(['ios/Podfile.lock', 'android/app/debug.keystore']);
   expect(capturedCmd).toMatch(/ls-files/);
-  // Without -z, `ls-files` C-quotes any path that is non-ASCII or holds a
-  // newline, and a quoted path can never match the entry the carry is about
-  // to copy -- the guard would silently pass it through.
   expect(capturedCmd).toMatch(/-z/);
 
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
   expect(listTrackedPaths('/wt')).toBe(null);
 });
 
-// The destination of a real `worktree create` is always a git worktree, so an
-// unanswerable `ls-files` means something is wrong enough that guessing is not
-// allowed. Falling back to "assume nothing is tracked" would reopen the exact
-// hole this guard closes, so the carry refuses to write over anything that is
-// already there.
 test('carry fails closed when the destination cannot be asked what it tracks', () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
   const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
@@ -1028,13 +869,6 @@ test('carry fails closed when the destination cannot be asked what it tracks', (
   }
 });
 
-// -----------------------------------------------------------------------------
-// Shell-injection regressions (C1 + H1). These MUST drive the real executor
-// against a real git repo: a mocked exec proves the argv shape but cannot prove
-// no shell evaluates a `$(...)` payload. The whole point is that repo-controlled
-// input -- a committed worktree.baseRef, a `--base`, or an ignored filename that
-// `git ls-files` does not quote -- reaches git/cp as one literal argument.
-
 test('C1: resolveRef never lets a $(...) baseRef reach a shell, and still resolves a real ref', () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-sec-resolveref-'));
@@ -1049,15 +883,12 @@ test('C1: resolveRef never lets a $(...) baseRef reach a shell, and still resolv
     git('git commit -q --allow-empty -m init');
     const realHead = git('git rev-parse --short HEAD').trim();
 
-    // A relative-path payload lands in the process cwd if a shell ever runs it.
     process.chdir(base);
     expect(resolveRef(root, '$(touch PWNED)')).toBe(null);
     expect(existsSync(join(base, 'PWNED'))).toBe(false);
 
-    // Real refs still resolve to the sha, unchanged.
     expect(resolveRef(root, 'HEAD')).toBe(realHead);
     expect(resolveRef(root, 'main')).toBe(realHead);
-    // A leading-dash ref is a safe lookup miss (--end-of-options), not a flag.
     expect(resolveRef(root, '-oops')).toBe(null);
   } finally {
     process.chdir(cwdBefore);
@@ -1078,12 +909,7 @@ test('C1: addWorktree never lets a $(...) baseRef reach a shell, and still creat
     git('git config user.name test');
     git('git commit -q --allow-empty -m init');
 
-    // `git worktree add` carries no `-C`, so it runs in process.cwd(); the real
-    // create flow invokes it from inside the repo. A relative-path payload would
-    // land here if a shell ever ran it.
     process.chdir(root);
-    // A `$(...)` baseRef must not execute. git will simply fail to resolve the
-    // literal commit-ish, so addWorktree throws -- but no shell runs.
     expect(() =>
       addWorktree({
         path: join(base, 'wt-evil'),
@@ -1091,10 +917,9 @@ test('C1: addWorktree never lets a $(...) baseRef reach a shell, and still creat
         baseRef: '$(touch PWNED2)',
         cwd: root,
       }),
-    ).toThrow();
+    ).toThrow(/invalid reference/);
     expect(existsSync(join(root, 'PWNED2'))).toBe(false);
 
-    // A real base ref still produces a working worktree on a fresh branch.
     const wt = join(base, 'wt-good');
     addWorktree({ path: wt, branch: 'worktree-good', baseRef: 'HEAD', cwd: root });
     expect(existsSync(join(wt, '.git'))).toBe(true);
@@ -1114,7 +939,7 @@ test('C1: addWorktree rejects a leading-dash baseRef with a clear error (defense
     runFile: (file, args) => {
       throw new Error(`git must not be invoked: ${file} ${args.join(' ')}`);
     },
-    runQuiet: () => null, // branch does not exist -> fresh path, where baseRef is used
+    runQuiet: () => null,
     spawn: () => {},
   });
   expect(() =>
@@ -1159,9 +984,6 @@ test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a l
     git('git add README.md .gitignore');
     git('git commit -q -m init');
 
-    // A genuinely ignored, top-level file whose NAME is a command-substitution
-    // payload. `git ls-files --others --ignored --directory` returns this
-    // unquoted; under the old `cp -Rc "${from}"` it executed.
     const evil = 'a$(touch INJECTED).log';
     writeFileSync(join(root, evil), 'payload');
 
@@ -1171,7 +993,6 @@ test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a l
     expect(existsSync(join(base, 'INJECTED'))).toBe(false);
     expect(failed).toEqual([]);
     expect(copied.includes(evil)).toBeTruthy();
-    // Carried as a real file with its content intact, not evaluated.
     expect(existsSync(join(target, evil))).toBe(true);
     expect(readFileSync(join(target, evil), 'utf-8')).toBe('payload');
   } finally {
@@ -1180,10 +1001,8 @@ test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a l
   }
 });
 
-test('isCarrySkipped skips .rn-iso and .DerivedData at any depth, and nothing that merely resembles them', () => {
+test('isCarrySkipped skips .DerivedData at any depth and treats .rn-iso normally', () => {
   for (const rel of [
-    '.rn-iso',
-    'apps/mobile/.rn-iso',
     '.DerivedData',
     'ios/build/.DerivedData',
     'node_modules/expo-modules-jsi/apple/.DerivedData',
@@ -1194,6 +1013,8 @@ test('isCarrySkipped skips .rn-iso and .DerivedData at any depth, and nothing th
   for (const rel of [
     'node_modules',
     'ios/Pods',
+    '.rn-iso',
+    'apps/mobile/.rn-iso',
     'apps/mobile/.rn-isotope',
     'MyDerivedData',
     'apple/MyDerivedData/x',
@@ -1205,12 +1026,6 @@ test('isCarrySkipped skips .rn-iso and .DerivedData at any depth, and nothing th
   }
 });
 
-// The live bug: `worktree create --carry-ignored` cloned
-// node_modules/expo-modules-jsi/apple/.DerivedData -- a Clang module cache that
-// bakes the SOURCE worktree's absolute paths -- so the new worktree's build
-// died with `missing required module 'SwiftShims'`. node_modules is one
-// collapsed ls-files entry, so the skip has to reach INSIDE the clone: prune
-// the .DerivedData subtree from the destination while leaving its siblings.
 test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData but keeps its sibling', () => {
   const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-derived-'));
   const root = join(base, 'repo');
@@ -1227,9 +1042,6 @@ test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData bu
     git('git add README.md .gitignore');
     git('git commit -q -m init');
 
-    // Gitignored via node_modules: the Clang module cache (baked absolute
-    // paths -> must NOT be carried) and a real source file beside it (must be
-    // carried, proving we prune the child, not the parent apple/ directory).
     mkdirSync(join(root, 'node_modules/pkg/apple/.DerivedData'), { recursive: true });
     writeFileSync(join(root, 'node_modules/pkg/apple/.DerivedData/x'), 'baked');
     writeFileSync(join(root, 'node_modules/pkg/apple/Real.swift'), 'import Foundation');
@@ -1245,11 +1057,6 @@ test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData bu
   }
 });
 
-// carryOverFiles is file-by-file (and excludes node_modules), so the same skip
-// applies at the entry level: a .DerivedData segment in an enumerated path is
-// dropped while its sibling is copied. The empty `.keep` keeps git from
-// collapsing .DerivedData into one directory entry, so both files enumerate
-// individually the way they would inside a partially-ignored tree.
 test('carryOverFiles against a real git repo skips a .DerivedData file but copies its sibling', () => {
   const base = mkdtempSync(join(tmpdir(), 'rn-iso-test-derived-files-'));
   const root = join(base, 'repo');
@@ -1268,9 +1075,9 @@ test('carryOverFiles against a real git repo skips a .DerivedData file but copie
 
     mkdirSync(join(root, 'apple/.DerivedData'), { recursive: true });
     writeFileSync(join(root, 'apple/.DerivedData/cache.derived'), 'baked');
-    writeFileSync(join(root, 'apple/.DerivedData/.keep'), ''); // untracked, not ignored
+    writeFileSync(join(root, 'apple/.DerivedData/.keep'), '');
     writeFileSync(join(root, 'apple/Real.derived'), 'source');
-    writeFileSync(join(root, 'apple/.keep'), ''); // untracked, not ignored
+    writeFileSync(join(root, 'apple/.keep'), '');
 
     const { copied, failed } = carryOverFiles({ root, target, patterns: ['*.derived'] });
 
@@ -1282,13 +1089,6 @@ test('carryOverFiles against a real git repo skips a .DerivedData file but copie
     rmSync(base, { recursive: true, force: true });
   }
 });
-
-// --- carrying the source's uncommitted tracked changes ----------------------
-//
-// `--carry-ignored` clones artifacts built against the source's WORKING TREE;
-// these tests pin the machinery that carries the uncommitted tracked diff the
-// artifacts were installed for. Mocked executor here (the decision logic); the
-// against-a-real-repo halves live in worktree-create.test.ts, driving real git.
 
 const TEXT_PATCH = [
   'diff --git a/app.json b/app.json',
@@ -1336,7 +1136,6 @@ test('carryUncommittedChanges checks first, applies second, through one temp pat
   expect(runFileCalls[1]?.slice(0, 4)).toEqual(['git', '-C', '/wt', 'apply']);
   const checkedFile = runFileCalls[0]?.[5];
   expect(runFileCalls[1]?.[4]).toBe(checkedFile);
-  // The temp file does not outlive the call.
   expect(existsSync(String(checkedFile))).toBe(false);
 });
 
@@ -1376,15 +1175,11 @@ test('a check that passes but an apply that fails is reported as the conflict ca
   expect(result.conflicted).toBe(true);
 });
 
-// --- the dirty-fingerprint-inputs status helper (doctor's parity note) ------
-
 test('dirtyFingerprintFiles asks git about exactly the fingerprint inputs and parses the paths', () => {
   const cmds: string[] = [];
   setExecutor({
     runQuiet: (cmd: string) => {
       cmds.push(cmd);
-      // The executor trims the WHOLE output, so the first line arrives one
-      // column short -- the exact damage normalizePorcelainLine repairs.
       return 'M app.json\nM  package.json';
     },
     spawn: () => {},

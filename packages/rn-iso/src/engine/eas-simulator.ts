@@ -191,7 +191,7 @@ export function remoteDaemonFrom(config: unknown): RemoteDaemon | null {
   if (!isRecord(config)) return null;
   // Honoured when present -- a caller reading the GraphQL object directly
   // still gets the strict answer -- but never required.
-  const typename = str(config.__typename);
+  const typename = str(config['__typename']);
   if (typename && typename !== 'AgentDeviceRunSessionRemoteConfig') return null;
   const baseUrl = str(config.agentDeviceRemoteSessionUrl);
   const token = str(config.agentDeviceRemoteSessionToken);

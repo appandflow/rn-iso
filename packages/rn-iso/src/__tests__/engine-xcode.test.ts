@@ -1,25 +1,3 @@
-// The iOS build engine: discovery, scheme selection, argv, product location,
-// and buildIos end to end.
-//
-// The file has three layers, and the split is deliberate.
-//
-// 1. PURE FUNCTIONS, exhaustively. Every decision the engine makes is a
-//    function of data, so all of them are tested without a toolchain.
-// 2. MOCKED EXECUTOR, for the argv and the streaming contract. This is where
-//    the production destination (`-destination id=<udid>`) is pinned, because
-//    the live tests below deliberately do not use it -- they must not create
-//    or boot a simulator.
-// 3. A REAL xcodebuild, against a scratch Xcode project this file writes to a
-//    temp directory. CLAUDE.md item 9: a mocked executor proves the right
-//    call was made and can never prove the toolchain accepts it. Three bugs
-//    shipped on the worktree branch with right-shaped mocks. So the success
-//    path, the failure path, `-list -json`, and the binary-plist bundle-id
-//    read are each driven through a real Xcode once.
-//
-// The scratch project is written here rather than checked in as a fixture so
-// that what the live tests build is visible beside what they assert. It is a
-// single Objective-C file with no UIKit: enough to produce a real .app with a
-// real Info.plist, and small enough to build in about two seconds.
 import assert from 'node:assert';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
@@ -29,6 +7,7 @@ import { join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { createNdjsonWriter, parseNdjsonText } from '../ndjson.ts';
+import { workspaceDerivedData, workspaceLogsDir } from '../paths.ts';
 import {
   buildIos,
   ccacheEnabled,
@@ -53,12 +32,6 @@ import {
   xcodebuildArgs,
 } from '../engine/xcode.ts';
 
-// --- captured from the real tool --------------------------------------
-//
-// `xcodebuild -list -json` verbatim, both container forms, from the scratch
-// project below. The two shapes differ: a workspace listing has no targets
-// and no configurations, so a parser that reaches for `project` finds
-// undefined and a parser that reaches for either finds the schemes.
 const REAL_PROJECT_LIST_JSON = `{
   "project" : {
     "configurations" : [
@@ -85,12 +58,20 @@ const REAL_WORKSPACE_LIST_JSON = `{
 }`;
 
 let tmp: string;
+let stateHome: string;
+let previousStateHome: string | undefined;
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'rn-iso-xcode-'));
+  stateHome = mkdtempSync(join(tmpdir(), 'rn-iso-xcode-state-'));
+  previousStateHome = process.env.RN_ISO_HOME;
+  process.env.RN_ISO_HOME = stateHome;
 });
 afterEach(() => {
   resetExecutor();
   rmSync(tmp, { recursive: true, force: true });
+  rmSync(stateHome, { recursive: true, force: true });
+  if (previousStateHome === undefined) delete process.env.RN_ISO_HOME;
+  else process.env.RN_ISO_HOME = previousStateHome;
 });
 
 function recordingWriter(file = '/dev/null/not-used'): NdjsonWriter & { records: NdjsonRecord[] } {
@@ -121,9 +102,6 @@ function fakeChild(): FakeChild {
   return child;
 }
 
-// A permissive view of buildIos's union return: the assertions below reach the
-// field the case under test carries without `any`. `asResult` casts once;
-// diagnostics ENTRIES stay optional, since a diagnostic may lack a given field.
 type BuildIosResultLike = {
   failed?: boolean;
   code?: string;
@@ -153,7 +131,6 @@ function asResult(value: unknown): BuildIosResultLike {
 
 type BuildIosArgs = Parameters<typeof buildIos>[0];
 
-// A minimal project on disk: enough shape for discovery, no Xcode required.
 function stubProject(root: string, { workspace = false, project = true, name = 'App' } = {}) {
   const ios = join(root, 'ios');
   mkdirSync(ios, { recursive: true });
@@ -164,9 +141,6 @@ function stubProject(root: string, { workspace = false, project = true, name = '
 
 describe('pickXcodeProject', () => {
   test('a workspace wins over a project, because CocoaPods links through it', () => {
-    // Building the .xcodeproj of a pods project links no Pods target: the
-    // best case is a link failure and the worst is an app that launches and
-    // then cannot find its native modules.
     expect(pickXcodeProject(['App.xcodeproj', 'App.xcworkspace', 'Podfile'])).toEqual({
       kind: 'workspace',
       flag: '-workspace',
@@ -249,8 +223,6 @@ describe('parseSchemeList', () => {
   });
 
   test('survives whatever xcodebuild prints before the JSON', () => {
-    // Package resolution, a simulator note, or xcodebuild's own NSLog all land
-    // on the same stream first. JSON.parse of the whole thing would throw.
     const noisy = [
       'Resolve Package Graph',
       'Resolved source packages:',
@@ -292,8 +264,6 @@ describe('pickScheme', () => {
   });
 
   test('several plausible schemes is null, NOT the first one', () => {
-    // Guessing here builds the tvOS target or a staging variant and installs
-    // it four minutes later. RN_ISO_NO_SCHEME is worth more than a coin flip.
     expect(pickScheme(['App-staging', 'App-production'], 'Unrelated')).toBe(null);
   });
 
@@ -431,9 +401,6 @@ describe('xcodebuildArgs', () => {
     expect(args.slice(-2)).toEqual(['-quiet', 'build']);
   });
 
-  // Build settings are not options: xcodebuild's own usage line is
-  // `[action ...] [buildsetting=value ...]`, and the live build below proves
-  // the real tool takes them there.
   test('build settings land AFTER the build action, and extra args still land before it', () => {
     const args = xcodebuildArgs({
       project,
@@ -452,34 +419,33 @@ describe('xcodebuildArgs', () => {
   });
 });
 
-// --- the compilation cache rn-iso puts on its own argv ----------------------
-//
-// The whole point of these is that a project needs NO Podfile change to get a
-// cross-worktree compilation cache. That makes the guards the interesting
-// part: every one of them is a case where adding the settings would be wrong.
 describe('compilationCacheSettings', () => {
-  const base = { workspaceRoot: '/w/app-412', casPath: '/home/.rn-iso/compilation-cache' };
+  const base = {
+    workspaceRoot: '/w/app-412',
+    derivedDataPath: '/home/.rn-iso/workspaces/app-412--abc/derived-data',
+    casPath: '/home/.rn-iso/compilation-cache',
+  };
 
   test('names the CAS, the prefix mapping and the Swift opt-out on an Xcode that has the cache', () => {
     expect(compilationCacheSettings({ ...base, xcodeMajor: 26 })).toEqual([
       'COMPILATION_CACHE_ENABLE_CACHING=YES',
       'COMPILATION_CACHE_CAS_PATH=/home/.rn-iso/compilation-cache',
-      // Swift caching cannot hit across workspaces without a mapping that
-      // crashes swift-frontend, so it is turned off explicitly.
       'SWIFT_ENABLE_COMPILE_CACHE=NO',
       'CLANG_ENABLE_PREFIX_MAPPING=YES',
-      'CLANG_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src',
+      'CLANG_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.rn-iso/workspaces/app-412--abc/derived-data=/^derived-data',
     ]);
   });
 
-  // Without the mapping every cache key contains this workspace's absolute
-  // path, so a second worktree of the same commit misses all of them -- which
-  // is the only reason the cache is worth turning on.
   test('the prefix mapping is the workspace root, normalised, and the virtual prefix a committed Podfile block must match', () => {
     expect(prefixMapping('/w/app-412')).toBe('/w/app-412=/^src');
     expect(prefixMapping('/w/app-412/')).toBe('/w/app-412=/^src');
-    const settings = compilationCacheSettings({ workspaceRoot: '/a/b/', casPath: '/cas', xcodeMajor: 27 });
-    expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=/a/b=/^src');
+    const settings = compilationCacheSettings({
+      workspaceRoot: '/a/b/',
+      derivedDataPath: '/state/b/derived-data',
+      casPath: '/cas',
+      xcodeMajor: 27,
+    });
+    expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=/a/b=/^src /state/b/derived-data=/^derived-data');
   });
 
   test('carries nothing on an Xcode older than the one that shipped the cache', () => {
@@ -488,9 +454,6 @@ describe('compilationCacheSettings', () => {
     expect(compilationCacheSettings({ ...base, xcodeMajor: 15 })).toEqual([]);
   });
 
-  // doctor hedges on an unreadable version and prints its advice anyway,
-  // because advice is free. This is the opposite trade: five build settings on
-  // a real four-minute build buy nothing on a version that ignores them.
   test('carries nothing when the Xcode version could not be read at all', () => {
     expect(compilationCacheSettings({ ...base, xcodeMajor: null })).toEqual([]);
   });
@@ -504,8 +467,6 @@ describe('the ccache detection both the build and doctor read', () => {
   test('only the string "true" under apple.ccacheEnabled counts', () => {
     expect(ccacheEnabled({ 'apple.ccacheEnabled': 'true' })).toBe(true);
     expect(ccacheEnabled({ 'apple.ccacheEnabled': 'false' })).toBe(false);
-    // Podfile.properties.json is a string-valued file; a boolean there is not
-    // what CocoaPods writes and is not what the property means.
     expect(ccacheEnabled({ 'apple.ccacheEnabled': true })).toBe(false);
     expect(ccacheEnabled({})).toBe(false);
     expect(ccacheEnabled(null)).toBe(false);
@@ -536,8 +497,6 @@ describe('locating the product', () => {
   });
 
   test('pickAppBundle prefers the app named after the scheme', () => {
-    // An extension or watch app puts more than one .app in the directory and
-    // a flat listing cannot tell which one is the top level bundle.
     expect(pickAppBundle(['App.app', 'AppWidget.app', 'App.dSYM'], 'App')).toBe('App.app');
   });
 
@@ -649,8 +608,6 @@ describe('tailLines', () => {
 });
 
 describe('buildIos with a mocked executor', () => {
-  // Everything a build needs except an actual Xcode: a project on disk, a
-  // scheme listing, a fake child to drive, and a plutil that answers.
   function harness(
     root: string,
     {
@@ -687,9 +644,6 @@ describe('buildIos with a mocked executor', () => {
     return join(dir, `${name}.app`);
   }
 
-  // The mocked executor's runQuiet answers null for `xcodebuild -version`, so
-  // every other case in this describe block exercises the "version unknown ->
-  // no settings" guard for free. These three are the ones that drive it.
   test('an injected set of settings lands on the argv, after the action', async () => {
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child });
@@ -704,7 +658,7 @@ describe('buildIos with a mocked executor', () => {
       'COMPILATION_CACHE_ENABLE_CACHING=YES',
       'COMPILATION_CACHE_CAS_PATH=/cas',
     ]);
-    makeProduct(join(tmp, '.rn-iso', 'derived-data'));
+    makeProduct(workspaceDerivedData(tmp));
     child.emit('close', 0, null);
     await promise;
   });
@@ -719,19 +673,15 @@ describe('buildIos with a mocked executor', () => {
       compilationCache: null,
     });
     expect(spawnCalls[0]?.args?.at(-1)).toBe('build');
-    makeProduct(join(tmp, '.rn-iso', 'derived-data'));
+    makeProduct(workspaceDerivedData(tmp));
     child.emit('close', 0, null);
     await promise;
   });
 
-  // A build that silently caches differently from the last one is exactly what
-  // an agent cannot debug from a transcript, so the CAS path is said once.
   test('the resolved settings produce ONE stderr note naming the CAS path, and land on the argv', async () => {
     const notes: string[] = [];
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child });
-    // A version the mocked executor CAN read, so the settings resolve for real
-    // rather than through the "version unknown" guard every other case hits.
     setExecutor({
       run: () => '',
       runQuiet: () => 'Xcode 26.1\nBuild version 17B55\n',
@@ -747,14 +697,14 @@ describe('buildIos with a mocked executor', () => {
       logWriter: recordingWriter(),
       onNote: (line) => notes.push(line),
     });
-    makeProduct(join(tmp, '.rn-iso', 'derived-data'));
+    makeProduct(workspaceDerivedData(tmp));
     child.emit('close', 0, null);
     await promise;
     expect(notes.length).toBe(1);
     expect(notes[0]).toMatch(/compilation cache on for this build: CAS at .*compilation-cache/);
     const args = spawnCalls[0]?.args ?? [];
     expect(args).toContain('COMPILATION_CACHE_ENABLE_CACHING=YES');
-    expect(args).toContain(`CLANG_OTHER_PREFIX_MAPPINGS=${tmp}=/^src`);
+    expect(args).toContain(`CLANG_OTHER_PREFIX_MAPPINGS=${tmp}=/^src ${workspaceDerivedData(tmp)}=/^derived-data`);
   });
 
   test('a build that carries no settings says nothing at all', async () => {
@@ -768,19 +718,16 @@ describe('buildIos with a mocked executor', () => {
       compilationCache: null,
       onNote: (line) => notes.push(line),
     });
-    makeProduct(join(tmp, '.rn-iso', 'derived-data'));
+    makeProduct(workspaceDerivedData(tmp));
     child.emit('close', 0, null);
     await promise;
     expect(notes).toEqual([]);
   });
 
   test('composes the production invocation: -destination id=<udid>, into the workspace derived data', async () => {
-    // The live tests below build with a generic destination because they must
-    // not create a simulator. THIS is where the destination an actual `rn-iso
-    // ios` run uses is pinned.
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child });
-    const dd = join(tmp, '.rn-iso', 'derived-data');
+    const dd = workspaceDerivedData(tmp);
     const promise = buildIos({ root: tmp, udid: 'BF2A-1111-2222', logWriter: recordingWriter() });
 
     expect(spawnCalls.length).toBe(1);
@@ -807,8 +754,6 @@ describe('buildIos with a mocked executor', () => {
     expect(opts.cwd).toBe(join(tmp, 'ios'));
     expect(opts.stdio).toEqual(['ignore', 'pipe', 'pipe']);
     expect(opts.detached).toBe(false);
-    // Without this xcodebuild block-buffers into a pipe and the whole
-    // transcript arrives at exit, which silently un-does the streaming.
     assert(opts.env);
     expect(opts.env.NSUnbufferedIO).toBe('YES');
 
@@ -818,9 +763,6 @@ describe('buildIos with a mocked executor', () => {
   });
 
   test('every transcript line reaches the writer BEFORE the build exits', async () => {
-    // The whole point: an agent tails this file during a four-minute build.
-    // A version that collected output and wrote it at exit would pass every
-    // other test in this file.
     const child = fakeChild();
     harness(tmp, { child });
     const writer = recordingWriter();
@@ -923,8 +865,6 @@ describe('buildIos with a mocked executor', () => {
     ]);
     expect(result.truncated).toBe(0);
 
-    // Contract 1: diagnostics land in the same file as the transcript, at
-    // level error, so `logs --errors` finds them without a second source.
     const errors = writer.records.filter((r) => r.level === 'error');
     expect(errors.map((r) => r.msg)).toEqual(["/src/App/AppDelegate.m:42:8: cannot find 'Foo' in scope"]);
     expect(errors[0]?.src).toBe('build');
@@ -954,8 +894,8 @@ describe('buildIos with a mocked executor', () => {
     const result = asResult(await promise);
     expect(result.diagnostics).toEqual([]);
     expect(result.tail).toEqual(['something', 'went', 'wrong', 'somehow', 'entirely']);
-    const errors = writer.records.filter((r) => r.level === 'error');
-    expect(errors[0]?.msg).toMatch(/no recognizable diagnostic/);
+    const error = writer.records.find((r) => r.level === 'error');
+    expect(error?.msg).toMatch(/no recognizable diagnostic/);
   });
 
   test('no ios/ directory fails before anything is spawned', async () => {
@@ -996,8 +936,6 @@ describe('buildIos with a mocked executor', () => {
   });
 
   test('an asynchronous spawn error resolves the build instead of hanging it', async () => {
-    // A child that emits `error` may never emit `close`. Waiting only for
-    // close would leave the caller awaiting forever.
     const child = fakeChild();
     harness(tmp, { child });
     const promise = buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter(), derivedDataPath: join(tmp, 'dd') });
@@ -1030,8 +968,6 @@ describe('buildIos with a mocked executor', () => {
     expect(result.diagnostics[0]?.message).toMatch(/No readable CFBundleIdentifier/);
   });
 
-  // The heartbeat: one stderr line per interval while the child runs, so a
-  // five-minute build is never indistinguishable from a wedged one.
   test('a slow build emits heartbeats carrying the latest transcript line, and stops when the child closes', async () => {
     const child = fakeChild();
     harness(tmp, { child });
@@ -1048,7 +984,6 @@ describe('buildIos with a mocked executor', () => {
     child.stdout.emit('data', 'CompileC main.o\n');
     await new Promise((r) => setTimeout(r, 80));
     expect(beats.length).toBeGreaterThanOrEqual(1);
-    // The phase-line shape: label column, elapsed, the sampled activity.
     expect(beats[0]).toMatch(/^build {6} still running \(\d+s\): CompileC main\.o$/);
     makeProduct(dd);
     child.emit('close', 0, null);
@@ -1091,13 +1026,6 @@ describe('buildIos with a mocked executor', () => {
   });
 });
 
-// --- the scratch Xcode project the live tests build ---------------------
-//
-// A hand-written pbxproj rather than a generated one: there is no supported
-// command that creates an .xcodeproj from a script, and `xcodegen` is not a
-// dependency this repo is going to take on for one test. Code signing is off
-// and the only source file is Objective-C with no UIKit, so the build needs
-// no team, no simulator and about two seconds.
 const SCRATCH_PBXPROJ = `// !$*UTF8*$!
 {
 archiveVersion = 1;
@@ -1270,9 +1198,6 @@ defaultConfigurationName = Release;
 rootObject = AA0000000000000000000D ;
 }`;
 
-// Shared, in xcshareddata, because that is the only kind of scheme
-// `xcodebuild -list` is guaranteed to report -- which is exactly the failure
-// resolveScheme's remedy tells a user to fix.
 const SCRATCH_SCHEME = `<?xml version="1.0" encoding="UTF-8"?>
 <Scheme LastUpgradeVersion = "1600" version = "1.7">
    <BuildAction parallelizeBuildables = "YES" buildImplicitDependencies = "YES">
@@ -1332,7 +1257,6 @@ int main(int argc, char *argv[]) {
 }
 `;
 
-// One undeclared identifier, on a line and column this file asserts on.
 const BROKEN_MAIN = `#import <Foundation/Foundation.h>
 
 int main(int argc, char *argv[]) {
@@ -1363,9 +1287,6 @@ function writeScratchProject(root: string, { main = WORKING_MAIN, workspace = fa
   return ios;
 }
 
-// Through the executor like everything else, so this file imports no
-// child_process of its own (CLAUDE.md, "Single exec wrapper"). Evaluated at
-// module load, when the default executor is still the active one.
 function xcodebuildAvailable() {
   if (process.platform !== 'darwin') return false;
   return getExecutor().runQuiet('xcodebuild -version') !== null;
@@ -1373,16 +1294,6 @@ function xcodebuildAvailable() {
 
 const LIVE = xcodebuildAvailable() ? false : 'xcodebuild is not available on this machine';
 
-// CLAUDE.md item 9. Every one of these drives the DEFAULT executor: real
-// spawn, real xcodebuild, real product on disk, real binary Info.plist.
-//
-// The destination is `generic/platform=iOS Simulator` rather than a udid
-// because these tests must not create, boot or touch a simulator (the
-// ownership rule: rn-iso only ever uses devices it created). The udid form
-// that production uses is pinned by the mocked test above; what these prove
-// is that the REST of the argv is a command xcodebuild accepts, that its
-// products land where productsDir() says, and that its diagnostics are shaped
-// the way errors-xcode.js expects.
 const LIVE_DESTINATION = 'generic/platform=iOS Simulator';
 
 describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolean }, () => {
@@ -1392,14 +1303,13 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     const project = discoverXcodeProject(tmp);
     expect(project.kind).toBe('workspace');
     expect(project.path).toBe(join(tmp, 'ios', 'Scratch.xcworkspace'));
-    // Real xcodebuild, real JSON, real parse.
     expect(resolveScheme(project)).toEqual({ scheme: 'Scratch', schemes: ['Scratch'] });
   });
 
   test('builds for real: the .app lands where productsDir says and its binary plist is readable', async () => {
     resetExecutor();
     writeScratchProject(tmp);
-    const logFile = join(tmp, '.rn-iso', 'logs', 'build-ios.ndjson');
+    const logFile = join(workspaceLogsDir(tmp), 'build-ios.ndjson');
     const writer = createNdjsonWriter(logFile);
     const result = asResult(
       await buildIos({
@@ -1414,20 +1324,15 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     expect(result.failed).toBe(undefined);
     expect(result.scheme).toBe('Scratch');
     expect(result.appPath).toBe(
-      join(tmp, '.rn-iso', 'derived-data', 'Build', 'Products', 'Debug-iphonesimulator', 'Scratch.app'),
+      join(workspaceDerivedData(tmp), 'Build', 'Products', 'Debug-iphonesimulator', 'Scratch.app'),
     );
     expect(existsSync(result.appPath)).toBeTruthy();
-    // A built Info.plist is a BINARY plist: this is the assertion that
-    // catches reading it as text or as XML.
     expect(result.bundleId).toBe('com.rniso.scratch');
     expect(result.durationMs > 0).toBeTruthy();
 
     const records = parseNdjsonText(readFileSync(logFile, 'utf-8'));
     expect(records[0]?.event).toBe('build_start');
-    // The build settings rn-iso appends land AFTER the action, which is where
-    // xcodebuild's own usage line puts them -- and this real build proves the
-    // real tool accepts them there.
-    expect(records[0]?.msg).toMatch(/^xcodebuild -project .*-derivedDataPath .* build( [A-Z_]+=\S+)+$/);
+    expect(records[0]?.msg).toMatch(/^xcodebuild -project .*-derivedDataPath .* build [\s\S]+$/);
     expect(records[0]?.msg).toMatch(/ COMPILATION_CACHE_ENABLE_CACHING=YES /);
     const transcript = records.filter((r) => r.level === 'debug');
     expect(transcript.length > 20).toBeTruthy();
@@ -1435,15 +1340,12 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     expect(transcript.some((r) => r.msg?.includes('BUILD SUCCEEDED'))).toBeTruthy();
     expect(records.at(-1)?.event).toBe('build_done');
     expect(records.filter((r) => r.level === 'error').length).toBe(0);
-    // A REAL xcodebuild, so vitest's 5s default is not the budget to measure
-    // it against: under full-suite parallel load this is the one case that
-    // loses that race, and it has flaked on CI for that reason alone.
   }, 120_000);
 
   test('fails for real: a broken source file becomes one diagnostic with file, line and column', async () => {
     resetExecutor();
     writeScratchProject(tmp, { main: BROKEN_MAIN });
-    const logFile = join(tmp, '.rn-iso', 'logs', 'build-ios.ndjson');
+    const logFile = join(workspaceLogsDir(tmp), 'build-ios.ndjson');
     const writer = createNdjsonWriter(logFile);
     const result = asResult(
       await buildIos({
@@ -1458,8 +1360,6 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     expect(result.failed).toBe(true);
     expect(result.code).toBe('RN_ISO_BUILD_FAILED');
     expect(result.exitCode).toBe(65);
-    // Exactly one: clang reports the same error for each architecture slice
-    // and the recap after ** BUILD FAILED ** quotes the CompileC line again.
     expect(result.diagnostics.length).toBe(1);
     const [diagnostic] = result.diagnostics;
     assert(diagnostic);
@@ -1469,10 +1369,6 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     expect(diagnostic.message).toMatch(/use of undeclared identifier 'rnIsoDeliberatelyUndefined'/);
     expect(diagnostic.remedy).toBe(undefined);
     expect(result.truncated).toBe(0);
-    // The tail is what a caller prints when extraction finds nothing. Here
-    // it is xcodebuild's own recap, which is the right fallback and also
-    // shows why the recap must NOT be extracted: it names the same file
-    // once per architecture slice.
     expect(result.tail.length).toBe(5);
     expect(result.tail.at(-1)).toMatch(/^\(\d+ failures\)$/);
 

@@ -1,20 +1,3 @@
-// src/supervisor/server-bare.js -- hosting a bare React Native dev server
-// IN-PROCESS, which is the only way rn-iso gets structured logs out of it.
-//
-// Both CLIs discard a reporter set in metro.config.js (Expo's
-// instantiateMetro.ts force-overrides config.reporter; RN's runServer.js
-// assigns it unconditionally), so capture only happens where the hosting
-// happens. Here, that is us: we load the project's config, set our own
-// reporter on it, and call the project's own Metro.
-//
-// Every ecosystem package is resolved from the PROJECT's node_modules through
-// createRequire, never from rn-iso's -- the same pattern loadFingerprinter()
-// uses for @expo/fingerprint. That is what makes this version-matched by
-// construction: we drive the exact Metro the project builds with, on any SDK,
-// while rn-iso itself depends on neither ecosystem.
-//
-// This mirrors @react-native/community-cli-plugin's runServer.js. Read that
-// file before changing anything here.
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { metroStoreInjectionEnabled } from '../config.ts';
@@ -22,16 +5,9 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
 
-// Every module in this file is resolved dynamically FROM THE PROJECT (metro,
-// dev-middleware, the cli-server-api, the loaded Metro config, the reporter,
-// the http server Metro hands back): none of it is a dependency of rn-iso, so
-// there is no declaration to import. A single localized alias marks every one
-// of those seams rather than a scattered `any`.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type BareModule = any;
 
-// The three packages a bare RN project already has: metro through
-// react-native, the other two through @react-native/community-cli-plugin.
 export const BARE_PACKAGES: string[] = [
   'metro',
   '@react-native/dev-middleware',
@@ -48,10 +24,6 @@ export function projectRequire(root: string): NodeJS.Require {
   return createRequire(join(root, 'package.json'));
 }
 
-// Babel-compiled packages put their exports on `.default` under some interop
-// settings and directly on module.exports under others, and which one you get
-// varies across the Metro and RN versions this has to work with. Pick whichever
-// object actually carries the functions rather than guessing from __esModule.
 export function normalizeModule(mod: BareModule, names: string[]): BareModule {
   if (!mod || typeof mod !== 'object') return mod;
   const has = (obj: BareModule) => obj && names.every((n) => typeof obj[n] === 'function');
@@ -60,10 +32,6 @@ export function normalizeModule(mod: BareModule, names: string[]): BareModule {
   return mod;
 }
 
-// Pure: given the loaded modules, what is missing? Returned as sentences
-// rather than a boolean because the caller's whole job is to name the package
-// and the export -- "cannot read property runServer of undefined" from three
-// frames deep is the failure this exists to prevent.
 export function checkBareApi(modules: Record<string, BareModule>): string[] {
   const problems: string[] = [];
   for (const name of BARE_PACKAGES) {
@@ -81,12 +49,6 @@ export function checkBareApi(modules: Record<string, BareModule>): string[] {
   return problems;
 }
 
-// Three distinct failures, three distinct codes. They have different remedies,
-// so collapsing them into one "could not start Metro" is what would send
-// someone reinstalling node_modules over a version mismatch.
-//   RN_ISO_BARE_DEPS  a package is not installed in the project
-//   RN_ISO_BARE_LOAD  it is installed but threw while loading
-//   RN_ISO_BARE_API   it loaded but is not the API this expects
 export interface BareDeps {
   metro: BareModule;
   devMiddleware: BareModule;
@@ -97,19 +59,19 @@ export function resolveBareDeps(
   root: string,
   { requireFrom = projectRequire }: { requireFrom?: (root: string) => NodeJS.Require } = {},
 ): BareDeps {
-  const require_ = requireFrom(root);
+  const localRequire = requireFrom(root);
   const modules: Record<string, BareModule> = {};
   const missing: string[] = [];
   for (const name of BARE_PACKAGES) {
     let resolved: string;
     try {
-      resolved = require_.resolve(name);
+      resolved = localRequire.resolve(name);
     } catch {
       missing.push(name);
       continue;
     }
     try {
-      modules[name] = normalizeModule(require_(resolved), REQUIRED_EXPORTS[name] ?? []);
+      modules[name] = normalizeModule(localRequire(resolved), REQUIRED_EXPORTS[name] ?? []);
     } catch (err) {
       throw supervisorError(
         'RN_ISO_BARE_LOAD',
@@ -140,15 +102,6 @@ export function resolveBareDeps(
   };
 }
 
-// The reporter is shared with anyone hosting Metro programmatically, so there
-// is exactly one implementation and it lives in @rn-iso/metro (CJS, importing
-// nothing from rn-iso). Resolution follows loadFingerprinter's chain: the
-// project first, then rn-iso's own install.
-//
-// It is deliberately NOT fatal when it cannot be found. A logging package that
-// is not installed must not cost the caller a dev server -- but it must not be
-// silent either, or a workspace with no logs looks like a workspace with no
-// errors. The caller reports the miss and serves on.
 export function loadNdjsonReporter(
   root: string,
   { requireFrom = createRequire }: { requireFrom?: (id: string) => NodeJS.Require } = {},
@@ -157,17 +110,11 @@ export function loadNdjsonReporter(
     try {
       const factory = requireFrom(from)('@rn-iso/metro').ndjsonReporter;
       if (typeof factory === 'function') return factory;
-    } catch {
-      // Try the next location.
-    }
+    } catch {}
   }
   return null;
 }
 
-// metro-cache's FileStore, resolved FROM THE PROJECT like everything else this
-// file loads: the store class has to be the one belonging to the Metro being
-// hosted. Null rather than a throw -- a transform cache is an optimisation,
-// and a project whose metro-cache cannot be resolved still gets a dev server.
 export function loadFileStore(
   root: string,
   { requireFrom = projectRequire }: { requireFrom?: (root: string) => NodeJS.Require } = {},
@@ -180,14 +127,6 @@ export function loadFileStore(
   }
 }
 
-// THE ZERO-CONFIG HALF OF `rn-iso start` ON A BARE PROJECT. rn-iso loads the
-// project's Metro config itself, so it can add the shared transform store
-// here instead of asking the repo for a metro.config.js edit. Everything the
-// project configured is kept: appendCacheStore appends.
-//
-// Every outcome is a log record and none of them is fatal, for the reason
-// above the reporter block: a workspace with no shared cache is slow, and a
-// workspace with no dev server is stopped.
 function installSharedCacheStore({
   root,
   config,
@@ -239,13 +178,6 @@ function installSharedCacheStore({
   });
 }
 
-// resolver.platforms comes from the project's own config, which through
-// @react-native/metro-config is ['android', 'ios']. The community CLI adds
-// 'native' to it before running the server (getCommunityCliDefaultConfig), and
-// without that a `.native.js` file does not resolve -- a difference that shows
-// up as a mid-bundle resolution failure rather than as a startup error, so it
-// is corrected here rather than discovered later. Mutates and reports whether
-// it changed anything.
 export function ensureNativePlatform(config: BareModule): boolean {
   const platforms = config?.resolver?.platforms;
   if (!Array.isArray(platforms) || platforms.includes('native')) return false;
@@ -253,9 +185,6 @@ export function ensureNativePlatform(config: BareModule): boolean {
   return true;
 }
 
-// @react-native/dev-middleware logs through a {info, warn, error} object. RN
-// routes those into the reporter as unstable_server_log events, which is how
-// they reach the same NDJSON timeline as everything else.
 export function reporterLogger(reporter: BareModule): {
   info: (...data: unknown[]) => void;
   warn: (...data: unknown[]) => void;
@@ -266,17 +195,11 @@ export function reporterLogger(reporter: BareModule): {
     (...data: unknown[]) => {
       try {
         reporter.update({ type: 'unstable_server_log', level, data });
-      } catch {
-        /* a logging failure must never reach the dev server */
-      }
+      } catch {}
     };
   return { info: at('info'), warn: at('warn'), error: at('error') };
 }
 
-// Closing an http server does not close established connections, and a dev
-// server always has some (the client's websocket, an inspector page). Without
-// closeAllConnections the close callback never fires and the supervisor hangs
-// in shutdown instead of exiting -- so the wait is also bounded.
 function closeHttpServer(httpServer: BareModule, timeoutMs: number): Promise<void> {
   return new Promise<void>((resolve) => {
     let done = false;
@@ -301,7 +224,6 @@ function closeHttpServer(httpServer: BareModule, timeoutMs: number): Promise<voi
   });
 }
 
-// The ServerHandle runSupervisor drives, plus the pieces a test reaches for.
 export interface BareServerHandle {
   mode: string;
   serverPid: null;
@@ -327,10 +249,6 @@ export async function startBareServer({
   writer?: NdjsonWriter | null;
   deps?: BareDeps | null;
   reporterFactory?: ((opts: { dir: string }) => BareModule) | null;
-  // Injectable so tests drive them and a caller can turn the store off:
-  // `cacheStore: false` adds nothing, and `fileStore` dictates the class
-  // instead of resolving metro-cache from the project. Left out, both are
-  // resolved (machine config, then the project's metro-cache).
   cacheStore?: boolean;
   fileStore?: (new (options: { root: string }) => { _root?: string }) | null;
   closeTimeoutMs?: number;
@@ -360,8 +278,6 @@ export async function startBareServer({
     reporter = makeReporter({ dir: logsDir });
     config.reporter = reporter;
   } else {
-    // No reporter package: serve, but say so in the log the reporter would
-    // have written to, so an empty timeline is never mistaken for a quiet one.
     writer?.write({
       src: 'metro',
       level: 'warn',
@@ -386,8 +302,6 @@ export async function startBareServer({
     logger: reporterLogger(reporter),
   });
 
-  // `host` is deliberately not passed: Metro then binds every interface, which
-  // is what the RN CLI does by default and what a device on the LAN needs.
   const httpServer = await metro.runServer(config, {
     unstable_extraMiddleware: [communityMiddleware, middleware],
     websocketEndpoints: { ...communityWebsocketEndpoints, ...websocketEndpoints },
@@ -403,8 +317,6 @@ export async function startBareServer({
 
   return {
     mode: 'bare-inproc',
-    // In-process: the supervisor IS the server, so there is no separate pid to
-    // record. Contract 2's serverPid is for the expo child.
     serverPid: null,
     httpServer,
     onExit(cb: (info: { code: number; reason?: string }) => void) {

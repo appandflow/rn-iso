@@ -16,17 +16,10 @@ import { spawn as realSpawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-// resolveProjectMetro proves a listener is ours by reading the process's cwd via
-// `lsof -d cwd`. That works on macOS (and any host where lsof reports fcwd) but
-// not on the ubuntu CI runner, where lsof does not return the cwd fd -- so the
-// real-listener identity test below can only run where that capability exists.
-// Probe it against our own pid; skip rather than fail where it is unavailable.
 const CAN_READ_CWD = processCwd(process.pid) !== null;
 import { join } from 'node:path';
 
 afterEach(() => resetExecutor());
-
-// --- port-to-process identity ------------------------------------------------
 
 test('parseLsofPids parses newline separated pids and ignores junk', () => {
   expect(parseLsofPids('59914\n59806\n')).toEqual([59914, 59806]);
@@ -68,9 +61,6 @@ test('resolveProjectMetro refuses a listener that does not answer /status', asyn
   const r = await resolveProjectMetro(8082, '/a/b', { probe: async () => false });
   expect(r.notOurs).toMatch(/does not answer/);
   expect(r.metro).toBe(undefined);
-  // TRANSIENT: this is exactly what a bare Metro looks like while it crawls a
-  // monorepo's file map with its event loop blocked, seconds after `start`
-  // returned. The build gate branches on this rather than on the prose.
   expect(r.kind).toBe(NOT_OURS_UNRESPONSIVE);
   resetExecutor();
 });
@@ -87,8 +77,6 @@ test('resolveProjectMetro refuses a Metro running from another directory', async
   });
   const r = await resolveProjectMetro(8082, '/a/b', { probe: async () => true });
   expect(r.notOurs).toMatch(/outside/);
-  // Terminal: another workspace's bundler does not become ours by waiting, so
-  // the gate refuses immediately instead of retrying for ten seconds.
   expect(r.kind).toBe(NOT_OURS_FOREIGN_CWD);
   resetExecutor();
 });
@@ -141,10 +129,6 @@ test('killMetroTree falls back to the bare pid when the group is gone', () => {
   }
 });
 
-// A Metro backgrounded by a non-interactive script shares its shell's process
-// group with rn-iso itself, so signalling the group would kill rn-iso and the
-// shell that started it -- and the group LEADER is that shell, not Metro. The
-// listener pid is signalled directly instead.
 test('killMetroTree signals the listener pid, not the leader, when the leader is our own process group', () => {
   setExecutor({
     run: () => '',
@@ -158,7 +142,6 @@ test('killMetroTree signals the listener pid, not the leader, when the leader is
     return true;
   }) as typeof process.kill;
   try {
-    // leader 4242 IS our own group; the Metro listener is pid 5555.
     expect(killMetroTree(4242, 5555)).toBe(true);
     expect(signalled).toEqual([[5555, 'SIGTERM']]);
   } finally {
@@ -167,8 +150,6 @@ test('killMetroTree signals the listener pid, not the leader, when the leader is
   }
 });
 
-// Live: the guard reads the real `ps -o pgid= -p <pid>` for THIS process. A
-// mocked executor cannot prove that command reports the group rn-iso is in.
 test('killMetroTree resolves its own process group with the real ps and spares it', () => {
   const ownPgid = processGroupLeader(process.pid);
   expect(Number.isFinite(ownPgid), 'ps must report a numeric pgid for this process').toBeTruthy();
@@ -198,12 +179,6 @@ test('killMetroTree reports false when nothing could be signalled', () => {
   }
 });
 
-// The whole feature is real lsof/ps/kill behavior, and a mocked executor
-// cannot prove those commands are correct. This runs a genuine listener that
-// answers /status exactly like Metro does, from a real directory.
-//
-// The listener binds port 0 and reports back the port the kernel gave it, so
-// the test never competes with a real dev server for a fixed number.
 test.skipIf(!CAN_READ_CWD)(
   'resolveProjectMetro identifies and kills a REAL listening process from the project dir',
   async () => {

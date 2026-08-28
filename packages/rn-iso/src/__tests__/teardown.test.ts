@@ -6,9 +6,6 @@ import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 let savedAndroidHome: string | undefined;
 let savedSdkRoot: string | undefined;
 
-// Pin Android tool resolution to the bare-name fallback: the machine's real
-// SDK (if any) must not leak absolute paths into the command strings the
-// androidExecutor mocks below match exactly.
 beforeEach(() => {
   savedAndroidHome = process.env.ANDROID_HOME;
   savedSdkRoot = process.env.ANDROID_SDK_ROOT;
@@ -80,8 +77,6 @@ test('teardownOwnedIosSim reports missing without erroring', () => {
   expect(teardownOwnedIosSim('U1', { del: true })).toEqual({ status: 'missing' });
 });
 
-// Occupancy protects a device that will SURVIVE. `shutdown` spares an occupied
-// sim because it is still there to come back to.
 test('teardownOwnedIosSim skips an occupied sim it is only shutting down', () => {
   const exec = iosExecutor({
     sims: [OWNED],
@@ -94,10 +89,6 @@ test('teardownOwnedIosSim skips an occupied sim it is only shutting down', () =>
   expect(!exec.calls.some((c) => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
 });
 
-// ...but a sim being DELETED is going away regardless: it is one rn-iso
-// created, for a project that is going away, and the holder is almost always
-// the caller's own UI-test runner. Skipping here leaked booted sims out of
-// `worktree remove` and only deferred the same decision to gc.
 test('teardownOwnedIosSim deletes an occupied sim anyway, without needing force', () => {
   const exec = iosExecutor({
     sims: [OWNED],
@@ -109,8 +100,6 @@ test('teardownOwnedIosSim deletes an occupied sim anyway, without needing force'
   expect(exec.calls.some((c) => /simctl delete U1/.test(c))).toBeTruthy();
 });
 
-// Ownership is still absolute: aggression applies to what rn-iso created, and
-// a sim renamed out of the prefix is not that, occupied or not.
 test('teardownOwnedIosSim still refuses a sim that is not rn-iso-owned, even when deleting', () => {
   const exec = iosExecutor({ sims: [{ udid: 'U1', name: 'My iPhone', state: 'Booted', isAvailable: true }] });
   setExecutor(exec);
@@ -120,8 +109,6 @@ test('teardownOwnedIosSim still refuses a sim that is not rn-iso-owned, even whe
   expect(!exec.calls.some((c) => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
 });
 
-// A delete that fails leaves the sim on disk. The outcome must be 'failed', so
-// callers report a leak instead of a device they never destroyed.
 test('teardownOwnedIosSim reports a failed delete rather than torn-down', () => {
   const exec = iosExecutor({ sims: [OWNED], throwOn: 'simctl delete' });
   setExecutor(exec);
@@ -130,8 +117,6 @@ test('teardownOwnedIosSim reports a failed delete rather than torn-down', () => 
   expect(r.reason).toMatch(/boom/);
 });
 
-// Containment: a throw must become a reported outcome, never propagate and
-// abort a batch teardown (worktree remove, gc sweeping many orphans).
 test('teardownOwnedIosSim contains a throw instead of propagating it', () => {
   setExecutor(iosExecutor({ sims: [OWNED], throwOn: 'simctl shutdown' }));
   const r = teardownOwnedIosSim('U1', { del: true });
@@ -204,7 +189,6 @@ test('skip outcomes carry a machine-readable kind, so callers need not match pro
   expect(teardownOwnedIosSim('U1', { del: true }).kind).toBe('not-owned');
   resetExecutor();
 
-  // del:false -- the occupied skip only exists for a device that will survive.
   setExecutor(iosExecutor({ sims: [OWNED], occupied: '\t1\t0\tUIKitApplication:com.x.xctrunner[0x1]\n' }));
   expect(teardownOwnedIosSim('U1', { del: false }).kind).toBe('occupied');
   resetExecutor();

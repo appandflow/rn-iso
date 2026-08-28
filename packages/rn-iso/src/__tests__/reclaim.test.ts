@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, setDevice, getProject } from '../config.ts';
 import { describeDereferenced, reclaimProject } from '../reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
+import { ensureWorkspaceStorage, workspaceStateFile } from '../paths.ts';
 
 let tmpHome: string;
 
@@ -37,7 +38,6 @@ test('describeDereferenced returns an empty list when nothing is claimed', () =>
 
 test('reclaimProject removes the config entry', async () => {
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
-  const { reclaimProject } = await import('../reclaim.ts');
   upsertProject('/proj', { metroPort: 8082 });
   setDevice('/proj', 'ios', { deviceUdid: 'U1' });
 
@@ -47,9 +47,6 @@ test('reclaimProject removes the config entry', async () => {
   expect(getProject('/proj')).toBe(null);
 });
 
-// Build output is workspace-local now, so reclaiming an entry has no external
-// artifacts to find or measure: it must not walk a global DerivedData tree
-// (one `plutil` per directory) or size anything (one `du` walk per match).
 test('reclaimProject scans and sizes no build output at all', async () => {
   const calls: string[] = [];
   setExecutor({
@@ -63,7 +60,6 @@ test('reclaimProject scans and sizes no build output at all', async () => {
     },
     spawn: () => {},
   });
-  const { reclaimProject } = await import('../reclaim.ts');
   upsertProject('/proj', { metroPort: 8082 });
 
   await reclaimProject('/proj');
@@ -71,8 +67,6 @@ test('reclaimProject scans and sizes no build output at all', async () => {
   expect(calls.some((c) => c.startsWith('plutil'))).toBe(false);
 });
 
-// A device whose delete FAILED is still on the machine. Dropping the entry
-// that names it is what turns a failed teardown into a leaked simulator.
 test('reclaimProject keeps the config entry when an owned device delete fails', async () => {
   const listJson = JSON.stringify({
     devices: {
@@ -90,7 +84,6 @@ test('reclaimProject keeps the config entry when an owned device delete fails', 
     runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
     spawn: () => {},
   });
-  const { reclaimProject } = await import('../reclaim.ts');
   upsertProject('/proj', { metroPort: 8082 });
   setDevice('/proj', 'ios', { deviceUdid: 'U1', owned: true });
 
@@ -114,7 +107,6 @@ test('reclaimProject removes the entry when the owned device really is deleted',
     runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
     spawn: () => {},
   });
-  const { reclaimProject } = await import('../reclaim.ts');
   upsertProject('/proj', { metroPort: 8082 });
   setDevice('/proj', 'ios', { deviceUdid: 'U1', owned: true });
 
@@ -125,14 +117,11 @@ test('reclaimProject removes the entry when the owned device really is deleted',
 });
 
 test('reclaimProject refuses to kill an unidentified process on the port', async () => {
-  // A stale record plus a foreign listener must NOT be killed: this is the
-  // Metro analogue of the Android console-port Critical from the 0.7.0 review.
   setExecutor({
     run: () => '',
     runQuiet: (cmd) => (cmd.includes('-sTCP:LISTEN') ? '4242' : ''),
     spawn: () => {},
   });
-  const { reclaimProject } = await import('../reclaim.ts');
   upsertProject('/nonexistent/project', { metroPort: 8082 });
 
   const result = await reclaimProject('/nonexistent/project', { deleteOwnedDevices: false });
@@ -154,8 +143,8 @@ test('reclaimProject refuses to kill an unidentified process on the port', async
 
 function workspaceWithSession(sessionId: string): string {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-ws-'));
-  mkdirSync(join(root, '.rn-iso'), { recursive: true });
-  writeFileSync(join(root, '.rn-iso', 'state.json'), JSON.stringify({ remoteDevice: { platform: 'ios', sessionId } }));
+  ensureWorkspaceStorage(root);
+  writeFileSync(workspaceStateFile(root), JSON.stringify({ remoteDevice: { platform: 'ios', sessionId } }));
   upsertProject(root, { label: 'agent-1' });
   return root;
 }
@@ -264,7 +253,7 @@ test.each([
   const result = await reclaimProject(root, { stopSession: realStoredSessionStop(sessionOutput, calls) });
   expect(result.keptEntry).toBe(true);
   expect(calls).not.toContain('simulator:stop');
-  const state = JSON.parse(readFileSync(join(root, '.rn-iso', 'state.json'), 'utf-8'));
+  const state = JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
   expect(state.remoteDevice.sessionId).toBe('drs_42');
   rmSync(root, { recursive: true, force: true });
 });
@@ -277,7 +266,7 @@ test('reclaim clears a verified terminal record without issuing stop', async () 
   });
   expect(result.keptEntry).toBe(false);
   expect(calls).not.toContain('simulator:stop');
-  expect(existsSync(join(root, '.rn-iso', 'state.json'))).toBe(false);
+  expect(existsSync(workspaceStateFile(root))).toBe(false);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -289,9 +278,9 @@ test('reclaim clears a verified terminal record without issuing stop', async () 
 
 function workspaceWithManagedTunnel(pid: number): string {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-ws-'));
-  mkdirSync(join(root, '.rn-iso'), { recursive: true });
+  ensureWorkspaceStorage(root);
   writeFileSync(
-    join(root, '.rn-iso', 'state.json'),
+    workspaceStateFile(root),
     JSON.stringify({
       metroTunnel: {
         kind: 'managed',
@@ -327,7 +316,7 @@ test('reclaim clears the exact managed tunnel record after a successful stop', a
   await reclaimProject(root, {
     stopMetroTunnel: async () => ({ status: 'stopped' }),
   });
-  expect(existsSync(join(root, '.rn-iso', 'state.json'))).toBe(false);
+  expect(existsSync(workspaceStateFile(root))).toBe(false);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -344,11 +333,11 @@ test('reclaim preserves a replacement managed tunnel record', async () => {
   } as const;
   const result = await reclaimProject(root, {
     stopMetroTunnel: async () => {
-      writeFileSync(join(root, '.rn-iso', 'state.json'), JSON.stringify({ metroTunnel: replacement }));
+      writeFileSync(workspaceStateFile(root), JSON.stringify({ metroTunnel: replacement }));
       return { status: 'stopped' };
     },
   });
-  const state = JSON.parse(readFileSync(join(root, '.rn-iso', 'state.json'), 'utf-8'));
+  const state = JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
   expect(state.metroTunnel).toEqual(replacement);
   expect(result.keptEntry).toBe(true);
   expect(result.stoppedTunnel).toBeNull();
@@ -417,9 +406,9 @@ test('a workspace with no recorded tunnel never calls stopMetroTunnel', async ()
 
 test('an Expo-hosted tunnel has no process of its own -- reclaim never calls stopMetroTunnel for it', async () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-ws-'));
-  mkdirSync(join(root, '.rn-iso'), { recursive: true });
+  ensureWorkspaceStorage(root);
   writeFileSync(
-    join(root, '.rn-iso', 'state.json'),
+    workspaceStateFile(root),
     JSON.stringify({ metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' } }),
   );
   upsertProject(root, { label: 'agent-1' });

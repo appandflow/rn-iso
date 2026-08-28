@@ -82,11 +82,10 @@ These are the "for agents" claim, stated concretely enough to be violated.
 
 The organizing rule:
 
-> **Content-addressed artifacts are shared. Location-addressed artifacts are
-> workspace-local.**
+> **Runtime state and content-addressed artifacts are global.**
 
 ```
-<worktree>/.rn-iso/                  # dies with the worktree, by construction
+~/.rn-iso/workspaces/<project>--<digest>/ # global workspace state
   derived-data/                      # -derivedDataPath for THIS checkout
   gradle-build/                      # android build dirs, .cxx
   logs/
@@ -94,7 +93,7 @@ The organizing rule:
   supervisor.pid
   state.json                         # last build, fingerprint, cache result
 
-~/.rn-iso/                           # keyed by content hash, outlives worktrees
+~/.rn-iso/                           # machine-wide state and caches
   config.json                        # the broker registry (unchanged from v2)
   metro-cache/                       # transform cache (exists today)
   build-cache/<platform>/<key>/      # .app/.apk by fingerprint (exists today)
@@ -131,7 +130,7 @@ utilities move to `src/fs-util.js`, and the DerivedData half is removed.
 
 ### Two interactions that must be got right
 
-- **`init` must add `.rn-iso/` to both `.gitignore` and `.worktreeexclude`.**
+- **`init` must add generated entries to `.worktreeexclude`.**
   Missing the second means `worktree create --carry-ignored` clones another
   workspace's DerivedData, logs and pidfile into the new worktree — strictly
   worse than starting cold.
@@ -291,7 +290,7 @@ Three sources normalize into one timeline of `{ts, src, level, ...}` records:
 
 ### Known risk
 
-`runServer.js` carries `TODO(T214991636): Remove legacy Metro log forwarding`.
+`runServer.js` carries a TODO for replacing Metro log forwarding.
 Client-log forwarding through the reporter is slated for replacement by
 CDP-based logging via the inspector proxy. This is a dated, concrete risk to
 the client-log source specifically; the mitigation is that
@@ -456,7 +455,7 @@ how `@rn-iso/metro` and `build-cache.js` self-register. Only the CLI verbs go.
 `init` wires the repo: the reporter and shared cache stores into
 `metro.config.js`, the build-cache provider, `COMPILATION_CACHE_ENABLE_CACHING`
 with a CAS path outside DerivedData, DerivedData redirection into
-`<worktree>/.rn-iso/`, and `.rn-iso/` into `.gitignore` and `.worktreeexclude`.
+the generated workspace exclusions into `.worktreeexclude`.
 `doctor` reports the same findings read-only, plus the resolved server adapter
 and its version, so an ecosystem mismatch is visible before a build hits it.
 
@@ -477,8 +476,6 @@ $ rn-iso doctor
 $ rn-iso init
   wrote  metro.config.js       reporter + sharedCacheStores
   wrote  ios/Podfile           COMPILATION_CACHE_ENABLE_CACHING, CAS -> ~/.rn-iso
-  wrote  .gitignore            .rn-iso/
-  wrote  .worktreeexclude      .rn-iso/
 ```
 
 `doctor` is the read-only half and `init` the writing half of one question:
@@ -500,7 +497,7 @@ stdout is the path and nothing else — the `WorktreeCreate` hook contract from
 $ rn-iso start
   port       8082 (reserved)
   supervisor pid 41233
-  logs       .rn-iso/logs/
+  logs       ~/.rn-iso/workspaces/app--<digest>/logs/
 ```
 
 Reserves a collision-free port, spawns the detached supervisor, waits until the
@@ -583,7 +580,7 @@ $ rn-iso ios                                   # native change, cache miss
   pods        out of sync with Podfile.lock -> installed (18s)
   build       FAILED after 2m41s
   error       ios/App/AppDelegate.swift:42:8: cannot find 'Foo' in scope
-  log         .rn-iso/logs/build-ios.ndjson
+  log         ~/.rn-iso/workspaces/app--<digest>/logs/build-ios.ndjson
 ```
 
 Six lines and the actual compiler diagnostic. `expo run:ios` emits several
@@ -625,7 +622,7 @@ This spec is deliberately larger than one implementation plan. It decomposes
 into four, each independently shippable and each leaving the CLI in a working
 state:
 
-1. **Layout and teardown.** `<worktree>/.rn-iso/`, DerivedData redirection, the
+1. **Layout and teardown.** Global workspace state, DerivedData redirection, the
    CAS path pin, `init`/`doctor` updates, `.worktreeexclude` wiring. Deletes
    `artifacts.js`, the mounted-volume guard, and top-level `gc`. Ships against
    the v2 command surface with no new commands, and is worth having on its own.

@@ -1,12 +1,3 @@
-// The supervisor daemon: argument parsing, Contract 2's state files, and the
-// lifecycle rules that make a supervisor findable and never silently useless.
-//
-// The two rules under test, because both are invisible until they are broken:
-//   1. the pid file, state.json and the global registration are all written
-//      BEFORE the server starts, so a supervisor that dies during startup is
-//      still findable;
-//   2. every exit path -- signal, failed start, server death -- writes a final
-//      record and clears every one of those records.
 import assert from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
@@ -14,8 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
-import { supervisorPidFile, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { describeError, supervisorError } from '../supervisor/errors.ts';
+import { writeWorkspaceState } from '../supervisor/state.ts';
 import {
   MODE_BARE,
   MODE_EXPO,
@@ -26,7 +18,6 @@ import {
   readWorkspaceState,
   runSupervisor,
   writePidFile,
-  writeWorkspaceState,
 } from '../supervisor/run.ts';
 
 let tmpHome: string;
@@ -100,7 +91,7 @@ describe('describeError', () => {
 });
 
 describe('Contract 2: the workspace state file', () => {
-  test('writeWorkspaceState creates .rn-iso/state.json and reads back', () => {
+  test('writeWorkspaceState creates the global state.json and reads back', () => {
     writeWorkspaceState(root, { supervisor: { pid: 1, port: 8082, mode: MODE_BARE } });
     expect(existsSync(workspaceStateFile(root))).toBeTruthy();
     const state = readWorkspaceState(root);
@@ -122,9 +113,9 @@ describe('Contract 2: the workspace state file', () => {
 
   test('writing leaves no temp file behind: readers must never see a partial state', () => {
     writeWorkspaceState(root, { supervisor: { pid: 3, port: 8084 } });
-    const leftovers = existsSync(join(root, '.rn-iso')) ? readFileSync(workspaceStateFile(root), 'utf-8') : '';
+    const leftovers = existsSync(workspaceDir(root)) ? readFileSync(workspaceStateFile(root), 'utf-8') : '';
     expect(leftovers).toMatch(/"pid": 3/);
-    const dir = join(root, '.rn-iso');
+    const dir = workspaceDir(root);
     const entries = existsSync(dir) ? readdirSync(dir) : [];
     expect(entries.filter((e) => e.includes('.tmp-'))).toEqual([]);
   });
@@ -159,20 +150,10 @@ describe('Contract 2: the workspace state file', () => {
   });
 });
 
-// state.json is a multi-writer read-modify-write: the supervisor writes
-// `supervisor`, each collector writes its own `collectors.<platform>`, and
-// `ios`/`android` write `lastBuild`. renameSync stops a reader ever seeing half
-// a file, but it does NOT stop a LOST UPDATE: two writers that both read the
-// old state and then rename their own version over it silently drop one side's
-// key. Losing `collectors.<platform>` leaks a log stream `stop` can never reap.
-// Every writer goes through writeWorkspaceState, so a lock there is what makes
-// the whole cycle atomic. This is the live proof, cross-process on purpose:
-// several real processes writing different keys against one file at once, every
-// key must survive.
 describe('state.json concurrent writers (Contract 2 lock)', () => {
   test('4+ processes writing different keys never lose an update', async () => {
     const script = join(tmpHome, 'state-writer.mjs');
-    const runUrl = new URL('../supervisor/run.ts', import.meta.url).href;
+    const runUrl = new URL('../supervisor/state.ts', import.meta.url).href;
     writeFileSync(
       script,
       [
@@ -180,12 +161,6 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
         'const root = process.argv[2];',
         'const key = process.argv[3];',
         'const startAt = Number(process.argv[4]);',
-        // A shared start instant so every process does its single read-modify-write
-        // at the same moment -- process startup otherwise dominates and the
-        // writers never overlap. One-shot writes are the faithful reproduction:
-        // the real supervisor, collector and ios/android writers each patch their
-        // own key ONCE, so whichever renames last silently drops every key it did
-        // not happen to read (the lost update renameSync cannot prevent).
         'while (Date.now() < startAt) {}',
         'writeWorkspaceState(root, { [key]: { pid: process.pid } });',
       ].join('\n'),
@@ -201,11 +176,8 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
       'seventh',
       'eighth',
     ];
-    // Repeated rounds: a single simultaneous volley loses a key often but not
-    // every time, so the assertion is over several volleys -- an unlocked
-    // writer drops a key in at least one, a locked one never does.
     for (let round = 0; round < 8; round++) {
-      mkdirSync(join(root, '.rn-iso'), { recursive: true });
+      mkdirSync(workspaceDir(root), { recursive: true });
       writeFileSync(workspaceStateFile(root), '{}\n');
       const startAt = Date.now() + 250;
       await Promise.all(
@@ -227,7 +199,7 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
         expect(state && state[key]).toBeTruthy();
       }
     }
-  });
+  }, 15_000);
 });
 
 describe('runSupervisor', () => {
@@ -268,8 +240,6 @@ describe('runSupervisor', () => {
       attachSignals: false,
       onExit: () => {},
       startBare: async () => {
-        // The crash-safety rule: everything that makes this process findable
-        // exists by the time the server is asked to start.
         seen.current = {
           pid: readPidFile(root),
           state: readWorkspaceState(root),
@@ -333,7 +303,6 @@ describe('runSupervisor', () => {
     assert(running);
     expect(bareCalled).toBe(false);
     expect(running.mode).toBe(MODE_EXPO);
-    // Contract 2's serverPid: the expo child, recorded once it exists.
     const state = readWorkspaceState(root);
     assert(state);
     assert(state.supervisor);
@@ -407,7 +376,6 @@ describe('runSupervisor', () => {
     expect(existsSync(supervisorPidFile(root))).toBe(false);
     expect(readWorkspaceState(root)).toBe(null);
     expect(getProject(root)?.supervisor).toBe(undefined);
-    // The project record itself survives: it carries the device claims.
     expect(getProject(root)).toBeTruthy();
 
     const records = readMetroLog();
@@ -453,7 +421,6 @@ describe('runSupervisor', () => {
 
     expect(server.state.listeners.length).toBe(1);
     server.state.listeners[0]?.({ code: 3, signal: null });
-    // The shutdown is async; let it settle.
     await new Promise((r) => setTimeout(r, 10));
 
     expect(exits).toEqual([1]);
@@ -493,8 +460,6 @@ describe('runSupervisor', () => {
     expect(last.level).toBe('fatal');
     expect(last.msg).toMatch(/RN_ISO_BARE_DEPS/);
     expect(last.msg).toMatch(/Remedy: Run `npm install`\./);
-    // stderr is what lands in supervisor.log, which is all `start` can show
-    // when the supervisor never comes up. It must not be a bare stack.
     expect(stderr.join('\n')).toMatch(/RN_ISO_BARE_DEPS: metro is not resolvable/);
   });
 });

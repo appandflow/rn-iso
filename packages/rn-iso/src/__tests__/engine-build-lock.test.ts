@@ -1,23 +1,3 @@
-// src/engine/build-lock.js -- single-flight builds.
-//
-// Three agents on one commit currently pay for the same 19-minute build three
-// times. The lock is what makes exactly one of them compile it while the other
-// two wait for the artifact and install it.
-//
-// What is pinned here:
-//   1. THE PRIMITIVE. mkdirSync is atomic on every filesystem rn-iso runs on
-//      (the same rationale src/config.js's withConfigLock is built on), so the
-//      winner of a race is decided by the kernel and not by a check-then-act.
-//   2. STALENESS IS PID-LIVENESS, never mtime. A build legitimately runs for
-//      20+ minutes, so an age-based takeover would hand a second workspace the
-//      lock while the first is still compiling. A lock whose pid is dead is
-//      stale, and nothing else is.
-//   3. THE WAIT'S OUTCOMES. The artifact appearing IS the completion signal --
-//      a released lock with no artifact means the builder failed, and the
-//      waiter takes over rather than waiting forever for a build that is not
-//      coming.
-//   4. A REAL RACE, in real processes, against a real filesystem (CLAUDE.md
-//      item 9): a mocked mkdir cannot prove two processes cannot both win.
 import assert from 'node:assert';
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
@@ -55,36 +35,25 @@ afterEach(() => {
 
 const spec = (over = {}) => ({ platform: PLATFORM, key: KEY, root, logFile: join(root, 'build.ndjson'), ...over });
 
-// --- the path ---------------------------------------------------------------
-
 describe('where the lock lives', () => {
   test('is a directory under the config dir, named by platform and cache key', () => {
     expect(buildLocksDir()).toBe(join(home, 'build-locks'));
     expect(buildLockPath(PLATFORM, KEY)).toBe(join(home, 'build-locks', `ios-${KEY}.lock`));
   });
 
-  // RN_ISO_HOME redirects it along with everything else, which is what lets
-  // these tests -- and a rehearsal run -- race against a throwaway home.
   test('follows RN_ISO_HOME', () => {
     process.env.RN_ISO_HOME = join(home, 'elsewhere');
     expect(buildLocksDir()).toBe(join(home, 'elsewhere', 'build-locks'));
   });
 
-  // The key is composed by this codebase, but a lock path is a filesystem
-  // write: a separator in either half must never climb out of the lock dir.
   test('a separator in the key cannot escape the lock directory', () => {
     const path = buildLockPath('ios', '../../etc/passwd');
-    // One segment, directly inside the lock directory: the separators are gone,
-    // so what is left cannot traverse anywhere even though it still reads as
-    // the key someone passed.
     expect(dirname(path)).toBe(join(home, 'build-locks'));
     expect(!basename(path).includes('/')).toBeTruthy();
     expect(acquireBuildLock(spec({ key: '../../etc/passwd' })).acquired).toBe(true);
     expect(existsSync(join(home, 'build-locks'))).toBe(true);
   });
 });
-
-// --- acquire / held / release ----------------------------------------------
 
 describe('acquireBuildLock', () => {
   test('creates the lock and records who holds it', () => {
@@ -102,8 +71,6 @@ describe('acquireBuildLock', () => {
     expect(Date.parse(info.startedAt) > 0).toBeTruthy();
   });
 
-  // The whole point: the second caller is TOLD who is building, so it can say
-  // so and tail the right log rather than compiling the same thing again.
   test('a second acquire reports the holder rather than acquiring', () => {
     acquireBuildLock(spec());
     const second = acquireBuildLock(spec({ root: '/other/worktree' }));
@@ -123,10 +90,6 @@ describe('acquireBuildLock', () => {
     expect(acquireBuildLock(spec({ key: 'other-debug-sim' })).acquired).toBe(true);
   });
 
-  // A 20-minute xcodebuild is NORMAL. If staleness were mtime-based the way
-  // the config lock's is, the second workspace would take the lock at minute
-  // ten and both would compile -- which is the bug this whole file exists to
-  // prevent.
   test('an OLD lock held by a LIVE pid is not stale', () => {
     const got = acquireBuildLock(spec());
     assert(got.path);
@@ -156,10 +119,6 @@ describe('acquireBuildLock', () => {
     const taken = readBuildLock(path);
     assert(taken);
     expect(taken.pid).toBe(process.pid);
-    // Issue #54: the holder DIED without storing an artifact, so this run is
-    // about to compile the same inputs. The handle carries who it took over
-    // from, which is what lets the command say so in one line instead of
-    // repeating a doomed build in silence.
     assert(got.tookOver);
     expect(got.tookOver.pid).toBe(999999);
     expect(got.tookOver.projectRoot).toBe('/gone/worktree');
@@ -170,10 +129,6 @@ describe('acquireBuildLock', () => {
     expect(acquireBuildLock(spec()).tookOver).toBe(undefined);
   });
 
-  // A process killed between the mkdir and the write leaves a lock nothing can
-  // identify. Waiting on it forever would wedge every later build on this
-  // fingerprint, so it ages out -- this is the ONE place an age is consulted,
-  // and only because there is no pid to ask about.
   test('a lock with no lock.json at all is taken over once it has aged', () => {
     const path = buildLockPath(PLATFORM, KEY);
     mkdirSync(path, { recursive: true });
@@ -196,9 +151,6 @@ describe('acquireBuildLock', () => {
     expect(acquireBuildLock(spec()).acquired).toBe(true);
   });
 
-  // The counterpart of the takeover rule: once another process has decided our
-  // lock was stale and re-created it, the rmSync we run on the way out would
-  // delete a lock that is now someone else's, and TWO builders would compile.
   test('releaseBuildLock refuses to remove a lock another pid took over', () => {
     const got = acquireBuildLock(spec());
     assert(got.path);
@@ -215,8 +167,6 @@ describe('acquireBuildLock', () => {
     expect(existsSync(got.path)).toBe(true);
   });
 
-  // A failed build must free its waiters. `finally` is how the commands do it;
-  // this is the same guarantee at the unit level.
   test('a throw inside a finally-wrapped build still releases', () => {
     const got = acquireBuildLock(spec());
     assert(got.path);
@@ -230,8 +180,6 @@ describe('acquireBuildLock', () => {
     expect(existsSync(got.path)).toBe(false);
   });
 });
-
-// --- listing (what gc reports) ---------------------------------------------
 
 describe('listBuildLocks', () => {
   test('is empty when nothing has ever built', () => {
@@ -266,8 +214,6 @@ describe('listBuildLocks', () => {
     expect(stale.path).toBe(dead);
   });
 
-  // A directory somebody dropped in by hand is not a lock. Reporting it as a
-  // stale one would have `gc --delete` removing files it never wrote.
   test('a lock directory with unreadable json is listed with a null pid, not skipped', () => {
     const path = buildLockPath(PLATFORM, KEY);
     mkdirSync(path, { recursive: true });
@@ -278,8 +224,6 @@ describe('listBuildLocks', () => {
     expect(lock.alive).toBe(false);
   });
 });
-
-// --- the wait ---------------------------------------------------------------
 
 describe('waitForBuild', () => {
   const held = {
@@ -304,9 +248,6 @@ describe('waitForBuild', () => {
     ...over,
   });
 
-  // The artifact is the completion signal, not the lock's disappearance: the
-  // builder stores THEN releases, so an artifact can be there while the lock
-  // still is, and a waiter that keyed on the lock would sit through the gap.
   test('an artifact appearing is the hit, and it says how long the wait cost', async () => {
     lockOn();
     let polls = 0;
@@ -349,10 +290,6 @@ describe('waitForBuild', () => {
     expect(result.builderFailed).toMatch(/pid/i);
   });
 
-  // The race the artifact-first ordering exists to close: the builder stored
-  // its artifact and released between our two checks. That is a HIT, not a
-  // failed build -- reporting it as a failure would have the waiter recompile
-  // something that is sitting in the cache.
   test('an artifact that lands as the lock is released is still a hit', async () => {
     const path = lockOn();
     let stored: string | null = null;
@@ -385,9 +322,6 @@ describe('waitForBuild', () => {
     expect(slept).toBe(0);
   });
 
-  // Silence for nineteen minutes is indistinguishable from a hang. The line
-  // names the pid to check and the log to tail, so the wait is auditable from
-  // another terminal.
   test('emits a progress line about every 30s, naming the holder and its log', async () => {
     lockOn();
     let clock = 0;
@@ -408,9 +342,6 @@ describe('waitForBuild', () => {
     );
   });
 
-  // pid-liveness is the real guard; the ceiling is only there so a builder
-  // that is alive but wedged cannot hold an agent forever. It names the lock
-  // path because removing that directory is the whole remedy.
   test('a generous ceiling ends the wait with a structured error naming the lock', async () => {
     const path = lockOn();
     let clock = 0;
@@ -457,12 +388,6 @@ describe('waitingLine', () => {
   });
 });
 
-// --- the real race ----------------------------------------------------------
-//
-// CLAUDE.md item 9: a mocked filesystem proves the branches, not the
-// exclusion. Everything below runs in real child processes against a real
-// directory, because "exactly one wins" is a claim about the kernel.
-
 describe('a real race between real processes', () => {
   const LOCK_URL = new URL('../engine/build-lock.ts', import.meta.url).href;
   const CACHE_URL = new URL('../build-cache.ts', import.meta.url).href;
@@ -499,7 +424,6 @@ describe('a real race between real processes', () => {
         '  platform: "ios", key: process.argv[2], root: `/worktree/${process.argv[3]}`,',
         '  logFile: `/worktree/${process.argv[3]}/build.ndjson`,',
         '});',
-        // Held long enough that every sibling has certainly reached the mkdir.
         'await new Promise(r => setTimeout(r, 1500));',
         'console.log(JSON.stringify({ pid: process.pid, ...got }));',
       ].join('\n'),
@@ -518,15 +442,11 @@ describe('a real race between real processes', () => {
       expect(loser.held.pid).toBe(winners[0].pid);
       expect(loser.held.projectRoot).toMatch(/^\/worktree\//);
     }
-    // The winner's record is still on disk: nothing released it.
     const winnerRecord = readBuildLock(buildLockPath('ios', 'race-debug-sim'));
     assert(winnerRecord);
     expect(winnerRecord.pid).toBe(winners[0].pid);
   });
 
-  // The whole chain, end to end, in two processes: one holds the lock,
-  // compiles (a sleep and a real directory), stores into the real cache and
-  // releases; the other waits and installs what appeared.
   test('a waiter resolves the artifact the builder stores', async () => {
     const key = 'shared-debug-sim';
     const builder = script(
@@ -539,7 +459,7 @@ describe('a real race between real processes', () => {
         `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: process.argv[2], logFile: join(process.argv[2], "build.ndjson") });`,
         'if (!got.acquired) { console.log(JSON.stringify({ raced: true })); process.exit(0); }',
         'try {',
-        '  await new Promise(r => setTimeout(r, 900));', // the "build"
+        '  await new Promise(r => setTimeout(r, 900));',
         '  const app = join(process.argv[2], "Fixture.app");',
         '  mkdirSync(app, { recursive: true });',
         '  writeFileSync(join(app, "Fixture"), "binary");',
@@ -565,8 +485,6 @@ describe('a real race between real processes', () => {
     const buildRoot = join(root, 'builder');
     mkdirSync(buildRoot, { recursive: true });
     const started = runNode(builder, [buildRoot]);
-    // Give the builder the lock first: this test is about the WAITER's path,
-    // and the race itself is the test above.
     await new Promise((r) => setTimeout(r, 300));
     const [built, waited] = await Promise.all([started, runNode(waiter, [join(root, 'waiter')])]);
 
@@ -577,13 +495,9 @@ describe('a real race between real processes', () => {
     expect(waiterOut.hit).toBe(builderOut.stored);
     expect(waiterOut.waitedMs >= 0).toBeTruthy();
     expect(existsSync(join(waiterOut.hit, 'Fixture'))).toBeTruthy();
-    // The builder released in its finally, so the next build on this
-    // fingerprint is not blocked behind a lock nobody holds.
     expect(existsSync(buildLockPath('ios', key))).toBe(false);
   });
 
-  // A builder that is SIGKILLed releases nothing. pid-liveness is what keeps
-  // that from wedging every other workspace on the fingerprint.
   test('a builder killed mid-build leaves a lock the waiter takes over', async () => {
     const key = 'crash-debug-sim';
     const suicide = script(
@@ -612,15 +526,12 @@ describe('a real race between real processes', () => {
   });
 });
 
-// gc --delete acts on what listBuildLocks reports, so the list must never
-// contain something rn-iso did not write.
 test('a stray file with a .lock name is not reported as a lock', () => {
   mkdirSync(buildLocksDir(), { recursive: true });
   writeFileSync(join(buildLocksDir(), 'ios-not-a-lock.lock'), 'a file, not a directory');
   expect(listBuildLocks()).toEqual([]);
 });
 
-// --- issue #54: what a takeover says ---------------------------------------
 describe('takeoverLine', () => {
   test('names the builder, its log, and that the inputs are unchanged', () => {
     const line = takeoverLine({
@@ -643,9 +554,6 @@ describe('takeoverLine', () => {
     expect(line).not.toMatch(/read /);
   });
 
-  // The line is prefix-free on purpose: both callers are commands with their
-  // own phase-line column (waitingLine, which this module prints itself, keeps
-  // its prefix).
   test('carries no phase prefix of its own', () => {
     expect(takeoverLine({ projectRoot: null, pid: 1, logFile: null }).startsWith('RETRY:')).toBe(true);
   });

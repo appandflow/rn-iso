@@ -9,11 +9,14 @@
 // sits between ensureOwnedDevice (cheap) and ensureBooted (slow). Remote
 // inverts which step is expensive, so the session must be created in
 // ensureBooted, after the gate, and never in ensureOwnedDevice.
+import assert from 'node:assert';
 import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../paths.ts';
+import { remoteProfilePath } from '../engine/agent-device.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable,
@@ -99,6 +102,7 @@ function mockExec({
 }
 
 let root: string;
+let tmpHome: string;
 function ctx(overrides: Partial<Parameters<typeof remoteIosDeps>[0]> = {}) {
   const backend = overrides.backend ?? (overrides.existingDaemon ? 'proxy' : 'eas');
   return {
@@ -115,11 +119,15 @@ function ctx(overrides: Partial<Parameters<typeof remoteIosDeps>[0]> = {}) {
 }
 
 beforeEach(() => {
+  tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-home-'));
+  process.env.RN_ISO_HOME = tmpHome;
   root = mkdtempSync(join(tmpdir(), 'rn-iso-remote-'));
 });
 afterEach(() => {
   resetExecutor();
   rmSync(root, { recursive: true, force: true });
+  rmSync(tmpHome, { recursive: true, force: true });
+  delete process.env.RN_ISO_HOME;
 });
 
 describe('explicit backend selection', () => {
@@ -314,11 +322,11 @@ describe('the expensive step happens after the Metro gate', () => {
 describe('the remote session workspace lock', () => {
   test('a second process waits and takes over after the owner dies', async () => {
     const script = join(root, 'hold-lock.mjs');
-    const lockModule = new URL('../engine/workspace-process-lock.ts', import.meta.url).href;
+    const lockModule = new URL('../engine/device-remote.ts', import.meta.url).href;
     writeFileSync(
       script,
-      `import { withWorkspaceProcessLock } from ${JSON.stringify(lockModule)};
-await withWorkspaceProcessLock(process.argv[2], 'remote-session', async () => {
+      `import { withRemoteSessionLock } from ${JSON.stringify(lockModule)};
+await withRemoteSessionLock(process.argv[2], async () => {
   process.stdout.write('LOCKED\\n');
   await new Promise(() => setInterval(() => {}, 1_000));
 });
@@ -484,7 +492,7 @@ describe('the token never reaches disk', () => {
   test('the profile written next to it contains no credential', async () => {
     mockExec({ outputs: { sim: CREATED } });
     await remoteIosDeps(ctx()).ensureBooted({});
-    const profilePath = join(root, '.rn-iso', 'agent-device.remote.json');
+    const profilePath = remoteProfilePath(root);
     expect(existsSync(profilePath)).toBe(true);
     const written = readFileSync(profilePath, 'utf-8');
     expect(written).not.toContain('tok_secret');
@@ -504,7 +512,7 @@ describe('the token never reaches disk', () => {
     }
   });
 
-  test('the profile lives under .rn-iso/, never in the project itself', async () => {
+  test('the profile lives in global workspace storage, never in the project itself', async () => {
     mockExec({ outputs: { sim: CREATED } });
     await remoteIosDeps(ctx()).ensureBooted({});
     expect(existsSync(join(root, 'agent-device.remote.json'))).toBe(false);
@@ -719,7 +727,8 @@ describe('Metro reachability', () => {
     // resolves there, and the run reads as merely unverified.
     const r = resolveMetroOrigin({ metroPort: 8082, mode: 'auto', isExpo: false, available: [] });
     expect('failed' in r).toBe(true);
-    if ('failed' in r) expect(r.remedy).toContain('"off"');
+    assert('failed' in r);
+    expect(r.remedy).toContain('"off"');
   });
 
   test('launching against an unreachable Metro refuses instead of opening the app', async () => {
@@ -751,7 +760,7 @@ describe('Metro reachability', () => {
 // gate has confirmed a dev server is on it -- and still before ensureBooted,
 // which is what creates the billable session.
 async function reach(over: Record<string, unknown> = {}) {
-  const ctx = {
+  const context = {
     root,
     label: 'wt',
     platform: 'ios' as const,
@@ -760,21 +769,21 @@ async function reach(over: Record<string, unknown> = {}) {
     publicMetroUrl: null as string | null,
   };
   const result = await ensureMetroReachable({
-    ctx,
+    ctx: context,
     metroPort: 8085,
     isExpo: false,
     env: {},
     gateOrigin: async () => ({ ok: true as const }),
     ...over,
   } as unknown as Parameters<typeof ensureMetroReachable>[0]);
-  return { result, ctx };
+  return { result, context };
 }
 
 describe('the Metro refusal comes before anything billable', () => {
   test('no address and nothing to build one with is refused', async () => {
-    const { result, ctx } = await reach({ available: [] });
+    const { result, context } = await reach({ available: [] });
     expect('failed' in result).toBe(true);
-    expect(ctx.publicMetroUrl).toBeNull();
+    expect(context.publicMetroUrl).toBeNull();
   });
 
   test('a loopback daemon is NOT taken as proof the device is local', async () => {
@@ -786,7 +795,7 @@ describe('the Metro refusal comes before anything billable', () => {
 
   test('asserting the device is local needs no tunnel and no gate', async () => {
     let gated = false;
-    const { result, ctx } = await reach({
+    const { result, context } = await reach({
       tunnelMode: 'off',
       gateOrigin: async () => {
         gated = true;
@@ -794,13 +803,13 @@ describe('the Metro refusal comes before anything billable', () => {
       },
     });
     expect('ok' in result).toBe(true);
-    expect(ctx.publicMetroUrl).toBe('http://localhost:8085');
+    expect(context.publicMetroUrl).toBe('http://localhost:8085');
     expect(gated).toBe(false);
   });
 
   test('naming a public url is what unblocks it, and it IS gated', async () => {
     let gatedOrigin: string | null = null;
-    const { result, ctx } = await reach({
+    const { result, context } = await reach({
       env: { [PUBLIC_METRO_ENV]: 'https://abc.ngrok.app' },
       gateOrigin: async ({ origin }: { origin: string }) => {
         gatedOrigin = origin;
@@ -808,7 +817,7 @@ describe('the Metro refusal comes before anything billable', () => {
       },
     });
     expect('ok' in result).toBe(true);
-    expect(ctx.publicMetroUrl).toBe('https://abc.ngrok.app');
+    expect(context.publicMetroUrl).toBe('https://abc.ngrok.app');
     expect(gatedOrigin).toBe('https://abc.ngrok.app');
   });
 });
@@ -816,7 +825,7 @@ describe('the Metro refusal comes before anything billable', () => {
 describe('a tunnel rn-iso starts for itself', () => {
   test('reuses the tunnel recorded by start and gates it', async () => {
     let started = false;
-    const { result, ctx } = await reach({
+    const { result, context } = await reach({
       available: ['cloudflared'],
       startManagedTunnel: async () => {
         started = true;
@@ -834,11 +843,11 @@ describe('a tunnel rn-iso starts for itself', () => {
     });
     expect('ok' in result).toBe(true);
     expect(started).toBe(false);
-    expect(ctx.publicMetroUrl).toBe('https://t.trycloudflare.com');
+    expect(context.publicMetroUrl).toBe('https://t.trycloudflare.com');
   });
 
   test('a gate failure refuses with the gate stable code, and sets no origin', async () => {
-    const { result, ctx } = await reach({
+    const { result, context } = await reach({
       available: ['cloudflared'],
       readTunnelRecord: () => ({
         kind: 'managed',
@@ -857,9 +866,10 @@ describe('a tunnel rn-iso starts for itself', () => {
       }),
     });
     expect('failed' in result).toBe(true);
-    if ('failed' in result) expect(result.code).toBe('RN_ISO_REMOTE_METRO_WRONG');
+    assert('failed' in result);
+    expect(result.code).toBe('RN_ISO_REMOTE_METRO_WRONG');
     // Nothing downstream may treat this run as reachable.
-    expect(ctx.publicMetroUrl).toBeNull();
+    expect(context.publicMetroUrl).toBeNull();
   });
 
   test('a missing managed tunnel requires start --remote and never starts a duplicate', async () => {
@@ -873,7 +883,8 @@ describe('a tunnel rn-iso starts for itself', () => {
       readTunnelRecord: () => null,
     });
     expect('failed' in result).toBe(true);
-    if ('failed' in result) expect(result.remedy).toContain('start --remote');
+    assert('failed' in result);
+    expect(result.remedy).toContain('start --remote');
     expect(started).toBe(false);
   });
 });
@@ -918,7 +929,8 @@ describe('a session rn-iso created is never abandoned', () => {
     ['a different session id', JSON.stringify({ id: 'drs_other', status: 'STOPPED' })],
     ['ambiguous output', JSON.stringify({ id: 'drs_42' })],
   ])('a zero-exit stop with %s keeps the current-run session actionable', async (_case, stopOutput) => {
-    writeFileSync(join(root, '.rn-iso'), 'blocks the profile directory');
+    mkdirSync(join(tmpHome, 'workspaces'), { recursive: true });
+    writeFileSync(workspaceDir(root), 'blocks the profile directory');
     mockExec({ outputs: { sim: CREATED, 'simulator:stop': stopOutput } });
 
     const booted = await remoteIosDeps(ctx()).ensureBooted({});
@@ -938,7 +950,8 @@ describe('a session rn-iso created is never abandoned', () => {
   });
 
   test('a profile write failure after creation stops the new session', async () => {
-    writeFileSync(join(root, '.rn-iso'), 'blocks the profile directory');
+    mkdirSync(join(tmpHome, 'workspaces'), { recursive: true });
+    writeFileSync(workspaceDir(root), 'blocks the profile directory');
     const exec = mockExec({ outputs: { sim: CREATED } });
 
     const booted = await remoteIosDeps(ctx()).ensureBooted({});
@@ -949,7 +962,8 @@ describe('a session rn-iso created is never abandoned', () => {
   });
 
   test('an unconfirmed profile-write cleanup reports the session and manual remedy', async () => {
-    writeFileSync(join(root, '.rn-iso'), 'blocks the profile directory');
+    mkdirSync(join(tmpHome, 'workspaces'), { recursive: true });
+    writeFileSync(workspaceDir(root), 'blocks the profile directory');
     mockExec({ outputs: { sim: CREATED }, fail: 'simulator:stop' });
 
     const booted = await remoteIosDeps(ctx()).ensureBooted({});
@@ -976,11 +990,8 @@ describe('a re-run does not orphan the session it already has', () => {
   // overwritten) and billing to its cap. The documented loop re-runs `ios`
   // after every native change, so it fired constantly.
   function recordSession(id: string): void {
-    mkdirSync(join(root, '.rn-iso'), { recursive: true });
-    writeFileSync(
-      join(root, '.rn-iso', 'state.json'),
-      JSON.stringify({ remoteDevice: { platform: 'ios', sessionId: id } }),
-    );
+    ensureWorkspaceStorage(root);
+    writeFileSync(workspaceStateFile(root), JSON.stringify({ remoteDevice: { platform: 'ios', sessionId: id } }));
   }
 
   const LIVE = JSON.stringify({
@@ -1008,9 +1019,9 @@ describe('a re-run does not orphan the session it already has', () => {
   });
 
   test('ios refuses an Android session without stopping or replacing it', async () => {
-    mkdirSync(join(root, '.rn-iso'), { recursive: true });
+    ensureWorkspaceStorage(root);
     writeFileSync(
-      join(root, '.rn-iso', 'state.json'),
+      workspaceStateFile(root),
       JSON.stringify({ remoteDevice: { platform: 'android', sessionId: 'drs_android' } }),
     );
     const exec = mockExec({ outputs: { sim: CREATED } });
@@ -1106,9 +1117,7 @@ describe('a re-run does not orphan the session it already has', () => {
     expect(booted.failed).toBe(true);
     expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
     expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
-    expect(JSON.parse(readFileSync(join(root, '.rn-iso', 'state.json'), 'utf-8')).remoteDevice.sessionId).toBe(
-      'drs_other',
-    );
+    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_other');
   });
 
   test('a failed recorded-session lookup does not create a replacement', async () => {
@@ -1122,9 +1131,7 @@ describe('a re-run does not orphan the session it already has', () => {
     expect(booted.failed).toBe(true);
     expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
     expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
-    expect(JSON.parse(readFileSync(join(root, '.rn-iso', 'state.json'), 'utf-8')).remoteDevice.sessionId).toBe(
-      'drs_old',
-    );
+    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_old');
   });
 
   test('an operator-supplied daemon touches no recorded session at all', async () => {

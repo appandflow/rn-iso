@@ -8,6 +8,7 @@
 //                                agentDeviceRemoteSessionUrl / ...Token
 //   commands/simulator/list.ts   printJsonOnlyOutput({sessions, pageInfo})
 //   commands/simulator/stop.ts   printJsonOnlyOutput({id, status})
+import assert from 'node:assert';
 import type { Executor } from '../exec.ts';
 import {
   createSessionArgs,
@@ -91,7 +92,8 @@ describe('stored-session teardown authorization', () => {
       'drs_42',
     );
     expect(result.action).toBe('refused');
-    if (result.action === 'refused') expect(result.reason).toContain('not owned by rn-iso');
+    assert(result.action === 'refused');
+    expect(result.reason).toContain('not owned by rn-iso');
   });
 
   test.each(['STOPPED', 'ERRORED'])('treats verified terminal status %s as already stopped', (status) => {
@@ -108,13 +110,15 @@ describe('stored-session teardown authorization', () => {
   ])('refuses a terminal session owned by %s', (_owner, name) => {
     const result = inspectSessionForTeardown(JSON.stringify({ id: 'drs_42', name, status: 'STOPPED' }), 'drs_42');
     expect(result.action).toBe('refused');
-    if (result.action === 'refused') expect(result.reason).toContain('not owned by rn-iso');
+    assert(result.action === 'refused');
+    expect(result.reason).toContain('not owned by rn-iso');
   });
 
   test('refuses malformed output', () => {
     const result = inspectSessionForTeardown('not json', 'drs_42');
     expect(result.action).toBe('refused');
-    if (result.action === 'refused') expect(result.reason).toContain('valid JSON');
+    assert(result.action === 'refused');
+    expect(result.reason).toContain('valid JSON');
   });
 
   test('refuses a response for a different session', () => {
@@ -123,7 +127,8 @@ describe('stored-session teardown authorization', () => {
       'drs_42',
     );
     expect(result.action).toBe('refused');
-    if (result.action === 'refused') expect(result.reason).toContain('drs_other');
+    assert(result.action === 'refused');
+    expect(result.reason).toContain('drs_other');
   });
 
   test('refuses an unknown status', () => {
@@ -132,7 +137,8 @@ describe('stored-session teardown authorization', () => {
       'drs_42',
     );
     expect(result.action).toBe('refused');
-    if (result.action === 'refused') expect(result.reason).toContain('PAUSED');
+    assert(result.action === 'refused');
+    expect(result.reason).toContain('PAUSED');
   });
 });
 

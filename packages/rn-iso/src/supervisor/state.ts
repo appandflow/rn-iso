@@ -9,16 +9,12 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
-import { supervisorPidFile, workspaceStateFile, workspaceStateLock } from '../paths.ts';
+import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile, workspaceStateLock } from '../paths.ts';
 import type { ManagedProvider } from '../engine/metro-reach.ts';
 
 export const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';
 
-// The workspace state file is a defensive, loosely-typed bag: each writer
-// patches its own key (`supervisor`, `collectors.<platform>`, `lastBuild`) and
-// every reader guards for absence, so the shape is best modelled as a flat
-// record of optional keys rather than a closed interface.
 export interface WorkspaceState {
   supervisor?: Record<string, unknown>;
   collectors?: Record<string, unknown>;
@@ -100,17 +96,17 @@ export function readMetroTunnel(root: string): MetroTunnelRecord | null {
 
 // --- Contract 2: the workspace state file --------------------------------
 //
-// <root>/.rn-iso/state.json, written temp+rename so a reader never sees half a
-// file. Merged rather than overwritten: later steps put `lastBuild` beside
-// `supervisor`, and a supervisor shutting down must not take it with it.
+// The global workspace state file is written temp+rename so a reader never
+// sees half a file. Merged rather than overwritten: later steps put
+// `lastBuild` beside `supervisor`, and a supervisor shutting down must not
+// take it with it.
 
 export function readWorkspaceState(root: string): WorkspaceState | null {
   try {
     const parsed = JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed as WorkspaceState;
   } catch {
-    // Absent, unreadable, or half-written: the file is a cache of facts that
-    // are also in the config, so an unusable one reads as "no state".
     return null;
   }
 }
@@ -159,7 +155,10 @@ export function clearRemoteSession(root: string, expectedSessionId: string): voi
 export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
   const file = workspaceStateFile(root);
   return withDirLock(workspaceStateLock(root), fn, {
-    ensureParent: () => mkdirSync(dirname(file), { recursive: true }),
+    ensureParent: () => {
+      ensureWorkspaceStorage(root);
+      mkdirSync(dirname(file), { recursive: true });
+    },
   });
 }
 
@@ -167,9 +166,6 @@ export function writeWorkspaceState(root: string, patch: WorkspaceState): Worksp
   return withWorkspaceStateLock(root, () => replaceWorkspaceState(root, { ...readWorkspaceState(root), ...patch }));
 }
 
-// The whole file, not a merge. Kept separate because clearing a key through
-// the merging writer above would read the key back in and write it out again
-// -- the state would never actually clear.
 function replaceWorkspaceState(root: string, state: WorkspaceState): WorkspaceState {
   const file = workspaceStateFile(root);
   mkdirSync(dirname(file), { recursive: true });
@@ -227,11 +223,7 @@ export function clearWorkspaceStateKeys(root: string, keys: readonly string[]): 
     }
     if (!changed) return;
     if (Object.keys(state).length === 0) {
-      try {
-        rmSync(file, { force: true });
-      } catch {
-        /* already gone */
-      }
+      rmSync(file, { force: true });
       return;
     }
     replaceWorkspaceState(root, state);

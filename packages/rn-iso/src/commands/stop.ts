@@ -1,58 +1,30 @@
-// src/commands/stop.js
-//
-// `stop` is the inverse of `start`, and nothing more: it halts the
-// supervisor, reaps this workspace's device-log collectors, shuts the owned
-// device DOWN, and frees the port. It is not
-// destructive and it never deletes a device, because destruction lives in
-// exactly two commands -- `worktree remove` and `gc --delete`. An agent
-// reaching for `stop` to reclaim memory must not have a `--delete` within
-// reach of a typo, so there is no flag here that could become one.
-//
-// The identity discipline lives in two places:
-//   1. A supervisor pid is signalled only when it is ALIVE and PROVABLY ours --
-//      recorded in this workspace's state.json (or in the global registration
-//      for this exact path) and holding the port this project reserved. A pid
-//      is a number the OS reuses; a port is a slot anyone can occupy. Neither
-//      alone is proof.
-//   2. With no supervisor, the fallback is the `resolveProjectMetro` check
-//      before killing whatever answers the reserved port, with `--force` still
-//      the only way past an unproven listener. That flag guards THAT case; it
-//      has nothing to do with the supervisor, and it destroys nothing.
-//
-// Already-stopped is a success at every step. `stop` runs after a crash as
-// often as after a session, and an agent that reads a non-zero exit as "still
-// running" would loop on a workspace where nothing is left to stop.
 import chalk from 'chalk';
-import { readFileSync, rmSync } from 'fs';
+import { rmSync } from 'fs';
 import type { Command } from 'commander';
 import { clearSupervisor, getProject, upsertProject } from '../config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../config.ts';
 import { findProjectRoot } from '../project.ts';
-import { supervisorPidFile, workspaceStateFile } from '../paths.ts';
+import { supervisorPidFile } from '../paths.ts';
 import { findPidListeningOnPort, isPidAlive, killMetroTree, resolveProjectMetro } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
-import { endRecordedSession } from '../engine/device-remote.ts';
-import { resolveEasCliBin } from '../engine/remote-cache.ts';
-import { stopTunnel } from '../engine/tunnel.ts';
 import {
   clearManagedMetroTunnel,
   clearRemoteSession,
   clearWorkspaceStateKeys,
   readMetroTunnel,
+  readRemoteSession,
+  readWorkspaceState,
 } from '../supervisor/state.ts';
+import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
+import { endRecordedSession } from '../engine/device-remote.ts';
+import { resolveEasCliBin } from '../engine/remote-cache.ts';
+import { stopTunnel } from '../engine/tunnel.ts';
 
 const DEFAULT_WAIT_MS = 10_000;
 const POLL_MS = 100;
 
-// config.ts's SupervisorRecord does not declare `mode` (start.ts writes it
-// alongside pid/port/startedAt); extended locally rather than editing the
-// shared type.
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
 
-// The workspace state.json's `supervisor` block, as this file reads it back.
-// Flat and defensive like SupervisorRecord: written by the supervisor process
-// itself, in src/supervisor/run.js.
 interface SupervisorStateRecord {
   pid?: number;
   port?: number;
@@ -68,9 +40,6 @@ interface CollectorStateRecord {
 
 type CollectorStateMap = Record<string, CollectorStateRecord | undefined>;
 
-// Local, flat view of teardown.ts's outcomes -- deliberately looser (status as
-// a bare string) than the exported TeardownOutcome, reading only the fields
-// stop branches on.
 interface TeardownResult {
   status: string;
   kind?: string;
@@ -80,56 +49,25 @@ interface TeardownResult {
   holders?: string[];
 }
 
-// --- workspace state (Contract 2) -------------------------------------------
-//
-// Reading and clearing live here rather than in src/supervisor/ so that `stop`
-// and `status` depend on nothing the supervisor half owns: both must work on a
-// workspace whose supervisor died, or was never started by this rn-iso at all.
-
 export function readSupervisorState(root: string): SupervisorStateRecord | null {
-  const file = workspaceStateFile(root);
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf-8'));
-    const sup = parsed?.supervisor;
-    return sup && typeof sup === 'object' ? sup : null;
-  } catch {
-    // No file, or a half-written one from a supervisor killed mid-rename.
-    // Neither is a reason to refuse to stop anything.
-    return null;
-  }
+  const sup = readWorkspaceState(root)?.supervisor;
+  return sup && typeof sup === 'object' ? (sup as SupervisorStateRecord) : null;
 }
 
-// Contract 5. The same file, under its own key, written by `ios` / `android`'s
-// detached collectors. Read here rather than through src/collector/run.js for
-// the reason above the section: `stop` must work on a workspace whose
-// collectors are gone, or were never this rn-iso's.
 export function readCollectorState(root: string): CollectorStateMap {
-  const file = workspaceStateFile(root);
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf-8'));
-    const collectors = parsed?.collectors;
-    return collectors && typeof collectors === 'object' ? collectors : {};
-  } catch {
-    return {};
-  }
+  const collectors = readWorkspaceState(root)?.collectors;
+  return collectors && typeof collectors === 'object' ? (collectors as CollectorStateMap) : {};
 }
 
 // The remote session this workspace created, if any. Written by `ios --remote`
 // the moment the session exists, so a build that failed later still leaves a
 // handle here. Only the session id: the token is never persisted.
 interface RemoteDeviceRecord {
-  platform?: string;
+  platform?: string | null;
   sessionId?: string;
 }
 function readRemoteDeviceState(root: string): RemoteDeviceRecord | null {
-  const file = workspaceStateFile(root);
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf-8'));
-    const record = parsed?.remoteDevice;
-    return record && typeof record === 'object' ? record : null;
-  } catch {
-    return null;
-  }
+  return readRemoteSession(root);
 }
 
 // Drops the named top-level keys from state.json. NOT a delete of the file:
@@ -142,32 +80,16 @@ function dropStateKeys(root: string, keys: string[]): void {
 
 // Drops the supervisor block and the pid file.
 export function clearSupervisorState(root: string): void {
-  const pidFile = supervisorPidFile(root);
   try {
-    rmSync(pidFile, { force: true });
-  } catch {
-    // A read-only workspace is not a reason to fail a teardown.
-  }
-  dropStateKeys(root, ['supervisor']);
+    rmSync(supervisorPidFile(root), { force: true });
+  } catch {}
+  clearWorkspaceStateKeys(root, ['supervisor']);
 }
 
-// Drops the collectors block. Separate from clearSupervisorState because it is
-// cleared at a different point in the sequence: collectors are reaped even
-// when the supervisor could not be stopped, so their record must go with them
-// rather than waiting on the bookkeeping step that a live process suppresses.
 export function clearCollectorState(root: string): void {
-  dropStateKeys(root, ['collectors']);
+  clearWorkspaceStateKeys(root, ['collectors']);
 }
 
-// --- identity ---------------------------------------------------------------
-
-// Pure. Decides whether a recorded supervisor may be signalled at all, given
-// the two records that describe it and the port this project actually reserved.
-//
-//   { status: 'none' }                    nothing recorded
-//   { status: 'stale', pid }              recorded, not running: already stopped
-//   { status: 'unverified', pid, reason } running but not proven ours: never signalled
-//   { status: 'ours', pid, port, mode, startedAt }
 interface SupervisorTarget {
   status: string;
   pid?: number;
@@ -193,9 +115,6 @@ export function resolveSupervisorTarget({
   const pid = statePid ?? recordPid;
   if (!pid) return { status: 'none' };
 
-  // Two records naming different pids means one of them outlived its process
-  // and the number has since been reused. There is no way to tell which, so
-  // neither is signalled.
   if (statePid && recordPid && statePid !== recordPid) {
     return {
       status: 'unverified',
@@ -207,10 +126,6 @@ export function resolveSupervisorTarget({
   if (!isAlive(pid)) return { status: 'stale', pid };
 
   const port = numberOrNull(state?.port) ?? numberOrNull(record?.port);
-  // The port is the second half of the proof. When this project holds no
-  // reservation at all -- an earlier stop freed it and then failed -- the
-  // in-workspace record is what is left, and it is still a record written
-  // inside THIS workspace.
   if (reservedPort !== null && reservedPort !== undefined && port !== null && port !== reservedPort) {
     return {
       status: 'unverified',
@@ -239,18 +154,6 @@ function numberOrNull(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
 }
 
-// Pure. Contract 5's collectors, turned into a signal list.
-//
-// The identity discipline is the supervisor's, minus the port half a collector
-// does not have: a pid is signalled only when it is recorded in THIS
-// workspace's state.json and is actually running. That record is the whole
-// proof, which is why nothing else -- not a pid file, not a process name -- is
-// consulted, and why our own pid is refused outright: a state file that
-// somehow named this process would otherwise make `stop` SIGTERM itself.
-//
-//   { platform, pid, status: 'running' }   alive and ours: signal it
-//   { platform, pid, status: 'stale' }     recorded, not running
-//   { platform, pid, status: 'invalid' }   unusable record (no pid, or ours)
 interface CollectorTarget {
   platform: string;
   pid: number | null;
@@ -280,9 +183,6 @@ export function resolveCollectorTargets({
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-// Polls rather than waiting on the process, because it is not our child: a
-// detached supervisor is reparented to init, so there is no exit event to
-// listen for.
 async function waitForExit(
   pid: number,
   {
@@ -303,14 +203,8 @@ async function waitForExit(
   return !isAlive(pid);
 }
 
-// --- the sequence -----------------------------------------------------------
-
-// Outcomes, one per step, are the `--json` payload. Flat, all-optional shapes
-// rather than discriminated unions: every field this module reads is guarded
-// defensively at the read site already (`outcomes.metro.reason` on a status
-// that has none is simply undefined), matching MetroResolution's convention.
 interface SupervisorOutcome {
-  status: string; // none | stopped | already-stopped | unverified | timeout | failed
+  status: string;
   pid?: number;
   reason?: string;
   port?: number | null;
@@ -324,19 +218,19 @@ interface CollectorEntry {
 }
 
 interface CollectorsOutcome {
-  status: string; // none | stopped
+  status: string;
   entries: CollectorEntry[];
 }
 
 interface MetroOutcome {
-  status: string; // none | missing | stopped | forced | refused | failed | skipped
+  status: string;
   port?: number | null;
   pid?: number | null;
   reason?: string;
 }
 
 interface DeviceOutcomeEntry {
-  status: string; // shut-down | missing | skipped | failed
+  status: string;
   label?: string;
   reason?: string;
   kind?: string | null;
@@ -353,7 +247,7 @@ interface DeviceOutcome {
 }
 
 interface PortOutcome {
-  status: string; // none | freed | kept
+  status: string;
   port?: number | null;
   reason?: string;
 }
@@ -459,12 +353,8 @@ export async function runStop({
     metroTunnel: { status: 'none' },
   };
   let ok = true;
-  // Set when something this command could not stop is still holding the port.
-  // The reservation is then KEPT: it is the only record a retry can find that
-  // process by, and dropping it strands a live supervisor no command can name.
   let stillHolding: string | null | undefined = null;
 
-  // Step 1: the supervisor.
   const target = resolveSupervisorTarget({ state: sup, record: proj?.supervisor ?? null, reservedPort, isAlive });
   if (target.status === 'none') {
     report(chalk.dim('supervisor: none recorded'));
@@ -488,19 +378,9 @@ export async function runStop({
     }
   }
 
-  // Step 2: the device-log collectors (Contract 5). Reaped whether or not the
-  // supervisor went down, and BEFORE the device is shut down: a collector is a
-  // `simctl log stream` / `adb logcat` attached to the device step 4 is about
-  // to stop, and one left running there outlives the workspace it belongs to
-  // with nothing left that can name it. They hold no contended resource, so
-  // unlike the device there is nothing for a stuck supervisor to make unsafe.
   outcomes.collectors = reapCollectors(collectorRecords, { isAlive, signal: signalCollector, report });
   if (outcomes.collectors.entries.length) clearCollectors(root);
 
-  // Step 3: Metro. Only when no live supervisor was involved -- the supervisor
-  // hosts the dev server, so with one running (or refusing to die) the port is
-  // accounted for, and racing a second killer at it can only take out the wrong
-  // process.
   const supervisorHandled =
     outcomes.supervisor.status === 'stopped' ||
     outcomes.supervisor.status === 'timeout' ||
@@ -518,9 +398,6 @@ export async function runStop({
     }
   }
 
-  // Step 4: the device. Shut down, never deleted, and only when rn-iso owns it.
-  // Skipped entirely while something is still holding the port: the supervisor
-  // that ignored our SIGTERM is very likely still driving that simulator.
   if (stillHolding) {
     report(chalk.dim('device: left alone (something is still running)'));
   } else {
@@ -619,13 +496,6 @@ export async function runStop({
   return { ok, outcomes, summary: summarize(root, outcomes, ok) };
 }
 
-// SIGTERM each recorded collector, tolerating a pid that is already gone.
-//
-// No wait, and deliberately no escalation: a collector's SIGTERM handler
-// closes its NDJSON writer and unregisters itself, which is exactly the work a
-// second signal would interrupt mid-file. A dead pid is the NORMAL case -- the
-// app was killed, the collector noticed and exited -- so ESRCH is not a
-// failure and never makes `stop` non-zero.
 function reapCollectors(
   collectors: CollectorStateMap | null | undefined,
   {
@@ -652,14 +522,10 @@ function reapCollectors(
       continue;
     }
     try {
-      // Only a 'running' target reaches here, and resolveCollectorTargets only
-      // gives that status a non-null pid; the flat CollectorTarget shape just
-      // doesn't encode that link.
       signal(target.pid as number);
       entries.push({ platform: target.platform, pid: target.pid, status: 'stopped' });
       report(chalk.green(`collectors: stopped ${target.platform} pid ${target.pid}`));
     } catch {
-      // Raced with its own exit between the liveness check and the signal.
       entries.push({ platform: target.platform, pid: target.pid, status: 'already-stopped' });
       report(chalk.dim(`collectors: ${target.platform} pid ${target.pid} exited before it could be signalled`));
     }
@@ -696,18 +562,11 @@ async function stopSupervisor(
     report(chalk.red(`supervisor: ${reason}`));
     return { status: 'failed', pid: target.pid, port: target.port ?? null, reason };
   }
-  // stopSupervisor is only ever called with an 'ours' target, which always
-  // carries a real pid; SupervisorTarget itself keeps it optional because
-  // 'none' and 'stale' targets do not.
   const died = await waiter(target.pid as number);
   if (died) {
     report(chalk.green(`supervisor: stopped (pid ${target.pid})`));
     return { status: 'stopped', pid: target.pid, port: target.port ?? null, mode: target.mode ?? null };
   }
-  // Deliberately NOT escalating to SIGKILL. A supervisor mid-write on the log
-  // files is exactly what SIGTERM handling exists to finish, and a second
-  // signal from here would corrupt the timeline the agent is about to read.
-  // Escalation is the caller's call, so it gets the pid and the reason.
   const reason = `supervisor pid ${target.pid} did not exit within ${Math.round(DEFAULT_WAIT_MS / 1000)}s of SIGTERM`;
   report(chalk.red(`supervisor: ${reason}`));
   report(chalk.dim(`  inspect it with \`ps -p ${target.pid}\`, or signal it yourself: kill -9 -${target.pid}`));
@@ -761,29 +620,13 @@ async function stopMetro(
   return { status: 'forced', port, pid };
 }
 
-// --- who is holding an occupied sim ----------------------------------------
-//
-// teardownOwnedIosSim spares a sim something else is attached to (CLAUDE.md
-// item 4). The occupancy DECIDER counts only foreign .xctrunner bundles, and
-// the outcome now carries exactly that list, so the skip names what counted
-// and nothing else. (An earlier version scanned `ps` for any command line
-// carrying the udid, which named the sim's own runtime and the app rn-iso
-// itself launched alongside the one process that decided the skip.)
-//
-// The probe also fails CLOSED, so an 'occupied' skip with no holder list does
-// not prove a holder exists -- the generic hint is still better than nothing:
-// it is very nearly always one of two things.
 const OCCUPANCY_HINT = 'often a UI-test runner or device tool still attached';
 
-// PURE. The occupied skip, with whoever can be named appended to it.
 function occupiedSkipReason(reason: string, holders: string[] | null | undefined): string {
   const named = (holders || []).filter(Boolean);
   return named.length ? `${reason} -- held by UI-test runner ${named.join(', ')}` : `${reason} -- ${OCCUPANCY_HINT}`;
 }
 
-// Owned devices only, and always with del:false. `stop` shutting a device down
-// rather than deleting it is what makes returning to a branch cost a boot
-// instead of a create, a provision and a reinstall.
 function shutDownDevices(
   project: ProjectRecord | null | undefined,
   {
@@ -799,10 +642,6 @@ function shutDownDevices(
   const device: DeviceOutcome = { ios: null, android: null };
 
   const ios = project?.platforms?.ios;
-  // `deviceUdid` / `deviceName` reach DeviceRecord's index signature (the
-  // interface only names the fields it declares up front) rather than typed
-  // fields, hence the casts: the values are strings wherever this codebase
-  // writes them (see src/status.ts for the same convention).
   const iosUdid = ios?.deviceUdid as string | undefined;
   const iosName = ios?.deviceName as string | undefined;
   if (iosUdid) {
@@ -825,8 +664,6 @@ function shutDownDevices(
       };
       report(chalk.dim(`android: ${android.avdName} is not rn-iso-owned, leaving it running`));
     } else {
-      // Android has no occupancy probe, so there is no occupied skip to
-      // explain -- see teardownOwnedAvd.
       device.android = reportDevice('android', android.avdName, teardownAvd(android.avdName, { del: false }), report);
     }
   }
@@ -890,27 +727,15 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   return `${ok ? 'Stopped' : 'Stopped with problems'}: ${what} (${root})`;
 }
 
-// upsertProject spreads its fields over the existing record inside the config
-// lock, so this clears the reservation the same race-safe way claimMetroPort
-// takes it. There is no dedicated releaseMetroPort mutator in config.js; if one
-// is added, this is the single site to move onto it.
 function defaultFreePort(root: string, _port: number): void {
   if (!getProject(root)) return;
   upsertProject(root, { metroPort: null });
 }
 
-// The global registration is what makes a supervisor findable after its
-// workspace is gone (`status`, `worktree remove`), so it is the last
-// thing dropped and only once the process is provably down. A failure to clear
-// it is contained: `status` then reports a stale supervisor record, which is
-// recoverable, whereas failing the stop over bookkeeping is not.
 async function defaultClearRegistration(root: string): Promise<void> {
   try {
     clearSupervisor(root);
-  } catch {
-    // See above: a registry that cannot be written is not this command's
-    // failure to report.
-  }
+  } catch {}
 }
 
 interface StopOptions {

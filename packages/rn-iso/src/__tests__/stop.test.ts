@@ -1,18 +1,10 @@
-// test/stop.test.js
-//
-// `stop` is v3's inverse of `start`: halt the supervisor, shut the owned device
-// DOWN (never delete), free the port. The parts that decide what may be
-// signalled are pure and tested here without a live process; the sequencing is
-// tested through runStop with every side effect injected, so nothing in this
-// file kills anything, boots anything, or touches a real simulator.
-
 import assert from 'node:assert';
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { saveConfig, getProject } from '../config.ts';
-import { supervisorPidFile, workspaceStateFile } from '../paths.ts';
+import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile } from '../paths.ts';
 import {
   clearCollectorState,
   clearSupervisorState,
@@ -25,8 +17,6 @@ import {
 import { makeConfig, makeError, makeMetroResolution } from './_factories.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
-
-// --- resolveSupervisorTarget: who may be signalled --------------------------
 
 test('no supervisor recorded anywhere is "none", not an error', () => {
   const r = resolveSupervisorTarget({ state: null, record: null, reservedPort: 8083, isAlive: () => true });
@@ -57,9 +47,6 @@ test('a recorded pid that is not running is already stopped, not a failure', () 
   expect(r.pid).toBe(4242);
 });
 
-// The identity rule: a pid is signalled only when it is provably this
-// workspace's. A port that does not match the reservation is not proof, and
-// killing on it repeats the Android console-port mistake in a new place.
 test('a live pid whose recorded port is not this project reservation is refused', () => {
   const r = resolveSupervisorTarget({
     state: { pid: 4242, port: 8099 },
@@ -84,9 +71,6 @@ test('state.json and the global registry disagreeing on the pid is refused', () 
   expect(r.reason).toMatch(/777/);
 });
 
-// The workspace's state.json can be deleted (or never written) while the global
-// registration survives -- that registration is precisely what `status`
-// and `worktree remove` use to find a supervisor whose workspace vanished.
 test('a registry record with no state.json is still actionable when the port matches', () => {
   const r = resolveSupervisorTarget({
     state: null,
@@ -98,9 +82,6 @@ test('a registry record with no state.json is still actionable when the port mat
   expect(r.pid).toBe(4242);
 });
 
-// A previous interrupted stop can free the port before clearing the
-// registration. With no reservation left there is nothing to match against, so
-// the in-workspace state file is the proof instead.
 test('no reservation left falls back to the in-workspace record', () => {
   const r = resolveSupervisorTarget({
     state: { pid: 4242, port: 8083 },
@@ -110,8 +91,6 @@ test('no reservation left falls back to the in-workspace record', () => {
   });
   expect(r.status).toBe('ours');
 });
-
-// --- runStop: the sequence --------------------------------------------------
 
 type TeardownCall =
   | { udid: string; opts: { del?: boolean; label?: string } }
@@ -213,8 +192,6 @@ test('a live supervisor is SIGTERMed as a group and its Metro is left to it', as
   expect(calls.stateCleared).toBe(1);
 });
 
-// Escalation is a REPORT, not a SIGKILL: a supervisor that ignores SIGTERM is
-// mid-write on the log files, and a second signal is the caller's decision.
 test('a supervisor that outlives the wait is reported, never SIGKILLed', async () => {
   const { calls, opts } = seams({
     state: { pid: 4242, port: 8083 },
@@ -258,7 +235,6 @@ test('an unverified supervisor record is refused without signalling anything', a
   expect(calls.freed.length).toBe(0);
 });
 
-// With no supervisor, v2's path is unchanged: identity first, kill the group.
 test('no supervisor but our own Metro on the port kills the group', async () => {
   const { calls, opts } = seams({
     resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 90, leader: 88, cwd: '/proj/a' } }),
@@ -291,8 +267,6 @@ test('an unproven listener is refused and named, and --force overrides it', asyn
   expect(forced.calls.killedMetro).toEqual([99]);
 });
 
-// --force guards the unproven-listener case only. It must never turn "nothing
-// is listening" into a kill attempt.
 test('--force with nothing listening still reports missing', async () => {
   const { calls, opts } = seams({ force: true });
   const r = await runStop(opts);
@@ -300,8 +274,6 @@ test('--force with nothing listening still reports missing', async () => {
   expect(calls.killedMetro).toEqual([]);
 });
 
-// The whole point of v3 stop: the device survives, so returning to the branch
-// costs a boot rather than a create, a provision and a reinstall.
 test('owned devices are shut down with del:false, never deleted', async () => {
   const { calls, opts } = seams({
     project: {
@@ -334,8 +306,6 @@ test('a device rn-iso does not own is left alone', async () => {
   expect(calls.teardowns).toEqual([]);
 });
 
-// An occupied sim is spared, exactly as `shutdown` spares it: the device
-// survives this command, so something still attached to it matters.
 test('an occupied sim is reported as skipped and does not fail the run', async () => {
   const { opts } = seams({
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
@@ -370,8 +340,6 @@ test('a project with no reserved port has nothing to free', async () => {
   expect(calls.freed).toEqual([]);
 });
 
-// --- state files and the registry, against a real temp workspace ------------
-
 let tmpHome: string;
 let tmpRoot: string;
 
@@ -379,6 +347,7 @@ beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
   process.env.RN_ISO_HOME = tmpHome;
   tmpRoot = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
+  ensureWorkspaceStorage(tmpRoot);
 });
 
 afterEach(() => {
@@ -390,17 +359,13 @@ afterEach(() => {
 
 test('readSupervisorState reads the supervisor block, and tolerates corruption', () => {
   expect(readSupervisorState(tmpRoot)).toBe(null);
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(workspaceStateFile(tmpRoot), '{ not json');
   expect(readSupervisorState(tmpRoot)).toBe(null);
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7, port: 8083 } }));
   expect(readSupervisorState(tmpRoot)).toEqual({ pid: 7, port: 8083 });
 });
 
-// Later steps put `lastBuild` beside `supervisor` in the same file, so clearing
-// the supervisor must not take the rest of the file with it.
 test('clearSupervisorState drops the supervisor key and keeps the rest of state.json', () => {
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(supervisorPidFile(tmpRoot), '7');
   writeFileSync(
     workspaceStateFile(tmpRoot),
@@ -415,14 +380,12 @@ test('clearSupervisorState drops the supervisor key and keeps the rest of state.
 });
 
 test('clearSupervisorState removes a state file that held only the supervisor', () => {
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 } }));
   clearSupervisorState(tmpRoot);
   expect(existsSync(workspaceStateFile(tmpRoot))).toBe(false);
 });
 
 test('state-key cleanup waits for a concurrent state writer and retains its new session', async () => {
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 } }));
   const script = join(tmpRoot, 'write-session-under-lock.mjs');
   const stateModule = new URL('../supervisor/state.ts', import.meta.url).href;
@@ -472,7 +435,6 @@ test('stopping frees the reserved port in the registry and keeps the device reco
       },
     }),
   );
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(supervisorPidFile(tmpRoot), '4242');
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 4242, port: 8083 } }));
 
@@ -495,9 +457,6 @@ test('stopping frees the reserved port in the registry and keeps the device reco
   expect(existsSync(supervisorPidFile(tmpRoot))).toBe(false);
 });
 
-// The global registration is what `status` and `worktree remove` use to
-// find a supervisor whose workspace is gone, so a stop that leaves one behind
-// leaves a permanent ghost.
 test('stopping clears the global supervisor registration', async () => {
   saveConfig(
     makeConfig({
@@ -525,13 +484,6 @@ test('stopping clears the global supervisor registration', async () => {
   assert(proj);
   expect(proj.supervisor).toBe(undefined);
 });
-
-// --- Contract 5: the collectors ---------------------------------------------
-//
-// A collector is a detached `simctl log stream` / `adb logcat` this workspace
-// spawned. Nothing else on the machine can name it once state.json is gone, so
-// `stop` reaping it is the only thing standing between a workspace teardown and
-// a log stream that outlives the device it was reading.
 
 test('resolveCollectorTargets signals only live pids recorded for this workspace', () => {
   const targets = resolveCollectorTargets({
@@ -569,8 +521,6 @@ test('stop SIGTERMs every recorded collector and clears the key', async () => {
   expect(r.summary).toMatch(/2 collectors stopped/);
 });
 
-// A dead collector pid is the NORMAL case: the app was killed, the collector
-// noticed and exited on its own. It must never make `stop` non-zero.
 test('an already-dead collector is a success, not a failure', async () => {
   const { calls, opts } = seams({
     collectors: { ios: { pid: 111 } },
@@ -595,9 +545,6 @@ test('a collector that exits between the liveness check and the signal is not an
   expect(r.outcomes.collectors.entries).toEqual([{ platform: 'ios', pid: 111, status: 'already-stopped' }]);
 });
 
-// The device step is skipped while something still holds the port, but the
-// collectors are not: they hold nothing contended, and a stuck supervisor is
-// exactly the case where a leaked log stream would never be reaped by anything.
 test('collectors are still reaped when the supervisor could not be verified', async () => {
   const { calls, opts } = seams({
     state: { pid: 4242, port: 8099 },
@@ -622,18 +569,13 @@ test('nothing recorded means no clear and no signal', async () => {
 
 test('readCollectorState reads the collectors block and tolerates corruption', () => {
   expect(readCollectorState(tmpRoot)).toEqual({});
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(workspaceStateFile(tmpRoot), '{ not json');
   expect(readCollectorState(tmpRoot)).toEqual({});
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ collectors: { ios: { pid: 9 } } }));
   expect(readCollectorState(tmpRoot)).toEqual({ ios: { pid: 9 } });
 });
 
-// Same rule as clearSupervisorState: `lastBuild` lives in this file, and taking
-// the fingerprint away with a collector pid would make the next build a
-// guaranteed cache miss.
 test('clearCollectorState drops only the collectors key', () => {
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(
     workspaceStateFile(tmpRoot),
     JSON.stringify({
@@ -646,14 +588,6 @@ test('clearCollectorState drops only the collectors key', () => {
   const left = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
   expect(left).toEqual({ supervisor: { pid: 7 }, lastBuild: { fingerprint: 'abc' } });
 });
-
-// --- the occupied-sim skip names its holder --------------------------------
-//
-// "in use by another process (occupied)" told a reader that something is
-// holding the sim and nothing about what. The occupancy decider counts only
-// foreign .xctrunner bundles, and the teardown outcome carries exactly that
-// list -- so the skip names what counted, never the sim's own runtime or the
-// app rn-iso itself launched (which a ps-over-the-udid scan used to drag in).
 
 test('an occupied sim names the UI-test runner that decided the skip', async () => {
   const reports: string[] = [];
@@ -712,7 +646,6 @@ function withRemoteSession(sessionId: string) {
       projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } },
     }),
   );
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(
     workspaceStateFile(tmpRoot),
     JSON.stringify({ remoteDevice: { platform: 'ios', sessionId }, lastBuild: { hash: 'keepme' } }),
@@ -885,7 +818,6 @@ test('a remote session is stopped even when something still holds the port', asy
 
 function withManagedTunnel() {
   saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(
     workspaceStateFile(tmpRoot),
     JSON.stringify({
@@ -1059,7 +991,6 @@ test('an Expo-hosted tunnel has no process of its own -- stopMetroTunnel is neve
 
 test('an Expo tunnel record is dropped once the port is freed, not left stale for the next run', async () => {
   saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(
     workspaceStateFile(tmpRoot),
     JSON.stringify({ metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' } }),

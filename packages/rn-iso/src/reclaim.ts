@@ -1,4 +1,5 @@
 import { type ProjectRecord, getProject, removeProject } from './config.ts';
+import { existsSync, rmSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.ts';
 import { readCollectors } from './collector/state.ts';
@@ -12,32 +13,23 @@ import {
 import { endRecordedSession } from './engine/device-remote.ts';
 import { resolveEasCliBin } from './engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from './engine/tunnel.ts';
+import { workspaceDir } from './paths.ts';
 
-// Stop this workspace's device-log collectors. Their record in state.json is
-// the only thing that names them, so they must be reaped before the entry (and,
-// for `worktree remove`, the whole tree) is removed: a collector left running
-// leaks, and its own exit path rewrites state.json -- resurrecting a zombie
-// `.rn-iso` under a directory that was just deleted. `stop` reaps them the same
-// way; the shared reclaim path did not, relying on device teardown to end the
-// `log stream` / `logcat` indirectly, which a failed or already-stopped device
-// does not do.
 function reapCollectors(root: string): void {
   for (const record of Object.values(readCollectors(root))) {
     const pid = (record as { pid?: unknown } | null)?.pid;
     if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !isPidAlive(pid)) continue;
     try {
       process.kill(pid, 'SIGTERM');
-    } catch {
-      /* already gone between the read and the signal */
-    }
+    } catch {}
   }
 }
 
 // End the remote session this workspace created, while the workspace still
 // exists.
 //
-// TIMING IS THE WHOLE CONSTRAINT. The session id lives in
-// `<root>/.rn-iso/state.json`, and `eas simulator:stop` needs a project
+// TIMING IS THE WHOLE CONSTRAINT. The session id lives in global workspace
+// state, and `eas simulator:stop` needs a project
 // directory to run in (its contextDefinition includes ProjectDir). Both are
 // gone the moment `git worktree remove` runs, so this must happen HERE, in
 // the shared reclaim that precedes the caller's removal step -- not in the
@@ -85,8 +77,8 @@ function defaultStopSession(root: string, sessionId: string) {
 
 // End a tunnel `ios`/`android --remote` started for itself (a managed
 // provider; engine/tunnel.ts), for the same timing reason reclaimRemoteSession
-// runs here rather than in the caller: the record lives in
-// `<root>/.rn-iso/state.json`, which `worktree remove` deletes.
+// runs here rather than in the caller: the record lives in the global
+// workspace directory, which `worktree remove` deletes.
 //
 // Unconditional, like the remote session -- not gated by deleteOwnedDevices.
 // That flag guards DESTROYING a local device, a real choice because a
@@ -150,11 +142,6 @@ interface SkippedDevice {
   reason: string;
 }
 
-// The devices this project's entry stops referencing. Dropping the reference
-// is all that happens to them here: destroying a device is the separate,
-// opt-in `deleteOwnedDevices` path, and what it destroys is reported as
-// `deletedDevices`. So callers must describe this list as de-referenced, not
-// as freed hardware.
 export function describeDereferenced(project: ProjectRecord | null): string[] {
   const devices: string[] = [];
   const ios = project?.platforms?.ios;
@@ -165,26 +152,6 @@ export function describeDereferenced(project: ProjectRecord | null): string[] {
   return devices;
 }
 
-// Shut down + delete a project's owned devices. Only records with
-// `owned: true` are touched -- the device-level name-prefix guards inside
-// deleteIosSim/deleteAvd are a backstop, not the primary gate. iOS is
-// resolved against the live sim list BEFORE any command is issued at it
-// (resolveOwnedIosSim): a udid that no longer names an rn-iso-owned sim
-// (renamed by the user, or a stale/mistyped record) must never be shut
-// down, only reported as a skip -- shutting it down first and only
-// catching the mismatch at delete time would already have hit whatever
-// real simulator that udid resolves to. A device that is being deleted is
-// not occupancy-checked: it goes away even while a foreign UI-test runner
-// is attached, so the only skip reported here is a device rn-iso does not
-// own.
-//
-// Each device's teardown is wrapped in its own try/catch: an exec throw
-// (emulator not on PATH so listAvds() throws, or a guard throwing) must
-// never propagate out of here. A propagated throw would abort the whole
-// reclaim before the caller's removal step (e.g. `git worktree remove`)
-// ever runs, and re-running would hit the same throw forever. A failed
-// teardown is recorded with its reason instead, and the loop (and the
-// caller's removal) always proceeds.
 function reclaimOwnedDevices(project: ProjectRecord | null): {
   deletedDevices: string[];
   skippedDevices: SkippedDevice[];
@@ -192,14 +159,10 @@ function reclaimOwnedDevices(project: ProjectRecord | null): {
 } {
   const deletedDevices: string[] = [];
   const skippedDevices: SkippedDevice[] = [];
-  // Devices whose delete FAILED, so they are still on the machine.
   const failedDevices: SkippedDevice[] = [];
 
   const ios = project?.platforms?.ios;
   if (ios?.owned && ios.deviceUdid) {
-    // `deviceUdid` / `deviceName` reach DeviceRecord's index signature rather
-    // than a declared field, hence the casts: both are strings wherever this
-    // codebase writes them.
     const udid = ios.deviceUdid as string;
     const label = (ios.deviceName as string | undefined) || udid;
     const r = teardownOwnedIosSim(udid, { del: true, label });
@@ -211,7 +174,6 @@ function reclaimOwnedDevices(project: ProjectRecord | null): {
       skippedDevices.push(entry);
       failedDevices.push(entry);
     }
-    // 'missing' is already gone: nothing to shut down, delete, or report.
   }
 
   const android = project?.platforms?.android;
@@ -234,13 +196,6 @@ function reclaimOwnedDevices(project: ProjectRecord | null): {
   return { deletedDevices, skippedDevices, failedDevices };
 }
 
-// Drop a project's rn-iso state and, optionally, its owned devices. Shared by
-// `gc` and `worktree remove` so the two cannot drift.
-//
-// There is no build-output step here any more. Build output lives inside the
-// workspace (`<root>/.rn-iso/`), so it is reclaimed by whatever removes the
-// directory itself and never needs to be found by reverse-mapping a global
-// DerivedData tree back to a project.
 export interface ReclaimResult {
   path: string;
   dereferenced: string[];
@@ -257,6 +212,8 @@ export interface ReclaimResult {
   // one -- the provider name. null when there was none, or it was an
   // Expo-hosted tunnel with no process of its own.
   stoppedTunnel: string | null;
+  removedWorkspaceDirs: string[];
+  failedWorkspaceDirs: string[];
 }
 
 export async function reclaimProject(
@@ -270,8 +227,6 @@ export async function reclaimProject(
   const project = getProject(path);
   const dereferenced = describeDereferenced(project);
 
-  // Reap collectors first: they hold the device open via `log stream`/`logcat`,
-  // and their state.json record is about to be removed.
   reapCollectors(path);
 
   const {
@@ -320,11 +275,21 @@ export async function reclaimProject(
     }
   }
 
-  // A device whose delete FAILED is still on the machine, and this entry is
-  // the only record naming it. Dropping the entry here is what turns a failed
-  // teardown into a simulator nothing references, so the entry stays and the
-  // caller reports it as still tracked.
-  const keptEntry = failedDevices.length > 0;
+  const removedWorkspaceDirs: string[] = [];
+  const failedWorkspaceDirs: string[] = [];
+  if (failedDevices.length === 0) {
+    const dir = workspaceDir(path);
+    if (existsSync(dir)) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+        removedWorkspaceDirs.push(dir);
+      } catch {
+        failedWorkspaceDirs.push(dir);
+      }
+    }
+  }
+
+  const keptEntry = failedDevices.length > 0 || failedWorkspaceDirs.length > 0;
   if (project && !keptEntry) removeProject(path);
 
   return {
@@ -339,5 +304,7 @@ export async function reclaimProject(
     keptEntry,
     stoppedSession: remote.stopped,
     stoppedTunnel: tunnel.stopped,
+    removedWorkspaceDirs,
+    failedWorkspaceDirs,
   };
 }

@@ -1,11 +1,3 @@
-// engine/js-swap: fresh JS into a cached Release .app.
-//
-// The pure pieces (the hermes decision, the entry-file pick, the two bundle
-// argvs, hermesc's argv) are asserted as data. swapJsBundle itself is
-// asserted for ORDER through injected seams -- copy aside, bundle, hermesc,
-// replace, re-sign -- and for the guarantee every failure shape shares: a
-// return value naming the step, never a throw, because the caller's answer to
-// any of them is the same safe fallback (build fresh).
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -52,9 +44,6 @@ describe('hermesEnabledFromProperties', () => {
     expect(hermesEnabledFromProperties('{"hermesEnabled":"false"}')).toBe(false);
     expect(hermesEnabledFromProperties('{"hermesEnabled":false}')).toBe(false);
     expect(hermesEnabledFromProperties('{"hermesEnabled":"true"}')).toBe(true);
-    // Any other value is not the disable sentinel; the Podfile reads it the
-    // same way (podfile_properties['expo.jsEngine'] aside, hermesEnabled is
-    // compared against 'false' textually).
     expect(hermesEnabledFromProperties('{"hermesEnabled":"FALSE"}')).toBe(true);
   });
 
@@ -147,8 +136,6 @@ describe('hermesc', () => {
   });
 });
 
-// --- swapJsBundle orchestration --------------------------------------------
-
 let root: string;
 let tmp: string;
 const cachedApp = '/cache/ios/k-release-sim/Fixture.app';
@@ -163,7 +150,6 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-// A bundle child that streams a line and exits with `code`.
 function makeBundleChild(code = 0): ChildProcess {
   const child = makeChildProcess();
   setImmediate(() => {
@@ -226,8 +212,6 @@ describe('swapJsBundle', () => {
     expect(result.hermes).toBe(true);
 
     const shape = calls.map((c) => c.file);
-    // cp aside (clone attempt), npx bundle, hermesc, mv over the jsbundle,
-    // cp bundle into the copy, cp assets contents, codesign.
     expect(shape).toEqual(['cp', 'npx', hermescPath(root), 'mv', 'cp', 'cp', 'codesign']);
 
     const copyAside = calls[0];
@@ -237,7 +221,6 @@ describe('swapJsBundle', () => {
     expect(bundle?.args).toContain(bundleOutput);
     const codesign = calls.at(-1);
     expect(codesign?.args).toEqual(['--force', '--sign', '-', appCopy]);
-    // Nothing ever targeted the cached artifact itself after the copy.
     for (const call of calls.slice(1)) {
       expect(call.args ?? []).not.toContain(cachedApp);
     }
@@ -267,7 +250,6 @@ describe('swapJsBundle', () => {
     expect(result.hermes).toBe(false);
     expect(result.note).toMatch(/hermesc not found/);
     expect(calls.some((c) => c.file === hermescPath(root))).toBe(false);
-    // The plain bundle still lands in the copy and the copy is still re-signed.
     expect(calls.at(-1)?.file).toBe('codesign');
   });
 

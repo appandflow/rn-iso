@@ -1,21 +1,8 @@
-// Node resolution, not path joining.
-//
-// One mistake produced four bugs, and both real repos it was found on are
-// monorepos that HOIST: neither a pnpm workspace nor a yarn-workspaces one
-// puts `expo` (or its .bin shim) under the app's own node_modules. Every test
-// here runs against a scratch workspace built to that shape --
-//
-//   <ws>/node_modules/expo/{package.json,bin/cli}   the hoisted package
-//   <ws>/node_modules/.bin/expo                     the hoisted shim
-//   <ws>/packages/app/                              the app, with NO node_modules
-//
-// -- because a mock cannot fail the way the real thing did: every one of these
-// paths existed, and rn-iso reported "run npm install" at a fully installed
-// repo.
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runDoctor } from '../doctor.ts';
+import { workspaceStateFile } from '../paths.ts';
 import { detectIsExpo, isPackageResolvable, resolvePackageJson } from '../project.ts';
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
@@ -24,7 +11,6 @@ let home: string;
 let ws: string;
 let app: string;
 
-// The hoisted install, as an installer would leave it.
 function write(path: string, text: string, { exec = false } = {}) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, text);
@@ -50,8 +36,6 @@ beforeEach(() => {
   write(join(ws, 'node_modules', 'expo', 'bin', 'cli'), '#!/usr/bin/env node\n', { exec: true });
   write(join(ws, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n', { exec: true });
 
-  // The app: `expo` in dependencies, app.json WITHOUT the expo wrapper key
-  // (Expo accepts that, and a real repo ships it), and no `ios` script at all.
   write(
     join(app, 'package.json'),
     JSON.stringify({
@@ -78,8 +62,6 @@ afterEach(() => {
 
 describe("finding the project's expo binary", () => {
   test('resolves the HOISTED package from an app with no node_modules of its own', () => {
-    // The bug: join(app, 'node_modules', '.bin', 'expo') does not exist here,
-    // and never does in a monorepo.
     expect(resolvePackageJson(app, 'expo')).toBe(join(ws, 'node_modules', 'expo', 'package.json'));
     expect(expoBinPath(app)).toBe(join(ws, 'node_modules', 'expo', 'bin', 'cli'));
   });
@@ -87,7 +69,6 @@ describe("finding the project's expo binary", () => {
   test("derives the executable from the package's own bin field, not a guessed path", () => {
     const pkg = join(ws, 'node_modules', 'expo', 'package.json');
     expect(expoBinFromPackage(pkg)).toBe(join(ws, 'node_modules', 'expo', 'bin', 'cli'));
-    // The string form of `bin` is the other half of the field's shape.
     write(join(ws, 'node_modules', 'other', 'package.json'), JSON.stringify({ name: 'other', bin: 'cli.js' }));
     write(join(ws, 'node_modules', 'other', 'cli.js'), '#!/usr/bin/env node\n', { exec: true });
     expect(expoBinFromPackage(join(ws, 'node_modules', 'other', 'package.json'), 'other')).toBe(
@@ -119,9 +100,6 @@ describe("finding the project's expo binary", () => {
 
 describe('detectIsExpo on a hoisted workspace', () => {
   test('an app with a wrapper-less app.json and no ios script still reads as Expo', () => {
-    // The false negative that was fatal: detected as bare, the supervisor
-    // hosts Metro in-process, serves no Expo manifest, and the dev-client app
-    // dies on "Couldn't parse the manifest".
     expect(detectIsExpo(app)).toBe(true);
   });
 
@@ -164,10 +142,6 @@ describe('detectIsExpo on a hoisted workspace', () => {
   });
 });
 
-// CLAUDE.md's promise: one project never reads as expo in one command and bare
-// in another. The two readers that would disagree most expensively are the
-// supervisor (which picks the dev server) and doctor (which picks its
-// findings), so they are both asserted against the SAME directory.
 describe('detectIsExpo is the single source', () => {
   test('the supervisor picks the expo dev server for the project doctor treats as Expo', async () => {
     let startedExpo = false;
@@ -188,11 +162,6 @@ describe('detectIsExpo is the single source', () => {
     expect(startedExpo).toBe(true);
     expect(JSON.parse(readState()).supervisor.mode).toBe(MODE_EXPO);
 
-    // doctor reads the same detector: its Expo-only findings apply here.
-    // (`expo-dev-client` IS in this fixture's deps, and a MISSING provider is
-    // deliberately not a finding any more -- so the Expo-only finding this
-    // fixture is given to fire is the still-under-experiments note, which the
-    // bare branch suppresses along with the rest.)
     write(
       join(app, 'app.json'),
       JSON.stringify({
@@ -235,5 +204,5 @@ describe('detectIsExpo is the single source', () => {
 });
 
 function readState() {
-  return readFileSync(join(app, '.rn-iso', 'state.json'), 'utf-8');
+  return readFileSync(workspaceStateFile(app), 'utf-8');
 }

@@ -24,7 +24,7 @@ import { getExecutor } from '../exec.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
 import { queryLogs } from '../logs-query.ts';
-import { supervisorLogFile, workspaceLogsDir } from '../paths.ts';
+import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../paths.ts';
 import { reserveMetroPort } from '../ports.ts';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
 import {
@@ -33,7 +33,6 @@ import {
   readWorkspaceState,
   writeWorkspaceState,
 } from '../supervisor/state.ts';
-import { ensureWorkspaceIgnored } from '../engine/workspace.ts';
 import { workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import {
@@ -67,6 +66,10 @@ const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
 const LOG_TAIL_LINES = 5;
 const ERROR_EVIDENCE_RECORDS = 8;
+
+function writeNote(line: string): void {
+  console.error(line);
+}
 
 export function supervisorEntry(): string {
   return spawnEntry('supervisor-run');
@@ -109,10 +112,6 @@ export function parseWait(value: unknown): WaitResult {
   return { seconds };
 }
 
-// A loose, defensive read of whatever `state.supervisor` / `project.supervisor`
-// carries -- state.json's `supervisor` block is a Record<string, unknown> (see
-// supervisor/state.ts) and config.ts's ProjectRecord.supervisor does not
-// declare `mode`, so this names only the fields liveSupervisor actually reads.
 interface SupervisorCandidate {
   pid?: unknown;
   port?: unknown;
@@ -133,14 +132,6 @@ interface ChildExitInfo {
   error?: Error;
 }
 
-// Pure. The workspace state file is the primary record -- it is the only one
-// that carries the mode -- and the global config entry is the fallback for a
-// workspace whose .rn-iso directory was removed under a running supervisor.
-//
-// "Live" is pid alive AND the recorded port is the port we are about to use.
-// Both halves matter: a pid alone is not proof (pids are reused, and a stale
-// state.json outlives its process), and a supervisor recorded on a different
-// port is not the one that would answer here.
 export function liveSupervisor({
   state,
   project,
@@ -168,13 +159,6 @@ export function liveSupervisor({
   return null;
 }
 
-// Pure shaping of the --json payload, under the contract every rn-iso command
-// with a --json flag follows: one line on stdout, everything else on stderr.
-//
-// supervisorPid and mode are null when a dev server answers on the port but
-// rn-iso did not start it -- an agent that ran the project's own `npm start`
-// first. That is reported rather than fought: the port has what it needs, and
-// starting a second bundler over it would be the actual failure.
 export function startFacts({
   port,
   supervisor,
@@ -195,13 +179,6 @@ export function startFacts({
   };
 }
 
-// Pure shaping of the FAILURE payload, the other half of the same contract:
-// one parseable line on stdout either way. `start --json` used to print nothing
-// at all when it failed, so a caller doing `facts=$(rn-iso start --json)` got an
-// empty string and had to fall back to scraping stderr prose -- exactly what
-// `guide facts` promises the build commands never make you do. The shape is
-// theirs: a stable code to branch on, a message, and a remedy (null when there
-// is nothing to suggest beyond what was already printed).
 export function startError({
   code,
   message,
@@ -307,26 +284,19 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
     .command('start')
     .description(
       "Start this workspace's dev server under a detached supervisor and wait until it verifies as this project's. " +
-        'Idempotent: a healthy dev server on the reserved port is a no-op. Structured logs land in .rn-iso/logs.',
+        'Idempotent: a healthy dev server on the reserved port is a no-op. Structured logs land in the global workspace logs directory.',
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option('--wait <seconds>', `How long to wait for the dev server to answer (default ${DEFAULT_WAIT_SECONDS})`)
     .option('--remote', 'Prepare the dev server for a remote device')
     .action(async (opts: StartOptions) => {
       const json = Boolean(opts.json);
-      // Total wait, command start to the OK line: `start` blocks on health by
-      // contract, and how long that took is part of the report.
       const waitTimer = stepTimer();
       const out = (line: string) => {
         if (json) console.error(line);
         else console.log(line);
       };
-      const note = (line: string) => console.error(line);
-      // Every failure exits the same way: the diagnostic, whatever evidence
-      // there is for it, the remedy, and -- under --json -- the error contract
-      // as the single line on stdout. Same shape `ios` / `android` use, because
-      // an agent branching on `code` must not have to know which command it
-      // called.
+      const note = writeNote;
       const fail = ({
         code,
         message,
@@ -354,7 +324,6 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           remedy: 'Pass a whole number of seconds, e.g. --wait 90.',
         });
       }
-      // parseWait's contract: exactly one of `error` / `seconds` is set.
       const waitSeconds = wait.seconds as number;
 
       const root = findProjectRoot(process.cwd());
@@ -363,6 +332,16 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           code: 'RN_ISO_NO_PROJECT',
           message: 'Not in a React Native project (no package.json found).',
           remedy: 'Run this from the app directory -- the one holding package.json.',
+        });
+      }
+
+      try {
+        ensureWorkspaceStorage(root);
+      } catch (error) {
+        return fail({
+          code: (error as Error & { code?: string })?.code || 'RN_ISO_WORKSPACE_STATE',
+          message: `Could not prepare this workspace's rn-iso state: ${(error as Error)?.message || error}`,
+          remedy: 'Check that RN_ISO_HOME is writable and has free space.',
         });
       }
 
@@ -408,15 +387,6 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
 
       const managedRemote = remote && !tunnel && !publicUrl && tunnelMode !== 'off';
       const runStart = async (): Promise<void> => {
-        // `start` is the first command of the loop, so it is where the workspace
-        // directory first appears. Ensuring git ignores it here rather than in a
-        // setup command is what removes the step a repo had to remember: `ios` and
-        // `android` call the same function for the same reason, since either can
-        // be the first to write into `<root>/.rn-iso`.
-        const ignored = ensureWorkspaceIgnored(root);
-        if (ignored.added) note(chalk.dim('note   added .rn-iso/ to .gitignore'));
-        else if (ignored.error) note(chalk.yellow(`note   could not update ${ignored.path}: ${ignored.error}`));
-
         upsertProject(root, {
           bundleId: detectBundleId(root) ?? undefined,
           androidPackage: detectAndroidPackage(root) ?? undefined,
@@ -927,10 +897,6 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
     });
 }
 
-// The reserved port, re-reserved when a FOREIGN process holds it. Reporting
-// the conflict instead would strand the project on a port it can never use,
-// while our own dev server answering there is the healthy case and must not
-// move.
 async function resolvePort(root: string, note: (line: string) => void): Promise<number> {
   const project = getProject(root);
   const recorded = project?.metroPort;
@@ -995,13 +961,6 @@ function logTailLines(logFile: string): string[] {
   return [...readLogTail(logFile), `Supervisor log: ${logFile}`];
 }
 
-// The evidence for a spawn-path failure. The supervisor's own log is quoted
-// when it has anything to say -- but the death cry is usually NOT there: an
-// expo child's output is parsed into the workspace timeline as records, so a
-// child that dies before serving (a config PluginError, a bad app config)
-// leaves supervisor.log EMPTY while the actual error sits in metro.ndjson.
-// Pointing at the empty file was issue #24; the timeline's error records from
-// THIS attempt are the part of the answer that was always on disk.
 export function failureEvidence({
   logFile,
   logsDir,
@@ -1018,16 +977,10 @@ export function failureEvidence({
   try {
     errors = queryLogs({ dir: logsDir, minLevel: 'error' });
     all = queryLogs({ dir: logsDir });
-  } catch {
-    // An unreadable timeline must not mask the failure being reported.
-  }
+  } catch {}
   const since = (rs: ReturnType<typeof queryLogs>) =>
     rs.filter((r) => typeof r.ts === 'number' && r.ts >= sinceTs).slice(-ERROR_EVIDENCE_RECORDS);
   let recent = since(errors);
-  // Level inference on a child's raw output is best-effort, so a death cry
-  // can sit in the timeline at info (#30). When nothing made it to error
-  // level, the last raw lines of THIS attempt are still the best evidence
-  // there is -- the same reasoning as quoting supervisor.log's tail.
   const fellBack = recent.length === 0;
   if (fellBack) recent = since(all);
   for (const r of recent) {
@@ -1052,14 +1005,8 @@ function report({
   supervisor: LiveSupervisor | null;
   logsDir: string;
   alreadyRunning: boolean;
-  // Pre-rendered "(4s)": the total wait, stamped by the caller's stepTimer.
-  // The --json payload does not carry it -- one contract, unchanged.
   waited: string;
 }): StartFacts {
-  // LiveSupervisor is a closed, non-null shape (see above); SupervisorRecord
-  // is the loose index-signature bag startFacts (and the wider --json
-  // contract) is written against. Structurally compatible, cast for the
-  // index signature and the null-vs-undefined difference on mode/startedAt.
   const facts = startFacts({
     port,
     supervisor: supervisor as unknown as SupervisorRecord | null,

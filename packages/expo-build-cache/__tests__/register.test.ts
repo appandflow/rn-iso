@@ -18,10 +18,6 @@ afterEach(() => {
   delete process.env.RN_ISO_BUILD_CACHE;
 });
 
-// The documented way to use the CLI is `npx rn-iso`, so it is usually NOT a
-// dependency of the project. Registering through it meant registration silently
-// never happened for most users -- a real build populated 45 MB of cache and
-// `gc` still reported no cache.
 test('registers itself with no rn-iso installed', async () => {
   vi.resetModules();
   const bc = await import('../index.ts');
@@ -33,7 +29,6 @@ test('registers itself with no rn-iso installed', async () => {
   expect(entry.prune).toBe('entries');
 });
 
-// resolveBuildCache runs on every build, so registration must not accumulate.
 test('repeated registration updates rather than duplicating', async () => {
   vi.resetModules();
   const bc = await import('../index.ts');
@@ -44,8 +39,6 @@ test('repeated registration updates rather than duplicating', async () => {
   expect(manifest.caches.filter((c) => c.dir === cacheDir).length).toBe(1);
 });
 
-// A cache that cannot announce itself must still work: an unwritable manifest
-// is a housekeeping problem, not a build failure.
 test('an unwritable manifest does not break the cache', async () => {
   process.env.RN_ISO_HOME = '/dev/null/nope';
   vi.resetModules();

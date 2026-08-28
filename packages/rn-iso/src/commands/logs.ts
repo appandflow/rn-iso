@@ -1,12 +1,3 @@
-// src/commands/logs.js -- query the merged NDJSON timeline.
-//
-// Non-blocking by default (spec principle 7): the command prints what matches
-// and returns. `--follow` is the only way to make it wait.
-//
-// The exit code is the part to not get wrong: NOTHING MATCHING IS EXIT 0.
-// `rn-iso logs --errors` returning empty is the pass condition of an agent
-// loop, so a "no results" non-zero would report every healthy build as broken.
-// The only exit-1 paths here are a malformed query or no project.
 import chalk from 'chalk';
 import type { ChalkInstance } from 'chalk';
 import type { Command } from 'commander';
@@ -16,12 +7,14 @@ import { LEVELS, SOURCES } from '../ndjson.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { buildCriteria, compileGrep, fileSizes, followLogs, parseSince, queryLogs } from '../logs-query.ts';
 
-const LEVEL_WIDTH = 5; // 'debug' / 'fatal'
-const SRC_WIDTH = 6; // 'client' / 'device'
+const LEVEL_WIDTH = 5;
+const SRC_WIDTH = 6;
 const INDENT = '    ';
 
-// Stack frames arrive as {file,line,column,fn} straight off the wire, and any
-// field may be absent.
+function padTimePart(value: number, width = 2): string {
+  return String(value).padStart(width, '0');
+}
+
 interface StackFrame {
   file?: string;
   line?: number;
@@ -32,13 +25,9 @@ interface StackFrame {
 export function formatTime(ts: unknown): string {
   if (typeof ts !== 'number' || !Number.isFinite(ts)) return '--:--:--.---';
   const d = new Date(ts);
-  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+  return `${padTimePart(d.getHours())}:${padTimePart(d.getMinutes())}:${padTimePart(d.getSeconds())}.${padTimePart(d.getMilliseconds(), 3)}`;
 }
 
-// Stacks arrive as {file,line,column,fn} and any field may be absent -- this
-// step passes frames through unsymbolicated, so a frame can be little more
-// than a file. Returns null when there is nothing worth printing.
 export function formatStackFrame(frame: StackFrame | null | undefined): string | null {
   if (!frame || typeof frame !== 'object') return null;
   const where = [frame.file, frame.line, frame.column]
@@ -50,8 +39,6 @@ export function formatStackFrame(frame: StackFrame | null | undefined): string |
   return null;
 }
 
-// Pure: `paint` defaults to identity so the formatter never depends on whether
-// chalk decided stdout is a TTY. The command passes the colouring in.
 export function formatRecord(
   record: Partial<NdjsonRecord> | null | undefined,
   { paint }: { paint?: (t: string) => string } = {},
@@ -63,8 +50,6 @@ export function formatRecord(
   const [first, ...rest] = msg.split('\n');
   const lines = [`${formatTime(record?.ts)} ${colour(level)} ${src} ${first}`];
   for (const line of rest) lines.push(`${INDENT}${line}`);
-  // record.stack comes through NdjsonRecord's index signature as unknown;
-  // formatStackFrame is defensive about what it actually finds inside.
   for (const frame of (Array.isArray(record?.stack) ? record.stack : []) as StackFrame[]) {
     const rendered = formatStackFrame(frame);
     if (rendered) lines.push(`${INDENT}${rendered}`);
@@ -80,14 +65,6 @@ export function parseTail(value: unknown): { n?: number; error?: string } {
   return { n: parseInt(value.trim(), 10) };
 }
 
-// An unknown source would just match nothing, and "nothing" is the answer
-// this CLI must never get wrong: `logs --errors --source metrro` exiting 0
-// with no output is indistinguishable from a clean build. So it fails.
-//
-// `all` is spelled out rather than left implicit because --errors now has a
-// DEFAULT scope (metro, client, build -- see ERROR_SOURCES): without a word
-// for "everything", asking for the device stream back would mean typing the
-// whole list.
 interface SourcesResult {
   sources?: string[];
   error?: string;
@@ -116,16 +93,6 @@ export function validateLevel(level: string): LevelResult {
   return { error: `Invalid --level value ${JSON.stringify(level)}. Use one of: ${LEVELS.join(', ')}.` };
 }
 
-// How many records `--errors` prints before it stops and says how many are
-// left. The field case was 3,004 records of iOS syslog: a report that long is
-// not a report, and the agent reading it pays for every line. The cap is on
-// the PRINTED output only -- the query itself, and `status`, still count them
-// all, and --json is never capped because a machine reader asked for the set.
-//
-// The head is what survives, not the tail: the first error in a window is
-// usually the cause and the rest is cascade. That also makes the trailer's
-// count exact -- what was hidden IS the tail, so `--tail N` prints precisely
-// the records that were left out.
 export const ERRORS_PRINT_CAP = 20;
 
 const LEVEL_COLOURS: Record<string, ChalkInstance> = {
@@ -215,20 +182,15 @@ export default function logsCommand(program: Command): void {
 
       const emit = (record: NdjsonRecord) => {
         if (opts.json) {
-          // One raw record per line: this stdout is itself valid NDJSON.
           console.log(JSON.stringify(record));
           return;
         }
         console.log(formatRecord(record, { paint: record?.level ? LEVEL_COLOURS[record.level] : undefined }));
       };
 
-      // Snapshot the file sizes BEFORE the query so a record written between
-      // the two shows up twice rather than being missed. For an error stream
-      // a duplicate is noise; a gap is a wrong answer.
       const offsets = opts.follow ? fileSizes(dir) : null;
 
       const records = queryLogs(query);
-      // An explicit --tail is the caller choosing a length, so it wins.
       const capped =
         opts.errors && !opts.json && tail === undefined && records.length > ERRORS_PRINT_CAP
           ? records.slice(0, ERRORS_PRINT_CAP)
@@ -246,10 +208,6 @@ export default function logsCommand(program: Command): void {
         return;
       }
 
-      // In follow mode --errors drops the marker window: every error arriving
-      // from here is, by definition, after the last marker seen so far. Keeping
-      // the window would mean a later marker retroactively hiding lines already
-      // printed, which it cannot.
       const criteria = buildCriteria({
         sources,
         minLevel,
@@ -258,7 +216,6 @@ export default function logsCommand(program: Command): void {
         errorsOnly: Boolean(opts.errors),
       });
       const stop = followLogs({ dir, offsets, criteria, onRecord: emit });
-      // Ctrl+C is how a follow ends. It is a normal end, so it exits 0.
       const finish = () => {
         stop();
         process.exit(0);

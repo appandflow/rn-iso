@@ -8,13 +8,8 @@ import { resetExecutor } from '../exec.ts';
 import { defaultWorktreeDir } from '../worktree.ts';
 import { upsertProject, findEnclosingWorktreeRoot } from '../config.ts';
 
-// The action callback commander invokes: `(name, opts)`. `name` is undefined
-// when the command is run without its positional argument (from the repo cwd).
 type ActionFn = (name: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
 
-// The subset of commander's Command that registerCreate chains off of. A real
-// Command is assignable to this, so `stub as Command` is a plain widening cast
-// (no `as unknown` needed) that lets the stub stand in for the real object.
 interface CommandStub {
   command(nameAndArgs?: string): CommandStub;
   description(str?: string): CommandStub;
@@ -52,24 +47,6 @@ test('findEnclosingWorktreeRoot returns null when nothing is registered as a wor
   expect(findEnclosingWorktreeRoot('/repo-worktrees/feat-x/apps/mobile')).toBe(null);
 });
 
-// --- action-level tests: the stdout contract --------------------------
-//
-// CLAUDE.md item 8: the WorktreeCreate hook uses whatever `worktree create`
-// writes to stdout, and ONLY that, as the directory for the new session.
-// Every status/carry-over/failure line must go to stderr, and a setup
-// pipeline failure must still exit 0 (a non-zero exit here makes the hook
-// abort the session even though the worktree exists and is usable). Nothing
-// short of driving the real action against a real repo protects this --
-// the contract is about *what goes where*, not about any single function's
-// return value. Harness mirrors test/worktree-remove.test.js's captureAction
-// (registerCreate chains .command().description().option()...action(fn) off
-// a stub commander object) plus the real-git tmpdir/cleanup pattern from
-// test/worktree.test.js.
-
-// macOS's tmpdir() is itself a symlink (/var -> /private/var); `git
-// rev-parse --show-toplevel` (behind repoRoot) resolves through it, so an
-// expected path built from the raw mkdtempSync() result would never match
-// the actual argv0 -- same fix as `canon` in test/worktree-remove.test.js.
 function canon(p: string) {
   try {
     return realpathSync(p);
@@ -152,12 +129,6 @@ test('create action: success path writes exactly one stdout line, the worktree p
   }
 });
 
-// --- action-level tests: --base validation -----------------------------
-//
-// Real git throughout (CLAUDE.md item 9): the whole point of this validator is
-// what `git rev-parse` accepts, and a mocked executor can only prove we called
-// something rev-parse-shaped.
-
 test('create action: rejects a --base this repo cannot resolve, before creating anything, on stderr, exit 1', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-badbase-')));
@@ -177,10 +148,6 @@ test('create action: rejects a --base this repo cannot resolve, before creating 
   }
 });
 
-// The validator used to be a two-name enum, so branching from a release branch,
-// a tag or a sha was refused for no reason -- the plumbing has always handed the
-// resolved ref straight to `git worktree add`. Anything git resolves is allowed;
-// the sentinels still mean what they meant.
 test('create action: --base takes any ref this repo resolves, and branches from it', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-ref-')));
@@ -205,8 +172,6 @@ test('create action: --base takes any ref this repo resolves, and branches from 
       expect(logs).toEqual([target]);
       expect(process.exitCode).not.toBe(1);
       expect(execSync('git rev-parse HEAD', { cwd: target, encoding: 'utf-8' }).trim()).toBe(releaseSha);
-      // Testers could not tell what a worktree had been cut from. Say it, on
-      // stderr, with the sha -- a ref name alone moves.
       const branchedFrom = errs.filter((e) => String(e).startsWith('Branched '));
       expect(branchedFrom.length).toBe(1);
       expect(String(branchedFrom[0])).toMatch(new RegExp(`from ${ref.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')} \\(`));
@@ -218,10 +183,6 @@ test('create action: --base takes any ref this repo resolves, and branches from 
   }
 });
 
-// `git worktree remove` deletes the directory and leaves the branch, so a
-// create/remove/create cycle attaches rather than cutting a new branch -- and
-// --base means nothing on that path. Reporting "branched from <ref>" there
-// would be a lie about the one fact this line exists to carry.
 test('create action: an existing branch is reported as attached, not as branched from --base', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-reuse-')));
@@ -251,8 +212,6 @@ test('create action: accepts --base head and --base fresh', async () => {
     const head = await runCreateInRepo(repo, 'feat-head', { base: 'head', install: false });
     expect(head.logs).toEqual([join(defaultWorktreeDir(repo), 'feat-head')]);
     expect(process.exitCode).not.toBe(1);
-    // No staleness note for head: it is the checkout's own HEAD, which no
-    // `git fetch` moves (issue #26).
     expect(head.errs.some((e) => /current as of the last/.test(String(e)))).toBe(false);
 
     const fresh = await runCreateInRepo(repo, 'feat-fresh', { base: 'fresh', install: false });
@@ -265,20 +224,13 @@ test('create action: accepts --base head and --base fresh', async () => {
   }
 });
 
-// --- action-level tests: a leftover branch must not silently void --base ----
-//
-// `git worktree add` attaches to an existing `worktree-<name>` branch and the
-// base ref means nothing on that path. A create/remove/create cycle leaves that
-// branch behind, so `--base <sha>` printed one dim line and handed back a
-// worktree at the STALE tip -- the flag reading as accepted and doing nothing.
-// Two facts cannot both be honoured here, so rn-iso refuses rather than picking.
 test('create action: refuses when a leftover branch would void an explicit --base', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-stale-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
-    git('git branch worktree-feat-stale'); // the leftover, at the old tip
+    git('git branch worktree-feat-stale');
     writeFileSync(join(repo, 'NEW'), 'new');
     git('git add NEW');
     git('git commit -q -m second');
@@ -319,8 +271,6 @@ test('create action: a leftover branch already AT the base is attached to, not r
   }
 });
 
-// No --base means nothing was promised about the base, so attaching to whatever
-// the branch already is stays exactly as it was.
 test('create action: with no --base a leftover branch is still attached to', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-create-nobase-')));
@@ -341,13 +291,6 @@ test('create action: with no --base a leftover branch is still attached to', asy
     rmSync(base, { recursive: true, force: true });
   }
 });
-
-// --- --carry-ignored carries the source's uncommitted tracked changes -------
-//
-// Real git throughout (CLAUDE.md item 9): the carry is `git diff HEAD
-// --binary` piped through `git apply --check` / `git apply`, and a mocked
-// executor can only prove those commands were composed, not that git accepts
-// them. The mocked-decision tests live in worktree.test.ts.
 
 test('carriedChangesLine and carryConflictWarning cap at three files and count the rest', () => {
   expect(carriedChangesLine(['app.json'])).toBe(
@@ -371,22 +314,17 @@ test('create action: --carry-ignored applies the source uncommitted changes when
     writeFileSync(join(repo, '.gitignore'), 'node_modules/\n');
     git('git add app.json .gitignore');
     git('git commit -q -m app');
-    // The gitignored half of the working state (what --carry-ignored always carried)...
     mkdirSync(join(repo, 'node_modules', 'left-pad'), { recursive: true });
     writeFileSync(join(repo, 'node_modules', 'left-pad', 'index.js'), 'module.exports = () => {};\n');
-    // ...and the uncommitted tracked half (what it carries now).
     writeFileSync(join(repo, 'app.json'), '{"expo":{"name":"app","scheme":"dirty-scheme"}}\n');
 
     const { logs, errs } = await runCreateInRepo(repo, 'feat-carry', { carryIgnored: true, base: 'head' });
 
     const wt = join(defaultWorktreeDir(repo), 'feat-carry');
     expect(logs).toEqual([wt]);
-    // The dirty content is THERE...
     expect(readFileSync(join(wt, 'app.json'), 'utf-8')).toContain('dirty-scheme');
-    // ...and still UNCOMMITTED: committing a half-done edit is the author's call.
     const status = execSync('git status --porcelain -- app.json', { cwd: wt, encoding: 'utf-8' }).trim();
     expect(status).toBe('M app.json');
-    // The carry line, on stderr, quoting what moved.
     expect(errs.some((e) => /Carried 1 uncommitted change\(s\) from the source \(app\.json\)/.test(e))).toBeTruthy();
     expect(errs.some((e) => /uncommitted here too; commit deliberately/.test(e))).toBeTruthy();
     expect(process.exitCode).not.toBe(1);
@@ -409,17 +347,14 @@ test('create action: --carry-ignored warns and applies NOTHING when the base div
     writeFileSync(join(repo, 'app.json'), 'completely rewritten\n');
     git('git add app.json');
     git('git commit -q -m two');
-    // Dirty on top of commit two: this patch cannot apply onto commit one.
     writeFileSync(join(repo, 'app.json'), 'completely rewritten, plus dirty\n');
 
     const { logs, errs } = await runCreateInRepo(repo, 'feat-conflict', { carryIgnored: true, base: oldSha });
 
     const wt = join(defaultWorktreeDir(repo), 'feat-conflict');
     expect(logs).toEqual([wt]);
-    // The worktree is untouched: its base's content, and a clean status.
     expect(readFileSync(join(wt, 'app.json'), 'utf-8')).toBe('first version\n');
     expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe('');
-    // The warning names the file, the divergence, and the consequence.
     expect(errs.some((e) => /Could not carry the source's uncommitted changes \(app\.json\)/.test(e))).toBeTruthy();
     expect(errs.some((e) => /base diverges from the source HEAD/.test(e))).toBeTruthy();
     expect(errs.some((e) => /fingerprints and cache keys/.test(e))).toBeTruthy();

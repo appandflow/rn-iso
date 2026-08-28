@@ -20,9 +20,6 @@ test('the index lists every topic and the running version', () => {
   for (const name of topicNames()) expect(idx).toMatch(new RegExp(name));
 });
 
-// The whole point of `guide` is that it cannot drift from the binary. These
-// pin the claims most likely to rot -- if a flag or field is renamed and the
-// guide is not updated, this fails rather than shipping stale agent guidance.
 test('the facts topic documents the fields each --json payload actually carries', () => {
   const body = renderTopic('facts');
   assert(body);
@@ -69,9 +66,6 @@ test('the facts topic documents the fields each --json payload actually carries'
   }
 });
 
-// Every flag the guide advertises has to be one the binary actually defines,
-// and every flag the binary defines has to be advertised. v2's guide outlived
-// `up --wait-metro` by exactly one release, which is what this pins against.
 test('the flags the guide advertises are the flags the commands define', () => {
   const lifecycle = renderTopic('lifecycle');
   assert(lifecycle);
@@ -90,8 +84,6 @@ test('the flags the guide advertises are the flags the commands define', () => {
       expect(lifecycle.includes(flag)).toBeTruthy();
     }
   }
-  // The other direction, for the flag most likely to be documented into
-  // existence: `status` is machine-wide already and has no --all.
   const statusSrc = readFileSync(new URL('../commands/status.ts', import.meta.url), 'utf-8');
   expect(!statusSrc.includes("'--all'")).toBeTruthy();
   for (const name of topicNames()) {
@@ -178,10 +170,6 @@ test('the guide distinguishes local stop behavior from EAS session teardown', ()
 // The commands v3 deleted. A guide that still teaches one of them is worse than
 // no guide: the agent runs it and gets "unknown command".
 test('no topic teaches a command this binary does not have', () => {
-  // "rn-iso config" is excluded from this list on purpose: it survives as the
-  // name of the config FILE in two error messages, and as an explicit "there is
-  // no such command" in the settings topic. Its INVOCATION forms are checked
-  // separately below.
   const gone = [
     'rn-iso up',
     'rn-iso release',
@@ -202,8 +190,6 @@ test('no topic teaches a command this binary does not have', () => {
   expect(renderTopic('settings')).toMatch(/no `rn-iso config` command/);
 });
 
-// Every error code the build path can emit must be documented, or an agent
-// branching on `code` meets one it has no guidance for.
 test('the errors topic documents every code the build commands can emit', () => {
   const body = renderTopic('errors');
   assert(body);
@@ -213,7 +199,7 @@ test('the errors topic documents every code the build commands can emit', () => 
   const codes = new Set([...sources.matchAll(/RN_ISO_[A-Z_]+/g)].map((m) => m[0]));
   expect(codes.size >= 8).toBeTruthy();
   for (const code of codes) {
-    if (code === 'RN_ISO_CONFIG_CORRUPT') continue; // documented by its message, not its code
+    if (code === 'RN_ISO_CONFIG_CORRUPT') continue;
     expect(body.includes(code)).toBeTruthy();
   }
 });
@@ -239,9 +225,6 @@ test('the settings topic lists exactly the keys settings.js honours', () => {
   }
 });
 
-// The skill is now a pointer for volatile detail. Pin that it still names the
-// guide command -- if that link rots, agents get the thin skill with no way to
-// reach the reference it defers to.
 test('the skill points at the guide command and the topics it advertises', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   expect(skill).toMatch(/rn-iso guide/);
@@ -250,18 +233,11 @@ test('the skill points at the guide command and the topics it advertises', () =>
   }
 });
 
-// ONE skill ships. `rn-iso-init` is DELETED: once rn-iso started supplying the
-// compilation cache, the Gradle build cache and the shared Metro transform
-// store on the command lines it composes, there was no setup playbook left to
-// follow, and a second skill that mostly said "nothing to do" was worse than no
-// skill. Re-adding the directory would make `npx skills add appandflow/rn-iso`
-// install a page that contradicts this one.
 test('exactly one skill ships, and the deleted init skill has not come back', () => {
   const dir = fileURLToPath(new URL('../../skill/', import.meta.url));
-  expect(readdirSync(dir).sort()).toEqual(['SKILL.md']);
+  expect(readdirSync(dir).toSorted()).toEqual(['SKILL.md']);
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   expect(skill).toMatch(/no separate init skill/);
-  // And what the deleted playbook covered is reachable from where it matters.
   expect(skill).toMatch(/rn-iso doctor/);
   expect(skill).toMatch(/\.fingerprintignore/);
 });
@@ -300,7 +276,7 @@ test('the skill advertises exactly the commands bin/cli.js registers', () => {
   const registered = [...cli.matchAll(/^import (\w+)Command from '\.\.\/src\/commands\/([\w-]+)\.ts';$/gm)].map(
     (m) => m[2],
   );
-  expect(registered.sort()).toEqual([
+  expect(registered.toSorted()).toEqual([
     'android',
     'doctor',
     'gc',

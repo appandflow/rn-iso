@@ -1,26 +1,3 @@
-// src/logs-query.js -- reading the merged timeline back out.
-//
-// The log directory holds one file per source (metro.ndjson, client.ndjson,
-// device.ndjson, build-ios.ndjson, ...), each appended in ts order by its own
-// producer. A query is a k-way merge across whatever files happen to exist:
-// the set is discovered, never enumerated, because steps 3 and 4 add sources
-// and a hardcoded list would silently omit them.
-//
-// The query that has to be exactly right is `--errors`, because it is what an
-// agent loop polls after a build and its EMPTY result is the pass condition.
-// It has to be right in BOTH directions, and a field test caught it wrong in
-// both at once: it returned 3,004 iOS syslog lines on a healthy app while
-// hiding a real `[Error: Exception in HostFunction]`. Two rules come from
-// that, and they are the two things to not undo:
-//
-//   SCOPE  --errors reports metro, client and build by default (ERROR_SOURCES).
-//          Device errors are the OS talking, not the app; the app's own
-//          crashes reach the client and metro streams. `--source device` (or
-//          `--source all`) opts back in, and a plain `logs` still shows
-//          everything.
-//   WINDOW A marker records which window it closes, by its source. See
-//          markerWindow below: a finished bundle is not evidence that the
-//          app which loaded it is fine.
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'fs';
 import { join } from 'path';
 import { StringDecoder } from 'string_decoder';
@@ -44,8 +21,6 @@ interface MarkerWindow {
   bundleTs: number | null;
 }
 
-// The criteria recordMatches wants, built once by buildCriteria and reused by
-// both the one-shot query and the --follow stream.
 export interface QueryCriteria {
   sources?: string[];
   minLevel?: string;
@@ -61,10 +36,6 @@ interface TailState {
   partial: string;
 }
 
-// Pure. Returns { ms } or { error }, never NaN: the failure this exists to
-// prevent is `parseInt('soon')` producing NaN, every comparison against it
-// coming out false, and the query returning an empty result that an agent
-// loop reads as "nothing is wrong".
 export function parseSince(text: unknown): SinceResult {
   if (typeof text !== 'string') {
     return { error: `Invalid --since value ${JSON.stringify(text)}. Use a count and a unit, e.g. ${SINCE_FORMS}.` };
@@ -77,8 +48,6 @@ export function parseSince(text: unknown): SinceResult {
   return { ms: parseInt(m[1] ?? '', 10) * SINCE_UNITS[unit] };
 }
 
-// Pure. Same contract as parseSince: a bad pattern is data, not an exception,
-// so the command can print it and exit 1 instead of dumping a stack.
 export function compileGrep(pattern: unknown): GrepResult {
   if (pattern instanceof RegExp) return { re: pattern };
   try {
@@ -88,51 +57,8 @@ export function compileGrep(pattern: unknown): GrepResult {
   }
 }
 
-// The sources `--errors` reports when the caller named none. Device is out on
-// purpose: `simctl log stream` is predicated on the app's PROCESS, and inside
-// that process Apple's own frameworks log thousands of Error-typed lines that
-// have nothing to do with the app (collector/ios.js demotes the proven ones;
-// this is the second half of the same fix, for the ones nobody has curated
-// yet). A native crash that never reached JS is still findable -- `logs
-// --errors --source device`, `--source all`, or a plain `logs`.
 export const ERROR_SOURCES: string[] = ['metro', 'client', 'build'];
 
-// THE MARKER WINDOW, and why it is two numbers rather than one.
-//
-// FIELD CASE. A real startup crash was reported at 16:03:54 on client, and
-// Metro wrote its bundle_build_done marker at 16:03:55 -- one second LATER,
-// because the bundler finishes accounting for a build after the app has
-// already evaluated it. Under a single "last marker across all sources"
-// cutoff that marker retroactively swallowed the crash, and `--errors` said
-// the app was fine while it was sitting on a redbox.
-//
-// The rule now: a marker closes the window for the sources it can actually
-// speak for.
-//   * A BUNDLE marker (src metro: the reporter's bundle_build_done or
-//     bundle_build_failed, or the "Bundled 812ms" / "Bundling failed 893ms"
-//     lines in expo-child mode) means a bundle ATTEMPT finished -- success or
-//     failure, because a failed attempt is a boundary too: without one,
-//     back-to-back failures accumulate and `--errors` lists the stale one
-//     first (appandflow/rn-iso#13). It resets metro-source errors from before
-//     the attempt -- a resolve failure you fixed and rebuilt is history, and
-//     only the newest failure is current -- and says nothing about the app,
-//     so client, device and build errors survive it.
-//   * A LAUNCH marker (src build: `ios`/`android` after a successful launch)
-//     means a new run of the app starts here. It resets everything, which is
-//     what stops the previous run's redbox from being reported forever.
-//
-// Chosen over the alternative (a settle delay plus a [marker-5s, marker]
-// startup-crash window for client records) because that one is two tunable
-// constants deciding whether a crash is reported, and because a 5s window
-// applied to a LAUNCH marker would resurrect the previous run's errors --
-// exactly the bug the marker exists to prevent. The cost of this rule is the
-// opposite, safe direction: a client redbox that Fast Refresh already fixed
-// keeps being reported until the next launch marker.
-//
-// Classification is by `src`, not by event name, because the two bundle
-// markers have different event names (bundle_build_done / expo_stdout) and
-// the same source. An unrecognised marker source resets everything, which is
-// the conservative reading -- it shows more, never less.
 export function markerWindow(records: NdjsonRecord[]): MarkerWindow {
   let launchTs: number | null = null;
   let bundleTs: number | null = null;
@@ -149,8 +75,6 @@ export function markerWindow(records: NdjsonRecord[]): MarkerWindow {
   return { launchTs, bundleTs };
 }
 
-// Pure predicate shared by queryLogs and followLogs, so a follow stream and a
-// one-shot query can never disagree about what matches.
 export function recordMatches(record: NdjsonRecord | null | undefined, criteria: QueryCriteria = {}): boolean {
   if (!record) return false;
   const { sources, minLevel, grep, sinceTs, errorsOnly, markerTs, bundleMarkerTs } = criteria;
@@ -160,26 +84,12 @@ export function recordMatches(record: NdjsonRecord | null | undefined, criteria:
 
   if (errorsOnly) {
     if (record.level !== 'error' && record.level !== 'fatal') return false;
-    // markerTs is the LAUNCH cutoff and applies to every source;
-    // bundleMarkerTs is the bundle cutoff and applies to metro only. A metro
-    // error has to clear both, which makes its cutoff the later of the two.
     if (typeof markerTs === 'number') {
       const ts = tsOf(record);
-      // Strictly after: a record stamped at the same millisecond as the launch
-      // marker describes the run the marker closes off, not the one it opens.
       if (ts === null || ts <= markerTs) return false;
     }
     if (typeof bundleMarkerTs === 'number' && record.src === 'metro') {
       const ts = tsOf(record);
-      // Strict < -- a tie SURVIVES, the opposite of the launch rule above,
-      // because a bundle marker can be a FAILED attempt's boundary and both
-      // producers write that boundary immediately before the attempt's own
-      // error records (Metro reports bundle_build_failed before bundling_error
-      // from the same catch block; Expo prints the "Bundling failed" summary,
-      // which IS the marker, before its detail lines). Same producer, same
-      // file, appended in order: a metro error at the marker's own millisecond
-      // came after it and belongs to the window the marker OPENS. `<=` here
-      // would let a fast-failing bundle hide its own errors.
       if (ts === null || ts < bundleMarkerTs) return false;
     }
   }
@@ -191,17 +101,12 @@ export function recordMatches(record: NdjsonRecord | null | undefined, criteria:
 
   if (grep) {
     const re = grep instanceof RegExp ? grep : compileGrep(grep).re;
-    // .search rather than .test: it ignores lastIndex, so a caller-supplied
-    // /g regex cannot make alternate records match.
     if (!re || String(record.msg ?? '').search(re) === -1) return false;
   }
 
   return true;
 }
 
-// Turns CLI-shaped options into the criteria recordMatches wants, resolving
-// `since` against `now` and compiling `grep` once. Throws on bad input --
-// callers that want to report it politely call parseSince/compileGrep first.
 export function buildCriteria({
   sources,
   minLevel,
@@ -222,8 +127,6 @@ export function buildCriteria({
   now?: number;
 } = {}): QueryCriteria {
   const criteria: QueryCriteria = { errorsOnly: Boolean(errorsOnly) };
-  // The default scope lives here rather than in queryLogs so the one-shot
-  // query and the --follow stream cannot disagree about what --errors means.
   if (sources && sources.length > 0) criteria.sources = sources;
   else if (criteria.errorsOnly) criteria.sources = ERROR_SOURCES;
   if (minLevel) criteria.minLevel = minLevel;
@@ -242,8 +145,6 @@ export function buildCriteria({
   return criteria;
 }
 
-// Discovered, not enumerated. supervisor.log is deliberately excluded: it is
-// the supervisor's raw stdio, not NDJSON.
 export function logFiles(dir: string): string[] {
   let entries;
   try {
@@ -254,7 +155,7 @@ export function logFiles(dir: string): string[] {
   return entries
     .filter((e) => e.isFile() && e.name.endsWith('.ndjson'))
     .map((e) => e.name)
-    .sort();
+    .toSorted();
 }
 
 export function fileSizes(dir: string): Record<string, number> {
@@ -262,16 +163,11 @@ export function fileSizes(dir: string): Record<string, number> {
   for (const name of logFiles(dir)) {
     try {
       sizes[name] = statSync(join(dir, name)).size;
-    } catch {
-      // Raced against a rotation or a removed workspace: not this call's problem.
-    }
+    } catch {}
   }
   return sizes;
 }
 
-// Every record in the directory, merged ascending. Records with no usable ts
-// sort last in file order rather than poisoning the comparator: a producer
-// that forgot to stamp is a bug to see in the output, not a crash.
 export function readLogRecords(dir: string): NdjsonRecord[] {
   const all: NdjsonRecord[] = [];
   for (const name of logFiles(dir)) {
@@ -308,8 +204,6 @@ export function queryLogs({
   const all = readLogRecords(dir as string);
   if (all.length === 0) return [];
 
-  // The marker scan runs over the UNFILTERED merge on purpose: --source client
-  // must still see the build marker that closes the previous window.
   const { launchTs, bundleTs } = errorsOnly ? markerWindow(all) : { launchTs: null, bundleTs: null };
   const criteria = buildCriteria({
     sources,
@@ -323,31 +217,18 @@ export function queryLogs({
   });
 
   const matched = all.filter((r) => recordMatches(r, criteria));
-  // Tail last, so `--level error --tail 5` means the last five ERRORS and not
-  // the errors among the last five records.
   if (typeof tail === 'number' && tail >= 0 && matched.length > tail) {
     return matched.slice(matched.length - tail);
   }
   return matched;
 }
 
-// --- incremental tailing -------------------------------------------------
-//
-// Split into two pure functions plus a thin poller, so the part that is easy
-// to get wrong (offsets, a record split across two polls, a truncated file)
-// is unit-testable without sleeping.
-
-// Decides where the next read starts. A file smaller than our offset was
-// truncated or replaced; resuming past its end would stall the follower
-// silently, so it restarts from the beginning.
 export function tailRead(prev: TailState | null | undefined, size: number): { start: number; prev: TailState } {
   const state = prev && typeof prev.offset === 'number' ? prev : { offset: 0, partial: '' };
   if (size < state.offset) return { start: 0, prev: { offset: 0, partial: '' } };
   return { start: state.offset, prev: state };
 }
 
-// Absorbs a chunk read from `prev.offset` up to `size`. Whatever follows the
-// last newline is not a finished record, so it is carried to the next poll.
 export function advanceTail(
   prev: TailState | null | undefined,
   chunk: string | null | undefined,
@@ -365,14 +246,6 @@ export function advanceTail(
   return { state: { offset: size, partial }, records };
 }
 
-// Polling tail. Poll rather than fs.watch because the producers are separate
-// processes writing over several files (and, on step 3/4, over a network of
-// simctl/adb pipes); watch semantics differ per platform and drop events under
-// exactly the churn a bundler produces.
-//
-// `offsets` lets a caller snapshot sizes BEFORE running its one-shot query, so
-// a record written between the two is duplicated rather than lost. That is the
-// right direction to err for an error stream.
 export function followLogs({
   dir,
   onRecord,
@@ -407,9 +280,6 @@ export function followLogs({
       try {
         const buf = Buffer.allocUnsafe(size - start);
         const read = readSync(fd, buf, 0, size - start, start);
-        // Decode through a per-file StringDecoder: a poll boundary can fall in
-        // the middle of a multi-byte character, and a naive toString would turn
-        // it into replacement characters that then fail to parse.
         chunk = decoders.get(name)!.write(buf.subarray(0, read));
       } finally {
         closeSync(fd);
@@ -427,9 +297,7 @@ export function followLogs({
     for (const name of logFiles(dir)) {
       try {
         pollFile(name);
-      } catch {
-        // A file removed or replaced under us: pick it up on the next poll.
-      }
+      } catch {}
     }
   }
 
@@ -444,7 +312,7 @@ function tsOf(record: NdjsonRecord | null | undefined): number | null {
 }
 
 function sortByTs(records: NdjsonRecord[]): NdjsonRecord[] {
-  return records.sort((a, b) => {
+  return records.toSorted((a, b) => {
     const ta = tsOf(a);
     const tb = tsOf(b);
     if (ta === null && tb === null) return 0;

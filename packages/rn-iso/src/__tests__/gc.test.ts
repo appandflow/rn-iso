@@ -18,6 +18,7 @@ import { saveConfig, loadConfig } from '../config.ts';
 import { register } from '../cache-manifest.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../paths.ts';
 import gcCommand, {
   collectGcReport,
   describeUnverifiableDevices,
@@ -64,9 +65,6 @@ test('headline does not claim "nothing to reclaim" without flagging unchecked en
   expect(headline).toMatch(/could not be checked/i);
 });
 
-// `cache list` is gone as a verb, so its one piece of information -- which
-// rows a project described itself and which ones rn-iso merely recognised --
-// has to survive in gc's report or it is lost.
 test('the cache report says which caches were registered and which were detected', () => {
   const lines = formatGcReport({
     skipped: [],
@@ -92,8 +90,6 @@ test('the cache report says which caches were registered and which were detected
   expect(lines).toMatch(/Xcode compilation cache.*detected/);
 });
 
-// --- findOrphanedDevices (pure) ----------------------------------------
-
 test('findOrphanedDevices proposes only rn-iso devices absent from config', () => {
   const result = findOrphanedDevices({
     sims: [
@@ -114,7 +110,7 @@ test('findOrphanedDevices proposes only rn-iso devices absent from config', () =
     }),
     isMounted: () => true,
   });
-  expect(result.orphaned.map((o) => o.id).sort()).toEqual(['U1', 'rn-iso-old']);
+  expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['U1', 'rn-iso-old']);
 });
 
 test('devices referenced by a project on an unmounted volume are kept', () => {
@@ -136,9 +132,6 @@ test('a device named by a non-owned (legacy/stale) record is still counted as re
       projects: {
         '/p': {
           platforms: {
-            // No `owned: true` on either record -- a stale/mid-transition
-            // record must still count as a reference, or this sweep would
-            // propose deleting a device an unowned record still points at.
             ios: { deviceUdid: 'U1' },
             android: { avdName: 'rn-iso-stale-avd' },
           },
@@ -150,9 +143,6 @@ test('a device named by a non-owned (legacy/stale) record is still counted as re
   expect(result.orphaned.length).toBe(0);
 });
 
-// I3: a dead project's config entry hasn't been removed yet by the time the
-// device sweep runs in the SAME gc invocation -- it must not count as a
-// live reference, or the device only gets reaped on a second run.
 test('a device owned only by a dead project is orphaned when that project is passed as deadProjects', () => {
   const result = findOrphanedDevices({
     sims: [makeIosSim({ udid: 'U1', name: 'rn-iso-dead' })],
@@ -164,12 +154,6 @@ test('a device owned only by a dead project is orphaned when that project is pas
   expect(result.orphaned.map((o) => o.id)).toEqual(['U1']);
 });
 
-// --- findStaleProjectDevices (pure) ------------------------------------
-//
-// The gap this closes: `stop` has no --delete and a plain checkout cannot be
-// `worktree remove`d, so the main checkout's owned sim is shut down but never
-// reaped. Nothing else on the machine would ever destroy it.
-
 const staleSims = [makeIosSim({ udid: 'U-STALE', name: 'rn-iso-stale' })];
 
 function staleConfig(extra = {}) {
@@ -180,13 +164,6 @@ function staleConfig(extra = {}) {
     },
   });
 }
-
-// --- stale device RECORDS ---------------------------------------------
-//
-// The gap two field-test runs fell into: `status` warns "recorded sim <udid> no
-// longer exists" forever, and `gc` said nothing -- the path is alive so the
-// dead-entry sweep skips it, and the device is gone so the orphan sweep, which
-// starts from the live listing, cannot see it at all.
 
 test('findStaleDeviceRecords reports a live project pointing at a device that is gone', () => {
   const stale = findStaleDeviceRecords({
@@ -207,9 +184,6 @@ test('findStaleDeviceRecords reports a live project pointing at a device that is
   ]);
 });
 
-// A listing that could not be READ is not evidence that anything is gone.
-// Reading it as such would propose clearing every device record on the machine
-// the first time simctl is missing or wedged.
 test('findStaleDeviceRecords proposes nothing for a platform whose listing failed', () => {
   const config = makeConfig({
     projects: {
@@ -234,9 +208,6 @@ test('findStaleDeviceRecords skips a project the dead-entry sweep already claime
   expect(stale).toEqual([]);
 });
 
-// Ownership gates DESTRUCTION, and this destroys nothing. A legacy record
-// pointing at a simulator that no longer exists is exactly as useless as an
-// owned one, and leaving it keeps `status` warning about it forever.
 test('findStaleDeviceRecords covers a non-owned record too, and reports its ownership', () => {
   const stale = findStaleDeviceRecords({
     config: makeConfig({ projects: { '/a': { platforms: { ios: { deviceUdid: 'GONE' } } } } }),
@@ -245,8 +216,6 @@ test('findStaleDeviceRecords covers a non-owned record too, and reports its owne
   expect(stale.map((r) => r.owned)).toEqual([false]);
 });
 
-// A legacy physical record names hardware rn-iso never created; there is no AVD
-// listing it could be checked against, and nothing may consume it.
 test('findStaleDeviceRecords never calls a physical serial record stale', () => {
   expect(
     findStaleDeviceRecords({
@@ -294,8 +263,6 @@ test('findStaleProjectDevices leaves a recently touched project alone', () => {
   expect(stale.length).toBe(0);
 });
 
-// CLAUDE.md item 8: on doubt, skip. An unreadable timestamp is not evidence
-// that a project is abandoned.
 test('findStaleProjectDevices fails closed when a project timestamp cannot be read', () => {
   const now = Date.now();
   const stale = findStaleProjectDevices({
@@ -322,8 +289,6 @@ test('findStaleProjectDevices ignores devices rn-iso does not own', () => {
   expect(stale.length).toBe(0);
 });
 
-// A record naming a device that is not on the machine any more is not
-// something to issue a delete at: the live listing is the only proof.
 test('findStaleProjectDevices only proposes devices present in the live listing', () => {
   const now = Date.now();
   const stale = findStaleProjectDevices({
@@ -337,8 +302,6 @@ test('findStaleProjectDevices only proposes devices present in the live listing'
   expect(stale.length).toBe(0);
 });
 
-// A dead project's device is already the orphan sweep's job. Proposing it
-// twice would issue two deletes at the same udid in one run.
 test('findStaleProjectDevices skips projects the dead-entry sweep already claimed', () => {
   const now = Date.now();
   const stale = findStaleProjectDevices({
@@ -353,30 +316,17 @@ test('findStaleProjectDevices skips projects the dead-entry sweep already claime
   expect(stale.length).toBe(0);
 });
 
-// --- Action-level tests -----------------------------------------------
-//
-// The tests above only exercise the pure formatter. These drive the real
-// Commander action against a tmpdir RN_ISO_HOME (config.js) plus a tmpdir
-// HOME, so a "dead" project path resolves to a real, mounted boot-volume
-// ancestor rather than to the developer's own repos.
-
 let tmpHome: string;
 let fakeHome: string;
 let originalHome: string | undefined;
 let originalTmpdir: string | undefined;
 
-// loadConfig() is Config | null (null when no config exists on disk); every
-// caller below saves one first, so a missing config is a test bug worth
-// throwing on rather than a case to narrow at each read site.
 function currentConfig() {
   const cfg = loadConfig();
   assert(cfg, 'expected a config on disk');
   return cfg;
 }
 
-// No device tooling and no shellouts of any kind: any `run` is a bug, and
-// runQuiet answers the lsof port lookup reclaimProject makes with "no live
-// pid". Tests that need a live simctl listing use installDeviceExecutor.
 function installExecutor() {
   setExecutor({
     run(cmd) {
@@ -391,19 +341,12 @@ function installExecutor() {
   });
 }
 
-// Through commander, exactly as the binary does: the RN_ISO_HOME guard is
-// live on this path, so the device sweep is a no-op here by design.
 async function cli(args: string[] = []) {
   const program = new Command();
   gcCommand(program);
   await program.parseAsync(['node', 'rn-iso', 'gc', ...args]);
 }
 
-// The sweep machinery itself (teardown ordering, containment, stale reaping)
-// can only be exercised with the scoped-home guard lifted, and the guard is
-// deliberately unreachable from the CLI. `runGc` takes the decision as a
-// parameter commander never supplies, so these tests opt in explicitly and
-// every device they touch is a mocked one.
 async function sweepingGc(opts = {}) {
   await runGc({ unsafeAllowScopedDeviceSweep: true, ...opts });
 }
@@ -482,8 +425,8 @@ function registerExpoProject(project: string): void {
 }
 
 function writeRemoteState(project: string, value: unknown): void {
-  mkdirSync(join(project, '.rn-iso'), { recursive: true });
-  writeFileSync(join(project, '.rn-iso', 'state.json'), typeof value === 'string' ? value : JSON.stringify(value));
+  ensureWorkspaceStorage(project);
+  writeFileSync(workspaceStateFile(project), typeof value === 'string' ? value : JSON.stringify(value));
 }
 
 beforeEach(() => {
@@ -494,10 +437,6 @@ beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), 'rn-iso-fakehome-'));
   process.env.HOME = fakeHome;
 
-  // gc reports the shared caches on every run now, and one of them (Metro's
-  // file maps) lives loose in the system temp directory. Without redirecting
-  // TMPDIR, a `--delete --older-than` test would trim the developer's own
-  // Metro file maps off the real machine.
   originalTmpdir = process.env.TMPDIR;
   process.env.TMPDIR = fakeHome;
 });
@@ -561,7 +500,7 @@ describe('EAS orphan session sweep', () => {
 
     expect(output).not.toContain('drs_recorded');
     expect(output).toContain('drs_orphan');
-    expect(JSON.parse(readFileSync(join(otherWorkspace, '.rn-iso', 'state.json'), 'utf-8'))).toMatchObject({
+    expect(JSON.parse(readFileSync(workspaceStateFile(otherWorkspace), 'utf-8'))).toMatchObject({
       remoteDevice: { sessionId: 'drs_recorded' },
     });
   });
@@ -718,7 +657,7 @@ describe('EAS orphan session sweep', () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
     installExecutor();
-    const lockDir = join(project, '.rn-iso', 'remote-session.lock');
+    const lockDir = join(workspaceDir(realpathSync(project)), 'remote-session.lock');
     mkdirSync(lockDir, { recursive: true });
     writeFileSync(join(lockDir, 'owner.json'), '{not valid json');
     const old = new Date(Date.now() - 60_000);
@@ -1263,7 +1202,6 @@ test('gc reports the three things that still orphan, and no DerivedData', async 
 test('a dead project on an unmounted volume is not unregistered', async () => {
   const unmountedPath = '/Volumes/RnIsoTestVolumeThatDoesNotExist/proj/gone';
   const localDeadPath = join(fakeHome, 'no-longer-here');
-  // localDeadPath deliberately not created on disk: existsSync(localDeadPath) is false.
 
   saveConfig({
     version: 2,
@@ -1278,21 +1216,10 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
   await cli(['--delete']);
 
   const cfg = currentConfig();
-  // The unmounted-volume entry survives: its volume could not be confirmed
-  // mounted, so it must not be treated as dead.
   expect(cfg.projects[unmountedPath]).toBeTruthy();
   expect(cfg.projects[unmountedPath]?.metroPort).toBe(8100);
-  // The genuinely local dead entry (boot volume, directory just missing) is
-  // still pruned as before.
   expect(cfg.projects[localDeadPath]).toBe(undefined);
 });
-
-// --- Device-delete integration -----------------------------------------
-//
-// The action tests above never exercise the device-delete path:
-// installExecutor() throws on any `run`, so listAllIosSims() always throws
-// and orphanedDevices is always []. These seed a live simctl listing so a
-// real rn-iso-* sim goes through resolveOwnedIosSim -> shutdown -> delete.
 
 interface DeviceSpec {
   udid: string;
@@ -1362,7 +1289,6 @@ test('--delete re-verifies ownership before shutdown, shuts down before delete, 
     execCalls,
     throwOnShutdownFor: new Set(['UDID-1']),
   });
-  // Config references neither device: both are orphaned.
   saveConfig({ version: 2, projects: {}, repos: {} });
 
   await sweepingGc({ delete: true });
@@ -1376,9 +1302,6 @@ test('--delete re-verifies ownership before shutdown, shuts down before delete, 
   expect(firstListIndex < shutdown1Index).toBeTruthy();
   expect(shutdown2Index !== -1 && delete2Index !== -1).toBeTruthy();
   expect(shutdown2Index < delete2Index).toBeTruthy();
-  // The first device's shutdown threw, so its delete must never have been issued
-  // -- containment: one bad device must not abort the rest of the sweep, and a
-  // failed teardown must not still proceed to delete.
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-1'))).toBe(false);
 });
 
@@ -1397,11 +1320,6 @@ test('report-mode gc lists a seeded orphaned ios sim but issues no shutdown or d
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
 });
 
-// I3: before the fix, findOrphanedDevices was computed from the
-// pre-prune config, so a dead project's owned device still counted as
-// "referenced" on the run that prunes it -- it only got swept on a SECOND
-// `gc --delete`. One run must now both prune the dead entry and reap its
-// device.
 test("--delete reaps a dead project's owned orphan device in the same run it prunes the entry", async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');
   saveConfig({
@@ -1428,43 +1346,23 @@ test("--delete reaps a dead project's owned orphan device in the same run it pru
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-DEAD'))).toBeTruthy();
 });
 
-// --- The two blast-radius holes ----------------------------------------
-//
-// These are two DIFFERENT holes with the same consequence: an under-informed
-// reference map makes every rn-iso-* device on the machine look orphaned, and
-// --delete then destroys live environments belonging to someone else. Two
-// real simulators were destroyed this way. Each guard is tested with the
-// other one lifted, so neither can quietly stop carrying its own weight.
-
-// Hole (a): no config file at all. Tested with the scoped-home guard lifted,
-// so the cfg === null guard is the only thing standing between --delete and
-// every rn-iso-* device on the machine.
 test('gc with no config names rn-iso devices it cannot verify, but never touches them', async () => {
   const execCalls: string[] = [];
   installDeviceExecutor({
     devices: [{ udid: 'UDID-LIVE', name: 'rn-iso-someones-live-env', state: 'Booted' }],
     execCalls,
   });
-  // No saveConfig() call at all, so loadConfig() returns null, not {projects:{}}.
 
   const output = await captureLog(() => sweepingGc({ delete: true }));
 
-  // It IS named -- silently skipping meant a wiped config orphaned simulators
-  // that nothing would ever surface again.
   expect(output).toMatch(/rn-iso-someones-live-env/);
   expect(output).toMatch(/no rn-iso config found/i);
   expect(output).toMatch(/cannot be verified as orphaned/i);
-  // ...but it is never classified as orphaned, and never acted on.
   expect(output).not.toMatch(/Orphaned devices/i);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
 });
 
-// Hole (b): a POPULATED config under a non-default RN_ISO_HOME. This is the
-// one that actually destroyed simulators: a throwaway home stops being null
-// the moment any command writes to it, and from that point the sweep looked
-// perfectly well-informed while knowing nothing about the machine's real
-// devices. RN_ISO_HOME scopes the config; sims and AVDs are machine-global.
 test('a config scoped by RN_ISO_HOME never sweeps machine-global devices', async () => {
   const execCalls: string[] = [];
   installDeviceExecutor({
@@ -1474,8 +1372,6 @@ test('a config scoped by RN_ISO_HOME never sweeps machine-global devices', async
     ],
     execCalls,
   });
-  // Populated, and referencing none of the machine's devices -- exactly what a
-  // throwaway home looks like after one `up`.
   const livePath = join(fakeHome, 'some-project');
   mkdirSync(livePath, { recursive: true });
   saveConfig({
@@ -1493,9 +1389,6 @@ test('a config scoped by RN_ISO_HOME never sweeps machine-global devices', async
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
 });
 
-// The guard spares DEVICES and machine-global CACHES. Dead-entry pruning is
-// genuinely config-scoped -- the entries live in the config being read -- so it
-// stays fully functional under RN_ISO_HOME.
 test('the RN_ISO_HOME guard does not disable dead-entry pruning', async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');
   saveConfig({ version: 2, projects: { [localDeadPath]: { metroPort: 8100 } }, repos: {} });
@@ -1505,8 +1398,6 @@ test('the RN_ISO_HOME guard does not disable dead-entry pruning', async () => {
 
   expect(currentConfig().projects[localDeadPath]).toBe(undefined);
 });
-
-// --- Stale owned devices (--older-than) --------------------------------
 
 test('--delete --older-than reaps an owned device whose project went untouched, and clears its record', async () => {
   const stalePath = join(fakeHome, 'abandoned-project');
@@ -1531,8 +1422,6 @@ test('--delete --older-than reaps an owned device whose project went untouched, 
   expect(cfg.projects[stalePath]?.platforms?.ios).toBe(undefined);
 });
 
-// The whole field-test complaint, end to end: a live project whose recorded sim
-// is gone warned in `status` on every run and `gc` proposed nothing about it.
 test('gc reports a live project whose recorded sim is gone, and --delete clears the record only', async () => {
   const livePath = join(fakeHome, 'live-project');
   touchedDaysAgo(livePath, 1);
@@ -1554,7 +1443,6 @@ test('gc reports a live project whose recorded sim is gone, and --delete clears 
   const cfg = currentConfig();
   expect(cfg.projects[livePath]).toBeTruthy();
   expect(cfg.projects[livePath]?.platforms?.ios).toBe(undefined);
-  // Never touches devices: the premise is that there is none left to touch.
   expect(execCalls.some((c) => /simctl (shutdown|delete)/.test(c))).toBe(false);
   expect(execCalls.some((c) => /avdmanager delete/.test(c))).toBe(false);
 });
@@ -1616,8 +1504,6 @@ test('a device whose project is still being worked in is never reaped by --older
   expect(currentConfig().projects[livePath]?.platforms?.ios).toBeTruthy();
 });
 
-// --- Shared caches (the folded-in `cache list`) -------------------------
-
 test('a bare gc reports a registered cache with its size, without being asked for it', async () => {
   const cacheDir = join(fakeHome, 'my-cache');
   mkdirSync(join(cacheDir, 'entry-a'), { recursive: true });
@@ -1632,9 +1518,6 @@ test('a bare gc reports a registered cache with its size, without being asked fo
   expect(output).toMatch(/registered/);
 });
 
-// Emptying a shared cache is a performance decision, not cleanup. A plain
-// --delete is aimed at dead entries and orphaned devices, and must not take
-// gigabytes of live cache with it.
 test('--delete on its own never touches a shared cache', async () => {
   const cacheDir = join(fakeHome, 'my-cache');
   const entry = join(cacheDir, 'entry-a');
@@ -1648,7 +1531,6 @@ test('--delete on its own never touches a shared cache', async () => {
 
   await cli(['--delete']);
 
-  const { existsSync } = await import('node:fs');
   expect(existsSync(entry)).toBeTruthy();
 });
 
@@ -1668,22 +1550,11 @@ test('--delete --older-than trims the cache entries nothing has touched', async 
 
   await cli(['--delete', '--older-than', '30']);
 
-  const { existsSync } = await import('node:fs');
   expect(existsSync(oldEntry)).toBe(false);
   expect(existsSync(freshEntry)).toBeTruthy();
 });
 
-// --- gc --delete --all: the whole-or-nothing caches ---------------------
-//
-// --older-than TRIMS entries by age, and an index-backed cache cannot be
-// trimmed at all: Xcode's LLVM CAS addresses its `v9.*.leaf` data files from a
-// `v4.actions` index, so removing leaves individually corrupts it. pruneCache
-// declines it by design, which left nothing on the machine able to clear it.
-// --all is that path, and it is emptying rather than trimming.
-
 test('--delete --all empties an index-backed cache that --older-than cannot trim', async () => {
-  // Registered INSIDE getConfigDir(): RN_ISO_HOME scopes what --all is allowed
-  // to destroy, and a cache under the config dir is genuinely in scope.
   const casDir = join(tmpHome, 'compilation-cache');
   const leaf = join(casDir, 'v9.data.leaf');
   const index = join(casDir, 'v4.actions');
@@ -1697,7 +1568,6 @@ test('--delete --all empties an index-backed cache that --older-than cannot trim
   const report = await collectGcReport({ all: true });
   expect(report.caches.some((c) => c.prune === 'atomic' && c.willEmpty)).toBeTruthy();
 
-  // The gap --all exists to close: age-based trimming skips this cache whole.
   await captureLog(() => cli(['--delete', '--older-than', '30']));
   expect(existsSync(leaf)).toBeTruthy();
 
@@ -1706,8 +1576,6 @@ test('--delete --all empties an index-backed cache that --older-than cannot trim
   expect(existsSync(index)).toBe(false);
 });
 
-// Emptying an entries-style cache goes through pruneCache, the same code
-// --older-than uses -- there is no second removal path for the ordinary case.
 test('--delete --all empties an entries-style cache including entries used today', async () => {
   const cacheDir = join(tmpHome, 'my-cache');
   const freshEntry = join(cacheDir, 'entry-fresh');
@@ -1741,21 +1609,7 @@ test('--all without --delete reports what would be emptied and writes nothing', 
   expect(loadConfig()).toEqual(before);
 });
 
-// The guard --all makes mandatory, and the reason this flag is dangerous:
-// discoverCaches returns DETECTED caches as well as registered ones, and the
-// detected ones are MACHINE-GLOBAL. Xcode's CAS sits under
-// ~/Library/Developer/Xcode/DerivedData and Metro's file maps sit in
-// os.tmpdir(); neither moves with RN_ISO_HOME. So --all under a throwaway home
-// would empty the real machine's caches -- structurally the same bug as the
-// scoped device sweep that destroyed two real simulators on this branch, aimed
-// at disk instead of at live environments.
-//
-// RN_ISO_HOME scopes the config. Anything outside the config dir is
-// machine-global. A scoped config must never destroy machine-global state.
 test('--delete --all under a scoped home refuses machine-global caches', async () => {
-  // Detected exactly the way it is on a real machine: HOME is redirected here,
-  // so this is where caches.js looks for Xcode's CAS. It is outside
-  // getConfigDir(), which is what makes it off limits.
   const globalCas = join(fakeHome, 'Library', 'Developer', 'Xcode', 'DerivedData', 'CompilationCache.noindex');
   const leaf = join(globalCas, 'v9.data.leaf');
   mkdirSync(globalCas, { recursive: true });
@@ -1769,18 +1623,7 @@ test('--delete --all under a scoped home refuses machine-global caches', async (
   expect(output).toMatch(/RN_ISO_HOME/);
 });
 
-// The SAME hole, one flag over. --older-than trims rather than empties, but
-// trimming is destructive too and reaches the identical machine-global
-// directories. Metro's file maps are the case that proves it: prune 'entries'
-// (so pruneCache WILL trim them by age, unlike the index-backed CAS) living
-// loose in os.tmpdir(), which does not move with RN_ISO_HOME.
-//
-// This test must use a trimmable cache. Pointing it at the Xcode CAS passes
-// vacuously -- the CAS survives because pruneCache refuses atomic caches by
-// design, not because any guard stopped it.
 test('--delete --older-than under a scoped home refuses machine-global caches', async () => {
-  // TMPDIR is redirected to fakeHome, which is OUTSIDE getConfigDir() (tmpHome)
-  // -- the same relationship the real os.tmpdir() has to the real ~/.rn-iso.
   const map = join(fakeHome, 'metro-file-map-abc123');
   writeFileSync(map, 'x'.repeat(1000));
   const old = new Date(Date.now() - 400 * DAY_MS);
@@ -1794,9 +1637,6 @@ test('--delete --older-than under a scoped home refuses machine-global caches', 
   expect(output).toMatch(/machine-global/);
 });
 
-// --all's blast radius is disk, never live environments. The device sweep is
-// deliberately LIFTED here: --all must not widen its reach even on a run where
-// the sweep is genuinely working.
 test('--all reaches caches only: never a device, never a project entry', async () => {
   const livePath = join(fakeHome, 'live-project');
   mkdirSync(livePath, { recursive: true });
@@ -1827,13 +1667,11 @@ test('rejects a non-numeric --older-than instead of silently skipping every entr
   const program = new Command();
   program.exitOverride();
   gcCommand(program);
-  await expect(() => program.parseAsync(['node', 'rn-iso', 'gc', '--older-than', 'lastweek'])).rejects.toThrow();
+  await expect(() => program.parseAsync(['node', 'rn-iso', 'gc', '--older-than', 'lastweek'])).rejects.toThrow(
+    /must be a whole number of days/,
+  );
 });
 
-// With no config, gc must never DELETE (a missing config makes every rn-iso-*
-// device look orphaned, including another RN_ISO_HOME's live ones) -- but it
-// should still SAY they exist. Silently skipping meant a wiped config orphaned
-// simulators that nothing would ever surface again.
 test('describeUnverifiableDevices names rn-iso devices it cannot verify', () => {
   const notices = describeUnverifiableDevices(['rn-iso-alpha', 'iPhone 17 Pro'], ['rn-iso-beta', 'Pixel_6_API_34']);
   const joined = notices.join('\n');
@@ -1859,19 +1697,6 @@ test('describeUnverifiableDevices carries the reason it was given', () => {
   });
   expect(notices.join('\n')).toMatch(/RN_ISO_HOME/);
 });
-
-// --- build locks -----------------------------------------------------------
-//
-// A build lock (engine/build-lock.js) is a directory saying "this pid is
-// compiling this fingerprint". A machine that was rebooted, or a process that
-// was SIGKILLed, leaves one behind. It is harmless -- the next builder takes
-// it over on the pid-liveness check -- but it is debris, and `gc` is where
-// debris is reported.
-//
-// The direction of doubt is the one every other sweep here takes: a lock whose
-// holder is ALIVE is a build in progress, and nothing may touch it. Deleting
-// one would put two workspaces on the same 19-minute compile, which is the
-// exact failure single-flight exists to prevent.
 
 function writeLock({
   platform = 'ios',
@@ -1983,12 +1808,6 @@ test('a bare gc removes no lock at all', async () => {
   await captureLog(() => sweepingGc({}));
   expect(existsSync(stale)).toBe(true);
 });
-
-// --- build slots (engine/build-slots.js) -----------------------------------
-//
-// A build SLOT is the opt-in concurrency limit's semaphore. Like a build lock,
-// a reboot or a SIGKILL leaves a stale one behind; gc reports and (with
-// --delete) clears the stale ones, and never touches a slot a live builder holds.
 
 function writeSlot({
   index = 0,

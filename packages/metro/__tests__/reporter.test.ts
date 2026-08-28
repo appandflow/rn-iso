@@ -1,12 +1,3 @@
-// This package is CommonJS on purpose -- a metro.config.js and a supervisor
-// hosting Metro in-process both reach it through require() -- so its tests are
-// CommonJS too: `node --test` reparses an ESM test file in a typeless package
-// and warns about it on every run.
-//
-// What is under test is the record shape, not Metro. The events fed in are the
-// shapes Metro's reporter actually emits (a `client_log` with a data array, a
-// `bundling_error` carrying an Error), plus the shapes it does not, because a
-// reporter that throws takes the dev server down with it.
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -99,12 +90,6 @@ test('bundle_build_done is the marker that resets the --errors window', () => {
   });
 });
 
-// A FAILED build is an attempt boundary too: without a marker here,
-// back-to-back failures accumulate in `logs --errors` and the stale one is
-// listed first (appandflow/rn-iso#13). The events are fed in the exact order
-// metro's Server reports them -- bundle_build_failed, then the bundling_error
-// carrying the message -- so the marker precedes the attempt's own errors in
-// the file, which is what logs-query's strict (<) bundle cutoff relies on.
 test('bundle_build_failed is a marker too, written before the bundling_error it precedes', () => {
   withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
@@ -136,10 +121,6 @@ test('unstable_server_log carries its own level', () => {
   });
 });
 
-// Metro emits dozens of event types and adds more between minors. They are kept
-// -- at debug, so they cost nothing to a default query -- rather than dropped,
-// because the event name is often the only evidence of what the server was
-// doing before it failed.
 test('every other event is kept at debug with its event name', () => {
   withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
@@ -158,8 +139,6 @@ test('every other event is kept at debug with its event name', () => {
   });
 });
 
-// A reporter that throws takes the dev server down with it, and the shapes it
-// is handed come from a package rn-iso does not version.
 test('unknown and malformed shapes never throw, and never write a corrupt line', () => {
   withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
@@ -199,14 +178,10 @@ test('the log directory is created on the first write, not on construction', () 
   });
 });
 
-// Logging failure is not server failure: it is counted and swallowed.
 test.skipIf(Boolean(process.getuid) && process.getuid!() === 0)(
   'an unwritable directory costs records, not the server',
   () => {
     withDir((dir) => {
-      // Locked before the first write on purpose: a read-only directory stops the
-      // log files being CREATED, while a file that already exists goes on taking
-      // appends regardless of the directory's mode.
       const reporter = ndjsonReporter({ dir });
       fs.chmodSync(dir, 0o500);
       expect(() => {
@@ -224,16 +199,25 @@ test.skipIf(Boolean(process.getuid) && process.getuid!() === 0)(
   },
 );
 
-test('dir defaults to .rn-iso/logs under the working directory', () => {
+test('dir defaults to the readable collision-safe workspace under RN_ISO_HOME', () => {
   withDir((dir) => {
     const cwd = process.cwd();
+    const previousHome = process.env.RN_ISO_HOME;
+    const stateHome = path.join(dir, 'state-home');
     process.chdir(dir);
+    process.env.RN_ISO_HOME = stateHome;
     try {
       const reporter = ndjsonReporter();
       reporter.update({ type: 'bundle_build_done' });
-      expect(fs.existsSync(path.join(dir, '.rn-iso', 'logs', 'metro.ndjson'))).toBe(true);
+      const workspaces = fs.readdirSync(path.join(stateHome, 'workspaces'));
+      expect(workspaces).toHaveLength(1);
+      expect(workspaces[0]).toMatch(new RegExp(`^${path.basename(dir).toLowerCase()}--[a-f0-9]{16}$`));
+      expect(fs.existsSync(path.join(stateHome, 'workspaces', workspaces[0]!, 'logs', 'metro.ndjson'))).toBe(true);
+      expect(fs.existsSync(path.join(dir, '.rn-iso'))).toBe(false);
     } finally {
       process.chdir(cwd);
+      if (previousHome === undefined) delete process.env.RN_ISO_HOME;
+      else process.env.RN_ISO_HOME = previousHome;
     }
   });
 });

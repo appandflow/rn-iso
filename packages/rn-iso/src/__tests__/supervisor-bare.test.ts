@@ -1,10 +1,3 @@
-// Hosting Metro in-process for a bare RN project.
-//
-// The wiring is mirrored from @react-native/community-cli-plugin's
-// runServer.js, and the tests below pin the parts of that mirror that are easy
-// to get subtly wrong: which packages come from the PROJECT, what a missing or
-// mismatched one reports, and that the reporter and both middlewares actually
-// reach Metro.runServer.
 import assert from 'node:assert';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,24 +16,16 @@ import {
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { asRequire, makeError, makeWriter } from './_factories.ts';
 
-// assert.throws does not hand back the error, and every assertion below is
-// about the error's contents.
 function caught(fn: () => unknown): Error & Record<string, unknown> {
   try {
     fn();
   } catch (err) {
-    // The thrown value is unknown; every assertion below reads a coded-error
-    // property, so the single cast for that is centralized in this helper.
     return err as Error & Record<string, unknown>;
   }
   throw new Error('expected a throw');
 }
 
 let root: string;
-// RN_ISO_HOME is redirected for every case: startBareServer reads the machine
-// config (the injectMetroStore kill switch) and registers the store it adds,
-// so an unredirected run would touch the caches.json of whatever machine is
-// running the suite (CLAUDE.md item 5).
 let tmpHome: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'rn-iso-bare-'));
@@ -54,26 +39,24 @@ afterEach(() => {
   delete process.env.RN_ISO_HOME;
 });
 
-// A require() that resolves only the modules it is given, so a project's
-// node_modules can be simulated without one existing.
 function fakeRequire(
   modules: Record<string, unknown>,
   { throwOnLoad = {} }: { throwOnLoad?: Record<string, string> } = {},
 ) {
-  const require_ = (id: string) => {
+  const localRequire = (id: string) => {
     if (throwOnLoad[id]) throw new Error(throwOnLoad[id]);
     if (!(id in modules)) {
       throw makeError(`Cannot find module '${id}'`, { code: 'MODULE_NOT_FOUND' });
     }
     return modules[id];
   };
-  require_.resolve = (id: string) => {
+  localRequire.resolve = (id: string) => {
     if (!(id in modules) && !(id in throwOnLoad)) {
       throw makeError(`Cannot find module '${id}'`, { code: 'MODULE_NOT_FOUND' });
     }
     return id;
   };
-  return () => asRequire(require_);
+  return () => asRequire(localRequire);
 }
 
 type OkModules = {
@@ -102,7 +85,6 @@ describe("resolving the project's own dev server packages", () => {
     expect(!err.message.includes(' metro,')).toBeTruthy();
     expect(err.message).toMatch(new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     expect(err.remedy).toMatch(/npm install/);
-    // The other likely cause: an Expo project detected as bare.
     expect(err.remedy).toMatch(/Expo/);
   });
 
@@ -123,7 +105,6 @@ describe("resolving the project's own dev server packages", () => {
     const err = caught(() => resolveBareDeps(root, { requireFrom: fakeRequire(modules) }));
     expect(err.code).toBe('RN_ISO_BARE_API');
     expect(err.message).toMatch(/metro does not export runServer\(\)/);
-    // Never a bare stack: the message says which package and what is missing.
     expect(!/undefined is not a function/.test(err.message)).toBeTruthy();
   });
 
@@ -296,7 +277,6 @@ describe('startBareServer wiring', () => {
     expect(calls.loadConfig).toEqual({ cwd: root, port: 8099 });
     expect(calls.runServer.config.reporter).toBe(reporter);
     expect(calls.reporterDir).toBe(join(root, '.rn-iso', 'logs'));
-    // The config correction the RN CLI makes and metro.config.js does not.
     expect(calls.runServer.config.resolver.platforms).toEqual(['android', 'ios', 'native']);
   });
 
@@ -315,8 +295,6 @@ describe('startBareServer wiring', () => {
     expect(typeof calls.createDevMiddleware.logger.error).toBe('function');
     expect(calls.runServer.options.unstable_extraMiddleware).toEqual(['community-mw', 'dev-mw']);
     expect(calls.runServer.options.websocketEndpoints).toEqual({ '/message': 'm', '/inspector': 'i' });
-    // host is deliberately absent so Metro binds every interface, as the RN
-    // CLI does: a device on the LAN cannot reach a loopback-only bundler.
     expect('host' in calls.runServer.options).toBe(false);
   });
 
@@ -337,9 +315,6 @@ describe('startBareServer wiring', () => {
       }),
     });
     expect(handle.httpServer).toBeTruthy();
-    // config.reporter is left as the project's own (Metro's TerminalReporter,
-    // whose output still reaches supervisor.log) rather than replaced by a
-    // black hole.
     expect(calls.runServer.config.reporter).toBe(undefined);
     const warn = written.find((r) => r.event === 'reporter_missing');
     assert(warn);
@@ -396,11 +371,6 @@ describe('startBareServer wiring', () => {
   });
 });
 
-// --- the shared transform store, appended to the config rn-iso hosts --------
-//
-// THE POINT: a bare project gets a cross-worktree Metro transform cache with
-// no metro.config.js at all. The rule that matters is that it APPENDS: a
-// project that configured its own stores keeps every one of them, in order.
 describe('the shared Metro cache store', () => {
   class FakeStore {
     _root: string;
@@ -432,17 +402,11 @@ describe('the shared Metro cache store', () => {
     expect(result.added).toBe(false);
     expect(result.reason).toMatch(/already/);
     expect((config.cacheStores as unknown[]).length).toBe(1);
-    // Which is the predicate that decides it.
     expect(hasStoreAt(config.cacheStores, '/cache/app')).toBe(true);
     expect(hasStoreAt(config.cacheStores, '/cache/other')).toBe(false);
     expect(hasStoreAt(undefined, '/cache/app')).toBe(false);
   });
 
-  // THE SHAPE EVERY CURRENT METRO HAS. metro-cache 0.83.0 made FileStore's
-  // `_root` a PRIVATE `#root`, so the old "does a store already point here"
-  // probe read undefined on 0.83.5 / 0.84.4 / 0.85.0 / 0.87.0 and answered no
-  // every time. Nothing can read a private field from outside, so the stores
-  // rn-iso creates carry a tag instead -- and that is what the predicate reads.
   test('a store with no public root is still recognized, by the tag rn-iso puts on it', () => {
     class PrivateRootStore {
       #root: string;
@@ -457,17 +421,13 @@ describe('the shared Metro cache store', () => {
     expect(appendCacheStore(config, { storeRoot: '/cache/app', FileStore: PrivateRootStore }).added).toBe(true);
     const stores = config.cacheStores as unknown[];
     expect(stores.length).toBe(1);
-    // Nothing public on the instance says where it points...
     expect((stores[0] as { _root?: unknown })._root).toBe(undefined);
-    // ...but the predicate still answers, which is what stops a second append.
     expect(hasStoreAt(stores, '/cache/app')).toBe(true);
     expect(hasStoreAt(stores, '/cache/other')).toBe(false);
     expect(appendCacheStore(config, { storeRoot: '/cache/app', FileStore: PrivateRootStore }).added).toBe(false);
     expect((config.cacheStores as unknown[]).length).toBe(1);
   });
 
-  // Metro also accepts cacheStores as a function of its cache module. Calling
-  // it here would evaluate it at the wrong time, so it is wrapped instead.
   test('a function-shaped cacheStores is wrapped, not evaluated', () => {
     let calledWith: unknown = null;
     const config: { cacheStores?: unknown } = {
@@ -487,8 +447,6 @@ describe('the shared Metro cache store', () => {
   test('the store root is the shared Metro cache root, partitioned by the package name', () => {
     expect(metroStoreName(root)).toBe('bare');
     expect(metroStoreRoot(root)).toBe(join(tmpHome, 'metro-cache', 'bare'));
-    // A package.json with no name still gets a store, under the same default
-    // segment @rn-iso/metro uses.
     const nameless = mkdtempSync(join(tmpdir(), 'rn-iso-bare-nameless-'));
     try {
       writeFileSync(join(nameless, 'package.json'), '{}');
@@ -585,8 +543,6 @@ describe('startBareServer and the shared store', () => {
     expect(writer.records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
   });
 
-  // A transform cache is an optimisation. A project whose metro-cache cannot
-  // be resolved still gets a dev server, and the log says why it is uncached.
   test('an unresolvable metro-cache is a warn record, not a failure to serve', async () => {
     const projectStore = { name: 'project store' };
     const { deps, seen } = configuringDeps([projectStore]);

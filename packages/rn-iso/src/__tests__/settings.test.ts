@@ -16,8 +16,6 @@ import {
 } from '../settings.ts';
 import { setProjectSetting, setRepoSetting, upsertProject } from '../config.ts';
 
-// SettingsObject is Record<string, unknown> by design; this structural view
-// lets a test read the nested keys it asserts on without a per-access cast.
 type SettingsView = {
   packageManager?: string;
   caches?: string[];
@@ -94,9 +92,6 @@ test('resolveSettings orders project over repo over committed', () => {
   expect(merged.worktree.baseRef).toBe('fresh');
 });
 
-// Reported from the field: a committed `worktree.install` silently stopped
-// working when 0.9.0 removed the install pipeline. The only symptom was a
-// worktree with no dependencies. Removing a setting must break loudly.
 test('unknownSettingKeys reports keys rn-iso no longer reads', () => {
   expect(unknownSettingKeys({ packageManager: 'pnpm' })).toEqual(['packageManager']);
   expect(unknownSettingKeys({ worktree: { install: ['pnpm i'] } })).toEqual(['worktree.install']);
@@ -147,10 +142,6 @@ test('unknownSettingKeys tolerates empty and malformed input', () => {
   expect(unknownSettingKeys('nope')).toEqual([]);
 });
 
-// v3 deleted the `config` CLI, so a committed `.rn-iso.json` is the way an
-// array-valued setting is written by hand. These pin that the file's own JSON
-// types survive resolution -- there is no parse step left to convert them, so
-// a regression here would hand consumers a string where they expect an array.
 test('committed caches and device settings resolve with their JSON types intact', () => {
   const repo = mkdtempSync(join(tmpdir(), 'rn-iso-repo-'));
   try {

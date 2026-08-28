@@ -1,12 +1,3 @@
-// commands/android.js -- the flow, and the output that is the product.
-//
-// Nothing here boots an emulator, installs anything, or runs gradle: every
-// side effect of the command is a seam and every one of them is injected. The
-// config, the workspace state.json and the build log ARE real (under a temp
-// RN_ISO_HOME and a temp project), because the two things most worth
-// asserting -- that lastBuild merges into state.json instead of clobbering
-// it, and that the launch marker lands in the build log -- are only true if
-// the real writers are used.
 import assert from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -52,8 +43,6 @@ import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_fac
 
 const FINGERPRINT = 'a3f9b1c2d3e4f5a6b7c8d9e0f1a2b3c4';
 const CACHE_KEY = `${FINGERPRINT}-debug-sim`;
-// What a cache entry's stored asset manifest and a fresh build's captured one
-// look like; the gate itself is tested in engine-asset-manifest.test.ts.
 const STORED_ASSETS: AssetManifest = {
   version: 1,
   assets: [{ path: 'drawable-mdpi/logo.png', sha256: 'a'.repeat(64) }],
@@ -126,10 +115,6 @@ interface SpawnCall {
   unrefed?: boolean;
 }
 
-// The read-shapes below are the SUBSET of each seam's real argument object that
-// the assertions read back. The production interfaces (which have no index
-// signature) are assignable to these subsets, so they double as the mock
-// parameter types.
 interface AcquireLockArgs {
   platform?: string;
   key?: string;
@@ -207,7 +192,7 @@ interface Calls {
   releaseLock: unknown[];
   waitForBuild: unknown[];
   verify: VerifyArgs[];
-  ensureIgnored: unknown[];
+  ensureStorage: unknown[];
   readApkPackage: unknown[];
   order: string[];
 }
@@ -241,10 +226,8 @@ function harness(overrides = {}) {
     releaseLock: [],
     waitForBuild: [],
     verify: [],
-    ensureIgnored: [],
+    ensureStorage: [],
     readApkPackage: [],
-    // The sequence of the steps that decide who compiles, which is what the
-    // single-flight tests below are actually about.
     order: [],
   };
   const stderr: string[] = [];
@@ -267,8 +250,6 @@ function harness(overrides = {}) {
       calls.fingerprint.push(path);
       return { hash: FINGERPRINT, sources: [] };
     },
-    // Issue #60's miss diagnostic shells out to git; the default is a project
-    // with nothing untracked, so only the tests about it pay for it.
     untracked: (args: { projectRoot: string }) => {
       calls.untracked.push(args);
       return [];
@@ -278,9 +259,6 @@ function harness(overrides = {}) {
       calls.resolveCached.push([platform, key]);
       return null;
     },
-    // THE ASSET GATE's stored side. The default is a real manifest, which is
-    // what makes the default release cache hit swap; a test that wants the
-    // manifest-less entry overrides it with () => null.
     storedAssets: (platform: string, key: string) => {
       calls.order.push('storedAssets');
       calls.storedAssets.push([platform, key]);
@@ -296,14 +274,10 @@ function harness(overrides = {}) {
       calls.storeCached.push([platform, key, path, opts]);
       return path;
     },
-    // Level two. The default is the ordinary case: no provider configured, so
-    // nothing is asked and nothing is called.
     loadProvider: async (projectRoot: string, opts: Record<string, unknown> = {}) => {
       calls.loadProvider.push([projectRoot, opts]);
       return { none: true as const };
     },
-    // Never the real one: it shells out to `eas whoami`, which is a network
-    // call. The EAS-session tests override it with the state they are about.
     easAuth: (args: EasAuthArgs = {}) => {
       calls.easAuth.push(args);
       return { ok: true as const, account: 'janic' };
@@ -313,8 +287,6 @@ function harness(overrides = {}) {
       calls.resolveRemoteBuild.push(args);
       return null;
     },
-    // Single flight. The default is the ordinary case: nothing else on this
-    // machine is building this fingerprint, so this run is the one builder.
     acquireLock: (args: AcquireLockArgs = {}) => {
       calls.order.push('acquireLock');
       calls.acquireLock.push(args);
@@ -355,9 +327,6 @@ function harness(overrides = {}) {
       calls.install.push(args);
       return { ok: true, apkPath: args.apkPath ?? '' };
     },
-    // The default is what launchAndroidApp returns for a project with no
-    // dev-client scheme: the launcher activity, both port mechanisms in
-    // place. The dev-client shape has its own tests below.
     launch: (args: LaunchArgs = {}) => {
       calls.launch.push(args);
       return {
@@ -370,9 +339,6 @@ function harness(overrides = {}) {
         debugHttpHostNote: null,
       };
     },
-    // Release-only seams; a debug run must never reach any of them. The
-    // defaults are the ordinary release case: the swap succeeded, the app
-    // started, its process is alive.
     launchRelease: (args: LaunchArgs = {}) => {
       calls.order.push('launchRelease');
       calls.launchRelease.push(args);
@@ -394,14 +360,10 @@ function harness(overrides = {}) {
         durationMs: 4100,
       };
     },
-    // Reading the scheme out of the APK shells out to aapt; the resolver has
-    // its own tests (against a real dump), so the flow injects the answer.
     resolveDevClientScheme: (projectRoot: string, apkPath: unknown) => {
       calls.scheme.push([projectRoot, apkPath]);
       return undefined;
     },
-    // Same reason: apkPackage(dumpApkManifest(..)) shells out to aapt. Null is
-    // "the APK could not be read", which falls back to project detection.
     readApkPackage: (apkPath: string | null) => {
       calls.readApkPackage.push(apkPath);
       return null;
@@ -421,22 +383,18 @@ function harness(overrides = {}) {
       calls.kill.push([pid, signal]);
       return true;
     },
-    // The retry is real (one test below is about it); only the sleep is
-    // removed, so a refusal costs no wall time.
     resolveMetroRetrying: (
       resolve: Parameters<typeof resolveMetroWithRetry>[0],
       port: Parameters<typeof resolveMetroWithRetry>[1],
       path: Parameters<typeof resolveMetroWithRetry>[2],
       opts: Parameters<typeof resolveMetroWithRetry>[3],
     ) => resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
-    // The default is a launch that verified -- the app fetched a bundle from
-    // THIS workspace's Metro. The picker case has its own tests.
     verifyLaunched: async (args: VerifyArgs = {}) => {
       calls.verify.push(args);
       return { verified: true, waitedMs: 3100, timedOut: false, mode: null };
     },
-    ensureIgnored: async (dir: string) => {
-      calls.ensureIgnored.push(dir);
+    ensureStorage: async (dir: string) => {
+      calls.ensureStorage.push(dir);
     },
     out: (line: string) => stderr.push(line),
     emit: (line: string) => stdout.push(line),
@@ -940,14 +898,10 @@ describe('a cache hit', () => {
     expect(labelled(h.stderr, 'metro')[0]).toMatch(/port 8082 \(pid 41233\)/);
     expect(labelled(h.stderr, 'launch')[0]).toMatch(/com\.example\.app/);
     expect(labelled(h.stderr, 'logs')[0]).toMatch(/collector pid 9001/);
-    // Every timed phase line carries its own duration, in formatDuration's
-    // shape ("4s", "1m4s"), at the end of the line.
     expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/\(\d+m?\d*s\)$/);
     expect(labelled(h.stderr, 'device')[0]).toMatch(/booted \(\d+m?\d*s\)$/);
     expect(labelled(h.stderr, 'install')[0]).toMatch(/from local cache \(\d+m?\d*s\)$/);
     expect(labelled(h.stderr, 'launch')[0]).toMatch(/\(\d+m?\d*s\)$/);
-    // Output discipline: everything above is stderr, and stdout carries the
-    // single outcome line an agent reads.
     expect(h.stdout.length).toBe(1);
     expect(h.stdout[0]).toMatch(/OK: com\.example\.app launched on emulator-5584/);
     expect(h.stderr.length <= 9).toBeTruthy();
@@ -965,8 +919,6 @@ describe('a cache hit', () => {
       avdName: 'rn-iso-app-412',
       deviceName: 'rn-iso-app-412',
       fingerprint: FINGERPRINT,
-      // Payload parity with the iOS one, which has carried the key since it
-      // shipped: this is what addresses the entry the run hit or stored.
       cacheKey: CACHE_KEY,
       variant: null,
       metroPort: 8082,
@@ -1067,13 +1019,8 @@ describe('product flavors (--variant / android.variant)', () => {
     const result = await h.run();
 
     expect(result.ok).toBe(true);
-    // The variant reaches the gradle engine (which turns it into
-    // assembleProductionDebug -- engine-gradle.test.ts pins that), and the APK
-    // installed is the flavor's.
     expect(h.calls.build[0]?.variant).toBe('productionDebug');
     expect(h.calls.install[0]?.apkPath).toMatch(/apk\/production\/debug\/app-production-debug\.apk$/);
-    // The cache key carries the variant, so productionDebug and plain debug
-    // never share an entry.
     expect(h.calls.resolveCached[0]).toEqual(['android', FLAVORED_KEY]);
     expect(h.calls.storeCached[0]?.slice(0, 2)).toEqual(['android', FLAVORED_KEY]);
     expect(FLAVORED_KEY).not.toBe(CACHE_KEY);
@@ -1117,20 +1064,14 @@ describe('product flavors (--variant / android.variant)', () => {
 
 describe('the applicationId comes from the built APK', () => {
   test('the APK is authoritative when it answers, even when project detection disagrees', async () => {
-    // build.gradle says com.example.app (the base applicationId); the flavor
-    // that was actually built and installed is io.tlon.groups.
     const h = harness({ readApkPackage: () => 'io.tlon.groups' });
     const result = await h.run();
 
     expect(result.ok).toBe(true);
-    // The launch (and through it the run-as debug_http_host write and the
-    // monkey remedy, which engine/app-install derives from packageName) all
-    // target the package that is actually on the device.
     expect(h.calls.launch[0]?.packageName).toBe('io.tlon.groups');
     assert(result.facts);
     expect(result.facts.bundleId).toBe('io.tlon.groups');
     expect(h.stdout[0]).toMatch(/io\.tlon\.groups/);
-    // The disagreement is said out loud, once.
     expect(h.stderr.join('\n')).toMatch(/io\.tlon\.groups \(from the APK; project files say com\.example\.app\)/);
   });
 
@@ -1162,7 +1103,6 @@ describe('metro is verified before any build work', () => {
     expect(result.error.remedy).toMatch(/rn-iso start/);
     expect(result.error.remedy).toMatch(/--no-metro-check/);
     expect(h.stderr.at(-2)).toMatch(/RN_ISO_NO_METRO/);
-    // Nothing was built, so there is nothing to record.
     expect(existsSync(workspaceStateFile(root))).toBe(false);
   });
 
@@ -1177,8 +1117,6 @@ describe('metro is verified before any build work', () => {
     expect(result.error.message).toMatch(/pid 900 runs from \/elsewhere/);
   });
 
-  // Same race as iOS: `start` returns at listening, and a bare Metro then
-  // blocks its event loop crawling a monorepo's file map for ~20s.
   test('an indexing Metro is retried rather than refused', async () => {
     let attempts = 0;
     const h = harness({
@@ -1225,7 +1163,6 @@ describe('metro is verified before any build work', () => {
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(labelled(h.stderr, 'metro')[0]).toMatch(/not checked/);
-    // The reservation is still what the app is wired to.
     expect(h.calls.launch[0]?.metroPort).toBe(8082);
   });
 
@@ -1242,7 +1179,7 @@ describe('metro is verified before any build work', () => {
 });
 
 describe('the other refusals', () => {
-  test('an unresolvable @expo/fingerprint names the package to install', async () => {
+  test('a fingerprint with no hash refuses without a package-install remedy', async () => {
     const h = harness({
       fingerprint: async () => null,
       resolveCached: never('the cache lookup'),
@@ -1251,7 +1188,7 @@ describe('the other refusals', () => {
     const result = await h.run();
     assert(result.error);
     expect(result.error.code).toBe(NO_FINGERPRINT);
-    expect(result.error.remedy).toMatch(/npm i -D @expo\/fingerprint/);
+    expect(result.error.remedy).not.toMatch(/npm i -D @expo\/fingerprint/);
   });
 
   test('a fingerprint that throws is reported, not propagated', async () => {
@@ -1267,9 +1204,6 @@ describe('the other refusals', () => {
     expect(result.error.message).toMatch(/bad app\.json/);
   });
 
-  // Boot runs BESIDE the fingerprint/cache/build work now (gradle needs no
-  // device), so the refusal surfaces at install -- after the build has run
-  // and been stored for the retry -- not ahead of it.
   test('a device that cannot be booted refuses with RN_ISO_NO_DEVICE, after the build', async () => {
     const h = harness({
       ensureDeviceBooted: async () => ({ failed: true, reason: 'AVD rn-iso-app-412 no longer exists.' }),
@@ -1281,13 +1215,6 @@ describe('the other refusals', () => {
     expect(result.error.message).toMatch(/no longer exists/);
   });
 
-  // --- issue #64: the emulator's own words, not a guess -------------------
-  //
-  // The field case: an AVD that could not be created because the disk was
-  // nearly full. rn-iso reported RN_ISO_NO_DEVICE with an empty adb
-  // diagnostic and a remedy about JAVA_HOME / ANDROID_HOME / system images --
-  // none of which was the cause -- while the emulator had printed the actual
-  // reason one second in. It now goes into the message and the remedy.
   const DISK_FATAL =
     'FATAL | Not enough space to create userdata partition. Available: 6341.54 MB at /Users/j/.android/avd, need 7372.80 MB';
 
@@ -1308,18 +1235,12 @@ describe('the other refusals', () => {
     const result = await h.run();
     assert(result.error);
     expect(result.error.code).toBe(NO_DEVICE);
-    // The --json payload carries only {code, message, remedy}, so the real
-    // cause has to be in one of them.
     expect(result.error.message).toMatch(/Not enough space to create userdata partition/);
     expect(result.error.remedy).toMatch(/Free disk space at the AVD directory/);
-    // ... and the generic guesses are GONE from the remedy.
     expect(result.error.remedy).not.toMatch(/JAVA_HOME|rn-iso status/);
-    // The log that holds the rest is named, as `start` names supervisor.log.
-    expect(h.stderr.some((l) => /\.rn-iso\/logs\/emulator\.log/.test(l))).toBeTruthy();
+    expect(h.stderr.some((l) => l.includes(emulatorLogFile(root)))).toBeTruthy();
   });
 
-  // The same lift on the OTHER failure path: a create-or-boot that throws out
-  // of ensureOwnedDevice, which is where the field report actually landed.
   test('an ensureDevice throw is diagnosed from emulator.log too', async () => {
     writeEmulatorLog(["PANIC: Missing emulator engine program for 'arm64' CPU."]);
     const h = harness({
@@ -1335,9 +1256,6 @@ describe('the other refusals', () => {
     expect(result.error.remedy).not.toMatch(/JAVA_HOME/);
   });
 
-  // And when the log says nothing recognizable, today's diagnostic stands
-  // exactly as it was -- a wrong cause is worse than no cause. Only the log
-  // path is added.
   test('the generic remedy stands when emulator.log has no severity markers', async () => {
     writeEmulatorLog(['INFO    | Android emulator version 35.2.10.0', 'WARNING | System image is out of date']);
     const h = harness({
@@ -1348,12 +1266,9 @@ describe('the other refusals', () => {
     assert(result.error);
     expect(result.error.message).toBe('AVD rn-iso-app-412 no longer exists.');
     expect(result.error.remedy).toMatch(/rn-iso status/);
-    expect(h.stderr.some((l) => /\.rn-iso\/logs\/emulator\.log/.test(l))).toBeTruthy();
+    expect(h.stderr.some((l) => l.includes(emulatorLogFile(root)))).toBeTruthy();
   });
 
-  // The emulator log is where the boot's stdio goes, so `android` has to be
-  // the one that names it: it owns the workspace path sim/android.js is told
-  // to write to.
   test('the emulator log path is threaded into both device seams', async () => {
     const h = harness({});
     await h.run();
@@ -1438,8 +1353,7 @@ describe('a failed build', () => {
     const errors = labelled(h.stderr, 'error');
     expect(errors.some((l) => /MainActivity\.kt:23:9: Unresolved reference 'Foo'\./.test(l))).toBeTruthy();
     expect(errors.some((l) => /and 3 more diagnostic/.test(l))).toBeTruthy();
-    // The spec's shape: the log path relative to the workspace, not absolute.
-    expect(labelled(h.stderr, 'log')[0]).toMatch(/^ {2}log {9}\.rn-iso\/logs\/build-android\.ndjson$/);
+    expect(labelled(h.stderr, 'log')[0]).toBe(phaseLine('log', join(workspaceLogsDir(root), 'build-android.ndjson')));
   });
 
   test('falls back to the last transcript lines when nothing could be extracted', async () => {
@@ -1477,14 +1391,6 @@ describe('a failed build', () => {
   });
 });
 
-// --- level two: the project's own build cache provider ---------------------
-//
-// rn-iso's local cache is level one. The project's OWN configured provider
-// ("buildCacheProvider": "eas", or a module of its own) is level two, and a hit
-// there is copied into level one on the way past so the next worktree does not
-// pay for it either. engine-remote-cache.test.js covers the module; what is
-// pinned here is that the command asks in the right order and that nothing a
-// provider does can fail or stall the run.
 describe('the remote cache', () => {
   const provider = (name = 'eas') => ({ provider: { plugin: {}, options: {} }, name });
 
@@ -1496,8 +1402,6 @@ describe('the remote cache', () => {
   });
 
   test('a bare RN project never has its config read: the community CLI has no provider concept', async () => {
-    // The fixture package.json's `android` script is `react-native run-android`,
-    // which is what detectIsExpo reads.
     const h = harness();
     await h.run();
     expect(h.calls.loadProvider[0]?.[1]).toEqual({ isExpo: false });
@@ -1613,9 +1517,6 @@ describe('the remote cache', () => {
     expect(lines[0]).toMatch(/eas-build-cache-provider/);
   });
 
-  // eas-build-cache-provider catches every error from `npx eas-cli` and returns
-  // null, so a logged-out machine gets a clean MISS on every build and nothing
-  // says why. The pre-flight is what turns that silence into one line.
   test('a logged-out EAS session skips the remote tier and says so, once', async () => {
     const h = harness({
       loadProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
@@ -1712,15 +1613,12 @@ describe('--no-build-cache', () => {
     expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/miss \(--no-build-cache\)/);
   });
 
-  // The whole reason to opt out is an entry you no longer trust. Keeping it
-  // would mean the next run trusts it again.
   test('still STORES -- over the entry it was told not to trust -- and still uploads', async () => {
     const h = harness({
       useBuildCache: false,
       loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
     });
     await h.run();
-    // A debug build emits no asset tree, so there is no manifest to record.
     expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: true, sources: [], assetManifest: null });
     expect(h.calls.uploadRemoteBuild.length).toBe(1);
   });
@@ -1732,14 +1630,6 @@ describe('--no-build-cache', () => {
   });
 });
 
-// --- single-flight builds ---------------------------------------------------
-//
-// The iOS command's wiring, on the Android half: both caches missed, so this
-// run is about to spend minutes in gradle -- and if another workspace on this
-// machine is already spending them on the same fingerprint, waiting for its
-// APK beats compiling the same one beside it. engine/build-lock.js is tested
-// on its own; what is pinned here is WHEN the lock is attempted, that a waiter
-// never builds, and that a builder always releases.
 describe('single-flight builds', () => {
   const heldBy = (pid = 41233, projectRoot = '/w/app-999') => ({
     held: {
@@ -1860,8 +1750,6 @@ describe('single-flight builds', () => {
     expect(h.calls.releaseLock.length).toBe(0);
   });
 
-  // A failed build that kept its lock would leave every other workspace on the
-  // fingerprint waiting for an APK nobody is making.
   test('a FAILED build releases the lock', async () => {
     const h = harness({
       build: async () => ({
@@ -1904,8 +1792,6 @@ describe('single-flight builds', () => {
     expect(h.calls.build.length).toBe(0);
   });
 
-  // The lock is an optimisation, and one that cannot run must never stop a
-  // build -- the same containment the cache store and the provider get.
   test('a lock that cannot be created is a note, and the build proceeds', async () => {
     const h = harness({
       acquireLock: () => {
@@ -1917,8 +1803,6 @@ describe('single-flight builds', () => {
     expect(h.stderr.join('\n')).toMatch(/read-only file system/);
   });
 });
-
-// --- contracts 4, 5 and 1 --------------------------------------------------
 
 describe('Contract 4: state.json.lastBuild', () => {
   test('is written on success with every field the contract names', async () => {
@@ -1981,8 +1865,6 @@ describe('Contract 5: the device-log collector', () => {
       'com.example.app',
     ]);
     expect(opts.detached).toBe(true);
-    // stdin dropped, stdout+stderr into collector-android.log -- the same
-    // capture `ios` does, so a collector that cannot attach leaves evidence.
     expect(Array.isArray(opts.stdio)).toBe(true);
     expect((opts.stdio as unknown[])[0]).toBe('ignore');
     expect(existsSync(collectorLogFile(root))).toBe(true);
@@ -2032,11 +1914,7 @@ describe('Contract 1: the launch marker', () => {
   });
 });
 
-// --- the pure parts --------------------------------------------------------
-
 describe('the pure parts', () => {
-  // The composer, driven through its readLog seam so the three branches are
-  // pinned without a file on disk.
   test('noDeviceDiagnostic prefers the emulator over the generic remedy, and names the log either way', () => {
     const fatal = 'FATAL | Not enough space to create userdata partition. Available: 1 MB, need 2 MB';
     const lifted = noDeviceDiagnostic({
@@ -2047,8 +1925,6 @@ describe('the pure parts', () => {
     });
     expect(lifted.message).toBe(`The emulator exited. The emulator reported: ${fatal}`);
     expect(lifted.remedy).toMatch(/Free disk space/);
-    // The first extracted line is folded into the message; the rest are the
-    // dim lines under it.
     expect(lifted.lines).toEqual(['FATAL | giving up']);
     expect(lifted.logPath).toBe('/ws/.rn-iso/logs/emulator.log');
 
@@ -2063,8 +1939,6 @@ describe('the pure parts', () => {
     expect(unrecognized.lines).toEqual([]);
     expect(unrecognized.logPath).toBe('/ws/.rn-iso/logs/emulator.log');
 
-    // A missing or empty log names nothing: it would send the reader to a
-    // file with nothing in it.
     const noLog = noDeviceDiagnostic({
       reason: 'The emulator exited.',
       logFile: '/ws/.rn-iso/logs/emulator.log',
@@ -2121,22 +1995,15 @@ describe('the pure parts', () => {
       logs: null,
     });
     expect(androidFacts({ variant: 'productionDebug' }).variant).toBe('productionDebug');
-    // Payload parity with iOS: the key that addresses the cache entry.
     expect(androidFacts({ cacheKey: `${FINGERPRINT}-productionrelease-sim` }).cacheKey).toBe(
       `${FINGERPRINT}-productionrelease-sim`,
     );
-    // A device tool is addressed by AVD name, not by console-port slot, and
-    // deviceName falls back to it rather than being separately null.
     expect({
       avdName: androidFacts({ avdName: 'rn-iso-app-412' }).avdName,
       deviceName: androidFacts({ avdName: 'rn-iso-app-412' }).deviceName,
     }).toEqual({ avdName: 'rn-iso-app-412', deviceName: 'rn-iso-app-412' });
-    // cacheHit is a LEVEL, not a boolean: 'local' | 'remote' | false.
     expect(androidFacts({ cacheHit: 'remote' }).cacheHit).toBe('remote');
     expect(androidFacts({ cacheHit: true }).cacheHit).toBe(false);
-    // A wait is reported ALONGSIDE cacheHit: 'local', never instead of it: the
-    // APK did come from the local cache, it just was not there yet when the
-    // run started.
     expect(androidFacts({ cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } }).waitedForBuild).toEqual({
       pid: 41233,
       ms: 761000,
@@ -2187,7 +2054,6 @@ describe('the pure parts', () => {
         },
       }),
     ).toBe(null);
-    // Never our own pid: the collector helpers share this process in tests.
     expect(
       killPreviousCollector(root, {
         collectors: { android: { pid: process.pid } },
@@ -2199,9 +2065,6 @@ describe('the pure parts', () => {
   });
 });
 
-// The launch is not the proof: an expo-dev-client app that opens its
-// DEVELOPMENT SERVERS picker has fetched nothing, and `am start` returned 0
-// all the same.
 describe('launch verification', () => {
   test("a verified launch reports launched: true and polls this workspace's timeline", async () => {
     const h = harness();
@@ -2216,8 +2079,6 @@ describe('launch verification', () => {
   test('the picker: no bundle request makes it launched: "unverified", still exit ok', async () => {
     const h = harness({ verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) });
     const result = await h.run();
-    // ok stays true: the app IS launched. What changes is the fact an agent
-    // branches on, and the warning that says what to do about it.
     expect(result.ok).toBe(true);
     assert(result.facts);
     expect(result.facts.launched).toBe('unverified');
@@ -2243,21 +2104,13 @@ describe('the launch outcome reaches the timeline', () => {
 });
 
 describe('the workspace directory is gitignored first', () => {
-  test('ensureWorkspaceIgnored runs before the build log is opened', async () => {
+  test('workspace storage is prepared before the build log is opened', async () => {
     const h = harness();
     await h.run();
-    expect(h.calls.ensureIgnored).toEqual([root]);
+    expect(h.calls.ensureStorage).toEqual([root]);
   });
 });
 
-// --- Contract 6, REPORTED (the result used to be invisible) ----------------
-//
-// launchAndroidApp has always returned debugHttpHost and debugHttpHostNote,
-// and until now every caller dropped them on the floor. That is how a
-// debug_http_host write that emitted an INVALID SHELL SCRIPT, and so had
-// never once succeeded, produced output identical to one that worked: the
-// launch survives on the adb reverse alone, and nothing printed the
-// difference. These tests are the consumer.
 describe('the port wiring is reported', () => {
   test('a successful debug_http_host write is a phase line and two facts', async () => {
     const h = harness();
@@ -2281,7 +2134,6 @@ describe('the port wiring is reported', () => {
       }),
     });
     const result = await h.run();
-    // The run still succeeds -- the reverse covers the 8081 path on its own.
     expect(result.ok).toBe(true);
     const wired = labelled(h.stderr, 'wired')[0];
     expect(wired).toMatch(/not debuggable/);
@@ -2297,7 +2149,6 @@ describe('the port wiring is reported', () => {
   });
 });
 
-// --- the dev-client deep link (F7) -----------------------------------------
 describe('the dev-client deep link', () => {
   test('the scheme is read from the APK that was just installed, and passed to the launch', async () => {
     const asked: unknown[][] = [];
@@ -2310,8 +2161,6 @@ describe('the dev-client deep link', () => {
     await h.run();
     expect(asked.length).toBe(1);
     expect(h.calls.launch[0]?.devClientScheme).toBe('exp+app');
-    // The apk the resolver is pointed at is the one that was installed, not
-    // a source tree it would have to guess a build output path in.
     expect(asked[0]).toEqual([root, h.calls.install[0]?.apkPath]);
   });
 
@@ -2358,8 +2207,6 @@ describe('the dev-client deep link', () => {
     const picker = text.indexOf('DEVELOPMENT SERVERS');
     expect(link > 0).toBeTruthy();
     expect(link < picker).toBeTruthy();
-    // The exact command, with the exact url: 10.0.2.2, this workspace's port,
-    // percent-encoded, quoted for the shell it is pasted into.
     expect(text).toMatch(
       /adb -s emulator-5584 shell am start -a android\.intent\.action\.VIEW -d 'exp\+app:\/\/expo-development-client\/\?url=http%3A%2F%2F10\.0\.2\.2%3A8082'/,
     );
@@ -2375,7 +2222,6 @@ describe('the dev-client deep link', () => {
   });
 });
 
-// --- F15: the emulator's NAME, not just its console-port slot --------------
 describe('the device identity is recorded', () => {
   test('avdName and deviceName reach the facts and state.json lastBuild', async () => {
     const h = harness();
@@ -2397,14 +2243,6 @@ describe('the device identity is recorded', () => {
   });
 });
 
-// --- reading the dev-client scheme out of the BUILT APK ---------------------
-//
-// The fixture is a real `aapt dump xmltree` of a real expo-dev-client debug
-// APK (see its header). Everything below is asserted against that rather than
-// against a hand-written manifest, because the two things that make this hard
-// are both properties of real output: the scheme can be an UNRESOLVED
-// resource reference, and the manifest of a dev client declares a dozen
-// schemes belonging to other people's SDKs.
 describe('the APK dev-client scheme', () => {
   const dump = () => readFileSync(join(import.meta.dirname, 'fixtures', 'aapt-xmltree-devclient.txt'), 'utf-8');
 
@@ -2412,7 +2250,6 @@ describe('the APK dev-client scheme', () => {
     const facts = apkDevClientFacts(dump());
     expect(facts.devClient).toBe(true);
     expect(facts.schemes).toEqual(['th3rdwave']);
-    // The trap: these ARE in the manifest, on other activities.
     expect(JSON.stringify(facts.schemes)).not.toMatch(/expo-dev-launcher|stripe/);
   });
 
@@ -2422,7 +2259,6 @@ describe('the APK dev-client scheme', () => {
   });
 
   test('an unresolved @0x resource reference is not a scheme', () => {
-    // MainActivity's first VIEW filter carries `android:scheme=@0x7f1300c6`.
     const tree = parseXmltree(dump());
     const values: (string | null)[] = [];
     const walk = (n: ReturnType<typeof parseXmltree>) => {
@@ -2450,9 +2286,6 @@ describe('the APK dev-client scheme', () => {
 
   test('androidDevClientScheme: the APK answers, in both directions', () => {
     expect(androidDevClientScheme(root, '/x/app.apk', { dump: () => dump() })).toBe('th3rdwave');
-    // A readable APK that is not a dev client is a plain launch -- NOT a
-    // fall through to app.json, which would deep-link an app with no
-    // launcher to handle it.
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { scheme: 'fromconfig' } }));
     const plain = dump()
       .split('\n')
@@ -2463,8 +2296,6 @@ describe('the APK dev-client scheme', () => {
 
   test('an unreadable APK falls back to the project config, exactly as iOS does', () => {
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { scheme: 'fromconfig' } }));
-    // No expo-dev-client in this fixture project's dependencies, so the
-    // config reader refuses too: a plain launch, not a link nothing answers.
     expect(androidDevClientScheme(root, '/x/app.apk', { dump: () => null })).toBe(undefined);
     writeFileSync(
       join(root, 'package.json'),
@@ -2519,7 +2350,6 @@ describe('the APK dev-client scheme', () => {
     expect(
       dumpApkManifest('/x/app.apk', { exec: throwing, aapt: { path: '/sdk/aapt', tool: 'aapt', version: '36.0.0' } }),
     ).toBe(null);
-    // Output that is not a manifest tree is not a manifest tree.
     expect(
       dumpApkManifest('/x/app.apk', {
         exec: makeExecutor({ runFile: () => 'ERROR: dump failed' }),
@@ -2530,10 +2360,6 @@ describe('the APK dev-client scheme', () => {
   });
 });
 
-// The fingerprint is scoped to Android. Unscoped, the iOS tree hashes into the
-// ANDROID key -- and a podspec that bakes an absolute path into
-// ios/Podfile.lock then makes every cross-worktree android build a cache miss.
-// See the field note above fingerprintProject in src/build-cache.js.
 test('android fingerprints with platforms scoped to android', async () => {
   const seen: Array<{ path: string; options?: Record<string, unknown> }> = [];
   const h = harness({
@@ -2548,7 +2374,6 @@ test('android fingerprints with platforms scoped to android', async () => {
   expect(seen[0]?.options?.platform).toBe('android');
 });
 
-// --- opt-in concurrency (unlimited by default) ---
 describe('concurrency limits', () => {
   test('unset limits change nothing: no slot is taken, no capacity refuses', async () => {
     let slotAcquired = 0;
@@ -2635,7 +2460,6 @@ describe('concurrency limits', () => {
   });
 });
 
-// The package attribute lives on the manifest ROOT, not on any child element.
 test('apkPackage reads the manifest root package and null on garbage', () => {
   const dump =
     'N: android=http://schemas.android.com/apk/res/android\nE: manifest (line=1)\n  A: package="com.example.blank" (Raw: "com.example.blank")\n  E: application (line=5)\n';
@@ -2643,16 +2467,6 @@ test('apkPackage reads the manifest root package and null on garbage', () => {
   expect(apkPackage('')).toBe(null);
   expect(apkPackage(null)).toBe(null);
 });
-
-// --- release builds (--variant ...Release, issue #57 phase 2) --------------
-//
-// A release-shaped variant is a different product: AGP's bundle task embeds
-// the JS, so Metro is not part of the run at all -- and a native-keyed cache
-// hit is an APK carrying its BUILDER's JS, which is why the hit path re-packs
-// a fresh bundle into a COPY rather than installing the artifact as-is. What
-// is pinned here is the command's side of that: the gate that does not run,
-// the launch that is a plain am start, the swap-then-install order, the ASSET
-// GATE's fallback, and the uninstall the re-signing makes inevitable.
 
 describe('variant resolution', () => {
   test('flag > setting > default', () => {
@@ -2671,16 +2485,12 @@ describe('variant resolution', () => {
   });
 
   test('a variant is release-shaped exactly when its BUILD TYPE suffix is release', () => {
-    // A gradle variant is <flavor><BuildType>, so the build type is the
-    // SUFFIX -- the mirror image of an Xcode configuration, which IS the
-    // build type.
     expect(isReleaseVariant('release')).toBe(true);
     expect(isReleaseVariant('Release')).toBe(true);
     expect(isReleaseVariant('productionRelease')).toBe(true);
     expect(isReleaseVariant(' previewRelease ')).toBe(true);
     expect(isReleaseVariant('debug')).toBe(false);
     expect(isReleaseVariant('productionDebug')).toBe(false);
-    // Not a suffix: a flavor that merely CONTAINS the word.
     expect(isReleaseVariant('releaseCandidateDebug')).toBe(false);
     expect(isReleaseVariant(null)).toBe(false);
     expect(isReleaseVariant('')).toBe(false);
@@ -2695,16 +2505,12 @@ describe('release skips Metro entirely', () => {
     expect(h.calls.metro.length).toBe(0);
     expect(h.stderr.join('\n')).not.toMatch(/RN_ISO_NO_METRO/);
     expect(labelled(h.stderr, 'metro')[0]).toMatch(/skipped \(productionRelease: the JS bundle is embedded/);
-    // The release launch, and NOT the wired one.
     expect(h.calls.launch.length).toBe(0);
     expect(h.calls.launchRelease[0]?.packageName).toBe('com.example.app');
-    // No `wired` line at all: nothing was reversed and no preference written.
     expect(labelled(h.stderr, 'wired').length).toBe(0);
-    // Verification is process-alive, not bundle-fetch.
     expect(h.calls.verify.length).toBe(0);
     expect(h.calls.verifyRelease.length).toBe(1);
     expect(labelled(h.stderr, 'verify')[0]).toMatch(/process alive/);
-    // The collector still attaches, so `logs --errors` works in release.
     expect(h.calls.spawn.length).toBe(1);
   });
 
@@ -2724,8 +2530,6 @@ describe('release skips Metro entirely', () => {
     expect(result.facts.launched).toBe(true);
     expect(result.facts.debugHttpHost).toBe(null);
     expect(result.facts.devClientUrl).toBe(null);
-    // And the cache key carries the variant, so a release APK and a debug one
-    // are never the same entry.
     expect(h.calls.resolveCached[0]?.[1]).toBe(`${FINGERPRINT}-productionrelease-sim`);
   });
 
@@ -2752,7 +2556,6 @@ describe('release skips Metro entirely', () => {
     const fromSetting = harness({ resolveMetro: never('the metro probe') });
     expect((await fromSetting.run()).ok).toBe(true);
     expect(fromSetting.calls.launchRelease.length).toBe(1);
-    // The flag beats the setting: the ordinary gated debug flow.
     const overridden = harness({ variant: 'productionDebug' });
     expect((await overridden.run()).ok).toBe(true);
     expect(overridden.calls.launch.length).toBe(1);
@@ -2782,22 +2585,18 @@ describe('the release APK swap', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
-    // Order: resolve the cache, swap, then install -- never a build.
     expect(h.calls.order.indexOf('swapApk')).toBeGreaterThan(h.calls.order.indexOf('resolveCached'));
     expect(h.calls.order.includes('build')).toBe(false);
-    // The swap starts from the cached artifact, with the resolved keystore.
     expect(h.calls.swapApk[0]?.cachedApkPath).toBe(cached);
     expect(h.calls.swapApk[0]?.keystore).toEqual({
       path: join(root, 'android', 'app', 'debug.keystore'),
       pass: 'pass:android',
     });
-    // The INSTALL gets the re-packed temp copy, never the cache entry itself.
     expect(h.calls.install[0]?.apkPath).toBe(join(root, 'apk-swap', 'app-production-release.apk'));
     assert(result.facts);
     expect(result.facts.appPath).toBe(join(root, 'apk-swap', 'app-production-release.apk'));
     expect(result.facts.cacheHit).toBe('local');
     expect(labelled(h.stderr, 'apk swap')[1]).toMatch(/hermes bytecode repacked \(store\), zipaligned and re-signed/);
-    // And the temp dir is reaped once the APK is on the device.
     expect(existsSync(join(root, 'apk-swap'))).toBe(false);
   });
 
@@ -2835,7 +2634,6 @@ describe('the release APK swap', () => {
     await h.run();
     expect(h.calls.storedAssets[0]).toEqual(['android', `${FINGERPRINT}-productionrelease-sim`]);
     expect(h.calls.swapApk[0]?.storedAssets).toEqual(STORED_ASSETS);
-    // Read BEFORE the swap runs, and only for a release hit.
     expect(h.calls.order.indexOf('storedAssets')).toBeLessThan(h.calls.order.indexOf('swapApk'));
   });
 
@@ -2869,13 +2667,11 @@ describe('the release APK swap', () => {
     expect(errs).toMatch(/changed drawable-mdpi\/logo\.png/);
     expect(errs).toMatch(/building fresh instead/);
     expect(errs).toMatch(/an APK cannot be made to carry an asset AAPT did not package/);
-    // The fallback compiled, stored, and installed ITS artifact.
     expect(h.calls.build.length).toBe(1);
     expect(h.calls.install[0]?.apkPath).toBe(
       join(root, 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk'),
     );
     assert(result.facts);
-    // The payload reports what actually happened: not a cache hit.
     expect(result.facts.cacheHit).toBe(false);
   });
 
@@ -2884,8 +2680,6 @@ describe('the release APK swap', () => {
       variant: 'productionRelease',
       resolveCached: () => cached,
       storedAssets: () => null,
-      // What swapApkBundle answers for a null stored manifest: a refusal with
-      // no assetDiff, because there was nothing to diff against.
       swapApk: async (args: SwapArgs = {}) => {
         expect(args.storedAssets).toBe(null);
         return {
@@ -2901,7 +2695,6 @@ describe('the release APK swap', () => {
     const errs = h.stderr.join('\n');
     expect(errs).toMatch(/predates asset tracking/);
     expect(errs).toMatch(/building fresh instead/);
-    // That suffix belongs to a real asset DIFFERENCE; there was none to name.
     expect(errs).not.toMatch(/an APK cannot be made to carry an asset AAPT did not package/);
     expect(h.calls.build.length).toBe(1);
   });
@@ -2913,9 +2706,6 @@ describe('the release APK swap', () => {
       swapApk: async () => ({ assetMismatch: true, reason: 'the sets differ', assetDiff: undefined }),
     });
     await h.run();
-    // overwrite: true even though --no-build-cache was NOT passed. storeBuild
-    // is idempotent by default, so without this the poisoned entry survives
-    // the build that replaced it and refuses the next run identically.
     expect(h.calls.storeCached[0]?.[3]).toEqual({
       overwrite: true,
       sources: [],
@@ -2936,7 +2726,6 @@ describe('the release APK swap', () => {
   test('a release build with no fallback stores WITHOUT overwriting, and carries its captured manifest', async () => {
     const h = harness({ variant: 'productionRelease', swapApk: never('the APK swap') });
     await h.run();
-    // The capture reads THIS variant's generated asset directory.
     expect(h.calls.captureAssets[0]).toEqual([root, { variant: 'productionRelease' }]);
     expect(h.calls.storeCached[0]?.[3]).toEqual({
       overwrite: false,
@@ -3003,13 +2792,6 @@ describe('installing a re-signed release APK', () => {
   });
 });
 
-// --- issue #59: the artifact is stored under the POST-prebuild key ----------
-//
-// `expo prebuild` generates android/ and rewrites package.json's scripts and
-// the app config -- all fingerprint SOURCES -- so a cold run's lookup hash is
-// not the hash its tree has when the APK exists. The field case: run 1 stored
-// 104 MB under 3c64263, and every run after it was stable at 7ea8b7c and
-// missed forever.
 describe('re-fingerprint after prebuild', () => {
   const COLD = 'cccccc1111';
   const WARM = 'wwwwww2222';
@@ -3019,8 +2801,6 @@ describe('re-fingerprint after prebuild', () => {
     return async () => ({ hash: call++ === 0 ? COLD : WARM, sources: [{ type: 'dir', filePath: 'android' }] });
   }
 
-  // A cold CNG tree: no android/, an Expo dependency, an app config -- the
-  // shape prebuild exists for.
   function cngProject() {
     rmSync(join(root, 'android'), { recursive: true, force: true });
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '54.0.0' } }));
@@ -3041,8 +2821,6 @@ describe('re-fingerprint after prebuild', () => {
     expect(String(lookedUp)).toMatch(new RegExp(`^${COLD}`));
     expect(String(storedKey)).toMatch(new RegExp(`^${WARM}`));
 
-    // The next run in this tree has android/, so it computes the warm hash and
-    // looks THAT up -- the key the cold run stored.
     mkdirSync(join(root, 'android', 'app'), { recursive: true });
     const warm = harness({ fingerprint: async () => ({ hash: WARM, sources: [] }) });
     await warm.run();
@@ -3062,25 +2840,17 @@ describe('re-fingerprint after prebuild', () => {
     expect(readState().lastBuild.cacheKey).toBe(h.calls.storeCached[0]?.[1]);
   });
 
-  // The point of the whole feature: a fresh worktree or clone of a CNG app is
-  // COLD, so its first lookup uses a hash that predates android/. The entry
-  // another workspace stored is keyed on the hash this run only learns after
-  // prebuild -- and asking again is the difference between an install and a
-  // full gradle build.
   test('a post-shift hit installs the cached APK and runs no gradle build', async () => {
     cngProject();
     const cachedApk = join(home, 'build-cache', 'android', `${WARM}-debug-sim`, 'app-debug.apk');
     const h = harness({
       fingerprint: shifting(),
-      // Cold key: nothing. Post-shift key: the entry a warm tree left.
       resolveCached: (_platform: string, key: string) => (key.startsWith(WARM) ? cachedApk : null),
       build: never('gradle'),
       storeCached: never('the store'),
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
-    // prebuild still runs -- it is what produces the tree the new hash
-    // describes -- but nothing after it does.
     expect(h.calls.prebuild.length).toBe(1);
     expect(h.calls.install[0]?.apkPath).toBe(cachedApk);
     expect(h.stderr.some((l) => /hit under the post-prebuild key \(this tree was cold/.test(l))).toBe(true);
@@ -3089,9 +2859,6 @@ describe('re-fingerprint after prebuild', () => {
     expect(result.facts?.cacheKey).toBe(`${WARM}-debug-sim`);
   });
 
-  // A release variant is not a special case: the post-shift hit goes through
-  // the SAME step a first-pass hit does -- the JS swap AND the asset gate,
-  // keyed on the entry the artifact actually came from.
   test('a post-shift hit on a release variant swaps the APK, gated on THAT entry manifest', async () => {
     cngProject();
     const cachedApk = join(home, 'build-cache', 'android', `${WARM}-productionrelease-sim`, 'app.apk');
@@ -3106,10 +2873,7 @@ describe('re-fingerprint after prebuild', () => {
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(h.calls.swapApk[0]?.cachedApkPath).toBe(cachedApk);
-    // THE ASSET GATE reads the manifest of the entry that answered, which is
-    // the post-shift key, never the key the run looked up first.
     expect(h.calls.storedAssets.at(-1)?.[1]).toBe(`${WARM}-productionrelease-sim`);
-    // The re-packed copy is what reaches the device, never the cache entry.
     expect(h.calls.install[0]?.apkPath).toBe(join(root, 'apk-swap', 'app-production-release.apk'));
   });
 
@@ -3159,12 +2923,10 @@ describe('re-fingerprint after prebuild', () => {
     expect(h.calls.fingerprint.length).toBe(1);
     expect(h.stderr.some((line) => /fingerprint\s+\S+ -> /.test(line))).toBe(false);
     expect(h.calls.storeCached[0]?.[1]).toBe(h.calls.resolveCached[0]?.[1]);
-    // And NO second lookup: there is no new key to ask about.
     expect(h.calls.resolveCached.length).toBe(1);
   });
 });
 
-// --- issue #60: a miss with no prior entry names the untracked native files -
 test('a first miss lists untracked files under the native dirs and points at .fingerprintignore', async () => {
   const asked: unknown[] = [];
   const h = harness({
@@ -3181,7 +2943,6 @@ test('a first miss lists untracked files under the native dirs and points at .fi
   expect(line).toMatch(/\.fingerprintignore/);
 });
 
-// --- issue #53: a bundle that is still building is its own state ------------
 describe('launch verification: bundling vs unverified', () => {
   test('a request that arrived reports launched: "bundling" and prints no remedy list', async () => {
     const h = harness({
@@ -3216,7 +2977,6 @@ describe('launch verification: bundling vs unverified', () => {
   });
 });
 
-// --- issue #54: a takeover after a builder that FAILED ----------------------
 test('taking the build lock over from a dead holder says this run repeats its inputs', async () => {
   const h = harness({
     acquireLock: () => ({
@@ -3259,12 +3019,6 @@ test('a builder that died mid-wait produces the same line before this run rebuil
   expect(line).toMatch(/pid 999/);
 });
 
-// --- issue #54: the collector replaces its predecessor without losing it ----
-//
-// The dying collector unregisters ITSELF from state.json.collectors on SIGTERM,
-// so a replacement spawned before it exits can have its own registration
-// deleted by its predecessor -- which is exactly what made `stop` report
-// "collectors: none recorded" after a launch that printed a collector pid.
 test('a new android collector waits for the previous one to exit before it is spawned', async () => {
   writeWorkspaceState(root, { collectors: { android: { pid: 4242, startedAt: 'then' } } });
   const order: string[] = [];
@@ -3281,8 +3035,6 @@ test('a new android collector waits for the previous one to exit before it is sp
       order.push(`kill ${target} ${signal}`);
       return true;
     },
-    // Alive for the first two polls, gone on the third: the spawn must be
-    // after that, never beside it.
     alive: () => {
       liveChecks += 1;
       order.push('alive');

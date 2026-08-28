@@ -7,6 +7,7 @@
 // resolved on the other machine. Nothing here infers; `auto` assumes the
 // device is elsewhere, because a device that CAN reach localhost loses nothing
 // by being handed a tunnel and a device that cannot loses the whole run.
+import assert from 'node:assert';
 import { detectProviders, planMetroReach, TUNNEL_MODES } from '../engine/metro-reach.ts';
 
 const BARE = { metroPort: 8085, isExpo: false } as const;
@@ -71,7 +72,8 @@ describe('expo tunnels its own dev server', () => {
   test('asking for expo on a bare RN workspace is refused, not silently ignored', () => {
     const plan = planMetroReach({ ...BARE, mode: 'expo' });
     expect('failed' in plan).toBe(true);
-    if ('failed' in plan) expect(plan.remedy).toMatch(/auto|off/);
+    assert('failed' in plan);
+    expect(plan.remedy).toMatch(/auto|off/);
   });
 });
 
@@ -84,10 +86,9 @@ describe('a managed provider', () => {
   test('naming one that is not installed refuses with how to install it', () => {
     const plan = planMetroReach({ ...BARE, mode: 'ngrok', available: ['cloudflared'] });
     expect('failed' in plan).toBe(true);
-    if ('failed' in plan) {
-      expect(plan.failed).toContain('ngrok');
-      expect(plan.remedy).toContain('brew install ngrok');
-    }
+    assert('failed' in plan);
+    expect(plan.failed).toContain('ngrok');
+    expect(plan.remedy).toContain('brew install ngrok');
   });
 
   test('auto with nothing installed refuses, and names every way out', () => {
@@ -95,11 +96,10 @@ describe('a managed provider', () => {
     // tunnel, or declare the device local.
     const plan = planMetroReach({ ...BARE, mode: 'auto', available: [] });
     expect('failed' in plan).toBe(true);
-    if ('failed' in plan) {
-      expect(plan.remedy).toContain('brew install');
-      expect(plan.remedy).toContain('metro.publicUrl');
-      expect(plan.remedy).toContain('"off"');
-    }
+    assert('failed' in plan);
+    expect(plan.remedy).toContain('brew install');
+    expect(plan.remedy).toContain('metro.publicUrl');
+    expect(plan.remedy).toContain('"off"');
   });
 
   test('auto NEVER falls back to localhost', () => {

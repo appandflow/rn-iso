@@ -1,11 +1,3 @@
-// engine/asset-manifest: what the release asset gate actually compares.
-//
-// The old gate read the cached APK's res/ table and was fundamentally
-// mis-specified (AGP shortens every resource path on a release build, and
-// what survives is mostly AndroidX's own drawables). This module replaces it
-// with an emitted-vs-emitted comparison, so the tests here are about the
-// three things that makes true: finding what a build emitted, hashing it
-// reproducibly, and comparing two of those exactly.
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -40,8 +32,6 @@ function write(file: string, contents: string) {
   mkdirSync(join(file, '..'), { recursive: true });
   writeFileSync(file, contents);
 }
-
-// --- hashing the emitted tree ----------------------------------------------
 
 describe('readAssetManifest', () => {
   test('every file, hashed by CONTENT, at its path relative to the asset root, sorted', () => {
@@ -95,11 +85,9 @@ describe('parseAssetManifest', () => {
     expect(parseAssetManifest('not json')).toBe(null);
     expect(parseAssetManifest(null)).toBe(null);
     expect(parseAssetManifest('[]')).toBe(null);
-    // A future version this build does not understand.
     expect(parseAssetManifest(JSON.stringify({ version: 2, assets: [] }))).toBe(null);
     expect(parseAssetManifest(JSON.stringify({ version: 1 }))).toBe(null);
     expect(parseAssetManifest(JSON.stringify({ version: 1, assets: [{ path: 'a.png' }] }))).toBe(null);
-    // An empty asset list IS a manifest.
     expect(parseAssetManifest(JSON.stringify({ version: 1, assets: [] }))).toEqual({ version: 1, assets: [] });
   });
 
@@ -107,8 +95,6 @@ describe('parseAssetManifest', () => {
     expect(ASSET_MANIFEST_FILE).toBe('assets-manifest.json');
   });
 });
-
-// --- finding what the build emitted ----------------------------------------
 
 describe('pickGeneratedResDir', () => {
   const modern = ['createBundleDebugJsAndAssets', 'createBundleProductionReleaseJsAndAssets'];
@@ -187,8 +173,6 @@ describe('captureAssetManifest', () => {
     expect(captureAssetManifest(root, { variant: 'release' })).toBe(null);
   });
 });
-
-// --- the comparison --------------------------------------------------------
 
 describe('compareAssetManifests', () => {
   const stored: AssetManifest = {

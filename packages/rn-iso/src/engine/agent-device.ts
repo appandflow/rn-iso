@@ -24,11 +24,10 @@
 //    and a profile is an ordinary file with no special mode, so a token
 //    written there outlives the command that needed it.
 //
-// 2. THE PROFILE IS RN-ISO'S FILE. It lives under <root>/.rn-iso/, which
-//    rn-iso creates and self-ensures into .gitignore, never in the project
-//    directory. Writing a project file is the line engine/remote-cache.ts
-//    draws and this honours it.
+// 2. THE PROFILE IS RN-ISO'S FILE. It lives in global workspace storage,
+//    never in the project directory.
 import { join } from 'node:path';
+import { workspaceDir } from '../paths.ts';
 import { sanitizeDeviceLabel } from '../sim/ios.ts';
 import type { RemoteDaemon } from './eas-simulator.ts';
 
@@ -63,7 +62,7 @@ export function sessionNameFor(label: string): string {
 
 // PURE. Where rn-iso keeps the profile: its own directory, not the project's.
 export function remoteProfilePath(root: string): string {
-  return join(root, '.rn-iso', PROFILE_FILE);
+  return join(workspaceDir(root), PROFILE_FILE);
 }
 
 // PURE. The profile, with no credential in it.

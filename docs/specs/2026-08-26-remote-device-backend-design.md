@@ -112,8 +112,8 @@ can find leaked sessions with it.
 
 **The token is never persisted.** `remoteConfig` carries
 `agentDeviceRemoteSessionUrl` and `agentDeviceRemoteSessionToken`. rn-iso
-records only the session id, under a new `remoteDevice` key in
-`<root>/.rn-iso/state.json`, written through the same
+records only the session id, under a new `remoteDevice` key in the global
+workspace `state.json`, written through the same
 `withWorkspaceStateLock` as `supervisor` and `collectors`. Later commands
 re-read the token with `eas simulator:get --id <id> --json`, which returns
 `remoteConfig` too. A leaked state file or a pasted build log then cannot

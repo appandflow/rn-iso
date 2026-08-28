@@ -1,24 +1,6 @@
-// src/commands/guide.js
-//
-// Version-matched reference documentation, printed by the binary itself.
-//
-// Why this exists: skill/SKILL.md ships through `npx skills add` (GitHub) while
-// the CLI ships through npm, with no version relationship between them. A user
-// reported running a newer CLI against an older skill and not noticing. Docs
-// that live only in the skill drift silently.
-//
-// The split is by VOLATILITY, not by length. The skill keeps what makes an
-// agent trigger correctly and behave safely -- the ownership model, the
-// destructive-command rules, the parallel-agent rules. Everything that changes
-// per release -- exact flags, payload shape, error remedies -- lives here, so
-// `npx rn-iso@latest guide facts` always describes the binary the agent is
-// about to run.
 import chalk from 'chalk';
 import type { Command } from 'commander';
 
-// One reference topic: a one-line summary for the index and a lazy body
-// renderer. Typed as a Record so `TOPICS[name]` is a keyed lookup (returns
-// undefined for an unknown topic, which renderTopic/renderIndex guard).
 interface GuideTopic {
   summary: string;
   body: () => string;
@@ -236,8 +218,9 @@ IDEMPOTENT
 WHAT THE SUPERVISOR IS
   One detached process per workspace. There is no machine-wide daemon, nothing
   to install, and no cross-project state. It hosts the dev server, writes its
-  output as NDJSON into <root>/.rn-iso/logs (see \`guide logs\`), and records
-  itself in <root>/.rn-iso/state.json before it starts serving. Two modes,
+  output as NDJSON into the global workspace logs directory
+  ($RN_ISO_HOME/workspaces/<project>--<digest>/logs; see \`guide logs\`), and
+  records itself in that workspace's state.json before it starts serving. Two modes,
   chosen by ecosystem detection:
 
     bare-inproc  bare React Native: Metro is hosted INSIDE the supervisor,
@@ -270,7 +253,7 @@ WHAT THE SUPERVISOR IS
   supervisor is a no-op and cannot change a running supervisor's env: to apply
   a new env var, \`stop\` first, then \`start\` with it set.
 
-  The supervisor's own stdio goes to .rn-iso/logs/supervisor.log, which is NOT
+  The supervisor's own stdio goes to the global workspace logs/supervisor.log, which is NOT
   part of the NDJSON timeline. It is what a supervisor that died before it
   could write a structured record leaves behind. In expo-child mode the child's
   output is parsed into the TIMELINE instead, so a dev server that dies on a
@@ -314,7 +297,7 @@ STARTING YOUR OWN BUNDLER STILL WORKS
 
   npx rn-iso logs [filters]
 
-Reads every *.ndjson file in <root>/.rn-iso/logs, merges them into one timeline
+Reads every *.ndjson file in the global workspace logs directory, merges them into one timeline
 ordered by timestamp, prints what matches, and EXITS. The file set is
 discovered, not enumerated.
 
@@ -442,6 +425,13 @@ code, never on the message.
 
 --- BUILD-PATH CODES (\`rn-iso ios\` / \`rn-iso android\`) ---
 
+RN_ISO_WORKSPACE_STATE / RN_ISO_WORKSPACE_COLLISION
+  rn-iso could not prepare this project's global workspace directory under
+  $RN_ISO_HOME/workspaces. Check that RN_ISO_HOME is writable and has free
+  space. COLLISION means the readable-name-plus-digest directory already has a
+  workspace.json for a different canonical project path; do not overwrite it
+  until you identify which workspace owns it.
+
 RN_ISO_NO_METRO
   Nothing that could be proven to be THIS workspace's dev server holds the
   reserved port -- or no port is reserved at all. The gate fires in about a
@@ -457,18 +447,15 @@ RN_ISO_NO_METRO
 
 RN_ISO_NO_FINGERPRINT
   \`@expo/fingerprint\` produced no hash, so the shared build cache cannot be
-  addressed. rn-iso DEPENDS on @expo/fingerprint, so a missing module is not
-  the usual cause any more -- a bare project needs no package.json change.
-  The project's own copy is still preferred when it has one (the hash then
-  matches what its own tooling computes) and rn-iso's is the fallback, so a
-  broken rn-iso install is the thing to check first. This is a refusal rather
-  than a silent full build because an unaddressable cache means every
+  addressed. rn-iso uses its declared @expo/fingerprint dependency directly,
+  independently of the target project's package graph. This is a refusal
+  rather than a silent full build because an unaddressable cache means every
   workspace on the commit compiles from scratch, forever.
 
 RN_ISO_PREBUILD_FAILED
   \`expo prebuild\` could not generate the missing native directory. The
   extracted output is above the code; the transcript is in
-  .rn-iso/logs/build-<platform>.ndjson.
+  the global workspace logs/build-<platform>.ndjson file.
 
 RN_ISO_DEPS_FAILED
   \`pod install\` (iOS) or the gradle dependency sync (Android) failed. On iOS
@@ -563,7 +550,7 @@ RN_ISO_NO_DEVICE
   rn-iso thinks it owns. Re-running the command creates a fresh owned device
   when the recorded one is gone.
   On Android the emulator's own stdio is captured to
-  \`.rn-iso/logs/emulator.log\` (truncated per boot), and when it printed a
+  the global workspace logs/emulator.log (truncated per boot), and when it printed a
   \`FATAL |\` / \`ERROR |\` / \`PANIC:\` line THAT is the message and the remedy
   you get -- the disk-space refusal ("Not enough space to create userdata
   partition") is the case this exists for. The generic toolchain remedy above
@@ -642,7 +629,7 @@ RN_ISO_METRO_TIMEOUT
   "The dev server did not answer on port <n> within <s>s."
   The supervisor is alive, but Metro or its requested Expo tunnel is not ready.
   \`start\` has already
-  printed the last lines of .rn-iso/logs/supervisor.log above this -- read
+  printed the last lines of the global workspace logs/supervisor.log above this -- read
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`rn-iso stop\`, then \`start\`.
 
@@ -712,13 +699,8 @@ not on any remote"  (worktree remove)
   refusal actually named.
   Use --force only when you genuinely intend to discard work; it deletes
   uncommitted and untracked files permanently.
-  Two things rn-iso wrote itself never cause this refusal: the workspace's own
-  \`.rn-iso/\`, and a \`.gitignore\` that is nothing but the \`.rn-iso/\` entry
-  \`start\`/\`ios\`/\`android\` add -- appended to a tracked file (restored before
-  the removal) or created whole in a repo that had none (deleted before it),
-  verified line by line against what rn-iso writes; any other line either way
-  still refuses. Commit that entry with your PR and it stops being written at
-  all.
+  Runtime state is outside the project tree, so rn-iso's own files never cause
+  Other dirty paths still refuse as described above.
 
 "Refusing to create <name>: the branch worktree-<name> already exists at <sha>,
 but --base <ref> resolves to <sha>"  (worktree create)
@@ -835,8 +817,11 @@ Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for.
 
 NOTHING ABOVE NEEDS A CHANGE TO THE REPO
-rn-iso runs on a clean checkout. \`.rn-iso/\` is added to .gitignore by
-start/ios/android themselves, and the performance caches ride on the command
+Runtime state is stored outside the project tree under
+$RN_ISO_HOME/workspaces/<project>--<digest>/ (default ~/.rn-iso/workspaces/).
+No .gitignore entry is created or required.
+rn-iso runs on a clean checkout. Runtime state is stored outside the project tree.
+runtime state lives under $RN_ISO_HOME/workspaces/<project>--<digest>, and the performance caches ride on the command
 lines rn-iso composes rather than on files the project owns:
 
   ios      xcodebuild carries COMPILATION_CACHE_ENABLE_CACHING, a shared
@@ -848,8 +833,9 @@ lines rn-iso composes rather than on files the project owns:
            no org.gradle.caching=true in gradle.properties.
   start    the dev server gets a shared Metro FileStore APPENDED to whatever
            the project configured -- in-process on a bare project, and through
-           NODE_OPTIONS=--require <shim> on an Expo child. Turn it off machine
-           -wide with { "caches": { "injectMetroStore": false } } in
+           Expo's config override on SDK 54+. Expo SDK 53 and older use their
+           normal Metro cache. Turn it off machine-wide with
+           { "caches": { "injectMetroStore": false } } in
            ~/.rn-iso/config.json; see \`guide settings\`.
 
 Each says so in one dim line. There is nothing to install, wire or commit, and
@@ -1096,7 +1082,7 @@ ON THE MAIN CHECKOUT
   what anyone meant -- so there, and only there, \`worktree remove\` reclaims
   the ENVIRONMENT and nothing else: the owned devices are deleted, the Metro
   port freed, the registry entries (including nested monorepo app dirs)
-  dropped, and <root>/.rn-iso deleted. The tree itself is never touched, which
+  dropped, and the global workspace directory deleted. The tree itself is never touched, which
   is also why the dirty-tree and unpushed guards do not apply on that path.
   It ends with:
     Reclaimed the environment; the working tree stays (it is the main checkout).
@@ -1115,7 +1101,7 @@ teardown rather than turning it into an orphan.
 WHAT ELSE STOP REAPS
   The device-log collectors (\`simctl log stream\` / \`adb logcat\`) that
   \`ios\` / \`android\` attach after launch. They are recorded in
-  <root>/.rn-iso/state.json, and nothing outside this workspace can name them,
+  the global workspace state.json, and nothing outside this workspace can name them,
   so \`stop\` is what stands between a teardown and a log stream that outlives
   the device it was reading. A fresh \`ios\` / \`android\` run also kills the
   previous collector for that platform before starting its own.
@@ -1161,9 +1147,9 @@ THE ONE CASE GC WILL NOT REAP
     avdmanager delete avd -n <name>
 
 DISK
-  Build output is workspace-local -- <worktree>/.rn-iso/derived-data and
-  gradle-build -- so \`worktree remove\` reclaims it definitionally and there
-  is no global DerivedData sweep to run.
+  Logs, state, pidfiles and Xcode DerivedData are under the global workspace
+  directory, and \`worktree remove\` reclaims them. Gradle retains its normal
+  project build directories while sharing task outputs through its build cache.
 
   So are the logs, and one of them is not small: build-ios.ndjson /
   build-android.ndjson hold the whole xcodebuild or gradle transcript at debug
@@ -1171,7 +1157,7 @@ DISK
   first iOS build of a real app). They are worth that -- a build that fails at
   minute nine is unreadable any other way -- and they are per workspace, not
   global, so \`worktree remove\` reclaims them along with everything else in
-  <worktree>/.rn-iso. Each build starts its transcript file over, so the log
+  the global workspace directory. Each build starts its transcript file over, so the log
   holds one run and a workspace you keep building in does not accumulate them.
 
   Simulators are large and live in the CoreSimulator device set, not in your
@@ -1323,8 +1309,9 @@ be setup steps are supplied by rn-iso on the command lines it composes itself:
   start        a shared Metro FileStore, APPENDED to whatever the project
                configured -- so no metro.config.js. On a bare project rn-iso
                hosts Metro itself and adds it to the config it loaded; on Expo
-               the child is spawned with NODE_OPTIONS extended by a --require
-               shim that does the same inside it.
+               SDK 54+ the child loads rn-iso's config adapter through
+               EXPO_OVERRIDE_METRO_CONFIG. Expo SDK 53 and older run with
+               their normal Metro cache.
 
 Each of those prints one dim line saying it happened. There is no setup skill
 and no init command; \`rn-iso doctor\` reports the project-side settings as
@@ -1340,17 +1327,17 @@ feature exists to avoid:
   }
 
 in ~/.rn-iso/config.json. It turns the store off on BOTH dev servers. Only the
-literal false does; anything else leaves it on. The shim also fails soft on its
-own: if it cannot resolve metro-config, or cannot substitute for it, it writes
-one line to stderr (which lands in the timeline) and the dev server runs with
-whatever cache it would have had.
+literal false does; anything else leaves it on. The Expo adapter also fails
+soft when it cannot create a FileStore: it writes one line to stderr (which
+lands in the timeline) and the dev server runs with whatever cache it would
+have had.
 
 Reading the timeline for it: on Expo, \`cache_store_requested\` is rn-iso saying
-it asked (it set NODE_OPTIONS on a process it does not run, which is all this
-side can know), and \`cache_store_added\` is the SHIM reporting from inside that
-process that the store is in the config Metro loaded. Only the second one means
-transforms are being shared. A bare project writes \`cache_store_added\` directly,
-because there rn-iso adds the store itself.
+it asked (it set EXPO_OVERRIDE_METRO_CONFIG on a process it does not run, which
+is all this side can know), and \`cache_store_added\` is the adapter reporting
+from inside that process that the store is in the config Metro loaded. Only the
+second one means transforms are being shared. A bare project writes
+\`cache_store_added\` directly, because there rn-iso adds the store itself.
 
 CACHE LOCATIONS ARE MACHINE-LEVEL TOO
 The shared build cache and Metro transform cache default to living under

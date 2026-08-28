@@ -12,7 +12,7 @@ const out = join(here, '..', 'docs', 'changelog.md');
 const versions = readdirSync(releasesDir)
   .filter((f) => /^\d+\.\d+\.\d+\.md$/.test(f))
   .map((f) => f.replace(/\.md$/, ''))
-  .sort((a, b) => {
+  .toSorted((a, b) => {
     const pa = a.split('.').map(Number);
     const pb = b.split('.').map(Number);
     return pb[0] - pa[0] || pb[1] - pa[1] || pb[2] - pa[2];

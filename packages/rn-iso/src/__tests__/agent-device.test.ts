@@ -5,7 +5,7 @@
 // fails loudly if it regresses:
 //   1. The daemon token NEVER reaches disk. It travels as an env var on the
 //      child, and the profile written next to it must not contain it.
-//   2. The profile is written under <root>/.rn-iso/, never into the project.
+//   2. The profile is written in global workspace storage, never in the project.
 import {
   DAEMON_TOKEN_ENV,
   closeArgs,
@@ -80,8 +80,17 @@ describe('the connection profile', () => {
     expect(remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt' }).session).toBe(sessionNameFor('wt'));
   });
 
-  test('lives under .rn-iso/, never in the project directory', () => {
-    expect(remoteProfilePath('/work/app')).toBe('/work/app/.rn-iso/agent-device.remote.json');
+  test('lives in global workspace storage, never in the project directory', () => {
+    const previous = process.env.RN_ISO_HOME;
+    process.env.RN_ISO_HOME = '/rn-iso-home';
+    try {
+      expect(remoteProfilePath('/work/app')).toMatch(
+        /^\/rn-iso-home\/workspaces\/app--[a-f0-9]{16}\/agent-device\.remote\.json$/,
+      );
+    } finally {
+      if (previous === undefined) delete process.env.RN_ISO_HOME;
+      else process.env.RN_ISO_HOME = previous;
+    }
   });
 });
 

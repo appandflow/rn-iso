@@ -1,9 +1,3 @@
-// Querying the merged timeline. The one query that has to be exactly right is
-// --errors: it is what an agent loop polls after a build, and an empty result
-// is its pass condition. Its window is "since the last marker across ALL
-// sources", so a build launch marker written to build-ios.ndjson resets the
-// window for client errors too -- otherwise the previous run's redbox reads as
-// this run's failure forever.
 import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -50,8 +44,6 @@ describe('parseSince', () => {
     expect(parseSince(' 5M ')).toEqual({ ms: 300000 });
   });
 
-  // The failure mode this replaces: parseInt('soon') is NaN, every comparison
-  // against it is false, and the query silently returns nothing.
   test('rejects garbage with a message naming the input and the accepted forms', () => {
     for (const bad of ['soon', '5', '5x', '-3m', '', '  ', 'm', '1.5h', undefined, null, 12]) {
       const r = parseSince(bad);
@@ -78,10 +70,6 @@ describe('compileGrep', () => {
   });
 });
 
-// A marker closes the window for the sources it can speak for, so the scan
-// returns two numbers: the last LAUNCH (src build -- a new run of the app
-// starts here, everything before it is history) and the last BUNDLE (src
-// metro -- the bundler is happy, which says nothing about the app).
 describe('markerWindow', () => {
   test('separates the launch marker from the bundle marker', () => {
     const records = [
@@ -112,8 +100,6 @@ describe('markerWindow', () => {
     expect(markerWindow([{ src: 'metro', msg: 'a', marker: true }])).toEqual({ launchTs: null, bundleTs: null });
   });
 
-  // Conservative on purpose: an unrecognised marker source resets EVERYTHING,
-  // so a producer added later shows more rather than silently less.
   test('a marker from any source other than metro counts as a launch', () => {
     expect(markerWindow([{ ts: 4, src: 'device', level: 'info', msg: 'x', marker: true }])).toEqual({
       launchTs: 4,
@@ -163,10 +149,6 @@ describe('recordMatches', () => {
     expect(recordMatches({ ...err, ts: 101 }, { errorsOnly: true, markerTs: 100 })).toBe(true);
   });
 
-  // The bundle cutoff is strict on purpose: a bundle marker can be a FAILED
-  // attempt's boundary, appended immediately before the attempt's own error
-  // records -- at the same millisecond when the failure is fast -- so a tie
-  // belongs to the window the marker opens, not the one it closes.
   test('errorsOnly with a bundle marker keeps a metro error at the exact marker ts', () => {
     const err = { ...rec, level: 'error' };
     expect(recordMatches({ ...err, ts: 99 }, { errorsOnly: true, bundleMarkerTs: 100 })).toBe(false);
@@ -298,7 +280,6 @@ describe('queryLogs', () => {
       expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
     });
 
-    // THE contract case: the marker lives in another file entirely.
     test('a build marker resets the window for client errors too', () => {
       writeLog('client.ndjson', [
         { ts: 10, src: 'client', level: 'error', msg: 'stale redbox from the last run' },
@@ -318,12 +299,6 @@ describe('queryLogs', () => {
       expect(queryLogs({ dir, errorsOnly: true }).map((r) => r.msg)).toEqual(['error after build 2']);
     });
 
-    // The tie rules differ by marker kind, on purpose. Nothing races the
-    // launch marker `ios`/`android` writes, so a record at its exact ts
-    // describes the run it closes off. A bundle marker can be a FAILED
-    // attempt's boundary, appended by the same producer to the same file
-    // immediately BEFORE the attempt's own errors, so a tie there belongs to
-    // the window the marker opens.
     test('an error at the exact launch-marker ts belongs to the previous window', () => {
       writeLog('client.ndjson', [{ ts: 5, src: 'client', level: 'error', msg: 'same instant' }]);
       writeLog('build-ios.ndjson', [{ ts: 5, src: 'build', level: 'info', msg: 'launched', marker: true }]);
@@ -350,20 +325,10 @@ describe('queryLogs', () => {
     });
   });
 
-  // --- the field sequences -------------------------------------------------
-  //
-  // Two real e2e runs against a real app produced these. They are written with
-  // wall-clock timestamps because the ORDER and the GAP are the whole bug: one
-  // second between a crash and the marker that swallowed it.
   describe('errorsOnly, against the field capture', () => {
     const at = (sec: number, ms = 0) =>
       Date.parse(`2026-08-24T16:03:${String(sec).padStart(2, '0')}.${String(ms).padStart(3, '0')}Z`);
 
-    // THE bug. The app threw at 16:03:54 while evaluating the bundle; Metro
-    // wrote bundle_build_done at 16:03:55, one second LATER, because the
-    // bundler finishes accounting for a build after the client has already run
-    // it. A single "last marker across all sources" cutoff read that marker as
-    // "everything before me is history" and reported a healthy app.
     test('a bundle marker 1s after a startup crash does not hide it', () => {
       writeLog('build-ios.ndjson', [
         { ts: at(50), src: 'build', level: 'info', msg: 'launched com.example.app', marker: true },
@@ -375,7 +340,6 @@ describe('queryLogs', () => {
         { ts: at(55), src: 'metro', level: 'info', msg: 'bundle build done (1)', marker: true },
       ]);
 
-      // The marker IS later than the error -- this is not a sorting accident.
       const window = markerWindow(readAll());
       assert(window.bundleTs !== null);
       expect(window.bundleTs > at(54)).toBeTruthy();
@@ -384,9 +348,6 @@ describe('queryLogs', () => {
       expect(queryLogs({ dir, errorsOnly: true }).map((r) => r.msg)).toEqual(['[Error: Exception in HostFunction]']);
     });
 
-    // The other direction, which the same rule has to keep: a bundle marker is
-    // exactly the right thing to retire a METRO error with, because a bundle
-    // that built is proof the resolve failure was fixed.
     test('a bundle marker still retires the metro error the rebuild fixed', () => {
       writeLog('metro.ndjson', [
         {
@@ -400,27 +361,18 @@ describe('queryLogs', () => {
       expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
     });
 
-    // And a launch marker retires everything, which is what stops the previous
-    // run's redbox from being reported forever.
     test('a launch marker retires a client error that preceded it', () => {
       writeLog('client.ndjson', [{ ts: at(40), src: 'client', level: 'error', msg: 'last run redbox' }]);
       writeLog('build-ios.ndjson', [{ ts: at(50), src: 'build', level: 'info', msg: 'launched', marker: true }]);
       expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
     });
 
-    // Metro errors clear both cutoffs: the later of the two wins, so a bundle
-    // error from BEFORE this run's launch is history even with no rebuild.
     test('a metro error before the launch marker is history too', () => {
       writeLog('metro.ndjson', [{ ts: at(40), src: 'metro', level: 'error', msg: 'stale bundling error' }]);
       writeLog('build-ios.ndjson', [{ ts: at(50), src: 'build', level: 'info', msg: 'launched', marker: true }]);
       expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
     });
 
-    // The tailwind failure as it was ACTUALLY stored during the field test:
-    // level info, because the supervisor's expo-child vocabulary did not know
-    // "Bundling failed" / "Unable to resolve" yet (that fix is elsewhere).
-    // Neither of this file's fixes invents it as an error, and neither hides
-    // it from a plain query -- so whichever way that lands, this is correct.
     test('a bundling failure stored at info is not an error, but is still in the timeline', () => {
       writeLog('metro.ndjson', [
         {
@@ -433,7 +385,6 @@ describe('queryLogs', () => {
       ]);
       expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
       expect(queryLogs({ dir }).length).toBe(1);
-      // ...and the moment its level is right, the window rule reports it.
       writeLog('metro.ndjson', [
         {
           ts: at(40),
@@ -447,17 +398,8 @@ describe('queryLogs', () => {
     });
   });
 
-  // --- consecutive failed bundles (appandflow/rn-iso#13) --------------------
-  //
-  // The repro from the issue: break the bundle, reload, change the cause,
-  // reload again. Before failed attempts wrote markers, both failures were
-  // listed oldest first and errorsSinceMarker only grew; an agent reading
-  // top-down acted on the stale one. Each attempt's boundary marker now
-  // advances the window past the PREVIOUS attempt, and a success still
-  // advances it past everything metro.
   describe('errorsOnly, consecutive failed bundles', () => {
     test('bare mode: only the newest attempt is reported, and a success clears it', () => {
-      // Attempt 1, as the reporter writes it: boundary first, then the error.
       writeLog('metro.ndjson', [
         {
           ts: 10,
@@ -473,7 +415,6 @@ describe('queryLogs', () => {
         'Unable to resolve "some-pkg" from "App.tsx"',
       ]);
 
-      // Attempt 2 fails differently: attempt 1 is superseded, not accumulated.
       writeLog('metro.ndjson', [
         {
           ts: 20,
@@ -489,7 +430,6 @@ describe('queryLogs', () => {
         'SyntaxError in App.tsx: Unexpected token',
       ]);
 
-      // Attempt 3 succeeds: the pass condition holds again.
       writeLog('metro.ndjson', [
         { ts: 30, src: 'metro', level: 'info', msg: 'bundle build done (3)', event: 'bundle_build_done', marker: true },
       ]);
@@ -497,8 +437,6 @@ describe('queryLogs', () => {
     });
 
     test('expo-child mode: the "Bundling failed" line is its own boundary and stays visible', () => {
-      // As stored from Expo's stdout: the failed summary IS the marker, and
-      // the detail line follows it.
       writeLog('metro.ndjson', [
         {
           ts: 10,
@@ -537,8 +475,6 @@ describe('queryLogs', () => {
       expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
     });
 
-    // A failed bundle says nothing about the app: only metro errors are
-    // superseded by it. The previous run's redbox stays until a launch.
     test('a failed-bundle marker does not retire a client error', () => {
       writeLog('client.ndjson', [{ ts: 5, src: 'client', level: 'error', msg: 'redbox' }]);
       writeLog('metro.ndjson', [{ ts: 10, src: 'metro', level: 'info', msg: 'bundle build failed (1)', marker: true }]);
@@ -546,12 +482,6 @@ describe('queryLogs', () => {
     });
   });
 
-  // --- the default scope ---------------------------------------------------
-  //
-  // The same field run returned 3,004 records from `--errors`, every one of
-  // them iOS syslog from inside the app's process. collector/ios.js demotes
-  // the proven offenders; this is the other half, for the ones nobody has
-  // curated yet: device is not in the default scope of --errors at all.
   describe('errorsOnly, scope', () => {
     test('ERROR_SOURCES is metro, client and build -- the app talking, not the OS', () => {
       expect(ERROR_SOURCES).toEqual(['metro', 'client', 'build']);
@@ -570,7 +500,6 @@ describe('queryLogs', () => {
       }
       writeLog('device.ndjson', storm);
       expect(queryLogs({ dir, errorsOnly: true })).toEqual([]);
-      // Nothing was dropped from the capture: they are one flag away.
       expect(queryLogs({ dir, errorsOnly: true, sources: ['device'] }).length).toBe(3004);
       expect(queryLogs({ dir }).length).toBe(3004);
     });
@@ -614,8 +543,6 @@ describe('incremental tailing', () => {
     });
   });
 
-  // A truncated file (a supervisor restart that rotated it) must not be read
-  // from an offset past its end, which would silently stall the follower.
   test('tailRead restarts from zero when the file shrank', () => {
     expect(tailRead({ offset: 100, partial: 'x' }, 4)).toEqual({
       start: 0,

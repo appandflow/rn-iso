@@ -1,38 +1,3 @@
-// src/engine/errors-gradle.js -- a gradle transcript reduced to the few lines
-// that say what actually broke.
-//
-// PURE, and the whole module is: it takes text and returns data. The build
-// itself lives in engine/gradle.js, so the parsing that decides what an agent
-// reads can be tested against recorded transcripts without a gradle daemon,
-// an Android SDK, or a network.
-//
-// Why this exists at all: `./gradlew assembleDebug` on a React Native app
-// emits several thousand lines, and the compiler diagnostic is four of them.
-// The design's output discipline is that the agent pays for those four --
-// on failure the EXTRACTED diagnostic plus the log path, never the
-// transcript. The full transcript is on disk in build-android.ndjson when it
-// is wanted, which is rarely, and never as tokens.
-//
-// The forms recognized below are gradle's and the Android toolchain's, in the
-// order a failing build prints them:
-//
-//   > Task :app:compileDebugKotlin FAILED       which task gave up
-//   e: file:///p/Main.kt:10:5 Unresolved ...    kotlinc, K2 URI form
-//   e: /p/Main.kt: (10, 5): Unresolved ...      kotlinc, pre-K2 form
-//   /p/Main.java:10: error: cannot find symbol  javac
-//   ERROR:/p/res/values/x.xml:5:5: AAPT: ...    aapt2 resource linking
-//   FAILURE: Build failed with an exception.    the summary block, whose
-//   * What went wrong:                          section is the one gradle
-//   Execution failed for task ':app:...'.       writes for humans
-//   > Could not resolve com.foo:bar:1.0.        dependency resolution
-//
-// Anything unrecognized yields [] rather than a guess: a wrong diagnostic
-// costs an agent more than no diagnostic, because it sends it editing a file
-// that is not broken.
-
-// A single extracted diagnostic. `line`/`column` and `remedy` are only ever
-// present when the pattern that matched carried a location / a known fix --
-// see the `add` closure in extractGradleDiagnostics and remedyFor.
 export interface Diagnostic {
   file?: string;
   line?: number;
@@ -43,32 +8,14 @@ export interface Diagnostic {
 
 export const MAX_DIAGNOSTICS = 10;
 
-// A single diagnostic's message is a line of an agent's output, not a page.
 const MAX_MESSAGE_LENGTH = 300;
 
-// --- the recognized forms -------------------------------------------------
-
-// kotlinc K2: `e: file:///abs/Main.kt:10:5 Unresolved reference 'foo'.`
 const KOTLIN_URI = /^e:\s+file:\/\/(\/\S+?):(\d+):(\d+)\s+(.*)$/;
-// kotlinc pre-K2: `e: /abs/Main.kt: (10, 5): Unresolved reference: foo`
 const KOTLIN_PAREN = /^e:\s+(\S+?):\s*\((\d+),\s*(\d+)\):\s*(.*)$/;
-// Anything else kotlinc marks as an error, e.g. `e: Compilation error.`
 const KOTLIN_BARE = /^e:\s+(.*)$/;
-// javac: `/abs/Main.java:10: error: cannot find symbol`, and the
-// file:line:col:error: form clang-style tools use.
 const FILE_LINE_ERROR = /^([^\s:]+):(\d+):(?:(\d+):)?\s*(?:AAPT:\s*)?error:\s*(.*)$/i;
-// aapt2 through gradle: `ERROR:/abs/res/values/strings.xml:5:5: AAPT: error: ...`
 const AAPT_PREFIXED = /^ERROR:\s*([^\s:]+):(\d+):(?:(\d+):)?\s*(.*)$/;
-// A bare `error: resource string/foo not found.` with no file to blame.
 const BARE_ERROR = /^error:\s*(.*)$/i;
-// CMake's own fatal line, which is where a native build says what to DO about
-// it. AGP folds a failed C/C++ configure into gradle's "* What went wrong:"
-// section as one long [CXX1429] block; that section is joined into a single
-// message and then clipped at MAX_MESSAGE_LENGTH, and the line naming the fix
-// (`message(FATAL_ERROR "... run npx install-skia")`) sits at the END of the
-// block -- so the clip removed the only actionable line in it. Every
-// FATAL_ERROR line is therefore ALSO kept as a diagnostic of its own, both
-// inside that block and standalone in the transcript.
 const FATAL_ERROR = /FATAL_ERROR/;
 const TASK_FAILED = /^>\s*Task\s+(:[A-Za-z0-9_.:-]+)\s+FAILED\b/;
 const FAILURE_HEADER = /^FAILURE:\s*Build (?:failed|completed with)/;
@@ -76,12 +23,6 @@ const WHAT_WENT_WRONG = /^\*\s*What went wrong:/;
 const SECTION = /^\*\s*[A-Za-z]/;
 const COULD_NOT_RESOLVE = /^>?\s*(Could not (?:resolve|find|download|GET) .+)$/;
 
-// --- remedies -------------------------------------------------------------
-//
-// Only for failures whose fix is environmental rather than in the code. A
-// remedy on "cannot find symbol" would be noise; a remedy on "SDK location
-// not found" is the entire answer, and without it an agent retries the build
-// instead of setting the variable.
 const REMEDIES: Array<[RegExp, string]> = [
   [
     /JAVA_HOME is (?:set to an invalid directory|not set)/i,
@@ -121,13 +62,6 @@ export function remedyFor(message: string): string | null {
   return null;
 }
 
-// --- the extractor --------------------------------------------------------
-
-// Returns every diagnostic found, deduped, in transcript order. Unrecognized
-// text returns []. The cap lives in capDiagnostics so the extractor stays a
-// plain "what is in this text" question -- a caller wanting all of them (a
-// test, a future `logs --build`) is not forced through a limit meant for
-// terminal output.
 export function extractGradleDiagnostics(text: string): Diagnostic[] {
   if (typeof text !== 'string' || text.trim() === '') return [];
   const lines = text.split('\n');
@@ -154,9 +88,6 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
     const line = raw.trim();
     if (!line) continue;
 
-    // The FAILURE block is multi-line and is handled first: its inner lines
-    // ("Execution failed for task ...", "> Compilation failed; see ...")
-    // would otherwise be picked up individually and read as separate faults.
     if (FAILURE_HEADER.test(line)) {
       const block = readWhatWentWrong(lines, i);
       if (block) {
@@ -167,8 +98,6 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
       continue;
     }
     if (WHAT_WENT_WRONG.test(line)) {
-      // A transcript captured from the middle (a tail, a log excerpt) can
-      // start inside the block, with no FAILURE header above it.
       const block = readWhatWentWrong(lines, i - 1);
       if (block) {
         add({ message: block.message });
@@ -178,8 +107,6 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
       continue;
     }
 
-    // Before every other form: a CMake fatal is the fix, and it must survive
-    // whatever else the line also looks like.
     if (FATAL_ERROR.test(line)) {
       add({ message: line });
       continue;
@@ -187,8 +114,6 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
 
     const kotlinUri = KOTLIN_URI.exec(line);
     if (kotlinUri) {
-      // file and message are required capture groups; skip if a match somehow
-      // lacks them rather than fabricate a diagnostic.
       const uriFile = kotlinUri[1];
       const uriMsg = kotlinUri[4];
       if (uriFile === undefined || uriMsg === undefined) continue;
@@ -273,7 +198,6 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
   return found;
 }
 
-// PURE. What goes on the terminal, and what was left in the log.
 export function capDiagnostics(
   diagnostics: Diagnostic[],
   limit: number = MAX_DIAGNOSTICS,
@@ -283,8 +207,6 @@ export function capDiagnostics(
   return { shown: all.slice(0, limit), truncated: all.length - limit };
 }
 
-// PURE. One diagnostic as one line, in the compiler's own file:line:col
-// shape so an editor, a grep, and a human all read it the same way.
 export function formatDiagnostic(diag?: Diagnostic | null): string {
   if (!diag) return '';
   const where = diag.file
@@ -293,13 +215,6 @@ export function formatDiagnostic(diag?: Diagnostic | null): string {
   return `${where}${diag.message}`;
 }
 
-// --- helpers --------------------------------------------------------------
-
-// The "* What went wrong:" section, from a FAILURE header at `start`. Gradle
-// writes the cause on the first line and each nested cause on a `> ` line
-// under it, then moves on to "* Try:". The nested causes carry the useful
-// half ("Compilation failed", "Could not resolve X"), so they are joined
-// into the message rather than dropped.
 function readWhatWentWrong(
   lines: string[],
   start: number,
@@ -307,8 +222,6 @@ function readWhatWentWrong(
   let i = start + 1;
   while (i < lines.length && !WHAT_WENT_WRONG.test(stripCarriage(lines[i]).trim())) {
     const probe = stripCarriage(lines[i]).trim();
-    // Only whitespace separates the header from the section. Anything else
-    // means this FAILURE header is not followed by one at all.
     if (probe !== '' && !FAILURE_HEADER.test(probe)) return null;
     i++;
   }
@@ -320,16 +233,12 @@ function readWhatWentWrong(
     const line = stripCarriage(lines[j]).trim();
     if (SECTION.test(line)) break;
     if (line === '') {
-      // A blank line ends the section only once something has been read;
-      // gradle puts none inside it.
       if (parts.length) break;
       continue;
     }
     parts.push(line.replace(/^>\s*/, ''));
   }
   if (parts.length === 0) return null;
-  // The fatal lines are returned SEPARATELY as well as inside the joined
-  // message: the join is clipped, and these are the lines that must not be.
   return { message: parts.join(' '), fatal: parts.filter((part) => FATAL_ERROR.test(part)), endIndex: j - 1 };
 }
 
@@ -339,9 +248,6 @@ function stripAaptPrefix(message: string): string {
     .replace(/^error:\s*/i, '');
 }
 
-// kotlinc prints a file URI, and a path with a space in it comes back
-// percent-encoded. decodeURIComponent throws on a malformed sequence, which
-// is not a reason to lose the diagnostic.
 function decodePath(path: string): string {
   try {
     return decodeURIComponent(path);
@@ -350,8 +256,6 @@ function decodePath(path: string): string {
   }
 }
 
-// Gradle's rich console redraws with carriage returns; a captured transcript
-// keeps them, and they would otherwise glue two lines together.
 function stripCarriage(line: string | undefined): string {
   const text = String(line ?? '');
   const idx = text.lastIndexOf('\r');

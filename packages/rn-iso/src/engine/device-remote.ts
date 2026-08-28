@@ -19,12 +19,12 @@
 // so `ensureOwnedDevice` here does NOTHING but record intent, and the session
 // is created in `ensureBooted`, AFTER the gate. Same ordering property, same
 // reason, opposite mechanics.
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
-import { workspaceLogsDir } from '../paths.ts';
+import { workspaceDir, workspaceLogsDir } from '../paths.ts';
 import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import type { RemoteDeviceBackend } from '../types.ts';
 import {
@@ -262,11 +262,14 @@ function writeProfile(ctx: RemoteContext, daemon: RemoteDaemon): string {
  * differing is only what the two command files call their fields --
  * udid/serial, bundleId/packageName, appPath/apkPath.
  */
+function exec() {
+  return getExecutor();
+}
+
 function remoteDeviceDeps(ctx: RemoteContext) {
   let session: RemoteSession | null = null;
   let createdSession: string | null = null;
 
-  const exec = () => getExecutor();
   const easEnv = easExecOptions(ctx.root);
 
   return {
@@ -757,7 +760,17 @@ export function withRemoteSessionLock<T>(
   fn: () => Promise<T>,
   options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  return withWorkspaceProcessLock(root, 'remote-session', fn, { waitMs: 4 * 60_000, ...options });
+  let canonicalRoot: string;
+  try {
+    canonicalRoot = realpathSync(root);
+  } catch {
+    canonicalRoot = resolvePath(root);
+  }
+  return withWorkspaceProcessLock(workspaceDir(canonicalRoot), 'remote-session', fn, {
+    external: true,
+    waitMs: 4 * 60_000,
+    ...options,
+  });
 }
 
 export async function ensureRemoteBootOwned<T extends BootResult>({

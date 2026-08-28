@@ -1,10 +1,3 @@
-// The NDJSON core: Contract 1 records in, one JSON object per line out.
-//
-// The load-bearing property here is that a logging failure must never reach
-// the caller. The supervisor calls write() from inside a Metro reporter on
-// every event; if a full disk or a deleted directory threw from there, a
-// logging problem would take the dev server down with it. So every failure
-// path is a counted drop, and close() is where the count surfaces.
 import assert from 'node:assert';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -43,8 +36,6 @@ describe('parseNdjsonLine', () => {
     expect(parseNdjsonLine('   ')).toBe(null);
   });
 
-  // A half-written final line is the normal state of a file being appended to
-  // by a live supervisor. Reading it must skip, never throw.
   test('returns null for a truncated or corrupt line', () => {
     expect(parseNdjsonLine('{"ts":1,"src":"met')).toBe(null);
     expect(parseNdjsonLine('not json at all')).toBe(null);
@@ -155,9 +146,6 @@ describe('createNdjsonWriter', () => {
     expect(msgs).toEqual(['first', 'second']);
   });
 
-  // The build transcript's mode: a per-run file whose first error belongs to
-  // THIS run. The multi-writer logs never pass truncate, which the append
-  // test above pins.
   test('truncate: true starts the file over instead of appending to the previous run', () => {
     const file = join(dir, 'build-ios.ndjson');
     const a = createNdjsonWriter(file, { truncate: true });
@@ -180,9 +168,6 @@ describe('createNdjsonWriter', () => {
     expect(msgs).toEqual(['one', 'two']);
   });
 
-  // Truncation rides the lazy open, not writer creation: `ios` creates the
-  // writer before the Metro gate, and a run refused there must leave the
-  // previous run's transcript intact rather than an empty file.
   test('truncation happens on the first write, not at writer creation', () => {
     const file = join(dir, 'build-ios.ndjson');
     const a = createNdjsonWriter(file);
@@ -206,8 +191,6 @@ describe('createNdjsonWriter', () => {
     expect(stats.file).toBe(join(dir, 'metro.ndjson'));
   });
 
-  // A file where a directory should be is the cheap, real stand-in for the
-  // whole family of fs failures (ENOSPC, EACCES, a raced rmdir).
   test('never throws when the path cannot be opened, and counts the drop', () => {
     const blocker = join(dir, 'logs');
     writeFileSync(blocker, 'i am a file, not a directory');
@@ -243,8 +226,6 @@ describe('createNdjsonWriter', () => {
     expect(parseNdjsonText(readFileSync(file, 'utf-8')).map((r) => r.msg)).toEqual(['fine']);
   });
 
-  // The supervisor keeps writing while a `worktree remove` or a stray rm -rf
-  // takes the log directory out from under it. That must not throw either.
   test('keeps working when its directory is removed mid-run', () => {
     const file = join(dir, 'logs', 'metro.ndjson');
     const w = createNdjsonWriter(file);
