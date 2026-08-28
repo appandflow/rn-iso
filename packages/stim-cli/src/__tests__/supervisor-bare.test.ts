@@ -8,6 +8,7 @@ import {
   checkBareApi,
   ensureNativePlatform,
   loadNdjsonReporter,
+  normalizeMetroTransformerPaths,
   normalizeModule,
   reporterLogger,
   resolveBareDeps,
@@ -158,6 +159,22 @@ describe('config adjustments', () => {
 
   test('ensureNativePlatform tolerates a config with no resolver', () => {
     expect(ensureNativePlatform({})).toBe(false);
+  });
+
+  test('normalizes a project-local Metro transformer path across worktrees', () => {
+    const config = {
+      transformer: {
+        asyncRequireModulePath: join(root, 'node_modules', 'metro-runtime', 'src', 'modules', 'asyncRequire.js'),
+      },
+    };
+    expect(normalizeMetroTransformerPaths(config, root)).toBe(true);
+    expect(config.transformer.asyncRequireModulePath).toBe('./node_modules/metro-runtime/src/modules/asyncRequire.js');
+  });
+
+  test('keeps a Metro transformer path outside the project root', () => {
+    const config = { transformer: { asyncRequireModulePath: '/shared/metro-runtime/asyncRequire.js' } };
+    expect(normalizeMetroTransformerPaths(config, root)).toBe(false);
+    expect(config.transformer.asyncRequireModulePath).toBe('/shared/metro-runtime/asyncRequire.js');
   });
 });
 
