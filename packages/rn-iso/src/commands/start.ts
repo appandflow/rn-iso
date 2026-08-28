@@ -1,19 +1,3 @@
-// src/commands/start.js -- reserve the port, spawn the detached supervisor,
-// wait until the dev server is verifiably THIS project's, print the facts.
-//
-// `start` is the one command that blocks on purpose: waiting for health is its
-// contract, because everything an agent does next (build, install, launch)
-// fails slowly and confusingly if the bundler is not up yet.
-//
-// Health is `resolveProjectMetro`, never a bare /status probe. A port is not
-// identity: a foreign bundler answering /status on our reserved port would
-// send the agent's build at someone else's dev server, which is exactly what
-// the identity check exists to prevent -- and the reserved port moves instead
-// of being reported as a conflict the caller can do nothing about.
-//
-// Three flags: --json, --wait, and --remote. Anything a project needs
-// beyond that is the project's own bundler command, which is not rn-iso's
-// judgment to make.
 import chalk from 'chalk';
 import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync, readFileSync } from 'node:fs';
@@ -58,8 +42,6 @@ import {
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
-// The same stopwatch the build commands stamp their phase lines with, so the
-// OK line's total wait reads the same way ("4s", "1m4s").
 import { stepTimer } from './ios.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
@@ -80,15 +62,6 @@ interface WaitResult {
   error?: string;
 }
 
-// PURE. Whether THIS Expo dev server should tunnel itself.
-//
-// Matches engine/metro-reach.ts's own condition for its `{ expoTunnel: true }`
-// branch (mode is "expo") and its precedence
-// (a named metro.publicUrl wins over starting anything). Not routed through
-// planMetroReach itself: that function also decides between a managed
-// provider and a refusal, neither of which `start` can act on -- there is no
-// device here yet to hand a tunnel to, and no `available` providers worth
-// probing for a decision this narrow.
 export function wantsExpoOwnTunnel({
   isExpo,
   remote,
@@ -375,8 +348,6 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         Boolean(opts.remote) || remoteIosSetting(settings) !== null || remoteAndroidSetting(settings) !== null;
       const tunnelMode = tunnelModeSetting(settings) ?? 'auto';
       const publicUrl = publicUrlSetting(settings);
-      // Decided here, not at `ios`/`android --remote` time: a later run
-      // cannot retroactively add `--tunnel` to an already-running dev server.
       const tunnel = wantsExpoOwnTunnel({
         isExpo,
         remote,
@@ -406,8 +377,6 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
 
         const spawnSupervisor = (origin: string | null): ChildProcess => {
           mkdirSync(logsDir, { recursive: true });
-          // One append-only descriptor preserves stdout and stderr order and
-          // records failures that occur before structured logging starts.
           const fd = openSync(logFile, 'a');
           spawnedTs = Date.now();
           const supervisorArgs = [
@@ -420,8 +389,6 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           ];
           const child = getExecutor().spawn(process.execPath, supervisorArgs, {
             cwd: root,
-            // The supervisor owns its process group so it survives this command
-            // and can be stopped without signalling the caller's shell.
             detached: true,
             stdio: ['ignore', fd, fd],
             env: origin
@@ -704,8 +671,6 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           }
         };
 
-        // Already up: the whole point of an idempotent start. Two `start` runs in
-        // a row must leave one supervisor, not two bundlers fighting for a port.
         if (!spawnedChild && resolution.metro) {
           if (managedTunnelExited()) return failExitedManagedTunnel();
           if (tunnel && supervisor) {
@@ -742,10 +707,6 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           return;
         }
 
-        // A live supervisor that is not answering yet is either still starting
-        // (the common case, when two `start` runs race) or wedged. Either way,
-        // spawning a second one would leave the workspace with two supervisors
-        // and one port, so we wait on the one that exists instead.
         if (!spawnedChild && supervisor) {
           note(
             chalk.dim(
@@ -799,7 +760,6 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           return;
         }
 
-        // ---- spawn the supervisor ----
         if (managedTunnelExited()) return failExitedManagedTunnel();
         const child = spawnedChild ?? spawnSupervisor(publicOrigin);
         const attemptStartedTs = spawnedTs ?? Date.now();
@@ -808,22 +768,12 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           root,
           port,
           seconds: waitSeconds,
-          // A supervisor that has already exited is never going to answer, so
-          // the wait ends at second one instead of at sixty.
           aborted: () => childExit !== null || (child.pid ? !isPidAlive(child.pid) : false) || managedTunnelExited(),
         });
 
         if (!healthy) {
           if (managedTunnelExited()) return failExitedManagedTunnel();
-          // A supervisor that is GONE and one that is merely slow need different
-          // next steps, so the two are distinguished rather than both reported
-          // as a timeout. The exit event is the better evidence; the liveness
-          // check catches the case where the process died without us seeing it.
           const gone = childExit !== null || (child.pid ? !isPidAlive(child.pid) : false);
-          // Cast rather than rely on narrowing: childExit is only ever
-          // reassigned inside the 'exit'/'error' listeners above, and TS's flow
-          // analysis does not see through those closures back to its declared
-          // type here.
           const exitInfo = childExit as ChildExitInfo | null;
           const how = exitInfo
             ? exitInfo.signal
@@ -868,10 +818,12 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           }
         }
 
-        supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) ||
-          // child.pid is only undefined if the spawn itself failed, which the
-          // health check above would already have turned into a failure.
-          { pid: child.pid as number, port, mode: null, startedAt: null };
+        supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) || {
+          pid: child.pid as number,
+          port,
+          mode: null,
+          startedAt: null,
+        };
         report({ json, out, port, supervisor, logsDir, alreadyRunning: false, waited: waitTimer() });
       };
 
@@ -955,10 +907,6 @@ async function waitForExpoTunnel({
   return !aborted() && readMetroTunnel(root)?.kind === 'expo';
 }
 
-// The evidence a start failure carries: the last lines of the supervisor's raw
-// stdio, then the path to the rest of it. That file is the ONLY record of a
-// supervisor that died before it could write a structured one, which is why
-// every failure quotes it.
 function logTailLines(logFile: string): string[] {
   return [...readLogTail(logFile), `Supervisor log: ${logFile}`];
 }

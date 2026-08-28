@@ -489,9 +489,6 @@ test('action: main-checkout artifact deletion blocks a concurrent replacement tu
   expect(existsSync(workspaceStateFile(mainDir))).toBe(false);
 });
 
-// A registered directory that is not a git repo at all: there is no worktree
-// to hand to git and no git status to guard, so environment reclaim is the
-// only thing `remove` can mean there -- and it gets exactly that.
 test('action: a registered project directory that is not a git repo gets the same environment reclaim', async () => {
   upsertProject(wtDir, {
     metroPort: 8087,
@@ -654,12 +651,6 @@ test('action: a retained EAS session prevents generic worktree removal', async (
   expect(errs.join('\n')).toContain('eas simulator:stop --id drs_retained');
 });
 
-// Regression: in a monorepo, `rn-iso ios` registers a nested app dir (e.g.
-// `<worktree>/apps/mobile`) as its own config key -- a different key from
-// the worktree root that `worktree create` registers. That nested key is
-// where metroPort and the device claim actually live. Reclaiming only the
-// exact `path` argument (the old behaviour) leaves the nested entry, its
-// Metro process, and its port claim to leak until `gc --delete` runs.
 test('action: reclaims a nested monorepo app-dir project registered under the worktree root, not just the root itself', async () => {
   const nestedDir = join(wtDir, 'apps', 'mobile');
   upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
@@ -958,8 +949,6 @@ test('action: an unregistered nested remote start cannot bypass the worktree rem
   await expect(withManagedRemoteWorktreeLock(wtDir, async () => 'released')).resolves.toBe('released');
 });
 
-// Containment: a path out of `git status` is relative to the worktree, and
-// anything that resolves outside it is left alone whatever it says.
 test('action: a dirty path escaping the worktree is never removed', async () => {
   upsertProject(wtDir, { metroPort: 8093 });
   const outside = join(mainDir, '.rn-iso');

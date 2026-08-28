@@ -1,12 +1,3 @@
-// engine/metro-reach.js -- the one decision about how a remote device reaches
-// this workspace's Metro.
-//
-// The property these pin hardest is the DIRECTION OF THE DEFAULT. rn-iso used
-// to infer "the device is on this machine" from "the daemon URL is loopback",
-// which `ssh -L` makes false, and the app was then pointed at a localhost that
-// resolved on the other machine. Nothing here infers; `auto` assumes the
-// device is elsewhere, because a device that CAN reach localhost loses nothing
-// by being handed a tunnel and a device that cannot loses the whole run.
 import assert from 'node:assert';
 import { detectProviders, planMetroReach, TUNNEL_MODES } from '../engine/metro-reach.ts';
 
@@ -15,9 +6,6 @@ const EXPO = { metroPort: 8085, isExpo: true } as const;
 
 describe('off is an assertion, not a guess', () => {
   test('off uses localhost and skips the gate', () => {
-    // The one case with no third party in the path: a same-machine
-    // `agent-device proxy`. There is nothing to verify because rn-iso is not
-    // trusting anyone else's address.
     expect(planMetroReach({ ...BARE, mode: 'off' })).toEqual({ origin: 'http://localhost:8085', gate: false });
   });
 
@@ -38,8 +26,6 @@ describe('an address the operator supplied', () => {
   });
 
   test('is GATED, because rn-iso did not create it', () => {
-    // The stale-tunnel bug: a URL rn-iso did not build is one it cannot vouch
-    // for, so it must be proven to reach THIS workspace's Metro.
     const plan = planMetroReach({ ...BARE, mode: 'auto', publicUrl: 'https://abc.example' });
     expect('gate' in plan && plan.gate).toBe(true);
   });
@@ -94,8 +80,6 @@ describe('a managed provider', () => {
   });
 
   test('auto with nothing installed refuses, and names every way out', () => {
-    // The refusal has to be actionable: install one, point at an existing
-    // tunnel, or declare the device local.
     const plan = planMetroReach({ ...BARE, mode: 'auto', available: [] });
     expect('failed' in plan).toBe(true);
     assert('failed' in plan);
@@ -105,9 +89,6 @@ describe('a managed provider', () => {
   });
 
   test('auto NEVER falls back to localhost', () => {
-    // The whole point. Falling back would recreate the bug this file exists
-    // to remove: a remote device told to fetch from a localhost that is not
-    // this machine.
     for (const available of [[], ['ngrok'] as const, ['cloudflared'] as const]) {
       const plan = planMetroReach({ ...BARE, mode: 'auto', available });
       expect('origin' in plan).toBe(false);
@@ -135,9 +116,6 @@ describe('provider detection', () => {
   });
 
   test('prefers ngrok when both are installed', () => {
-    // A cloudflared quick tunnel takes MINUTES to become routable and gets a
-    // new hostname every run; ngrok routes immediately. Both work, so the
-    // faster one is the default when there is a choice.
     expect(detectProviders(() => true)).toEqual(['ngrok', 'cloudflared']);
   });
 

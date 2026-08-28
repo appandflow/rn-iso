@@ -631,8 +631,6 @@ function findBundleRequest(
   return null;
 }
 
-// Exported so the remote Metro gate reads this workspace's timeline the
-// same way launch verification does. Both checks use the same proof records.
 export function readMetroRecords(logsDir: string | undefined): NdjsonRecord[] {
   return readNdjson(logsDir, 'metro.ndjson');
 }
@@ -666,9 +664,6 @@ export function unverifiedLaunchLines({
   serial?: string | null;
   devClientUrl?: string | null;
   mode?: string | null;
-  // A remote device has no simctl on this machine, and the app was pointed at
-  // metroOrigin rather than at localhost, so the local steps below are all
-  // wrong for it -- `xcrun simctl openurl <session-id>` names nothing.
   remote?: boolean;
   metroOrigin?: string | null;
   // Explicit return type: isolatedDeclarations requires one at every module
@@ -684,10 +679,6 @@ export function unverifiedLaunchLines({
   let step = 0;
   const push = (text: string) => lines.push(`  ${++step}. ${text}`);
   if (remote) {
-    // The device is not on this machine, so every simctl/adb step is
-    // unusable. What CAN be wrong is reachability: the app fetches from
-    // metroOrigin, and unlike a local run that address has to work from the
-    // device's network, not from here.
     push(
       `Check that ${origin} is reachable FROM THE DEVICE's network, not just from this machine. That is the usual cause: a tunnel that stopped, or one this machine can reach and the device cannot.`,
     );

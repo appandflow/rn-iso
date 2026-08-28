@@ -100,16 +100,7 @@ function writePhase(name: unknown, text: string): void {
 
 export const PLATFORM = 'ios';
 
-// Build for the simulator platform rather than one device. Used only when the
-// device is remote: see the buildIos call for why `id=<udid>` cannot work
-// there.
 const GENERIC_SIM_DESTINATION = 'generic/platform=iOS Simulator';
-
-// --- local, flat shapes for engine results ---------------------------------
-//
-// These interfaces describe only the shape THIS file reads off the engine and
-// sim results -- a deliberately local, all-optional view, looser than the
-// producers' own exported types, matching the defensive reads underneath.
 
 interface DeviceLike {
   deviceName?: string | null;
@@ -526,8 +517,6 @@ export function iosFacts({
     metroPort,
     logs: { dir: logsDir },
     durationMs,
-    // Omitted entirely on a local device rather than carried as null: a key
-    // that is always present invites a caller to print an empty link.
     ...(webPreviewUrl ? { webPreviewUrl } : {}),
   };
 }
@@ -618,8 +607,6 @@ export async function replaceCollector({
 }
 
 interface IosDeps {
-  // Remote mode's two entries. Everything else in this seam is a local
-  // engine call; these are what let `--remote` swap the device out.
   resolveRemoteContext: typeof resolveRemoteContext;
   ensureMetroReachable: typeof ensureMetroReachable;
   ensureRemoteBootOwned: typeof ensureRemoteBootOwned;
@@ -1203,9 +1190,6 @@ async function finishIosRun({
 }
 
 export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> = {}): Promise<IosFacts | null> {
-  // Annotated explicitly: spreading a Partial<> over the full DEFAULT_DEPS
-  // would otherwise let TS infer some properties as possibly-undefined, even
-  // though every key is always present (DEFAULT_DEPS supplies every one).
   let d: typeof DEFAULT_DEPS = { ...DEFAULT_DEPS, ...overrides };
   const json = Boolean(opts.json);
   const metroCheck = opts.metroCheck !== false;
@@ -1315,11 +1299,6 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const proj = d.getProject(root);
   const label = d.projectShortcut(root, proj);
 
-  // ---- remote device: four dep overrides, or none ----
-  //
-  // `--remote` swaps the device out and NOTHING else. The build, the
-  // fingerprint, the cache and Metro all stay exactly where they were, which
-  // is why this is four entries in the dep seam rather than a second command.
   let remoteDevice: ReturnType<typeof d.remoteIosDeps> | null = null;
   if (remoteBackend) {
     const resolved = await d.resolveRemoteContext({
@@ -1342,7 +1321,6 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     };
   }
 
-  // ---- concurrency: opt-in, unlimited by default ----
   const limits = d.getConcurrencyLimits();
 
   const capacity = d.checkDeviceCapacity({

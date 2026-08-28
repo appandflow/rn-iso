@@ -359,11 +359,8 @@ interface ReclaimAllResult {
   skippedDevices: SkippedDevice[];
   keptEntries: string[];
   retainedResources: RetainedResource[];
-  // Every key that was reclaimed, including nested registered projects.
   reclaimedKeys: string[];
-  // The remote sessions this reclaim ended. Each one was billing.
   stoppedSessions: string[];
-  // The managed tunnels (ngrok/cloudflared) this reclaim ended.
   stoppedTunnels: string[];
   removedWorkspaceDirs: string[];
   failedWorkspaceDirs: string[];
@@ -474,19 +471,6 @@ function hasRegisteredProjectUnder(rootPath: string): boolean {
   return Object.keys(cfg?.projects ?? {}).some((key) => isPathPrefix(rootPath, key));
 }
 
-// `worktree remove` on the MAIN working tree (or on a registered directory
-// that is not a git repo at all): everything the normal removal does to
-// rn-iso's own state -- reclaim every registered key under the root with the
-// owned devices deleted, drop the registry entries, delete each global
-// workspace directory -- with the source tree itself left completely alone. There is
-// no `git worktree remove` here (git cannot remove the main tree) and no
-// dirty/unpushed guard: those protect work in a tree about to be deleted,
-// and nothing here is deleted but rn-iso's own state dir, so dirt is not
-// this command's business and is not mentioned. Every line goes to stderr,
-// mirroring the normal removal's reporting.
-//
-// A retained owned-resource record keeps its global workspace directory and
-// makes the command exit 1, so the next removal attempt can retry the teardown.
 async function reclaimEnvironment(root: string, why: string): Promise<void> {
   await withManagedRemoteWorktreeRemovalLock(root, () =>
     withReclaimLocks(root, async (lockedKeys) => {

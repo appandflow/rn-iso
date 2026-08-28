@@ -349,9 +349,6 @@ describe('runSupervisor', () => {
         return server.handle;
       },
     });
-    // startBareServer's own signature does not read `tunnel` at all; this
-    // only pins that runSupervisor still passes it through uniformly rather
-    // than special-casing the bare starter.
     expect(bareSawTunnel).toBe(true);
   });
 

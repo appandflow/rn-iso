@@ -1,13 +1,3 @@
-// engine/eas-simulator.js -- the `eas sim` session, asserted as exact argv
-// and against eas-cli's real JSON shapes.
-//
-// The shapes below are eas-cli's own, read from source rather than guessed:
-//   commands/simulator/index.ts  printJsonOnlyOutput({id, name, type,
-//                                deviceRunSessionUrl, remoteConfig})
-//   simulator/utils.ts           AgentDeviceRunSessionRemoteConfig carries
-//                                agentDeviceRemoteSessionUrl / ...Token
-//   commands/simulator/list.ts   printJsonOnlyOutput({sessions, pageInfo})
-//   commands/simulator/stop.ts   printJsonOnlyOutput({id, status})
 import assert from 'node:assert';
 import type { Executor } from '../exec.ts';
 import {
@@ -26,8 +16,6 @@ import {
   stopSessionArgs,
 } from '../engine/eas-simulator.ts';
 
-// eas-cli emits pure JSON on stdout under --json; every non-JSON message goes
-// to stderr. These fixtures are therefore whole-stdout, not fragments.
 const AGENT_DEVICE_CONFIG = {
   __typename: 'AgentDeviceRunSessionRemoteConfig',
   agentDeviceRemoteSessionUrl: 'https://sim-42.eas.dev/daemon',
@@ -168,8 +156,6 @@ describe('definitive missing-session errors', () => {
 describe('createSessionArgs', () => {
   test('never writes .env.eas-simulator into the project', () => {
     const args = createSessionArgs({ label: 'wt', platform: 'ios' });
-    // --out-config-type env makes eas PRINT the config instead of writing a
-    // dotenv into the project dir, which it does even under --json.
     const i = args.indexOf('--out-config-type');
     expect(i).toBeGreaterThan(-1);
     expect(args[i + 1]).toBe('env');
@@ -235,8 +221,6 @@ describe('remoteDaemonFrom', () => {
   });
 
   test('refuses a session of another type rather than half-reading it', () => {
-    // rn-iso drives agent-device. An appium or argent session is a real
-    // session that this backend cannot speak to, so it must not look usable.
     expect(remoteDaemonFrom({ __typename: 'AppiumRunSessionRemoteConfig', appiumUrl: 'x' })).toBeNull();
     expect(remoteDaemonFrom(null)).toBeNull();
     expect(remoteDaemonFrom(undefined)).toBeNull();
@@ -385,9 +369,6 @@ describe('the read and destroy argv', () => {
   });
 
   test('stopSessionArgs names the session explicitly, never the ambient dotenv', () => {
-    // stop defaults to .env.eas-simulator when --id is absent, which would
-    // reach for whatever session that file names -- possibly another
-    // workspace's.
     expect(stopSessionArgs('drs_42')).toEqual(['simulator:stop', '--id', 'drs_42', '--json', '--non-interactive']);
   });
 
@@ -418,8 +399,6 @@ describe('the read and destroy argv', () => {
 
 describe('the executor seam', () => {
   test('every eas call runs through runFile, in the project directory', () => {
-    // eas sim resolves its project from cwd and takes no positional for it,
-    // unlike `expo config --json <root>`.
     const exec = recordingExec();
     exec.runFile('/bin/eas', createSessionArgs({ label: 'wt', platform: 'ios' }), { cwd: '/work/app' });
     expect(exec.calls[0]?.[0]).toBe('/bin/eas');
@@ -428,11 +407,6 @@ describe('the executor seam', () => {
 });
 
 describe('the shape eas sim actually prints', () => {
-  // VERBATIM from a live `eas sim --platform ios --json` against appandflow.
-  // The point of this fixture is what it does NOT have: __typename. That
-  // field exists on eas-cli's in-memory GraphQL object, which is what its own
-  // source switches on, but printJsonOnlyOutput does not serialize it.
-  // Requiring it rejected every real session -- the bug this pins.
   const LIVE = JSON.stringify({
     id: '01a03fb5-c9f7-7403-8810-712f74e6cafc',
     name: 'rn-iso endpoint probe',
@@ -456,8 +430,6 @@ describe('the shape eas sim actually prints', () => {
   });
 
   test('__typename is honoured when present but never required', () => {
-    // A caller reading the GraphQL object directly still gets the strict
-    // answer; a caller reading the CLI's JSON is not punished for its absence.
     expect(
       remoteDaemonFrom({
         __typename: 'AppiumRunSessionRemoteConfig',

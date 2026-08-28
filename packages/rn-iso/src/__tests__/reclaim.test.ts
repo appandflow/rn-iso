@@ -130,17 +130,6 @@ test('reclaimProject refuses to kill an unidentified process on the port', async
   resetExecutor();
 });
 
-// --- the remote session ----------------------------------------------------
-//
-// A remote session bills until its max duration, so `worktree remove` and
-// `gc` ending it is not housekeeping -- it is the difference between a clean
-// teardown and money spent on nothing.
-//
-// TIMING is what these pin. The session id lives in the workspace's
-// state.json and `eas simulator:stop` needs a project directory, so both are
-// gone the moment the caller removes the tree. Ending it has to happen inside
-// reclaim, before that.
-
 function workspaceWithSession(sessionId: string): string {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-ws-'));
   ensureWorkspaceStorage(root);
@@ -164,9 +153,6 @@ test('reclaim ends the remote session recorded for the workspace', async () => {
 });
 
 test('the session is ended even without deleteOwnedDevices', async () => {
-  // deleteOwnedDevices guards DESTROYING a local sim, which is a real choice
-  // because a shut-down sim can be booted again. A session cannot be handed
-  // back: the workspace holding its id is going away either way.
   const root = workspaceWithSession('drs_7');
   let called = false;
   await reclaimProject(root, {
@@ -186,8 +172,6 @@ test('a session that could not be stopped keeps the entry and names the manual f
     stopSession: () => ({ status: 'failed', reason: 'offline' }),
   });
   expect(r.stoppedSession).toBeNull();
-  // keptEntry is what stops `worktree remove` reporting a clean teardown, and
-  // what leaves a record naming the session that is still running.
   expect(r.keptEntry).toBe(true);
   expect(getProject(root)).toBeTruthy();
   const reported = r.failedDevices[0]?.reason ?? '';
@@ -215,8 +199,6 @@ test('a stopped session with an unreconciled claim keeps the workspace retry han
 });
 
 test('a throwing stop is contained, so the caller still removes the tree', async () => {
-  // A propagated throw would abort reclaim before `git worktree remove` runs,
-  // and re-running would hit it forever.
   const root = workspaceWithSession('drs_5');
   const r = await reclaimProject(root, {
     stopSession: () => {
@@ -294,12 +276,6 @@ test('reclaim clears a verified terminal record without issuing stop', async () 
   rmSync(root, { recursive: true, force: true });
 });
 
-// --- a tunnel `ios`/`android --remote` started for itself -------------------
-//
-// The same timing constraint as the remote session: engine/tunnel.ts's pid
-// lives in the workspace's state.json, gone the moment the caller removes the
-// tree, so it has to be reaped inside reclaim, before that happens.
-
 function workspaceWithManagedTunnel(pid: number): string {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-ws-'));
   ensureWorkspaceStorage(root);
@@ -370,9 +346,6 @@ test('reclaim preserves a replacement managed tunnel record', async () => {
 });
 
 test('the tunnel is stopped even without deleteOwnedDevices', async () => {
-  // deleteOwnedDevices guards DESTROYING a local sim; a tunnel process is not
-  // a device it could hand back later, it is simply leaked once its
-  // workspace is gone, so this is unconditional.
   const root = workspaceWithManagedTunnel(4242);
   let called = false;
   await reclaimProject(root, {
@@ -449,9 +422,6 @@ test('an Expo-hosted tunnel has no process of its own -- reclaim never calls sto
 });
 
 test('an operator-supplied tunnel (metro.publicUrl) is never recorded, so reclaim never touches it', async () => {
-  // rn-iso only reaps what it created: an operator's own tunnel is never
-  // written to state.json's metroTunnel key, so there is nothing here to
-  // find, let alone kill.
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-ws-'));
   upsertProject(root, { label: 'agent-1' });
   let called = false;

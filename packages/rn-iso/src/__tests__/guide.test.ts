@@ -172,8 +172,6 @@ test('the guide distinguishes local stop behavior from EAS session teardown', ()
   expect(lifecycle).toMatch(/recorded EAS session[^.]*irreversibly ends/i);
 });
 
-// The commands v3 deleted. A guide that still teaches one of them is worse than
-// no guide: the agent runs it and gets "unknown command".
 test('no topic teaches a command this binary does not have', () => {
   const gone = [
     'rn-iso up',
@@ -278,8 +276,6 @@ test('the skill teaches the complete remote-device contract', () => {
   expect(skill).toMatch(/recorded EAS session[^.]*irreversibly ends/i);
 });
 
-// The surface list in the skill IS the surface an agent reads first. A command
-// listed there that the binary does not register is a guaranteed dead end.
 test('the skill advertises exactly the commands bin/cli.js registers', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   const cli = readFileSync(new URL('../../bin/cli.ts', import.meta.url), 'utf-8');

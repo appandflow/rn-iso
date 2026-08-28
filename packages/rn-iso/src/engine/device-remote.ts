@@ -1,24 +1,3 @@
-// src/engine/device-remote.ts -- the remote half of the device, shaped to
-// drop into the dep seam commands/ios.ts already has.
-//
-// THE SEAM IS NOT NEW. `DEFAULT_DEPS` in commands/ios.ts is documented as
-// "the test seam. Every engine call goes through it", and four of its entries
-// are the entire device surface: ensureOwnedDevice, ensureBooted,
-// installIosApp, launchIosApp. Remote mode replaces those four and nothing
-// else. Inventing a parallel DeviceBackend abstraction beside a seam that
-// already exists would be a second way to say the same thing.
-//
-// The consequence worth stating: every call site, every phase line and every
-// existing test is untouched. The local path is not refactored at all, so a
-// regression there cannot be caused by this file.
-//
-// WHERE THE EXPENSIVE WORK SITS. Locally, ensureOwnedDevice is cheap (a
-// simctl create) and ensureBooted is the ~10s one, which is why the Metro
-// gate sits between them: a dead port must cost a second, not a boot. Remote
-// inverts the cost -- creating a cloud session is the slow, billable step --
-// so `ensureOwnedDevice` here does NOTHING but record intent, and the session
-// is created in `ensureBooted`, AFTER the gate. Same ordering property, same
-// reason, opposite mechanics.
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
@@ -65,33 +44,8 @@ import { getConfigDir } from '../config.ts';
 export const REMOTE_SESSION_ERROR = 'RN_ISO_NO_REMOTE_SESSION';
 const REMOTE_METRO_ERROR = 'RN_ISO_REMOTE_METRO_UNREACHABLE';
 
-// Where the app should look for Metro, when the device is not on this machine.
-// Set it to a URL that reaches THIS workspace's dev server from the device's
-// network -- a cloudflared/ngrok tunnel in front of the reserved port.
 export { PUBLIC_METRO_ENV } from './metro-reach.ts';
 
-/**
- * PURE. The origin the launched app should fetch its bundle from, or a
- * refusal.
- *
- * THIS IS THE HARD PART OF A REMOTE DEVICE, and it is not solved by
- * agent-device for a self-hosted proxy. Established against agent-device
- * 0.20.10: `agent-device proxy` serves /health, /rpc, /upload and /artifacts
- * and NOTHING under /api/metro, so `/api/metro/bridge` is a 404 and the
- * companion-tunnel path is a cloud-only feature. A device on another machine
- * therefore has no route to this laptop's Metro that agent-device will build.
- *
- * So the honest rule:
- *   loopback daemon -> the simulator shares this host's loopback, and
- *                      `localhost:<reserved port>` is correct and verified.
- *   anything else   -> rn-iso cannot invent a reachable address. It refuses,
- *                      unless the operator names one via RN_ISO_METRO_PUBLIC_URL.
- *
- * Refusing beats guessing. `localhost` sent to a remote device resolves on
- * THAT machine, so the app would silently load nothing (or, worse, another
- * project's bundler) and the run would look like a launch that merely failed
- * to verify.
- */
 export function resolveMetroOrigin({
   metroPort,
   publicUrl = null,
@@ -108,30 +62,12 @@ export function resolveMetroOrigin({
   const plan = planMetroReach({ mode, metroPort, publicUrl, isExpo, available });
   if ('origin' in plan) return plan;
   if ('failed' in plan) return plan;
-  // expoTunnel / start are decisions the COMMAND layer acts on before a launch
-  // ever happens; by the time an origin is needed one of them has produced a
-  // publicUrl. Reaching here means that step was skipped.
   return {
     failed: 'Metro has no address the device can reach yet.',
     remedy: 'This is an rn-iso bug: the tunnel step did not run before the launch.',
   };
 }
 
-// NO DEFAULT DURATION, deliberately.
-//
-// The cap is per-account and rn-iso cannot know it. A hardcoded 120 was
-// rejected live with "Device run session max duration must not exceed 115
-// minutes for this account; received 120 minutes", which failed the whole
-// command before a session existed. EAS derives its own default from the job
-// run priority, so omitting the flag is both correct and account-portable.
-//
-// What actually bounds the cost is teardown -- `stop`, `worktree remove` and
-// `gc` all end the session -- not a number invented here. A caller who wants
-// a tighter bound passes one, and the flag is only sent when they do.
-
-// The device record the rest of ios.ts reads. Only `deviceName` is consumed
-// (by deviceLabel), so it says what this device IS rather than pretending to
-// be a simulator model.
 interface RemoteDeviceRecord {
   deviceName: string;
   owned: true;
@@ -144,14 +80,6 @@ interface OpFailure {
   reason: string;
 }
 
-// The exact shapes the local counterparts in engine/app-install.ts return.
-// Named because isolatedDeclarations requires it, and useful anyway: this IS
-// the contract the dep seam swaps on.
-// FLAT and all-optional, matching engine/device.ts's BootResult and the
-// app-install results these stand in for. A discriminated union would be
-// tidier in isolation, but every caller and every test in this codebase reads
-// these shapes field-by-field, and the seam's whole point is that the remote
-// half is indistinguishable from the local one.
 export interface BootResult {
   ok?: boolean;
   udid?: string;
@@ -192,37 +120,23 @@ function describe(err: unknown): string {
   return stderr || String(e?.message ?? err);
 }
 
-/** What a remote run needs to know, resolved once by the command layer. */
 export interface RemoteContext {
   root: string;
   label: string;
   backend: RemoteDeviceBackend;
   easBin: string;
   agentDeviceBin: string;
-  // Which device this run wants. Reaches `eas sim --platform` and the
-  // connection profile; nothing else in a remote run differs by platform.
   platform?: 'ios' | 'android';
   maxDurationMinutes?: number | null;
-  // A URL that reaches THIS workspace's Metro from the device's network.
-  // Only consulted when the daemon is not on this machine.
   publicMetroUrl?: string | null;
-  // Carried so the launch resolves the origin the same way resolveRemoteContext
-  // already did, rather than second-guessing it.
   tunnelMode?: TunnelMode;
   isExpo?: boolean;
-  // The readiness poll's wait, injectable so a test does not sleep for real.
   sleep?: (ms: number) => Promise<void>;
-  // Set when the operator already has a daemon (an `agent-device proxy`, or
-  // an exported EAS session). rn-iso then creates NO session and destroys
-  // none: it is a guest on someone else's device.
   existingDaemon?: RemoteDaemon | null;
   easLedgerRoot?: string;
   removeEasSessionClaim?: typeof removeEasSessionClaim;
 }
 
-// The live session for one `rn-iso ios` run. Held in a closure rather than in
-// state.json because the token must not reach disk; the session ID does get
-// recorded by the command layer so `stop` and `gc` can find it later.
 interface RemoteSession {
   id: string | null;
   daemon: RemoteDaemon;
@@ -253,24 +167,6 @@ function writeProfile(ctx: RemoteContext, daemon: RemoteDaemon): string {
   return path;
 }
 
-/**
- * The four dep overrides remote mode installs over DEFAULT_DEPS, plus the
- * session accessor the command layer needs to record the id.
- *
- * Each returned function matches its local counterpart's signature exactly.
- * That is the whole design: ios.ts calls `d.installIosApp({udid, appPath})`
- * whether the device is a simulator on this Mac or one in a datacenter.
- */
-/**
- * The device operations remote mode performs, in platform-NEUTRAL names.
- *
- * The two platform adapters below are thin because on a remote device the
- * launch is genuinely the same operation: locally iOS points the app at
- * `localhost` and Android at `10.0.2.2` (its own host's loopback), and BOTH
- * are replaced by the one public origin the tunnel serves. What is left
- * differing is only what the two command files call their fields --
- * udid/serial, bundleId/packageName, appPath/apkPath.
- */
 function exec() {
   return getExecutor();
 }
@@ -282,29 +178,14 @@ function remoteDeviceDeps(ctx: RemoteContext) {
   const easEnv = easExecOptions(ctx.root);
 
   return {
-    // Remote has no local device to count. maxDevices caps booted simulators
-    // on THIS machine, and escaping that ceiling is the entire reason to run
-    // remote, so enforcing it here would refuse the thing it was asked for.
     checkCapacity: () => null,
 
-    // Records intent only. The session is created in ensureBooted so the
-    // Metro gate still runs before the expensive, billable step.
-    //
-    // The name says which KIND of remote device this is, because the two
-    // behave differently in ways an operator needs to see in one line: an EAS
-    // session is rn-iso's to create and destroy, a daemon from the
-    // environment is somebody else's and is never stopped here.
     ensureDevice: async (): Promise<RemoteDeviceRecord> => ({
       deviceName: ctx.backend === 'proxy' ? 'remote device (your daemon)' : 'EAS Simulator',
       owned: true,
       remote: true,
     }),
 
-    // Creates the session (unless the operator brought one), writes the
-    // connection profile, and connects. `connect` is also what prepares
-    // Metro: it registers rn-iso's local dev server with the daemon through
-    // agent-device's companion tunnel, which is how a cloud simulator reaches
-    // a bundler on this laptop.
     ensureBooted: async ({ out = () => {} }: { out?: (msg: string) => void } = {}): Promise<BootResult> => {
       session = null;
       createdSession = null;
@@ -319,16 +200,6 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       let id: string | null = null;
       let createdHere: string | null = null;
 
-      // A live owned session with a daemon is reused. Any other recorded
-      // session is verified before replacement.
-      //
-      // `eas sim` defaults to --force, so every run would otherwise mint a
-      // fresh session while the previous one stayed live, unrecorded (the id
-      // in state.json is overwritten) and billing to its cap. The documented
-      // loop re-runs `ios` after every native change, so that fired
-      // constantly. Reuse also removes a 60-90s session creation from the
-      // common case, which is the difference between `ios --remote` being
-      // idempotent and being expensive.
       if (!daemon) {
         const recorded = readRemoteSession(ctx.root);
         if (recorded && recorded.platform !== (ctx.platform ?? 'ios')) {
@@ -383,11 +254,6 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         }
         id = created.id;
         createdHere = created.id;
-        // The session EXISTS from this line on, and it bills. Every failure
-        // below therefore has to end it rather than return and forget it:
-        // nothing else can, because the id is not recorded until this
-        // function succeeds. Observed live -- a session with no endpoint yet
-        // left an IN_PROGRESS session nothing could find.
         daemon = created.daemon ?? (await waitForDaemon(ctx, created.id, note, { sleep: ctx.sleep ?? defaultSleep }));
         if (!daemon) {
           return abandonSession(
@@ -406,8 +272,6 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         if (createdHere) return abandonSession(ctx, createdHere, reason);
         return { failed: true, reason };
       }
-      // Best-effort, and its failure is expected on a first run: there is no
-      // session to close. See closeArgs for why it has to happen anyway.
       try {
         exec().runFile(ctx.agentDeviceBin, closeArgs(profilePath), {
           cwd: ctx.root,
@@ -426,17 +290,9 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         return { failed: true, reason: `agent-device connect failed: ${describe(err)}` };
       }
 
-      // Surfaced the moment the session is reachable, not at the end: it is
-      // how a HUMAN watches a device they cannot see, and it is most useful
-      // while the build is still running. On its own line so terminals
-      // linkify it.
       session = { id, daemon, profilePath };
       createdSession = createdHere;
       if (daemon.webPreviewUrl) note(`Watch this device: ${daemon.webPreviewUrl}`);
-      // `udid` is the field ios.ts reads and prints, and shortUdid truncates
-      // it for the phase line. A session id shortens to something meaningful;
-      // a base URL shortens to "http..", which is noise. So a daemon with no
-      // session of its own reports its host instead.
       return { ok: true, udid: id ?? daemonHostLabel(daemon.baseUrl) };
     },
 
@@ -467,10 +323,6 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       devClientScheme?: string | null;
     }): LaunchResult => {
       if (!session) return notConnected(LAUNCH_ERROR);
-      // A null port is a RELEASE-shaped launch: the JS is embedded, Metro is
-      // not part of the run, and there is nothing to point the app at. The
-      // reachability question below only exists for a dev build, so skip it
-      // rather than refusing a launch that needs no dev server.
       if (metroPort === null) {
         try {
           exec().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, appId, null, null), {
@@ -482,9 +334,6 @@ function remoteDeviceDeps(ctx: RemoteContext) {
           return { failed: true, code: LAUNCH_ERROR, reason: `agent-device open ${appId} failed: ${describe(err)}` };
         }
       }
-      // WHERE the app looks for Metro is decided first, and a device that
-      // cannot reach this workspace's dev server is a refusal rather than a
-      // launch that will never load a bundle.
       const origin = resolveMetroOrigin({
         metroPort,
         publicUrl: ctx.publicMetroUrl ?? null,
@@ -495,11 +344,6 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         return { failed: true, code: REMOTE_METRO_ERROR, reason: `${origin.failed} ${origin.remedy}` };
       }
 
-      // The dev-client link is composed HERE rather than left to
-      // agent-device's own Metro hint. That hint writes bare-RN's
-      // RCT_jsLocation, which an expo-dev-client ignores
-      // (callstack/agent-device#1245). `open <app> <url>` runs simctl openurl
-      // with the url verbatim, so rn-iso's own link works today.
       const url = devClientScheme
         ? `${devClientScheme}://expo-development-client/?url=${encodeURIComponent(origin.origin)}`
         : null;
@@ -508,13 +352,6 @@ function remoteDeviceDeps(ctx: RemoteContext) {
           cwd: ctx.root,
           env: daemonEnv(session.daemon),
         });
-        // Reports the origin the app was actually pointed at, not a
-        // jsLocation this path never wrote.
-        // The alert only exists because the line above opened a URL, and it
-        // holds the deep link until it is answered -- which is why a remote
-        // dev-client launch used to report UNVERIFIED every time. Best-effort:
-        // a bare-RN launch opens no URL and raises no alert, and this is then
-        // a no-op that must not fail the run.
         if (url) {
           try {
             exec().runFile(ctx.agentDeviceBin, acceptAlertArgs(session.profilePath), {
@@ -535,8 +372,6 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       }
     },
 
-    // Not a dep override. The command layer records a session created by this
-    // boot attempt. A reused session already has its durable ownership record.
     createdSessionId: (): string | null => createdSession,
 
     abandonCreatedSession: (): AbandonCreatedSessionResult => {
@@ -550,21 +385,10 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       return stopped;
     },
 
-    // Not a dep override either. The browser preview for this device, so the
-    // --json payload can carry it and a caller can hand it to a person.
     webPreviewUrl: (): string | null => session?.daemon.webPreviewUrl ?? null,
   };
 }
 
-/**
- * Where a remote run gets its tools and, optionally, its daemon.
- *
- *   { ctx }                ready to run
- *   { failed: reason, remedy }  a refusal the command prints as-is
- *
- * The selected backend decides whether credentials connect to an existing
- * proxy or EAS creates a session.
- */
 export async function resolveRemoteContext({
   root,
   label,
@@ -580,8 +404,6 @@ export async function resolveRemoteContext({
   backend: RemoteDeviceBackend;
   platform?: 'ios' | 'android';
   easBin: string | null;
-  // How this workspace expects the device to reach Metro, and what it has to
-  // work with. See engine/metro-reach.ts.
   tunnelMode?: TunnelMode;
   publicUrl?: string | null;
   isExpo?: boolean;
@@ -634,19 +456,6 @@ export async function resolveRemoteContext({
     };
   }
 
-  // Metro reachability is decided HERE, before anything is created or built.
-  //
-  // It used to be checked at launch, which is the worst possible place: a run
-  // with no reachable Metro would create a billable session, compile for
-  // minutes, install, and only then refuse. Everything needed to answer the
-  // question is already known at this point -- an EAS session is cloud-hosted
-  // and therefore never loopback, and an operator daemon carries its URL.
-  //
-  // NOTHING IS INFERRED. This used to accept a loopback daemon URL as proof
-  // that the device shares this machine, which `ssh -L 4310:localhost:4310
-  // macmini` makes false -- and the app was then pointed at a localhost that
-  // resolved on the Mac mini. `metro.tunnel: "off"` is how that case is
-  // DECLARED instead; see engine/metro-reach.ts.
   return {
     ctx: {
       root,
@@ -656,17 +465,12 @@ export async function resolveRemoteContext({
       easBin: easBin ?? '',
       agentDeviceBin,
       maxDurationMinutes,
-      // Filled in later by ensureMetroReachable, once the reserved port is
-      // known and the local Metro gate has confirmed a dev server is there.
       publicMetroUrl: null,
       existingDaemon,
     },
   };
 }
 
-// PURE-ish. Is this binary on PATH? Used to decide which tunnel providers
-// rn-iso could start. Fails CLOSED to "absent": a probe that itself fails
-// must not make rn-iso try to spawn something that is not there.
 export function binOnPath(bin: string): boolean {
   try {
     return Boolean(getExecutor().runQuiet(`command -v ${bin}`, { timeoutMs: 5000 }));
@@ -681,28 +485,15 @@ function defaultLookupAgentDevice(): string | null {
   return file || null;
 }
 
-// How long to wait for a freshly created session to publish its endpoint,
-// and how often to ask. A cloud VM boot is tens of seconds; `eas sim` polls
-// internally too but has been seen returning before the endpoint exists.
 const DAEMON_WAIT_MS = 180_000;
 const DAEMON_POLL_MS = 5_000;
 
-/**
- * Poll `simulator:get` until the session publishes an agent-device endpoint.
- *
- * Bounded, because the alternative is a command that hangs on a session that
- * will never be ready -- while billing.
- */
 async function waitForDaemon(
   ctx: RemoteContext,
   sessionId: string,
   out: (msg: string) => void,
   { sleep = defaultSleep }: { sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<RemoteDaemon | null> {
-  // Bounded by ATTEMPTS, not by a wall-clock deadline. A deadline read from
-  // the real clock spins without limit the moment `sleep` does not actually
-  // sleep, which is exactly what a test injects -- it burned a worker to an
-  // out-of-memory before this was counted instead.
   const attempts = Math.ceil(DAEMON_WAIT_MS / DAEMON_POLL_MS);
   for (let attempt = 0; attempt < attempts; attempt++) {
     const daemon = readDaemon(ctx, sessionId);
@@ -717,16 +508,6 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * End a session rn-iso created but cannot use, and fold the outcome into the
- * refusal.
- *
- * A session that fails between create and record is invisible to `stop`,
- * `gc` and `worktree remove`, so this is the ONLY place it can be ended. If
- * the stop also fails, the id goes in the message: a human can still run
- * `eas simulator:stop --id <id>`, and a leak nobody is told about is the
- * worst outcome here.
- */
 function stopCreatedSession(ctx: RemoteContext, sessionId: string): AbandonCreatedSessionResult {
   let stopOutput: string;
   try {
@@ -879,8 +660,6 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   }
 }
 
-// PURE. The host:port of a daemon, for a phase line that has room for one
-// short token. Falls back to the whole URL when it will not parse.
 function daemonHostLabel(baseUrl: string): string {
   try {
     return new URL(baseUrl).host;
@@ -897,18 +676,8 @@ function notConnected(code: string): OpFailure {
   };
 }
 
-// Re-reads the session so the token is fetched, never stored. Returns null on
-// any failure: the caller turns that into a refusal with the session id in it,
-// which is more useful than a parse error from here.
-// The statuses eas-cli reports for a session that still exists and can still
-// be driven. Anything else (STOPPED, ERRORED) is a session to replace.
 const LIVE_STATUSES = new Set(['NEW', 'IN_PROGRESS']);
 
-// Like readDaemon, but ALSO requires the session to still be live.
-//
-// Reuse needs both facts and readDaemon only proves one: a STOPPED session
-// can still report a remoteConfig, so reusing on config alone would connect
-// to a daemon that is gone and fail at install instead of creating a session.
 function readLiveDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null {
   let stdout: string;
   try {
@@ -941,15 +710,7 @@ function readDaemon(ctx: RemoteContext, sessionId: string): RemoteDaemon | null 
   }
 }
 
-/**
- * The dep overrides `ios --remote` installs over DEFAULT_DEPS.
- *
- * Names match commands/ios.ts's seam exactly, so every call site, phase line
- * and existing test is untouched.
- */
 export function remoteIosDeps(ctx: RemoteContext): {
-  // Handed back so the command layer can pass it to ensureMetroReachable,
-  // which fills in the origin once the reserved port is known.
   ctx: RemoteContext;
   checkDeviceCapacity: () => null;
   ensureOwnedDevice: () => Promise<RemoteDeviceRecord>;
@@ -981,21 +742,6 @@ export function remoteIosDeps(ctx: RemoteContext): {
   };
 }
 
-/**
- * The same, for `android --remote`, against commands/android.ts's own names.
- *
- * `adb reverse` and `10.0.2.2` do NOT appear here, and their absence is the
- * whole point. Both are host-relative -- a reverse maps a device port to the
- * host running adb, and 10.0.2.2 is the emulator's route to ITS OWN host --
- * so on a remote emulator both name the wrong machine. The public origin
- * replaces them, exactly as it replaces `localhost` on iOS, which is why this
- * adapter is thin rather than a second implementation.
- *
- * The Metro hint still lands: agent-device writes `debug_http_host` (and
- * `dev_server_https`, which a tunnel on 443 needs) into the app's shared
- * prefs from `--metro-host`/`--metro-port`, running adb against ITS OWN
- * emulator where a reverse would be meaningless from here.
- */
 export function remoteAndroidDeps(ctx: RemoteContext): {
   ctx: RemoteContext;
   checkCapacity: () => null;
@@ -1025,8 +771,6 @@ export function remoteAndroidDeps(ctx: RemoteContext): {
     ctx: shared,
     checkCapacity: core.checkCapacity,
     ensureDevice: core.ensureDevice,
-    // Same identity, different field name: android.ts reads `serial` where
-    // ios.ts reads `udid`.
     ensureDeviceBooted: async (opts) => {
       const booted = await core.ensureBooted(opts);
       return booted.ok ? { ok: true, serial: booted.udid } : booted;
@@ -1040,14 +784,6 @@ export function remoteAndroidDeps(ctx: RemoteContext): {
   };
 }
 
-/**
- * End the session recorded in state.json. The entry point `stop`, `gc` and
- * `worktree remove` use, so none of them has to know how to resolve a tool
- * or compose an argv.
- *
- * Resolves its own binaries because a teardown runs long after the `ios` that
- * created the session, in a process that has none of its context.
- */
 export function endRecordedSession({
   root,
   sessionId,
@@ -1082,15 +818,6 @@ export function endRecordedSession({
   );
 }
 
-/**
- * End a remote session. The inverse of ensureBooted, and the reason
- * `stop` gains a delete it never had locally: a cloud session bills while it
- * lives, so leaving one up is the worse failure.
- *
- * Disconnect first, so the lease is released and the Metro companion this
- * workspace owns is stopped, then stop the session itself. A disconnect
- * failure must not prevent the stop: the session is what costs money.
- */
 export function teardownRemote(
   ctx: RemoteContext,
   { sessionId }: { sessionId: string | null },
@@ -1148,27 +875,6 @@ export function teardownRemote(
   return { status: 'torn-down', reason: removeClaim() };
 }
 
-/**
- * Give the device an address for Metro, and PROVE it reaches this workspace's.
- *
- * SEPARATE FROM resolveRemoteContext, and called later, because it needs two
- * things that are not known when the dep overrides are installed: the port
- * this workspace actually reserved, and confirmation from the local Metro
- * gate that a dev server is running there at all.
- *
- * Running it earlier looked equivalent and was not. It defaulted the port to
- * 8081 -- so a managed tunnel was built to whatever happened to be on 8081,
- * which on this machine is routinely a DIFFERENT workspace -- and it probed
- * before the local gate had established there was a dev server to reach, so a
- * simply-absent Metro was reported as "the tunnel is serving a different dev
- * server" instead of RN_ISO_NO_METRO.
- *
- * It still runs before ensureBooted, which is what creates the billable
- * session, so every refusal here costs nothing.
- *
- * Mutates `ctx.publicMetroUrl`: remoteIosDeps has already closed over this
- * object by the time this runs, and the launch reads the origin from it.
- */
 export async function ensureMetroReachable({
   ctx,
   metroPort,
@@ -1193,8 +899,6 @@ export async function ensureMetroReachable({
   gateOrigin?: typeof gateMetroOrigin;
 }): Promise<{ ok: true } | { failed: string; remedy: string; code?: string }> {
   const { root } = ctx;
-  // The gate probes a platform-specific bundle path; ios is the shape both
-  // dev servers answer when a context predates the android wiring.
   const platform = ctx.platform ?? 'ios';
   const publicMetroUrl = env[PUBLIC_METRO_ENV]?.trim() || publicUrl || null;
   const recorded = readTunnelRecord(root);
@@ -1211,19 +915,12 @@ export async function ensureMetroReachable({
   });
   if ('failed' in plan) return plan;
 
-  // Act on the plan: an asserted-local origin needs nothing further; the
-  // other two branches produce an origin rn-iso has to arrange itself, and
-  // both are non-local -- see the `gate` decision below.
   let resolvedUrl: string | null = null;
   let gate = false;
   if ('origin' in plan) {
     resolvedUrl = plan.origin;
     gate = plan.gate;
   } else if ('expoTunnel' in plan) {
-    // `start` records the URL the moment Expo's own tunnel comes up (see
-    // supervisor/server-expo.ts); a remote run can only use it, never start
-    // one of its own -- `ios --remote` cannot add `--tunnel` to an
-    // already-running dev server.
     if (!recorded || recorded.kind !== 'expo') {
       return {
         failed:
@@ -1234,9 +931,6 @@ export async function ensureMetroReachable({
     resolvedUrl = recorded.url;
     gate = true;
   } else {
-    // { start: provider }. `start --remote` owns provider startup. The device
-    // command only accepts its live record, so retries cannot create a second
-    // process that has no teardown record.
     const port = Number(metroPort);
     const providerMatches = tunnelMode === 'auto' || (recorded?.kind === 'managed' && recorded.provider === plan.start);
     if (
@@ -1256,11 +950,6 @@ export async function ensureMetroReachable({
     gate = true;
   }
 
-  // The gate, before anything billable. `resolvedUrl` is a SECOND address for
-  // the reserved port -- an operator's own, Expo's, or a managed one -- and
-  // none of them are proven to still reach THIS workspace without it (see
-  // engine/metro-gate.ts's header for the tunnel-outlived-the-reservation bug
-  // this closes).
   if (gate && resolvedUrl) {
     const logsDir = workspaceLogsDir(root);
     const result = await gateOrigin({

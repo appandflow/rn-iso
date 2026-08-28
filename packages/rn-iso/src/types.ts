@@ -103,9 +103,6 @@ export interface IosFacts {
   metroPort?: number | null;
   logs: LogsInfo;
   durationMs?: number;
-  // Only on a remote device that has a browser preview (an EAS Simulator
-  // session). A person cannot see a device in a datacenter; this is how they
-  // watch it.
   webPreviewUrl?: string | null;
 }
 

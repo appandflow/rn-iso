@@ -1,11 +1,3 @@
-// src/supervisor/state.ts -- the workspace state + pid helpers, guard-free.
-//
-// Split out of supervisor/run.ts so that the importable state helpers live in a
-// module with NO top-level main() and NO server imports: `ios`, `android`,
-// `start` and the collector all read and write state.json through here, and
-// bundling any of them must never drag the spawnable daemon entry (or Metro)
-// in behind it. run.ts re-exports this surface for callers that still reach for
-// it there.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
@@ -19,30 +11,16 @@ export interface WorkspaceState {
   supervisor?: Record<string, unknown>;
   collectors?: Record<string, unknown>;
   lastBuild?: Record<string, unknown>;
-  // Written by `ios --remote` the moment the session exists. The session id
-  // ONLY: the daemon token is never persisted anywhere.
   remoteDevice?: Record<string, unknown>;
-  // The address a remote device reaches this workspace's Metro through, when
-  // rn-iso set one up itself: an Expo-hosted tunnel (`start`, kind 'expo') or
-  // a managed provider (`ios`/`android` --remote, kind 'managed'). Never
-  // written for an operator-supplied metro.publicUrl -- rn-iso only records
-  // what it can also reap.
   metroTunnel?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
-// The Expo dev server tunnelling itself (`expo start --tunnel`). Nothing to
-// reap: the tunnel dies with the expo child, which `stop` already kills.
-// Not exported on its own: nothing names it directly, only through the
-// MetroTunnelRecord union readMetroTunnel returns.
 interface ExpoTunnelRecord {
   kind: 'expo';
   url: string;
 }
 
-// A tunnel rn-iso started and owns the process of (engine/tunnel.ts's
-// TunnelRecord, plus the discriminant). `stop`, `gc` and `worktree remove`
-// reap this one by pid.
 export interface ManagedTunnelRecord {
   kind: 'managed';
   provider: ManagedProvider;
@@ -62,10 +40,6 @@ export interface RemoteSessionRecord {
   startedAt: string | null;
 }
 
-// The tunnel this workspace's Metro is reachable through, if rn-iso set one
-// up. A narrow reader for the same reason readRemoteSessionId is one: every
-// site that reads or reaps this record must agree on its shape and on what a
-// malformed one means.
 export function readMetroTunnel(root: string): MetroTunnelRecord | null {
   const record = readWorkspaceState(root)?.metroTunnel;
   if (!record || typeof record !== 'object') return null;
@@ -97,13 +71,6 @@ export function readMetroTunnel(root: string): MetroTunnelRecord | null {
   return null;
 }
 
-// --- Contract 2: the workspace state file --------------------------------
-//
-// The global workspace state file is written temp+rename so a reader never
-// sees half a file. Merged rather than overwritten: later steps put
-// `lastBuild` beside `supervisor`, and a supervisor shutting down must not
-// take it with it.
-
 export function readWorkspaceState(root: string): WorkspaceState | null {
   try {
     const parsed = JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
@@ -114,13 +81,6 @@ export function readWorkspaceState(root: string): WorkspaceState | null {
   }
 }
 
-// The remote session this workspace created, or null.
-//
-// A narrow reader rather than a raw readWorkspaceState at each call site: the
-// three places that end a session (`stop`, `worktree remove` and `gc`, the
-// last two through reclaim) must all agree on where the id lives and on what
-// a malformed record means, and a session they disagree about is one that
-// keeps billing.
 export function readRemoteSession(root: string): RemoteSessionRecord | null {
   const record = readWorkspaceState(root)?.remoteDevice;
   if (!record || typeof record !== 'object') return null;
@@ -146,15 +106,6 @@ export function clearRemoteSession(root: string, expectedSessionId: string): voi
   });
 }
 
-// Runs `fn` with the state.json lock held (reentrant within this process).
-// EVERY read-modify-write of state.json goes through here so the whole cycle
-// is atomic: the supervisor patches `supervisor`, each collector patches its
-// own `collectors.<platform>`, ios/android patch `lastBuild`, and these run at
-// once (the detached collector registers during the launch-verify window right
-// before writeLastBuild). renameSync stops a torn file, not a lost update --
-// two writers that both read the old state and rename their own version over it
-// drop one side's key, and a dropped `collectors.<platform>` leaks a log stream
-// `stop` can never reap. The lock is the thing that closes that window.
 export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
   const file = workspaceStateFile(root);
   return withDirLock(workspaceStateLock(root), fn, {
@@ -234,8 +185,6 @@ export function clearWorkspaceStateKeys(root: string, keys: readonly string[]): 
   });
 }
 
-// Removes only the selected key. The file goes when nothing else is left in
-// it, so a stopped workspace has no state.json rather than an empty one.
 function clearWorkspaceStateKey(root: string, key: string, shouldClear: (value: unknown) => boolean): boolean {
   return withWorkspaceStateLock(root, () => {
     const state = readWorkspaceState(root);

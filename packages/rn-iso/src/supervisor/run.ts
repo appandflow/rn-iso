@@ -49,8 +49,6 @@ export function parseArgs(argv: string[]): ParsedSupervisorArgs {
       port = argv[++i];
       continue;
     }
-    // `start` decided the Expo dev server should tunnel itself
-    // (metro.tunnel resolved to expo/auto-on-Expo); see server-expo.ts.
     if (arg === '--tunnel') {
       tunnel = true;
       continue;
@@ -84,8 +82,6 @@ type ServerStarter = (opts: {
   port: number;
   logsDir: string;
   writer?: NdjsonWriter | null;
-  // Expo-only; startBareServer ignores both (a bare workspace has no dev
-  // server of its own to hand a `--tunnel` flag to).
   tunnel?: boolean;
   onTunnelUrl?: ((url: string) => void) | null;
 }) => Promise<ServerHandle>;
@@ -93,8 +89,6 @@ type ServerStarter = (opts: {
 export interface RunSupervisorOptions {
   root: string;
   port: number;
-  // `start` decided the Expo dev server should tunnel itself; see
-  // server-expo.ts's `tunnel` option. No effect on the bare path.
   tunnel?: boolean;
   isExpo?: (projectRoot: string) => boolean;
   startBare?: ServerStarter | null;
@@ -128,7 +122,6 @@ export async function runSupervisor({
   const startedAt = new Date(now()).toISOString();
   const record = { pid: process.pid, port, mode, startedAt };
 
-  // ---- the record, first (rule 1) ----
   clearExpoMetroTunnel(root);
   writePidFile(root, process.pid);
   writeWorkspaceState(root, { supervisor: record });

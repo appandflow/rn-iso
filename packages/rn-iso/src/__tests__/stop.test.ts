@@ -634,12 +634,6 @@ test('a not-owned skip is not given an occupancy hint', async () => {
   expect(!/pid 1/.test(reason)).toBeTruthy();
 });
 
-// --- the remote session ----------------------------------------------------
-//
-// A remote session is the ONE device `stop` destroys rather than shuts down.
-// Locally that would be wrong (a shut-down sim costs nothing to keep); a
-// cloud session bills until its max duration, so leaving one up is worse.
-
 function withRemoteSession(sessionId: string) {
   saveConfig(
     makeConfig({
@@ -673,8 +667,6 @@ test('stopping ends the remote session this workspace created', async () => {
 });
 
 test('a session that could not be stopped fails the command, so it is not reported as clean', async () => {
-  // The failure mode this guards: a session nothing stopped keeps billing,
-  // and a green `stop` is how nobody finds out.
   withRemoteSession('drs_99');
   const r = await runStop({
     root: tmpRoot,
@@ -687,8 +679,6 @@ test('a session that could not be stopped fails the command, so it is not report
 
   expect(r.ok).toBe(false);
   expect(r.outcomes.device.remote?.status).toBe('failed');
-  // The record SURVIVES a failed stop, for the same reason a failed local
-  // teardown keeps its device record: it is the only handle left to retry.
   const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
   expect(state.remoteDevice.sessionId).toBe('drs_99');
 });
@@ -705,7 +695,6 @@ test('a successful stop drops the record but keeps lastBuild', async () => {
   });
   const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
   expect(state.remoteDevice).toBeUndefined();
-  // Taking the fingerprint away would make the next build a guaranteed miss.
   expect(state.lastBuild.hash).toBe('keepme');
 });
 
@@ -816,15 +805,9 @@ test('a workspace with no remote session never calls the remote teardown', async
 });
 
 test('a remote session is stopped even when something still holds the port', async () => {
-  // The stillHolding guard spares a LOCAL device from being yanked out from
-  // under a supervisor that ignored SIGTERM. A session in a datacenter is not
-  // what that supervisor is holding, and it bills by the minute regardless --
-  // so leaving it up because something else refused to die is the one outcome
-  // that costs money.
   const stopped: string[] = [];
   const r = await runStop({
     root: tmpRoot,
-    // A supervisor that will not die is what sets stillHolding.
     isAlive: () => true,
     killGroup: () => false,
     resolveMetro: async () => ({ missing: true }),
@@ -838,12 +821,6 @@ test('a remote session is stopped even when something still holds the port', asy
   expect(stopped).toEqual(['drs_42']);
   expect(r.outcomes.device?.remote?.status).toBe('torn-down');
 });
-
-// --- a tunnel `ios`/`android --remote` started for itself -------------------
-//
-// engine/tunnel.ts's own process (a managed provider), unrelated to the
-// supervisor or to any local device -- reaped unconditionally, the same
-// reasoning as the remote session above.
 
 function withManagedTunnel() {
   saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
@@ -894,7 +871,6 @@ test('stopping reaps a managed tunnel this workspace started', async () => {
   expect(r.outcomes.metroTunnel).toEqual({ status: 'stopped', provider: 'ngrok', reason: undefined });
   const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
   expect(state.metroTunnel).toBeUndefined();
-  // Taking the fingerprint away would make the next build a guaranteed miss.
   expect(state.lastBuild.hash).toBe('keepme');
 });
 
@@ -970,11 +946,6 @@ test('a workspace with no recorded tunnel never calls stopMetroTunnel', async ()
 });
 
 test('the tunnel is stopped even when something still holds the port', async () => {
-  // Same stillHolding setup as "a supervisor that outlives the wait is
-  // reported, never SIGKILLed" above: a recorded supervisor that ignores
-  // SIGTERM. The guard that spares a LOCAL device from being yanked out from
-  // under it does not apply here -- a tunnel is engine/tunnel.ts's own
-  // detached process, independent of the supervisor.
   const stopped: number[] = [];
   const { calls, opts } = seams({
     state: { pid: 4242, port: 8083 },
@@ -1031,16 +1002,10 @@ test('an Expo tunnel record is dropped once the port is freed, not left stale fo
     clearRegistration: async () => {},
     report: () => {},
   });
-  // Nothing else was in the file, so clearing the last key removes it.
   expect(existsSync(workspaceStateFile(tmpRoot))).toBe(false);
 });
 
 test('an Expo tunnel record survives while something still holds the port', async () => {
-  // The expo child that fronts it is very likely still running -- the same
-  // reason the local device shutdown step is skipped in this case. Proven by
-  // the bookkeeping step (the only place that drops the record) never
-  // running at all: a supervisor that outlives the wait is what sets
-  // stillHolding, the same setup as the "outlives the wait" test above.
   const { calls, opts } = seams({
     state: { pid: 4242, port: 8083 },
     isAlive: (pid: number) => pid === 4242,
@@ -1050,16 +1015,10 @@ test('an Expo tunnel record survives while something still holds the port', asyn
   const r = await runStop(opts);
   expect(r.outcomes.port.status).toBe('kept');
   expect(calls.stateCleared).toBe(0);
-  // 'not-managed': there is a recorded tunnel, but no process of its own to
-  // stop, and the record was left alone rather than dropped.
   expect(r.outcomes.metroTunnel.status).toBe('not-managed');
 });
 
 test('an operator-supplied tunnel (metro.publicUrl) is never recorded, so `stop` never touches it', async () => {
-  // rn-iso only reaps what it created (CLAUDE.md item 2's ownership rule,
-  // applied to tunnels): an operator's own tunnel is used through
-  // metro.publicUrl and is never written to state.json's metroTunnel key,
-  // so there is nothing here for `stop` to find, let alone kill.
   saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
   let called = false;
   const r = await runStop({

@@ -1,15 +1,8 @@
-// engine/metro-gate.js -- proving a public address reaches THIS Metro.
-//
-// The bug this exists for, observed live: a cloudflared tunnel was built for
-// port 8085, `rn-iso stop` released 8085, another workspace took it, and the
-// tunnel then published THAT project's dev server. Healthy, answering, and
-// wrong -- which is why liveness is not the test and identity is.
 import { describeMiss, gateMetroOrigin, probeBundleUrl, REMOTE_METRO_WRONG } from '../engine/metro-gate.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 
 const ORIGIN = 'https://abc.trycloudflare.com';
 
-// A clock the test drives, so a 25s timeout costs nothing and cannot flake.
 function clock(start = 1_000) {
   let t = start;
   return { now: () => t, sleep: async (ms: number) => void (t += ms) };
@@ -38,8 +31,6 @@ describe('the proof is a request arriving in THIS workspace log', () => {
   });
 
   test('a HEALTHY foreign server is refused -- liveness is not identity', async () => {
-    // The live failure: the tunnel answered 200 the whole time, from another
-    // project's Metro. Nothing ever reached ours.
     const result = await gate({ probe: async () => 200, isProof: () => false });
     expect(result.failed).toBe(true);
     expect(result.code).toBe(REMOTE_METRO_WRONG);
@@ -55,12 +46,9 @@ describe('the proof is a request arriving in THIS workspace log', () => {
 
 describe('records from BEFORE the probe do not count', () => {
   test('an older bundle event is not proof', async () => {
-    // Otherwise any previously-built bundle would vouch for any address.
     const stale: NdjsonRecord[] = [{ ts: 10, src: 'metro', level: 'info', msg: 'bundle' }];
     const result = await gate({
       readRecords: () => stale,
-      // The real isBundleProof compares against `since`; this asserts the gate
-      // actually passes a sane `since` rather than 0.
       isProof: (r, since) => (r.ts ?? 0) >= since,
     });
     expect(result.failed).toBe(true);
@@ -73,8 +61,6 @@ describe('what the miss says', () => {
   });
 
   test('a 5xx points at the tunnel rather than the project', () => {
-    // cloudflared returns 502/522 when the edge is up and the origin is not:
-    // the tunnel exists, the port behind it does not.
     expect(describeMiss(ORIGIN, 8085, 502)).toContain('not a dev server');
     expect(describeMiss(ORIGIN, 8085, 522)).toContain('not a dev server');
   });
@@ -114,9 +100,6 @@ describe('failing closed', () => {
   });
 
   test('the request is abandoned once the proof lands', async () => {
-    // The proof is the log entry, not the response body -- waiting for four
-    // megabytes of bundle would make the gate cost as much as the thing it
-    // guards.
     let aborted = false;
     const result = await gate({
       probe: (_url, signal) =>

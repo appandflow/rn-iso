@@ -1,11 +1,3 @@
-// engine/tunnel.ts -- starting, waiting out, and reaping a tunnel rn-iso
-// starts for itself.
-//
-// The property this file pins hardest is the one recorded in tunnel.ts's own
-// header: a provider PRINTING its URL is not the same fact as that URL being
-// routable, so startTunnel must never report success before a probe actually
-// confirms reachability -- and that confirmation must be provable on a fake
-// clock, because the real timeout is minutes long.
 import {
   readTunnelProcessArgs,
   readTunnelProcessToken,
@@ -23,8 +15,6 @@ import { join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 
-// A clock the test drives, so a multi-minute timeout costs nothing and
-// cannot flake. Same shape as engine/metro-gate.test.ts's clock().
 function clock(start = 1_000) {
   let t = start;
   return { now: () => t, sleep: async (ms: number) => void (t += ms) };
@@ -975,9 +965,6 @@ describe('readTunnelProcessToken', () => {
 });
 
 describe('against output cloudflared really printed', () => {
-  // CLAUDE.md item 9: a hand-written sample proves the regex matches what the
-  // test author imagined. These lines are copied verbatim from a cloudflared
-  // 2026.8.2 run captured while building this feature.
   const BANNER =
     '2026-08-26T19:50:27Z INF |  https://priest-contribute-mysql-leslie.trycloudflare.com                                  |';
   const REQUEST_ERROR =
@@ -990,14 +977,10 @@ describe('against output cloudflared really printed', () => {
   });
 
   test('a url carrying a PATH still yields only the origin', () => {
-    // cloudflared logs `dest=<url>/status` on every failed request. Returning
-    // the path too would be handed to the device as a bundle host.
     expect(parseCloudflaredLine(REQUEST_ERROR)).toBe('https://priest-contribute-mysql-leslie.trycloudflare.com');
   });
 
   test('the pre-banner line naming the domain is NOT a url', () => {
-    // It appears seconds before the real one. Matching it would hand out
-    // "trycloudflare.com" as the tunnel.
     expect(parseCloudflaredLine(PRECHECK)).toBeNull();
   });
 });
