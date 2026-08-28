@@ -763,9 +763,13 @@ lines rn-iso composes rather than on files the project owns:
            -wide with { "caches": { "injectMetroStore": false } } in
            ~/.rn-iso/config.json; see \`guide settings\`.
 
-Each says so in one dim line. \`rn-iso doctor\` still reports the project-side
-equivalents -- as things worth committing only if you ALSO build outside
-rn-iso, never as setup rn-iso is waiting on.
+Each says so in one dim line. There is nothing to install, wire or commit, and
+no setup skill to run. \`rn-iso doctor\` is the read-only second opinion when
+something IS blocked or slow: it reports only what rn-iso cannot handle itself
+(a missing dev client, ccache, a fingerprint no fresh worktree reproduces, a
+provider on a key this SDK ignores) plus the project-side settings that matter
+solely for builds you make OUTSIDE rn-iso. A clean doctor means there is
+nothing rn-iso needs from this repo.
 
 THE BUILD CACHE HAS TWO LEVELS
   1. rn-iso's own, on this machine: a directory under ~/.rn-iso shared by
@@ -787,6 +791,26 @@ THE BUILD CACHE HAS TWO LEVELS
   stored its fingerprint sources beside the cache entry, the fingerprint line
   gains " -- N sources changed: <up to three paths>", and the full list
   (capped at 20 names) lands in the build log as a fingerprint_diff record.
+
+WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
+  Every entry is keyed on what the tree hashes, so two workspaces share an
+  entry only when they hash alike. A file that changes without changing the
+  BUILD is what breaks that, and it fails silently -- a cache that never hits
+  looks exactly like a cache that is not there.
+
+  \`.fingerprintignore\` at the project root (same syntax as .gitignore) is the
+  answer. Put in it only what genuinely cannot change the native build: a
+  generated report, a local env file, a lockfile whose checksums embed absolute
+  machine paths (\`ios/Podfile.lock\` is the usual one -- pod checksums can bake
+  in a machine path, and \`pod install\` rewrites it on a plain re-install).
+  Never ignore a real native input -- a Podfile, a gradle file, the app config
+  -- to force a hit: that trades a slow build for a wrong one.
+
+  \`rn-iso doctor\` measures this directly rather than reading the file: it
+  fingerprints HEAD in a temporary clean worktree, compares, and reports a
+  mismatch naming the differing sources. Untracked, non-gitignored files under
+  ios/ or android/ count too -- they are hashed like any other source, so a
+  stray file there moves the key on your machine and nowhere else.
 
 ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   The cache makes the SECOND workspace on a commit free -- but only once the
@@ -1179,9 +1203,9 @@ be setup steps are supplied by rn-iso on the command lines it composes itself:
                the child is spawned with NODE_OPTIONS extended by a --require
                shim that does the same inside it.
 
-Each of those prints one dim line saying it happened. \`rn-iso doctor\` still
-reports the project-side settings, as things you need only if you ALSO build
-outside rn-iso.
+Each of those prints one dim line saying it happened. There is no setup skill
+and no init command; \`rn-iso doctor\` reports the project-side settings as
+things you need only if you ALSO build outside rn-iso.
 
 TURNING THE METRO STORE OFF (MACHINE-LEVEL)
 The Expo injection is the invasive one, so it has a switch -- and the switch is

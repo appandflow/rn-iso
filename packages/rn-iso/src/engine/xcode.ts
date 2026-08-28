@@ -244,7 +244,8 @@ export function resolveScheme(project: XcodeProject, { exec = null }: { exec?: E
 // written to; a repo that ALSO wants the setting for builds run outside rn-iso
 // still commits it, and gets the identical settings either way.
 //
-// The five settings mirror what the rn-iso-init skill's Podfile snippet does:
+// The five settings are what an equivalent Podfile `post_install` block would
+// have to set, for a repo that also wants them outside rn-iso:
 //
 //   COMPILATION_CACHE_ENABLE_CACHING  turn the CAS on
 //   COMPILATION_CACHE_CAS_PATH        point it OUTSIDE DerivedData -- the
@@ -269,12 +270,13 @@ export function resolveScheme(project: XcodeProject, { exec = null }: { exec?: E
 //                                     keys instead of missing everything
 export const COMPILATION_CACHE_MIN_XCODE = 26;
 
-// The virtual prefix the workspace root is rewritten to. It is the same string
-// the rn-iso-init skill's Podfile snippet uses ON PURPOSE: a repo that commits
-// that snippet AND runs rn-iso must land on one set of cache keys, not two.
+// The virtual prefix the workspace root is rewritten to. A repo that commits
+// the equivalent Podfile `post_install` block for its own builds must use this
+// exact string: committing one AND running rn-iso has to land on one set of
+// cache keys, not two.
 const PREFIX_MAP_TARGET = '/^src';
 
-// ONE mapping, not two. The skill's snippet also maps $(DERIVED_DATA_DIR),
+// ONE mapping, not two. A Podfile block has to map $(DERIVED_DATA_DIR) as well,
 // because a project's DerivedData sits outside its source tree; rn-iso builds
 // with `-derivedDataPath <root>/.rn-iso/derived-data`, which is INSIDE the
 // root, so the root mapping already covers it at the identical relative path

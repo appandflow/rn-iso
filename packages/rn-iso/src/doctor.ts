@@ -1,11 +1,18 @@
-// Checks for the settings that decide whether a second workspace is fast or
-// slow, and that give no feedback when they are wrong.
+// THE ORGANISING RULE: doctor reports what rn-iso CANNOT fix for itself.
 //
-// Every finding here was a real, silent cost on a real project: a build cache
-// that never hit because its key was per-workspace, a dev client missing so a
-// reserved Metro port could not reach the app, a Metro cache that re-transformed
-// two thousand modules per worktree. None of them fail a build. They just make
-// it slow, and nothing says so.
+// rn-iso supplies the Metro transform store, the Xcode compilation cache and
+// the Gradle build cache on the command lines it composes, so a project that
+// configures none of them is not slow and is not a finding. The mere ABSENCE
+// of a project-side cache setting is therefore not reported at all -- the same
+// call already made for a missing Expo build-cache provider.
+//
+// What is left is active misconfiguration: something that will silently defeat
+// rn-iso (ccache, which makes it skip its own compilation cache; a fingerprint
+// that no fresh worktree reproduces, so every cache entry misses; a missing dev
+// client, so a reserved port cannot reach the app) or silently defeat the
+// project's OWN builds (a cacheStores wired conditionally, a CAS left at the
+// per-workspace default, a provider on a key this SDK ignores, an EAS session
+// that cannot answer). A clean doctor means nothing rn-iso cannot handle itself.
 //
 // Findings are observations with a reason, not pass/fail rules: the specifics
 // are Xcode- and SDK-version-shaped and will age. A finding that says what was
@@ -92,112 +99,45 @@ export function checkDevClient(pkg: AnyJson | null, isExpo: boolean = true): Fin
     'cost',
     'expo-dev-client is not installed',
     'A Metro port reserved by rn-iso cannot reach the app without it: the port travels in the dev-client deep link `rn-iso ios` opens, and without the dev client nothing handles that URL. The app falls back to port 8081 and shows "No script URL provided".',
-    'npx expo install expo-dev-client',
+    'npx expo install expo-dev-client, then rebuild with `rn-iso ios` / `rn-iso android`. It is a NATIVE dependency: an app already on the device will not pick it up, and the first build after installing it is a cache miss by design because the native fingerprint moved. Do not solve this by compiling the port in (RCT_METRO_PORT, or the dev client defaultLaunchURL) -- the build cache does not key on the port, so a binary built for one workspace would silently talk to another workspace bundler.',
   );
 }
 
-// Metro's default cache is per-project, so every worktree re-transforms the
-// whole module graph. One FileStore outside any project fixes it -- and rn-iso
-// now installs that store ITSELF, on its own dev server, so none of what
-// follows is a setup step any more.
-//
-// THESE FINDINGS ARE ABOUT BUILDS RN-ISO DOES NOT DRIVE. `rn-iso start` hosts
-// a bare project's Metro in-process and appends rn-iso's own FileStore to
+// A shared Metro transform store is something RN-ISO SUPPLIES. `rn-iso start`
+// hosts a bare project's Metro in-process and APPENDS its own FileStore to
 // whatever cacheStores the project configured; on Expo it injects the same
 // store into the child through NODE_OPTIONS. So a project with no cacheStores
-// at all still gets a shared transform cache under `rn-iso start`. What a
-// committed store buys is the runs rn-iso is not in: `npx expo start` by hand,
-// a teammate's editor task, CI.
+// at all is already sharing transforms between worktrees under rn-iso, and its
+// ABSENCE is not a finding: there is nothing there rn-iso cannot handle itself.
+// (Nor is a metro.config.js that only re-exports another package's config: what
+// that file hides is a store rn-iso does not need either way.)
+//
+// What survives is the one shape that is actively wrong -- a cacheStores wired
+// behind a conditional, which is a store the project BELIEVES it has and does
+// not. Under `rn-iso start` it costs nothing, because rn-iso's own store is
+// appended whether the project's is on or off; outside rn-iso it costs exactly
+// what having no store costs, on every run.
 //
 // This reads the file and never evaluates it -- a metro.config.js runs project
 // code, and a diagnostic may not. That is why a mention of `cacheStores` is not
 // the same as a cacheStore: on a real repo the store was built behind
 // `process.env.X === '1' ? [...] : undefined` and spread in, so it was off for
 // everyone who had not opted in, and a substring match called that a pass.
-// Unreadable stays unreadable; the finding says so instead of guessing either
-// way.
 export function checkMetroCache(metroConfigSource: string | null): Finding | null {
-  if (metroConfigSource == null) {
-    return finding(
-      'note',
-      'No metro.config.js found (rn-iso supplies the shared store anyway)',
-      "Metro's default transform cache lives under $TMPDIR/metro-cache -- outside the project, but in a location the OS periodically purges and rn-iso's gc cannot see. `rn-iso start` appends its own FileStore under ~/.rn-iso/metro-cache regardless, so the dev server rn-iso runs is already sharing transforms between worktrees.",
-      'Nothing to do for rn-iso. Add a metro.config.js with a FileStore cacheStore only if you also run Metro outside it.',
-    );
-  }
-  // A config that is nothing but a re-export cannot be read here at all: the
-  // store, if there is one, lives in the package it delegates to. Saying so is
-  // the honest answer; the confident per-project finding below would be a
-  // measurement of a file that decides nothing.
-  const delegate = metroConfigDelegate(metroConfigSource);
-  if (delegate) {
-    return finding(
-      'note',
-      `metro config delegates to ${delegate}; rn-iso cannot inspect it`,
-      `metro.config.js is a re-export of ${delegate} and doctor reads this file rather than executing it, so whether a shared cacheStore is configured is decided somewhere rn-iso cannot see. This is a note, not a cost: the store may well be there, and \`rn-iso start\` appends its own to whatever that file resolves to either way.`,
-      `Nothing to do for rn-iso. If you also run Metro outside it, check ${delegate} for a cacheStores/FileStore rooted outside every project (@rn-iso/metro's sharedCacheStores() is the packaged one).`,
-    );
-  }
+  // No metro.config.js at all, and a config that never names cacheStores, are
+  // the same answer: rn-iso supplies the store, so there is nothing to say.
+  if (metroConfigSource == null) return null;
   const lines = String(metroConfigSource).split('\n');
   const mentions = lines.filter((line) => /cacheStores/.test(line));
-  if (mentions.length) {
-    // One unconditional mention is enough: the store is wired for everybody.
-    if (!lines.every((line, i) => !/cacheStores/.test(line) || isConditional(lines, i))) return null;
-    return finding(
-      'note',
-      'metro.config.js mentions cacheStores, but not unconditionally',
-      `Every line naming it is inside a conditional, and doctor reads this file rather than executing it, so it cannot tell whether the store is installed. Under \`rn-iso start\` this costs nothing -- rn-iso appends its own store whether the project's is on or off -- but outside rn-iso a cacheStores that is off by default costs exactly what having none costs: ${mentions.map((l) => l.trim()).join(' / ')}`,
-      'Only for Metro runs rn-iso does not host: confirm it applies without env vars -- a store behind an opt-in flag is not shared until every workspace sets the flag.',
-    );
-  }
+  if (!mentions.length) return null;
+  // One unconditional mention is enough: the store is wired for everybody.
+  if (!lines.every((line, i) => !/cacheStores/.test(line) || isConditional(lines, i))) return null;
   return finding(
     'note',
-    'metro.config.js sets no cacheStores (rn-iso supplies one on its own dev server)',
-    'Without a shared cacheStore each worktree transforms the whole module graph from cold -- thousands of modules, every time. `rn-iso start` appends its own FileStore under ~/.rn-iso/metro-cache, so the dev server rn-iso hosts does not pay that; a Metro started any other way still does.',
-    "Nothing to do for rn-iso. For runs outside it: config.cacheStores = [new FileStore({ root: path.join(os.homedir(), '.<app>-metro-cache') })]",
+    'metro.config.js mentions cacheStores, but not unconditionally',
+    `Every line naming it is inside a conditional, and doctor reads this file rather than executing it, so it cannot tell whether the store is installed. Under \`rn-iso start\` this costs nothing -- rn-iso appends its own store whether the project's is on or off -- but outside rn-iso a cacheStores that is off by default costs exactly what having none costs: ${mentions.map((l) => l.trim()).join(' / ')}`,
+    'Only for Metro runs rn-iso does not host: confirm it applies without env vars -- a store behind an opt-in flag is not shared until every workspace sets the flag.',
   );
-}
-
-// PURE. The package a metro.config.js hands its whole job to, or null.
-//
-// A real monorepo's app had this as its entire config:
-//
-//   module.exports = require('@acme/app-scripts/metro-config')(__dirname);
-//
-// Every text check below it -- and the "Metro cache is per-project" finding it
-// would otherwise emit -- is blind on a file like that, and reporting a cost
-// nobody can act on is worse than reporting nothing. The rule: no mention of
-// cacheStores anywhere, and the file's only statement is a re-export of a
-// module that is not one of Metro's own config packages (a config that
-// requires `expo/metro-config` and then builds on it is an ordinary config,
-// not a delegation).
-const METRO_CORE_MODULES =
-  /^(?:metro|metro-config|metro-cache|@react-native\/metro-config|@expo\/metro-config|expo\/metro-config|expo\/metro-config\/.*|@react-native\/metro-babel-transformer|path|node:path|fs|node:fs|os|node:os)$/;
-
-export function metroConfigDelegate(source: unknown): string | null {
-  const text = String(source || '');
-  if (/cacheStores/.test(text)) return null;
-  const code = text
-    // Comments first: the delegating config in the wild carried a commented-out
-    // `getDefaultConfig` require, and counting that as a statement would hide
-    // every real delegation behind it.
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .map((line) => line.replace(/\/\/.*$/, '').trim())
-    .filter((line) => line !== '' && line !== "'use strict';" && line !== '"use strict";')
-    .join(' ');
-  const m =
-    /^module\.exports\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)[^;]*;?$/.exec(code) ||
-    /^export\s+(?:\*|\{\s*default[^}]*\})\s+from\s+['"]([^'"]+)['"];?$/.exec(code) ||
-    /^export\s+default\s+require\(\s*['"]([^'"]+)['"]\s*\)[^;]*;?$/.exec(code);
-  if (!m) return null;
-  const pkg = m[1];
-  if (pkg === undefined) return null;
-  const base = pkg.startsWith('@') ? pkg.split('/').slice(0, 2).join('/') : (pkg.split('/')[0] ?? pkg);
-  if (METRO_CORE_MODULES.test(pkg) || METRO_CORE_MODULES.test(base)) return null;
-  // A relative path is still this repo's own code, and naming it is still the
-  // honest answer -- doctor cannot follow it either.
-  return pkg;
 }
 
 // Deliberately crude, because the alternative is evaluating the file: an env
@@ -229,47 +169,33 @@ function isConditionalLine(line: string): boolean {
 // derived from the workspace path, so the default is per-workspace -- which is
 // exactly the sharing it looks like it is providing.
 //
-// NOT A SETUP STEP ANY MORE. `rn-iso ios` passes the caching settings, the
+// RN-ISO SUPPLIES THIS ITSELF. `rn-iso ios` passes the caching settings, the
 // shared CAS path and the clang prefix mapping on its own xcodebuild argv
 // (compilationCacheSettings in engine/xcode.ts), where a `SETTING=value`
-// override reaches every target including the Pods. So the Podfile edit buys
-// nothing for a build rn-iso drives; it buys the builds rn-iso does not drive.
-// Both findings below say that, and both are notes for that reason.
+// override reaches every target including the Pods. So a Podfile that enables
+// NOTHING is not a finding at all any more: there is nothing there rn-iso
+// cannot handle itself.
+//
+// One shape survives, and it is the actively wrong one: caching turned ON in
+// the project with the CAS left at its per-workspace default. That is a cache
+// the project believes it has and does not -- on every build rn-iso is not
+// driving, which is the only kind this setting reaches.
 export function checkCompilationCache(podfileSource: string | null, xcodeMajor: number | null): Finding | null {
   if (podfileSource == null) return null;
-  // The content-addressed compilation cache is Xcode 26+. On anything older
-  // there is nothing to advise: saying "enable it" would be wrong, and saying
-  // "upgrade Xcode" is a bigger decision than this command should be making.
-  // A null major means the version could not be read, which is not the same as
-  // "old": the advice still goes out, hedged, rather than being withheld.
-  // (rn-iso's OWN argv is stricter -- it needs a version it actually read; see
-  // compilationCacheSettings.)
+  // The content-addressed compilation cache is Xcode 26+. On anything older the
+  // project's own setting does nothing either way, so there is nothing to
+  // report. A null major means the version could not be read, which is not the
+  // same as "old": the finding still goes out. (rn-iso's OWN argv is stricter --
+  // it needs a version it actually read; see compilationCacheSettings.)
   if (xcodeMajor != null && xcodeMajor < COMPILATION_CACHE_MIN_XCODE) return null;
-  const enabled = /COMPILATION_CACHE_ENABLE_CACHING/.test(podfileSource);
-  const path = /COMPILATION_CACHE_CAS_PATH/.test(podfileSource);
-  if (!enabled) {
-    // Say which Xcode this is about. Naming a version rn-iso never read would
-    // read as a measurement, and the advice is wrong on anything older than 26.
-    const version =
-      xcodeMajor != null
-        ? `On Xcode ${xcodeMajor}`
-        : "On Xcode 26 or newer (this machine's Xcode version could not be read, so check yours first)";
-    return finding(
-      'note',
-      'The Podfile does not enable Xcode compilation caching (rn-iso supplies it on its own builds)',
-      `${version} a content-addressed cache can carry compiled output between workspaces, which is the difference between a full build and a partial one in a fresh worktree. \`rn-iso ios\` already passes COMPILATION_CACHE_ENABLE_CACHING, a shared COMPILATION_CACHE_CAS_PATH and the clang prefix mapping on its own xcodebuild command line, so this repo needs no change to get it. The Podfile only matters if you ALSO build outside rn-iso -- Xcode itself, \`npx expo run:ios\`, CI -- where those runs fall back to the per-workspace default.`,
-      "Nothing to do for rn-iso. For builds outside it: in the Podfile's post_install, inside an `installer.pods_project.targets.each { |t| t.build_configurations.each { |config| ... } }` loop -- adding one if post_install has none, or has only a loop over resource bundles -- set config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES' and COMPILATION_CACHE_CAS_PATH to a path outside DerivedData.",
-    );
-  }
-  if (!path) {
-    return finding(
-      'note',
-      'The Podfile enables compilation caching but leaves the CAS at its default path',
-      'The default CAS lives at the DerivedData root, and DerivedData is per-workspace -- so nothing is actually shared between worktrees, which is the only reason to turn it on. Builds rn-iso drives are unaffected: they override COMPILATION_CACHE_CAS_PATH to a shared path on the xcodebuild command line, which wins over the project setting. This costs only the builds you run outside rn-iso.',
-      'Nothing to do for rn-iso. For builds outside it: set COMPILATION_CACHE_CAS_PATH to a fixed path outside DerivedData.',
-    );
-  }
-  return null;
+  if (!/COMPILATION_CACHE_ENABLE_CACHING/.test(podfileSource)) return null;
+  if (/COMPILATION_CACHE_CAS_PATH/.test(podfileSource)) return null;
+  return finding(
+    'note',
+    'The Podfile enables compilation caching but leaves the CAS at its default path',
+    'The default CAS lives at the DerivedData root, and DerivedData is per-workspace -- so nothing is actually shared between worktrees, which is the only reason to turn it on. Builds rn-iso drives are unaffected: they override COMPILATION_CACHE_CAS_PATH to a shared path on the xcodebuild command line, which wins over the project setting. This costs only the builds you run outside rn-iso.',
+    'Nothing to do for rn-iso. For builds outside it: set COMPILATION_CACHE_CAS_PATH to a fixed path outside DerivedData -- ~/.rn-iso/compilation-cache is where rn-iso puts its own, so the two share entries instead of filling two caches.',
+  );
 }
 
 // `.rn-iso/` holds this workspace's build output, its logs and the supervisor
@@ -332,7 +258,7 @@ export function checkCcacheConflict(podfileSource: string | null, podfilePropert
     'cost',
     'ccache is enabled, so rn-iso leaves Xcode compilation caching off',
     'The ccache launcher script is what disables explicitly built modules, which compilation caching requires -- so enabling both tends to mean neither works. rn-iso will not add its compilation-cache settings to a build whose project has apple.ccacheEnabled=true, and ccache itself keys on absolute paths, so it misses across worktrees anyway.',
-    'Pick one. On Xcode 26 the compilation cache is the one that survives a different workspace path, and rn-iso supplies it on its own builds as soon as apple.ccacheEnabled is off.',
+    'Pick one, and on Xcode 26 the compilation cache is the one that survives a different workspace path -- rn-iso supplies it on its own builds as soon as ccache is off. Turn it off where the value comes FROM: on Expo that is the expo-build-properties plugin in the app config (ios.ccacheEnabled), because prebuild rewrites ios/Podfile.properties.json from it; on a bare project edit ios/Podfile.properties.json directly. Then re-run pod install (or let `rn-iso ios` do it).',
   );
 }
 
@@ -352,16 +278,14 @@ export function checkBuildCacheProvider(
   dynamicConfig: string | null = null,
 ): Finding | null {
   // Bare React Native has no equivalent hook: the community CLI never consults
-  // a provider, so there is nothing to misconfigure and nothing to suggest
-  // beyond building the lookup yourself.
-  if (!isExpo) {
-    return finding(
-      'note',
-      'No build cache hook outside Expo',
-      'The provider that lets a workspace install a cached .app instead of compiling is an Expo CLI feature; the React Native community CLI has no equivalent. `@expo/fingerprint` works standalone on a bare project, so the pieces exist -- keying a stored .app on it and installing that yourself is the missing part.',
-      null,
-    );
-  }
+  // a provider, so there is nothing here to misconfigure. It used to say so in
+  // a note with no fix, which meant a bare project could never get a clean
+  // doctor run -- over something rn-iso handles completely on its own (its
+  // fingerprint build cache is the only level a bare project has, and it needs
+  // no provider). Silence is the honest answer under the same rule that
+  // stopped reporting a MISSING provider on Expo. `guide lifecycle` explains
+  // the two levels for anyone who goes looking.
+  if (!isExpo) return null;
   // A project whose config is code -- app.config.ts / app.config.js -- cannot be
   // read statically, and evaluating it would mean running arbitrary project code
   // inside a diagnostic. Saying nothing would be worse: it reads as a pass, and
@@ -486,43 +410,6 @@ export function checkEasAuth({
   return null;
 }
 
-// Gradle's task-output cache (`org.gradle.caching`) is OFF by default, and a
-// second worktree then recompiles every task from scratch even when nothing
-// changed. The cache lives under the Gradle user home (~/.gradle by default),
-// which every worktree on the machine already shares.
-//
-// NOT A SETUP STEP ANY MORE, for the same reason as the compilation cache:
-// `rn-iso android` puts `--build-cache` on its own gradlew argv, which turns
-// the cache on for that invocation regardless of what the properties file
-// says. The finding is about the gradle runs rn-iso does not make.
-//
-// `source` is android/gradle.properties, read and never evaluated. Null means
-// the file is absent -- a CNG project has no android/ until prebuild generates
-// one -- and the check is skipped rather than guessed at: there is no file to
-// set the property in, and prebuild writes the template's own.
-export function checkGradleBuildCache(gradlePropertiesSource: string | null): Finding | null {
-  if (gradlePropertiesSource == null) return null;
-  const enabled = String(gradlePropertiesSource)
-    .split('\n')
-    .map((line) => line.trim())
-    // A properties file comments with # or !; a commented-out property sets
-    // nothing.
-    .filter((line) => line && !line.startsWith('#') && !line.startsWith('!'))
-    .some((line) => {
-      // The KEY is case-sensitive (Java properties are); the VALUE is parsed
-      // by Boolean.parseBoolean, which is not.
-      const m = /^org\.gradle\.caching\s*[=:]\s*(.+)$/.exec(line);
-      return m !== null && m[1]?.trim().toLowerCase() === 'true';
-    });
-  if (enabled) return null;
-  return finding(
-    'note',
-    "Gradle's build cache is off in gradle.properties (rn-iso passes --build-cache anyway)",
-    "org.gradle.caching=true is not set in android/gradle.properties. `rn-iso android` passes --build-cache on its own ./gradlew invocation, so a second worktree already reuses the first one's compiled classes -- the task-output cache lives under the Gradle user home, which every worktree on this machine shares. The property only matters for gradle runs made OUTSIDE rn-iso (Android Studio, a plain ./gradlew, CI), which re-run every task from scratch.",
-    'Nothing to do for rn-iso. Add org.gradle.caching=true to android/gradle.properties only if you also build outside it.',
-  );
-}
-
 // The one note about concurrency limits, and ONLY when a limit is set: an
 // unset cap is the default (rn-iso imposes nothing), so saying "no limits are
 // configured" on every run would be noise. When one IS set, echoing the caps
@@ -583,9 +470,6 @@ export function runDoctor(
     : ['app.config.ts', 'app.config.js', 'app.config.mjs'].find((f) => existsSync(join(projectRoot, f))) || null;
   const podfileProperties = readJson(join(projectRoot, 'ios', 'Podfile.properties.json'));
   const podfile = read(join('ios', 'Podfile'));
-  // Null when android/gradle.properties does not exist -- a CNG project has no
-  // android/ until prebuild -- which skips the gradle-cache check entirely.
-  const gradleProperties = read(join('android', 'gradle.properties'));
   const metroConfig = read('metro.config.js') ?? read('metro.config.cjs');
   const gitignore = read('.gitignore');
   // git's verdict on the workspace dir, monorepo-aware. check-ignore exits 0
@@ -639,7 +523,6 @@ export function runDoctor(
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
     checkCompilationCache(podfile, xcodeMajor),
-    checkGradleBuildCache(gradleProperties),
     checkArtifactLayout({ gitignoreSource: gitignore, gitIgnored }),
     checkCcacheConflict(podfile, podfileProperties),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
@@ -714,7 +597,7 @@ export function checkFingerprintParity({
     'note',
     'This checkout does not fingerprint like a fresh worktree of HEAD',
     `A clean detached worktree of HEAD computes a different @expo/fingerprint hash than this checkout, so worktrees will MISS the cache entries this checkout fills (and vice versa) until the two agree.${differing} ${cause} (To measure this, doctor ran a real fingerprint twice and briefly created a temporary git worktree -- .git/worktrees metadata was touched and cleaned up.)`,
-    'Commit the dirty fingerprint inputs, or add genuinely build-irrelevant ones to .fingerprintignore.',
+    'Commit the dirty fingerprint inputs, or list the build-irrelevant ones in .fingerprintignore (same syntax as .gitignore, at the project root). Only the ones that genuinely cannot change the native build belong there -- generated reports, local env files, a lockfile whose checksums embed absolute machine paths. Never ignore a real native input (a Podfile, a gradle file, the app config) to force a hit: that trades a slow build for a wrong one.',
   );
 }
 

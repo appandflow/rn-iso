@@ -475,7 +475,7 @@ describe('compilationCacheSettings', () => {
   // Without the mapping every cache key contains this workspace's absolute
   // path, so a second worktree of the same commit misses all of them -- which
   // is the only reason the cache is worth turning on.
-  test('the prefix mapping is the workspace root, normalised, and the same virtual prefix the init skill uses', () => {
+  test('the prefix mapping is the workspace root, normalised, and the virtual prefix a committed Podfile block must match', () => {
     expect(prefixMapping('/w/app-412')).toBe('/w/app-412=/^src');
     expect(prefixMapping('/w/app-412/')).toBe('/w/app-412=/^src');
     const settings = compilationCacheSettings({ workspaceRoot: '/a/b/', casPath: '/cas', xcodeMajor: 27 });
@@ -1435,7 +1435,10 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     expect(transcript.some((r) => r.msg?.includes('BUILD SUCCEEDED'))).toBeTruthy();
     expect(records.at(-1)?.event).toBe('build_done');
     expect(records.filter((r) => r.level === 'error').length).toBe(0);
-  });
+    // A REAL xcodebuild, so vitest's 5s default is not the budget to measure
+    // it against: under full-suite parallel load this is the one case that
+    // loses that race, and it has flaked on CI for that reason alone.
+  }, 120_000);
 
   test('fails for real: a broken source file becomes one diagnostic with file, line and column', async () => {
     resetExecutor();

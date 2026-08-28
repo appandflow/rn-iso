@@ -22,13 +22,16 @@ program.name('rn-iso').description('Isolated React Native dev environments per p
 // (doctor once per repo, then worktree -> start -> ios/android -> logs ->
 // stop), then the whole-machine commands, then the two meta commands.
 //
-// There is no `init`. Setting a repo up is not a generator's job: every edit it
-// would make lands in a file the project already owns (a metro.config.js with
-// its own transformer, a Podfile with existing post_install logic), and the one
-// thing it could write safely -- the `.rn-iso/` gitignore entry -- is now
-// self-ensured by the commands that create the directory (engine/workspace.js).
-// What is left is judgement, which is the rn-iso-init SKILL's job: doctor
-// reports, an agent applies each fix in the repo's own style.
+// There is no `init`, and no setup skill either. Setting a repo up stopped
+// being a step: rn-iso supplies the Metro store, the Xcode compilation cache
+// and the Gradle build cache on the command lines it composes, and the one
+// edit that was always safe -- the `.rn-iso/` gitignore entry -- is
+// self-ensured by the commands that create the directory (engine/workspace.ts).
+// What is left is what rn-iso CANNOT do for a project, and `doctor` reports
+// exactly that, read-only, at the moment it matters; the edits it names land in
+// files the project already owns (a metro.config.js with its own transformer, a
+// Podfile with existing post_install logic), which is judgement, not
+// templating, so an agent applies each one in the repo's own style.
 doctorCommand(program);
 worktreeCommand(program);
 startCommand(program);

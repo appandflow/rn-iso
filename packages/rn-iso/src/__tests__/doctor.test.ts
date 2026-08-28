@@ -11,11 +11,9 @@ import {
   checkDevClient,
   checkEasAuth,
   checkFingerprintParity,
-  checkGradleBuildCache,
   checkMetroCache,
   detectFingerprintParity,
   runDoctor,
-  metroConfigDelegate,
   detectXcodeMajor,
   parseXcodeMajor,
   checkConcurrency,
@@ -50,20 +48,31 @@ test('buildCacheProvider at the top level on a newer SDK is what it should be', 
   expect(checkBuildCacheProvider({ expo: { buildCacheProvider: './p.js' } }, 57)).toBe(null);
 });
 
-// A bare React Native project has no provider hook at all, so advice about
-// where to put the key would be nonsense.
-test('a non-Expo project is told there is no hook, not told to configure one', () => {
-  const f = checkBuildCacheProvider(null, null, false);
-  assert(f);
-  expect(f.level).toBe('note');
-  expect(f.title).toMatch(/outside Expo/);
-  expect(f.detail).toMatch(/fingerprint/);
+// A bare React Native project has no provider hook at all, so there is nothing
+// to misconfigure and nothing to act on -- and a note with no fix meant a bare
+// project could never get a clean doctor run over something rn-iso handles
+// entirely by itself. Same rule as a MISSING provider on Expo: silence.
+test('a non-Expo project is not told anything about a provider it cannot have', () => {
+  expect(checkBuildCacheProvider(null, null, false)).toBe(null);
+  expect(checkBuildCacheProvider({ expo: {} }, 57, false)).toBe(null);
+  expect(checkBuildCacheProvider(null, 57, false, 'app.config.ts')).toBe(null);
 });
 
-// The compilation cache is an Xcode 26 feature. On older Xcode there is nothing
-// useful to say, and "enable it" would be wrong.
+// The compilation cache is an Xcode 26 feature. On older Xcode the project's own
+// setting does nothing either way, so there is nothing to report.
 test('compilation cache is not flagged at all on an Xcode that does not have it', () => {
-  expect(checkCompilationCache('post_install do |installer|\nend\n', 15)).toBe(null);
+  expect(checkCompilationCache("config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES'", 15)).toBe(null);
+});
+
+// THE RULE (issue #67 follow-up): rn-iso passes the compilation-cache settings
+// on its own xcodebuild argv, so a Podfile that enables NOTHING is not a
+// finding -- the absence of a project-side cache setting is nothing doctor has
+// to report any more.
+test('a Podfile that enables no compilation caching is reported as nothing at all', () => {
+  for (const xcode of [26, 27, null]) {
+    expect(checkCompilationCache('post_install do |installer|\nend\n', xcode)).toBe(null);
+  }
+  expect(checkCompilationCache(null, 26)).toBe(null);
 });
 
 // It is a NOTE and not a cost now: rn-iso overrides COMPILATION_CACHE_CAS_PATH
@@ -76,6 +85,9 @@ test('compilation cache enabled without a CAS path is a note about builds outsid
   expect(f.detail).toMatch(/per-workspace/);
   expect(f.detail).toMatch(/outside rn-iso/);
   expect(f.fix).toMatch(/Nothing to do for rn-iso/);
+  // Point the project's own builds at the SAME cache rn-iso fills, or the
+  // machine ends up with two.
+  expect(f.fix).toMatch(/~\/\.rn-iso\/compilation-cache/);
 });
 
 test('compilation cache with an explicit CAS path is reported as nothing', () => {
@@ -102,6 +114,18 @@ test('ccache alone is now flagged, because it is what stops rn-iso supplying the
   expect(f.title).toMatch(/rn-iso leaves Xcode compilation caching off/);
 });
 
+// doctor is the only place this is said, so the fix has to name where the value
+// is WRITTEN: on Expo it comes from the expo-build-properties plugin and
+// prebuild rewrites Podfile.properties.json from it, so editing the generated
+// file alone is undone by the next prebuild.
+test('the ccache fix names where the value comes from, on Expo and on a bare project', () => {
+  const f = checkCcacheConflict('post_install', { 'apple.ccacheEnabled': 'true' });
+  assert(f);
+  expect(f.fix).toMatch(/expo-build-properties/);
+  expect(f.fix).toMatch(/Podfile\.properties\.json/);
+  expect(f.fix).toMatch(/pod install/);
+});
+
 test('a project with no ccache is reported as nothing, with or without caching in the Podfile', () => {
   expect(checkCcacheConflict("COMPILATION_CACHE_ENABLE_CACHING = 'YES'", { 'apple.ccacheEnabled': 'false' })).toBe(
     null,
@@ -124,20 +148,16 @@ test('an Expo project without the dev client is flagged, because a reserved port
   expect(f.detail).toMatch(/8081/);
 });
 
-// Every branch is a NOTE now. `rn-iso start` appends its own FileStore to the
-// config it hosts (bare) or injects one into the Expo child, so a project with
-// no cacheStores is not paying anything under rn-iso -- only outside it.
-test('metro config with a cacheStore is reported as nothing; without one it is a note about runs outside rn-iso', () => {
+// THE RULE (issue #67 follow-up): `rn-iso start` appends its own FileStore to
+// the config it hosts (bare) or injects one into the Expo child, so a project
+// with no cacheStores is not paying anything under rn-iso. Its ABSENCE is
+// therefore not a finding -- no metro.config.js, a config that never names
+// cacheStores, and a config that delegates to another package are all silent.
+test('a project that configures no cacheStores is reported as nothing at all', () => {
   expect(checkMetroCache('config.cacheStores = [new FileStore({})]')).toBe(null);
-  const missing = checkMetroCache('module.exports = config;');
-  assert(missing);
-  expect(missing.level).toBe('note');
-  expect(missing.detail).toMatch(/rn-iso start/);
-  expect(missing.fix).toMatch(/Nothing to do for rn-iso/);
-  const note = checkMetroCache(null);
-  assert(note);
-  expect(note.level).toBe('note');
-  expect(note.fix).toMatch(/Nothing to do for rn-iso/);
+  expect(checkMetroCache('module.exports = config;')).toBe(null);
+  expect(checkMetroCache(null)).toBe(null);
+  expect(checkMetroCache("module.exports = require('@acme/app-scripts/metro-config')(__dirname);")).toBe(null);
 });
 
 // A config that is code cannot be read without executing it, and executing
@@ -160,25 +180,6 @@ test('a newer SDK with a dynamic config is pointed at the top-level key', () => 
 
 test('no config at all and no dynamic config stays silent', () => {
   expect(checkBuildCacheProvider(null, 57, true, null)).toBe(null);
-});
-
-// Nothing ever passed an Xcode version, so every user was told what "Xcode 26+"
-// offers, including the ones on Xcode 15 for whom that check should not fire and
-// the ones whose actual version this line was quietly guessing at.
-test('the compilation cache advice names the Xcode it was told about', () => {
-  const podfile = 'post_install do |installer|\nend\n';
-  const f = checkCompilationCache(podfile, 27);
-  assert(f);
-  expect(f.detail).toMatch(/On Xcode 27 /);
-});
-
-test('an unreadable Xcode version is hedged rather than guessed at', () => {
-  const podfile = 'post_install do |installer|\nend\n';
-  const f = checkCompilationCache(podfile, null);
-  assert(f);
-  expect(f.level).toBe('note');
-  expect(f.detail).toMatch(/could not be read/);
-  expect(f.detail).not.toMatch(/^On Xcode 26 a /);
 });
 
 // The version comes from `xcodebuild -version`, whose first line is "Xcode 26.1".
@@ -233,6 +234,19 @@ test('the dev client finding still fires for a project that builds with expo run
   const f = checkDevClient(pkg, true);
   assert(f);
   expect(f.level).toBe('cost');
+});
+
+// This is the one finding whose remedy is a NATIVE dependency, so the fix has
+// to say both halves: install it AND rebuild, because an app already on the
+// device will not pick it up. It also has to refuse the wrong shortcut --
+// compiling the port in breaks the build cache, which does not key on the port.
+test('the dev client fix names the install, the rebuild, and why not to bake the port in', () => {
+  const f = checkDevClient({ dependencies: { expo: '~57.0.0' } });
+  assert(f);
+  expect(f.fix).toMatch(/npx expo install expo-dev-client/);
+  expect(f.fix).toMatch(/rebuild/i);
+  expect(f.fix).toMatch(/NATIVE dependency/);
+  expect(f.fix).toMatch(/RCT_METRO_PORT/);
 });
 
 // `.rn-iso/` holds this workspace's build output, logs and supervisor pidfile,
@@ -316,11 +330,12 @@ test('an unconditional cacheStores stays silent', () => {
   ).toBe(null);
 });
 
-// A metro.config.js that is one line of delegation decides NOTHING here, and
-// the per-project cost finding it used to produce was a confident measurement
-// of a file that does not hold the answer. Taken verbatim from a real
-// yarn-workspaces repo, commented-out require and all.
-test('a metro config that delegates to a workspace package is reported as uninspectable', () => {
+// A metro.config.js that is one line of delegation used to get its own "cannot
+// inspect it" note. It does not any more: what such a file hides is a store
+// rn-iso supplies either way, so there is nothing doctor can say that is
+// actionable. Taken verbatim from a real yarn-workspaces repo, commented-out
+// require and all.
+test('a metro config that delegates to a workspace package is silent, not a note', () => {
   const source = [
     '// RN CLI checks for this to make sure the config is valid :/',
     "// const { getDefaultConfig } = require('@react-native/metro-config');",
@@ -329,55 +344,18 @@ test('a metro config that delegates to a workspace package is reported as uninsp
     '  __dirname,',
     ');',
   ].join('\n');
-  expect(metroConfigDelegate(source)).toBe('@th3rdwave/react-native-app-scripts/metro-config');
-  const f = checkMetroCache(source);
-  assert(f);
-  expect(f.level).toBe('note');
-  expect(f.title).toMatch(/delegates to @th3rdwave\/react-native-app-scripts\/metro-config; rn-iso cannot inspect it/);
-  expect(f.title).not.toMatch(/per-project/);
-});
-
-test('the ESM and plain forms of the same delegation are recognized too', () => {
-  expect(metroConfigDelegate("module.exports = require('@acme/metro');")).toBe('@acme/metro');
-  expect(metroConfigDelegate("export { default } from '@acme/metro';")).toBe('@acme/metro');
-  expect(metroConfigDelegate("export default require('./tools/metro-config');")).toBe('./tools/metro-config');
-});
-
-test('an ordinary config that BUILDS on a metro package is not a delegation', () => {
-  // The distinction that matters: requiring expo/metro-config and then
-  // configuring it is a config doctor can read, and it must still get the
-  // real finding.
-  expect(metroConfigDelegate("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);")).toBe(null);
-  expect(
-    metroConfigDelegate(
-      "const { getDefaultConfig } = require('@react-native/metro-config');\nconst config = getDefaultConfig(__dirname);\nmodule.exports = config;",
-    ),
-  ).toBe(null);
-  const f = checkMetroCache("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);");
-  assert(f);
-  expect(f.level).toBe('note');
-  expect(f.title).toMatch(/sets no cacheStores/);
-});
-
-test('a delegating config that DOES mention cacheStores is read normally', () => {
-  // Delegation is only interesting because the file says nothing about the
-  // cache. One that does is inspectable after all.
-  const source =
-    "const base = require('@acme/metro');\nbase.cacheStores = [new FileStore({ root: '/x' })];\nmodule.exports = base;";
-  expect(metroConfigDelegate(source)).toBe(null);
   expect(checkMetroCache(source)).toBe(null);
 });
 
-// The two settings only do anything inside a loop that defines `config`. A real
-// Podfile's post_install had no such loop (only one over resource bundles), so
-// the advice as written produced a Podfile that compiled and cached nothing.
-test('the compilation cache advice names the loop the settings have to live in', () => {
-  const f = checkCompilationCache('post_install do |installer|\nend\n', 26);
-  assert(f);
-  expect(f.fix).toMatch(/post_install/);
-  expect(f.fix).toMatch(/targets\.each/);
-  expect(f.fix).toMatch(/build_configurations/);
-  expect(f.fix).toMatch(/adding one if/i);
+// A config that BUILDS on a metro package is an ordinary config, and one that
+// simply sets no cacheStores is silent for the same reason as everything above.
+test('an ordinary config built on expo/metro-config with no cacheStores is silent too', () => {
+  expect(checkMetroCache("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);")).toBe(null);
+  expect(
+    checkMetroCache(
+      "const base = require('@acme/metro');\nbase.cacheStores = [new FileStore({ root: '/x' })];\nmodule.exports = base;",
+    ),
+  ).toBe(null);
 });
 
 // A dynamic config is the one case where doctor cannot answer its own question,
@@ -574,49 +552,21 @@ test('a project with no provider configured at all is reported as nothing', () =
 });
 
 // --- Gradle's task-output cache ---------------------------------------------
-test('org.gradle.caching=true is reported as nothing, in every spelling gradle accepts', () => {
-  expect(checkGradleBuildCache('org.gradle.jvmargs=-Xmx2g\norg.gradle.caching=true\n')).toBe(null);
-  expect(checkGradleBuildCache('org.gradle.caching = TRUE')).toBe(null);
-  expect(checkGradleBuildCache('org.gradle.caching:true')).toBe(null);
-});
-
-test('a gradle.properties without org.gradle.caching=true is a note naming the cost and the fix', () => {
-  for (const source of [
-    'org.gradle.jvmargs=-Xmx2g\n',
-    '# org.gradle.caching=true\n',
-    'org.gradle.caching=false\n',
-    // The key is case-sensitive: Gradle does not read this one.
-    'ORG.GRADLE.CACHING=true\n',
-  ]) {
-    const f = checkGradleBuildCache(source);
-    assert(f, `expected a finding for ${JSON.stringify(source)}`);
-    expect(f.level).toBe('note');
-    expect(f.title).toMatch(/Gradle/);
-    expect(f.detail).toMatch(/worktree/);
-    expect(f.fix).toMatch(/org\.gradle\.caching=true/);
-  }
-});
-
-test('an absent android/gradle.properties (CNG) skips the gradle check entirely', () => {
-  expect(checkGradleBuildCache(null)).toBe(null);
-});
-
-test('runDoctor reads android/gradle.properties and reports the gradle cache, but only when the file exists', () => {
+//
+// The check is GONE. `rn-iso android` passes --build-cache on its own gradlew
+// argv, which wins over the properties file, so nothing android/gradle.properties
+// can say about org.gradle.caching defeats rn-iso or is worth reporting: the
+// only finding it ever produced was "the property is not set", which is exactly
+// the absence this rule stopped reporting.
+test('a gradle.properties without org.gradle.caching is not a finding any more', () => {
   const withAndroid = mkdtempSync(join(tmpdir(), 'rn-iso-doc-gradle-'));
   writeFileSync(join(withAndroid, 'package.json'), JSON.stringify({ name: 'x' }));
   mkdirSync(join(withAndroid, 'android'), { recursive: true });
-  writeFileSync(join(withAndroid, 'android', 'gradle.properties'), 'org.gradle.jvmargs=-Xmx2g\n');
-  const findings = runDoctor(withAndroid);
-  expect(findings.some((f) => /Gradle/.test(f.title))).toBeTruthy();
-
-  writeFileSync(join(withAndroid, 'android', 'gradle.properties'), 'org.gradle.caching=true\n');
-  expect(runDoctor(withAndroid).some((f) => /Gradle/.test(f.title))).toBe(false);
+  for (const source of ['org.gradle.jvmargs=-Xmx2g\n', '# org.gradle.caching=true\n', 'org.gradle.caching=false\n']) {
+    writeFileSync(join(withAndroid, 'android', 'gradle.properties'), source);
+    expect(runDoctor(withAndroid).some((f) => /Gradle/i.test(f.title))).toBe(false);
+  }
   rmSync(withAndroid, { recursive: true, force: true });
-
-  const cng = mkdtempSync(join(tmpdir(), 'rn-iso-doc-cng-'));
-  writeFileSync(join(cng, 'package.json'), JSON.stringify({ name: 'x' }));
-  expect(runDoctor(cng).some((f) => /Gradle/.test(f.title))).toBe(false);
-  rmSync(cng, { recursive: true, force: true });
 });
 
 // --- fingerprint parity ------------------------------------------------------
@@ -648,6 +598,20 @@ test('a parity mismatch names the differing sources, the dirty files, the conseq
   expect(f.detail).toMatch(/fingerprint twice/);
   expect(f.detail).toMatch(/\.git\/worktrees/);
   expect(f.detail).toMatch(/cleaned up/);
+});
+
+// The .fingerprintignore advice lives HERE now -- there is no setup skill to
+// carry it -- so the fix has to say what belongs in the file and what must
+// never go in it.
+test('the parity fix carries the .fingerprintignore advice, including what not to ignore', () => {
+  const f = checkFingerprintParity({ projectHash: 'aaa', worktreeHash: 'bbb' });
+  assert(f);
+  expect(f.fix).toMatch(/\.fingerprintignore/);
+  expect(f.fix).toMatch(/gitignore/);
+  // What belongs in it: things that cannot change the native build.
+  expect(f.fix).toMatch(/absolute machine paths|generated|env file/);
+  // And the refusal: never ignore a real native input to force a hit.
+  expect(f.fix).toMatch(/Never ignore a real native input/);
 });
 
 test('a parity mismatch with no dirty files still fires, hedged instead of accusing', () => {
