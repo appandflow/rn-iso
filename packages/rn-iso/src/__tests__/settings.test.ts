@@ -202,6 +202,12 @@ describe('ngrokUrlSetting', () => {
     );
   });
 
+  test('normalizes a trailing slash for stable record reuse', () => {
+    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'https://stable.ngrok.app/' } })).toBe(
+      'https://stable.ngrok.app',
+    );
+  });
+
   test('is unset for auto and every other tunnel mode', () => {
     for (const tunnel of ['auto', 'expo', 'cloudflared', 'off']) {
       expect(ngrokUrlSetting({ metro: { tunnel, ngrokUrl: 'https://stable.ngrok.app' } })).toBeNull();

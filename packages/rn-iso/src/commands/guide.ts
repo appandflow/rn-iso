@@ -590,10 +590,10 @@ RN_ISO_REMOTE_METRO_UNREACHABLE
 --- DEV-SERVER CODES (\`rn-iso start\`) ---
 
 RN_ISO_REMOTE_START_REQUIRED
-  A healthy Expo server was started without a tunnel. A running Expo server
-  cannot gain that option. For an rn-iso supervisor, run \`rn-iso stop\`, then
-  \`rn-iso start --remote\`. For an external server, configure
-  metro.publicUrl or let rn-iso supervise the server.
+  A healthy bare or Expo server was started without its required remote
+  tunnel. A running server cannot gain that option. For an rn-iso supervisor,
+  run \`rn-iso stop\`, then \`rn-iso start --remote\`. For an external server,
+  configure metro.publicUrl or let rn-iso supervise the server.
 
 RN_ISO_BARE_DEPS / RN_ISO_BARE_LOAD / RN_ISO_BARE_API  (bare RN)
   The supervisor hosts Metro out of the PROJECT's node_modules, so metro,
@@ -622,9 +622,10 @@ RN_ISO_SUPERVISOR_EXITED
   the full records. Fix that and run \`start\` again; nothing is left running.
 
 RN_ISO_BAD_ARG / RN_ISO_NO_PROJECT
-  \`start\` refused before doing anything: an unusable --wait value, or a
-  working directory with no package.json above it. Both are caught before the
-  port is reserved and before anything is spawned, so nothing was started.
+  \`start\` refused before doing anything: an unusable --wait value, an invalid
+  Metro tunnel setting, or a working directory with no package.json above it.
+  These errors are caught before the port is reserved and before anything is
+  spawned, so nothing was started.
 
 "@rn-iso/metro is not installed ... so bundler and client logs will not be
 captured"  (in metro.ndjson, bare RN)
@@ -1228,7 +1229,7 @@ KEYS RN-ISO READS
                         "expo" lets the Expo dev server tunnel itself;
                         "cloudflared" /
                         "ngrok" name a managed provider explicitly. Any
-                        other value is treated as unset.
+                        other value is refused as invalid.
   metro.ngrokUrl        an HTTPS URL reserved for the managed ngrok provider.
                         Requires metro.tunnel "ngrok" and passes --url to
                         ngrok http. rn-iso owns this process.

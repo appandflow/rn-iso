@@ -129,15 +129,33 @@ function remoteSetting(settings: SettingsObject, platform: 'ios' | 'android'): b
 }
 
 // engine/metro-reach.ts's TunnelMode, committed once for the whole repo
-// rather than passed per invocation -- there is no `--tunnel` flag. Anything
-// other than one of the five known modes is treated as unset rather than
-// trusted, the same rule remoteIosSetting applies to a non-`true` value: a
-// typo here must fall back to `auto`, not silently disable tunnelling.
+// rather than passed per invocation -- there is no `--tunnel` flag. Readers
+// return null for missing or invalid input; commands validate before using the
+// value so invalid input cannot silently select a default.
 export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
   const block = settings.metro;
   if (typeof block !== 'object' || block === null) return null;
   const mode = (block as { tunnel?: unknown }).tunnel;
   return typeof mode === 'string' && (TUNNEL_MODES as readonly string[]).includes(mode) ? (mode as TunnelMode) : null;
+}
+
+export function metroTunnelSettingError(settings: SettingsObject): string | null {
+  const block = settings.metro;
+  if (!isPlainObject(block)) return null;
+  if ('tunnel' in block) {
+    const mode = block.tunnel;
+    if (typeof mode !== 'string' || !(TUNNEL_MODES as readonly string[]).includes(mode)) {
+      return `Invalid metro.tunnel setting ${JSON.stringify(mode)}. Expected one of: ${TUNNEL_MODES.join(', ')}.`;
+    }
+  }
+  if (!('ngrokUrl' in block)) return null;
+  if (block.tunnel !== 'ngrok') {
+    return 'metro.ngrokUrl requires metro.tunnel to be "ngrok".';
+  }
+  if (normalizedHttpsUrl(block.ngrokUrl) === null) {
+    return 'metro.ngrokUrl must be a valid HTTPS URL.';
+  }
+  return null;
 }
 
 // An operator-supplied tunnel URL that already exists. planMetroReach uses
@@ -157,11 +175,14 @@ export function ngrokUrlSetting(settings: SettingsObject): string | null {
   const block = settings.metro;
   if (typeof block !== 'object' || block === null) return null;
   if ((block as { tunnel?: unknown }).tunnel !== 'ngrok') return null;
-  const raw = (block as { ngrokUrl?: unknown }).ngrokUrl;
+  return normalizedHttpsUrl((block as { ngrokUrl?: unknown }).ngrokUrl);
+}
+
+function normalizedHttpsUrl(raw: unknown): string | null {
   if (typeof raw !== 'string' || !raw.trim()) return null;
   try {
     const url = new URL(raw.trim());
-    return url.protocol === 'https:' ? raw.trim() : null;
+    return url.protocol === 'https:' ? raw.trim().replace(/\/+$/, '') : null;
   } catch {
     return null;
   }

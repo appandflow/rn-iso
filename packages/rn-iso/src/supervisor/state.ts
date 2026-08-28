@@ -155,6 +155,21 @@ export function clearExpoMetroTunnel(root: string): void {
   });
 }
 
+export function clearManagedMetroTunnel(root: string, expected: Omit<ManagedTunnelRecord, 'kind'>): void {
+  clearWorkspaceStateKey(root, 'metroTunnel', (value) => {
+    if (typeof value !== 'object' || value === null) return false;
+    const record = value as Partial<ManagedTunnelRecord>;
+    return (
+      record.kind === 'managed' &&
+      record.provider === expected.provider &&
+      record.pid === expected.pid &&
+      record.url === expected.url &&
+      record.port === expected.port &&
+      record.startedAt === expected.startedAt
+    );
+  });
+}
+
 // Removes only the selected key. The file goes when nothing else is left in
 // it, so a stopped workspace has no state.json rather than an empty one.
 function clearWorkspaceStateKey(root: string, key: string, shouldClear: (value: unknown) => boolean): void {

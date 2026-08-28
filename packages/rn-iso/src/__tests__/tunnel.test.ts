@@ -172,6 +172,102 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     expect(result).toEqual({ failed: true, reason: expect.stringContaining('did not print a tunnel URL') });
   });
 
+  test('waits for a child that exits after SIGTERM before returning failure', async () => {
+    let exited = false;
+    let streamsDestroyed = 0;
+    const child = makeChildProcess({
+      kill(signal) {
+        expect(signal).toBe('SIGTERM');
+        setTimeout(() => {
+          exited = true;
+          child.emit('exit', null, 'SIGTERM');
+        }, 5);
+        return true;
+      },
+    });
+    Object.assign(child.stdout as object, { destroy: () => void (streamsDestroyed += 1) });
+    Object.assign(child.stderr as object, { destroy: () => void (streamsDestroyed += 1) });
+
+    await startTunnel({ provider: 'ngrok', port: 8081, spawnFn: () => child, urlTimeoutMs: 1 });
+
+    expect(exited).toBe(true);
+    expect(streamsDestroyed).toBe(2);
+  });
+
+  test('escalates to SIGKILL and confirms exit when a child ignores SIGTERM', async () => {
+    const signals: Array<NodeJS.Signals | number | undefined> = [];
+    const child = makeChildProcess({
+      kill(signal) {
+        signals.push(signal);
+        if (signal === 'SIGKILL') child.emit('exit', null, 'SIGKILL');
+        return true;
+      },
+    });
+
+    await startTunnel({
+      provider: 'ngrok',
+      port: 8081,
+      spawnFn: () => child,
+      urlTimeoutMs: 1,
+      cleanupTimeoutMs: 5,
+      isChildAlive: () => true,
+    } as Parameters<typeof startTunnel>[0]);
+
+    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+  });
+
+  test('does not fall back when SIGKILL cannot confirm child exit', async () => {
+    const providers: string[] = [];
+    const child = makeChildProcess({ kill: () => true });
+
+    const result = await startTunnelSequence({
+      providers: ['ngrok', 'cloudflared'],
+      port: 8081,
+      start: async ({ provider }) => {
+        providers.push(provider);
+        if (provider === 'cloudflared') return { url: 'https://fallback.trycloudflare.com', pid: 4243 };
+        return startTunnel({
+          provider,
+          port: 8081,
+          spawnFn: () => child,
+          urlTimeoutMs: 1,
+          cleanupTimeoutMs: 1,
+          isChildAlive: () => true,
+        } as Parameters<typeof startTunnel>[0]);
+      },
+    });
+
+    expect(providers).toEqual(['ngrok']);
+    expect(result).toEqual({ failed: true, reason: expect.stringContaining('could not confirm') });
+  });
+
+  test('auto fallback starts only after the failed child exits', async () => {
+    const order: string[] = [];
+    const child = makeChildProcess({
+      kill() {
+        setTimeout(() => {
+          order.push('ngrok-exit');
+          child.emit('exit', null, 'SIGTERM');
+        }, 5);
+        return true;
+      },
+    });
+
+    await startTunnelSequence({
+      providers: ['ngrok', 'cloudflared'],
+      port: 8081,
+      start: async ({ provider }) => {
+        if (provider === 'cloudflared') {
+          order.push('cloudflared-start');
+          return { url: 'https://fallback.trycloudflare.com', pid: 4243 };
+        }
+        return startTunnel({ provider, port: 8081, spawnFn: () => child, urlTimeoutMs: 1 });
+      },
+    });
+
+    expect(order).toEqual(['ngrok-exit', 'cloudflared-start']);
+  });
+
   test('a URL that never becomes reachable fails on the INJECTED clock, not a real one', async () => {
     const c = clock();
     const child = makeChildProcess();
@@ -218,10 +314,15 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
       port: 8081,
       spawnFn: () => child,
       probeReachable: async () => true,
+      cleanupTimeoutMs: 1,
     });
     child.stdout?.emit('data', `${JSON.stringify({ url: 'https://x.ngrok-free.app' })}\n`);
     const result = await promise;
-    expect(result).toEqual({ failed: true, reason: expect.stringContaining('reported no pid') });
+    expect(result).toEqual({
+      failed: true,
+      reason: expect.stringMatching(/reported no pid.*could not confirm/),
+      cleanupFailed: true,
+    });
   });
 });
 

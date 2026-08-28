@@ -152,6 +152,14 @@ test('the errors topic documents every code the build commands can emit', () => 
   }
 });
 
+test('the remote start remedy covers existing bare and Expo servers', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  const section = body.slice(body.indexOf('RN_ISO_REMOTE_START_REQUIRED'), body.indexOf('RN_ISO_BARE_DEPS'));
+  expect(section).toContain('bare');
+  expect(section).toContain('Expo');
+});
+
 test('the settings topic lists exactly the keys settings.js honours', () => {
   const body = renderTopic('settings');
   assert(body);

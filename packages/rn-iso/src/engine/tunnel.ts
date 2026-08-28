@@ -1,18 +1,13 @@
 // src/engine/tunnel.ts -- the lifecycle of a tunnel rn-iso starts for itself:
 // launch the provider named by engine/metro-reach.ts's `{ start: provider }`
 // plan, read the provider's own address back out of its (untrusted) output,
-// prove that address actually serves before calling it ready, and reap the
-// process again on `stop`.
+// optionally prove that address serves, and reap the process again on `stop`.
 //
-// CRITICAL, and the reason step three exists at all: a provider PRINTING its
-// URL is not the same fact as that URL being routable. A cloudflared quick
-// tunnel can take MINUTES to register with Cloudflare's edge even after its
-// own log says the connection came up -- confirmed live, and it cost hours of
-// misdiagnosis here, because everything downstream (the Metro gate, the
-// device) looked like it was talking to a dead tunnel when the tunnel was
-// simply not up yet. So `startTunnel` never reports success on the URL alone;
-// it polls the URL itself until something answers, with a generous and
-// injectable timeout, and only then hands the URL back.
+// A provider PRINTING its URL is not the same fact as that URL being routable.
+// A cloudflared quick tunnel can take minutes to register with Cloudflare's
+// edge after its connection log appears. `requireReachable` selects the
+// startup contract: URL-only when Metro is not running yet, or a reachable URL
+// when it is.
 //
 // Parsing is kept pure and separate from invocation (CLAUDE.md item 3):
 // `parseCloudflaredLine` / `parseNgrokLine` take one line of a provider's
@@ -20,6 +15,9 @@
 // in sight, so the untrusted-output handling is tested without spawning
 // anything.
 import type { ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
 import { createLineReader } from '../supervisor/server-expo.ts';
@@ -107,6 +105,116 @@ const REACHABLE_POLL_MS = 2_000;
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+// --- serializing one managed acquisition per workspace --------------------
+
+const TUNNEL_LOCK_RECORD = 'owner.json';
+const TUNNEL_LOCK_WAIT_MS = 60_000;
+const TUNNEL_LOCK_POLL_MS = 25;
+const TUNNEL_LOCK_RECORD_GRACE_MS = 5_000;
+
+interface TunnelLockRecord {
+  pid: number;
+  token: string;
+}
+
+interface ManagedTunnelLockOptions {
+  isAlive?: (pid: number) => boolean;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  waitMs?: number;
+}
+
+function managedTunnelLockPath(root: string): string {
+  return join(root, '.rn-iso', 'metro-tunnel.lock');
+}
+
+function readTunnelLock(path: string): TunnelLockRecord | null {
+  try {
+    const parsed = JSON.parse(readFileSync(join(path, TUNNEL_LOCK_RECORD), 'utf-8')) as Partial<TunnelLockRecord>;
+    return typeof parsed.pid === 'number' && typeof parsed.token === 'string'
+      ? { pid: parsed.pid, token: parsed.token }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function tunnelLockAge(path: string, now: number): number | null {
+  try {
+    return now - statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+function reapTunnelLock(path: string): void {
+  const aside = `${path}.reap-${process.pid}-${randomUUID()}`;
+  try {
+    renameSync(path, aside);
+  } catch {
+    return;
+  }
+  rmSync(aside, { recursive: true, force: true });
+}
+
+export async function withManagedTunnelLock<T>(
+  root: string,
+  fn: () => Promise<T>,
+  {
+    isAlive = isPidAlive,
+    now = Date.now,
+    sleep = defaultSleep,
+    waitMs = TUNNEL_LOCK_WAIT_MS,
+  }: ManagedTunnelLockOptions = {},
+): Promise<T> {
+  const path = managedTunnelLockPath(root);
+  const deadline = now() + waitMs;
+  let owned: TunnelLockRecord | null = null;
+
+  while (!owned) {
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      mkdirSync(path);
+      owned = { pid: process.pid, token: randomUUID() };
+      writeFileSync(join(path, TUNNEL_LOCK_RECORD), JSON.stringify(owned));
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') {
+        if (owned) rmSync(path, { recursive: true, force: true });
+        throw err;
+      }
+    }
+
+    const holder = readTunnelLock(path);
+    if (holder && !isAlive(holder.pid)) {
+      reapTunnelLock(path);
+      continue;
+    }
+    if (!holder) {
+      const age = tunnelLockAge(path, now());
+      if (age === null) continue;
+      if (age > TUNNEL_LOCK_RECORD_GRACE_MS) {
+        reapTunnelLock(path);
+        continue;
+      }
+    }
+    if (now() >= deadline) {
+      const error = new Error(`Timed out waiting for the managed tunnel lock at ${path}.`);
+      (error as Error & { code?: string }).code = 'RN_ISO_LOCK_TIMEOUT';
+      throw error;
+    }
+    await sleep(TUNNEL_LOCK_POLL_MS);
+  }
+
+  try {
+    return await fn();
+  } finally {
+    if (readTunnelLock(path)?.token === owned?.token) {
+      rmSync(path, { recursive: true, force: true });
+    }
+  }
+}
+
 // Any HTTP response -- even a 404 from Metro's own router -- proves the
 // tunnel forwards traffic to something behind it; only a connection failure
 // means it is not routable yet.
@@ -129,10 +237,19 @@ function waitForUrl(
 ): Promise<{ url: string | null; exited: boolean }> {
   return new Promise((resolve) => {
     let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let onOut: (chunk: unknown) => void;
+    let onErr: (chunk: unknown) => void;
+    let onError: () => void;
+    let onExit: () => void;
     const finish = (url: string | null, exited = false) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      child.stdout?.removeListener('data', onOut);
+      child.stderr?.removeListener('data', onErr);
+      child.removeListener('error', onError);
+      child.removeListener('exit', onExit);
       resolve({ url, exited });
     };
     const onLine = (line: string) => {
@@ -142,13 +259,17 @@ function waitForUrl(
     };
     const outReader = createLineReader(onLine);
     const errReader = createLineReader(onLine);
+    onOut = (chunk: unknown) => outReader.push(chunk);
+    onErr = (chunk: unknown) => errReader.push(chunk);
+    onError = () => finish(null);
+    onExit = () => finish(null, true);
     child.stdout?.setEncoding?.('utf-8');
     child.stderr?.setEncoding?.('utf-8');
-    child.stdout?.on('data', (chunk: unknown) => outReader.push(chunk));
-    child.stderr?.on('data', (chunk: unknown) => errReader.push(chunk));
-    child.on('error', () => finish(null));
-    child.on('exit', () => finish(null, true));
-    const timer = setTimeout(() => finish(null), timeoutMs);
+    child.stdout?.on('data', onOut);
+    child.stderr?.on('data', onErr);
+    child.on('error', onError);
+    child.on('exit', onExit);
+    timer = setTimeout(() => finish(null), timeoutMs);
   });
 }
 
@@ -189,9 +310,14 @@ export interface StartTunnelOptions {
   sleep?: (ms: number) => Promise<void>;
   ngrokUrl?: string | null;
   requireReachable?: boolean;
+  cleanupTimeoutMs?: number;
+  isChildAlive?: (pid: number) => boolean;
 }
 
-export type StartTunnelResult = { url: string; pid: number } | { failed: true; reason: string };
+export type StartTunnelResult = { url: string; pid: number } | { failed: true; reason: string; cleanupFailed?: true };
+
+const CLEANUP_TIMEOUT_MS = 1_000;
+const CLEANUP_POLL_MS = 25;
 
 /**
  * Start `provider`'s own binary against `port`, wait for it to print its
@@ -213,6 +339,8 @@ export async function startTunnel({
   sleep = defaultSleep,
   ngrokUrl = null,
   requireReachable = true,
+  cleanupTimeoutMs = CLEANUP_TIMEOUT_MS,
+  isChildAlive = isPidAlive,
 }: StartTunnelOptions): Promise<StartTunnelResult> {
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const { bin, args } = tunnelArgv(provider, port, ngrokUrl);
@@ -231,18 +359,33 @@ export async function startTunnel({
   }
 
   const { url, exited } = await waitForUrl(child, parserFor(provider), urlTimeoutMs);
+  const failAfterCleanup = async (reason: string, alreadyExited = false): Promise<StartTunnelResult> => {
+    const stopped = await terminateChild(child, {
+      alreadyExited,
+      timeoutMs: cleanupTimeoutMs,
+      now,
+      sleep,
+      isAlive: isChildAlive,
+    });
+    return stopped
+      ? { failed: true, reason }
+      : {
+          failed: true,
+          reason: `${reason} Sent SIGKILL but could not confirm that pid ${child.pid ?? 'unknown'} exited.`,
+          cleanupFailed: true,
+        };
+  };
   if (!url) {
-    killChild(child);
-    return {
-      failed: true,
-      reason: exited
+    return failAfterCleanup(
+      exited
         ? `${provider} exited before printing a tunnel URL.`
         : `${provider} did not print a tunnel URL within ${urlTimeoutMs}ms.`,
-    };
+      exited,
+    );
   }
+  resumeChildPipes(child);
 
-  // CRITICAL (see header): printing the URL is not the same as the URL being
-  // routable, so success is never reported on it alone.
+  // Reachable startup proves that the discovered URL forwards traffic.
   if (requireReachable) {
     const reachable = await waitUntilReachable({
       url,
@@ -252,19 +395,17 @@ export async function startTunnel({
       timeoutMs: reachableTimeoutMs,
     });
     if (!reachable) {
-      killChild(child);
-      return {
-        failed: true,
-        reason: `${url} did not become reachable within ${reachableTimeoutMs}ms; ${provider} may still be registering, or the network path is blocked.`,
-      };
+      return failAfterCleanup(
+        `${url} did not become reachable within ${reachableTimeoutMs}ms; ${provider} may still be registering, or the network path is blocked.`,
+      );
     }
   }
 
   const pid = child.pid;
   if (!pid) {
-    killChild(child);
-    return { failed: true, reason: `${provider} started but reported no pid.` };
+    return failAfterCleanup(`${provider} started but reported no pid.`);
   }
+  unrefChildPipes(child);
   child.unref?.();
   return { url, pid };
 }
@@ -299,20 +440,97 @@ export async function startTunnelSequence({
     });
     if (!('failed' in result)) return { provider, ...result };
     failures.push(`${provider}: ${result.reason}`);
+    if (result.cleanupFailed) return { failed: true, reason: failures.join(' ') };
   }
   return { failed: true, reason: failures.join(' ') || 'No managed tunnel provider was selected.' };
 }
 
-// Aborts a tunnel attempt that is not going to succeed. Uses the ChildProcess
-// handle directly (rather than process.kill by pid, as stopTunnel below
-// does) because this runs inside the same call that spawned it and already
-// holds the handle.
-function killChild(child: ChildProcess): void {
-  try {
-    child.kill('SIGTERM');
-  } catch {
-    /* already gone */
+function closeChildPipes(child: ChildProcess): void {
+  child.stdout?.destroy?.();
+  child.stderr?.destroy?.();
+}
+
+function unrefChildPipes(child: ChildProcess): void {
+  resumeChildPipes(child);
+  for (const stream of [child.stdout, child.stderr]) {
+    (stream as { unref?: () => void } | null)?.unref?.();
   }
+}
+
+function resumeChildPipes(child: ChildProcess): void {
+  child.stdout?.resume?.();
+  child.stderr?.resume?.();
+}
+
+async function signalAndWaitForExit(
+  child: ChildProcess,
+  signal: NodeJS.Signals,
+  {
+    timeoutMs,
+    now,
+    sleep,
+    isAlive,
+  }: {
+    timeoutMs: number;
+    now: () => number;
+    sleep: (ms: number) => Promise<void>;
+    isAlive: (pid: number) => boolean;
+  },
+): Promise<boolean> {
+  let exited = false;
+  const onExit = () => {
+    exited = true;
+  };
+  child.once('exit', onExit);
+  try {
+    child.kill(signal);
+  } catch (err) {
+    child.removeListener('exit', onExit);
+    return isEsrch(err);
+  }
+  const hasExited = () => exited;
+  const deadline = now() + timeoutMs;
+  while (!hasExited() && now() < deadline) {
+    await sleep(CLEANUP_POLL_MS);
+  }
+  if (!hasExited() && child.pid && !isAlive(child.pid)) exited = true;
+  child.removeListener('exit', onExit);
+  return hasExited();
+}
+
+async function terminateChild(
+  child: ChildProcess,
+  {
+    alreadyExited,
+    timeoutMs,
+    now,
+    sleep,
+    isAlive,
+  }: {
+    alreadyExited: boolean;
+    timeoutMs: number;
+    now: () => number;
+    sleep: (ms: number) => Promise<void>;
+    isAlive: (pid: number) => boolean;
+  },
+): Promise<boolean> {
+  if (alreadyExited) {
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      /* already gone */
+    }
+    closeChildPipes(child);
+    return true;
+  }
+  const terminated = await signalAndWaitForExit(child, 'SIGTERM', { timeoutMs, now, sleep, isAlive });
+  if (terminated) {
+    closeChildPipes(child);
+    return true;
+  }
+  const killed = await signalAndWaitForExit(child, 'SIGKILL', { timeoutMs, now, sleep, isAlive });
+  closeChildPipes(child);
+  return killed;
 }
 
 function describe(err: unknown): string {
