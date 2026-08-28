@@ -547,9 +547,10 @@ export function noMetroRemedy({
 }
 
 // `<root>/.rn-iso` must be git-ignored before this command writes a build log,
-// a state file or a derived-data tree into it. Imported dynamically and
-// tolerantly: it is one repo-hygiene write, and a build must not fail because
-// of it.
+// a state file or a derived-data tree into it. The entry goes in this clone's
+// `.git/info/exclude` -- local, untracked, nothing to commit. Imported
+// dynamically and tolerantly: it is one repo-hygiene write, and a build must
+// not fail because of it.
 export async function ensureWorkspaceIgnoredSafely(
   root: string,
   { note = (_line: string) => {} }: { note?: (line: string) => void } = {},
@@ -560,7 +561,7 @@ export async function ensureWorkspaceIgnoredSafely(
   } catch (err) {
     note(
       chalk.dim(
-        `Could not ensure ${root}/.gitignore lists the rn-iso workspace directory: ${(err as Error)?.message || err}`,
+        `Could not ensure git ignores the rn-iso workspace directory under ${root}: ${(err as Error)?.message || err}`,
       ),
     );
     return null;

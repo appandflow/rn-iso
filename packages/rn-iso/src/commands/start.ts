@@ -255,8 +255,12 @@ export function registerStart(program: Command): void {
       // setup command is what removes the step a repo had to remember: `ios` and
       // `android` call the same function for the same reason, since either can
       // be the first to write into `<root>/.rn-iso`.
+      //
+      // The entry goes in this clone's `.git/info/exclude`, so it is local and
+      // untracked: nothing to commit, and outside a git repo nothing happens
+      // and nothing is said.
       const ignored = ensureWorkspaceIgnored(root);
-      if (ignored.added) note(chalk.dim('note   added .rn-iso/ to .gitignore'));
+      if (ignored.added) note(chalk.dim('note   added .rn-iso/ to .git/info/exclude (local, nothing to commit)'));
       else if (ignored.error) note(chalk.yellow(`note   could not update ${ignored.path}: ${ignored.error}`));
 
       upsertProject(root, {

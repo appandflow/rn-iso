@@ -387,14 +387,26 @@ export function workspaceArtifactPaths(lines: string[] | null | undefined): stri
   return paths;
 }
 
+// LEGACY, AND DELIBERATELY KEPT (#79). rn-iso no longer writes to a project's
+// .gitignore at all: `ensureWorkspaceIgnored` puts the entry in this clone's
+// `.git/info/exclude`, which is untracked, so a workspace created by this
+// version can never produce the dirt this function and the one below forgive.
+// What they still cover is every tree that ALREADY carries the old block -- a
+// worktree made by an earlier rn-iso, or a checkout where one ran once.
+// Deleting them would hand those trees back the exact dead end they were
+// written for: a `worktree remove` refusing over rn-iso's own write, with
+// --force as the only way out. They cost nothing on a clean listing, and they
+// match against renderWorkspaceIgnoreBlock's byte-stable text, so they keep
+// working for as long as such a tree exists.
+//
 // PURE. Whether a unified diff adds rn-iso's own gitignore block and NOTHING
 // else -- the second dead end of the same shape as `?? .rn-iso/`.
 //
-// `start` / `ios` / `android` append the block to the repo's .gitignore
-// (ensureWorkspaceIgnored, the self-heal that replaced `init`). On a repo whose
-// .gitignore is TRACKED that is ` M apps/x/.gitignore`, and `worktree remove`
-// refused over it: the loop's own write blocking the loop's own teardown, with
-// --force -- which also discards real work -- as the only way out.
+// Older rn-iso appended the block to the repo's .gitignore (ensureWorkspaceIgnored,
+// the self-heal that replaced `init`). On a repo whose .gitignore is TRACKED
+// that is ` M apps/x/.gitignore`, and `worktree remove` refused over it: the
+// loop's own write blocking the loop's own teardown, with --force -- which
+// also discards real work -- as the only way out.
 //
 // The rule is deliberately narrow and fails CLOSED, because .gitignore is a
 // file the repo owns and an edit to it can be real work:
@@ -438,10 +450,11 @@ export function addsOnlyWorkspaceIgnoreBlock(diff: string | null | undefined): b
 }
 
 // PURE. Whether a .gitignore file's WHOLE content is rn-iso's own block -- the
-// untracked half of the same dead end.
+// untracked half of the same dead end, and LEGACY for the same reason as the
+// function above.
 //
-// On a repo that has no .gitignore at all, the self-ensure does not modify a
-// file, it CREATES one, and git reports `?? .gitignore`. `worktree remove`
+// On a repo that had no .gitignore at all, the old self-ensure did not modify a
+// file, it CREATED one, and git reported `?? .gitignore`. `worktree remove`
 // counted that as untracked work and refused, offering --force -- the loop's
 // own write blocking the loop's own teardown, exactly as the modified case did
 // one file over. A diff cannot decide this one: an untracked file has no index
@@ -475,9 +488,11 @@ export function isOnlyWorkspaceIgnoreBlock(content: string | null | undefined): 
 // it stays dirty, which is the safe direction, and no quoting question arises.
 const SAFE_DIFF_PATH = /^[A-Za-z0-9._/-]+$/;
 
-// Drops a `.gitignore` that is rn-iso's own write from a dirty listing, and
-// reports which files those were AND in which of the two ways, because the two
-// need opposite treatments afterwards:
+// Drops a `.gitignore` that is a LEGACY rn-iso write (see above: current
+// versions write this clone's `.git/info/exclude` instead, which is untracked
+// and never dirty) from a dirty listing, and reports which files those were AND
+// in which of the two ways, because the two need opposite treatments
+// afterwards:
 //
 //   healed   ` M path` -- the repo tracks a .gitignore and the self-ensure
 //                         APPENDED the block to it. Undone with `git checkout`.
@@ -545,7 +560,7 @@ const POD_CHURN_PATH = /(?:^|\/)ios\/(?:Podfile\.lock|[^/]+\.xcodeproj\/project\
 // they are inside a directory that is about to be deleted wholesale, so
 // restoring them destroys nothing that surviving the command would have saved,
 // and lockfile changes anyone MEANT would have been committed. It is the same
-// reasoning that already restores rn-iso's own .gitignore append
+// reasoning that restores a LEGACY rn-iso .gitignore append
 // (excludeSelfHealedIgnores), one file over -- with the difference that these
 // were written by the project's tooling rather than by rn-iso, which is why
 // every line says so.

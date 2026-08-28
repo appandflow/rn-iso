@@ -626,13 +626,13 @@ not on any remote"  (worktree remove)
   refusal actually named.
   Use --force only when you genuinely intend to discard work; it deletes
   uncommitted and untracked files permanently.
-  Two things rn-iso wrote itself never cause this refusal: the workspace's own
-  \`.rn-iso/\`, and a \`.gitignore\` that is nothing but the \`.rn-iso/\` entry
-  \`start\`/\`ios\`/\`android\` add -- appended to a tracked file (restored before
-  the removal) or created whole in a repo that had none (deleted before it),
-  verified line by line against what rn-iso writes; any other line either way
-  still refuses. Commit that entry with your PR and it stops being written at
-  all.
+  Nothing rn-iso writes itself ever causes this refusal. The workspace's own
+  \`.rn-iso/\` dies with the worktree by design, and the entry that hides it goes
+  in this clone's \`.git/info/exclude\` -- local, untracked, never in
+  \`git status\`, nothing to commit. (A tree made by an OLDER rn-iso, which
+  appended that entry to a \`.gitignore\`, is still handled: the block is
+  restored on a tracked file or the whole file deleted when rn-iso created it,
+  verified line by line; any other line either way still refuses.)
 
 "Refusing to create <name>: the branch worktree-<name> already exists at <sha>,
 but --base <ref> resolves to <sha>"  (worktree create)
@@ -749,9 +749,12 @@ Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for.
 
 NOTHING ABOVE NEEDS A CHANGE TO THE REPO
-rn-iso runs on a clean checkout. \`.rn-iso/\` is added to .gitignore by
-start/ios/android themselves, and the performance caches ride on the command
-lines rn-iso composes rather than on files the project owns:
+rn-iso runs on a clean checkout, and leaves no tracked file changed. \`.rn-iso/\`
+is ignored by start/ios/android themselves, in this clone's
+\`.git/info/exclude\` -- git honours it exactly like a \`.gitignore\` entry, but
+it is per-clone and never tracked, so there is nothing to commit and a repo
+that already ignores the directory is left alone. The performance caches ride
+on the command lines rn-iso composes rather than on files the project owns:
 
   ios      xcodebuild carries COMPILATION_CACHE_ENABLE_CACHING, a shared
            COMPILATION_CACHE_CAS_PATH and a clang prefix mapping of this

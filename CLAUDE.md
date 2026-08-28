@@ -39,11 +39,29 @@ job: every edit it would make lands in a file the project already owns (a
 `post_install` logic, an app config that may be TypeScript), which is
 judgement, not templating. The generated `scripts/dev` went with it: rn-iso IS
 the build command, so there was no bundler or build command left to wrap. The
-one edit that never needed judgement — `.rn-iso/` in `.gitignore` — is now
+one edit that never needed judgement — ignoring `.rn-iso/` — is now
 SELF-ENSURED by the commands that create the directory
 (`ensureWorkspaceIgnored` in `src/engine/workspace.ts`, called by `start`,
 `ios` and `android`), which is what removed the setup step rather than moving
 it.
+
+**And since #79 that write touches NO TRACKED FILE.** The entry goes in
+`.git/info/exclude`, resolved through `git rev-parse --git-common-dir` — never
+by assuming `.git` is a directory, because in a worktree it is a file, and the
+COMMON dir is what every worktree of the repo shares, so one write covers them
+all. Git honours it exactly like a `.gitignore` entry but it is per-clone and
+never tracked: nothing in `git status`, nothing to commit, nothing carried into
+a worktree, nothing for `worktree remove` to restore. Whether the directory is
+already ignored is GIT'S question, asked once through
+`gitIgnoresWorkspaceDir` (`git check-ignore .rn-iso/` — the trailing slash is
+load-bearing: check-ignore does not stat the disk, so without it a bare
+`.rn-iso` reads as a file and the directory-only pattern `.rn-iso/` never
+matches, which is exactly the case here since the ensure runs BEFORE the
+directory exists). `doctor` imports that same predicate rather than asking its
+own way. Outside a git repo the whole thing is a silent no-op. The
+restore-or-delete logic in `commands/worktree.ts` for rn-iso's own `.gitignore`
+block is now LEGACY — unreachable for new workspaces, kept working for trees an
+earlier version already touched.
 
 **And the `rn-iso-init` SKILL went with it, which is the most recent deletion
 — do not bring that back either.** After #67 rn-iso supplies the compilation
@@ -179,10 +197,13 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # commands' own tests are about ORDER and OUTPUT, not about xcodebuild.
       device.js           # ensureOwnedDevice (the ownership rule, item 2) + ensureBooted (the
                           # wait `simctl install` needs). No path here touches hardware.
-      workspace.js        # ensureWorkspaceIgnored: the `.rn-iso/` gitignore entry, self-ensured
-                          # by start / ios / android. Idempotent and content-based (`/.rn-iso`,
-                          # `.rn-iso` and `.rn-iso/` are ONE entry to git), creates the file when
-                          # there is none, and reports an unwritable .gitignore rather than
+      workspace.js        # ensureWorkspaceIgnored: the `.rn-iso/` entry in this clone's
+                          # `.git/info/exclude` (NEVER the project's .gitignore -- no tracked
+                          # file is written), self-ensured by start / ios / android. Resolves the
+                          # file through `rev-parse --git-common-dir`, so one write covers every
+                          # worktree; skips silently when `gitIgnoresWorkspaceDir` (the shared
+                          # check-ignore predicate doctor also uses) already says yes, and
+                          # silently outside a repo; reports an unwritable file rather than
                           # throwing -- no dev server dies over a read-only checkout
       prebuild.js         # `expo prebuild -p <p> --no-install`, only when the native dir is absent
       deps.js             # podsAreStale (pure: Podfile.lock vs Pods/Manifest.lock) + runPodInstall

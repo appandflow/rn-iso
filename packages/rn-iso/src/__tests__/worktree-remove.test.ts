@@ -16,7 +16,7 @@ import {
   workspaceArtifactPaths,
 } from '../commands/worktree.ts';
 import type { Command } from 'commander';
-import { ensureWorkspaceIgnored, renderWorkspaceIgnoreBlock } from '../engine/workspace.ts';
+import { renderWorkspaceIgnoreBlock } from '../engine/workspace.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, getProject } from '../config.ts';
 
@@ -841,12 +841,18 @@ test('action: a dirty path escaping the worktree is never removed', async () => 
 
 // --- item 1: rn-iso's own gitignore self-heal must not dead-end teardown ----
 //
-// `start` appends the `.rn-iso/` block to a TRACKED .gitignore (that is the
-// self-heal that replaced `init`), which shows up as ` M apps/x/.gitignore` and
-// refused the teardown -- the same class of dead end as `?? .rn-iso/`, one file
-// over: the loop's own write blocking the loop's own exit. It is only ignorable
-// when the diff is EXACTLY that block and nothing else, so the fixtures below
-// are built from renderWorkspaceIgnoreBlock rather than retyped.
+// An older `start` appended the `.rn-iso/` block to a TRACKED .gitignore (that
+// was the self-heal that replaced `init`), which shows up as
+// ` M apps/x/.gitignore` and refused the teardown -- the same class of dead end
+// as `?? .rn-iso/`, one file over: the loop's own write blocking the loop's own
+// exit. It is only ignorable when the diff is EXACTLY that block and nothing
+// else, so the fixtures below are built from renderWorkspaceIgnoreBlock rather
+// than retyped.
+//
+// KEPT AFTER #79, WHICH IS WHY THESE TESTS STAY. The writer now targets the
+// untracked `.git/info/exclude`, so this dirt cannot appear in a NEW workspace
+// -- but a tree an earlier rn-iso touched still carries it, and the forgiveness
+// has to keep working for exactly as long as such a tree exists.
 
 interface IgnoreDiffOptions {
   file?: string;
@@ -874,7 +880,8 @@ function ignoreDiff({
   ].join('\n');
 }
 
-// The exact lines ensureWorkspaceIgnored appends, blank separator included.
+// The exact lines an older ensureWorkspaceIgnored appended, blank separator
+// included.
 function ourBlockLines() {
   return [
     '',
@@ -1202,13 +1209,19 @@ test('action: the dirty-tree remedy names the real worktree, not a placeholder',
 // appended block, and that `git worktree remove` still refuses over the
 // modified .gitignore unless it is restored first (it does; that is why the
 // verdict is paired with a restore rather than left to die with the directory).
-// The gate-run dead end, end to end: a repo with NO .gitignore at all, the real
-// `ensureWorkspaceIgnored` writing one, and real git refusing to remove the
-// worktree over the untracked file rn-iso itself created. Only real git settles
-// whether deleting the file is enough (it is; the .rn-iso/ the entry was hiding
-// becomes untracked again the moment it goes, which is why the purge runs a
-// second time).
-test('against a real repo: a worktree whose only dirt is the .gitignore rn-iso created', async () => {
+// The gate-run dead end, end to end: a repo with NO .gitignore at all, an
+// OLDER rn-iso writing one, and real git refusing to remove the worktree over
+// the untracked file rn-iso itself created. Only real git settles whether
+// deleting the file is enough (it is; the .rn-iso/ the entry was hiding becomes
+// untracked again the moment it goes, which is why the purge runs a second
+// time).
+//
+// LEGACY BY CONSTRUCTION SINCE #79. `ensureWorkspaceIgnored` writes the
+// untracked `.git/info/exclude` now, so no NEW workspace can arrive in this
+// state -- but every tree an earlier version touched still can, which is why
+// the block is written here by hand (from the same renderer, so it stays the
+// real thing) rather than by calling the function.
+test('against a real repo: a worktree whose only dirt is a LEGACY .gitignore rn-iso created', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-created-')));
   const repo = join(base, 'repo');
@@ -1233,9 +1246,9 @@ test('against a real repo: a worktree whose only dirt is the .gitignore rn-iso c
     const wt = join(base, 'wt');
     git(`git worktree add -q "${wt}" -b feat-created`);
 
-    // Exactly what `start` does, through the real function: the repo has no
-    // .gitignore, so one is created -- and it is untracked.
-    expect(ensureWorkspaceIgnored(wt).added).toBe(true);
+    // Exactly what an older `start` did: the repo had no .gitignore, so the
+    // whole file was created -- and it is untracked.
+    writeFileSync(join(wt, '.gitignore'), renderWorkspaceIgnoreBlock());
     mkdirSync(join(wt, '.rn-iso', 'logs'), { recursive: true });
     writeFileSync(join(wt, '.rn-iso', 'state.json'), '{}');
     expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe('?? .gitignore');

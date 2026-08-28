@@ -265,7 +265,12 @@ test('a project that does not ignore .rn-iso is told what ends up in git status'
   assert(f);
   expect(f.title).toMatch(/not gitignored/);
   expect(f.detail).toMatch(/commit/i);
-  expect(f.fix).toMatch(/add it themselves/i);
+  // The fix is to run the loop, not to edit a tracked file: the entry rn-iso
+  // writes is local and untracked (#79), and the text has to say so or a reader
+  // goes looking for a .gitignore change to commit.
+  expect(f.fix).toMatch(/start\/ios\/android/);
+  expect(f.fix).toMatch(/\.git\/info\/exclude/);
+  expect(f.fix).toMatch(/nothing to commit/i);
 });
 
 test('a missing .gitignore is the same diagnosis as one that does not mention it', () => {

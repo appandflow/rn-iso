@@ -110,7 +110,9 @@ interface MetroExecutorMock {
   listening: boolean;
   run(): string;
   runFile(): string;
-  runQuiet(cmd: string): string;
+  // null is the real executor's "the command failed", which is how git
+  // reports both "not a repo" and "not ignored".
+  runQuiet(cmd: string): string | null;
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions): ChildStub;
 }
 
@@ -129,10 +131,17 @@ function metroExecutor({
   listeners = {},
   cwd = root,
   spawnResult = null,
+  // The two questions engine/workspace.ts asks git. Unset means "not a repo",
+  // which is what every test that is not about the exclude entry wants: the
+  // ensure is then a silent no-op.
+  gitCommonDir = null,
+  gitIgnored = false,
 }: {
   listeners?: Record<string, number>;
   cwd?: string;
   spawnResult?: ChildStub | null;
+  gitCommonDir?: string | null;
+  gitIgnored?: boolean;
 } = {}): MetroExecutorMock {
   const calls: { run: string[]; spawn: SpawnCall[] } = { run: [], spawn: [] };
   return {
@@ -146,6 +155,8 @@ function metroExecutor({
     },
     runQuiet(cmd) {
       calls.run.push(cmd);
+      if (/rev-parse --git-common-dir/.test(cmd)) return gitCommonDir;
+      if (/check-ignore/.test(cmd)) return gitIgnored ? '.rn-iso/' : null;
       const listening = /lsof -nP -iTCP:(\d+)/.exec(cmd);
       if (listening) return listeners[listening[1] ?? ''] ? String(listeners[listening[1] ?? '']) : '';
       if (/lsof -a -p \d+ -d cwd/.test(cmd)) return `p1\nfcwd\nn${cwd}`;
@@ -593,21 +604,27 @@ describe('the error contract', () => {
 // `.rn-iso/` used to be gitignored by `rn-iso init`, which made it a step a
 // repo had to remember before its first build -- and forgetting it dead-ended
 // `worktree remove` on `?? .rn-iso/`. `start` is the first command of the loop,
-// so it ensures the entry itself.
-describe('the workspace gitignore', () => {
-  test('adds the entry on a repo that has none, and says so once on stderr', async () => {
+// so it ensures the entry itself -- since #79 in this clone's
+// `.git/info/exclude`, which is untracked, so the project's own files are never
+// touched and there is nothing to commit.
+describe('the workspace exclude entry', () => {
+  test('adds the entry when git does not already ignore it, and says so once on stderr', async () => {
     const port = 8161;
     const server = await metroListener(port);
-    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
+    const gitDir = join(root, '.git');
+    mkdirSync(gitDir, { recursive: true });
+    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, gitCommonDir: gitDir }));
     upsertProject(root, { metroPort: port });
     try {
       const result = await runAction({ json: true, wait: '5' });
       expect(result.exitCode).toBe(null);
-      const gitignore = readFileSync(join(root, '.gitignore'), 'utf-8');
-      expect(gitignore).toMatch(/^\.rn-iso\/$/m);
-      const notes = result.errs.filter((l) => /added \.rn-iso\/ to \.gitignore/.test(l));
+      expect(readFileSync(join(gitDir, 'info', 'exclude'), 'utf-8')).toMatch(/^\.rn-iso\/$/m);
+      // The project's own tree is untouched: no .gitignore, tracked or not.
+      expect(existsSync(join(root, '.gitignore'))).toBe(false);
+      const notes = result.errs.filter((l) => /added \.rn-iso\/ to \.git\/info\/exclude/.test(l));
       expect(notes.length).toBe(1);
       expect(notes[0]).toMatch(/note {3}added/);
+      expect(notes[0]).toMatch(/nothing to commit/);
       // The note is stderr, never the --json payload's line.
       expect(result.logs.length).toBe(1);
       expect(JSON.parse(result.logs[0] ?? '').port).toBeTruthy();
@@ -619,14 +636,33 @@ describe('the workspace gitignore', () => {
   test('a repo that already ignores it is left alone and says nothing', async () => {
     const port = 8162;
     const server = await metroListener(port);
-    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
+    const gitDir = join(root, '.git');
+    mkdirSync(gitDir, { recursive: true });
+    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, gitCommonDir: gitDir, gitIgnored: true }));
     upsertProject(root, { metroPort: port });
-    writeFileSync(join(root, '.gitignore'), 'node_modules\n/.rn-iso\n');
     try {
       const result = await runAction({ json: true, wait: '5' });
       expect(result.exitCode).toBe(null);
-      expect(readFileSync(join(root, '.gitignore'), 'utf-8')).toBe('node_modules\n/.rn-iso\n');
-      expect(result.errs.filter((l) => /gitignore/.test(l))).toEqual([]);
+      expect(existsSync(join(gitDir, 'info'))).toBe(false);
+      expect(result.errs.filter((l) => /exclude|gitignore/.test(l))).toEqual([]);
+    } finally {
+      server.close();
+    }
+  });
+
+  // No git repo, no `git status` to keep readable: nothing is written anywhere
+  // and nothing is printed. This is the default shape of every other test here.
+  test('outside a git repo nothing is written and nothing is said', async () => {
+    const port = 8163;
+    const server = await metroListener(port);
+    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
+    upsertProject(root, { metroPort: port });
+    try {
+      const result = await runAction({ json: true, wait: '5' });
+      expect(result.exitCode).toBe(null);
+      expect(existsSync(join(root, '.gitignore'))).toBe(false);
+      expect(existsSync(join(root, '.git'))).toBe(false);
+      expect(result.errs.filter((l) => /exclude|gitignore/.test(l))).toEqual([]);
     } finally {
       server.close();
     }

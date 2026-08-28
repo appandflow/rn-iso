@@ -27,6 +27,7 @@ import { dirtyFingerprintFiles } from './worktree.ts';
 import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from './config.ts';
 import { liveOwnedDeviceCount } from './engine/device.ts';
 import { listBuildSlots } from './engine/build-slots.ts';
+import { gitIgnoresWorkspaceDir } from './engine/workspace.ts';
 import { type IosSimRecord, listAllIosSims } from './sim/ios.ts';
 // parseXcodeMajor / detectXcodeMajor / ccacheEnabled live in the BUILD engine
 // now, because the build is what consumes them: rn-iso puts the compilation
@@ -223,10 +224,12 @@ function listsWorkspaceDir(source: string | null | undefined): boolean {
 }
 
 // `gitIgnored` is git's own verdict (`git check-ignore`), which sees every
-// .gitignore on the path -- a monorepo app dir covered by the REPO ROOT's
-// .gitignore is properly ignored even though its own file never says so
-// (appandflow/rn-iso#31). The file read stays as the fallback for a tree
-// where git is not available.
+// source of ignore rules at once: every .gitignore on the path -- a monorepo
+// app dir covered by the REPO ROOT's file is properly ignored even though its
+// own file never says so (appandflow/rn-iso#31) -- and this clone's
+// `.git/info/exclude`, which is where rn-iso's own entry now lives (#79) and
+// where no file read would ever find it. The .gitignore read stays only as the
+// fallback for a tree where git is not available.
 export function checkArtifactLayout({
   gitignoreSource,
   gitIgnored = null,
@@ -237,7 +240,7 @@ export function checkArtifactLayout({
     'note',
     '.rn-iso/ is not gitignored',
     "It holds this workspace's build output, logs and supervisor pidfile -- location-addressed, meaningful only to the checkout that produced it. Unignored, every build offers its own DerivedData up for commit and git status stops being readable.",
-    `Add ${WORKSPACE_DIR}/ to .gitignore -- or just run start/ios/android once: they add it themselves and say so. On a repo rn-iso has already touched, this finding means that self-write failed or was reverted.`,
+    `Run start/ios/android once: they add ${WORKSPACE_DIR}/ to this clone's .git/info/exclude themselves and say so -- a local, untracked entry, so there is nothing to commit. On a repo rn-iso has already touched, this finding means that self-write failed or was reverted.`,
   );
 }
 
@@ -472,15 +475,11 @@ export function runDoctor(
   const podfile = read(join('ios', 'Podfile'));
   const metroConfig = read('metro.config.js') ?? read('metro.config.cjs');
   const gitignore = read('.gitignore');
-  // git's verdict on the workspace dir, monorepo-aware. check-ignore exits 0
-  // for ignored, 1 for not ignored, 128 outside a repo; runQuiet nulls the
-  // failures, so only a definite "ignored" upgrades the file-based answer.
-  const gitIgnored =
-    getExecutor().runQuiet(`git -C ${JSON.stringify(projectRoot)} check-ignore ${WORKSPACE_DIR}`, {
-      timeoutMs: 10000,
-    }) != null
-      ? true
-      : null;
+  // git's verdict on the workspace dir, monorepo-aware, and the SAME predicate
+  // the writer consults before touching anything (engine/workspace.ts). Only a
+  // definite "ignored" upgrades the file-based answer, so a tree where git
+  // cannot answer still gets the .gitignore read below.
+  const gitIgnored = gitIgnoresWorkspaceDir(projectRoot) ? true : null;
 
   // Same detector `status` uses, so one project never reads as expo in one
   // command and bare in another. It weighs the `ios` script above the presence
