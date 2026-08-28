@@ -52,10 +52,17 @@ export interface SessionSummary {
   platform: string | null;
 }
 
-export interface ScopedSessionSummary extends SessionSummary {
+export interface ScopedSessionSummary extends Omit<SessionSummary, 'name' | 'status' | 'platform'> {
   name: string;
   status: string;
+  platform: 'ios' | 'android';
   projectScope: string;
+}
+
+export interface SessionListPage {
+  sessions: unknown[];
+  hasNextPage: boolean;
+  endCursor: string | null;
 }
 
 export interface StoppedSession {
@@ -141,15 +148,19 @@ export function stopSessionArgs(sessionId: string): string[] {
 
 // PURE. argv listing rn-iso's own LIVE sessions, which is what `gc` sweeps.
 // A stopped or errored session costs nothing and is not a leak.
-export function listOwnedSessionsArgs(): string[] {
-  return [
+export function listOwnedSessionsArgs(after: string | null = null): string[] {
+  const args = [
     'simulator:list',
     '--name',
     OWNED_PREFIX,
     ...LIVE_STATUSES.flatMap((s) => ['--status', s]),
+    '--limit',
+    '100',
     '--json',
     '--non-interactive',
   ];
+  if (after) args.push('--after', after);
+  return args;
 }
 
 // PURE. The daemon coordinates, or null.
@@ -300,14 +311,28 @@ export function parseSessionList(stdout: string): SessionSummary[] {
   return out;
 }
 
-export function parseSessionListEntries(
+export function parseSessionListPage(
   stdout: string,
-): { ok: true; sessions: unknown[] } | { ok: false; reason: string } {
+): { ok: true; page: SessionListPage } | { ok: false; reason: string } {
   const data = parseJson(stdout);
   if (!isRecord(data) || !Array.isArray(data.sessions)) {
     return { ok: false, reason: 'EAS session list did not return valid JSON with a sessions array.' };
   }
-  return { ok: true, sessions: data.sessions };
+  if (!isRecord(data.pageInfo) || typeof data.pageInfo.hasNextPage !== 'boolean') {
+    return { ok: false, reason: 'EAS session list page did not return valid pagination information.' };
+  }
+  const endCursor = data.pageInfo.endCursor;
+  if (endCursor !== null && typeof endCursor !== 'string') {
+    return { ok: false, reason: 'EAS session list returned a malformed pagination cursor.' };
+  }
+  return {
+    ok: true,
+    page: {
+      sessions: data.sessions,
+      hasNextPage: data.pageInfo.hasNextPage,
+      endCursor,
+    },
+  };
 }
 
 // PURE. Selects active sessions carrying rn-iso's ownership prefix that no
@@ -368,10 +393,14 @@ export function findOrphanedOwnedSessions({
 
     const platformValue = str(raw.platform);
     const normalizedPlatform = platformValue?.toLowerCase() ?? null;
-    if (normalizedPlatform && !SESSION_PLATFORMS.has(normalizedPlatform)) {
+    if (!normalizedPlatform || !SESSION_PLATFORMS.has(normalizedPlatform)) {
       blocked.add(id);
       candidates.delete(id);
-      notices.push(`Owned EAS session ${id} has unknown platform ${platformValue}.`);
+      notices.push(
+        platformValue
+          ? `Owned EAS session ${id} has unknown platform ${platformValue}.`
+          : `Owned EAS session ${id} has no platform.`,
+      );
       continue;
     }
     if (recorded.has(id) || blocked.has(id)) continue;
@@ -380,7 +409,7 @@ export function findOrphanedOwnedSessions({
       id,
       name,
       status,
-      platform: normalizedPlatform,
+      platform: normalizedPlatform as 'ios' | 'android',
       projectScope: scope,
     };
     const previous = candidates.get(id);

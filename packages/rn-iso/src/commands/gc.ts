@@ -38,7 +38,7 @@ import {
   inspectSessionForTeardown,
   isDefinitiveMissingSessionError,
   listOwnedSessionsArgs,
-  parseSessionListEntries,
+  parseSessionListPage,
   stopSessionArgs,
   verifyStoppedSession,
   type ScopedSessionSummary,
@@ -423,8 +423,30 @@ function readRecordedRemoteSessionIds(roots: string[]): {
   let safe = true;
 
   for (const root of new Set(roots)) {
+    let rootEntries: string[];
+    try {
+      if (!statSync(root).isDirectory()) throw new Error('path is not a directory');
+      rootEntries = readdirSync(root);
+    } catch (error) {
+      safe = false;
+      notices.push(`${root} is not available as a readable workspace directory: ${describeError(error)}`);
+      continue;
+    }
+    if (!rootEntries.includes('.rn-iso')) continue;
+
+    const workspaceDir = join(root, '.rn-iso');
+    let workspaceEntries: string[];
+    try {
+      if (!statSync(workspaceDir).isDirectory()) throw new Error('path is not a directory');
+      workspaceEntries = readdirSync(workspaceDir);
+    } catch (error) {
+      safe = false;
+      notices.push(`${workspaceDir} is not available as a readable workspace directory: ${describeError(error)}`);
+      continue;
+    }
+    if (!workspaceEntries.includes('state.json')) continue;
+
     const path = workspaceStateFile(root);
-    if (!existsSync(path)) continue;
     let state: unknown;
     try {
       state = JSON.parse(readFileSync(path, 'utf-8')) as unknown;
@@ -472,21 +494,39 @@ function collectEasSessionSweep(config: Config | null, deps: GcDependencies): Ea
   const workspaceRoots = [...Object.keys(config?.projects ?? {}), projectRoot];
   const recorded = readRecordedRemoteSessionIds(workspaceRoots);
   const run = deps.runEasFile ?? ((file, args, options) => getExecutor().runFile(file, args, options));
-  let stdout: string;
-  try {
-    stdout = run(eas.file, listOwnedSessionsArgs(), {
-      cwd: projectRoot,
-      timeoutMs: EAS_OPERATION_TIMEOUT_MS,
-      omitEnv: PROXY_CREDENTIAL_ENV,
-    });
-  } catch (error) {
-    return empty([...recorded.notices, `EAS session list failed for ${projectRoot}: ${describeError(error)}`]);
+  const sessions: unknown[] = [];
+  const seenCursors = new Set<string>();
+  let after: string | null = null;
+  while (true) {
+    let stdout: string;
+    try {
+      stdout = run(eas.file, listOwnedSessionsArgs(after), {
+        cwd: projectRoot,
+        timeoutMs: EAS_OPERATION_TIMEOUT_MS,
+        omitEnv: PROXY_CREDENTIAL_ENV,
+      });
+    } catch (error) {
+      return empty([...recorded.notices, `EAS session list failed for ${projectRoot}: ${describeError(error)}`]);
+    }
+
+    const parsed = parseSessionListPage(stdout);
+    if (!parsed.ok) return empty([...recorded.notices, parsed.reason]);
+    sessions.push(...parsed.page.sessions);
+    if (!parsed.page.hasNextPage) break;
+
+    const cursor = parsed.page.endCursor?.trim();
+    if (!cursor) {
+      return empty([...recorded.notices, 'EAS session list has a next page but returned no pagination cursor.']);
+    }
+    if (seenCursors.has(cursor)) {
+      return empty([...recorded.notices, `EAS session list repeated pagination cursor ${cursor}.`]);
+    }
+    seenCursors.add(cursor);
+    after = cursor;
   }
 
-  const parsed = parseSessionListEntries(stdout);
-  if (!parsed.ok) return empty([...recorded.notices, parsed.reason]);
   const compared = findOrphanedOwnedSessions({
-    sessions: parsed.sessions,
+    sessions,
     recordedSessionIds: recorded.ids,
     projectScope: projectRoot,
   });

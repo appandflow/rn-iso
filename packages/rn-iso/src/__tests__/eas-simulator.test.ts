@@ -321,6 +321,20 @@ describe('findOrphanedOwnedSessions', () => {
     expect(result.notices.join('\n')).toMatch(/PAUSED/);
   });
 
+  test.each([
+    ['missing', undefined],
+    ['null', null],
+    ['unknown', 'WINDOWS'],
+  ])('requires a known platform when it is %s', (_label, platform) => {
+    const result = findOrphanedOwnedSessions({
+      sessions: [{ id: 'bad-platform', name: 'rn-iso-bad', status: 'IN_PROGRESS', platform }],
+      recordedSessionIds: [],
+      projectScope: scope,
+    });
+    expect(result.orphaned).toEqual([]);
+    expect(result.notices.join('\n')).toMatch(/platform/i);
+  });
+
   test('reports malformed owned entries and refuses to infer their identity', () => {
     const result = findOrphanedOwnedSessions({
       sessions: [
@@ -377,6 +391,14 @@ describe('the read and destroy argv', () => {
     expect(args).toContain('--status');
     expect(args).toContain('new');
     expect(args).toContain('in-progress');
+    expect(args.slice(args.indexOf('--limit'), args.indexOf('--limit') + 2)).toEqual(['--limit', '100']);
+    expect(args).not.toContain('--after');
+  });
+
+  test('listOwnedSessionsArgs continues after a page cursor', () => {
+    const args = listOwnedSessionsArgs('cursor-2');
+    expect(args.slice(args.indexOf('--after'), args.indexOf('--after') + 2)).toEqual(['--after', 'cursor-2']);
+    expect(args.slice(args.indexOf('--limit'), args.indexOf('--limit') + 2)).toEqual(['--limit', '100']);
   });
 
   test('parseStoppedSession reports the status eas confirmed', () => {
