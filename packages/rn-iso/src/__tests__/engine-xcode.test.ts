@@ -29,6 +29,7 @@ import { join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { createNdjsonWriter, parseNdjsonText } from '../ndjson.ts';
+import { workspaceDerivedData, workspaceLogsDir } from '../paths.ts';
 import {
   buildIos,
   ccacheEnabled,
@@ -85,12 +86,20 @@ const REAL_WORKSPACE_LIST_JSON = `{
 }`;
 
 let tmp: string;
+let stateHome: string;
+let previousStateHome: string | undefined;
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'rn-iso-xcode-'));
+  stateHome = mkdtempSync(join(tmpdir(), 'rn-iso-xcode-state-'));
+  previousStateHome = process.env.RN_ISO_HOME;
+  process.env.RN_ISO_HOME = stateHome;
 });
 afterEach(() => {
   resetExecutor();
   rmSync(tmp, { recursive: true, force: true });
+  rmSync(stateHome, { recursive: true, force: true });
+  if (previousStateHome === undefined) delete process.env.RN_ISO_HOME;
+  else process.env.RN_ISO_HOME = previousStateHome;
 });
 
 function recordingWriter(file = '/dev/null/not-used'): NdjsonWriter & { records: NdjsonRecord[] } {
@@ -458,7 +467,11 @@ describe('xcodebuildArgs', () => {
 // cross-worktree compilation cache. That makes the guards the interesting
 // part: every one of them is a case where adding the settings would be wrong.
 describe('compilationCacheSettings', () => {
-  const base = { workspaceRoot: '/w/app-412', casPath: '/home/.rn-iso/compilation-cache' };
+  const base = {
+    workspaceRoot: '/w/app-412',
+    derivedDataPath: '/home/.rn-iso/workspaces/app-412--abc/derived-data',
+    casPath: '/home/.rn-iso/compilation-cache',
+  };
 
   test('names the CAS, the prefix mapping and the Swift opt-out on an Xcode that has the cache', () => {
     expect(compilationCacheSettings({ ...base, xcodeMajor: 26 })).toEqual([
@@ -468,7 +481,7 @@ describe('compilationCacheSettings', () => {
       // crashes swift-frontend, so it is turned off explicitly.
       'SWIFT_ENABLE_COMPILE_CACHE=NO',
       'CLANG_ENABLE_PREFIX_MAPPING=YES',
-      'CLANG_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src',
+      'CLANG_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.rn-iso/workspaces/app-412--abc/derived-data=/^derived-data',
     ]);
   });
 
@@ -478,8 +491,13 @@ describe('compilationCacheSettings', () => {
   test('the prefix mapping is the workspace root, normalised, and the virtual prefix a committed Podfile block must match', () => {
     expect(prefixMapping('/w/app-412')).toBe('/w/app-412=/^src');
     expect(prefixMapping('/w/app-412/')).toBe('/w/app-412=/^src');
-    const settings = compilationCacheSettings({ workspaceRoot: '/a/b/', casPath: '/cas', xcodeMajor: 27 });
-    expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=/a/b=/^src');
+    const settings = compilationCacheSettings({
+      workspaceRoot: '/a/b/',
+      derivedDataPath: '/state/b/derived-data',
+      casPath: '/cas',
+      xcodeMajor: 27,
+    });
+    expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=/a/b=/^src /state/b/derived-data=/^derived-data');
   });
 
   test('carries nothing on an Xcode older than the one that shipped the cache', () => {
@@ -704,7 +722,7 @@ describe('buildIos with a mocked executor', () => {
       'COMPILATION_CACHE_ENABLE_CACHING=YES',
       'COMPILATION_CACHE_CAS_PATH=/cas',
     ]);
-    makeProduct(join(tmp, '.rn-iso', 'derived-data'));
+    makeProduct(workspaceDerivedData(tmp));
     child.emit('close', 0, null);
     await promise;
   });
@@ -719,7 +737,7 @@ describe('buildIos with a mocked executor', () => {
       compilationCache: null,
     });
     expect(spawnCalls[0]?.args?.at(-1)).toBe('build');
-    makeProduct(join(tmp, '.rn-iso', 'derived-data'));
+    makeProduct(workspaceDerivedData(tmp));
     child.emit('close', 0, null);
     await promise;
   });
@@ -747,14 +765,14 @@ describe('buildIos with a mocked executor', () => {
       logWriter: recordingWriter(),
       onNote: (line) => notes.push(line),
     });
-    makeProduct(join(tmp, '.rn-iso', 'derived-data'));
+    makeProduct(workspaceDerivedData(tmp));
     child.emit('close', 0, null);
     await promise;
     expect(notes.length).toBe(1);
     expect(notes[0]).toMatch(/compilation cache on for this build: CAS at .*compilation-cache/);
     const args = spawnCalls[0]?.args ?? [];
     expect(args).toContain('COMPILATION_CACHE_ENABLE_CACHING=YES');
-    expect(args).toContain(`CLANG_OTHER_PREFIX_MAPPINGS=${tmp}=/^src`);
+    expect(args).toContain(`CLANG_OTHER_PREFIX_MAPPINGS=${tmp}=/^src ${workspaceDerivedData(tmp)}=/^derived-data`);
   });
 
   test('a build that carries no settings says nothing at all', async () => {
@@ -768,7 +786,7 @@ describe('buildIos with a mocked executor', () => {
       compilationCache: null,
       onNote: (line) => notes.push(line),
     });
-    makeProduct(join(tmp, '.rn-iso', 'derived-data'));
+    makeProduct(workspaceDerivedData(tmp));
     child.emit('close', 0, null);
     await promise;
     expect(notes).toEqual([]);
@@ -780,7 +798,7 @@ describe('buildIos with a mocked executor', () => {
     // ios` run uses is pinned.
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child });
-    const dd = join(tmp, '.rn-iso', 'derived-data');
+    const dd = workspaceDerivedData(tmp);
     const promise = buildIos({ root: tmp, udid: 'BF2A-1111-2222', logWriter: recordingWriter() });
 
     expect(spawnCalls.length).toBe(1);
@@ -1399,7 +1417,7 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
   test('builds for real: the .app lands where productsDir says and its binary plist is readable', async () => {
     resetExecutor();
     writeScratchProject(tmp);
-    const logFile = join(tmp, '.rn-iso', 'logs', 'build-ios.ndjson');
+    const logFile = join(workspaceLogsDir(tmp), 'build-ios.ndjson');
     const writer = createNdjsonWriter(logFile);
     const result = asResult(
       await buildIos({
@@ -1414,7 +1432,7 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     expect(result.failed).toBe(undefined);
     expect(result.scheme).toBe('Scratch');
     expect(result.appPath).toBe(
-      join(tmp, '.rn-iso', 'derived-data', 'Build', 'Products', 'Debug-iphonesimulator', 'Scratch.app'),
+      join(workspaceDerivedData(tmp), 'Build', 'Products', 'Debug-iphonesimulator', 'Scratch.app'),
     );
     expect(existsSync(result.appPath)).toBeTruthy();
     // A built Info.plist is a BINARY plist: this is the assertion that
@@ -1427,7 +1445,7 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     // The build settings rn-iso appends land AFTER the action, which is where
     // xcodebuild's own usage line puts them -- and this real build proves the
     // real tool accepts them there.
-    expect(records[0]?.msg).toMatch(/^xcodebuild -project .*-derivedDataPath .* build( [A-Z_]+=\S+)+$/);
+    expect(records[0]?.msg).toMatch(/^xcodebuild -project .*-derivedDataPath .* build [\s\S]+$/);
     expect(records[0]?.msg).toMatch(/ COMPILATION_CACHE_ENABLE_CACHING=YES /);
     const transcript = records.filter((r) => r.level === 'debug');
     expect(transcript.length > 20).toBeTruthy();
@@ -1443,7 +1461,7 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
   test('fails for real: a broken source file becomes one diagnostic with file, line and column', async () => {
     resetExecutor();
     writeScratchProject(tmp, { main: BROKEN_MAIN });
-    const logFile = join(tmp, '.rn-iso', 'logs', 'build-ios.ndjson');
+    const logFile = join(workspaceLogsDir(tmp), 'build-ios.ndjson');
     const writer = createNdjsonWriter(logFile);
     const result = asResult(
       await buildIos({

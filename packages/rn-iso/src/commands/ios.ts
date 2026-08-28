@@ -36,8 +36,8 @@ import {
   storeBuild,
   untrackedMissLine,
   untrackedNativeFiles,
-  type FingerprintSourceLike,
 } from '../build-cache.ts';
+import type { FingerprintSource } from '@expo/fingerprint';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import {
   DEFAULT_METRO_PORT,
@@ -82,7 +82,7 @@ import { getExecutor } from '../exec.ts';
 import type { CacheHitLevel, IosFacts } from '../types.ts';
 import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.ts';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
-import { workspaceLogsDir } from '../paths.ts';
+import { ensureWorkspaceStorage, workspaceLogsDir } from '../paths.ts';
 import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.ts';
 import { resolveSettings, unknownSettingKeys, type SettingsObject } from '../settings.ts';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
@@ -550,24 +550,17 @@ export function noMetroRemedy({
   return 'Run `rn-iso start` first, or pass --no-metro-check.';
 }
 
-// `<root>/.rn-iso` must be git-ignored before this command writes a build log,
-// a state file or a derived-data tree into it. Imported dynamically and
-// tolerantly: it is one repo-hygiene write, and a build must not fail because
-// of it.
-export async function ensureWorkspaceIgnoredSafely(
+// Prepare the global per-project state directory before any command writer
+// opens a log, state file, or DerivedData tree.
+export async function ensureWorkspaceStorageSafely(
   root: string,
   { note = (_line: string) => {} }: { note?: (line: string) => void } = {},
 ): Promise<unknown> {
   try {
-    const mod = await import('../engine/workspace.ts');
-    return mod.ensureWorkspaceIgnored?.(root) ?? null;
+    return ensureWorkspaceStorage(root);
   } catch (err) {
-    note(
-      chalk.dim(
-        `Could not ensure ${root}/.gitignore lists the rn-iso workspace directory: ${(err as Error)?.message || err}`,
-      ),
-    );
-    return null;
+    note(chalk.dim(`Could not prepare this workspace's rn-iso state: ${(err as Error)?.message || err}`));
+    throw err;
   }
 }
 
@@ -696,8 +689,8 @@ export function writeLastBuild(
   try {
     write(root, { lastBuild: record });
   } catch {
-    // A workspace whose .rn-iso directory cannot be written still built and
-    // launched an app; losing the record is not worth failing the run over.
+    // A workspace whose global state directory cannot be written still built
+    // and launched an app; losing the record is not worth failing the run over.
   }
   return record;
 }
@@ -844,7 +837,7 @@ interface IosDeps {
   launchIosApp: typeof launchIosApp;
   verifyLaunch: typeof verifyLaunch;
   verifyReleaseLaunch: typeof verifyReleaseLaunch;
-  ensureWorkspaceIgnored: typeof ensureWorkspaceIgnoredSafely;
+  ensureWorkspaceStorage: typeof ensureWorkspaceStorageSafely;
   replaceCollector: typeof replaceCollector;
   writeWorkspaceState: typeof writeWorkspaceState;
   createWriter: typeof createNdjsonWriter;
@@ -895,7 +888,7 @@ const DEFAULT_DEPS: IosDeps = {
   launchIosApp,
   verifyLaunch,
   verifyReleaseLaunch,
-  ensureWorkspaceIgnored: ensureWorkspaceIgnoredSafely,
+  ensureWorkspaceStorage: ensureWorkspaceStorageSafely,
   replaceCollector,
   writeWorkspaceState,
   createWriter: createNdjsonWriter,
@@ -967,9 +960,20 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return null;
   }
 
-  // Before ANY write into <root>/.rn-iso -- the build log below, the state
-  // file, the derived-data tree -- make sure git ignores the directory.
-  await d.ensureWorkspaceIgnored(root, { note });
+  // Before any write, establish the global state directory and its ownership
+  // metadata. No generated path is created inside the project.
+  try {
+    await d.ensureWorkspaceStorage(root, { note });
+  } catch (error) {
+    const code = (error as Error & { code?: string })?.code || 'RN_ISO_WORKSPACE_STATE';
+    const message = `Could not prepare this workspace's rn-iso state: ${(error as Error)?.message || error}`;
+    note(chalk.red(`${code}: ${message}`));
+    note(chalk.dim('Check that RN_ISO_HOME is writable and has free space.'));
+    if (json)
+      console.log(JSON.stringify({ code, message, remedy: 'Check that RN_ISO_HOME is writable and has free space.' }));
+    process.exitCode = 1;
+    return null;
+  }
 
   const logsDir = workspaceLogsDir(root);
   const logFile = buildLogFile(root);
@@ -1200,7 +1204,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // consult reports its own time on its own cache line below.
   const fingerprintTimer = stepTimer(d.now);
   let fingerprint: string | null;
-  let fingerprintSources: FingerprintSourceLike[] = [];
+  let fingerprintSources: FingerprintSource[] = [];
   try {
     // Scoped to iOS: an unscoped hash folds android/ into the iOS key (and
     // vice versa), which is what kept `android` from ever hitting the shared
@@ -1216,8 +1220,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return fail({
       code: 'RN_ISO_NO_FINGERPRINT',
       message: `Could not fingerprint ${root}: @expo/fingerprint produced no hash for it.`,
-      remedy:
-        'rn-iso ships its own @expo/fingerprint, so this is not a missing dependency: check that this install is complete, or install a copy in the project (`npm i -D @expo/fingerprint`) to override the one rn-iso falls back to.',
+      remedy: 'Check the project native inputs and the @expo/fingerprint error above, then retry.',
     });
   }
   // The same key the Expo provider derives. The configuration is part of it
@@ -1250,7 +1253,6 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   if (!cached) {
     const lastBuild = (d.readWorkspaceState(root)?.lastBuild ?? null) as Record<string, unknown> | null;
     const miss = describeFingerprintMiss({
-      projectRoot: root,
       platform: PLATFORM,
       current: { hash: fingerprint, sources: fingerprintSources },
       lastBuild,

@@ -7,7 +7,7 @@
 // the app is launched.
 //
 // It converts ONE device's output for ONE app into Contract-1 records in
-// <root>/.rn-iso/logs/device.ndjson, and does nothing else. It is separate
+// the global workspace logs/device.ndjson, and does nothing else. It is separate
 // from the supervisor on purpose: the supervisor's life is the dev server's,
 // while a collector's is a particular install of a particular app, and a
 // fresh `ios` run replaces the collector without touching Metro.

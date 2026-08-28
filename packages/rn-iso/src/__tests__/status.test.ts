@@ -17,6 +17,7 @@ import assert from 'node:assert';
 import { makeConfig } from './_factories.ts';
 import statusCommand, { readVolumes } from '../commands/status.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
+import { ensureWorkspaceStorage, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 
 let tmpHome: string;
 
@@ -184,13 +185,13 @@ async function runStatusJson() {
 }
 
 function writeLogs(root: string, records: NdjsonRecord[]) {
-  mkdirSync(join(root, '.rn-iso', 'logs'), { recursive: true });
-  writeFileSync(join(root, '.rn-iso', 'logs', 'metro.ndjson'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  mkdirSync(workspaceLogsDir(root), { recursive: true });
+  writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
 }
 
 function writeState(root: string, supervisor: { pid: number; port: number; mode: string; startedAt: number }) {
-  mkdirSync(join(root, '.rn-iso'), { recursive: true });
-  writeFileSync(join(root, '.rn-iso', 'state.json'), JSON.stringify({ supervisor }));
+  ensureWorkspaceStorage(root);
+  writeFileSync(workspaceStateFile(root), JSON.stringify({ supervisor }));
 }
 
 // Health is Contract 3: the identity check, never a bare /status probe. This
@@ -250,7 +251,7 @@ test('status reports a supervisor whose port answers as this project as healthy'
       healthy: true,
     });
     expect(env.logs.errorsSinceMarker).toBe(1);
-    expect(env.logs.dir).toMatch(/\.rn-iso\/logs$/);
+    expect(env.logs.dir).toBe(workspaceLogsDir(root));
     expect(env.warnings).toEqual([]);
   } finally {
     await new Promise((resolve) => server.close(resolve));
@@ -266,7 +267,7 @@ test('status reports a supervisor whose port answers as this project as healthy'
 test('status counts a device-only noise storm as zero errors', async () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
   try {
-    mkdirSync(join(root, '.rn-iso', 'logs'), { recursive: true });
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
     const storm = [];
     for (let i = 0; i < 3004; i += 1) {
       storm.push({
@@ -277,10 +278,7 @@ test('status counts a device-only noise storm as zero errors', async () => {
         msg: `nw_socket_handle_socket_event [C${i}:1] Socket SO_ERROR [54: Connection reset by peer]`,
       });
     }
-    writeFileSync(
-      join(root, '.rn-iso', 'logs', 'device.ndjson'),
-      storm.map((r) => JSON.stringify(r)).join('\n') + '\n',
-    );
+    writeFileSync(join(workspaceLogsDir(root), 'device.ndjson'), storm.map((r) => JSON.stringify(r)).join('\n') + '\n');
     saveConfig(
       makeConfig({
         version: 2,
@@ -459,6 +457,23 @@ test('a project on another volume reports that volume alongside the boot one', a
   const v1 = volumes[1];
   assert(v1?.disk);
   expect(v1.disk.availableMb).toBe(1536 * 1024);
+});
+
+test('an RN_ISO_HOME on another volume is reported even when the project is on the boot volume', () => {
+  const previousHome = process.env.RN_ISO_HOME;
+  process.env.RN_ISO_HOME = '/Volumes/StateSSD/rn-iso';
+  try {
+    const asked = dfExecutor({
+      '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }),
+      '/Volumes/StateSSD': dfOutput({ totalKb: 2048 * 1024 * 1024, availableKb: 1536 * 1024 * 1024 }),
+    });
+    const volumes = readVolumes('/Users/someone/code/app');
+    expect(asked).toEqual(['/', '/Volumes/StateSSD']);
+    expect(volumes.map((v) => v.volume)).toEqual(['/', '/Volumes/StateSSD']);
+  } finally {
+    if (previousHome === undefined) delete process.env.RN_ISO_HOME;
+    else process.env.RN_ISO_HOME = previousHome;
+  }
 });
 
 // A df that cannot be read is a missing line, never a crash and never a zero.

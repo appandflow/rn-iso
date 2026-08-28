@@ -224,16 +224,25 @@ test.skipIf(Boolean(process.getuid) && process.getuid!() === 0)(
   },
 );
 
-test('dir defaults to .rn-iso/logs under the working directory', () => {
+test('dir defaults to the readable collision-safe workspace under RN_ISO_HOME', () => {
   withDir((dir) => {
     const cwd = process.cwd();
+    const previousHome = process.env.RN_ISO_HOME;
+    const stateHome = path.join(dir, 'state-home');
     process.chdir(dir);
+    process.env.RN_ISO_HOME = stateHome;
     try {
       const reporter = ndjsonReporter();
       reporter.update({ type: 'bundle_build_done' });
-      expect(fs.existsSync(path.join(dir, '.rn-iso', 'logs', 'metro.ndjson'))).toBe(true);
+      const workspaces = fs.readdirSync(path.join(stateHome, 'workspaces'));
+      expect(workspaces).toHaveLength(1);
+      expect(workspaces[0]).toMatch(new RegExp(`^${path.basename(dir).toLowerCase()}--[a-f0-9]{16}$`));
+      expect(fs.existsSync(path.join(stateHome, 'workspaces', workspaces[0]!, 'logs', 'metro.ndjson'))).toBe(true);
+      expect(fs.existsSync(path.join(dir, '.rn-iso'))).toBe(false);
     } finally {
       process.chdir(cwd);
+      if (previousHome === undefined) delete process.env.RN_ISO_HOME;
+      else process.env.RN_ISO_HOME = previousHome;
     }
   });
 });

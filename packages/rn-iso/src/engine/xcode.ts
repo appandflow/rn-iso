@@ -20,7 +20,7 @@
 // whole transcript in one lump at exit and silently un-does the streaming.
 import type { ChildProcess } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import chalk from 'chalk';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -278,12 +278,26 @@ const PREFIX_MAP_TARGET = '/^src';
 
 // ONE mapping, not two. A Podfile block has to map $(DERIVED_DATA_DIR) as well,
 // because a project's DerivedData sits outside its source tree; rn-iso builds
-// with `-derivedDataPath <root>/.rn-iso/derived-data`, which is INSIDE the
+// with `-derivedDataPath` set to the global workspace derived-data directory,
 // root, so the root mapping already covers it at the identical relative path
 // in every worktree. Adding the second mapping here would also risk expanding
 // an undefined setting reference into an empty prefix.
 export function prefixMapping(workspaceRoot: string): string {
   return `${String(workspaceRoot).replace(/\/+$/, '')}=${PREFIX_MAP_TARGET}`;
+}
+
+// DerivedData used to be nested under the source root, so the source mapping
+// covered both. It now lives under RN_ISO_HOME and needs its own stable virtual
+// prefix or the human-readable per-workspace directory leaks into CAS keys.
+function compilationPrefixMappings(workspaceRoot: string, derivedDataPath: string): string {
+  const source = resolve(workspaceRoot);
+  const derived = resolve(derivedDataPath);
+  const mappings = [prefixMapping(source)];
+  const rel = relative(source, derived);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    mappings.push(`${derived}=/^derived-data`);
+  }
+  return mappings.join(' ');
 }
 
 // PURE. Whether the project has ccache wired into its pod build. ccache and
@@ -323,11 +337,13 @@ export function readPodfileProperties(root: string): Record<string, unknown> | n
 // exactly as it was.
 export function compilationCacheSettings({
   workspaceRoot,
+  derivedDataPath,
   casPath,
   xcodeMajor,
   ccache = false,
 }: {
   workspaceRoot: string;
+  derivedDataPath: string;
   casPath: string;
   xcodeMajor: number | null;
   ccache?: boolean;
@@ -340,7 +356,7 @@ export function compilationCacheSettings({
     `COMPILATION_CACHE_CAS_PATH=${casPath}`,
     'SWIFT_ENABLE_COMPILE_CACHE=NO',
     'CLANG_ENABLE_PREFIX_MAPPING=YES',
-    `CLANG_OTHER_PREFIX_MAPPINGS=${prefixMapping(workspaceRoot)}`,
+    `CLANG_OTHER_PREFIX_MAPPINGS=${compilationPrefixMappings(workspaceRoot, derivedDataPath)}`,
   ];
 }
 
@@ -371,17 +387,20 @@ export function detectXcodeMajor(exec: Executor | null = null): number | null {
 // exactly the kind of thing an agent cannot debug from a transcript.
 function resolveCompilationCacheSettings({
   root,
+  derivedDataPath,
   exec = null,
   casPath = sharedCompilationCache(),
   onNote = (line: string) => console.error(line),
 }: {
   root: string;
+  derivedDataPath: string;
   exec?: Executor | null;
   casPath?: string;
   onNote?: (line: string) => void;
 }): string[] {
   const settings = compilationCacheSettings({
     workspaceRoot: root,
+    derivedDataPath,
     casPath,
     xcodeMajor: detectXcodeMajor(exec),
     ccache: ccacheEnabled(readPodfileProperties(root)),
@@ -755,7 +774,7 @@ export async function buildIos({
 
   const buildSettings =
     compilationCache === undefined
-      ? resolveCompilationCacheSettings({ root, exec: executor, onNote })
+      ? resolveCompilationCacheSettings({ root, derivedDataPath: dd, exec: executor, onNote })
       : compilationCache || [];
 
   const args = xcodebuildArgs({
@@ -836,14 +855,14 @@ export async function buildIos({
   // the last diagnostic -- usually the most important line in the file -- is
   // in the transcript rather than lost in a pipe.
   const outcome = await new Promise<{ code?: number | null; signal?: NodeJS.Signals | null; error?: Error }>(
-    (resolve) => {
+    (settlePromise) => {
       let settled = false;
       const finish = (value: { code?: number | null; signal?: NodeJS.Signals | null; error?: Error }) => {
         if (settled) return;
         settled = true;
         outReader.flush();
         errReader.flush();
-        resolve(value);
+        settlePromise(value);
       };
       child.on('close', (code, signal) => finish({ code, signal }));
       // A spawn that fails after the call returned (ENOENT resolved

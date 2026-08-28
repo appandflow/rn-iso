@@ -23,14 +23,15 @@
 // often as after a session, and an agent that reads a non-zero exit as "still
 // running" would loop on a workspace where nothing is left to stop.
 import chalk from 'chalk';
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { rmSync } from 'fs';
 import type { Command } from 'commander';
 import { clearSupervisor, getProject, upsertProject } from '../config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../config.ts';
 import { findProjectRoot } from '../project.ts';
-import { supervisorPidFile, workspaceStateFile } from '../paths.ts';
+import { supervisorPidFile } from '../paths.ts';
 import { findPidListeningOnPort, isPidAlive, killMetroTree, resolveProjectMetro } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
+import { clearWorkspaceStateKeys, readWorkspaceState } from '../supervisor/state.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 
 const DEFAULT_WAIT_MS = 10_000;
@@ -78,16 +79,8 @@ interface TeardownResult {
 // workspace whose supervisor died, or was never started by this rn-iso at all.
 
 export function readSupervisorState(root: string): SupervisorStateRecord | null {
-  const file = workspaceStateFile(root);
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf-8'));
-    const sup = parsed?.supervisor;
-    return sup && typeof sup === 'object' ? sup : null;
-  } catch {
-    // No file, or a half-written one from a supervisor killed mid-rename.
-    // Neither is a reason to refuse to stop anything.
-    return null;
-  }
+  const sup = readWorkspaceState(root)?.supervisor;
+  return sup && typeof sup === 'object' ? (sup as SupervisorStateRecord) : null;
 }
 
 // Contract 5. The same file, under its own key, written by `ios` / `android`'s
@@ -95,56 +88,18 @@ export function readSupervisorState(root: string): SupervisorStateRecord | null 
 // the reason above the section: `stop` must work on a workspace whose
 // collectors are gone, or were never this rn-iso's.
 export function readCollectorState(root: string): CollectorStateMap {
-  const file = workspaceStateFile(root);
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf-8'));
-    const collectors = parsed?.collectors;
-    return collectors && typeof collectors === 'object' ? collectors : {};
-  } catch {
-    return {};
-  }
-}
-
-// Drops the named top-level keys from state.json. NOT a delete of the file:
-// `ios` / `android` write `lastBuild` beside `supervisor` and `collectors`,
-// and taking the build fingerprint away with a pid would turn every stop into
-// a guaranteed cache miss on the next build.
-function dropStateKeys(root: string, keys: string[]): void {
-  const file = workspaceStateFile(root);
-  if (!existsSync(file)) return;
-  let parsed;
-  try {
-    parsed = JSON.parse(readFileSync(file, 'utf-8'));
-  } catch {
-    // Unparseable: nothing in it can be preserved anyway, and a corrupt file
-    // left in place would fail every later read.
-    rmSync(file, { force: true });
-    return;
-  }
-  if (!parsed || typeof parsed !== 'object') {
-    rmSync(file, { force: true });
-    return;
-  }
-  for (const key of keys) delete parsed[key];
-  if (Object.keys(parsed).length === 0) {
-    rmSync(file, { force: true });
-    return;
-  }
-  // Same temp-then-rename as saveConfig: a reader must never see a partial file.
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, JSON.stringify(parsed, null, 2));
-  renameSync(tmp, file);
+  const collectors = readWorkspaceState(root)?.collectors;
+  return collectors && typeof collectors === 'object' ? (collectors as CollectorStateMap) : {};
 }
 
 // Drops the supervisor block and the pid file.
 export function clearSupervisorState(root: string): void {
-  const pidFile = supervisorPidFile(root);
   try {
-    rmSync(pidFile, { force: true });
+    rmSync(supervisorPidFile(root), { force: true });
   } catch {
-    // A read-only workspace is not a reason to fail a teardown.
+    // A stale unreadable pidfile is not a reason to fail teardown.
   }
-  dropStateKeys(root, ['supervisor']);
+  clearWorkspaceStateKeys(root, ['supervisor']);
 }
 
 // Drops the collectors block. Separate from clearSupervisorState because it is
@@ -152,7 +107,7 @@ export function clearSupervisorState(root: string): void {
 // when the supervisor could not be stopped, so their record must go with them
 // rather than waiting on the bookkeeping step that a live process suppresses.
 export function clearCollectorState(root: string): void {
-  dropStateKeys(root, ['collectors']);
+  clearWorkspaceStateKeys(root, ['collectors']);
 }
 
 // --- identity ---------------------------------------------------------------

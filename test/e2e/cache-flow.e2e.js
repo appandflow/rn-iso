@@ -21,10 +21,9 @@
 // Everything runs under a throwaway RN_ISO_HOME and a throwaway TMPDIR-rooted
 // repo, so it never touches the real machine's caches, registry or checkouts.
 //
-// The only non-real piece is the leaf hash function: @expo/fingerprint is not
-// installed in this repo, so a vendored, API-compatible, platform-scoping stub
-// is injected through the `load` seam fingerprintProject already exposes for
-// this purpose. See fixtures/fingerprint-stub.mjs.
+// The leaf hash function is injected so this fast cross-platform suite does not
+// spend minutes on native discovery. Production itself imports
+// @expo/fingerprint directly; the seam here only verifies option threading.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
@@ -42,16 +41,12 @@ import {
 } from '../../packages/rn-iso/src/build-cache.ts';
 import { buildLockPath } from '../../packages/rn-iso/src/engine/build-lock.ts';
 import { loadConfig } from '../../packages/rn-iso/src/config.ts';
-import { makeFingerprinter } from './fixtures/fingerprint-stub.mjs';
-
+import { createFingerprintAsync } from './fixtures/fingerprint-stub.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 const CLI = join(REPO, 'packages', 'rn-iso', 'bin', 'cli.ts');
 const LOCK_URL = pathToFileURL(join(REPO, 'packages', 'rn-iso', 'src', 'engine', 'build-lock.ts')).href;
 const CACHE_URL = pathToFileURL(join(REPO, 'packages', 'rn-iso', 'src', 'build-cache.ts')).href;
-
-// The stub, injected everywhere fingerprintProject is called below.
-const load = () => makeFingerprinter();
 
 const ctx = {};
 
@@ -98,8 +93,10 @@ test('worktree create prints only the worktree path, and makes a real worktree',
 // --- 2. the cross-worktree fingerprint premise -------------------------------
 
 test('two worktrees of one commit fingerprint identically when scoped', async () => {
-  const a = (await fingerprintProject(ctx.wt1, { platform: 'android', load }))?.hash;
-  const b = (await fingerprintProject(ctx.wt2, { platform: 'android', load }))?.hash;
+  const a = (await fingerprintProject(ctx.wt1, { platform: 'android', createFingerprint: createFingerprintAsync }))
+    ?.hash;
+  const b = (await fingerprintProject(ctx.wt2, { platform: 'android', createFingerprint: createFingerprintAsync }))
+    ?.hash;
   assert.ok(a && typeof a === 'string', 'a real hash came back');
   assert.equal(a, b, 'identical native trees at one commit hash identically -- the whole premise');
   ctx.androidHash1 = a;
@@ -112,15 +109,21 @@ test('a worktree-local path under ios/ changes the ios hash but NOT the android 
   writeFileSync(join(ctx.wt1, 'ios', 'Podfile.lock'), `PODS:\n  - hermes-engine (from \`${ctx.wt1}/ios\`)\n`);
   writeFileSync(join(ctx.wt2, 'ios', 'Podfile.lock'), `PODS:\n  - hermes-engine (from \`${ctx.wt2}/ios\`)\n`);
 
-  const iosA = (await fingerprintProject(ctx.wt1, { platform: 'ios', load }))?.hash;
-  const iosB = (await fingerprintProject(ctx.wt2, { platform: 'ios', load }))?.hash;
+  const iosA = (await fingerprintProject(ctx.wt1, { platform: 'ios', createFingerprint: createFingerprintAsync }))
+    ?.hash;
+  const iosB = (await fingerprintProject(ctx.wt2, { platform: 'ios', createFingerprint: createFingerprintAsync }))
+    ?.hash;
   assert.notEqual(iosA, iosB, 'the ios hash differs across worktrees -- an UNSCOPED hash would poison android too');
 
   // ... and the android hash is untouched by the ios/ divergence: still equal,
   // still what it was before. This is the property that makes the cross-worktree
   // android cache hit at all.
-  const androidA = (await fingerprintProject(ctx.wt1, { platform: 'android', load }))?.hash;
-  const androidB = (await fingerprintProject(ctx.wt2, { platform: 'android', load }))?.hash;
+  const androidA = (
+    await fingerprintProject(ctx.wt1, { platform: 'android', createFingerprint: createFingerprintAsync })
+  )?.hash;
+  const androidB = (
+    await fingerprintProject(ctx.wt2, { platform: 'android', createFingerprint: createFingerprintAsync })
+  )?.hash;
   assert.equal(androidA, androidB, 'scoping keeps the ios/ churn out of the android key');
   assert.equal(androidA, ctx.androidHash1, 'and the android hash did not move');
 });
@@ -128,8 +131,10 @@ test('a worktree-local path under ios/ changes the ios hash but NOT the android 
 // --- 3. cross-worktree cache hit, then a miss on a native change -------------
 
 test('a build stored under wt1 key resolves from wt2 key: a cross-worktree HIT', async () => {
-  const hash1 = (await fingerprintProject(ctx.wt1, { platform: 'android', load }))?.hash;
-  const hash2 = (await fingerprintProject(ctx.wt2, { platform: 'android', load }))?.hash;
+  const hash1 = (await fingerprintProject(ctx.wt1, { platform: 'android', createFingerprint: createFingerprintAsync }))
+    ?.hash;
+  const hash2 = (await fingerprintProject(ctx.wt2, { platform: 'android', createFingerprint: createFingerprintAsync }))
+    ?.hash;
   const key1 = buildCacheKey('android', hash1, {});
   const key2 = buildCacheKey('android', hash2, {});
   assert.equal(key1, key2, 'same fingerprint, same options -> same cache key across worktrees');
@@ -157,7 +162,9 @@ test('changing a native input in wt2 changes the key and turns the hit into a MI
   const gradle = join(ctx.wt2, 'android', 'app', 'build.gradle');
   writeFileSync(gradle, readFileSync(gradle, 'utf-8') + '\n// native input changed by the e2e\n');
 
-  const changed = (await fingerprintProject(ctx.wt2, { platform: 'android', load }))?.hash;
+  const changed = (
+    await fingerprintProject(ctx.wt2, { platform: 'android', createFingerprint: createFingerprintAsync })
+  )?.hash;
   assert.notEqual(changed, ctx.androidHash1, 'the fingerprint moved with the native input');
 
   const changedKey = buildCacheKey('android', changed, {});
@@ -367,9 +374,7 @@ function makeMinimalRnProject(root) {
   write(join(root, 'android', 'app', 'build.gradle'), "apply plugin: 'com.android.application'\n");
   write(join(root, 'android', 'app', 'AndroidManifest.xml'), '<manifest package="com.app"/>\n');
 
-  // .rn-iso must never influence a fingerprint, and must never be carried into a
-  // worktree; a .gitignore entry keeps the tree clean for the remove step.
-  write(join(root, '.gitignore'), 'node_modules/\n.rn-iso/\n');
+  write(join(root, '.gitignore'), 'node_modules/\n');
 }
 
 function initGitRepoWithRemote(repo, remote) {

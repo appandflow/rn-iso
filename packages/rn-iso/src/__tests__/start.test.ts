@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import type { Command } from 'commander';
 import { getProject, upsertProject } from '../config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { supervisorLogFile, workspaceLogsDir } from '../paths.ts';
+import { supervisorLogFile, workspaceLogsDir, workspaceMetadataFile } from '../paths.ts';
 import { writeWorkspaceState } from '../supervisor/run.ts';
 import {
   liveSupervisor,
@@ -591,12 +591,8 @@ describe('the error contract', () => {
   });
 });
 
-// `.rn-iso/` used to be gitignored by `rn-iso init`, which made it a step a
-// repo had to remember before its first build -- and forgetting it dead-ended
-// `worktree remove` on `?? .rn-iso/`. `start` is the first command of the loop,
-// so it ensures the entry itself.
-describe('the workspace gitignore', () => {
-  test('adds the entry on a repo that has none, and says so once on stderr', async () => {
+describe('global workspace storage', () => {
+  test('creates ownership metadata under RN_ISO_HOME and never touches .gitignore', async () => {
     const port = 8161;
     const server = await metroListener(port);
     setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
@@ -604,30 +600,10 @@ describe('the workspace gitignore', () => {
     try {
       const result = await runAction({ json: true, wait: '5' });
       expect(result.exitCode).toBe(null);
-      const gitignore = readFileSync(join(root, '.gitignore'), 'utf-8');
-      expect(gitignore).toMatch(/^\.rn-iso\/$/m);
-      const notes = result.errs.filter((l) => /added \.rn-iso\/ to \.gitignore/.test(l));
-      expect(notes.length).toBe(1);
-      expect(notes[0]).toMatch(/note {3}added/);
-      // The note is stderr, never the --json payload's line.
+      expect(existsSync(join(root, '.gitignore'))).toBe(false);
+      expect(JSON.parse(readFileSync(workspaceMetadataFile(root), 'utf-8')).projectRoot).toBe(root);
       expect(result.logs.length).toBe(1);
       expect(JSON.parse(result.logs[0] ?? '').port).toBeTruthy();
-    } finally {
-      server.close();
-    }
-  });
-
-  test('a repo that already ignores it is left alone and says nothing', async () => {
-    const port = 8162;
-    const server = await metroListener(port);
-    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
-    upsertProject(root, { metroPort: port });
-    writeFileSync(join(root, '.gitignore'), 'node_modules\n/.rn-iso\n');
-    try {
-      const result = await runAction({ json: true, wait: '5' });
-      expect(result.exitCode).toBe(null);
-      expect(readFileSync(join(root, '.gitignore'), 'utf-8')).toBe('node_modules\n/.rn-iso\n');
-      expect(result.errs.filter((l) => /gitignore/.test(l))).toEqual([]);
     } finally {
       server.close();
     }

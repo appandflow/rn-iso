@@ -23,11 +23,10 @@ import { getExecutor } from '../exec.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
 import { queryLogs } from '../logs-query.ts';
-import { supervisorLogFile, workspaceLogsDir } from '../paths.ts';
+import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../paths.ts';
 import { reserveMetroPort } from '../ports.ts';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
 import { readWorkspaceState } from '../supervisor/state.ts';
-import { ensureWorkspaceIgnored } from '../engine/workspace.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 // The same stopwatch the build commands stamp their phase lines with, so the
 // OK line's total wait reads the same way ("4s", "1m4s").
@@ -86,7 +85,7 @@ interface ChildExitInfo {
 
 // Pure. The workspace state file is the primary record -- it is the only one
 // that carries the mode -- and the global config entry is the fallback for a
-// workspace whose .rn-iso directory was removed under a running supervisor.
+// workspace whose global state directory was removed under a running supervisor.
 //
 // "Live" is pid alive AND the recorded port is the port we are about to use.
 // Both halves matter: a pid alone is not proof (pids are reused, and a stale
@@ -196,7 +195,7 @@ export function registerStart(program: Command): void {
     .command('start')
     .description(
       "Start this workspace's dev server under a detached supervisor and wait until it verifies as this project's. " +
-        'Idempotent: a healthy dev server on the reserved port is a no-op. Structured logs land in .rn-iso/logs.',
+        'Idempotent: a healthy dev server on the reserved port is a no-op. Structured logs land in the global workspace logs directory.',
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option('--wait <seconds>', `How long to wait for the dev server to answer (default ${DEFAULT_WAIT_SECONDS})`)
@@ -254,14 +253,15 @@ export function registerStart(program: Command): void {
         });
       }
 
-      // `start` is the first command of the loop, so it is where the workspace
-      // directory first appears. Ensuring git ignores it here rather than in a
-      // setup command is what removes the step a repo had to remember: `ios` and
-      // `android` call the same function for the same reason, since either can
-      // be the first to write into `<root>/.rn-iso`.
-      const ignored = ensureWorkspaceIgnored(root);
-      if (ignored.added) note(chalk.dim('note   added .rn-iso/ to .gitignore'));
-      else if (ignored.error) note(chalk.yellow(`note   could not update ${ignored.path}: ${ignored.error}`));
+      try {
+        ensureWorkspaceStorage(root);
+      } catch (error) {
+        return fail({
+          code: (error as Error & { code?: string })?.code || 'RN_ISO_WORKSPACE_STATE',
+          message: `Could not prepare this workspace's rn-iso state: ${(error as Error)?.message || error}`,
+          remedy: 'Check that RN_ISO_HOME is writable and has free space.',
+        });
+      }
 
       upsertProject(root, {
         bundleId: detectBundleId(root) ?? undefined,

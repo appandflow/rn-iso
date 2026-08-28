@@ -18,7 +18,8 @@
 // the two entry points onto separate sets of entries.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
-import { createRequire } from 'module';
+import * as expoFingerprint from '@expo/fingerprint';
+import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
 import { buildCacheKey as coreBuildCacheKey } from '@rn-iso/core';
 import { getExecutor } from './exec.ts';
 import { register } from './cache-manifest.ts';
@@ -70,68 +71,9 @@ export function artifactIn(dir: string): string | null {
   return found ? join(dir, found) : null;
 }
 
-// @expo/fingerprint is resolved from the PROJECT first: an Expo app already has
-// it, and using the project's copy means the hash matches the one its own CLI
-// would compute -- the same entry its own `expo run:ios` and its EAS build
-// address. Only then fall back to the copy rn-iso DEPENDS on.
-//
-// That fallback is why a bare `@react-native-community/cli init` app needs no
-// package.json change (issue #74): it has no @expo/fingerprint, the first
-// resolution misses, and rn-iso's own copy answers. It is deliberately second,
-// not first -- a project that ships a version has a reason to, and rn-iso
-// hashing a project differently from the project's own tooling is a cache
-// nobody shares.
-// Returning null rather than throwing lets the caller give advice instead of a
-// stack trace.
-// The only shape this module ever calls on the module @expo/fingerprint
-// resolves to. A real interface rather than `any`: the module is loaded
-// dynamically (require of a package that may or may not be installed), but
-// what is done with it afterward is fixed and worth typing honestly.
-// `diffFingerprints` is optional on purpose -- old versions of the package do
-// not export it, and every caller falls back to the plain per-path comparison
-// below when it is absent.
-export interface Fingerprinter {
-  createFingerprintAsync(
-    projectRoot: string,
-    options?: { platforms: string[] } | undefined,
-  ): Promise<{ hash?: string | null; sources?: unknown[] | null } | null | undefined>;
-  diffFingerprints?(
-    fingerprint1: { sources: FingerprintSourceLike[]; hash: string },
-    fingerprint2: { sources: FingerprintSourceLike[]; hash: string },
-  ): unknown[];
-}
-
-// One entry of a fingerprint's `sources` array, as loosely as this module
-// reads it: @expo/fingerprint's own Fingerprint type is not importable here
-// (the package is the PROJECT's, resolved at runtime), so only the fields the
-// diff below touches are named. `filePath` names file/dir sources; `id` names
-// contents sources (a config value hashed without a file behind it).
-export interface FingerprintSourceLike {
-  type?: string;
-  filePath?: string;
-  id?: string;
-  hash?: string | null;
-  [key: string]: unknown;
-}
-
 // What fingerprintProject returns: the hash that keys the cache, plus the
 // sources it was computed from -- the half that can explain a MISS.
-export interface ProjectFingerprint {
-  hash: string;
-  sources: FingerprintSourceLike[];
-}
-
-export function loadFingerprinter(projectRoot: string): Fingerprinter | null {
-  for (const from of [join(projectRoot, 'package.json'), import.meta.url]) {
-    try {
-      const localRequire = createRequire(from);
-      return localRequire('@expo/fingerprint');
-    } catch {
-      // Try the next location.
-    }
-  }
-  return null;
-}
+export type ProjectFingerprint = Fingerprint;
 
 // The platforms @expo/fingerprint accepts as a scope (options.platforms:
 // Platform[]). Anything else is not passed at all -- an unrecognized value
@@ -156,23 +98,24 @@ const FINGERPRINT_PLATFORMS = new Set(['ios', 'android']);
  * anyway, and the sources are what can say WHY two hashes differ. Callers that
  * only want the key read `.hash` and ignore the rest.
  *
- * `load` is injected only so the option threading is testable without a real
- * @expo/fingerprint on disk.
+ * `createFingerprint` is injected only so option threading is testable without
+ * hashing a real project. Production calls the declared dependency directly.
  */
 export async function fingerprintProject(
   projectRoot: string,
   {
     platform,
-    load = loadFingerprinter,
-  }: { platform?: string; load?: (projectRoot: string) => Fingerprinter | null } = {},
+    createFingerprint = expoFingerprint.createFingerprintAsync,
+  }: { platform?: string; createFingerprint?: typeof expoFingerprint.createFingerprintAsync } = {},
 ): Promise<ProjectFingerprint | null> {
-  const fp = load(projectRoot);
-  if (!fp) return null;
-  const options = platform && FINGERPRINT_PLATFORMS.has(platform) ? { platforms: [platform] } : undefined;
-  const result = await fp.createFingerprintAsync(projectRoot, options);
+  const options: FingerprintOptions | undefined =
+    platform && FINGERPRINT_PLATFORMS.has(platform)
+      ? { platforms: [platform] as FingerprintOptions['platforms'] }
+      : undefined;
+  const result = await createFingerprint(projectRoot, options);
   const hash = result?.hash ?? null;
   if (!hash) return null;
-  const sources = Array.isArray(result?.sources) ? (result.sources as FingerprintSourceLike[]) : [];
+  const sources = Array.isArray(result?.sources) ? (result.sources as FingerprintSource[]) : [];
   return { hash, sources };
 }
 
@@ -243,7 +186,7 @@ export function storeBuild(
     | {
         root?: string;
         overwrite?: boolean;
-        sources?: FingerprintSourceLike[] | null;
+        sources?: FingerprintSource[] | null;
         assetManifest?: AssetManifest | null;
       } = {},
 ): string | null {
@@ -308,9 +251,9 @@ export function storeBuild(
 //
 // A cache miss says only "the hash changed". The sources stored beside each
 // entry (SOURCES_FILE, written by storeBuild above) are what can say WHICH
-// native inputs moved -- diffed against the current run's sources, preferably
-// by the project's own @expo/fingerprint.diffFingerprints, with a plain
-// per-path hash comparison as the fallback for versions that predate it.
+// native inputs moved -- diffed against the current run's sources with rn-iso's
+// declared @expo/fingerprint, with a plain per-path comparison if its diff
+// cannot interpret an older stored entry.
 
 // The sources JSON stored beside the artifact in an entry directory.
 // artifactIn above only ever matches .app/.apk, so this file can never be
@@ -319,14 +262,10 @@ const SOURCES_FILE = 'fingerprint-sources.json';
 
 // The stored sources of an entry, or null when the entry has none (it predates
 // this file, was stored by the Expo provider, or the JSON is unreadable).
-export function storedSources(
-  platform: string,
-  key: string,
-  root: string = cacheRoot(),
-): FingerprintSourceLike[] | null {
+export function storedSources(platform: string, key: string, root: string = cacheRoot()): FingerprintSource[] | null {
   try {
     const parsed: unknown = JSON.parse(readFileSync(join(entryDir(platform, key, root), SOURCES_FILE), 'utf-8'));
-    return Array.isArray(parsed) ? (parsed as FingerprintSourceLike[]) : null;
+    return Array.isArray(parsed) ? (parsed as FingerprintSource[]) : null;
   } catch {
     return null;
   }
@@ -348,16 +287,15 @@ export function storedAssetManifest(platform: string, key: string, root: string 
 // PURE. The name a source is reported by: filePath for file/dir sources, id
 // for contents sources. Null for a shape this does not recognise.
 function sourceName(source: unknown): string | null {
-  const s = source as FingerprintSourceLike | null | undefined;
+  const s = source as Record<string, unknown> | null | undefined;
   if (typeof s?.filePath === 'string' && s.filePath !== '') return s.filePath;
   if (typeof s?.id === 'string' && s.id !== '') return s.id;
   return null;
 }
 
-// PURE. The name a diffFingerprints item is about. Newer versions return
-// { op, addedSource | removedSource | beforeSource/afterSource }; older ones
-// returned the changed sources themselves. Reading all of those shapes keeps
-// this working across the project's own @expo/fingerprint version.
+// PURE. The name a diffFingerprints item is about. Current versions return
+// { op, addedSource | removedSource | beforeSource/afterSource }; accepting a
+// source directly also keeps older cache metadata readable after an upgrade.
 function diffItemName(item: unknown): string | null {
   const o = item as Record<string, unknown> | null | undefined;
   for (const candidate of [o, o?.addedSource, o?.removedSource, o?.afterSource, o?.beforeSource]) {
@@ -370,11 +308,11 @@ function diffItemName(item: unknown): string | null {
 // PURE fallback: the per-name hash comparison of two sources arrays. Reports
 // changed and added names in the current list's order, then names the previous
 // list had that are now gone.
-export function compareSourceLists(previous: FingerprintSourceLike[], current: FingerprintSourceLike[]): string[] {
+export function compareSourceLists(previous: unknown[], current: unknown[]): string[] {
   const previousByName = new Map<string, string | null>();
   for (const source of previous) {
     const name = sourceName(source);
-    if (name !== null) previousByName.set(name, source.hash ?? null);
+    if (name !== null) previousByName.set(name, ((source as Record<string, unknown>).hash as string | null) ?? null);
   }
   const changed: string[] = [];
   const seen = new Set<string>();
@@ -382,7 +320,8 @@ export function compareSourceLists(previous: FingerprintSourceLike[], current: F
     const name = sourceName(source);
     if (name === null || seen.has(name)) continue;
     seen.add(name);
-    if (!previousByName.has(name) || previousByName.get(name) !== (source.hash ?? null)) changed.push(name);
+    const hash = (source as Record<string, unknown>).hash;
+    if (!previousByName.has(name) || previousByName.get(name) !== (hash ?? null)) changed.push(name);
   }
   for (const [name] of previousByName) {
     if (!seen.has(name)) changed.push(name);
@@ -400,10 +339,10 @@ export function diffFingerprintSources({
   current,
   differ = null,
 }: {
-  previous: FingerprintSourceLike[];
+  previous: FingerprintSource[];
   previousHash?: string | null;
   current: ProjectFingerprint;
-  differ?: Fingerprinter['diffFingerprints'] | null;
+  differ?: typeof expoFingerprint.diffFingerprints | null;
 }): string[] {
   if (typeof differ === 'function') {
     try {
@@ -445,19 +384,17 @@ export function fingerprintDiffSuffix(changed: string[]): string {
 // trimmed, not changed), no stored sources for the previous entry, or a diff
 // that comes back empty.
 export function describeFingerprintMiss({
-  projectRoot,
   platform,
   current,
   lastBuild,
   root = cacheRoot(),
-  load = loadFingerprinter,
+  differ = expoFingerprint.diffFingerprints,
 }: {
-  projectRoot: string;
   platform: string;
   current: ProjectFingerprint;
   lastBuild: Record<string, unknown> | null | undefined;
   root?: string;
-  load?: (projectRoot: string) => Fingerprinter | null;
+  differ?: typeof expoFingerprint.diffFingerprints | null;
 }): { changed: string[]; previousHash: string } | null {
   if (!lastBuild || lastBuild.platform !== platform) return null;
   const previousHash = typeof lastBuild.fingerprint === 'string' ? lastBuild.fingerprint : null;
@@ -465,7 +402,6 @@ export function describeFingerprintMiss({
   if (!previousHash || !previousKey || previousHash === current.hash) return null;
   const previous = storedSources(platform, previousKey, root);
   if (!previous) return null;
-  const differ = load(projectRoot)?.diffFingerprints ?? null;
   const changed = diffFingerprintSources({ previous, previousHash, current, differ });
   return changed.length ? { changed, previousHash } : null;
 }
@@ -484,8 +420,8 @@ export function describeFingerprintMiss({
  * The PRE-mutation hash stays the lookup key -- it is what the tree computed
  * when the run started -- and this is only ever used to decide what the
  * artifact is STORED as. Null when the recompute could not be made (the
- * fingerprinter went away mid-run, or threw): the caller keeps the key it has,
- * which is exactly the old behaviour.
+ * declared fingerprinter threw): the caller keeps the key it has, which is
+ * exactly the old behaviour.
  */
 export async function refingerprintAfterMutation({
   projectRoot,

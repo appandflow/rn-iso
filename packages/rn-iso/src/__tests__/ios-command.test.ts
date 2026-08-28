@@ -36,7 +36,7 @@ import {
   resolveConfiguration,
   phaseLine,
   podAction,
-  ensureWorkspaceIgnoredSafely,
+  ensureWorkspaceStorageSafely,
   registerIos,
   replaceCollector,
   resolveMetroWithRetry,
@@ -155,7 +155,7 @@ interface RecordedArgs {
   loadProjectProvider: { isExpo?: unknown };
   acquireBuildLock: { root?: unknown; platform?: unknown; logFile?: unknown; key?: unknown };
   untrackedNativeFiles: { projectRoot?: unknown };
-  ensureWorkspaceIgnored: unknown;
+  ensureWorkspaceStorage: unknown;
 }
 
 function harness(overrides: LooseDeps = {}) {
@@ -297,8 +297,8 @@ function harness(overrides: LooseDeps = {}) {
       record('verifyReleaseLaunch', args);
       return { verified: true, waitedMs: 3000 };
     },
-    ensureWorkspaceIgnored: async (dir) => {
-      record('ensureWorkspaceIgnored', dir);
+    ensureWorkspaceStorage: async (dir) => {
+      record('ensureWorkspaceStorage', dir);
     },
     ...overrides,
   };
@@ -585,21 +585,21 @@ describe('launch verification', () => {
   });
 });
 
-describe('the workspace directory is gitignored before anything is written into it', () => {
-  test('ensureWorkspaceIgnored runs before the device, the gate or the build log', async () => {
+describe('global workspace storage', () => {
+  test('workspace storage is prepared before the device, the gate or the build log', async () => {
     reserve();
     const { calls } = await run({});
-    expect(calls.args.ensureWorkspaceIgnored).toBe(root);
-    expect(calls.order[0]).toBe('ensureWorkspaceIgnored');
+    expect(calls.args.ensureWorkspaceStorage).toBe(root);
+    expect(calls.order[0]).toBe('ensureWorkspaceStorage');
   });
 
-  test('the default seam tolerates a module that is missing or a file it cannot write', async () => {
-    // It is one line of repo hygiene: a build must not fail over it, and the
-    // wrapper is what guarantees that whether engine/workspace.js is there or
-    // not.
-    const notes = [];
-    const result = await ensureWorkspaceIgnoredSafely('/definitely/not/a/checkout', { note: (l) => notes.push(l) });
-    expect(result === null || typeof result === 'object').toBeTruthy();
+  test('the default seam creates global storage without touching the project', async () => {
+    const notes: string[] = [];
+    const project = '/definitely/not/a/checkout';
+    const result = await ensureWorkspaceStorageSafely(project, { note: (l) => notes.push(l) });
+    expect(typeof result).toBe('string');
+    expect(existsSync(join(project, '.rn-iso'))).toBe(false);
+    expect(notes).toEqual([]);
   });
 });
 

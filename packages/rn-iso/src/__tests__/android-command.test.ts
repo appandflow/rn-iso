@@ -184,7 +184,7 @@ interface Calls {
   releaseLock: unknown[];
   waitForBuild: unknown[];
   verify: VerifyArgs[];
-  ensureIgnored: unknown[];
+  ensureStorage: unknown[];
   readApkPackage: unknown[];
   order: string[];
 }
@@ -218,7 +218,7 @@ function harness(overrides = {}) {
     releaseLock: [],
     waitForBuild: [],
     verify: [],
-    ensureIgnored: [],
+    ensureStorage: [],
     readApkPackage: [],
     // The sequence of the steps that decide who compiles, which is what the
     // single-flight tests below are actually about.
@@ -412,8 +412,8 @@ function harness(overrides = {}) {
       calls.verify.push(args);
       return { verified: true, waitedMs: 3100, timedOut: false, mode: null };
     },
-    ensureIgnored: async (dir: string) => {
-      calls.ensureIgnored.push(dir);
+    ensureStorage: async (dir: string) => {
+      calls.ensureStorage.push(dir);
     },
     out: (line: string) => stderr.push(line),
     emit: (line: string) => stdout.push(line),
@@ -758,7 +758,7 @@ describe('metro is verified before any build work', () => {
 });
 
 describe('the other refusals', () => {
-  test('an unresolvable @expo/fingerprint names the package to install', async () => {
+  test('a fingerprint with no hash refuses without a package-install remedy', async () => {
     const h = harness({
       fingerprint: async () => null,
       resolveCached: never('the cache lookup'),
@@ -767,7 +767,7 @@ describe('the other refusals', () => {
     const result = await h.run();
     assert(result.error);
     expect(result.error.code).toBe(NO_FINGERPRINT);
-    expect(result.error.remedy).toMatch(/npm i -D @expo\/fingerprint/);
+    expect(result.error.remedy).not.toMatch(/npm i -D @expo\/fingerprint/);
   });
 
   test('a fingerprint that throws is reported, not propagated', async () => {
@@ -831,7 +831,7 @@ describe('the other refusals', () => {
     // ... and the generic guesses are GONE from the remedy.
     expect(result.error.remedy).not.toMatch(/JAVA_HOME|rn-iso status/);
     // The log that holds the rest is named, as `start` names supervisor.log.
-    expect(h.stderr.some((l) => /\.rn-iso\/logs\/emulator\.log/.test(l))).toBeTruthy();
+    expect(h.stderr.some((l) => l.includes(emulatorLogFile(root)))).toBeTruthy();
   });
 
   // The same lift on the OTHER failure path: a create-or-boot that throws out
@@ -864,7 +864,7 @@ describe('the other refusals', () => {
     assert(result.error);
     expect(result.error.message).toBe('AVD rn-iso-app-412 no longer exists.');
     expect(result.error.remedy).toMatch(/rn-iso status/);
-    expect(h.stderr.some((l) => /\.rn-iso\/logs\/emulator\.log/.test(l))).toBeTruthy();
+    expect(h.stderr.some((l) => l.includes(emulatorLogFile(root)))).toBeTruthy();
   });
 
   // The emulator log is where the boot's stdio goes, so `android` has to be
@@ -954,8 +954,7 @@ describe('a failed build', () => {
     const errors = labelled(h.stderr, 'error');
     expect(errors.some((l) => /MainActivity\.kt:23:9: Unresolved reference 'Foo'\./.test(l))).toBeTruthy();
     expect(errors.some((l) => /and 3 more diagnostic/.test(l))).toBeTruthy();
-    // The spec's shape: the log path relative to the workspace, not absolute.
-    expect(labelled(h.stderr, 'log')[0]).toMatch(/^ {2}log {9}\.rn-iso\/logs\/build-android\.ndjson$/);
+    expect(labelled(h.stderr, 'log')[0]).toBe(phaseLine('log', join(workspaceLogsDir(root), 'build-android.ndjson')));
   });
 
   test('falls back to the last transcript lines when nothing could be extracted', async () => {
@@ -1759,10 +1758,10 @@ describe('the launch outcome reaches the timeline', () => {
 });
 
 describe('the workspace directory is gitignored first', () => {
-  test('ensureWorkspaceIgnored runs before the build log is opened', async () => {
+  test('workspace storage is prepared before the build log is opened', async () => {
     const h = harness();
     await h.run();
-    expect(h.calls.ensureIgnored).toEqual([root]);
+    expect(h.calls.ensureStorage).toEqual([root]);
   });
 });
 

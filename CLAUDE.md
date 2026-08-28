@@ -17,8 +17,9 @@ in the order an agent uses them:
   shared build cache or build (prebuild / pod-or-gradle sync / xcodebuild or
   gradle), install, launch wired to the reserved port, and attach a device-log
   collector.
-- **`rn-iso logs`** queries the merged NDJSON timeline under
-  `<root>/.rn-iso/logs`; **`rn-iso stop`** is the inverse of `start` (halt the
+- **`rn-iso logs`** queries the merged NDJSON timeline under the global,
+  readable workspace directory `$RN_ISO_HOME/workspaces/<project>--<digest>/logs`
+  (by default `~/.rn-iso/workspaces/...`); **`rn-iso stop`** is the inverse of `start` (halt the
   supervisor, reap the collectors, shut the owned device DOWN, free the port —
   it never deletes).
 
@@ -38,12 +39,12 @@ job: every edit it would make lands in a file the project already owns (a
 `metro.config.js` with its own transformer, a `Podfile` with existing
 `post_install` logic, an app config that may be TypeScript), which is
 judgement, not templating. The generated `scripts/dev` went with it: rn-iso IS
-the build command, so there was no bundler or build command left to wrap. The
-one edit that never needed judgement — `.rn-iso/` in `.gitignore` — is now
-SELF-ENSURED by the commands that create the directory
-(`ensureWorkspaceIgnored` in `src/engine/workspace.ts`, called by `start`,
-`ios` and `android`), which is what removed the setup step rather than moving
-it.
+the build command, so there was no bundler or build command left to wrap.
+Runtime state is stored outside the project tree under
+`$RN_ISO_HOME/workspaces/<project>--<digest>/` (default
+`~/.rn-iso/workspaces/...`) by `ensureWorkspaceStorage` in `src/paths.ts`,
+called by `start`, `ios` and `android`. No `.gitignore` edit or other project
+mutation is needed.
 
 **And the `rn-iso-init` SKILL went with it, which is the most recent deletion
 — do not bring that back either.** After #67 rn-iso supplies the compilation
@@ -58,17 +59,18 @@ of them at the moment it matters, and its `fix` text carries the advice (the
 that writes it, what belongs in a `.fingerprintignore`), with the fingerprint
 half also explained in `guide lifecycle`.
 
-State lives in `~/.rn-iso/config.json`, keyed by absolute project path, plus
-per-workspace `<root>/.rn-iso/state.json` (the supervisor record, the collector
-records, and `lastBuild`). The `RN_ISO_HOME` env var redirects the global half
-for tests.
+State lives in `~/.rn-iso/config.json`, keyed by absolute project path, plus a
+per-workspace state file under `$RN_ISO_HOME/workspaces/<project>--<digest>/`.
+The directory name is human-readable and collision-safe; `workspace.json` maps
+it back to the canonical absolute project root. `RN_ISO_HOME` redirects all
+machine-level and workspace state for tests.
 
 Both of those JSON files are multi-writer, and **both read-modify-writes are
 locked** with the same primitive: `src/dir-lock.js` (`withDirLock`), an atomic
 `mkdir` + mtime-stale-takeover advisory lock, reentrant per lock path. The
 global config uses it as `withConfigLock` (lock at `~/.rn-iso/config.lock`);
 state.json uses it as `withWorkspaceStateLock` in `src/supervisor/run.js` (lock
-at `<root>/.rn-iso/state.lock`), which every state writer -- the supervisor, the
+at the global workspace `state.lock`), which every state writer -- the supervisor, the
 two collectors, and `ios`/`android`'s `lastBuild` -- inherits by going through
 `writeWorkspaceState`. mtime staleness is correct for these because the writes
 are milliseconds long; a lock a process holds for _minutes_ (a build) must use
@@ -152,12 +154,13 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # recordMatches / queryLogs / followLogs, and the --errors
                           # marker window
     worktree.js           # git worktree add/remove/list, base-ref resolution, carry-over.
-                          # `.rn-iso/` is excluded from carry-over unconditionally, at any depth
-                          # (isWorkspaceArtifact); `.worktreeexclude` only ADDS to that list
+                          # `.DerivedData` is excluded from carry-over unconditionally;
+                          # `.worktreeexclude` adds project-specific exclusions
     fs-util.js            # volume utilities (volumeRootFor, isRealMount, listMountedVolumes,
                           # isOnMountedVolume) and sizing (directorySize, formatBytes)
-    paths.js              # every path rn-iso writes: workspace-local under <root>/.rn-iso,
+    paths.js              # every path rn-iso writes: global workspace storage,
                           # shared caches under getConfigDir(). Pure, no I/O.
+                          # Runtime workspace state is under $RN_ISO_HOME/workspaces/<project>--<digest>.
     status.js             # pure shaping of the cross-project state `status` prints
     teardown.js           # THE owned-device teardown: resolve -> occupancy -> shutdown -> delete,
                           # with containment. Used by reclaim, stop, gc.
@@ -179,15 +182,11 @@ packages/rn-iso/          # the CLI. ESM, Node 20+.
                           # commands' own tests are about ORDER and OUTPUT, not about xcodebuild.
       device.js           # ensureOwnedDevice (the ownership rule, item 2) + ensureBooted (the
                           # wait `simctl install` needs). No path here touches hardware.
-      workspace.js        # ensureWorkspaceIgnored: the `.rn-iso/` gitignore entry, self-ensured
-                          # by start / ios / android. Idempotent and content-based (`/.rn-iso`,
-                          # `.rn-iso` and `.rn-iso/` are ONE entry to git), creates the file when
-                          # there is none, and reports an unwritable .gitignore rather than
-                          # throwing -- no dev server dies over a read-only checkout
+      workspace.js        # carry-over helpers; current commands never edit a project's .gitignore
       prebuild.js         # `expo prebuild -p <p> --no-install`, only when the native dir is absent
       deps.js             # podsAreStale (pure: Podfile.lock vs Pods/Manifest.lock) + runPodInstall
       xcode.js            # discoverXcodeProject / listSchemes / buildIos: xcodebuild into
-                          # <ws>/.rn-iso/derived-data, transcript streamed to the build log
+                          # global workspace derived-data, transcript streamed to the build log
       gradle.js           # buildAndroid: ./gradlew assemble<Variant> (default assembleDebug),
                           # apk located by output listing, flavor-aware, mtime freshness guard
       js-swap.js          # RELEASE iOS cache hits: the cached .app copied aside, this tree's
@@ -322,9 +321,7 @@ device it owns, not just a claim on it.
 **The rule now has no carve-out.** It used to read "the one exception is
 physical devices: hardware cannot be spawned" — rn-iso has no `--serial` and no
 physical support (spec: "Out of scope"), so every device rn-iso touches is one
-rn-iso created, and `teardown.js` lost its unowned branch. A legacy record
-naming a serial is reported once in `engine/device.js` and falls through to
-creating an owned emulator; nothing is ever issued at that serial. When
+rn-iso created, and `teardown.js` has no unowned branch. When
 resolving ambiguity here, fail toward creating an owned emulator, never toward
 touching hardware. (`parseAdbDevices` still buckets physical serials — it is a
 faithful parse of `adb devices`, and a connected phone has to land somewhere

@@ -1,12 +1,10 @@
-import { existsSync, readFileSync, realpathSync, rmSync } from 'fs';
-import { isAbsolute, relative, resolve } from 'path';
+import { existsSync, realpathSync } from 'fs';
+import { resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { resolveSettings, unknownSettingKeys } from '../settings.ts';
 import { isPathPrefix, loadConfig, upsertProject } from '../config.ts';
-import { workspaceDir } from '../paths.ts';
 import { reclaimProject } from '../reclaim.ts';
-import { listsWorkspaceDir, renderWorkspaceIgnoreBlock } from '../engine/workspace.ts';
 import {
   addWorktree,
   branchExists,
@@ -21,7 +19,6 @@ import {
   hasUncommittedWork,
   isMainWorkingTree,
   isPodInstallChurn,
-  isWorkspaceArtifact,
   listWorktrees,
   podsOutOfSync,
   readWorktreeExclude,
@@ -32,7 +29,6 @@ import {
   resolveRef,
   restoreFile,
   unpushedCommits,
-  unstagedDiff,
   worktreePath,
 } from '../worktree.ts';
 import type { WorktreeEntry } from '../worktree.ts';
@@ -342,182 +338,10 @@ export function porcelainPath(line: string): string | null {
   return renamed.replace(/^"(.*)"$/, '$1');
 }
 
-// PURE. Drops the workspace's own `.rn-iso/` from a dirty listing.
-//
-// Unconditional, and this is the field-tested reason: two real e2e runs
-// dead-ended here. A workspace that has ever been started holds `.rn-iso/`, and
-// on a repo that does not gitignore it `git status` reports `?? .rn-iso/`, which
-// `worktree remove` counted as untracked work and refused over -- with the only
-// documented escape being `--force`, a flag that ALSO discards real uncommitted
-// changes. There was no non-destructive way out of a refusal caused entirely by
-// rn-iso's own output.
-//
-// It is safe because the directory dies with the worktree by design: it holds
-// derived data, logs and a supervisor pidfile, all keyed to a path that is about
-// to stop existing. `worktree create --carry-ignored` refuses to carry it for
-// the same reason (isWorkspaceArtifact, src/worktree.js), so the two ends of the
-// lifecycle agree. `start` now adds the gitignore entry itself, which stops the
-// `??` line appearing at all -- this is the guard for every workspace that
-// predates that, and for a repo whose .gitignore cannot be written.
-export function excludeWorkspaceArtifacts(lines: string[] | null | undefined): string[] {
-  return (lines || []).filter((line) => {
-    const path = porcelainPath(line);
-    return path === null || !isWorkspaceArtifact(path);
-  });
-}
-
-// PURE. The workspace directories in a dirty listing -- the complement of
-// excludeWorkspaceArtifacts, and the reason that filter alone was not the whole
-// fix. `git worktree remove` runs its OWN cleanliness check and refuses on
-// "modified or untracked files", so a `?? .rn-iso/` that rn-iso has decided to
-// ignore still stops git one step later, with `--force` as git's only answer --
-// which lands the reader right back in the dead end this was meant to remove.
-//
-// So the directory is deleted first, from the listing git itself produced. That
-// is not destruction: it is rn-iso's own output, inside a worktree the command
-// is about to delete wholesale, already reclaimed by the time this runs. Taken
-// from the listing rather than from a glob so nothing is removed that git did
-// not just name.
-export function workspaceArtifactPaths(lines: string[] | null | undefined): string[] {
-  const paths: string[] = [];
-  for (const line of lines || []) {
-    const path = porcelainPath(line);
-    if (path && isWorkspaceArtifact(path)) paths.push(path);
-  }
-  return paths;
-}
-
-// PURE. Whether a unified diff adds rn-iso's own gitignore block and NOTHING
-// else -- the second dead end of the same shape as `?? .rn-iso/`.
-//
-// `start` / `ios` / `android` append the block to the repo's .gitignore
-// (ensureWorkspaceIgnored, the self-heal that replaced `init`). On a repo whose
-// .gitignore is TRACKED that is ` M apps/x/.gitignore`, and `worktree remove`
-// refused over it: the loop's own write blocking the loop's own teardown, with
-// --force -- which also discards real work -- as the only way out.
-//
-// The rule is deliberately narrow and fails CLOSED, because .gitignore is a
-// file the repo owns and an edit to it can be real work:
-//   - not one removed line, ever (a diff that took something away is not ours,
-//     whatever it added);
-//   - every added line is one of the block's own, or the blank separator;
-//   - and the `.rn-iso` entry itself is among them, so a diff that only added
-//     the comments is not mistaken for the block.
-// The allowed set is derived from renderWorkspaceIgnoreBlock rather than
-// retyped, so the check cannot drift from the writer, and membership of the
-// entry line goes through listsWorkspaceDir, so `.rn-iso`, `/.rn-iso` and
-// `.rn-iso/` stay the one entry git treats them as.
-export function addsOnlyWorkspaceIgnoreBlock(diff: string | null | undefined): boolean {
-  if (typeof diff !== 'string' || diff.trim() === '') return false;
-  const allowed = new Set(
-    renderWorkspaceIgnoreBlock()
-      .split('\n')
-      .map((l) => l.trim()),
-  );
-  allowed.add('');
-  let added = 0;
-  let sawEntry = false;
-  let inHunk = false;
-  for (const line of diff.split('\n')) {
-    // Everything before the first @@ is the file header, where `+++ b/path`
-    // would otherwise read as an added line.
-    if (line.startsWith('@@')) {
-      inHunk = true;
-      continue;
-    }
-    if (!inHunk) continue;
-    if (line.startsWith('\\')) continue; // "\ No newline at end of file"
-    if (line.startsWith('-')) return false;
-    if (!line.startsWith('+')) continue; // context
-    const body = line.slice(1).trim();
-    if (!allowed.has(body)) return false;
-    if (listsWorkspaceDir(body)) sawEntry = true;
-    added += 1;
-  }
-  return added > 0 && sawEntry;
-}
-
-// PURE. Whether a .gitignore file's WHOLE content is rn-iso's own block -- the
-// untracked half of the same dead end.
-//
-// On a repo that has no .gitignore at all, the self-ensure does not modify a
-// file, it CREATES one, and git reports `?? .gitignore`. `worktree remove`
-// counted that as untracked work and refused, offering --force -- the loop's
-// own write blocking the loop's own teardown, exactly as the modified case did
-// one file over. A diff cannot decide this one: an untracked file has no index
-// side to diff against, so the content itself is the evidence.
-//
-// The rule is the same shape as addsOnlyWorkspaceIgnoreBlock, and fails CLOSED
-// for the same reason: every non-blank line must be one of the block's own, and
-// the `.rn-iso` entry itself must be among them, so a file carrying one line
-// the repo wrote (or only our comments) is work and stays dirty. The allowed
-// set is derived from renderWorkspaceIgnoreBlock rather than retyped, so it
-// cannot drift from the writer.
-export function isOnlyWorkspaceIgnoreBlock(content: string | null | undefined): boolean {
-  if (typeof content !== 'string' || content.trim() === '') return false;
-  const allowed = new Set(
-    renderWorkspaceIgnoreBlock()
-      .split('\n')
-      .map((l) => l.trim()),
-  );
-  let sawEntry = false;
-  for (const raw of content.split('\n')) {
-    const line = raw.trim();
-    if (line === '') continue;
-    if (!allowed.has(line)) return false;
-    if (listsWorkspaceDir(line)) sawEntry = true;
-  }
-  return sawEntry;
-}
-
 // A path this code is about to interpolate into a shell command, or resolve
 // against the worktree root. Anything outside the set is not examined at all --
 // it stays dirty, which is the safe direction, and no quoting question arises.
 const SAFE_DIFF_PATH = /^[A-Za-z0-9._/-]+$/;
-
-// Drops a `.gitignore` that is rn-iso's own write from a dirty listing, and
-// reports which files those were AND in which of the two ways, because the two
-// need opposite treatments afterwards:
-//
-//   healed   ` M path` -- the repo tracks a .gitignore and the self-ensure
-//                         APPENDED the block to it. Undone with `git checkout`.
-//   created  `?? path` -- the repo had no .gitignore and the self-ensure WROTE
-//                         one. There is nothing to restore it to; it is deleted.
-//
-// `diff` and `read` are injected (they are the impure steps) so the two
-// decisions above stay testable without git and without a filesystem.
-//
-// For the modified case only an UNSTAGED modification (` M`) qualifies: a staged
-// change is not what `git diff` describes and not what `git checkout -- <file>`
-// would undo, so it is left to refuse.
-interface SelfHealedIgnoresResult {
-  lines: string[];
-  healed: string[];
-  created: string[];
-}
-
-export function excludeSelfHealedIgnores(
-  lines: string[] | null | undefined,
-  { diff, read }: { diff: (file: string) => string | null; read: (file: string) => string },
-): SelfHealedIgnoresResult {
-  const kept: string[] = [];
-  const healed: string[] = [];
-  const created: string[] = [];
-  for (const line of lines || []) {
-    const path = porcelainPath(line);
-    const isIgnoreFile = path && /(?:^|\/)\.gitignore$/.test(path) && SAFE_DIFF_PATH.test(path);
-    if (isIgnoreFile && String(line).startsWith(' M ') && addsOnlyWorkspaceIgnoreBlock(diff(path))) {
-      healed.push(path);
-      continue;
-    }
-    if (isIgnoreFile && String(line).startsWith('?? ') && isOnlyWorkspaceIgnoreBlock(read(path))) {
-      created.push(path);
-      continue;
-    }
-    kept.push(line);
-  }
-  return { lines: kept, healed, created };
-}
 
 // The two files a `pod install` rewrites, under an `ios/` directory:
 //   <anything>/ios/Podfile.lock
@@ -545,10 +369,8 @@ const POD_CHURN_PATH = /(?:^|\/)ios\/(?:Podfile\.lock|[^/]+\.xcodeproj\/project\
 // they are inside a directory that is about to be deleted wholesale, so
 // restoring them destroys nothing that surviving the command would have saved,
 // and lockfile changes anyone MEANT would have been committed. It is the same
-// reasoning that already restores rn-iso's own .gitignore append
-// (excludeSelfHealedIgnores), one file over -- with the difference that these
-// were written by the project's tooling rather than by rn-iso, which is why
-// every line says so.
+// command can safely restore the known generated churn before deleting the
+// worktree, while still naming every file it touches.
 //
 // It fails CLOSED in three directions, and each of them matters more than the
 // convenience:
@@ -746,9 +568,9 @@ interface ReclaimAllResult {
   deletedDevices: string[];
   skippedDevices: SkippedDevice[];
   keptEntries: string[];
-  // Every key that was reclaimed (the root plus the nested registered ones),
-  // for the caller that deletes each key's own `.rn-iso/` rather than the
-  // whole tree -- see reclaimEnvironment.
+  removedWorkspaceDirs: string[];
+  failedWorkspaceDirs: string[];
+  // Every key that was reclaimed (the root plus the nested registered ones).
   reclaimedKeys: string[];
 }
 
@@ -765,21 +587,34 @@ async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
   const deletedDevices: string[] = [];
   const skippedDevices: SkippedDevice[] = [];
   const keptEntries: string[] = [];
+  const removedWorkspaceDirs: string[] = [];
+  const failedWorkspaceDirs: string[] = [];
   for (const key of keys) {
     const r = await reclaimProject(key, { deleteOwnedDevices: true });
     dereferenced.push(...r.dereferenced);
     if (r.killedPid) killedPids.push(r.killedPid);
     deletedDevices.push(...r.deletedDevices);
     skippedDevices.push(...r.skippedDevices);
+    removedWorkspaceDirs.push(...r.removedWorkspaceDirs);
+    failedWorkspaceDirs.push(...r.failedWorkspaceDirs);
     if (r.keptEntry) keptEntries.push(key);
   }
-  return { dereferenced, killedPids, deletedDevices, skippedDevices, keptEntries, reclaimedKeys: [...keys] };
+  return {
+    dereferenced,
+    killedPids,
+    deletedDevices,
+    skippedDevices,
+    keptEntries,
+    removedWorkspaceDirs,
+    failedWorkspaceDirs,
+    reclaimedKeys: [...keys],
+  };
 }
 
 // Whether rn-iso registered anything at or under `rootPath`. This is what
 // makes `worktree remove` meaningful on a directory that is not a git repo at
 // all: there is no worktree to remove there, but there can still be an
-// environment (a port, an owned device, a `.rn-iso/`) to reclaim.
+// environment (a port, an owned device, and global or legacy state) to reclaim.
 function hasRegisteredProjectUnder(rootPath: string): boolean {
   const cfg = loadConfig();
   return Object.keys(cfg?.projects ?? {}).some((key) => isPathPrefix(rootPath, key));
@@ -788,32 +623,23 @@ function hasRegisteredProjectUnder(rootPath: string): boolean {
 // `worktree remove` on the MAIN working tree (or on a registered directory
 // that is not a git repo at all): everything the normal removal does to
 // rn-iso's own state -- reclaim every registered key under the root with the
-// owned devices deleted, drop the registry entries, delete each key's
-// `.rn-iso/` -- with the source tree itself left completely alone. There is
+// owned devices deleted, drop the registry entries, delete each key's global
+// workspace output -- with the source tree itself left completely alone. There is
 // no `git worktree remove` here (git cannot remove the main tree) and no
 // dirty/unpushed guard: those protect work in a tree about to be deleted,
 // and nothing here is deleted but rn-iso's own state dir, so dirt is not
 // this command's business and is not mentioned. Every line goes to stderr,
 // mirroring the normal removal's reporting.
 //
-// The exit code follows the normal removal's rule for a failed device
-// teardown: the record is kept (dropping it is what turns a failed teardown
-// into a simulator nothing references) and the command exits 1.
+// The exit code follows the normal removal's rule for failed cleanup: the
+// registry handle is kept so a device or global workspace deletion can be
+// retried, and the command exits 1.
 async function reclaimEnvironment(root: string, why: string): Promise<void> {
   const result = await reclaimAll(root);
-  for (const key of result.reclaimedKeys) {
-    // Contained by construction: every key is `root` itself or a registered
-    // path-segment-prefix child of it (see reclaimAll), and only the key's
-    // own `.rn-iso/` is touched -- never anything else in the tree.
-    const dir = workspaceDir(key);
-    if (!existsSync(dir)) continue;
-    try {
-      rmSync(dir, { recursive: true, force: true });
-      console.error(chalk.dim(`  removed ${relative(root, dir) || dir} (this workspace's own output)`));
-    } catch {
-      console.error(chalk.yellow(`  could not remove ${dir}`));
-    }
+  for (const dir of result.removedWorkspaceDirs) {
+    console.error(chalk.dim(`  removed ${dir} (this workspace's own output)`));
   }
+  for (const dir of result.failedWorkspaceDirs) console.error(chalk.yellow(`  could not remove ${dir}`));
   if (result.dereferenced.length) console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
   for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
   if (result.deletedDevices.length)
@@ -824,72 +650,16 @@ async function reclaimEnvironment(root: string, why: string): Promise<void> {
   for (const kept of result.keptEntries) {
     console.error(
       chalk.yellow(
-        `  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
+        `  rn-iso still tracks ${kept} because environment cleanup failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
       ),
     );
   }
-  console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
-  if (result.keptEntries.length) process.exitCode = 1;
-}
-
-// Deletes the workspace directories `git status` reported inside `root`, and
-// returns the relative paths actually removed.
-//
-// Containment first, every time: a path from git is relative to the worktree,
-// but resolving it and checking it still lands inside is what keeps a `..` in
-// the listing (or a path this code mis-parsed) from reaching outside the
-// directory that is about to be deleted anyway. A removal that fails is
-// skipped, not thrown: `git worktree remove` is about to report the same
-// problem in better words.
-// The two file operations this command performs on a path git named, both
-// contained the same way purgeWorkspaceArtifacts is: resolve it, and refuse it
-// if it did not land inside the worktree. A `..` in a listing, or a path this
-// code mis-parsed, must not reach outside the directory that is about to be
-// deleted.
-function insidePath(root: string, rel: string): string | null {
-  const target = resolve(root, rel);
-  const inside = relative(root, target);
-  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) return null;
-  return target;
-}
-
-// The content of a file git reported inside the worktree, or '' when it cannot
-// be read -- which the caller must treat as "not ours", the safe direction.
-function readInside(root: string, rel: string): string {
-  const target = insidePath(root, rel);
-  if (!target) return '';
-  try {
-    return readFileSync(target, 'utf-8');
-  } catch {
-    return '';
+  if (result.keptEntries.length) {
+    console.error(chalk.yellow(`Environment cleanup is incomplete; the working tree stays (${why}).`));
+    process.exitCode = 1;
+  } else {
+    console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
   }
-}
-
-function removeInside(root: string, rel: string): boolean {
-  const target = insidePath(root, rel);
-  if (!target) return false;
-  try {
-    rmSync(target, { force: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function purgeWorkspaceArtifacts(root: string, dirtyLines: string[] | null | undefined): string[] {
-  const removed: string[] = [];
-  for (const rel of workspaceArtifactPaths(dirtyLines)) {
-    const target = insidePath(root, rel);
-    if (!target) continue;
-    if (!existsSync(target)) continue;
-    try {
-      rmSync(target, { recursive: true, force: true });
-      removed.push(rel);
-    } catch {
-      // Left for `git worktree remove` to complain about by name.
-    }
-  }
-  return removed;
 }
 
 export function registerRemove(worktree: Command): void {
@@ -963,7 +733,7 @@ export function registerRemove(worktree: Command): void {
       // `--git-common-dir` (the repository lives inside it). git cannot
       // remove it, and deleting the source tree is not what anyone meant --
       // so on it, and only on it, `remove` reclaims the ENVIRONMENT
-      // (devices, port, registry entries, `.rn-iso/`) and leaves every file
+      // (devices, port, registry entries, global and legacy state) and leaves every file
       // in the tree untouched. This used to be a flat refusal; reclaiming is
       // strictly what the refusal sent you off to do by hand.
       if (isMainWorkingTree(entry.path)) {
@@ -978,37 +748,15 @@ export function registerRemove(worktree: Command): void {
         path = entry.path;
       }
 
-      // The workspace's own `.rn-iso/` is excluded from the verdict, not just
-      // from the printed list: it is the one dirty path this command created
-      // itself and the one it is definitely about to delete. hasUncommittedWork
-      // is still what distinguishes "clean" from "git could not answer" (null),
-      // which must stay a blocker of its own; the line listing then decides
-      // whether anything that is NOT ours is dirty.
-      //
-      // A .gitignore carrying nothing but rn-iso's own block is the same
-      // exclusion one file over (addsOnlyWorkspaceIgnoreBlock and
-      // isOnlyWorkspaceIgnoreBlock above): rn-iso wrote it, and it is checked
-      // line by line against what rn-iso writes rather than assumed. Both
-      // shapes count -- the block APPENDED to a tracked .gitignore, and a whole
-      // .gitignore CREATED where the repo had none, which is what a repo with
-      // no ignore file at all produces and what the refusal was hit on.
+      // hasUncommittedWork distinguishes "clean" from "git could not answer"
+      // (null), which must stay a blocker of its own. rn-iso runtime state is
+      // global, so every project-local dirty path is user/project state.
       const gitAnswered = hasUncommittedWork(path);
       const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
-      const {
-        lines: afterIgnores,
-        healed: selfHealedIgnores,
-        created: selfCreatedIgnores,
-      } = excludeSelfHealedIgnores(excludeWorkspaceArtifacts(allDirty), {
-        diff: (file) => unstagedDiff(path, file),
-        read: (file) => readInside(path, file),
-      });
-      // ... and last, the churn a `pod install` leaves behind, but ONLY when it
-      // is all that is left once rn-iso's own writes are out. See
-      // excludePodChurn: the refusal protects uncommitted work, and these two
-      // files are about to be deleted with the worktree either way. Ordered
-      // after the two exclusions above so "the only dirt" really means the only
-      // dirt, and not "the only dirt that is not ours".
-      const { lines: dirtyLines, restore: podChurn } = excludePodChurn(afterIgnores);
+      // The churn a `pod install` leaves behind is restored only when it is all
+      // that is dirty. See excludePodChurn: the refusal protects uncommitted
+      // work, and these generated files are deleted with the worktree either way.
+      const { lines: dirtyLines, restore: podChurn } = excludePodChurn(allDirty);
       const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
       const unpushed = unpushedCommits(path);
       const blockers = removalBlockers({ dirty, unpushed });
@@ -1078,36 +826,12 @@ export function registerRemove(worktree: Command): void {
       // directory `git worktree remove` deletes.
       const result = await reclaimAll(path);
 
-      // ... and now the workspace directories themselves, so git's own
-      // cleanliness check does not refuse over the one thing rn-iso just
-      // decided was not work. Ordered after reclaimAll on purpose: the
-      // supervisor writing into .rn-iso/logs is stopped by then.
-      for (const purged of purgeWorkspaceArtifacts(path, allDirty)) {
-        console.error(chalk.dim(`  removed ${purged} (this workspace's own output)`));
-      }
-
-      // ... and the same step for a .gitignore rn-iso wrote to itself, for the
-      // same reason and no other: git's cleanliness check counts a modified
-      // tracked file, so leaving it to die with the directory is not actually
-      // an option -- verified against real git, which refuses with "contains
-      // modified or untracked files" and offers only --force. Restoring is the
-      // narrowest way through: the only change being undone is one rn-iso made,
-      // the file is inside a directory that is about to be deleted anyway, and
-      // the line says exactly what was decided and why.
-      for (const file of selfHealedIgnores) {
-        if (restoreFile(path, file)) {
-          console.error(chalk.dim(`  restoring ${file} (only rn-iso's own entry was added)`));
-        } else {
-          console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
-        }
-      }
-      // ... and the same step for `pod install`'s churn, for the same reason:
+      // Restore `pod install` churn before asking git to remove the worktree:
       // git's own cleanliness check counts these tracked modifications and
       // refuses the removal over them, so leaving them to die with the
       // directory is not an option. The note names the file and says why,
-      // because unlike the .gitignore above these were written by the
-      // project's own tooling and a reader has to be able to see that rn-iso
-      // decided to undo something it did not write.
+      // these were written by the project's own tooling, so every line says
+      // exactly what rn-iso decided to undo.
       for (const file of podChurn) {
         if (restoreFile(path, file)) {
           console.error(chalk.dim(`  restored ${file} (pod install churn; the worktree is being removed)`));
@@ -1115,32 +839,6 @@ export function registerRemove(worktree: Command): void {
           console.error(chalk.yellow(`  could not restore ${file}; git may refuse to remove the worktree`));
         }
       }
-      // ... and a .gitignore that exists only because rn-iso wrote it is
-      // deleted rather than restored: there is no earlier version to go back
-      // to, and git refuses over an untracked file exactly as it refuses over a
-      // modified one. Same containment as the workspace purge -- the path is
-      // resolved and checked to still be inside the worktree that is about to
-      // be deleted anyway.
-      for (const file of selfCreatedIgnores) {
-        if (removeInside(path, file)) {
-          console.error(chalk.dim(`  removed ${file} (rn-iso wrote all of it)`));
-        } else {
-          console.error(chalk.yellow(`  could not remove ${file}; git may refuse to remove the worktree`));
-        }
-      }
-      // Undoing that entry un-ignores what it was ignoring: `.rn-iso/` was
-      // invisible to the listing above precisely BECAUSE the self-heal had
-      // added the entry, and the moment it is restored the directory is
-      // untracked again -- which is the exact thing git refuses over. Found
-      // against real git, where the removal failed here with "contains
-      // modified or untracked files" after a clean verdict. So ask git once
-      // more, and only when something was actually restored.
-      if (selfHealedIgnores.length || selfCreatedIgnores.length) {
-        for (const purged of purgeWorkspaceArtifacts(path, dirtyPaths(path, { limit: Infinity }))) {
-          console.error(chalk.dim(`  removed ${purged} (this workspace's own output)`));
-        }
-      }
-
       try {
         removeWorktree(path, { force: opts.force });
       } catch (e) {
@@ -1166,7 +864,7 @@ export function registerRemove(worktree: Command): void {
         for (const kept of result.keptEntries) {
           console.error(
             chalk.dim(
-              `  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
+              `  rn-iso still tracks ${kept} because environment cleanup failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
             ),
           );
         }
@@ -1174,6 +872,9 @@ export function registerRemove(worktree: Command): void {
         return;
       }
       console.log(chalk.green(`Removed worktree ${path}`));
+      for (const dir of result.removedWorkspaceDirs) {
+        console.log(chalk.dim(`  removed workspace output ${dir}`));
+      }
       if (result.dereferenced.length)
         console.log(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
       for (const pid of result.killedPids) console.log(chalk.dim(`  killed Metro pid ${pid}`));
@@ -1185,7 +886,7 @@ export function registerRemove(worktree: Command): void {
       for (const kept of result.keptEntries) {
         console.log(
           chalk.yellow(
-            `  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
+            `  rn-iso still tracks ${kept} because environment cleanup failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
           ),
         );
       }

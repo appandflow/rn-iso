@@ -1,5 +1,10 @@
 # End-to-end tests and CI
 
+Per-workspace runtime state and logs live outside the project tree under
+`$RN_ISO_HOME/workspaces/<readable-project-slug>--<16hex-path-digest>/` (by
+default `~/.rn-iso/workspaces/...`). rn-iso does not create a project
+`.gitignore` entry for this state.
+
 rn-iso has three test layers. The unit suite (`npm test`, ~1350 `node:test`
 cases across the three packages) is the bulk of the coverage. On top of it sit
 two end-to-end layers that exercise the _published loop_ rather than individual
@@ -31,14 +36,21 @@ caches, registry, or checkouts. What it proves:
 5. `rn-iso worktree remove` refuses a dirty tree, then removes a clean one
    leaving no dirs, no config entries, and a clean `git worktree list`.
 
-The one non-real piece is the leaf hash function: `@expo/fingerprint` is not a
-dependency of this repo, so a vendored, API-compatible, platform-scoping stub
-(`test/e2e/fixtures/fingerprint-stub.mjs`) is injected through the `load` seam
-`fingerprintProject` already exposes for exactly this reason. Everything else --
-`buildCacheKey`, `storeBuild`, `resolveBuild`, `acquireBuildLock`, the worktree
-CLI -- is the real library.
+The one non-real piece is the leaf hash function: the real CLI has a direct `@expo/fingerprint` dependency, while this fast suite injects a deterministic platform-scoping stub (`test/e2e/fixtures/fingerprint-stub.mjs`) through the `load` seam. Everything else -- `buildCacheKey`, `storeBuild`, `resolveBuild`, `acquireBuildLock`, the worktree CLI -- is the real library.
 
 ## The native e2e
+
+There are TWO native suites, on one 2x2 matrix and one shared harness
+(`test/e2e/native/harness.mjs`, which owns the fixture creation, the process
+wrappers, the cleanup checks and the diagnostics dump so both drivers build and
+tear down the same app the same way):
+
+| suite      | driver               | proves                                               | when                        |
+| ---------- | -------------------- | ---------------------------------------------------- | --------------------------- |
+| **loop**   | `run-native-e2e.mjs` | the dev loop works end to end                        | nightly, PR label, dispatch |
+| **caches** | `run-cache-e2e.mjs`  | each individual cache is engaged, storing and reused | on demand                   |
+
+### The loop suite
 
 `test/e2e/native/run-native-e2e.mjs` codifies `docs/field-test-protocol.md` as
 an executable. It creates a real app, runs the real `start` -> `ios|android`
@@ -50,8 +62,7 @@ framework in {bare, expo}   x   platform in {ios, android}
 ```
 
 bare and expo are not cosmetic variants: bare hosts Metro **in-process**
-(`start` mode `bare-inproc`) and needs `@expo/fingerprint` installed into the
-fixture; expo spawns `expo start` as a **child** (mode `expo-child`) and
+(`start` mode `bare-inproc`); expo spawns `expo start` as a **child** (mode `expo-child`) and
 prebuilds first. The driver asserts the start mode explicitly per variant --
 this is the `detectIsExpo` path a field test caught misfiring on a wrapper-less
 `app.json`. Per variant it asserts: correct start mode; a cold build produces a
@@ -75,6 +86,109 @@ The fixture-creation commands are version-sensitive; each is overridable with an
 env var (`RN_ISO_E2E_BARE_INIT`, `RN_ISO_E2E_EXPO_INIT`) so a runner can adjust
 them without touching assertion logic.
 
+### The cache suite
+
+`test/e2e/native/run-cache-e2e.mjs` is the executable replacement for the
+hand-written cache field passes. Those kept drifting in coverage: one Android
+pass never checked Gradle caching at all, a zero-config pass ran iOS-only and
+left `--build-cache` unproven, and the Metro store shim shipped through green CI
+(#73) because nothing measured the directory it was supposed to be filling.
+
+**The three-part rule.** For every cache it proves three separate things, and
+refuses to take one as evidence of another:
+
+- **ENGAGED** -- the flag / setting / record is really there, read back off the
+  REAL argv or the REAL log, never re-derived from the suite's idea of what
+  rn-iso should have done.
+- **STORES** -- the cache directory actually GREW. A file count before and a
+  file count after. **This is the one that matters**: an engaged cache that
+  stores nothing looks identical to a working one from every other angle, and
+  that is exactly the shape of the shim bug.
+- **REUSED** -- a SECOND workspace got the stored work back.
+
+**The eight checks.**
+
+| id                  | what it proves                                                                            | how                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zero-config`       | rn-iso writes no runtime state into the repo; global workspace state needs no ignore rule | `git status --porcelain` before and after; a change to `metro.config.js` / `Podfile` / `gradle.properties` is a CRITICAL failure; every worktree is removed WITHOUT `--force` and no project `.gitignore` mutation is expected                                                                                                                                                          |
+| `metro-store`       | the shared transform store is engaged per dev-server mode, stores, and is reused          | the `cache_store_added` record in the global workspace `logs/metro.ndjson` (expo: the shim's confirmation from inside the child; bare: the in-process append), the ABSENCE of the shim's "could not share" warning, one store root for both workspaces, then a file count around each workspace's build+launch                                                                          |
+| `xcode-cas`         | Xcode 26 compilation caching                                                              | the five build settings read verbatim off the `build_start` record in `build-ios.ndjson`, CAS directory growth across the cold compile, and near-zero growth when a never-compiled workspace compiles the same sources                                                                                                                                                                  |
+| `gradle-cache`      | the Gradle build cache                                                                    | `--build-cache` read off the `build_start` record in `build-android.ndjson` (added in #78 so this need not race `ps`), growth of `<gradle user home>/caches/build-cache-1`, and `FROM-CACHE` tasks in a second worktree forced to run gradle with `rn-iso android --no-build-cache`                                                                                                     |
+| `fingerprint-cache` | the entry is complete and under the right key                                             | the entry holds the artifact AND `fingerprint-sources.json` (and, for an Android release entry, `assets-manifest.json`); a second run in the SAME tree must HIT what the first stored, which is what proves the entry landed under the POST-mutation key that prebuild and `pod install` shift it to                                                                                    |
+| `pods-reuse`        | carried Pods skip `pod install`                                                           | the racing worktrees are cloned from wt1 with `--carry-ignored`, so they carry its `ios/` and its installed Pods; the one that takes the BUILD path must print no `pods` phase line at all                                                                                                                                                                                              |
+| `single-flight`     | two workspaces racing one uncached fingerprint compile once                               | both racers point at an EMPTY build-cache root (so the fingerprint is identical to the one already stored and misses only because that root is empty, which keeps the check about the lock and nothing else) while the build lock stays shared through `RN_ISO_HOME`; exactly one compiles, the other reports `waited ... -> installed from cache` with `waitedForBuild` in its payload |
+| `gc-view`           | `gc` can see every cache                                                                  | a bare `gc` must list each live cache directory with a size under "Shared build caches (N) - alive, not garbage"                                                                                                                                                                                                                                                                        |
+
+**Honesty rules.** Every assertion prints the evidence it checked -- numbers, and
+quoted lines. A check that cannot run SKIPS with the reason spelled out ("no
+Android SDK on this runner", "compilation caching needs Xcode 26+, this runner
+reports ..."), and a skip is never a pass. A check that finishes without
+reporting a verdict is a failure. Every human line goes to stderr; **stdout
+carries exactly one line**, the machine-readable summary:
+
+```json
+{"suite":"caches","variant":"expo-ios","ok":true,"counts":{"pass":6,"skip":2,"fail":0},"checks":[...]}
+```
+
+Each `checks[]` entry carries its `id`, `status`, `reason` and the full
+`evidence` array, so a CI job can fail on one cache without a human reading the
+log.
+
+**Cache roots are forced, not inherited.** Unlike the loop suite -- which lets
+CI persist `RN_ISO_BUILD_CACHE` across runs on purpose, and has
+`RN_ISO_E2E_WARM_CACHE` to relax its cold-miss assertion -- the cache suite
+overrides `RN_ISO_BUILD_CACHE` and `RN_ISO_METRO_CACHE` into its own throwaway
+home. Every number it reports is a before/after around a COLD compile, and an
+inherited warm cache turns "the CAS gained 4,000 files" into a measurement of
+nothing.
+
+Run it by hand:
+
+```bash
+# the full suite (two cold compiles plus two cache-hit builds; 20-60 minutes)
+node test/e2e/native/run-cache-e2e.mjs --framework expo --platform ios
+node test/e2e/native/run-cache-e2e.mjs --framework bare --platform android
+
+# skip the single-flight race (saves one cold compile; that check reports SKIP)
+node test/e2e/native/run-cache-e2e.mjs --framework expo --platform ios --skip-race
+
+# against a checkout you already have, and keep the summary
+node test/e2e/native/run-cache-e2e.mjs --framework expo --platform ios \
+  --app-dir ~/src/my-app --summary /tmp/cache-summary.json
+
+# print the plan, no side effects
+node test/e2e/native/run-cache-e2e.mjs --framework bare --platform ios --dry-run
+```
+
+On CI it is `workflow_dispatch` only: **Actions -> Native E2E -> Run workflow ->
+suite: `caches`** (or `all` for both). The default stays `loop`, so the nightly
+and the PR label behave exactly as they always have.
+
+#### What its first run found
+
+Recorded so that a red run is not mysterious. First full local run,
+2026-08-27, `expo-ios`, Expo SDK 57 / RN 0.86 / Xcode 26.6, 769s:
+`xcode-cas`, `fingerprint-cache`, `single-flight` and `pods-reuse` PASS,
+`gradle-cache` SKIP (iOS), and **two checks fail on real product bugs, both
+still open**:
+
+- **`metro-store`** -- on Expo SDK 54+ the Metro packages are vendored under
+  `@expo/metro`, so the dev server requires `@expo/metro/metro-config` and never
+  the bare `metro-config` that `shim/metro-cache-store.cjs` hooks
+  (`if (request !== 'metro-config') return exports`). The shim therefore never
+  substitutes anything: no confirmation, **no warning either** (it only warns on
+  paths it reaches), and the shared transform store directory is never created.
+  The timeline shows `cache_store_requested` and nothing after it. This is the
+  #73 failure mode in a new place, and it is exactly what the STORES measurement
+  is for -- the request record alone looks like success.
+- **`gc-view`** -- rn-iso points `COMPILATION_CACHE_CAS_PATH` at
+  `<config dir>/compilation-cache`, but nothing registers that directory in the
+  cache manifest, and `caches.ts` only DETECTS Xcode's default CAS under
+  `~/Library/Developer/Xcode/DerivedData`. So `gc` reports a 28 KB cache nobody
+  is filling and misses the 201 MB one a single build just wrote. Nothing will
+  ever trim it -- the same hazard `registerMetroStore`'s own comment names for
+  the Metro store.
+
 ## CI
 
 Two workflows under `.github/workflows/`:
@@ -88,7 +202,16 @@ Two workflows under `.github/workflows/`:
 - **`e2e-native.yml`** -- the native matrix. **Gated**: it runs nightly
   (schedule), on demand (`workflow_dispatch`), and on a pull request **only when
   the PR carries the `e2e-native` label** -- a flaky 15-minute `xcodebuild` must
-  not block every PR. iOS runs on `macos-latest` (Xcode via
+  not block every PR. A `suite` dispatch input picks which driver runs on the
+  matrix (`loop` | `caches` | `all`, default `loop`); `inputs` is empty on
+  schedule and on `pull_request`, so both fall through to `loop` and the
+  nightly's behaviour is preserved by construction rather than by a second code
+  path. The `caches` selection raises the job timeout to 120 minutes (per
+  variant it pays one more cold compile than the loop suite -- the single-flight
+  race -- plus two cache-hit builds, and on Android one forced `gradlew` run)
+  and uploads its machine-readable summary
+  as an artifact with `if: always()` -- a FAILING cache run is exactly when the
+  per-check evidence is worth reading. iOS runs on `macos-latest` (Xcode via
   `maxim-lobanov/setup-xcode`); Android runs on a Linux+KVM host via
   `reactivecircus/android-emulator-runner`. Each platform's `{bare, expo}` are a
   matrix, so they run as parallel, isolated jobs. `~/.rn-iso`'s shared build
@@ -105,3 +228,9 @@ Two workflows under `.github/workflows/`:
   the env vars above if not).
 - The Android job's `api-level` / `target` / `arch` have a matching system image
   available to `android-emulator-runner`.
+- **Disk, for the `caches` suite only.** It stands up FOUR worktrees, each with
+  its own global workspace DerivedData / Gradle build dir under `RN_ISO_HOME`, and
+  `--keep` leaves them for the artifact step. A hosted runner's free space is
+  the thing most likely to end that run early; if it does, `--skip-race` drops
+  it to two worktrees at the cost of the `single-flight` and `pods-reuse`
+  checks (both of which then report SKIP with that reason).

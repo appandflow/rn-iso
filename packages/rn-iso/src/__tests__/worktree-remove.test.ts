@@ -3,22 +3,17 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
-  addsOnlyWorkspaceIgnoreBlock,
   excludePodChurn,
-  excludeSelfHealedIgnores,
-  excludeWorkspaceArtifacts,
   matchWorktreeEntry,
   porcelainPath,
   removalBlockers,
   registerRemove,
-  isOnlyWorkspaceIgnoreBlock,
   removalRemedy,
-  workspaceArtifactPaths,
 } from '../commands/worktree.ts';
 import type { Command } from 'commander';
-import { ensureWorkspaceIgnored, renderWorkspaceIgnoreBlock } from '../engine/workspace.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, getProject } from '../config.ts';
+import { ensureWorkspaceStorage, workspaceDir } from '../paths.ts';
 
 // The action callback commander invokes: `(target, opts)`. `target` is
 // undefined when `worktree remove` is run without its positional argument.
@@ -67,32 +62,10 @@ test('reports an indeterminate-status blocker instead of treating it as clean', 
 // --- the dirty listing: what counts, and what to do about it ----------
 
 test('porcelainPath reads the path out of each status form', () => {
-  expect(porcelainPath('?? .rn-iso/')).toBe('.rn-iso/');
   expect(porcelainPath(' M ios/Podfile.lock')).toBe('ios/Podfile.lock');
   expect(porcelainPath('R  old/name.js -> new/name.js')).toBe('new/name.js');
   expect(porcelainPath('?? "we\u00e4rd path"')).toBe('we\u00e4rd path');
   expect(porcelainPath('   ')).toBe(null);
-});
-
-// Two real e2e runs dead-ended on `?? .rn-iso/`, with `--force` -- which also
-// discards real work -- as the only documented escape. The directory dies with
-// the worktree by design, so it never counts.
-test('the workspace directory never counts as dirty work, at any depth', () => {
-  expect(excludeWorkspaceArtifacts(['?? .rn-iso/'])).toEqual([]);
-  expect(excludeWorkspaceArtifacts(['?? apps/mobile/.rn-iso/'])).toEqual([]);
-  expect(excludeWorkspaceArtifacts([' M .rn-iso/state.json'])).toEqual([]);
-  expect(excludeWorkspaceArtifacts(['?? .rn-iso/', ' M src/app.js'])).toEqual([' M src/app.js']);
-  expect(excludeWorkspaceArtifacts(['?? .rn-isolation/'])).toEqual(['?? .rn-isolation/']);
-});
-
-// `git worktree remove` runs its OWN cleanliness check, so filtering .rn-iso/
-// out of rn-iso's verdict only moved the dead end one step: git then refused
-// over the same untracked directory, with --force as its only answer.
-test('workspaceArtifactPaths is the complement of the filter, so the two cover every line', () => {
-  const lines = ['?? .rn-iso/', ' M src/app.js', '?? apps/mobile/.rn-iso/'];
-  expect(workspaceArtifactPaths(lines)).toEqual(['.rn-iso/', 'apps/mobile/.rn-iso/']);
-  expect(excludeWorkspaceArtifacts(lines)).toEqual([' M src/app.js']);
-  expect(workspaceArtifactPaths(lines).length + excludeWorkspaceArtifacts(lines).length).toBe(lines.length);
 });
 
 // The refusal used to offer `git checkout -- <path>` whatever the dirt was.
@@ -332,9 +305,9 @@ afterEach(() => {
 // `git worktree remove` cannot remove the main working tree, and deleting the
 // source tree is not what anyone meant. So on the main checkout (detected by
 // `rev-parse --git-dir --git-common-dir` resolving to the same place) `remove`
-// does everything the normal removal does to rn-iso's own state -- devices
-// deleted, port freed, registry entries dropped, `.rn-iso/` deleted -- and
-// leaves every file in the tree alone. This replaced a flat refusal.
+// does everything the normal removal does to rn-iso's global state -- devices
+// deleted, port freed, registry entries and workspace state dropped -- and
+// leaves every project file in the tree alone.
 
 test('action: on the main checkout, reclaims the environment with the owned device deleted and the tree untouched', async () => {
   upsertProject(mainDir, {
@@ -344,6 +317,8 @@ test('action: on the main checkout, reclaims the environment with the owned devi
   writeFileSync(join(mainDir, 'keep.txt'), 'source file');
   mkdirSync(join(mainDir, '.rn-iso', 'logs'), { recursive: true });
   writeFileSync(join(mainDir, '.rn-iso', 'state.json'), '{}');
+  ensureWorkspaceStorage(mainDir);
+  writeFileSync(join(workspaceDir(mainDir), 'state.json'), '{}');
   const exec = makeExecutor({
     worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
     simctlList: simctlJson([{ udid: 'U9', name: 'rn-iso-main', state: 'Shutdown', isAvailable: true }]),
@@ -366,7 +341,8 @@ test('action: on the main checkout, reclaims the environment with the owned devi
   expect(exec.calls.run.some((c) => /xcrun simctl delete U9/.test(c))).toBeTruthy();
   // The registry entry is dropped and the state dir deleted...
   expect(getProject(mainDir)).toBe(null);
-  expect(existsSync(join(mainDir, '.rn-iso'))).toBe(false);
+  expect(existsSync(join(mainDir, '.rn-iso'))).toBe(true);
+  expect(existsSync(workspaceDir(mainDir))).toBe(false);
   // ...while the tree itself is untouched: the marker survives and no
   // `git worktree remove` was ever issued.
   expect(readFileSync(join(mainDir, 'keep.txt'), 'utf-8')).toBe('source file');
@@ -500,7 +476,7 @@ test('action: a registered project directory that is not a git repo gets the sam
   expect(process.exitCode).not.toBe(1);
   expect(exec.calls.run.some((c) => /xcrun simctl delete U8/.test(c))).toBeTruthy();
   expect(getProject(wtDir)).toBe(null);
-  expect(existsSync(join(wtDir, '.rn-iso'))).toBe(false);
+  expect(existsSync(join(wtDir, '.rn-iso'))).toBe(true);
   expect(readFileSync(join(wtDir, 'keep.txt'), 'utf-8')).toBe('source file');
   expect(errs.join('\n')).toMatch(/working tree stays \(it is not a git repository\)/);
 });
@@ -607,33 +583,6 @@ test('action: on success, deletes an owned iOS sim via simctl', async () => {
   expect(getProject(wtDir)).toBe(null);
 });
 
-// A legacy assignment (`owned` absent) is a device rn-iso did not create --
-// its claim is cleared like any other, but the device itself must never be
-// shut down or deleted.
-test('action: does not delete a legacy (non-owned) iOS device', async () => {
-  upsertProject(wtDir, {
-    metroPort: 8091,
-    platforms: { ios: { deviceUdid: 'U2' } },
-  });
-  const exec = makeExecutor({
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'feat-x' },
-    ]),
-  });
-  setExecutor(exec);
-
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
-
-  expect(process.exitCode).not.toBe(1);
-  // Stronger than checking for the absence of a delete: U2 must never be
-  // named in ANY issued command (no shutdown, no occupancy probe, no
-  // delete) -- a legacy record is not rn-iso's to touch at all.
-  expect(![...exec.calls.run, ...exec.calls.runQuiet].some((c) => c.includes('U2'))).toBeTruthy();
-  expect(getProject(wtDir)).toBe(null);
-});
-
 // The environment dies whole even in a monorepo: two nested app-dir keys
 // under one worktree root, each with their own owned sim, must both be
 // reaped by a single `worktree remove` -- not just the first one found.
@@ -732,11 +681,7 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
   expect(!logs.some((l) => /kept/i.test(l))).toBeTruthy();
 });
 
-// The whole field-test failure, end to end: a workspace whose ONLY dirty path is
-// its own `.rn-iso/` must remove without --force. Before this it refused, and
-// the printed remedy (`git checkout -- <path>`) could not clear an untracked
-// directory, so there was no non-destructive way forward at all.
-test('action: a tree dirty only with .rn-iso/ removes without --force', async () => {
+test('action: a project-local .rn-iso directory is ordinary dirt and refuses removal', async () => {
   upsertProject(wtDir, { metroPort: 8090 });
   const exec = makeExecutor({
     dirty: '?? .rn-iso/\n',
@@ -750,13 +695,12 @@ test('action: a tree dirty only with .rn-iso/ removes without --force', async ()
   const run = captureAction(registerRemove);
   await run(wtDir, {});
 
-  expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
-  expect(!exec.calls.run.some((c) => /worktree remove --force/.test(c))).toBeTruthy();
-  expect(getProject(wtDir)).toBe(null);
+  expect(process.exitCode).toBe(1);
+  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
+  expect(getProject(wtDir)).not.toBe(null);
 });
 
-test('action: real work beside .rn-iso/ still refuses, and names both remedies', async () => {
+test('action: real work beside .rn-iso/ refuses and names every dirty path', async () => {
   upsertProject(wtDir, { metroPort: 8091 });
   const exec = makeExecutor({
     dirty: '?? .rn-iso/\n M src/app.js\n?? scratch.txt\n',
@@ -782,15 +726,10 @@ test('action: real work beside .rn-iso/ still refuses, and names both remedies',
   const text = errs.join('\n');
   expect(text).toMatch(/checkout --/);
   expect(text).toMatch(/clean -fd/);
-  expect(!text.includes('.rn-iso/')).toBeTruthy();
+  expect(text.includes('.rn-iso/')).toBeTruthy();
 });
 
-// Filtering `.rn-iso/` out of rn-iso's own verdict was only half the fix: `git
-// worktree remove` refuses on "modified or untracked files" too, so the
-// directory has to be gone before git looks. Verified against real git in the
-// live smoke run recorded with this change (CLAUDE.md item 9); this pins the
-// wiring.
-test('action: the workspace directory is deleted before git worktree remove is called', async () => {
+test('action: rn-iso never deletes a project-local .rn-iso directory', async () => {
   upsertProject(wtDir, { metroPort: 8092 });
   mkdirSync(join(wtDir, '.rn-iso', 'logs'), { recursive: true });
   writeFileSync(join(wtDir, '.rn-iso', 'state.json'), '{}');
@@ -801,22 +740,13 @@ test('action: the workspace directory is deleted before git worktree remove is c
       { path: wtDir, branch: 'feat-x' },
     ]),
   });
-  // Fail the removal the way real git does when the directory is still there,
-  // so the assertion is about ORDER rather than about our own rmSync.
-  const originalRunFile = exec.runFile;
-  exec.runFile = function (file, args = []) {
-    if (/worktree remove/.test([file, ...args].join(' ')) && existsSync(join(wtDir, '.rn-iso'))) {
-      throw new Error('fatal: contains modified or untracked files, use --force to delete it');
-    }
-    return originalRunFile.call(this, file, args);
-  };
   setExecutor(exec);
 
   const run = captureAction(registerRemove);
   await run(wtDir, {});
 
-  expect(existsSync(join(wtDir, '.rn-iso'))).toBe(false);
-  expect(process.exitCode).not.toBe(1);
+  expect(existsSync(join(wtDir, '.rn-iso'))).toBe(true);
+  expect(process.exitCode).toBe(1);
 });
 
 // Containment: a path out of `git status` is relative to the worktree, and
@@ -839,273 +769,6 @@ test('action: a dirty path escaping the worktree is never removed', async () => 
   await run(wtDir, {});
 
   expect(existsSync(outside)).toBe(true);
-});
-
-// --- item 1: rn-iso's own gitignore self-heal must not dead-end teardown ----
-//
-// `start` appends the `.rn-iso/` block to a TRACKED .gitignore (that is the
-// self-heal that replaced `init`), which shows up as ` M apps/x/.gitignore` and
-// refused the teardown -- the same class of dead end as `?? .rn-iso/`, one file
-// over: the loop's own write blocking the loop's own exit. It is only ignorable
-// when the diff is EXACTLY that block and nothing else, so the fixtures below
-// are built from renderWorkspaceIgnoreBlock rather than retyped.
-
-interface IgnoreDiffOptions {
-  file?: string;
-  added?: string[];
-  removed?: string[];
-  context?: string[];
-}
-
-function ignoreDiff({
-  file = 'apps/x/.gitignore',
-  added = [],
-  removed = [],
-  context = ['node_modules/'],
-}: IgnoreDiffOptions = {}) {
-  return [
-    `diff --git a/${file} b/${file}`,
-    'index c2658d7..2986a0a 100644',
-    `--- a/${file}`,
-    `+++ b/${file}`,
-    '@@ -1 +1,6 @@',
-    ...context.map((l) => ` ${l}`),
-    ...removed.map((l) => `-${l}`),
-    ...added.map((l) => `+${l}`),
-    '',
-  ].join('\n');
-}
-
-// The exact lines ensureWorkspaceIgnored appends, blank separator included.
-function ourBlockLines() {
-  return [
-    '',
-    ...renderWorkspaceIgnoreBlock()
-      .split('\n')
-      .filter((l) => l !== ''),
-  ];
-}
-
-test('a .gitignore diff that adds only rn-iso own block is recognized as ours', () => {
-  expect(addsOnlyWorkspaceIgnoreBlock(ignoreDiff({ added: ourBlockLines() }))).toBe(true);
-});
-
-test('one user line beside our block is not ours', () => {
-  const added = [...ourBlockLines(), '.env.local'];
-  expect(addsOnlyWorkspaceIgnoreBlock(ignoreDiff({ added }))).toBe(false);
-});
-
-test('a removed line is never ours, whatever was added', () => {
-  const diff = ignoreDiff({ added: ourBlockLines(), removed: ['node_modules/'], context: [] });
-  expect(addsOnlyWorkspaceIgnoreBlock(diff)).toBe(false);
-});
-
-test('an empty, missing or entry-less diff is not ours', () => {
-  expect(addsOnlyWorkspaceIgnoreBlock('')).toBe(false);
-  expect(addsOnlyWorkspaceIgnoreBlock(null)).toBe(false);
-  expect(
-    addsOnlyWorkspaceIgnoreBlock(
-      ignoreDiff({ added: ["# rn-iso: this workspace's build output, logs and supervisor pidfile."] }),
-    ),
-  ).toBe(false);
-});
-
-// The other half of the same dead end, and the one a repo with NO .gitignore
-// hits: `start` does not MODIFY a file there, it CREATES one, so git reports
-// `?? .gitignore` and `worktree remove` refused over an untracked file it had
-// written itself. A diff cannot answer this one -- an untracked file has no
-// index side -- so the whole content is checked against the block instead, and
-// on the same fail-closed rule: one line that is not ours and it stays dirty.
-test('a .gitignore that is nothing but rn-iso own block is recognized as ours', () => {
-  expect(isOnlyWorkspaceIgnoreBlock(renderWorkspaceIgnoreBlock())).toBe(true);
-  expect(isOnlyWorkspaceIgnoreBlock(`\n${renderWorkspaceIgnoreBlock()}\n\n`)).toBe(true);
-});
-
-test('anything else in the file is the repo own, and refuses', () => {
-  expect(isOnlyWorkspaceIgnoreBlock(`${renderWorkspaceIgnoreBlock()}.env.local\n`)).toBe(false);
-  expect(isOnlyWorkspaceIgnoreBlock(`node_modules/\n${renderWorkspaceIgnoreBlock()}`)).toBe(false);
-  expect(isOnlyWorkspaceIgnoreBlock('')).toBe(false);
-  expect(isOnlyWorkspaceIgnoreBlock(null)).toBe(false);
-  expect(isOnlyWorkspaceIgnoreBlock("# rn-iso: this workspace's build output, logs and supervisor pidfile.\n")).toBe(
-    false,
-  );
-});
-
-test('excludeSelfHealedIgnores drops an untracked .gitignore rn-iso wrote whole', () => {
-  const read = () => renderWorkspaceIgnoreBlock();
-  const result = excludeSelfHealedIgnores(['?? apps/x/.gitignore'], { diff: () => '', read });
-  expect(result.lines).toEqual([]);
-  expect(result.created).toEqual(['apps/x/.gitignore']);
-  expect(result.healed).toEqual([]);
-
-  expect(
-    excludeSelfHealedIgnores(['?? apps/x/.gitignore'], {
-      diff: () => '',
-      read: () => `${renderWorkspaceIgnoreBlock()}.env\n`,
-    }).lines,
-  ).toEqual(['?? apps/x/.gitignore']);
-  expect(excludeSelfHealedIgnores(['?? scratch.txt'], { diff: () => '', read }).lines).toEqual(['?? scratch.txt']);
-});
-
-test('excludeSelfHealedIgnores drops only an unstaged .gitignore whose diff is ours', () => {
-  const ours = ignoreDiff({ added: ourBlockLines() });
-  const seen: string[] = [];
-  const diff = (file: string) => {
-    seen.push(file);
-    return ours;
-  };
-
-  const clean = excludeSelfHealedIgnores([' M apps/x/.gitignore'], { diff, read: () => '' });
-  expect(clean.lines).toEqual([]);
-  expect(clean.healed).toEqual(['apps/x/.gitignore']);
-  expect(clean.created).toEqual([]);
-  expect(seen).toEqual(['apps/x/.gitignore']);
-
-  // A STAGED change to the same file is a different thing: `git checkout --`
-  // would not clear it and git would refuse anyway. Fail closed.
-  expect(excludeSelfHealedIgnores(['M  apps/x/.gitignore'], { diff, read: () => '' }).lines).toEqual([
-    'M  apps/x/.gitignore',
-  ]);
-  expect(excludeSelfHealedIgnores([' M src/app.js'], { diff, read: () => '' }).lines).toEqual([' M src/app.js']);
-});
-
-test('action: a worktree dirty only with a .gitignore rn-iso created removes, deleting it first', async () => {
-  upsertProject(wtDir, { metroPort: 8097 });
-  // The real file, because this is the one case decided by CONTENT on disk
-  // rather than by a diff git can be asked for.
-  writeFileSync(join(wtDir, '.gitignore'), renderWorkspaceIgnoreBlock());
-  mkdirSync(join(wtDir, '.rn-iso'), { recursive: true });
-  writeFileSync(join(wtDir, '.rn-iso', 'state.json'), '{}');
-  setExecutor(
-    makeExecutor({
-      dirty: '?? .gitignore\n',
-      worktrees: porcelain([
-        { path: mainDir, branch: 'main' },
-        { path: wtDir, branch: 'feat-x' },
-      ]),
-    }),
-  );
-
-  const errs: string[] = [];
-  const original = console.error;
-  console.error = (m) => errs.push(String(m));
-  try {
-    const run = captureAction(registerRemove);
-    await run(wtDir, {});
-  } finally {
-    console.error = original;
-  }
-
-  expect(process.exitCode).not.toBe(1);
-  expect(existsSync(join(wtDir, '.gitignore'))).toBe(false);
-  expect(errs.join('\n')).toMatch(/removed \.gitignore \(rn-iso wrote all of it\)/);
-});
-
-test('action: a .gitignore with the repo own lines in it still refuses', async () => {
-  writeFileSync(join(wtDir, '.gitignore'), `${renderWorkspaceIgnoreBlock()}.env.local\n`);
-  setExecutor(
-    makeExecutor({
-      dirty: '?? .gitignore\n',
-      worktrees: porcelain([
-        { path: mainDir, branch: 'main' },
-        { path: wtDir, branch: 'feat-x' },
-      ]),
-    }),
-  );
-
-  const errs: string[] = [];
-  const original = console.error;
-  console.error = (m) => errs.push(String(m));
-  try {
-    const run = captureAction(registerRemove);
-    await run(wtDir, {});
-  } finally {
-    console.error = original;
-  }
-
-  expect(process.exitCode).toBe(1);
-  expect(existsSync(join(wtDir, '.gitignore'))).toBe(true);
-  expect(errs.join('\n')).toMatch(/clean -fd/);
-});
-
-test('action: a worktree dirty only with rn-iso own gitignore append removes, restoring the file first', async () => {
-  upsertProject(wtDir, { metroPort: 8096 });
-  const exec = makeExecutor({
-    dirty: ' M apps/x/.gitignore\n',
-    diffs: { 'apps/x/.gitignore': ignoreDiff({ added: ourBlockLines() }) },
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'feat-x' },
-    ]),
-  });
-  setExecutor(exec);
-
-  const errs: string[] = [];
-  const original = console.error;
-  console.error = (m) => errs.push(String(m));
-  try {
-    const run = captureAction(registerRemove);
-    await run(wtDir, {});
-  } finally {
-    console.error = original;
-  }
-
-  expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
-  expect(!exec.calls.run.some((c) => /worktree remove --force/.test(c))).toBeTruthy();
-  // git runs its OWN cleanliness check, so the file has to be back before it
-  // looks -- proven against real git in the integration test below.
-  const restore = exec.calls.runQuiet.findIndex((c) => /checkout -- "apps\/x\/\.gitignore"/.test(c));
-  expect(restore >= 0).toBeTruthy();
-  expect(errs.join('\n')).toMatch(/restoring apps\/x\/\.gitignore \(only rn-iso's own entry was added\)/);
-});
-
-test('action: our block plus a user line still refuses', async () => {
-  upsertProject(wtDir, { metroPort: 8097 });
-  const exec = makeExecutor({
-    dirty: ' M apps/x/.gitignore\n',
-    diffs: { 'apps/x/.gitignore': ignoreDiff({ added: [...ourBlockLines(), '.env.local'] }) },
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'feat-x' },
-    ]),
-  });
-  setExecutor(exec);
-
-  const errs: string[] = [];
-  const original = console.error;
-  console.error = (m) => errs.push(String(m));
-  try {
-    const run = captureAction(registerRemove);
-    await run(wtDir, {});
-  } finally {
-    console.error = original;
-  }
-
-  expect(process.exitCode).toBe(1);
-  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
-  expect(errs.join('\n')).toMatch(/apps\/x\/\.gitignore/);
-});
-
-test('action: a removed line in the .gitignore still refuses', async () => {
-  upsertProject(wtDir, { metroPort: 8098 });
-  const exec = makeExecutor({
-    dirty: ' M apps/x/.gitignore\n',
-    diffs: {
-      'apps/x/.gitignore': ignoreDiff({ added: ourBlockLines(), removed: ['node_modules/'], context: [] }),
-    },
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'feat-x' },
-    ]),
-  });
-  setExecutor(exec);
-
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
-
-  expect(process.exitCode).toBe(1);
-  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });
 
 // --- item 2: the default path, the remedy placeholders, the dead reference --
@@ -1200,124 +863,6 @@ test('action: the dirty-tree remedy names the real worktree, not a placeholder',
 //
 // Everything above runs on a mocked executor, which can prove we composed a
 // git-shaped command but not that git accepts it -- and this change turns on
-// two things only real git can settle: the exact shape of `git diff` for an
-// appended block, and that `git worktree remove` still refuses over the
-// modified .gitignore unless it is restored first (it does; that is why the
-// verdict is paired with a restore rather than left to die with the directory).
-// The gate-run dead end, end to end: a repo with NO .gitignore at all, the real
-// `ensureWorkspaceIgnored` writing one, and real git refusing to remove the
-// worktree over the untracked file rn-iso itself created. Only real git settles
-// whether deleting the file is enough (it is; the .rn-iso/ the entry was hiding
-// becomes untracked again the moment it goes, which is why the purge runs a
-// second time).
-test('against a real repo: a worktree whose only dirt is the .gitignore rn-iso created', async () => {
-  resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-created-')));
-  const repo = join(base, 'repo');
-  const originalCwd = process.cwd();
-  const errs: string[] = [];
-  const originalError = console.error;
-  const originalLog = console.log;
-  try {
-    const bareRemote = join(base, 'remote.git');
-    mkdirSync(bareRemote, { recursive: true });
-    execSync(`git init -q --bare "${bareRemote}"`);
-    mkdirSync(repo, { recursive: true });
-    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
-    git('git init -q');
-    git('git config user.email test@example.com');
-    git('git config user.name test');
-    git(`git remote add origin "${bareRemote}"`);
-    writeFileSync(join(repo, 'package.json'), '{}');
-    git('git add -A');
-    git('git commit -q -m init');
-    git('git push -q -u origin HEAD');
-    const wt = join(base, 'wt');
-    git(`git worktree add -q "${wt}" -b feat-created`);
-
-    // Exactly what `start` does, through the real function: the repo has no
-    // .gitignore, so one is created -- and it is untracked.
-    expect(ensureWorkspaceIgnored(wt).added).toBe(true);
-    mkdirSync(join(wt, '.rn-iso', 'logs'), { recursive: true });
-    writeFileSync(join(wt, '.rn-iso', 'state.json'), '{}');
-    expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe('?? .gitignore');
-
-    console.error = (m) => errs.push(String(m));
-    console.log = () => {};
-    const run = captureAction(registerRemove);
-    await run(wt, {});
-    console.error = originalError;
-    console.log = originalLog;
-
-    expect(process.exitCode).not.toBe(1);
-    expect(existsSync(wt)).toBe(false);
-    expect(errs.join('\n')).toMatch(/removed \.gitignore \(rn-iso wrote all of it\)/);
-  } finally {
-    console.error = originalError;
-    console.log = originalLog;
-    process.chdir(originalCwd);
-    process.exitCode = 0;
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test('against a real repo: removal from a monorepo app dir, dirty only with rn-iso own gitignore append', async () => {
-  resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-remove-live-')));
-  const repo = join(base, 'repo');
-  const originalCwd = process.cwd();
-  const errs: string[] = [];
-  const originalError = console.error;
-  const originalLog = console.log;
-  try {
-    const bareRemote = join(base, 'remote.git');
-    mkdirSync(bareRemote, { recursive: true });
-    execSync(`git init -q --bare "${bareRemote}"`);
-    mkdirSync(join(repo, 'apps', 'x'), { recursive: true });
-    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
-    git('git init -q');
-    git('git config user.email test@example.com');
-    git('git config user.name test');
-    git(`git remote add origin "${bareRemote}"`);
-    writeFileSync(join(repo, 'apps', 'x', '.gitignore'), 'node_modules/\n');
-    git('git add -A');
-    git('git commit -q -m init');
-    // Without a remote every commit counts as unpushed and the removal is
-    // refused for a reason that has nothing to do with this test.
-    git('git push -q -u origin HEAD');
-    const wt = join(base, 'wt');
-    git(`git worktree add -q "${wt}" -b feat-live`);
-
-    // Exactly what `start` does, through the real writer: the workspace
-    // directory, and the gitignore entry that hides it.
-    const gitignore = join(wt, 'apps', 'x', '.gitignore');
-    writeFileSync(gitignore, `${readFileSync(gitignore, 'utf-8')}\n${renderWorkspaceIgnoreBlock()}`);
-    mkdirSync(join(wt, 'apps', 'x', '.rn-iso', 'logs'), { recursive: true });
-    writeFileSync(join(wt, 'apps', 'x', '.rn-iso', 'state.json'), '{}');
-    expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe('M apps/x/.gitignore');
-
-    // ...and the removal is run from the app dir, the way an agent does.
-    process.chdir(join(wt, 'apps', 'x'));
-    console.error = (m) => errs.push(String(m));
-    console.log = () => {};
-    const run = captureAction(registerRemove);
-    await run(undefined, {});
-    console.error = originalError;
-    console.log = originalLog;
-    process.chdir(originalCwd);
-
-    expect(process.exitCode).not.toBe(1);
-    expect(existsSync(wt)).toBe(false);
-    expect(errs.join('\n')).toMatch(/restoring apps\/x\/\.gitignore/);
-  } finally {
-    console.error = originalError;
-    console.log = originalLog;
-    process.chdir(originalCwd);
-    process.exitCode = 0;
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
 // The main-checkout branch turns on a rev-parse comparison only real git can
 // settle (`--git-dir` == `--git-common-dir` in the main tree, and only there).
 // A real repo, registered, with uncommitted work: remove must reclaim the
@@ -1357,8 +902,8 @@ test('against a real repo: remove on the main checkout reclaims the environment 
     expect(readFileSync(join(repo, 'package.json'), 'utf-8')).toBe('{}');
     expect(readFileSync(join(repo, 'marker.txt'), 'utf-8')).toBe('still here');
     expect(execSync('git rev-parse --is-inside-work-tree', { cwd: repo, encoding: 'utf-8' }).trim()).toBe('true');
-    // ...while the rn-iso state is gone whole.
-    expect(existsSync(join(repo, '.rn-iso'))).toBe(false);
+    // ...while only global rn-iso state is reclaimed; project files survive.
+    expect(existsSync(join(repo, '.rn-iso'))).toBe(true);
     expect(getProject(repo)).toBe(null);
     expect(errs.join('\n')).toMatch(/working tree stays \(it is the main checkout\)/);
   } finally {

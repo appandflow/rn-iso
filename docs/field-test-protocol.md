@@ -61,11 +61,12 @@ Deviate when reality demands it — and log why as a friction.
    monorepos: work from the app directory, but install per the repo's rules).
 3. **Dev server.** `npx rn-iso start --json`. Assert: correct mode
    (`expo-child` for Expo apps, `bare-inproc` for bare RN — a wrong detection
-   here is CRITICAL), the `.rn-iso/` gitignore entry self-ensured, second
+   here is CRITICAL), the global readable workspace directory created under
+   `~/.rn-iso/workspaces/<project>--<digest>/`, second
    `start` a no-op, `status` shows the supervisor healthy.
 4. **Build.** `npx rn-iso ios` (and/or `android`). Cold: watch the phase
    lines; on failure judge the extracted diagnostic against the raw log in
-   `.rn-iso/logs/build-*.ndjson` — was it enough to act on? Assert the
+   `~/.rn-iso/workspaces/<project>--<digest>/logs/build-*.ndjson` — was it enough to act on? Assert the
    `--json` payload: `launched` must be `true` (not `"unverified"`); if
    unverified, follow rn-iso's OWN stderr guidance and judge whether it was
    sufficient — that fallback UX is under test.

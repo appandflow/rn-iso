@@ -7,7 +7,7 @@
 // diagnostic plus the path to the log that holds the rest. `expo run:android`
 // emits several thousand lines and an agent pays for all of them on success
 // as well as on failure, which is the cost this command exists to remove. The
-// full transcript is still on disk in .rn-iso/logs/build-android.ndjson -- it
+// full transcript is still on disk in the global workspace logs/build-android.ndjson -- it
 // is simply never tokens.
 //
 // Two orderings in the flow below are deliberate:
@@ -45,8 +45,8 @@ import {
   storedAssetManifest,
   untrackedMissLine,
   untrackedNativeFiles,
-  type FingerprintSourceLike,
 } from '../build-cache.ts';
+import type { FingerprintSource } from '@expo/fingerprint';
 import {
   acquireBuildLock,
   releaseBuildLock,
@@ -66,7 +66,7 @@ import {
   // fallback here too. Imported rather than copied: two readers of one
   // config key drift, and this one is already tested.
   devClientScheme as configuredDevClientScheme,
-  ensureWorkspaceIgnoredSafely,
+  ensureWorkspaceStorageSafely,
   // The launch outcome's Contract-1 record. Four-valued and identical on both
   // platforms, so it is written once and imported rather than copied.
   launchOutcomeRecord,
@@ -546,7 +546,7 @@ export function phaseLine(label: unknown, text: string): string {
 }
 
 // PURE. Paths under the workspace print relative to it, the way the spec's
-// worked example does: `.rn-iso/logs/build-android.ndjson` is shorter than
+// worked example does: the global workspace logs/build-android.ndjson is shorter than
 // the absolute path, and every command here runs from inside the workspace.
 // The --json payload keeps the absolute form, which is what a consumer needs.
 export function displayPath(root: string, path: string): string {
@@ -827,7 +827,7 @@ interface RunAndroidOptions {
   readState?: typeof readWorkspaceState;
   pidAlive?: typeof isPidAlive;
   verifyLaunched?: typeof verifyLaunch;
-  ensureIgnored?: typeof ensureWorkspaceIgnoredSafely;
+  ensureStorage?: typeof ensureWorkspaceStorageSafely;
   fingerprint?: typeof fingerprintProject;
   untracked?: typeof untrackedNativeFiles;
   resolveCached?: typeof resolveBuild;
@@ -896,7 +896,7 @@ export async function runAndroid(
     readState = readWorkspaceState,
     pidAlive = isPidAlive,
     verifyLaunched = verifyLaunch,
-    ensureIgnored = ensureWorkspaceIgnoredSafely,
+    ensureStorage = ensureWorkspaceStorageSafely,
     fingerprint = fingerprintProject,
     untracked = untrackedNativeFiles,
     resolveCached = resolveBuild,
@@ -930,9 +930,19 @@ export async function runAndroid(
 ): Promise<RunAndroidResult> {
   const started = now();
   const startedAt = new Date(started).toISOString();
-  // Before ANY write into <root>/.rn-iso -- the build log opened on the next
-  // line, the state file, the APK paths recorded in it.
-  await ensureIgnored(root, { note: out });
+  // Before any write, establish the global state directory and its ownership
+  // metadata. No generated path is created inside the project.
+  try {
+    await ensureStorage(root, { note: out });
+  } catch (error) {
+    const code = (error as Error & { code?: string })?.code || 'RN_ISO_WORKSPACE_STATE';
+    const message = `Could not prepare this workspace's rn-iso state: ${(error as Error)?.message || error}`;
+    const remedy = 'Check that RN_ISO_HOME is writable and has free space.';
+    out(phaseLine('error', chalk.red(`${code}: ${message}`)));
+    out(phaseLine('remedy', remedy));
+    if (json) emit(JSON.stringify({ code, message, remedy }));
+    return { ok: false, error: { code, message, remedy } };
+  }
   const logsDir = workspaceLogsDir(root);
   const buildLog = join(logsDir, 'build-android.ndjson');
   const writer = createWriter(buildLog, { truncate: true });
@@ -1174,7 +1184,7 @@ export async function runAndroid(
   // consult reports its own time on its own cache line below.
   const fingerprintTimer = stepTimer(now);
   let hash: string | null;
-  let fingerprintSources: FingerprintSourceLike[] = [];
+  let fingerprintSources: FingerprintSource[] = [];
   try {
     // Scoped to Android. Unscoped, ios/ hashes into this key: a podspec that
     // bakes an absolute path into ios/Podfile.lock then makes every
@@ -1186,14 +1196,14 @@ export async function runAndroid(
     return fail(
       NO_FINGERPRINT,
       `@expo/fingerprint could not fingerprint ${root}: ${(err as Error)?.message || err}`,
-      "Fix the error above, or install a working copy in the project with `npm i -D @expo/fingerprint` (the project's copy wins over the one rn-iso ships).",
+      'Fix the @expo/fingerprint error above, then retry.',
     );
   }
   if (!hash) {
     return fail(
       NO_FINGERPRINT,
       `@expo/fingerprint returned no hash for ${root}, so the build cache cannot be addressed.`,
-      'rn-iso ships its own @expo/fingerprint, so this is not a missing dependency: check that this install is complete, or install a copy in the project (`npm i -D @expo/fingerprint`) to override the one rn-iso falls back to.',
+      'Check the project native inputs and the @expo/fingerprint error above, then retry.',
     );
   }
   record.fingerprint = hash;
@@ -1229,7 +1239,6 @@ export async function runAndroid(
   if (!cached) {
     const lastBuild = (readState(root)?.lastBuild ?? null) as Record<string, unknown> | null;
     const miss = describeFingerprintMiss({
-      projectRoot: root,
       platform: PLATFORM,
       current: { hash, sources: fingerprintSources },
       lastBuild,

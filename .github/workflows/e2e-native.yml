@@ -1,8 +1,21 @@
 # SLOW, GATED native e2e -- a real xcodebuild / gradle build on a real
-# simulator/emulator, driven by test/e2e/native/run-native-e2e.mjs. It codifies
-# docs/field-test-protocol.md across the full 2x2 matrix:
+# simulator/emulator, across the full 2x2 matrix:
 #
 #     framework in {bare, expo}   x   platform in {ios, android}
+#
+# TWO SUITES RUN ON THIS MATRIX, selected by the `suite` dispatch input:
+#   loop    test/e2e/native/run-native-e2e.mjs -- docs/field-test-protocol.md as
+#           code: create -> start -> build -> second worktree hits the cache ->
+#           teardown. THE DEFAULT, and what the nightly has always run.
+#   caches  test/e2e/native/run-cache-e2e.mjs -- for every cache rn-iso supplies,
+#           prove it is ENGAGED (read off the real argv/log), that it STORES (the
+#           directory gained files), and that a second workspace REUSED it. It
+#           costs two extra cold compiles per variant, so it is ON DEMAND ONLY:
+#           run it before a release, or after a change that touches caching.
+#   all     both, in that order.
+#
+# The nightly and the PR label keep running `loop` exactly as before -- adding
+# the input changed nothing about them.
 #
 # WHY IT IS GATED. A cold native build is ~10-20 minutes and occasionally flaky
 # (device boot, toolchain). Blocking every PR on it would be miserable, so it
@@ -29,6 +42,12 @@ on:
     # runs on the default branch, which is what we want.
     - cron: '0 7 * * *'
   workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Which suite to run on the 2x2 matrix'
+        type: choice
+        default: loop
+        options: [loop, caches, all]
   pull_request:
     # `labeled` is what makes "add the label to run it" work; the others let a
     # push to an already-labeled PR re-run. The `if:` on each job is the actual
@@ -38,6 +57,12 @@ on:
 concurrency:
   group: e2e-native-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # `inputs` is empty on schedule and on pull_request, so both fall through to
+  # `loop` -- the nightly's behaviour is preserved by construction rather than by
+  # a second code path.
+  RN_ISO_E2E_SUITE: ${{ inputs.suite || 'loop' }}
 
 permissions:
   contents: read
@@ -51,7 +76,9 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e-native'))
     runs-on: macos-latest
-    timeout-minutes: 60
+    # The caches suite adds a second cold compile (the single-flight race) plus a
+    # third cache-hit build, so it needs headroom the loop suite never did.
+    timeout-minutes: ${{ (inputs.suite == 'caches' || inputs.suite == 'all') && 120 || 60 }}
     strategy:
       fail-fast: false
       matrix:
@@ -63,8 +90,8 @@ jobs:
       # exercised. Kept per-variant so bare and expo never address one another's
       # entries.
       RN_ISO_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/ios-${{ matrix.framework }}
-      # Keep every temp dir (and thus each worktree's .rn-iso/logs) under the
-      # workspace so the failure artifact step can find the build logs.
+      # Keep the throwaway RN_ISO_HOME under the workspace so the failure
+      # artifact step can find global workspace logs.
       TMPDIR: ${{ github.workspace }}/.e2e-tmp
     steps:
       - uses: actions/checkout@v4
@@ -109,17 +136,43 @@ jobs:
       - name: Detect a warmed cross-run cache
         run: echo "RN_ISO_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$RN_ISO_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
-      - name: Native e2e (ios, ${{ matrix.framework }})
+      - name: Loop suite (ios, ${{ matrix.framework }})
+        if: env.RN_ISO_E2E_SUITE == 'loop' || env.RN_ISO_E2E_SUITE == 'all'
         # --keep leaves the temp worktrees in place on this ephemeral runner so
         # the artifact step below can collect their build logs.
-        run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep
+        run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep --home "$TMPDIR/rn-iso-home"
+
+      - name: Cache suite (ios, ${{ matrix.framework }})
+        if: env.RN_ISO_E2E_SUITE == 'caches' || env.RN_ISO_E2E_SUITE == 'all'
+        # It forces its own RN_ISO_BUILD_CACHE / RN_ISO_METRO_CACHE under a
+        # throwaway home ON PURPOSE (see the file header): every number it
+        # reports is a before/after around a COLD compile, and the persisted
+        # cross-run cache above would turn each of them into a measurement of
+        # nothing. So the restore step is harmless here, and simply unused.
+        # --summary writes the machine-readable verdict where the artifact step
+        # can pick it up whether the run passed or failed.
+        run: >-
+          node test/e2e/native/run-cache-e2e.mjs
+          --framework ${{ matrix.framework }} --platform ios --keep --home "$TMPDIR/rn-iso-home"
+          --summary "$GITHUB_WORKSPACE/cache-summary-ios-${{ matrix.framework }}.json"
+
+      - name: Upload the cache-suite summary
+        # `always()`: a FAILING cache run is exactly when the per-check evidence
+        # is worth reading, and the summary carries it.
+        if: always() && (env.RN_ISO_E2E_SUITE == 'caches' || env.RN_ISO_E2E_SUITE == 'all')
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-summary-ios-${{ matrix.framework }}
+          path: cache-summary-ios-${{ matrix.framework }}.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Upload build logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-ios-${{ matrix.framework }}
-          path: ${{ env.TMPDIR }}/**/.rn-iso/logs/*
+          path: ${{ env.TMPDIR }}/rn-iso-home/workspaces/**/logs/*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
@@ -133,7 +186,7 @@ jobs:
     # A Linux host with KVM: the Android emulator needs hardware acceleration,
     # which the ubuntu-latest GitHub runners provide once /dev/kvm is exposed.
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: ${{ (inputs.suite == 'caches' || inputs.suite == 'all') && 120 || 60 }}
     strategy:
       fail-fast: false
       matrix:
@@ -188,7 +241,7 @@ jobs:
       - name: Detect a warmed cross-run cache
         run: echo "RN_ISO_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$RN_ISO_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
-      - name: Native e2e (android, ${{ matrix.framework }})
+      - name: Native e2e (android, ${{ matrix.framework }}) -- runs the selected suite(s)
         # reactivecircus/android-emulator-runner installs the SDK + system image,
         # enables acceleration, and runs `script` once an emulator is up. rn-iso
         # then creates and boots its OWN owned AVD (the ownership rule forbids it
@@ -208,14 +261,33 @@ jobs:
           script: |
             adb -s emulator-5554 emu kill || true
             sleep 3
-            node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep
+            case "$RN_ISO_E2E_SUITE" in
+              loop|all)
+                node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/rn-iso-home"
+                ;;
+            esac
+            case "$RN_ISO_E2E_SUITE" in
+              caches|all)
+                node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/rn-iso-home" \
+                  --summary "$GITHUB_WORKSPACE/cache-summary-android-${{ matrix.framework }}.json"
+                ;;
+            esac
+
+      - name: Upload the cache-suite summary
+        if: always() && (env.RN_ISO_E2E_SUITE == 'caches' || env.RN_ISO_E2E_SUITE == 'all')
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-summary-android-${{ matrix.framework }}
+          path: cache-summary-android-${{ matrix.framework }}.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Upload build logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-android-${{ matrix.framework }}
-          path: ${{ env.TMPDIR }}/**/.rn-iso/logs/*
+          path: ${{ env.TMPDIR }}/rn-iso-home/workspaces/**/logs/*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
