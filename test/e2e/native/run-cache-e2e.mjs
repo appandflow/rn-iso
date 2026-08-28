@@ -42,12 +42,15 @@ const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `stim-cl
 
 const BUILD_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(HOME_DIR, 'build-cache');
 const METRO_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(HOME_DIR, 'metro-cache');
+const CACHE_TMP_DIR = args.dryRun ? '<dry-run>' : join(HOME_DIR, 'tmp');
 const CAS_DIR = join(HOME_DIR, 'compilation-cache');
+if (!args.dryRun) mkdirSync(CACHE_TMP_DIR, { recursive: true });
 const ENV = {
   ...process.env,
   STIM_CLI_HOME: HOME_DIR,
   STIM_CLI_BUILD_CACHE: BUILD_CACHE_ROOT,
   STIM_CLI_METRO_CACHE: METRO_CACHE_ROOT,
+  TMPDIR: CACHE_TMP_DIR,
   CI: '1',
 };
 process.env.STIM_CLI_HOME = HOME_DIR;
@@ -885,6 +888,7 @@ function plan() {
   log(`work dir=${WORK_DIR}`);
   log(`build cache=${BUILD_CACHE_ROOT} (forced; any inherited STIM_CLI_BUILD_CACHE is ignored)`);
   log(`metro cache=${METRO_CACHE_ROOT} (forced; any inherited STIM_CLI_METRO_CACHE is ignored)`);
+  log(`temp dir=${CACHE_TMP_DIR} (forced so Metro's default store cannot hide shared-store writes)`);
   log(PLATFORM === 'ios' ? `xcode CAS=${CAS_DIR}` : `gradle build cache=${GRADLE_CACHE_DIR}`);
   log(`race build cache=${RACE_CACHE_ROOT}`);
   log(
