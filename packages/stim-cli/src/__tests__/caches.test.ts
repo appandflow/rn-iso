@@ -76,6 +76,34 @@ test('discoverCaches reports the Gradle build cache from GRADLE_USER_HOME', () =
   }
 });
 
+test('Gradle cache pruning keeps its lock and metadata files', () => {
+  const gradleHome = mkdtempSync(join(tmpdir(), 'stim-cli-gradle-prune-'));
+  const previous = process.env.GRADLE_USER_HOME;
+  const buildCache = join(gradleHome, 'caches', 'build-cache-1');
+  mkdirSync(buildCache, { recursive: true });
+  const entry = join(buildCache, '0123456789abcdef0123456789abcdef');
+  const lock = join(buildCache, 'build-cache-1.lock');
+  const metadata = join(buildCache, 'gc.properties');
+  for (const file of [entry, lock, metadata]) {
+    writeFileSync(file, 'x');
+    age(file);
+  }
+  try {
+    process.env.GRADLE_USER_HOME = gradleHome;
+    const cache = discoverCaches().find((c) => c.name === 'Gradle build cache');
+    assert(cache);
+    const result = pruneCache(cache, { olderThanDays: 30 });
+    expect(result.removed).toBe(1);
+    expect(existsSync(entry)).toBe(false);
+    expect(existsSync(lock)).toBe(true);
+    expect(existsSync(metadata)).toBe(true);
+  } finally {
+    if (previous === undefined) delete process.env.GRADLE_USER_HOME;
+    else process.env.GRADLE_USER_HOME = previous;
+    rmSync(gradleHome, { recursive: true, force: true });
+  }
+});
+
 test('sizeCaches keeps a precounted size and measures the rest', () => {
   const dir = mkdtempSync(join(tmpdir(), 'stim-cli-size-'));
   try {

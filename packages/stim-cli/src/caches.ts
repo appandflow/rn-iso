@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
-import { join, resolve } from 'path';
+import { basename, join, resolve } from 'path';
 import { directorySize } from './fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
 import { findProjectRoot } from './project.ts';
@@ -13,6 +13,7 @@ export interface CacheDescriptor {
   prune: 'atomic' | 'entries';
   note: string;
   entriesDepth?: number;
+  entryNamePattern?: RegExp;
   files?: string[];
   bytes?: number;
   source?: 'registered' | 'detected';
@@ -41,6 +42,7 @@ function gradleBuildCache(): CacheDescriptor | null {
     name: 'Gradle build cache',
     dir,
     prune: 'entries',
+    entryNamePattern: /^[0-9a-f]{32}$/,
     note: 'shared Gradle task outputs enabled by stim-cli --build-cache',
   };
 }
@@ -124,7 +126,9 @@ export function pruneCache(
     return { removed: 0, bytes: 0, skipped: 'index-backed; empty it whole or not at all' };
   }
 
-  const entries = cache.files ?? entriesAtDepth(cache.dir, cache.entriesDepth ?? 1);
+  const entries = (cache.files ?? entriesAtDepth(cache.dir, cache.entriesDepth ?? 1)).filter(
+    (entry) => !cache.entryNamePattern || cache.entryNamePattern.test(basename(entry)),
+  );
   let removed = 0;
   let bytes = 0;
   for (const entry of entries) {
