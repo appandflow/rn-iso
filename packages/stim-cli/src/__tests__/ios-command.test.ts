@@ -385,7 +385,7 @@ describe('the simulator boot gate', () => {
 });
 
 describe('the Metro gate retries an indexing Metro', () => {
-  test('a port that verifies on the third attempt is not refused', async () => {
+  test('a port that verifies after the 20-second indexing window is not refused', async () => {
     reserve();
     let attempts = 0;
     const { exitCode, calls } = await run(
@@ -393,14 +393,14 @@ describe('the Metro gate retries an indexing Metro', () => {
       {
         resolveProjectMetro: async () => {
           attempts += 1;
-          if (attempts < 3)
+          if (attempts < 4)
             return { notOurs: "pid 42 on port 8082 does not answer Metro's /status", kind: 'unresponsive' };
           return { metro: { pid: 42, leader: 42, cwd: root } };
         },
       },
     );
     expect(exitCode).toBe(null);
-    expect(attempts).toBe(3);
+    expect(attempts).toBe(4);
     expect(calls.order.includes('buildIos')).toBeTruthy();
   });
 

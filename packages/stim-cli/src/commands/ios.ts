@@ -347,7 +347,7 @@ function readJson(file: string): unknown {
   }
 }
 
-export const GATE_RETRY_DELAYS_MS: number[] = [3000, 7000];
+export const GATE_RETRY_DELAYS_MS: number[] = [3000, 7000, 10000];
 
 export function gateShouldRetry(resolution: MetroResolutionLike | null | undefined): boolean {
   if (resolution?.metro) return false;
