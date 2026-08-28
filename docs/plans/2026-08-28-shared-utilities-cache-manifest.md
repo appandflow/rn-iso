@@ -13,6 +13,7 @@
 ### Task 1: Shared command output
 
 **Files:**
+
 - Create: `packages/rn-iso/src/command-output.ts`
 - Create: `packages/rn-iso/src/__tests__/command-output.test.ts`
 - Modify: `packages/rn-iso/src/commands/ios.ts`
@@ -88,6 +89,7 @@ git -c commit.gpgsign=false commit -m "refactor: share command output helpers"
 ### Task 2: Shared process output
 
 **Files:**
+
 - Create: `packages/rn-iso/src/process-output.ts`
 - Create: `packages/rn-iso/src/__tests__/process-output.test.ts`
 - Modify: `packages/rn-iso/src/supervisor/server-expo.ts`
@@ -141,6 +143,7 @@ git -c commit.gpgsign=false commit -m "refactor: share process output helpers"
 ### Task 3: Locked core manifest transaction
 
 **Files:**
+
 - Modify: `packages/core/index.ts`
 - Create: `packages/core/__tests__/cache-manifest.test.ts`
 - Modify: `packages/rn-iso/src/dir-lock.ts`
@@ -205,6 +208,7 @@ git -c commit.gpgsign=false commit -m "fix: serialize cache manifest updates"
 ### Task 4: Use the core transaction in the CLI
 
 **Files:**
+
 - Modify: `packages/rn-iso/src/cache-manifest.ts`
 - Modify: `packages/rn-iso/src/__tests__/cache-manifest.test.ts`
 - Modify: `packages/rn-iso/src/__tests__/cache-packages.test.ts`
@@ -239,6 +243,7 @@ git -c commit.gpgsign=false commit -m "refactor: share cache manifest transactio
 ### Task 5: Documentation and full verification
 
 **Files:**
+
 - Modify: `packages/rn-iso/skill/SKILL.md`
 
 **Step 1: Update user guidance**
