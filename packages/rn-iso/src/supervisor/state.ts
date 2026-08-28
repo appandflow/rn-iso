@@ -9,7 +9,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { withDirLock } from '../dir-lock.ts';
-import { supervisorPidFile, workspaceStateFile, workspaceStateLock } from '../paths.ts';
+import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile, workspaceStateLock } from '../paths.ts';
 
 export const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';
@@ -27,17 +27,19 @@ export interface WorkspaceState {
 
 // --- Contract 2: the workspace state file --------------------------------
 //
-// <root>/.rn-iso/state.json, written temp+rename so a reader never sees half a
+// global workspace state.json, written temp+rename so a reader never sees half a
 // file. Merged rather than overwritten: later steps put `lastBuild` beside
 // `supervisor`, and a supervisor shutting down must not take it with it.
 
 export function readWorkspaceState(root: string): WorkspaceState | null {
   try {
     const parsed = JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed as WorkspaceState;
   } catch {
-    // Absent, unreadable, or half-written: the file is a cache of facts that
-    // are also in the config, so an unusable one reads as "no state".
+    // Absent, unreadable, or half-written. The global registry is the other
+    // copy of the live ownership facts, so one bad file is not a reason for
+    // every command to fail.
     return null;
   }
 }
@@ -54,7 +56,10 @@ export function readWorkspaceState(root: string): WorkspaceState | null {
 export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
   const file = workspaceStateFile(root);
   return withDirLock(workspaceStateLock(root), fn, {
-    ensureParent: () => mkdirSync(dirname(file), { recursive: true }),
+    ensureParent: () => {
+      ensureWorkspaceStorage(root);
+      mkdirSync(dirname(file), { recursive: true });
+    },
   });
 }
 
@@ -78,17 +83,17 @@ function replaceWorkspaceState(root: string, state: WorkspaceState): WorkspaceSt
 // stopped workspace has no state.json rather than an empty one -- but a
 // workspace that has recorded something else keeps it.
 export function clearWorkspaceSupervisor(root: string): void {
+  clearWorkspaceStateKeys(root, ['supervisor']);
+}
+
+export function clearWorkspaceStateKeys(root: string, keys: string[]): void {
   withWorkspaceStateLock(root, () => {
     const state = readWorkspaceState(root);
-    if (!state || !('supervisor' in state)) return;
-    delete state.supervisor;
+    if (!state || !keys.some((key) => key in state)) return;
+    for (const key of keys) delete state[key];
     const file = workspaceStateFile(root);
     if (Object.keys(state).length === 0) {
-      try {
-        rmSync(file, { force: true });
-      } catch {
-        /* already gone */
-      }
+      rmSync(file, { force: true });
       return;
     }
     replaceWorkspaceState(root, state);

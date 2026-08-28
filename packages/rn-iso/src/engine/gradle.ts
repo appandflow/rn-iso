@@ -80,7 +80,7 @@ const LAST_LINES = 20;
 // block, the failing task and the compiler output at the END of a build, so a
 // rolling window costs nothing in practice while keeping a multi-thousand-line
 // React Native transcript out of memory. The COMPLETE transcript is in
-// .rn-iso/logs/build-android.ndjson regardless -- every line goes to the
+// the global workspace logs/build-android.ndjson regardless -- every line goes to the
 // writer as it arrives.
 const TRANSCRIPT_LINES = 2000;
 
@@ -463,6 +463,24 @@ export async function buildAndroid(
       ),
     );
   }
+
+  // The exact command, first line of the log -- the same record xcode.ts
+  // writes for the same reason (issue #78). An agent debugging a build it did
+  // not compose needs to see what was actually run, and reconstructing it from
+  // this file's source is not the same thing as reading it. It is also the
+  // only honest way to assert that `--build-cache` reached gradle: the
+  // alternative is racing `ps` against a live build.
+  //
+  // level "info" and NOT `raw`, exactly as on iOS: this line was reported by
+  // rn-iso, not inferred from gradle's stdout, and the transcript records below
+  // stay debug/raw.
+  logWriter?.write?.({
+    src: 'build',
+    level: 'info',
+    msg: `${project.gradlew as string} ${args.join(' ')}`,
+    event: 'build_start',
+  });
+
   const startedAt = now();
   const tail: string[] = [];
   const window: string[] = [];

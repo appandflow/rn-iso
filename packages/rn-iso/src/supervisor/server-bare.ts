@@ -8,8 +8,7 @@
 // reporter on it, and call the project's own Metro.
 //
 // Every ecosystem package is resolved from the PROJECT's node_modules through
-// createRequire, never from rn-iso's -- the same pattern loadFingerprinter()
-// uses for @expo/fingerprint. That is what makes this version-matched by
+// createRequire, never from rn-iso's. That makes the server version-matched by
 // construction: we drive the exact Metro the project builds with, on any SDK,
 // while rn-iso itself depends on neither ecosystem.
 //
@@ -142,8 +141,8 @@ export function resolveBareDeps(
 
 // The reporter is shared with anyone hosting Metro programmatically, so there
 // is exactly one implementation and it lives in @rn-iso/metro (CJS, importing
-// nothing from rn-iso). Resolution follows loadFingerprinter's chain: the
-// project first, then rn-iso's own install.
+// nothing from rn-iso). Resolution tries the project first, then rn-iso's own
+// install, so projects may install the integration explicitly but need not.
 //
 // It is deliberately NOT fatal when it cannot be found. A logging package that
 // is not installed must not cost the caller a dev server -- but it must not be

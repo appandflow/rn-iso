@@ -1,22 +1,89 @@
 // The single source of truth for every path rn-iso writes.
 //
 // The rule that decides which half a path belongs in: CONTENT-ADDRESSED
-// artifacts are shared, LOCATION-ADDRESSED artifacts are workspace-local. A
-// build cache entry keyed on a fingerprint is meaningful to any workspace on
-// the same commit, so it is shared. A DerivedData tree is meaningful only to
-// the checkout that produced it, so it lives inside that checkout and dies
-// with it -- which is what removes the need to ever reverse-map a global
-// build directory back to a workspace.
+// artifacts are shared across workspaces, while LOCATION-ADDRESSED artifacts
+// get one directory per canonical project path. Both live under RN_ISO_HOME;
+// rn-iso never writes generated state into the project it is operating on.
 //
-// Pure: nothing here creates a directory. Callers mkdir when they write.
-import { join } from 'path';
-import { buildCacheRoot, metroCacheRoot } from '@rn-iso/core';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'path';
+import {
+  buildCacheRoot,
+  metroCacheRoot,
+  workspaceId as coreWorkspaceId,
+  workspaceName as coreWorkspaceName,
+  workspaceSlug as coreWorkspaceSlug,
+  workspaceStateDir,
+} from '@rn-iso/core';
 import { getConfigDir } from './config.ts';
+import { withDirLock } from './dir-lock.ts';
 
-export const WORKSPACE_DIR_NAME = '.rn-iso';
+const WORKSPACE_METADATA_FILE_NAME = 'workspace.json';
+
+export function workspaceSlug(projectRoot: string): string {
+  return coreWorkspaceSlug(projectRoot);
+}
+
+export function workspaceId(projectRoot: string): string {
+  return coreWorkspaceId(projectRoot);
+}
+
+export function workspaceName(projectRoot: string): string {
+  return coreWorkspaceName(projectRoot);
+}
 
 export function workspaceDir(projectRoot: string): string {
-  return join(projectRoot, WORKSPACE_DIR_NAME);
+  return workspaceStateDir(projectRoot);
+}
+
+export function workspaceMetadataFile(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), WORKSPACE_METADATA_FILE_NAME);
+}
+
+interface WorkspaceMetadata {
+  projectRoot: string;
+  workspace: string;
+  version: 1;
+}
+
+// The one impure path helper. Commands call this before their first write so
+// every global workspace directory says which canonical project path owns it.
+// The digest collision check fails closed rather than letting two projects
+// share state. Temp+rename keeps concurrent starts from exposing partial JSON.
+export function ensureWorkspaceStorage(projectRoot: string): string {
+  const canonicalRoot = resolve(projectRoot);
+  const dir = workspaceDir(canonicalRoot);
+  const file = workspaceMetadataFile(canonicalRoot);
+  mkdirSync(dir, { recursive: true });
+  return withDirLock(join(dir, 'metadata.lock'), () => {
+    if (!existsSync(file)) {
+      const metadata: WorkspaceMetadata = {
+        projectRoot: canonicalRoot,
+        workspace: workspaceName(canonicalRoot),
+        version: 1,
+      };
+      const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+      writeFileSync(tmp, `${JSON.stringify(metadata, null, 2)}\n`);
+      try {
+        renameSync(tmp, file);
+      } catch (error) {
+        rmSync(tmp, { force: true });
+        throw error;
+      }
+      return dir;
+    }
+    try {
+      const current = JSON.parse(readFileSync(file, 'utf-8')) as Partial<WorkspaceMetadata>;
+      if (current.projectRoot === canonicalRoot) return dir;
+    } catch {
+      // An unreadable ownership record is not safe to overwrite.
+    }
+    const error = new Error(
+      `rn-iso workspace collision at ${dir}: its workspace.json does not belong to ${canonicalRoot}.`,
+    ) as Error & { code?: string };
+    error.code = 'RN_ISO_WORKSPACE_COLLISION';
+    throw error;
+  });
 }
 
 export function workspaceLogsDir(projectRoot: string): string {

@@ -2,7 +2,7 @@
 //
 // Invoked as `node run.js --root <abs path> --port <n>`, normally by
 // `rn-iso start`, which spawns it detached with its stdio pointed at
-// <root>/.rn-iso/logs/supervisor.log.
+// the global workspace logs/supervisor.log.
 //
 // It hosts ONE dev server for ONE workspace and nothing else. There is no
 // machine-wide daemon: no cross-project state, no IPC beyond this workspace,

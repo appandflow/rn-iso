@@ -2,42 +2,25 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from 'os';
 import { basename, dirname, join } from 'path';
 import { getExecutor } from './exec.ts';
-import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.ts';
-
-// `.rn-iso/` is never carried into a new worktree, at any depth and whatever
-// any pattern file says. It holds THIS workspace's derived data, its logs and
-// the supervisor pidfile: build output keyed to a path the new worktree does
-// not have, and a pidfile naming a process that is not running. Carrying that
-// is strictly worse than starting cold, so it is code rather than
-// configuration -- `.worktreeexclude` extends this list and cannot shorten it.
-//
-// Matched segment-wise rather than by prefix because a monorepo has one of
-// these per app directory (`apps/mobile/.rn-iso`), and because the entry `git
-// ls-files --directory` collapses to is the directory itself.
-export function isWorkspaceArtifact(rel: string): boolean {
-  return String(rel).split('/').includes(WORKSPACE_DIR);
-}
 
 // The full carry-skip decision, shared by BOTH carry paths so they cannot
 // drift. A path is skipped when any of its segments is exactly a basename that
 // bakes the SOURCE worktree's absolute path and is regenerated for free:
 //
-//   .rn-iso        this workspace's derived data / logs / supervisor pidfile
-//                  (see isWorkspaceArtifact).
 //   .DerivedData   Xcode/Clang derived data. A live tlon Expo build died with
 //                  `missing required module 'SwiftShims'` because
 //                  `--carry-ignored` cloned
 //                  node_modules/expo-modules-jsi/apple/.DerivedData: the Clang
 //                  module cache inside it bakes the old worktree's absolute
 //                  paths, so every carried module map pointed back at the source
-//                  tree. Same class as .rn-iso -- absolute-path-baked and cheap
-//                  to rebuild -- so it is code, not configuration.
+//                  tree. It is absolute-path-baked and cheap to rebuild, so it
+//                  is code, not configuration.
 //
 // Scoped NARROWLY to those exact basenames: node_modules, Pods and everything a
 // build cannot rebuild for free are the whole point of --carry-ignored and must
 // still be carried, and a lookalike like `MyDerivedData` or `.DerivedDataX`
 // must NOT match (segment equality, never a prefix/substring).
-const CARRY_SKIP_BASENAMES = new Set([WORKSPACE_DIR, '.DerivedData']);
+const CARRY_SKIP_BASENAMES = new Set(['.DerivedData']);
 
 export function isCarrySkipped(rel: string): boolean {
   return String(rel)
@@ -323,9 +306,8 @@ export function listGitignoredEntries(root: string): string[] {
 // surfaces as a confusing build error, whereas the failure mode of naming what
 // to skip is a directory copied needlessly.
 //
-// `patterns` are the caller's additions on top of the built-in exclusion of
-// `.rn-iso/` (see isWorkspaceArtifact): they extend it, and cannot un-exclude
-// it.
+// `patterns` are the caller's additions on top of the built-in `.DerivedData`
+// exclusion: they extend it and cannot un-exclude it.
 //
 // `cloned` is false when `cp -c` was refused and the entry had to be copied for
 // real -- APFS clonefiles only work same-volume, and that is the difference
@@ -596,9 +578,8 @@ export function dirtyPaths(dir: string, { limit = 10 }: { limit?: number } = {})
 // consumer of these lines slices a fixed two-character status field
 // (porcelainPath, isPodInstallChurn, the `??` test in removalRemedy), so the
 // damaged line silently mis-parsed -- `porcelainPath` returned `s/Podfile.lock`
-// for it, and the workspace-artifact and self-healed-gitignore filters could
-// never match the first line of a listing. Re-shape it here, once, rather than
-// teach every consumer about it.
+// for it, and every fixed-column consumer misread the first line of a listing.
+// Re-shape it here, once, rather than teach every consumer about it.
 //
 // A well-formed porcelain line always has a space in column three; a damaged
 // one has the first character of the path there, and cannot itself start with a
@@ -606,17 +587,6 @@ export function dirtyPaths(dir: string, { limit = 10 }: { limit?: number } = {})
 function normalizePorcelainLine(line: string): string {
   if (line === '' || line[2] === ' ') return line;
   return ` ${line}`;
-}
-
-// The UNSTAGED diff of one path -- worktree against index, which is exactly the
-// change `git checkout -- <file>` would undo. Null when git could not answer,
-// which callers must read as "no idea", never as "no change".
-//
-// The path is interpolated into a shell command, so it is only ever passed one
-// the caller has already constrained (see SAFE_DIFF_PATH in commands/worktree.js);
-// `--` keeps a leading dash from being read as an option either way.
-export function unstagedDiff(dir: string, file: string): string | null {
-  return getExecutor().runQuiet(`git -C "${dir}" diff -- "${file}"`);
 }
 
 // Restores one path from the index. False when git refused or could not run,

@@ -8,7 +8,6 @@ import {
   defaultWorktreeDir,
   worktreePath,
   matchesInclude,
-  isWorkspaceArtifact,
   isCarrySkipped,
   unpushedCommits,
   hasUncommittedWork,
@@ -711,28 +710,7 @@ test('pod-install churn is recognised so the restore advice only fires when it w
   expect(isPodInstallChurn([])).toBe(false);
 });
 
-// --- .rn-iso/ is never carried, and that is not configurable -----------------
-//
-// It holds this workspace's derived data, its logs and the supervisor pidfile:
-// build output keyed to a path the new worktree does not have, and a pidfile
-// for a process that is not running. There is no repo for which carrying that
-// is right, so it is code rather than a line in a file someone has to remember
-// to write. A monorepo has one per app directory, hence the depth cases.
-test('isWorkspaceArtifact matches the workspace dir at any depth, and nothing else', () => {
-  for (const rel of [
-    '.rn-iso',
-    '.rn-iso/logs/metro.ndjson',
-    'apps/mobile/.rn-iso',
-    'apps/mobile/.rn-iso/derived-data',
-  ]) {
-    expect(isWorkspaceArtifact(rel)).toBe(true);
-  }
-  for (const rel of ['node_modules', 'apps/mobile/.rn-isotope', 'docs/rn-iso.md', 'apps/.rn-iso-old']) {
-    expect(isWorkspaceArtifact(rel)).toBe(false);
-  }
-});
-
-test('cloneIgnoredEntries skips every .rn-iso with no pattern file anywhere', () => {
+test('cloneIgnoredEntries treats .rn-iso like any other gitignored project directory', () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
   const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
   try {
@@ -749,17 +727,14 @@ test('cloneIgnoredEntries skips every .rn-iso with no pattern file anywhere', ()
 
     const { copied } = cloneIgnoredEntries({ root, target, patterns: [] });
 
-    expect(copied).toEqual(['node_modules', 'apps/mobile/ios/Pods']);
+    expect(copied).toEqual(['node_modules', '.rn-iso', 'apps/mobile/.rn-iso', 'apps/mobile/ios/Pods']);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
   }
 });
 
-// The pattern file extends the built-in list. It cannot shorten it: a pattern
-// that names .rn-iso -- or a negation someone hopes will re-include it -- has
-// no effect, because the exclusion is not implemented with patterns at all.
-test('.worktreeexclude patterns add to the built-in exclusion and cannot undo it', () => {
+test('.worktreeexclude can skip a project-owned .rn-iso directory normally', () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
   const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
   try {
@@ -774,21 +749,15 @@ test('.worktreeexclude patterns add to the built-in exclusion and cannot undo it
       spawn: () => {},
     });
 
-    const extended = cloneIgnoredEntries({ root, target, patterns: ['coverage'] });
-    expect(extended.copied).toEqual(['node_modules']);
-
-    const attemptedReinclude = cloneIgnoredEntries({ root, target, patterns: ['!.rn-iso', '!**/.rn-iso'] });
-    expect(attemptedReinclude.copied).toEqual(['node_modules', 'coverage']);
+    const excluded = cloneIgnoredEntries({ root, target, patterns: ['coverage', '**/.rn-iso'] });
+    expect(excluded.copied).toEqual(['node_modules']);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
   }
 });
 
-// The file-by-file half of carry-over (.worktreeinclude) reaches individual
-// gitignored files, which is how a `**/*.json`-shaped pattern could otherwise
-// pick up a workspace's own state.json.
-test('carryOverFiles never carries a file from inside a workspace directory', () => {
+test('carryOverFiles treats files inside .rn-iso like ordinary project files', () => {
   const root = mkdtempSync(join(tmpdir(), 'rn-iso-test-root-'));
   const target = mkdtempSync(join(tmpdir(), 'rn-iso-test-target-'));
   try {
@@ -804,8 +773,8 @@ test('carryOverFiles never carries a file from inside a workspace directory', ()
 
     const { copied } = carryOverFiles({ root, target, patterns: ['**/*.json'] });
 
-    expect(copied).toEqual(['config/local.json']);
-    expect(existsSync(join(target, 'apps/mobile/.rn-iso/state.json'))).toBe(false);
+    expect(copied).toEqual(['apps/mobile/.rn-iso/state.json', 'config/local.json']);
+    expect(existsSync(join(target, 'apps/mobile/.rn-iso/state.json'))).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
@@ -1180,10 +1149,8 @@ test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a l
   }
 });
 
-test('isCarrySkipped skips .rn-iso and .DerivedData at any depth, and nothing that merely resembles them', () => {
+test('isCarrySkipped skips .DerivedData at any depth and treats .rn-iso normally', () => {
   for (const rel of [
-    '.rn-iso',
-    'apps/mobile/.rn-iso',
     '.DerivedData',
     'ios/build/.DerivedData',
     'node_modules/expo-modules-jsi/apple/.DerivedData',
@@ -1194,6 +1161,8 @@ test('isCarrySkipped skips .rn-iso and .DerivedData at any depth, and nothing th
   for (const rel of [
     'node_modules',
     'ios/Pods',
+    '.rn-iso',
+    'apps/mobile/.rn-iso',
     'apps/mobile/.rn-isotope',
     'MyDerivedData',
     'apple/MyDerivedData/x',

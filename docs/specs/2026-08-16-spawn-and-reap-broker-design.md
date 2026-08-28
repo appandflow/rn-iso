@@ -117,9 +117,7 @@ effects); `up --json` is a superset.
 - **`release`** — deletes the owned device (`simctl delete` /
   `avdmanager delete avd`). Releasing an owned resource means destroying
   it; app state is disposable by definition. Occupancy-guarded, `--force`
-  to override. Legacy (unowned) and physical-device assignments are
-  cleared, never deleted — the old behavior, preserved exactly where the
-  device is not rn-iso's.
+  to override.
 - **`worktree remove`** — additionally deletes the env's owned devices
   (both platforms). The env dies whole. Same occupancy guard.
 - **`shutdown`** — shuts down (never deletes) owned devices; end-of-day
@@ -148,11 +146,8 @@ effects); `up --json` is a superset.
 ## Config schema
 
 `platforms.<p>` gains `owned: true` and `deviceName` (`rn-iso-<label>`) on
-devices rn-iso creates. **Migration is behavioral, not structural:** an
-existing assignment without `owned` is legacy — reused if present, never
-deleted or shut down by rn-iso. New allocations always create owned devices.
-Projects converge naturally, or immediately via `release`. No version bump
-needed beyond v2.
+devices rn-iso creates. New allocations always create owned devices. No
+version bump is needed beyond v2.
 
 ## SKILL.md restructure
 

@@ -4,7 +4,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  checkArtifactLayout,
   checkBuildCacheProvider,
   checkCompilationCache,
   checkCcacheConflict,
@@ -247,46 +246,6 @@ test('the dev client fix names the install, the rebuild, and why not to bake the
   expect(f.fix).toMatch(/rebuild/i);
   expect(f.fix).toMatch(/NATIVE dependency/);
   expect(f.fix).toMatch(/RCT_METRO_PORT/);
-});
-
-// `.rn-iso/` holds this workspace's build output, logs and supervisor pidfile,
-// and the only thing that can still be wrong about it is the .gitignore entry:
-// carrying it into a fresh worktree is prevented in code now, not by a second
-// file that has to say so (isWorkspaceArtifact in src/worktree.js).
-test('silent when .rn-iso is gitignored', () => {
-  expect(checkArtifactLayout({ gitignoreSource: '.rn-iso/\n' })).toBe(null);
-  // git's monorepo-aware verdict wins over the app dir's own file (#31)
-  expect(checkArtifactLayout({ gitignoreSource: 'node_modules\n', gitIgnored: true })).toBe(null);
-  expect(checkArtifactLayout({ gitignoreSource: '.rn-iso/\n', gitIgnored: null })).toBe(null);
-});
-
-test('a project that does not ignore .rn-iso is told what ends up in git status', () => {
-  const f = checkArtifactLayout({ gitignoreSource: 'node_modules\n' });
-  assert(f);
-  expect(f.title).toMatch(/not gitignored/);
-  expect(f.detail).toMatch(/commit/i);
-  expect(f.fix).toMatch(/add it themselves/i);
-});
-
-test('a missing .gitignore is the same diagnosis as one that does not mention it', () => {
-  const missing = checkArtifactLayout({ gitignoreSource: null });
-  assert(missing);
-  expect(missing.title).toMatch(/not gitignored/);
-  const noArg = checkArtifactLayout();
-  const empty = checkArtifactLayout({ gitignoreSource: '' });
-  assert(noArg);
-  assert(empty);
-  expect(noArg.title).toBe(empty.title);
-});
-
-// The entry is a path, not a substring: leading and trailing slashes and
-// comments are all the forms a real .gitignore is written in.
-test('the entry is recognised however it is written, and comments do not count', () => {
-  expect(checkArtifactLayout({ gitignoreSource: '/.rn-iso\n' })).toBe(null);
-  expect(checkArtifactLayout({ gitignoreSource: '.rn-iso\n' })).toBe(null);
-  const commented = checkArtifactLayout({ gitignoreSource: '# ignore .rn-iso/ one day\nnode_modules\n' });
-  assert(commented);
-  expect(commented.title).toMatch(/not gitignored/);
 });
 
 // --- cacheStores that is only wired some of the time ------------------------
@@ -641,16 +600,14 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
     git('git commit -q -m init');
     writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app', scheme: 'dirty' } }));
 
-    const load = () => ({
-      createFingerprintAsync: async (dir: string) => {
-        const hash = createHash('sha1')
-          .update(readFileSync(join(dir, 'app.json'), 'utf-8'))
-          .digest('hex');
-        return { hash, sources: [{ type: 'file', filePath: 'app.json', hash }] };
-      },
-    });
+    const createFingerprint = async (dir: string) => {
+      const hash = createHash('sha1')
+        .update(readFileSync(join(dir, 'app.json'), 'utf-8'))
+        .digest('hex');
+      return { hash, sources: [{ type: 'file' as const, filePath: 'app.json', reasons: [], hash }] };
+    };
 
-    const finding = await detectFingerprintParity(repo, { load });
+    const finding = await detectFingerprintParity(repo, { createFingerprint });
     assert(finding, 'expected the parity note to fire');
     expect(finding.level).toBe('note');
     expect(finding.title).toMatch(/fresh worktree/);
@@ -684,31 +641,31 @@ test('detectFingerprintParity against a real repo: a clean checkout is silent', 
     git('git add app.json');
     git('git commit -q -m init');
 
-    const load = () => ({
-      createFingerprintAsync: async (dir: string) => {
-        const hash = createHash('sha1')
-          .update(readFileSync(join(dir, 'app.json'), 'utf-8'))
-          .digest('hex');
-        return { hash, sources: [{ type: 'file', filePath: 'app.json', hash }] };
-      },
-    });
+    const createFingerprint = async (dir: string) => {
+      const hash = createHash('sha1')
+        .update(readFileSync(join(dir, 'app.json'), 'utf-8'))
+        .digest('hex');
+      return { hash, sources: [{ type: 'file' as const, filePath: 'app.json', reasons: [], hash }] };
+    };
 
-    expect(await detectFingerprintParity(repo, { load })).toBe(null);
+    expect(await detectFingerprintParity(repo, { createFingerprint })).toBe(null);
     expect(execSync('git worktree list', { cwd: repo, encoding: 'utf-8' }).trim().split('\n').length).toBe(1);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
 
-test('detectFingerprintParity skips silently outside a git repo and without a fingerprinter', async () => {
+test('detectFingerprintParity skips silently outside a git repo without invoking the fingerprinter', async () => {
   resetExecutor();
   const dir = mkdtempSync(join(tmpdir(), 'rn-iso-parity-nogit-'));
   try {
-    const load = () => ({
-      createFingerprintAsync: async () => ({ hash: 'x', sources: [] }),
-    });
-    expect(await detectFingerprintParity(dir, { load })).toBe(null);
-    expect(await detectFingerprintParity(dir, { load: () => null })).toBe(null);
+    let called = false;
+    const createFingerprint = async () => {
+      called = true;
+      return { hash: 'x', sources: [] };
+    };
+    expect(await detectFingerprintParity(dir, { createFingerprint })).toBe(null);
+    expect(called).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

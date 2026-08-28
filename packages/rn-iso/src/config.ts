@@ -191,7 +191,7 @@ export function clearDevice(projectPath: string, platform: string): void {
 
 // --- The supervisor registration --------------------------------------
 //
-// The workspace already records its supervisor in <root>/.rn-iso/state.json,
+// The workspace already records its supervisor in the global workspace state.json,
 // which is where `stop` and `status` read it from. This second copy is the
 // GLOBAL one, and it exists for the case the workspace copy cannot cover: a
 // worktree deleted out from under a running supervisor takes state.json with

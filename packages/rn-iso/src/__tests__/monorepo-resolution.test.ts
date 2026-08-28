@@ -16,6 +16,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runDoctor } from '../doctor.ts';
+import { workspaceStateFile } from '../paths.ts';
 import { detectIsExpo, isPackageResolvable, resolvePackageJson } from '../project.ts';
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
@@ -235,5 +236,5 @@ describe('detectIsExpo is the single source', () => {
 });
 
 function readState() {
-  return readFileSync(join(app, '.rn-iso', 'state.json'), 'utf-8');
+  return readFileSync(workspaceStateFile(app), 'utf-8');
 }

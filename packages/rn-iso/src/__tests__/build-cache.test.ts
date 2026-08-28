@@ -2,6 +2,8 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
+import * as expoFingerprint from '@expo/fingerprint';
+import type { FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
   artifactIn,
@@ -13,7 +15,6 @@ import {
   fingerprintDiffRecord,
   fingerprintDiffSuffix,
   fingerprintProject,
-  loadFingerprinter,
   refingerprintAfterMutation,
   resolveBuild,
   storeBuild,
@@ -44,6 +45,14 @@ function seedEntry(platform: string, hash: string, name = 'MyApp.app') {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, name), 'binary');
   return join(dir, name);
+}
+
+function fpFile(filePath: string, hash: string): FingerprintSource {
+  return { type: 'file', filePath, reasons: [], hash };
+}
+
+function fpDir(filePath: string, hash: string): FingerprintSource {
+  return { type: 'dir', filePath, reasons: [], hash };
 }
 
 test('artifactIn finds the .app or .apk and ignores anything else in the entry', () => {
@@ -290,64 +299,23 @@ test('storing a build registers the cache root at the depth its entries actually
 // worktrees by construction, and an UNSCOPED fingerprint hashes ios/ into the
 // android key. With platforms scoped to the platform being built, both
 // worktrees fingerprinted identically (b5a268e6...).
-// --- resolving @expo/fingerprint at all (issue #74) -------------------------
-//
-// A plain `@react-native-community/cli init` app has no @expo/fingerprint, and
-// without it `ios` / `android` refuse with RN_ISO_NO_FINGERPRINT and a remedy
-// that is a package.json edit -- which is a project change, on the one path
-// (bare) where the zero-config claim had nothing behind it. rn-iso DEPENDS on
-// @expo/fingerprint now, so the second candidate always answers.
-describe('loadFingerprinter', () => {
-  test("falls back to rn-iso's own copy for a project that has none", () => {
-    // `root` is a fresh tmpdir with no node_modules anywhere above it, which
-    // is the bare project's situation exactly.
-    const fp = loadFingerprinter(root);
-    assert(fp);
-    expect(typeof fp.createFingerprintAsync).toBe('function');
-  });
-
-  // The fallback is a REAL dependency, not a hope that something hoisted one
-  // into place. Asserting the manifest is what keeps a future dependency
-  // cleanup from turning the bare path back into a refusal.
-  test('@expo/fingerprint is a declared dependency of the rn-iso package', () => {
-    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as {
-      dependencies?: Record<string, string>;
-    };
-    expect(typeof pkg.dependencies?.['@expo/fingerprint']).toBe('string');
-  });
-
-  // ...and it stays SECOND. A project that ships its own version has a reason
-  // to, and a hash rn-iso computes differently from the project's own tooling
-  // is a cache entry nobody else ever addresses.
-  test("the project's own copy still wins when it has one", () => {
-    const stub = join(root, 'node_modules', '@expo', 'fingerprint');
-    mkdirSync(stub, { recursive: true });
-    writeFileSync(join(stub, 'package.json'), JSON.stringify({ name: '@expo/fingerprint', main: 'index.js' }));
-    writeFileSync(join(stub, 'index.js'), 'exports.createFingerprintAsync = async () => ({ hash: "from-project" });\n');
-    const fp = loadFingerprinter(root);
-    assert(fp);
-    expect(fp.createFingerprintAsync).toBeDefined();
-    return expect(fp.createFingerprintAsync(root)).resolves.toEqual({ hash: 'from-project' });
-  });
-
-  // A path that does not exist is a resolution miss on the FIRST candidate and
-  // a hit on the second, never a throw: the caller's error message is what a
-  // user reads, not a stack.
-  test('a project path that does not exist still resolves rather than throwing', () => {
-    expect(loadFingerprinter(join(root, 'does', 'not', 'exist'))).not.toBe(null);
-  });
+// The import above is a REAL dependency, not a hope that the target project
+// happens to hoist a copy into place.
+test('@expo/fingerprint is a declared dependency of the rn-iso package', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as {
+    dependencies?: Record<string, string>;
+  };
+  expect(typeof pkg.dependencies?.['@expo/fingerprint']).toBe('string');
 });
 
 test('fingerprintProject scopes the hash to the platform being built', async () => {
-  const seen: { dir: string; options: { platforms: string[] } | undefined }[] = [];
-  const load = () => ({
-    createFingerprintAsync: async (dir: string, options?: { platforms: string[] }) => {
-      seen.push({ dir, options });
-      return { hash: `hash-${options?.platforms?.join('+')}` };
-    },
-  });
-  expect((await fingerprintProject(root, { platform: 'ios', load }))?.hash).toBe('hash-ios');
-  expect((await fingerprintProject(root, { platform: 'android', load }))?.hash).toBe('hash-android');
+  const seen: { dir: string; options: FingerprintOptions | undefined }[] = [];
+  const createFingerprint = async (dir: string, options?: FingerprintOptions) => {
+    seen.push({ dir, options });
+    return { hash: `hash-${options?.platforms?.join('+')}`, sources: [] };
+  };
+  expect((await fingerprintProject(root, { platform: 'ios', createFingerprint }))?.hash).toBe('hash-ios');
+  expect((await fingerprintProject(root, { platform: 'android', createFingerprint }))?.hash).toBe('hash-android');
   expect(seen.map((s) => s.options?.platforms)).toEqual([['ios'], ['android']]);
 });
 
@@ -355,14 +323,12 @@ test('fingerprintProject scopes the hash to the platform being built', async () 
 // passed as an empty array, which @expo/fingerprint would read as "hash
 // nothing native".
 test('fingerprintProject without a platform passes no platforms option', async () => {
-  let options: { platforms: string[] } | undefined | 'unset' = 'unset';
-  const load = () => ({
-    createFingerprintAsync: async (_dir: string, opts?: { platforms: string[] }) => {
-      options = opts;
-      return { hash: 'h' };
-    },
-  });
-  expect((await fingerprintProject(root, { load }))?.hash).toBe('h');
+  let options: FingerprintOptions | undefined | 'unset' = 'unset';
+  const createFingerprint = async (_dir: string, opts?: FingerprintOptions) => {
+    options = opts;
+    return { hash: 'h', sources: [] };
+  };
+  expect((await fingerprintProject(root, { createFingerprint }))?.hash).toBe('h');
   const seen = options as { platforms?: string[] } | undefined | 'unset';
   expect(typeof seen === 'object' ? seen?.platforms : undefined).toBe(undefined);
 });
@@ -370,14 +336,12 @@ test('fingerprintProject without a platform passes no platforms option', async (
 // An unknown platform is not silently turned into a scope: `platforms: ['web']`
 // would hash nothing and produce one key for every project on the machine.
 test('fingerprintProject ignores a platform it does not know', async () => {
-  let options: { platforms: string[] } | undefined | 'unset' = 'unset';
-  const load = () => ({
-    createFingerprintAsync: async (_dir: string, opts?: { platforms: string[] }) => {
-      options = opts;
-      return { hash: 'h' };
-    },
-  });
-  await fingerprintProject(root, { platform: 'web', load });
+  let options: FingerprintOptions | undefined | 'unset' = 'unset';
+  const createFingerprint = async (_dir: string, opts?: FingerprintOptions) => {
+    options = opts;
+    return { hash: 'h', sources: [] };
+  };
+  await fingerprintProject(root, { platform: 'web', createFingerprint });
   const seen = options as { platforms?: string[] } | undefined | 'unset';
   expect(typeof seen === 'object' ? seen?.platforms : undefined).toBe(undefined);
 });
@@ -390,7 +354,7 @@ test('storeBuild writes fingerprint-sources.json beside the artifact, and stored
   mkdirSync(build, { recursive: true });
   writeFileSync(join(build, 'bin'), 'x');
 
-  const sources = [{ type: 'file', filePath: 'ios/Podfile.lock', hash: 'aa' }];
+  const sources = [fpFile('ios/Podfile.lock', 'aa')];
   storeBuild('ios', 'k1', build, { root, sources });
 
   expect(storedSources('ios', 'k1', root)).toEqual(sources);
@@ -439,7 +403,7 @@ test('storeBuild carries the sources AND the asset manifest in the same store', 
   mkdirSync(join(root, 'build2'), { recursive: true });
   writeFileSync(build, 'apk');
 
-  const sources = [{ type: 'file', filePath: 'android/app/build.gradle', hash: 'aa' }];
+  const sources = [fpFile('android/app/build.gradle', 'aa')];
   const assetManifest: AssetManifest = { version: ASSET_MANIFEST_VERSION, assets: [] };
   storeBuild('android', 'ak2', build, { root, sources, assetManifest });
 
@@ -502,14 +466,14 @@ test('compareSourceLists is empty when nothing moved, and ignores unnamed source
 });
 
 test('diffFingerprintSources prefers the project differ and falls back when it throws or misbehaves', () => {
-  const previous = [{ filePath: 'a', hash: '1' }];
-  const current = { hash: 'h2', sources: [{ filePath: 'a', hash: '2' }] };
+  const previous = [fpFile('a', '1')];
+  const current = { hash: 'h2', sources: [fpFile('a', '2')] };
 
   // The project's own diffFingerprints answers, in the new item shape.
   const seen: unknown[] = [];
-  const differ = (fp1: unknown, fp2: unknown) => {
+  const differ: typeof expoFingerprint.diffFingerprints = (fp1, fp2) => {
     seen.push([fp1, fp2]);
-    return [{ op: 'changed', beforeSource: { filePath: 'a' }, afterSource: { filePath: 'a' } }];
+    return [{ op: 'changed', beforeSource: fpFile('a', '1'), afterSource: fpFile('a', '2') }];
   };
   expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ })).toEqual(['a']);
   expect(seen.length).toBe(1);
@@ -548,43 +512,37 @@ test('describeFingerprintMiss only speaks for the same platform, a different has
   writeFileSync(join(build, 'bin'), 'x');
   storeBuild('ios', 'old-key', build, {
     root,
-    sources: [{ type: 'file', filePath: 'ios/Podfile.lock', hash: 'aa' }],
+    sources: [fpFile('ios/Podfile.lock', 'aa')],
   });
 
-  const current = { hash: 'new-hash', sources: [{ type: 'file', filePath: 'ios/Podfile.lock', hash: 'a2' }] };
+  const current = { hash: 'new-hash', sources: [fpFile('ios/Podfile.lock', 'a2')] };
   const lastBuild = { platform: 'ios', fingerprint: 'old-hash', cacheKey: 'old-key' };
-  const load = () => null; // no project @expo/fingerprint: the fallback diff decides
+  const differ = null; // exercise the plain source-list fallback
 
-  const miss = describeFingerprintMiss({ projectRoot: root, platform: 'ios', current, lastBuild, root, load });
+  const miss = describeFingerprintMiss({ platform: 'ios', current, lastBuild, root, differ });
   assert(miss);
   expect(miss.previousHash).toBe('old-hash');
   expect(miss.changed).toEqual(['ios/Podfile.lock']);
 
   // Wrong platform, same hash, no record, no stored sources: all null.
-  expect(describeFingerprintMiss({ projectRoot: root, platform: 'android', current, lastBuild, root, load })).toBe(
-    null,
-  );
+  expect(describeFingerprintMiss({ platform: 'android', current, lastBuild, root, differ })).toBe(null);
   expect(
     describeFingerprintMiss({
-      projectRoot: root,
       platform: 'ios',
       current: { ...current, hash: 'old-hash' },
       lastBuild,
       root,
-      load,
+      differ,
     }),
   ).toBe(null);
-  expect(describeFingerprintMiss({ projectRoot: root, platform: 'ios', current, lastBuild: null, root, load })).toBe(
-    null,
-  );
+  expect(describeFingerprintMiss({ platform: 'ios', current, lastBuild: null, root, differ })).toBe(null);
   expect(
     describeFingerprintMiss({
-      projectRoot: root,
       platform: 'ios',
       current,
       lastBuild: { ...lastBuild, cacheKey: 'never-stored' },
       root,
-      load,
+      differ,
     }),
   ).toBe(null);
 });
@@ -602,9 +560,9 @@ describe('refingerprintAfterMutation', () => {
       projectRoot: root,
       platform: 'android',
       previousHash: '3c64263',
-      fingerprint: async () => ({ hash: '7ea8b7c', sources: [{ type: 'dir', filePath: 'android' }] }),
+      fingerprint: async () => ({ hash: '7ea8b7c', sources: [fpDir('android', 'dd')] }),
     });
-    expect(shifted).toEqual({ hash: '7ea8b7c', sources: [{ type: 'dir', filePath: 'android' }], moved: true });
+    expect(shifted).toEqual({ hash: '7ea8b7c', sources: [fpDir('android', 'dd')], moved: true });
   });
 
   test('a hash that did not move is reported as not moved, so nothing is re-keyed', async () => {

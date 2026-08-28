@@ -1,14 +1,16 @@
 import { type ProjectRecord, getProject, removeProject } from './config.ts';
+import { existsSync, rmSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.ts';
 import { readCollectors } from './collector/state.ts';
+import { workspaceDir } from './paths.ts';
 
 // Stop this workspace's device-log collectors. Their record in state.json is
 // the only thing that names them, so they must be reaped before the entry (and,
 // for `worktree remove`, the whole tree) is removed: a collector left running
 // leaks, and its own exit path rewrites state.json -- resurrecting a zombie
-// `.rn-iso` under a directory that was just deleted. `stop` reaps them the same
-// way; the shared reclaim path did not, relying on device teardown to end the
+// global workspace directory after cleanup. `stop` reaps them the same way;
+// the shared reclaim path did not, relying on device teardown to end the
 // `log stream` / `logcat` indirectly, which a failed or already-stopped device
 // does not do.
 function reapCollectors(root: string): void {
@@ -120,10 +122,9 @@ function reclaimOwnedDevices(project: ProjectRecord | null): {
 // Drop a project's rn-iso state and, optionally, its owned devices. Shared by
 // `gc` and `worktree remove` so the two cannot drift.
 //
-// There is no build-output step here any more. Build output lives inside the
-// workspace (`<root>/.rn-iso/`), so it is reclaimed by whatever removes the
-// directory itself and never needs to be found by reverse-mapping a global
-// DerivedData tree back to a project.
+// Workspace output is global, so reclaim owns its deletion too. Keeping that
+// beside the registry removal means worktree remove, main-checkout reclaim and
+// gc cannot forget one half of the same environment.
 export interface ReclaimResult {
   path: string;
   dereferenced: string[];
@@ -134,6 +135,8 @@ export interface ReclaimResult {
   skippedDevices: SkippedDevice[];
   failedDevices: SkippedDevice[];
   keptEntry: boolean;
+  removedWorkspaceDirs: string[];
+  failedWorkspaceDirs: string[];
 }
 
 export async function reclaimProject(
@@ -177,7 +180,24 @@ export async function reclaimProject(
   // the only record naming it. Dropping the entry here is what turns a failed
   // teardown into a simulator nothing references, so the entry stays and the
   // caller reports it as still tracked.
-  const keptEntry = failedDevices.length > 0;
+  const removedWorkspaceDirs: string[] = [];
+  const failedWorkspaceDirs: string[] = [];
+  if (failedDevices.length === 0) {
+    const dir = workspaceDir(path);
+    if (existsSync(dir)) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+        removedWorkspaceDirs.push(dir);
+      } catch {
+        failedWorkspaceDirs.push(dir);
+      }
+    }
+  }
+
+  // Keep the registry handle when any irreversible cleanup step failed. That
+  // gives gc/worktree remove an exact project path to retry instead of turning
+  // a failed global-directory deletion into anonymous orphaned state.
+  const keptEntry = failedDevices.length > 0 || failedWorkspaceDirs.length > 0;
   if (project && !keptEntry) removeProject(path);
 
   return {
@@ -190,5 +210,7 @@ export async function reclaimProject(
     skippedDevices,
     failedDevices,
     keptEntry,
+    removedWorkspaceDirs,
+    failedWorkspaceDirs,
   };
 }

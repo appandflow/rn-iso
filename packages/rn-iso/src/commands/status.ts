@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { totalmem } from 'os';
 import type { Command } from 'commander';
-import { loadConfig } from '../config.ts';
+import { getConfigDir, loadConfig } from '../config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { isMetroRunning } from '../ports.ts';
@@ -237,18 +237,17 @@ export default function statusCommand(program: Command): void {
     });
 }
 
-// The volumes worth reporting: the boot volume, plus the project's own when it
-// is a different one. `volumeRootFor` is the same mapping `gc` uses to name an
-// unmounted volume, so the two commands label a volume identically.
+// The volumes worth reporting: the boot volume, the global rn-iso state home,
+// and the project itself. iOS DerivedData and shared caches use the state-home
+// volume; Android build output and source mutations can still use the project
+// volume. `volumeRootFor` keeps the labels consistent with gc.
 //
 // Single-quoted rather than run through runFile: the whole suite's mock
 // executors implement `runQuiet` and nothing else, and a status line is not
 // worth making every one of them grow a method. Single quotes make a space, a
 // `$` and a `"` in a volume name all literal.
 export function readVolumes(projectPath: string): VolumeInfo[] {
-  const roots = ['/'];
-  const projectVolume = volumeRootFor(projectPath);
-  if (projectVolume !== '/') roots.push(projectVolume);
+  const roots = [...new Set(['/', volumeRootFor(getConfigDir()), volumeRootFor(projectPath)])];
   const volumes: VolumeInfo[] = [];
   for (const volume of roots) {
     const quoted = `'${volume.replace(/'/g, "'\\''")}'`;

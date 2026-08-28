@@ -2,7 +2,7 @@
 // and, with --delete, reclaims it.
 //
 // Five things still orphan, and none of them is a build artifact any more --
-// build output lives inside the workspace (`<root>/.rn-iso/`) and dies with the
+// build output lives inside the global workspace directory and dies with the
 // directory that holds it, so the DerivedData sweep and its reverse-mapping
 // ambiguity are gone:
 //
@@ -923,7 +923,13 @@ export async function runGc(opts: RunGcOptions = {}): Promise<void> {
   let deleteFailures = 0;
   for (const path of deadProjects) {
     const result = await reclaimProject(path);
-    console.log(chalk.green(`Pruned ${path}`));
+    if (result.keptEntry) console.log(chalk.yellow(`Could not fully prune ${path}; its registry entry was kept.`));
+    else console.log(chalk.green(`Pruned ${path}`));
+    for (const dir of result.removedWorkspaceDirs) console.log(chalk.dim(`  removed workspace output ${dir}`));
+    for (const dir of result.failedWorkspaceDirs) {
+      console.log(chalk.red(`  could not remove workspace output ${dir}`));
+      deleteFailures += 1;
+    }
     if (result.killedPid) {
       console.log(chalk.dim(`  killed orphaned Metro pid ${result.killedPid}`));
     }

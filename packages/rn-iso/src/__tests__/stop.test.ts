@@ -7,11 +7,11 @@
 // file kills anything, boots anything, or touches a real simulator.
 
 import assert from 'node:assert';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { saveConfig, getProject } from '../config.ts';
-import { supervisorPidFile, workspaceStateFile } from '../paths.ts';
+import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile } from '../paths.ts';
 import {
   clearCollectorState,
   clearSupervisorState,
@@ -376,6 +376,7 @@ beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-'));
   process.env.RN_ISO_HOME = tmpHome;
   tmpRoot = mkdtempSync(join(tmpdir(), 'rn-iso-proj-'));
+  ensureWorkspaceStorage(tmpRoot);
 });
 
 afterEach(() => {
@@ -386,7 +387,6 @@ afterEach(() => {
 
 test('readSupervisorState reads the supervisor block, and tolerates corruption', () => {
   expect(readSupervisorState(tmpRoot)).toBe(null);
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(workspaceStateFile(tmpRoot), '{ not json');
   expect(readSupervisorState(tmpRoot)).toBe(null);
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7, port: 8083 } }));
@@ -396,7 +396,6 @@ test('readSupervisorState reads the supervisor block, and tolerates corruption',
 // Later steps put `lastBuild` beside `supervisor` in the same file, so clearing
 // the supervisor must not take the rest of the file with it.
 test('clearSupervisorState drops the supervisor key and keeps the rest of state.json', () => {
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(supervisorPidFile(tmpRoot), '7');
   writeFileSync(
     workspaceStateFile(tmpRoot),
@@ -411,7 +410,6 @@ test('clearSupervisorState drops the supervisor key and keeps the rest of state.
 });
 
 test('clearSupervisorState removes a state file that held only the supervisor', () => {
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 } }));
   clearSupervisorState(tmpRoot);
   expect(existsSync(workspaceStateFile(tmpRoot))).toBe(false);
@@ -429,7 +427,6 @@ test('stopping frees the reserved port in the registry and keeps the device reco
       },
     }),
   );
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(supervisorPidFile(tmpRoot), '4242');
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 4242, port: 8083 } }));
 
@@ -579,7 +576,6 @@ test('nothing recorded means no clear and no signal', async () => {
 
 test('readCollectorState reads the collectors block and tolerates corruption', () => {
   expect(readCollectorState(tmpRoot)).toEqual({});
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(workspaceStateFile(tmpRoot), '{ not json');
   expect(readCollectorState(tmpRoot)).toEqual({});
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ collectors: { ios: { pid: 9 } } }));
@@ -590,7 +586,6 @@ test('readCollectorState reads the collectors block and tolerates corruption', (
 // the fingerprint away with a collector pid would make the next build a
 // guaranteed cache miss.
 test('clearCollectorState drops only the collectors key', () => {
-  mkdirSync(join(tmpRoot, '.rn-iso'), { recursive: true });
   writeFileSync(
     workspaceStateFile(tmpRoot),
     JSON.stringify({

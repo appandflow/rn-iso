@@ -51,7 +51,9 @@ into `<dir>/metro.ndjson`, forwarded in-app console logs and redboxes into
 ```js
 const { ndjsonReporter } = require('@rn-iso/metro');
 
-config.reporter = ndjsonReporter({ dir: '.rn-iso/logs' });
+config.reporter = ndjsonReporter({
+  dir: '~/.rn-iso/workspaces/my-app--<16hex-path-digest>/logs',
+});
 await Metro.runServer(config, { host, port });
 ```
 
@@ -64,7 +66,9 @@ captures a bare React Native project's logs.
 Each record is `{ ts, src, level, msg }` plus, when they apply, `event` (the
 Metro event name), `stack` (passed through as Metro gave it) and `marker: true`
 (written on a finished bundle build, which is what `rn-iso logs --errors` counts
-errors from). `dir` defaults to `.rn-iso/logs` under the working directory.
+errors from). When used by rn-iso, `dir` defaults to
+`$RN_ISO_HOME/workspaces/<readable-project-slug>--<16hex-path-digest>/logs`
+(by default `~/.rn-iso/workspaces/...`), outside the working directory.
 
 A logging failure is never a server failure: an unwritable directory or an event
 shape from a Metro version this package has never seen is counted on

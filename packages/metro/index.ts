@@ -19,7 +19,7 @@
 // discarded. rn-iso's supervisor hosts Metro itself and passes this one in.
 //
 //   const { ndjsonReporter } = require('@rn-iso/metro');
-//   config.reporter = ndjsonReporter({ dir: '<root>/.rn-iso/logs' });
+//   config.reporter = ndjsonReporter();
 //
 // This file is authored in TypeScript with ESM syntax and built to CommonJS by
 // tsdown (format: 'cjs'), because a metro.config.js and a supervisor hosting
@@ -27,7 +27,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { metroCacheRoot, registerCache, tagSharedStore } from '@rn-iso/core';
+import { metroCacheRoot, registerCache, tagSharedStore, workspaceLogDir } from '@rn-iso/core';
 
 // A Metro FileStore, kept structural so this package need not depend on
 // metro-cache's types: the constructor is all the caller relies on.
@@ -203,13 +203,13 @@ function errorMessage(error: unknown): string {
 }
 
 export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
-  const logDir = dir || path.join(process.cwd(), '.rn-iso', 'logs');
+  const logDir = dir || workspaceLogDir(process.cwd());
   let ensured = false;
   let drops = 0;
 
   // Lazily: constructing a reporter must not create directories for a server
-  // that may never start, and the log directory is workspace-local, so it may
-  // not exist yet at all.
+  // that may never start, and the per-workspace log directory may not exist
+  // yet at all.
   function write(file: string, record: LogRecord): void {
     try {
       if (!ensured) {

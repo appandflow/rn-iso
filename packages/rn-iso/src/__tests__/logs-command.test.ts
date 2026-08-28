@@ -6,11 +6,12 @@
 // 2. --json emits the raw records, one per line, so its stdout is itself
 //    valid NDJSON and can be piped straight back into a parser.
 import assert from 'node:assert';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { parseNdjsonLine } from '../ndjson.ts';
+import { workspaceDir, workspaceLogsDir } from '../paths.ts';
 import logsCommand, {
   ERRORS_PRINT_CAP,
   formatRecord,
@@ -202,9 +203,9 @@ describe('logs command', () => {
   beforeEach(() => {
     tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-logscmd-home-'));
     process.env.RN_ISO_HOME = tmpHome;
-    project = mkdtempSync(join(tmpdir(), 'rn-iso-logscmd-'));
+    project = realpathSync(mkdtempSync(join(tmpdir(), 'rn-iso-logscmd-')));
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'demo' }));
-    logsDir = join(project, '.rn-iso', 'logs');
+    logsDir = workspaceLogsDir(project);
     mkdirSync(logsDir, { recursive: true });
     cwd = process.cwd();
     process.chdir(project);
@@ -271,7 +272,7 @@ describe('logs command', () => {
   });
 
   test('exits 0 when the workspace has no log directory at all', () => {
-    rmSync(join(project, '.rn-iso'), { recursive: true, force: true });
+    rmSync(workspaceDir(project), { recursive: true, force: true });
     run({});
     expect(exitCode).toBe(null);
     expect(out).toEqual([]);

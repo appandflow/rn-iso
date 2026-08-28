@@ -257,7 +257,7 @@ export function formatSpace(mb: number): string {
 // is the wrong number twice over: the repos live on an external SSD, so the
 // figure printed described a volume nothing was building on, and the volume
 // that could actually fill up went unmentioned. Build output is workspace-local
-// (`<root>/.rn-iso/derived-data`), so the project's volume is where a build
+// (the global workspace derived-data directory), so the project's volume is where a build
 // runs out of room; the boot volume still matters because the shared caches and
 // the simulator device set live under $HOME.
 //

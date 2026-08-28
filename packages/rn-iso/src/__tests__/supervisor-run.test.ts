@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
-import { supervisorPidFile, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { describeError, supervisorError } from '../supervisor/errors.ts';
 import {
   MODE_BARE,
@@ -110,9 +110,9 @@ describe('Contract 2: the workspace state file', () => {
 
   test('writing leaves no temp file behind: readers must never see a partial state', () => {
     writeWorkspaceState(root, { supervisor: { pid: 3, port: 8084 } });
-    const leftovers = existsSync(join(root, '.rn-iso')) ? readFileSync(workspaceStateFile(root), 'utf-8') : '';
+    const leftovers = existsSync(workspaceDir(root)) ? readFileSync(workspaceStateFile(root), 'utf-8') : '';
     expect(leftovers).toMatch(/"pid": 3/);
-    const dir = join(root, '.rn-iso');
+    const dir = workspaceDir(root);
     const entries = existsSync(dir) ? readdirSync(dir) : [];
     expect(entries.filter((e) => e.includes('.tmp-'))).toEqual([]);
   });
@@ -193,7 +193,7 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
     // every time, so the assertion is over several volleys -- an unlocked
     // writer drops a key in at least one, a locked one never does.
     for (let round = 0; round < 8; round++) {
-      mkdirSync(join(root, '.rn-iso'), { recursive: true });
+      mkdirSync(workspaceDir(root), { recursive: true });
       writeFileSync(workspaceStateFile(root), '{}\n');
       const startAt = Date.now() + 250;
       await Promise.all(

@@ -445,13 +445,55 @@ describe('buildAndroid', () => {
     expect((result as BuildAndroidResultLike).ok).toBe(true);
     expect((result as BuildAndroidResultLike).apkPath).toBe(join(debugApkDir(root), 'app-debug.apk'));
     expect(result.durationMs).toBe(41000);
+    // The first record is the COMMAND (issue #78), then the raw transcript.
+    const [start, ...transcript] = writer.records;
+    assert(start);
+    expect(start.event).toBe('build_start');
+    expect(start.msg).toBe(`${join(root, 'android', 'gradlew')} assembleDebug --build-cache`);
     // Contract 1: the raw transcript is src "build", level debug.
-    expect(writer.records.map((r) => r.msg)).toEqual(['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s']);
-    for (const record of writer.records) {
+    expect(transcript.map((r) => r.msg)).toEqual(['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s']);
+    for (const record of transcript) {
       expect(record.src).toBe('build');
       expect(record.level).toBe('debug');
       expect(record.raw).toBe(true);
     }
+  });
+
+  // The record exists so that "was --build-cache actually on the argv?" is a
+  // question the LOG answers -- test/e2e/native/run-cache-e2e.mjs reads exactly
+  // this record rather than racing `ps` against a live build. It is REPORTED,
+  // not inferred, so it carries level info and no `raw` flag, which is what
+  // distinguishes it from the transcript lines around it.
+  test('writes a build_start record carrying the resolved gradlew path and its full argv', async () => {
+    makeAndroidProject();
+    const writer = recordingWriter();
+    await buildAndroid(
+      { root, logWriter: writer },
+      { spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() }) },
+    );
+    const starts = writer.records.filter((r) => r.event === 'build_start');
+    expect(starts.length).toBe(1);
+    const start = starts[0];
+    assert(start);
+    expect(start.src).toBe('build');
+    expect(start.level).toBe('info');
+    expect(start.raw).toBe(undefined);
+    expect(start.msg).toBe(`${join(root, 'android', 'gradlew')} assembleDebug --build-cache`);
+  });
+
+  test('the build_start record shows the argv WITHOUT --build-cache when the cache is off', async () => {
+    makeAndroidProject();
+    const writer = recordingWriter();
+    await buildAndroid(
+      { root, logWriter: writer },
+      {
+        buildCache: false,
+        spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() }),
+      },
+    );
+    const start = writer.records.find((r) => r.event === 'build_start');
+    assert(start);
+    expect(start.msg).toBe(`${join(root, 'android', 'gradlew')} assembleDebug`);
   });
 
   test('a failing build comes back as data with the diagnostics extracted, never a throw', async () => {

@@ -94,7 +94,46 @@ function installMetroCache() {
     `class FileStore {
        constructor(options) { this._root = options.root; }
      }
+     class Cache {
+       constructor(stores) { this._stores = stores; }
+     }
+     exports.Cache = Cache;
      exports.FileStore = FileStore;\n`,
+  );
+}
+
+// The module path Expo SDK 54+ actually follows. @expo/metro-config borrows
+// mergeConfig from @expo/metro/metro-config; it does not call loadConfig. The
+// @expo/metro package then re-exports metro-cache for Metro's Transformer.
+// Keeping these as real packages on disk means the child exercises
+// Module._load with the same request strings as Expo, including both re-export
+// layers that the old shim missed.
+function installExpoMetroPath() {
+  installModule(
+    'metro-config',
+    `exports.mergeConfig = function mergeConfig(base, user) {
+       return Object.assign({}, base, user);
+     };\n`,
+  );
+  installMetroCache();
+  installModule('@expo/metro', 'module.exports = {};\n');
+  writeFileSync(
+    join(project, 'node_modules', '@expo', 'metro', 'metro-config.js'),
+    "module.exports = require('metro-config');\n",
+  );
+  writeFileSync(
+    join(project, 'node_modules', '@expo', 'metro', 'metro-cache.js'),
+    "module.exports = require('metro-cache');\n",
+  );
+  installModule(
+    '@expo/metro-config',
+    `const { mergeConfig } = require('@expo/metro/metro-config');
+     exports.loadUserConfig = function loadUserConfig() {
+       return mergeConfig(
+         { cacheStores: [{ _root: '/expo/default/store' }] },
+         { cacheStores: [{ _root: '/project/user/store' }] },
+       );
+     };\n`,
   );
 }
 
@@ -103,6 +142,13 @@ function installMetroCache() {
 const DRIVER = `
   const { loadConfig } = require('metro-config');
   loadConfig({ cwd: process.cwd() }).then((config) => {
+    // This is the line Metro's Transformer reaches after config assembly. The
+    // shim's guarantee now lives here, not in whichever Expo/Metro helper
+    // happened to build the config.
+    try {
+      const { Cache } = require('metro-cache');
+      if (typeof Cache === 'function') new Cache(config.cacheStores);
+    } catch {}
     console.log(JSON.stringify({ roots: (config.cacheStores || []).map((s) => s && s._root) }));
   });
 `;
@@ -178,6 +224,41 @@ function runChildCapturingStderr(store: string | null = '/cache/shimtest') {
 }
 
 describe('the metro-config shim, in a real child process', () => {
+  test("the Cache constructor is the guarantee: it keeps the project's stores and appends ours", () => {
+    installMetroCache();
+    const script = `
+      const { Cache } = require('metro-cache');
+      const cache = new Cache([{ _root: '/project/own/store' }]);
+      console.log(JSON.stringify(cache._stores.map((store) => store && store._root)));
+    `;
+    const result = runScript(script);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out)).toEqual(['/project/own/store', '/cache/shimtest']);
+    expect(result.err.split('\n').filter((line) => line.startsWith('rn-iso-metro-store:'))).toEqual([
+      'rn-iso-metro-store: sharing Metro transforms through /cache/shimtest',
+    ]);
+  });
+
+  test('the Expo SDK 54+ loadUserConfig path reaches the store even though it never calls loadConfig', () => {
+    installExpoMetroPath();
+    const script = `
+      const { loadUserConfig } = require('@expo/metro-config');
+      const config = loadUserConfig();
+      const { Cache } = require('@expo/metro/metro-cache');
+      const cache = new Cache(config.cacheStores);
+      console.log(JSON.stringify(cache._stores.map((store) => store && store._root)));
+    `;
+    const result = runScript(script);
+    expect(result.code).toBe(0);
+    // The user's cacheStores replaces Expo's default during merge; rn-iso
+    // appends after that choice and never restores or reorders the default.
+    expect(JSON.parse(result.out)).toEqual(['/project/user/store', '/cache/shimtest']);
+    expect(result.err.split('\n').filter((line) => line.startsWith('warning:'))).toEqual([]);
+    expect(result.err.split('\n').filter((line) => line.startsWith('rn-iso-metro-store:'))).toEqual([
+      'rn-iso-metro-store: sharing Metro transforms through /cache/shimtest',
+    ]);
+  });
+
   test("appends the store to the config metro-config returns, keeping the project's own", () => {
     installMetroConfig();
     installMetroCache();
@@ -244,7 +325,7 @@ describe('the metro-config shim, in a real child process', () => {
     const result = JSON.parse(raw) as { code: number; out: string; err: string };
     expect(result.code).toBe(0);
     expect(result.out.trim()).toBe('survived');
-    expect(result.err).toContain('exports no loadConfig()');
+    expect(result.err).toContain('exports neither a substitutable loadConfig() nor mergeConfig()');
   });
 
   // --- the substitute, against the shape metro-config actually has ---------
@@ -362,17 +443,21 @@ describe('the metro-config shim, in a real child process', () => {
     expect(JSON.parse(result.out)).toEqual({ untouched: true, roots: ['/project/own/store'] });
     const warnings = result.err.split('\n').filter((l) => l.startsWith('warning:'));
     expect(warnings.length).toBe(1);
-    expect(warnings[0]).toContain('cannot be substituted');
+    expect(warnings[0]).toContain('neither a substitutable loadConfig() nor mergeConfig()');
   });
 
   // --- the success line, which is the only honest record of the outcome -----
 
-  test('the shim announces the store ONCE, whatever loadConfig is called', () => {
+  test('the shim announces the store ONCE, whatever number of Cache objects Metro constructs', () => {
     installBabelMetroConfig();
     installMetroCache();
     const script = `
       const { loadConfig } = require('metro-config');
-      Promise.all([loadConfig({}), loadConfig({}), loadConfig({})]).then(() => console.log('done'));
+      const { Cache } = require('metro-cache');
+      Promise.all([loadConfig({}), loadConfig({}), loadConfig({})]).then((configs) => {
+        for (const config of configs) new Cache(config.cacheStores);
+        console.log('done');
+      });
     `;
     const result = runScript(script);
     expect(result.code).toBe(0);

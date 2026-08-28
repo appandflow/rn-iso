@@ -22,7 +22,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { getExecutor } from './exec.ts';
 import { detectIsExpo } from './project.ts';
-import { diffFingerprintSources, fingerprintProject, loadFingerprinter, type Fingerprinter } from './build-cache.ts';
+import * as expoFingerprint from '@expo/fingerprint';
+import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
 import { dirtyFingerprintFiles } from './worktree.ts';
 import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from './config.ts';
 import { liveOwnedDeviceCount } from './engine/device.ts';
@@ -44,7 +45,6 @@ import {
   ownerFromConfig,
   providerFromConfig,
 } from './engine/remote-cache.ts';
-import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.ts';
 
 // Loosely-typed views of the JSON config files this module parses
 // defensively (package.json, app.json, Podfile.properties.json): the shapes
@@ -195,49 +195,6 @@ export function checkCompilationCache(podfileSource: string | null, xcodeMajor: 
     'The Podfile enables compilation caching but leaves the CAS at its default path',
     'The default CAS lives at the DerivedData root, and DerivedData is per-workspace -- so nothing is actually shared between worktrees, which is the only reason to turn it on. Builds rn-iso drives are unaffected: they override COMPILATION_CACHE_CAS_PATH to a shared path on the xcodebuild command line, which wins over the project setting. This costs only the builds you run outside rn-iso.',
     'Nothing to do for rn-iso. For builds outside it: set COMPILATION_CACHE_CAS_PATH to a fixed path outside DerivedData -- ~/.rn-iso/compilation-cache is where rn-iso puts its own, so the two share entries instead of filling two caches.',
-  );
-}
-
-// `.rn-iso/` holds this workspace's build output, its logs and the supervisor
-// pidfile: everything that is meaningful only to the checkout that produced it.
-//
-// This used to check two files. The other half -- whether `.rn-iso/` was listed
-// in a `.worktreeexclude` -- is gone because it cannot be wrong any more:
-// `worktree create --carry-ignored` skips the directory unconditionally, in
-// code (isWorkspaceArtifact in src/worktree.js), at any depth and whatever any
-// pattern file says. Checking a guarantee is how doctor ends up confirming a
-// file nothing reads, which is exactly what it did in a monorepo, where the
-// `.worktreeexclude` it read sat next to package.json and `worktree create`
-// read the repo root's.
-
-// gitignore is a line-oriented path list, so the entry is matched as a path and
-// not as a substring: a commented-out line ignores nothing, and `/.rn-iso`,
-// `.rn-iso` and `.rn-iso/` are the same entry.
-function listsWorkspaceDir(source: string | null | undefined): boolean {
-  if (source == null) return false;
-  return String(source)
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#'))
-    .some((line) => line.replace(/^\/+/, '').replace(/\/+$/, '') === WORKSPACE_DIR);
-}
-
-// `gitIgnored` is git's own verdict (`git check-ignore`), which sees every
-// .gitignore on the path -- a monorepo app dir covered by the REPO ROOT's
-// .gitignore is properly ignored even though its own file never says so
-// (appandflow/rn-iso#31). The file read stays as the fallback for a tree
-// where git is not available.
-export function checkArtifactLayout({
-  gitignoreSource,
-  gitIgnored = null,
-}: { gitignoreSource?: string | null; gitIgnored?: boolean | null } = {}): Finding | null {
-  if (gitIgnored === true) return null;
-  if (gitIgnored === null && listsWorkspaceDir(gitignoreSource)) return null;
-  return finding(
-    'note',
-    '.rn-iso/ is not gitignored',
-    "It holds this workspace's build output, logs and supervisor pidfile -- location-addressed, meaningful only to the checkout that produced it. Unignored, every build offers its own DerivedData up for commit and git status stops being readable.",
-    `Add ${WORKSPACE_DIR}/ to .gitignore -- or just run start/ios/android once: they add it themselves and say so. On a repo rn-iso has already touched, this finding means that self-write failed or was reverted.`,
   );
 }
 
@@ -471,16 +428,6 @@ export function runDoctor(
   const podfileProperties = readJson(join(projectRoot, 'ios', 'Podfile.properties.json'));
   const podfile = read(join('ios', 'Podfile'));
   const metroConfig = read('metro.config.js') ?? read('metro.config.cjs');
-  const gitignore = read('.gitignore');
-  // git's verdict on the workspace dir, monorepo-aware. check-ignore exits 0
-  // for ignored, 1 for not ignored, 128 outside a repo; runQuiet nulls the
-  // failures, so only a definite "ignored" upgrades the file-based answer.
-  const gitIgnored =
-    getExecutor().runQuiet(`git -C ${JSON.stringify(projectRoot)} check-ignore ${WORKSPACE_DIR}`, {
-      timeoutMs: 10000,
-    }) != null
-      ? true
-      : null;
 
   // Same detector `status` uses, so one project never reads as expo in one
   // command and bare in another. It weighs the `ios` script above the presence
@@ -523,7 +470,6 @@ export function runDoctor(
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
     checkCompilationCache(podfile, xcodeMajor),
-    checkArtifactLayout({ gitignoreSource: gitignore, gitIgnored }),
     checkCcacheConflict(podfile, podfileProperties),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
     easFinding,
@@ -610,15 +556,15 @@ export function checkFingerprintParity({
 export async function detectFingerprintParity(
   projectRoot: string,
   {
-    load = loadFingerprinter,
+    createFingerprint = expoFingerprint.createFingerprintAsync,
+    differ = expoFingerprint.diffFingerprints,
     dirtyFiles = dirtyFingerprintFiles,
   }: {
-    load?: (projectRoot: string) => Fingerprinter | null;
+    createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
+    differ?: typeof expoFingerprint.diffFingerprints | null;
     dirtyFiles?: (root: string) => string[];
   } = {},
 ): Promise<Finding | null> {
-  const fp = load(projectRoot);
-  if (!fp) return null;
   const exec = getExecutor();
   const quotedRoot = JSON.stringify(projectRoot);
   if (exec.runQuiet(`git -C ${quotedRoot} rev-parse --git-dir`, { timeoutMs: 10000 }) == null) return null;
@@ -642,16 +588,15 @@ export async function detectFingerprintParity(
   }
 
   try {
-    const loadHere = () => fp;
-    const project = await fingerprintProject(projectRoot, { platform, load: loadHere });
-    const clean = await fingerprintProject(worktree, { platform, load: loadHere });
+    const project = await fingerprintProject(projectRoot, { platform, createFingerprint });
+    const clean = await fingerprintProject(worktree, { platform, createFingerprint });
     if (!project || !clean) return null;
     if (project.hash === clean.hash) return null;
     const changed = diffFingerprintSources({
       previous: clean.sources,
       previousHash: clean.hash,
       current: project,
-      differ: fp.diffFingerprints ?? null,
+      differ,
     });
     return checkFingerprintParity({
       projectHash: project.hash,
@@ -661,7 +606,7 @@ export async function detectFingerprintParity(
     });
   } catch {
     // A fingerprint that cannot run (a worktree with no node_modules can make
-    // the project's own fingerprinter throw) is a skip, not a finding.
+    // native dependency discovery throw) is a skip, not a finding.
     return null;
   } finally {
     // Always, on every exit path: the temp worktree registered itself in

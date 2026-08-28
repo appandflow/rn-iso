@@ -8,9 +8,40 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 export function configDir(): string {
   return process.env.RN_ISO_HOME || path.join(os.homedir(), '.rn-iso');
+}
+
+// Location-addressed runtime state lives outside the project tree. The base
+// name keeps directories recognizable to humans; the canonical path digest
+// keeps same-named projects and worktrees isolated.
+export function workspaceSlug(projectRoot: string): string {
+  const name = path
+    .basename(path.resolve(projectRoot))
+    .normalize('NFKD')
+    .replace(/[^A-Za-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase()
+    .slice(0, 48);
+  return name || 'workspace';
+}
+
+export function workspaceId(projectRoot: string): string {
+  return createHash('sha256').update(path.resolve(projectRoot)).digest('hex').slice(0, 16);
+}
+
+export function workspaceName(projectRoot: string): string {
+  return `${workspaceSlug(projectRoot)}--${workspaceId(projectRoot)}`;
+}
+
+export function workspaceStateDir(projectRoot: string): string {
+  return path.join(configDir(), 'workspaces', workspaceName(projectRoot));
+}
+
+export function workspaceLogDir(projectRoot: string): string {
+  return path.join(workspaceStateDir(projectRoot), 'logs');
 }
 
 // The machine config's cache overrides (`caches.buildCache` / `caches.metroCache`
