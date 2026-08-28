@@ -152,7 +152,7 @@ jobs:
         # can pick it up whether the run passed or failed.
         run: >-
           node test/e2e/native/run-cache-e2e.mjs
-          --framework ${{ matrix.framework }} --platform ios --keep --home "$TMPDIR/stim-cli-home"
+          --framework ${{ matrix.framework }} --platform ios --keep --home "$TMPDIR/stim-cli-cache-home"
           --summary "$GITHUB_WORKSPACE/cache-summary-ios-${{ matrix.framework }}.json"
 
       - name: Upload the cache-suite summary
@@ -171,7 +171,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-ios-${{ matrix.framework }}
-          path: ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
+          path: |
+            ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-cache-home/workspaces/**/logs/*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
@@ -260,7 +262,7 @@ jobs:
             adb -s emulator-5554 emu kill || true
             sleep 3
             if [ "$STIM_CLI_E2E_SUITE" = loop ] || [ "$STIM_CLI_E2E_SUITE" = all ]; then node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home"; fi
-            if [ "$STIM_CLI_E2E_SUITE" = caches ] || [ "$STIM_CLI_E2E_SUITE" = all ]; then node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home" --summary "$GITHUB_WORKSPACE/cache-summary-android-${{ matrix.framework }}.json"; fi
+            if [ "$STIM_CLI_E2E_SUITE" = caches ] || [ "$STIM_CLI_E2E_SUITE" = all ]; then node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-cache-home" --summary "$GITHUB_WORKSPACE/cache-summary-android-${{ matrix.framework }}.json"; fi
 
       - name: Upload the cache-suite summary
         if: always() && (env.STIM_CLI_E2E_SUITE == 'caches' || env.STIM_CLI_E2E_SUITE == 'all')
@@ -276,7 +278,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-android-${{ matrix.framework }}
-          path: ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
+          path: |
+            ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-cache-home/workspaces/**/logs/*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
