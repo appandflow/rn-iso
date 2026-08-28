@@ -843,7 +843,7 @@ describe('action: spawning the supervisor', () => {
     const { exec } = await runSpawnedExpoStart({
       port,
       options: { json: true, wait: '10' },
-      settings: { [platform]: { remote: true } },
+      settings: { [platform]: { remote: 'proxy' } },
       tunnelDelayMs: 0,
     });
     expect(exec.calls.spawn[0]?.args).toEqual([supervisorEntry(), '--root', root, '--port', String(port), '--tunnel']);

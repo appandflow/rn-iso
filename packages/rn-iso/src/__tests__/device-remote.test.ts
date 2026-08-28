@@ -18,6 +18,7 @@ import {
   PUBLIC_METRO_ENV,
   remoteAndroidDeps,
   remoteIosDeps,
+  resolveRemoteContext,
   resolveMetroOrigin,
   teardownRemote,
 } from '../engine/device-remote.ts';
@@ -82,9 +83,11 @@ function mockExec({
 
 let root: string;
 function ctx(overrides: Partial<Parameters<typeof remoteIosDeps>[0]> = {}) {
+  const backend = overrides.backend ?? (overrides.existingDaemon ? 'proxy' : 'eas');
   return {
     root,
     label: 'wt',
+    backend,
     easBin: '/bin/eas',
     agentDeviceBin: '/bin/agent-device',
     // The readiness poll is bounded at three minutes of real time; a test
@@ -100,6 +103,103 @@ beforeEach(() => {
 afterEach(() => {
   resetExecutor();
   rmSync(root, { recursive: true, force: true });
+});
+
+describe('explicit backend selection', () => {
+  const env = {
+    AGENT_DEVICE_DAEMON_BASE_URL: 'https://proxy.example/agent-device',
+    AGENT_DEVICE_DAEMON_AUTH_TOKEN: 'tok_proxy',
+  };
+
+  test('proxy requires both daemon variables with a precise remedy', async () => {
+    const missingToken = await resolveRemoteContext({
+      root,
+      label: 'wt',
+      backend: 'proxy',
+      easBin: '/bin/eas',
+      env: { AGENT_DEVICE_DAEMON_BASE_URL: env.AGENT_DEVICE_DAEMON_BASE_URL },
+      lookupAgentDevice: () => '/bin/agent-device',
+    });
+    expect(missingToken).toEqual({
+      failed: 'The proxy backend requires AGENT_DEVICE_DAEMON_AUTH_TOKEN.',
+      remedy: 'Export AGENT_DEVICE_DAEMON_AUTH_TOKEN, then run the device command with `--remote proxy` again.',
+      code: 'RN_ISO_REMOTE_PROXY_CONFIG',
+    });
+
+    const missingUrl = await resolveRemoteContext({
+      root,
+      label: 'wt',
+      backend: 'proxy',
+      easBin: '/bin/eas',
+      env: { AGENT_DEVICE_DAEMON_AUTH_TOKEN: env.AGENT_DEVICE_DAEMON_AUTH_TOKEN },
+      lookupAgentDevice: () => '/bin/agent-device',
+    });
+    expect(missingUrl).toEqual({
+      failed: 'The proxy backend requires AGENT_DEVICE_DAEMON_BASE_URL.',
+      remedy: 'Export AGENT_DEVICE_DAEMON_BASE_URL, then run the device command with `--remote proxy` again.',
+      code: 'RN_ISO_REMOTE_PROXY_CONFIG',
+    });
+  });
+
+  test('proxy uses only the supplied daemon and never creates an EAS session', async () => {
+    const resolved = await resolveRemoteContext({
+      root,
+      label: 'wt',
+      backend: 'proxy',
+      easBin: '/bin/eas',
+      env,
+      lookupAgentDevice: () => '/bin/agent-device',
+    });
+    expect('ctx' in resolved).toBe(true);
+    if (!('ctx' in resolved)) return;
+    expect(resolved.ctx.backend).toBe('proxy');
+    expect(resolved.ctx.existingDaemon).toEqual({
+      baseUrl: env.AGENT_DEVICE_DAEMON_BASE_URL,
+      token: env.AGENT_DEVICE_DAEMON_AUTH_TOKEN,
+    });
+
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(resolved.ctx).ensureBooted({});
+    expect(exec.calls.some((call) => call.file === '/bin/eas')).toBe(false);
+  });
+
+  test('eas requires the EAS CLI even when proxy variables are present', async () => {
+    const resolved = await resolveRemoteContext({
+      root,
+      label: 'wt',
+      backend: 'eas',
+      easBin: null,
+      env,
+      lookupAgentDevice: () => '/bin/agent-device',
+    });
+    expect(resolved).toEqual({
+      failed: 'The eas backend requires eas-cli.',
+      remedy: 'Install eas-cli, then run the device command with `--remote eas` again.',
+      code: 'RN_ISO_REMOTE_EAS_UNAVAILABLE',
+    });
+  });
+
+  test('eas ignores proxy variables and creates an EAS session', async () => {
+    const resolved = await resolveRemoteContext({
+      root,
+      label: 'wt',
+      backend: 'eas',
+      easBin: '/bin/eas',
+      env,
+      lookupAgentDevice: () => '/bin/agent-device',
+    });
+    expect('ctx' in resolved).toBe(true);
+    if (!('ctx' in resolved)) return;
+    expect(resolved.ctx.backend).toBe('eas');
+    expect(resolved.ctx.existingDaemon).toBeNull();
+
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(resolved.ctx).ensureBooted({});
+    expect(exec.calls.some((call) => call.file === '/bin/eas' && call.args[0] === 'sim')).toBe(true);
+    expect(
+      exec.calls.some((call) => call.env?.AGENT_DEVICE_DAEMON_AUTH_TOKEN === env.AGENT_DEVICE_DAEMON_AUTH_TOKEN),
+    ).toBe(false);
+  });
 });
 
 describe('the expensive step happens after the Metro gate', () => {

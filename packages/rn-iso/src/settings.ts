@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { getProjectSettings, getRepoSettings } from './config.ts';
 import { TUNNEL_MODES, type TunnelMode } from './engine/metro-reach.ts';
-import type { Settings, SettingsObject } from './types.ts';
+import type { RemoteDeviceBackend, Settings, SettingsObject } from './types.ts';
 export type { Settings, SettingsObject };
 
 function isPlainObject(v: unknown): v is SettingsObject {
@@ -103,29 +103,41 @@ export function resolveSettings({
   ]);
 }
 
-// Whether this workspace's iOS device is remote. Kept beside KNOWN_SETTINGS
+export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
+
+// Which remote backend this workspace's iOS device uses. Kept beside KNOWN_SETTINGS
 // for the reason stated above: the name of a setting and the code that reads
 // it drifting apart is how `worktree.install` became a silent no-op.
 //
 // Settings are Record<string, unknown> because they come from three JSON
-// layers, so the read narrows rather than asserts. Anything other than a
-// literal `true` is false: a setting that means "use a billable cloud device"
-// must not be switched on by a stray string.
-export function remoteIosSetting(settings: SettingsObject): boolean {
+// layers, so the read narrows rather than asserts.
+export function remoteIosSetting(settings: SettingsObject): RemoteDeviceBackend | null {
   return remoteSetting(settings, 'ios');
 }
 
-// The android half. Same rule, same reason: anything other than a literal
-// `true` is false, because a setting meaning "use a billable cloud device"
-// must not be switched on by a stray string.
-export function remoteAndroidSetting(settings: SettingsObject): boolean {
+// The Android half uses the same explicit backend values.
+export function remoteAndroidSetting(settings: SettingsObject): RemoteDeviceBackend | null {
   return remoteSetting(settings, 'android');
 }
 
-function remoteSetting(settings: SettingsObject, platform: 'ios' | 'android'): boolean {
+function remoteSetting(settings: SettingsObject, platform: 'ios' | 'android'): RemoteDeviceBackend | null {
   const block = settings[platform];
-  if (typeof block !== 'object' || block === null) return false;
-  return (block as { remote?: unknown }).remote === true;
+  if (!isPlainObject(block)) return null;
+  const remote = block.remote;
+  return typeof remote === 'string' && (REMOTE_DEVICE_BACKENDS as readonly string[]).includes(remote)
+    ? (remote as RemoteDeviceBackend)
+    : null;
+}
+
+export function remoteDeviceSettingError(settings: SettingsObject): string | null {
+  for (const platform of ['ios', 'android'] as const) {
+    const block = settings[platform];
+    if (!isPlainObject(block) || !('remote' in block)) continue;
+    if (remoteSetting(settings, platform) === null) {
+      return `Invalid ${platform}.remote setting ${JSON.stringify(block.remote)}. Expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`;
+    }
+  }
+  return null;
 }
 
 // engine/metro-reach.ts's TunnelMode, committed once for the whole repo

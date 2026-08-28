@@ -16,6 +16,7 @@ import assert from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Command } from 'commander';
 import { upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../paths.ts';
@@ -122,6 +123,17 @@ function captureAction(register: typeof registerIos, deps: LooseDeps) {
     assert(captured);
     return captured(opts);
   };
+}
+
+function parseRemoteOption(args: string[]): unknown {
+  const program = new Command();
+  program.exitOverride();
+  program.configureOutput({ writeErr: () => {} });
+  registerIos(program);
+  const command = program.commands[0];
+  assert(command);
+  command.parseOptions(args);
+  return command.opts().remote;
 }
 
 // Every engine call is a seam. The defaults describe the happy path with a
@@ -2185,22 +2197,40 @@ describe('concurrency limits', () => {
 // are about that boundary: which implementation each phase reached for, and
 // that the local path is untouched when the flag is absent.
 describe('--remote', () => {
+  test('the CLI parser accepts only an explicit proxy or eas backend', () => {
+    expect(parseRemoteOption(['--remote', 'proxy'])).toBe('proxy');
+    expect(parseRemoteOption(['--remote', 'eas'])).toBe('eas');
+    expect(() => parseRemoteOption(['--remote'])).toThrow(/argument missing/i);
+    expect(() => parseRemoteOption(['--remote', 'cloud'])).toThrow(/proxy.*eas/i);
+  });
+
   // A stand-in for engine/device-remote's return value. Records which device
   // calls went through the remote implementation rather than the local one.
   function remoteStub() {
     const hits: string[] = [];
+    const backends: unknown[] = [];
     return {
       hits,
+      backends,
       deps: {
-        resolveRemoteContext: () => ({
-          ctx: { root, label: 'fixture', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        }),
+        resolveRemoteContext: (args: { backend?: unknown }) => {
+          backends.push(args.backend);
+          return {
+            ctx: {
+              root,
+              label: 'fixture',
+              backend: args.backend,
+              easBin: '/bin/eas',
+              agentDeviceBin: '/bin/agent-device',
+            },
+          };
+        },
         // The reach step runs between the Metro gate and the boot; these
         // tests are about the device phases, not about tunnels.
         ensureMetroReachable: async () => ({ ok: true as const }),
         detectProviders: () => [],
         remoteIosDeps: () => ({
-          ctx: { root, label: 'fixture', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+          ctx: { root, label: 'fixture', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
           checkDeviceCapacity: () => {
             hits.push('checkDeviceCapacity');
             return null;
@@ -2231,7 +2261,7 @@ describe('--remote', () => {
   test('the device phases run against the remote implementation', async () => {
     const remote = remoteStub();
     reserve();
-    const { calls, exitCode } = await run({ remote: true }, remote.deps);
+    const { calls, exitCode } = await run({ remote: 'eas' }, remote.deps);
     expect(exitCode).toBeFalsy();
     expect(remote.hits).toEqual([
       'checkDeviceCapacity',
@@ -2240,6 +2270,7 @@ describe('--remote', () => {
       'installIosApp',
       'launchIosApp',
     ]);
+    expect(remote.backends).toEqual(['eas']);
     // The local implementations were never reached for those phases.
     expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
     expect(calls.order.includes('installIosApp')).toBeFalsy();
@@ -2248,7 +2279,7 @@ describe('--remote', () => {
   test('the build still happens locally -- only the device moved', async () => {
     const remote = remoteStub();
     reserve();
-    const { calls } = await run({ remote: true }, remote.deps);
+    const { calls } = await run({ remote: 'eas' }, remote.deps);
     // The whole premise of remote mode: the fingerprint, the cache and the
     // build are untouched, because none of them care where the device is.
     expect(calls.order.includes('fingerprintProject')).toBeTruthy();
@@ -2263,7 +2294,7 @@ describe('--remote', () => {
     const remote = remoteStub();
     reserve();
     const { exitCode } = await run(
-      { remote: true },
+      { remote: 'eas' },
       { ...remote.deps, resolveProjectMetro: async () => ({ metro: null }) },
     );
     expect(exitCode).toBe(1);
@@ -2273,7 +2304,7 @@ describe('--remote', () => {
 
   test('an unusable remote setup refuses before any build work', async () => {
     const { exitCode, calls, stderr } = await run(
-      { remote: true },
+      { remote: 'eas' },
       {
         resolveRemoteContext: () => ({ failed: 'agent-device is not on PATH.', remedy: 'Install it.' }),
       },
@@ -2303,14 +2334,15 @@ describe('--remote', () => {
   test('the ios.remote setting does the same thing as the flag', async () => {
     const remote = remoteStub();
     reserve();
-    const { exitCode } = await run({}, { ...remote.deps, resolveSettings: () => ({ ios: { remote: true } }) });
+    const { exitCode } = await run({}, { ...remote.deps, resolveSettings: () => ({ ios: { remote: 'proxy' } }) });
     expect(exitCode).toBeFalsy();
     expect(remote.hits.includes('ensureBooted')).toBeTruthy();
+    expect(remote.backends).toEqual(['proxy']);
   });
 
-  test('a non-true ios.remote value does not switch on a billable device', async () => {
+  test('an invalid ios.remote value is a structured refusal', async () => {
     let asked = false;
-    await run(
+    const { exitCode, stderr } = await run(
       {},
       {
         resolveSettings: () => ({ ios: { remote: 'yes' } }),
@@ -2321,6 +2353,9 @@ describe('--remote', () => {
       },
     );
     expect(asked).toBe(false);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('RN_ISO_BAD_ARG');
+    expect(stderr).toContain('Invalid ios.remote setting');
   });
 
   test('the reach step gets the RESERVED port, and runs after the Metro gate', async () => {
@@ -2334,7 +2369,7 @@ describe('--remote', () => {
     let seenPort: unknown = null;
     const order: string[] = [];
     await run(
-      { remote: true },
+      { remote: 'eas' },
       {
         ...remote.deps,
         resolveMetroWithRetry: async () => {
@@ -2363,7 +2398,7 @@ describe('--remote', () => {
     reserve();
     let seen = null as Record<string, unknown> | null;
     await run(
-      { remote: true },
+      { remote: 'eas' },
       {
         ...remote.deps,
         buildIos: async (args: Record<string, unknown>) => {
@@ -2610,12 +2645,12 @@ describe('the remote browser preview', () => {
   function previewStub(url: string | null) {
     return {
       resolveRemoteContext: () => ({
-        ctx: { root, label: 'fixture', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: { root, label: 'fixture', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
       }),
       ensureMetroReachable: async () => ({ ok: true as const }),
       detectProviders: () => [],
       remoteIosDeps: () => ({
-        ctx: { root, label: 'fixture', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        ctx: { root, label: 'fixture', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
         checkDeviceCapacity: () => null,
         ensureOwnedDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureBooted: async () => ({ ok: true, udid: 'drs_42' }),
@@ -2631,20 +2666,20 @@ describe('the remote browser preview', () => {
     // A person cannot see a device in a datacenter. This is the handle a
     // caller gives them.
     reserve();
-    const { logs } = await run({ remote: true, json: true }, previewStub('https://preview.example/abc'));
+    const { logs } = await run({ remote: 'eas', json: true }, previewStub('https://preview.example/abc'));
     expect(parseFirst(logs).webPreviewUrl).toBe('https://preview.example/abc');
   });
 
   test('the human summary prints it too', async () => {
     reserve();
-    const { stderr } = await run({ remote: true }, previewStub('https://preview.example/abc'));
+    const { stderr } = await run({ remote: 'eas' }, previewStub('https://preview.example/abc'));
     expect(stderr).toContain('Watch this device: https://preview.example/abc');
   });
 
   test('a device with no preview omits the key rather than carrying null', async () => {
     // An always-present key invites a caller to print an empty link.
     reserve();
-    const { logs } = await run({ remote: true, json: true }, previewStub(null));
+    const { logs } = await run({ remote: 'eas', json: true }, previewStub(null));
     expect('webPreviewUrl' in parseFirst(logs)).toBe(false);
   });
 

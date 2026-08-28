@@ -109,6 +109,21 @@ test('the Metro guide documents explicit remote intent and the local default', (
   expect(body).toMatch(/metro\.tunnel[^.]*provider/i);
 });
 
+test('the guide keeps Metro intent separate from the explicit device backend', () => {
+  const lifecycle = renderTopic('lifecycle');
+  const settings = renderTopic('settings');
+  const errors = renderTopic('errors');
+  assert(lifecycle);
+  assert(settings);
+  assert(errors);
+  expect(lifecycle).toMatch(/ios\s+[^\n]*--remote <proxy\|eas>/);
+  expect(lifecycle).toMatch(/android\s+[^\n]*--remote <proxy\|eas>/);
+  expect(settings).toMatch(/ios\.remote[^\n]*"proxy" or "eas"/);
+  expect(settings).toMatch(/android\.remote[^\n]*"proxy" or "eas"/);
+  expect(errors).toContain('RN_ISO_REMOTE_PROXY_CONFIG');
+  expect(errors).toContain('RN_ISO_REMOTE_EAS_UNAVAILABLE');
+});
+
 // The commands v3 deleted. A guide that still teaches one of them is worse than
 // no guide: the agent runs it and gets "unknown command".
 test('no topic teaches a command this binary does not have', () => {

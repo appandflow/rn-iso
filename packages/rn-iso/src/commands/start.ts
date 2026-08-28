@@ -40,6 +40,7 @@ import {
   ngrokUrlSetting,
   metroTunnelSettingError,
   remoteAndroidSetting,
+  remoteDeviceSettingError,
   remoteIosSetting,
   resolveSettings,
   tunnelModeSetting,
@@ -393,7 +394,16 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           remedy: `Set metro.tunnel to one of: auto, expo, ngrok, cloudflared, off.`,
         });
       }
-      const remote = Boolean(opts.remote) || remoteIosSetting(settings) || remoteAndroidSetting(settings);
+      const remoteSettingError = remoteDeviceSettingError(settings);
+      if (remoteSettingError) {
+        return fail({
+          code: 'RN_ISO_BAD_ARG',
+          message: remoteSettingError,
+          remedy: 'Set ios.remote and android.remote to either proxy or eas.',
+        });
+      }
+      const remote =
+        Boolean(opts.remote) || remoteIosSetting(settings) !== null || remoteAndroidSetting(settings) !== null;
       const tunnelMode = tunnelModeSetting(settings) ?? 'auto';
       const publicUrl = publicUrlSetting(settings);
       // Decided here, not at `ios`/`android --remote` time: a later run

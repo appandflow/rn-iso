@@ -11,6 +11,7 @@ import assert from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Command } from 'commander';
 import { setProjectSetting, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
@@ -38,6 +39,7 @@ import {
   noDeviceDiagnostic,
   startCollector,
   phaseLine,
+  registerAndroid,
   runAndroid,
   shortHash,
 } from '../commands/android.ts';
@@ -80,6 +82,26 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
   delete process.env.RN_ISO_HOME;
+});
+
+function parseRemoteOption(args: string[]): unknown {
+  const program = new Command();
+  program.exitOverride();
+  program.configureOutput({ writeErr: () => {} });
+  registerAndroid(program);
+  const command = program.commands[0];
+  assert(command);
+  command.parseOptions(args);
+  return command.opts().remote;
+}
+
+describe('--remote', () => {
+  test('the CLI parser accepts only an explicit proxy or eas backend', () => {
+    expect(parseRemoteOption(['--remote', 'proxy'])).toBe('proxy');
+    expect(parseRemoteOption(['--remote', 'eas'])).toBe('eas');
+    expect(() => parseRemoteOption(['--remote'])).toThrow(/argument missing/i);
+    expect(() => parseRemoteOption(['--remote', 'cloud'])).toThrow(/proxy.*eas/i);
+  });
 });
 
 // --- the harness -----------------------------------------------------------
@@ -424,6 +446,109 @@ function harness(overrides = {}) {
 
 const labelled = (lines: string[], label: string) => lines.filter((l) => l.startsWith(`  ${label}`));
 const readState = () => JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
+
+describe('explicit remote backend behavior', () => {
+  function remoteHarness(backend: 'proxy' | 'eas') {
+    const selected: unknown[] = [];
+    const remoteCalls: string[] = [];
+    const h = harness({
+      remoteDevice: backend,
+      resolveRemoteDeviceContext: async (args: { backend?: unknown }) => {
+        selected.push(args.backend);
+        return {
+          ctx: {
+            root,
+            label: 'app',
+            backend: args.backend,
+            easBin: '/bin/eas',
+            agentDeviceBin: '/bin/agent-device',
+          },
+        };
+      },
+      remoteDeviceDeps: () => ({
+        ctx: { root, label: 'app', backend, easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        checkCapacity: () => null,
+        ensureDevice: async () => {
+          remoteCalls.push('ensureDevice');
+          return { deviceName: 'remote device', owned: true, remote: true };
+        },
+        ensureDeviceBooted: async () => {
+          remoteCalls.push('ensureDeviceBooted');
+          return { ok: true, serial: 'remote-42' };
+        },
+        install: (args: InstallArgs = {}) => {
+          remoteCalls.push('install');
+          return { ok: true, apkPath: args.apkPath ?? '' };
+        },
+        launch: () => {
+          remoteCalls.push('launch');
+          return { ok: true, mode: 'remote' };
+        },
+        createdSessionId: () => null,
+        webPreviewUrl: () => null,
+      }),
+      resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
+    });
+    return { h, selected, remoteCalls };
+  }
+
+  test.each(['proxy', 'eas'] as const)(
+    '%s selects that backend and replaces only device operations',
+    async (backend) => {
+      const { h, selected, remoteCalls } = remoteHarness(backend);
+      const result = await h.run();
+      expect(result.ok).toBe(true);
+      expect(selected).toEqual([backend]);
+      expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
+      expect(h.calls.ensureDevice).toEqual([]);
+      expect(h.calls.fingerprint.length).toBe(1);
+    },
+  );
+
+  test('android.remote selects the same explicit backend as the CLI', async () => {
+    const selected: unknown[] = [];
+    const h = harness({
+      resolveSettingsFor: () => ({ android: { remote: 'proxy' } }),
+      resolveRemoteDeviceContext: async (args: { backend?: unknown }) => {
+        selected.push(args.backend);
+        return { failed: 'stop after selection', remedy: 'test', code: 'TEST' };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(selected).toEqual(['proxy']);
+  });
+
+  test('an invalid android.remote setting is a structured refusal', async () => {
+    let resolved = false;
+    const h = harness({
+      resolveSettingsFor: () => ({ android: { remote: true } }),
+      resolveRemoteDeviceContext: async () => {
+        resolved = true;
+        return { failed: 'must not run', remedy: '' };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('RN_ISO_BAD_ARG');
+    expect(result.error?.message).toContain('Invalid android.remote setting');
+    expect(resolved).toBe(false);
+  });
+
+  test('the local path does not resolve a remote backend', async () => {
+    let resolved = false;
+    const h = harness({
+      resolveRemoteDeviceContext: async () => {
+        resolved = true;
+        return { failed: 'must not run', remedy: '' };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(resolved).toBe(false);
+    expect(h.calls.ensureDevice.length).toBe(1);
+  });
+});
 
 // --- the flow --------------------------------------------------------------
 

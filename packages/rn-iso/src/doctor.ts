@@ -47,6 +47,7 @@ import {
 } from './engine/remote-cache.ts';
 import { WORKSPACE_DIR_NAME as WORKSPACE_DIR } from './paths.ts';
 import { remoteAndroidSetting, remoteIosSetting, resolveSettings } from './settings.ts';
+import type { RemoteDeviceBackend } from './types.ts';
 
 // Loosely-typed views of the JSON config files this module parses
 // defensively (package.json, app.json, Podfile.properties.json): the shapes
@@ -439,24 +440,23 @@ export function checkConcurrency({
 //
 // Silent by default, for the reason checkConcurrency is: a machine that never
 // uses a remote device should not read about one on every run. "Asked for
-// one" means either `ios.remote` in settings or a daemon already exported
-// into the environment -- the two ways `ios --remote` can be satisfied.
+// one" means `ios.remote` or `android.remote` names a backend.
 //
 // PURE: the caller resolves both facts. The one thing worth being loud about
 // is a configured remote with no agent-device, because that fails at the
 // device step AFTER the build, which is the expensive place to find out.
 export function checkRemoteDevice({
-  configured = false,
+  configured = null,
   daemonInEnv = false,
   agentDeviceOnPath = false,
   easCliResolvable = false,
 }: {
-  configured?: boolean;
+  configured?: RemoteDeviceBackend | null;
   daemonInEnv?: boolean;
   agentDeviceOnPath?: boolean;
   easCliResolvable?: boolean;
 } = {}): Finding | null {
-  if (!configured && !daemonInEnv) return null;
+  if (!configured) return null;
 
   if (!agentDeviceOnPath) {
     return finding(
@@ -467,12 +467,20 @@ export function checkRemoteDevice({
     );
   }
 
-  if (daemonInEnv) {
+  if (configured === 'proxy') {
+    if (daemonInEnv) {
+      return finding(
+        'note',
+        'This project uses a remote proxy',
+        'The proxy backend connects through AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN. rn-iso does not create or stop the remote device.',
+        null,
+      );
+    }
     return finding(
-      'note',
-      'A remote daemon is set in the environment',
-      'AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN are both set, so `rn-iso ios --remote` will use that daemon and create no EAS session of its own. It also stops none: a session someone else started is theirs to end.',
-      null,
+      'cost',
+      'The remote proxy credentials are missing',
+      'The proxy backend requires AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN.',
+      'Export AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN.',
     );
   }
 
@@ -480,15 +488,15 @@ export function checkRemoteDevice({
     return finding(
       'cost',
       'A remote device is configured, but there is no eas-cli to create a session with',
-      'With no daemon in the environment, `rn-iso ios --remote` creates an EAS Simulator session itself, which needs eas-cli and an account with EAS Simulator access. Neither a project copy nor one on PATH was found.',
-      'Install eas-cli, or export AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN from `eas sim` or `agent-device proxy`.',
+      'The eas backend creates an EAS Simulator session. It needs eas-cli and an account with EAS Simulator access. Neither a project copy nor one on PATH was found.',
+      'Install eas-cli.',
     );
   }
 
   return finding(
     'note',
     'This project uses a remote device',
-    '`ios --remote` / `android --remote` create an EAS Simulator session named rn-iso-<label>, bounded to two hours, and ends it on `stop` and `worktree remove`. The build still runs on this machine; only the device is elsewhere. Native device logs are not captured on a remote device -- the Metro half of the timeline is unaffected.',
+    '`ios --remote eas` / `android --remote eas` create an EAS Simulator session named rn-iso-<label> and end it on `stop` and `worktree remove`. The build still runs on this machine; only the device is elsewhere. Native device logs are not captured on a remote device -- the Metro half of the timeline is unaffected.',
     null,
   );
 }
@@ -587,17 +595,16 @@ export function runDoctor(
   // one of them says this project actually uses one, so an ordinary project
   // pays a settings read and nothing else.
   const projectSettings = resolveSettings({ projectPath: projectRoot, repoRoot: projectRoot });
-  const remoteConfigured = remoteIosSetting(projectSettings) || remoteAndroidSetting(projectSettings);
+  const remoteConfigured = remoteIosSetting(projectSettings) ?? remoteAndroidSetting(projectSettings);
   const daemonInEnv = Boolean(remoteEnv.AGENT_DEVICE_DAEMON_BASE_URL && remoteEnv.AGENT_DEVICE_DAEMON_AUTH_TOKEN);
-  const remoteFinding =
-    remoteConfigured || daemonInEnv
-      ? checkRemoteDevice({
-          configured: remoteConfigured,
-          daemonInEnv,
-          agentDeviceOnPath: lookupAgentDevice ? lookupAgentDevice() : agentDeviceIsOnPath(),
-          easCliResolvable: Boolean(resolveEasCliBin(projectRoot)),
-        })
-      : null;
+  const remoteFinding = remoteConfigured
+    ? checkRemoteDevice({
+        configured: remoteConfigured,
+        daemonInEnv,
+        agentDeviceOnPath: lookupAgentDevice ? lookupAgentDevice() : agentDeviceIsOnPath(),
+        easCliResolvable: Boolean(resolveEasCliBin(projectRoot)),
+      })
+    : null;
 
   return [
     checkDevClient(pkg, isExpo),

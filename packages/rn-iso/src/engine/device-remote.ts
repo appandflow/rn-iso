@@ -26,6 +26,7 @@ import { isPidAlive } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceLogsDir } from '../paths.ts';
 import { readMetroTunnel, readRemoteSessionId } from '../supervisor/state.ts';
+import type { RemoteDeviceBackend } from '../types.ts';
 import {
   acceptAlertArgs,
   closeArgs,
@@ -172,6 +173,7 @@ function describe(err: unknown): string {
 export interface RemoteContext {
   root: string;
   label: string;
+  backend: RemoteDeviceBackend;
   easBin: string;
   agentDeviceBin: string;
   // Which device this run wants. Reaches `eas sim --platform` and the
@@ -248,7 +250,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
     // session is rn-iso's to create and destroy, a daemon from the
     // environment is somebody else's and is never stopped here.
     ensureDevice: async (): Promise<RemoteDeviceRecord> => ({
-      deviceName: ctx.existingDaemon ? 'remote device (your daemon)' : 'EAS Simulator',
+      deviceName: ctx.backend === 'proxy' ? 'remote device (your daemon)' : 'EAS Simulator',
       owned: true,
       remote: true,
     }),
@@ -476,16 +478,13 @@ function remoteDeviceDeps(ctx: RemoteContext) {
  *   { ctx }                ready to run
  *   { failed: reason, remedy }  a refusal the command prints as-is
  *
- * The operator-supplied daemon is read from the environment because that is
- * the shape both producers already emit: eas-cli writes
- * AGENT_DEVICE_DAEMON_BASE_URL / _AUTH_TOKEN into .env.eas-simulator, and
- * `agent-device proxy` documents the same two names. Honouring them means a
- * self-hosted proxy needs no rn-iso-specific setup at all, and it is the only
- * path that works before EAS Simulator leaves its waitlist.
+ * The selected backend decides whether credentials connect to an existing
+ * proxy or EAS creates a session.
  */
 export async function resolveRemoteContext({
   root,
   label,
+  backend,
   platform = 'ios',
   easBin,
   env = process.env,
@@ -494,6 +493,7 @@ export async function resolveRemoteContext({
 }: {
   root: string;
   label: string;
+  backend: RemoteDeviceBackend;
   platform?: 'ios' | 'android';
   easBin: string | null;
   // How this workspace expects the device to reach Metro, and what it has to
@@ -511,29 +511,42 @@ export async function resolveRemoteContext({
   if (!agentDeviceBin) {
     return {
       failed: 'agent-device is not on PATH, and it is what drives a remote device.',
-      remedy: 'Install it (`npm i -g agent-device`), then run `rn-iso ios --remote` again.',
+      remedy: `Install it (\`npm i -g agent-device\`), then run \`rn-iso ${platform} --remote ${backend}\` again.`,
     };
   }
 
   const baseUrl = env.AGENT_DEVICE_DAEMON_BASE_URL?.trim();
   const token = env.AGENT_DEVICE_DAEMON_AUTH_TOKEN?.trim();
-  const existingDaemon = baseUrl && token ? { baseUrl, token } : null;
-
-  // An eas-cli is only needed when rn-iso has to CREATE the session. A
-  // daemon already in the environment (a proxy, or a session someone else
-  // started) makes eas-cli irrelevant, so it must not be a requirement.
-  if (!existingDaemon && !easBin) {
+  let existingDaemon: RemoteDaemon | null = null;
+  if (backend === 'proxy') {
+    if (!baseUrl && !token) {
+      return {
+        failed: 'The proxy backend requires AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN.',
+        remedy:
+          'Export AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN, then run the device command with `--remote proxy` again.',
+        code: 'RN_ISO_REMOTE_PROXY_CONFIG',
+      };
+    }
+    if (!baseUrl) {
+      return {
+        failed: 'The proxy backend requires AGENT_DEVICE_DAEMON_BASE_URL.',
+        remedy: 'Export AGENT_DEVICE_DAEMON_BASE_URL, then run the device command with `--remote proxy` again.',
+        code: 'RN_ISO_REMOTE_PROXY_CONFIG',
+      };
+    }
+    if (!token) {
+      return {
+        failed: 'The proxy backend requires AGENT_DEVICE_DAEMON_AUTH_TOKEN.',
+        remedy: 'Export AGENT_DEVICE_DAEMON_AUTH_TOKEN, then run the device command with `--remote proxy` again.',
+        code: 'RN_ISO_REMOTE_PROXY_CONFIG',
+      };
+    }
+    existingDaemon = { baseUrl, token };
+  } else if (!easBin) {
     return {
-      failed: 'No remote daemon in the environment, and no eas-cli to create an EAS Simulator session with.',
-      remedy:
-        'Either export AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN (from `eas sim` or `agent-device proxy`), or install eas-cli.',
-    };
-  }
-
-  if (baseUrl && !token) {
-    return {
-      failed: 'AGENT_DEVICE_DAEMON_BASE_URL is set but AGENT_DEVICE_DAEMON_AUTH_TOKEN is not.',
-      remedy: 'Export both, or unset the base URL to let rn-iso create its own EAS Simulator session.',
+      failed: 'The eas backend requires eas-cli.',
+      remedy: 'Install eas-cli, then run the device command with `--remote eas` again.',
+      code: 'RN_ISO_REMOTE_EAS_UNAVAILABLE',
     };
   }
 
@@ -554,6 +567,7 @@ export async function resolveRemoteContext({
     ctx: {
       root,
       label,
+      backend,
       platform,
       easBin: easBin ?? '',
       agentDeviceBin,
@@ -824,7 +838,7 @@ export function endRecordedSession({
     };
   }
   return teardownRemote(
-    { root, label: '', easBin, agentDeviceBin: agentDeviceBin ?? '', existingDaemon: null },
+    { root, label: '', backend: 'eas', easBin, agentDeviceBin: agentDeviceBin ?? '', existingDaemon: null },
     { sessionId, stopArgs: stopSessionArgs(sessionId) },
   );
 }

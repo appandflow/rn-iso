@@ -24,7 +24,7 @@ import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
-import type { Command } from 'commander';
+import { InvalidArgumentError, type Command } from 'commander';
 import {
   buildCacheKey,
   describeFingerprintMiss,
@@ -88,13 +88,15 @@ import {
 import { swapJsBundle } from '../engine/js-swap.ts';
 import { buildIos, readBundleId } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
-import type { CacheHitLevel, IosFacts } from '../types.ts';
+import type { CacheHitLevel, IosFacts, RemoteDeviceBackend } from '../types.ts';
 import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.ts';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../paths.ts';
 import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.ts';
 import {
   publicUrlSetting,
+  REMOTE_DEVICE_BACKENDS,
+  remoteDeviceSettingError,
   remoteIosSetting,
   resolveSettings,
   tunnelModeSetting,
@@ -179,7 +181,7 @@ interface IosCommandOptions {
   metroCheck?: boolean;
   buildCache?: boolean;
   configuration?: string;
-  remote?: boolean;
+  remote?: RemoteDeviceBackend;
 }
 
 interface WaitedForBuild {
@@ -966,8 +968,12 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       'Xcode configuration to build (e.g. Release; simulator only). A non-Debug configuration embeds the JS bundle and skips Metro entirely. Overrides the ios.configuration setting. Default: Debug',
     )
     .option(
-      '--remote',
-      'Install and launch on a remote simulator (EAS Simulator, or an agent-device proxy named by AGENT_DEVICE_DAEMON_BASE_URL) instead of a local one. The build still happens here.',
+      '--remote <backend>',
+      'Install and launch on a remote device with proxy or EAS. The build still happens here.',
+      (value) => {
+        if ((REMOTE_DEVICE_BACKENDS as readonly string[]).includes(value)) return value as RemoteDeviceBackend;
+        throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
+      },
     )
     .action(async (opts: IosCommandOptions) => {
       await runIos(opts, deps);
@@ -1102,6 +1108,14 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   for (const key of unknownSettingKeys(settings)) {
     note(chalk.yellow(`Warning: setting "${key}" is not read by rn-iso and will be ignored.`));
   }
+  const remoteSettingError = remoteDeviceSettingError(settings);
+  if (remoteSettingError) {
+    return fail({
+      code: 'RN_ISO_BAD_ARG',
+      message: remoteSettingError,
+      remedy: `Set ios.remote and android.remote to one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`,
+    });
+  }
 
   // The Xcode configuration this run builds. Precedence: the --configuration
   // flag (per-invocation judgment) over the ios.configuration setting (the
@@ -1121,12 +1135,13 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // `--remote` swaps the device out and NOTHING else. The build, the
   // fingerprint, the cache and Metro all stay exactly where they were, which
   // is why this is four entries in the dep seam rather than a second command.
-  const wantRemote = Boolean(opts.remote) || remoteIosSetting(settings);
+  const remoteBackend = opts.remote ?? remoteIosSetting(settings);
   let remoteDevice: ReturnType<typeof d.remoteIosDeps> | null = null;
-  if (wantRemote) {
+  if (remoteBackend) {
     const resolved = await d.resolveRemoteContext({
       root,
       label,
+      backend: remoteBackend,
       easBin: d.resolveEasCliBin(root)?.file ?? null,
     });
     if ('failed' in resolved) {

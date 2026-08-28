@@ -726,34 +726,47 @@ test('a project with no remote device gets no remote finding', () => {
   // Not even when the tools happen to be installed: having agent-device on
   // PATH is not a request for a remote device.
   expect(checkRemoteDevice({ agentDeviceOnPath: true, easCliResolvable: true })).toBeNull();
+  expect(checkRemoteDevice({ daemonInEnv: true, agentDeviceOnPath: true })).toBeNull();
 });
 
 test('a configured remote with no agent-device is a cost, not a note', () => {
   // It fails at the device step, which is AFTER the build -- the expensive
   // place to discover a missing tool.
-  const f = checkRemoteDevice({ configured: true, agentDeviceOnPath: false });
+  const f = checkRemoteDevice({ configured: 'eas', agentDeviceOnPath: false });
   assert(f);
   expect(f.level).toBe('cost');
   expect(f.fix).toContain('agent-device');
 });
 
-test('a daemon in the environment is reported as the operator owning the session', () => {
-  const f = checkRemoteDevice({ daemonInEnv: true, agentDeviceOnPath: true });
+test('the proxy backend reports that the operator owns the daemon', () => {
+  const f = checkRemoteDevice({ configured: 'proxy', daemonInEnv: true, agentDeviceOnPath: true });
   assert(f);
   expect(f.level).toBe('note');
   // The load-bearing half: rn-iso neither creates nor stops that session.
-  expect(f.detail).toContain('create no EAS session of its own');
+  expect(f.detail).toContain('does not create or stop the remote device');
 });
 
-test('a configured remote with no eas-cli and no daemon cannot create a session', () => {
-  const f = checkRemoteDevice({ configured: true, agentDeviceOnPath: true, easCliResolvable: false });
+test('the proxy backend requires both daemon variables', () => {
+  const f = checkRemoteDevice({ configured: 'proxy', daemonInEnv: false, agentDeviceOnPath: true });
   assert(f);
   expect(f.level).toBe('cost');
   expect(f.fix).toContain('AGENT_DEVICE_DAEMON_BASE_URL');
 });
 
+test('the eas backend requires eas-cli even when daemon variables exist', () => {
+  const f = checkRemoteDevice({
+    configured: 'eas',
+    daemonInEnv: true,
+    agentDeviceOnPath: true,
+    easCliResolvable: false,
+  });
+  assert(f);
+  expect(f.level).toBe('cost');
+  expect(f.fix).toContain('eas-cli');
+});
+
 test('a fully configured remote says what it will do, including the log gap', () => {
-  const f = checkRemoteDevice({ configured: true, agentDeviceOnPath: true, easCliResolvable: true });
+  const f = checkRemoteDevice({ configured: 'eas', agentDeviceOnPath: true, easCliResolvable: true });
   assert(f);
   expect(f.level).toBe('note');
   expect(f.detail).toContain('Native device logs are not captured');

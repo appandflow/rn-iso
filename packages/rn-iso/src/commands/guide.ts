@@ -234,7 +234,8 @@ WHAT THE SUPERVISOR IS
   \`--tunnel\` and EXPO_UNSTABLE_TUNNEL_V2=1 (the legacy ws-tunnel path is
   locked to port 8081, which every reserved port but the first collides with)
   and records the URL Expo reports under state.json's metroTunnel. This has to
-  happen here: \`ios --remote\` / \`android --remote\` cannot add \`--tunnel\` to
+  happen here: \`ios --remote <proxy|eas>\` / \`android --remote <proxy|eas>\`
+  cannot add \`--tunnel\` to
   an already-running dev server. A later \`start --remote\` refuses with a
   stop-and-restart remedy when a healthy local Expo supervisor has no recorded
   Expo tunnel. See \`guide settings\` for metro.tunnel.
@@ -563,13 +564,21 @@ RN_ISO_AT_CAPACITY
   behaves differently: a compile WAITS for a free slot rather than refusing.
   See \`guide lifecycle\`, "opt-in concurrency limits".)
 
---- REMOTE-DEVICE CODES (\`ios --remote\` / \`android --remote\`) ---
+--- REMOTE-DEVICE CODES (\`ios --remote <proxy|eas>\` / \`android --remote <proxy|eas>\`) ---
 
 RN_ISO_NO_REMOTE_SESSION
-  \`--remote\` could not even be set up: agent-device is not on PATH, no eas-cli
-  and no AGENT_DEVICE_DAEMON_BASE_URL/_AUTH_TOKEN daemon, or metro.tunnel names
-  a provider or mode this workspace cannot use (e.g. "expo" on a bare RN
+  The selected backend could not use agent-device, or metro.tunnel names a
+  provider or mode this workspace cannot use (e.g. "expo" on a bare RN
   project). The remedy line says which. Nothing was created yet.
+
+RN_ISO_REMOTE_PROXY_CONFIG
+  \`--remote proxy\` requires AGENT_DEVICE_DAEMON_BASE_URL and
+  AGENT_DEVICE_DAEMON_AUTH_TOKEN. These variables provide credentials after
+  proxy is selected. They never select the backend.
+
+RN_ISO_REMOTE_EAS_UNAVAILABLE
+  \`--remote eas\` requires eas-cli. Proxy environment variables do not change
+  this selection and are not passed to EAS.
 
 RN_ISO_REMOTE_METRO_WRONG
   The gate that proves a tunnel still reaches THIS workspace's Metro failed --
@@ -930,8 +939,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
 THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote
-  ios             --json --no-metro-check --no-build-cache --configuration <name> --remote
-  android         --json --no-metro-check --no-build-cache --variant <name> --remote
+  ios             --json --no-metro-check --no-build-cache --configuration <name> --remote <proxy|eas>
+  android         --json --no-metro-check --no-build-cache --variant <name> --remote <proxy|eas>
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide; there is no --all)
@@ -1186,9 +1195,9 @@ KEYS RN-ISO READS
                         embedded JS, no Metro, cache keyed -release-sim, and
                         a JS-bundle swap on cache hits. The \`--configuration\`
                         flag overrides this per invocation. Unset means Debug.
-  ios.remote            true to use a remote simulator instead of a local one,
-                        the same as passing \`--remote\`. The build still runs
-                        here; only the device is elsewhere.
+  ios.remote            "proxy" or "eas" to use that remote backend, the same
+                        as passing \`--remote proxy\` or \`--remote eas\`. The
+                        build still runs here; only the device is elsewhere.
   android.systemImage   e.g. "system-images;android-36;google_apis;arm64-v8a"
   android.variant       e.g. "productionDebug" -- the gradle variant to
                         assemble and install on a project with product
@@ -1219,7 +1228,7 @@ KEYS RN-ISO READS
                         committed .rn-iso.json avoids carrying a secret; a
                         bare string is used as the literal password. Unset
                         means the debug keystore's fixed "android".
-  android.remote        the android half of ios.remote, same rule
+  android.remote        "proxy" or "eas"; the Android half of ios.remote
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
                         local. "auto" (default) uses Expo's own tunnel on Expo

@@ -127,6 +127,9 @@ export type Config = RnIsoConfig;
 export type SettingsObject = Record<string, unknown>;
 export type Settings = SettingsObject;
 
+// The device backend selected by a command or platform setting.
+export type RemoteDeviceBackend = 'proxy' | 'eas';
+
 // --- facts: the --json payloads ---------------------------------------------
 
 // A build cache hit is reported by LEVEL, not merely truthiness: 'local' and

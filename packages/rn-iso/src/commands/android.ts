@@ -29,8 +29,8 @@ import type { ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
-import type { Command } from 'commander';
-import type { AndroidFacts, SettingsObject, WaitedForBuild } from '../types.ts';
+import { InvalidArgumentError, type Command } from 'commander';
+import type { AndroidFacts, RemoteDeviceBackend, SettingsObject, WaitedForBuild } from '../types.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import {
@@ -78,7 +78,12 @@ import {
   // duration reads the same ("4s", "1m4s") whichever platform printed it.
   stepTimer,
 } from './ios.ts';
-import { remoteAndroidSetting, resolveSettings } from '../settings.ts';
+import {
+  REMOTE_DEVICE_BACKENDS,
+  remoteAndroidSetting,
+  remoteDeviceSettingError,
+  resolveSettings,
+} from '../settings.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 import { readCollectors } from '../collector/state.ts';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
@@ -232,7 +237,7 @@ interface AndroidCommandOptions {
   metroCheck?: boolean;
   buildCache?: boolean;
   variant?: string;
-  remote?: boolean;
+  remote?: RemoteDeviceBackend;
 }
 
 interface FailExtra {
@@ -790,8 +795,12 @@ export function registerAndroid(program: Command): void {
       'Gradle variant to assemble and install (e.g. productionDebug on a flavored project); overrides the android.variant setting. A variant ending in Release embeds the JS bundle and skips Metro entirely. Default: debug',
     )
     .option(
-      '--remote',
-      'Install and launch on a remote emulator (EAS Simulator, or an agent-device proxy named by AGENT_DEVICE_DAEMON_BASE_URL) instead of a local one. The build still happens here.',
+      '--remote <backend>',
+      'Install and launch on a remote device with proxy or EAS. The build still happens here.',
+      (value) => {
+        if ((REMOTE_DEVICE_BACKENDS as readonly string[]).includes(value)) return value as RemoteDeviceBackend;
+        throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
+      },
     )
     .action(async (opts: AndroidCommandOptions) => {
       const root = findProjectRoot(process.cwd());
@@ -806,7 +815,7 @@ export function registerAndroid(program: Command): void {
         metroCheck: opts.metroCheck !== false,
         useBuildCache: opts.buildCache !== false,
         variant: opts.variant ?? null,
-        remoteDevice: Boolean(opts.remote),
+        remoteDevice: opts.remote ?? null,
       });
       if (!result.ok) process.exit(1);
     });
@@ -826,7 +835,11 @@ interface RunAndroidOptions {
   readApkPackage?: (apkPath: string | null) => string | null;
   // `--remote`. Named for the device rather than the flag because `remote`
   // already means the build-cache provider in this file.
-  remoteDevice?: boolean;
+  remoteDevice?: RemoteDeviceBackend | null;
+  resolveSettingsFor?: typeof resolveSettings;
+  resolveRemoteDeviceContext?: typeof resolveRemoteContext;
+  remoteDeviceDeps?: typeof remoteAndroidDeps;
+  resolveEasBin?: typeof resolveEasCliBin;
   getLimits?: typeof getConcurrencyLimits;
   checkCapacity?: typeof checkDeviceCapacity;
   acquireSlot?: typeof acquireBuildSlot;
@@ -886,7 +899,11 @@ export async function runAndroid(
   {
     root,
     json = false,
-    remoteDevice: useRemoteDevice = false,
+    remoteDevice: commandRemoteBackend = null,
+    resolveSettingsFor = resolveSettings,
+    resolveRemoteDeviceContext = resolveRemoteContext,
+    remoteDeviceDeps: makeRemoteDeviceDeps = remoteAndroidDeps,
+    resolveEasBin = resolveEasCliBin,
     metroCheck = true,
     // --no-build-cache turns off every LOOKUP -- the local cache and the
     // project's provider both -- and nothing else: the fresh build is still
@@ -1031,11 +1048,19 @@ export async function runAndroid(
   };
 
   // ---- project facts -------------------------------------------------
-  const settings = resolveSettings({
+  const settings = resolveSettingsFor({
     projectPath: root,
     gitCommonDir: gitCommonDir(root),
     repoRoot: repoRoot(root),
   });
+  const remoteSettingError = remoteDeviceSettingError(settings);
+  if (remoteSettingError) {
+    return fail(
+      'RN_ISO_BAD_ARG',
+      remoteSettingError,
+      `Set ios.remote and android.remote to one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`,
+    );
+  }
   // The flavored variant drives the gradle task, the APK location and the
   // cache key below. Precedence: the --variant flag (per-invocation judgment)
   // over the android.variant setting (the repo-level default) over nothing --
@@ -1064,17 +1089,18 @@ export async function runAndroid(
   // `--remote` swaps the device out and NOTHING else. The build, the
   // fingerprint and the cache are identical; only where the app is installed
   // and launched changes.
-  const wantRemote = useRemoteDevice || remoteAndroidSetting(settings);
-  let remoteDevice: ReturnType<typeof remoteAndroidDeps> | null = null;
-  if (wantRemote) {
-    const resolved = await resolveRemoteContext({
+  const remoteBackend = commandRemoteBackend ?? remoteAndroidSetting(settings);
+  let remoteDevice: ReturnType<typeof makeRemoteDeviceDeps> | null = null;
+  if (remoteBackend) {
+    const resolved = await resolveRemoteDeviceContext({
       root,
       label,
       platform: PLATFORM,
-      easBin: resolveEasCliBin(root)?.file ?? null,
+      backend: remoteBackend,
+      easBin: resolveEasBin(root)?.file ?? null,
     });
     if ('failed' in resolved) return fail(resolved.code ?? REMOTE_SESSION_ERROR, resolved.failed, resolved.remedy);
-    remoteDevice = remoteAndroidDeps(resolved.ctx);
+    remoteDevice = makeRemoteDeviceDeps(resolved.ctx);
     checkCapacity = remoteDevice.checkCapacity;
     ensureDevice = remoteDevice.ensureDevice;
     ensureDeviceBooted = remoteDevice.ensureDeviceBooted;

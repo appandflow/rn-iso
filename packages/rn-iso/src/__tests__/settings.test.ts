@@ -7,6 +7,9 @@ import {
   ngrokUrlSetting,
   publicUrlSetting,
   readCommittedSettings,
+  remoteAndroidSetting,
+  remoteDeviceSettingError,
+  remoteIosSetting,
   resolveSettings,
   tunnelModeSetting,
   unknownSettingKeys,
@@ -108,6 +111,30 @@ test('unknownSettingKeys accepts every key that is still honoured', () => {
       worktreeDir: '/tmp/wt',
     }),
   ).toEqual([]);
+});
+
+describe('remote device settings', () => {
+  test('accepts only the explicit proxy and eas backends', () => {
+    expect(remoteIosSetting({ ios: { remote: 'proxy' } })).toBe('proxy');
+    expect(remoteIosSetting({ ios: { remote: 'eas' } })).toBe('eas');
+    expect(remoteAndroidSetting({ android: { remote: 'proxy' } })).toBe('proxy');
+    expect(remoteAndroidSetting({ android: { remote: 'eas' } })).toBe('eas');
+  });
+
+  test('reports invalid platform values instead of silently disabling remote mode', () => {
+    expect(remoteDeviceSettingError({ ios: { remote: true } })).toBe(
+      'Invalid ios.remote setting true. Expected one of: proxy, eas.',
+    );
+    expect(remoteDeviceSettingError({ android: { remote: 'cloud' } })).toBe(
+      'Invalid android.remote setting "cloud". Expected one of: proxy, eas.',
+    );
+  });
+
+  test('missing platform settings remain local and valid', () => {
+    expect(remoteIosSetting({})).toBeNull();
+    expect(remoteAndroidSetting({ android: {} })).toBeNull();
+    expect(remoteDeviceSettingError({})).toBeNull();
+  });
 });
 
 test('unknownSettingKeys reports a nested unknown without flagging its parent', () => {
