@@ -7,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -1348,6 +1349,25 @@ describe('EAS orphan session sweep', () => {
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
   });
 
+  test('a listed state entry that cannot be read fails closed for remote deletion', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [{ id: 'drs_unreadable', name: 'rn-iso-old', platform: 'ios' }]);
+    symlinkSync(join(fakeHome, 'missing-state-target'), workspaceStateFile(project));
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_unreadable', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_unreadable: JSON.stringify({ id: 'drs_unreadable', name: 'rn-iso-old', status: 'IN_PROGRESS' }) },
+      stop: { drs_unreadable: JSON.stringify({ id: 'drs_unreadable', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() => runGc({ delete: true }, harness.deps));
+
+    expect(output).toMatch(/state\.json.*could not be read/i);
+    expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+  });
+
   test('a candidate changed to an unowned name is never stopped', async () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
@@ -1401,6 +1421,78 @@ describe('EAS orphan session sweep', () => {
     expect(output).toContain('Stopped EAS session drs_ok');
     expect(output).toMatch(/could not be deleted/i);
     expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('a throwing claim removal reports resolved sessions and continues other candidates and local cleanup', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [
+      { id: 'drs_first', name: 'rn-iso-first', platform: 'ios' },
+      { id: 'drs_second', name: 'rn-iso-second', platform: 'android' },
+    ]);
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: easList([
+        { id: 'drs_first', name: 'rn-iso-first', status: 'IN_PROGRESS', platform: 'IOS' },
+        { id: 'drs_second', name: 'rn-iso-second', status: 'IN_PROGRESS', platform: 'ANDROID' },
+      ]),
+      get: {
+        drs_first: JSON.stringify({ id: 'drs_first', name: 'rn-iso-first', status: 'IN_PROGRESS' }),
+        drs_second: JSON.stringify({ id: 'drs_second', name: 'rn-iso-second', status: 'IN_PROGRESS' }),
+      },
+      stop: {
+        drs_first: JSON.stringify({ id: 'drs_first', status: 'STOPPED' }),
+        drs_second: JSON.stringify({ id: 'drs_second', status: 'STOPPED' }),
+      },
+    });
+
+    const output = await captureLog(() =>
+      runGc({ delete: true }, {
+        ...harness.deps,
+        removeEasSessionClaim: () => {
+          throw new Error('claim store unavailable');
+        },
+      } as unknown as Parameters<typeof runGc>[1]),
+    );
+
+    expect(output).toMatch(/Stopped EAS session drs_first/);
+    expect(output).toMatch(/Stopped EAS session drs_second/);
+    expect(output).toMatch(/ownership claim.*could not be removed/i);
+    expect(harness.calls.map((call) => call.args[0])).toEqual([
+      'simulator:list',
+      'simulator:get',
+      'simulator:stop',
+      'simulator:get',
+      'simulator:stop',
+    ]);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
+  test('a false claim removal reports the stopped session and retained claim', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    claimEasSessions(project, [{ id: 'drs_resolved', name: 'rn-iso-resolved', platform: 'ios' }]);
+    installExecutor();
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_resolved', name: 'rn-iso-resolved', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: {
+        drs_resolved: JSON.stringify({ id: 'drs_resolved', name: 'rn-iso-resolved', status: 'IN_PROGRESS' }),
+      },
+      stop: { drs_resolved: JSON.stringify({ id: 'drs_resolved', status: 'STOPPED' }) },
+    });
+
+    const output = await captureLog(() =>
+      runGc({ delete: true }, { ...harness.deps, removeEasSessionClaim: () => false } as unknown as Parameters<
+        typeof runGc
+      >[1]),
+    );
+
+    expect(output).toMatch(/Stopped EAS session drs_resolved/);
+    expect(output).toMatch(/ownership claim.*could not be removed/i);
+    expect(output).toMatch(/could not be deleted/i);
   });
 
   test('the report states that the EAS sweep covers only the current project', async () => {

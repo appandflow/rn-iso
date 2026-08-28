@@ -427,7 +427,12 @@ export async function runStop({
       report(chalk.red(`remote: ${result.reason ?? `could not stop session ${sessionId}`}`));
     } else {
       report(chalk.dim(`remote: stopped session ${sessionId}`));
-      clearRemoteSession(root, sessionId);
+      if (result.reason) {
+        ok = false;
+        report(chalk.yellow(`remote: ${result.reason}`));
+      } else {
+        clearRemoteSession(root, sessionId);
+      }
     }
   }
 

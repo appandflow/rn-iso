@@ -22,7 +22,7 @@
 // that is how @rn-iso/metro and src/build-cache.js self-register.
 import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
-import { dirname, isAbsolute, join, relative, resolve } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { clearDevice, getConfigDir, loadConfig } from '../config.ts';
@@ -145,6 +145,7 @@ interface GcDependencies {
   easSweepBlockedNotice?: string;
   easLockedRoots?: readonly string[];
   easLedgerRoot?: string;
+  removeEasSessionClaim?: typeof removeEasSessionClaim;
   precollectedEasSessionSweep?: EasSessionSweep;
 }
 
@@ -386,16 +387,17 @@ function readRecordedRemoteSessionIds(roots: string[]): {
 
 function claimStateAbsence(claim: EasSessionClaim): { absent: boolean; notice: string | null } {
   const stateDir = dirname(claim.stateFile);
+  let entries: string[];
   try {
     if (!statSync(stateDir).isDirectory()) throw new Error('path is not a directory');
-    readdirSync(stateDir);
+    entries = readdirSync(stateDir);
   } catch (error) {
     return {
       absent: false,
       notice: `${stateDir} is not available for EAS ownership verification: ${describeError(error)}`,
     };
   }
-  if (!existsSync(claim.stateFile)) return { absent: true, notice: null };
+  if (!entries.includes(basename(claim.stateFile))) return { absent: true, notice: null };
   let state: unknown;
   try {
     state = JSON.parse(readFileSync(claim.stateFile, 'utf-8')) as unknown;
@@ -1232,6 +1234,21 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
               : readRecordedRemoteSessionIds([...Object.keys(currentConfig?.projects ?? {}), projectScope]);
             const ledgerRoot = coordinatedDeps.easLedgerRoot ?? easMachineStateRoot();
             const ledger = readEasSessionLedger(ledgerRoot);
+            const removeClaim = coordinatedDeps.removeEasSessionClaim ?? removeEasSessionClaim;
+            const reconcileClaim = (sessionId: string): void => {
+              let detail = 'the claim store did not remove it';
+              try {
+                if (removeClaim(sessionId, ledgerRoot)) return;
+              } catch (error) {
+                detail = describeError(error);
+              }
+              deleteFailures++;
+              console.log(
+                chalk.red(
+                  `EAS session ${sessionId} is resolved, but its ownership claim could not be removed: ${detail}. The claim was retained for reconciliation.`,
+                ),
+              );
+            };
             if (registryExpanded) {
               deleteFailures += easSessionSweep.orphaned.length;
               console.log(
@@ -1285,7 +1302,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
                 } catch (error) {
                   if (isDefinitiveMissingSessionError(error, session.id)) {
                     console.log(chalk.dim(`EAS session ${session.id} is already gone.`));
-                    removeEasSessionClaim(session.id, ledgerRoot);
+                    reconcileClaim(session.id);
                   } else {
                     deleteFailures++;
                     console.log(chalk.red(`Could not verify EAS session ${session.id}: ${describeError(error)}`));
@@ -1296,7 +1313,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
                 const inspection = inspectSessionForTeardown(live, session.id);
                 if (inspection.action === 'already-stopped') {
                   console.log(chalk.dim(`EAS session ${session.id} is already stopped (${inspection.status}).`));
-                  removeEasSessionClaim(session.id, ledgerRoot);
+                  reconcileClaim(session.id);
                   continue;
                 }
                 if (inspection.action === 'refused') {
@@ -1320,7 +1337,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
                   continue;
                 }
                 console.log(chalk.green(`Stopped EAS session ${session.id} (${session.name})`));
-                removeEasSessionClaim(session.id, ledgerRoot);
+                reconcileClaim(session.id);
               }
             }
           });

@@ -54,6 +54,16 @@ function reclaimRemoteSession(
     result = { status: 'failed', reason: String((err as Error)?.message ?? err) };
   }
   if (result.status === 'torn-down') {
+    if (result.reason) {
+      return {
+        stopped: sessionId,
+        failed: {
+          platform: 'ios',
+          name: `remote session ${sessionId}`,
+          reason: `${result.reason} The session is stopped. Re-run cleanup to reconcile its retained ownership claim.`,
+        },
+      };
+    }
     clearRemoteSession(root, sessionId);
     return { stopped: sessionId, failed: null };
   }

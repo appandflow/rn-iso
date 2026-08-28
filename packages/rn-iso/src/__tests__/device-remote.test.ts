@@ -563,6 +563,41 @@ describe('session creation', () => {
     expect(stateWritten).toBe(false);
   });
 
+  test.each([
+    ['false result', () => false],
+    [
+      'throw',
+      () => {
+        throw new Error('claim store unavailable');
+      },
+    ],
+  ])('a state publication failure contains a claim-removal %s after verified stop', async (_label, removeClaim) => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+
+    const result = await ensureRemoteBootOwned({
+      root,
+      platform: 'ios',
+      sessionName: 'rn-iso-wt',
+      startedAt: '2026-08-28T00:00:00.000Z',
+      boot: async () => ({ ok: true, udid: 'drs_claimed' }),
+      createdSessionId: () => 'drs_claimed',
+      abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_claimed' }),
+      writeState: () => {
+        throw new Error('state store unavailable');
+      },
+      removeEasSessionClaim: removeClaim,
+      withProjectLock: async (_project, fn) => fn(),
+      withLock: async (_project, fn) => fn(),
+      ledgerRoot,
+    });
+
+    expect('failed' in result && result.failed).toBe(true);
+    expect('code' in result && result.code).toBe('RN_ISO_REMOTE_SESSION_CLEANUP');
+    expect('reason' in result && result.reason).toMatch(/session.*stopped.*ownership claim.*could not be removed/i);
+    expect('remedy' in result && result.remedy).toContain(ledgerRoot);
+    expect(readEasSessionLedger(ledgerRoot).claims.has('drs_claimed')).toBe(true);
+  });
+
   test('runs in the project directory, because eas sim resolves it from cwd', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     await remoteIosDeps(ctx()).ensureBooted({});
@@ -659,6 +694,66 @@ describe('fixed ownership claim teardown', () => {
 
     expect(teardownRemote(ctx({ easLedgerRoot: ledgerRoot }), { sessionId: 'drs_42' }).status).toBe('failed');
     expect(readEasSessionLedger(ledgerRoot).claims.has('drs_42')).toBe(true);
+  });
+
+  test('verified teardown contains a throwing claim removal and reports reconciliation', () => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    recordEasSessionClaim(
+      {
+        sessionId: 'drs_42',
+        name: 'rn-iso-wt',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: tmpHome,
+        stateFile: workspaceStateFile(root),
+      },
+      ledgerRoot,
+    );
+    mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+      },
+    });
+
+    const result = teardownRemote(
+      ctx({
+        easLedgerRoot: ledgerRoot,
+        removeEasSessionClaim: () => {
+          throw new Error('claim store unavailable');
+        },
+      }),
+      { sessionId: 'drs_42' },
+    );
+
+    expect(result.status).toBe('torn-down');
+    expect(result.reason).toMatch(/ownership claim.*could not be removed/i);
+  });
+
+  test('verified teardown reports a false claim removal for reconciliation', () => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    recordEasSessionClaim(
+      {
+        sessionId: 'drs_42',
+        name: 'rn-iso-wt',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: tmpHome,
+        stateFile: workspaceStateFile(root),
+      },
+      ledgerRoot,
+    );
+    mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'rn-iso-wt', status: 'IN_PROGRESS' }),
+      },
+    });
+
+    const result = teardownRemote(ctx({ easLedgerRoot: ledgerRoot, removeEasSessionClaim: () => false }), {
+      sessionId: 'drs_42',
+    });
+
+    expect(result.status).toBe('torn-down');
+    expect(result.reason).toMatch(/ownership claim.*could not be removed/i);
   });
 });
 
@@ -1275,6 +1370,38 @@ describe('a re-run does not orphan the session it already has', () => {
     await remoteIosDeps(ctx()).ensureBooted({});
     expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
     expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(true);
+  });
+
+  test('a stopped recorded session with an unreconciled claim is not replaced', async () => {
+    recordSession('drs_dead');
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    recordEasSessionClaim(
+      {
+        sessionId: 'drs_dead',
+        name: 'rn-iso-wt',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: tmpHome,
+        stateFile: workspaceStateFile(root),
+      },
+      ledgerRoot,
+    );
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'rn-iso-wt', status: 'STOPPED' }),
+        sim: CREATED,
+      },
+    });
+
+    const booted = await remoteIosDeps(
+      ctx({ easLedgerRoot: ledgerRoot, removeEasSessionClaim: () => false }),
+    ).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(booted.code).toBe('RN_ISO_REMOTE_SESSION_CLEANUP');
+    expect(booted.reason).toMatch(/ownership claim.*could not be removed/i);
+    expect(exec.calls.some((call) => call.args[0] === 'sim')).toBe(false);
+    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_dead');
   });
 
   test('an unowned live recorded session is neither stopped nor replaced', async () => {

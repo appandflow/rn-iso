@@ -709,6 +709,29 @@ test('a successful stop drops the record but keeps lastBuild', async () => {
   expect(state.lastBuild.hash).toBe('keepme');
 });
 
+test('a stopped session with an unreconciled claim is reported and keeps its retry record', async () => {
+  withRemoteSession('drs_8');
+  const lines: string[] = [];
+
+  const result = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: () => ({
+      status: 'torn-down',
+      reason: 'The ownership claim could not be removed. Re-run stop to reconcile it.',
+    }),
+    report: (line) => lines.push(line),
+  });
+
+  expect(result.ok).toBe(false);
+  expect(lines.join('\n')).toMatch(/stopped session drs_8/i);
+  expect(lines.join('\n')).toMatch(/ownership claim.*could not be removed/i);
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice.sessionId).toBe('drs_8');
+});
+
 function verifiedTeardown(sessionOutput: string, calls: string[]) {
   setExecutor({
     runFile: (_file: string, args: string[]) => {

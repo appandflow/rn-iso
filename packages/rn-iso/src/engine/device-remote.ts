@@ -54,7 +54,12 @@ import {
 } from './eas-simulator.ts';
 import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
 import { withEasProjectLock } from './eas-project-lock.ts';
-import { easMachineStateRoot, recordEasSessionClaim, removeEasSessionClaim } from './eas-session-ledger.ts';
+import {
+  easMachineStateRoot,
+  readEasSessionLedger,
+  recordEasSessionClaim,
+  removeEasSessionClaim,
+} from './eas-session-ledger.ts';
 import { getConfigDir } from '../config.ts';
 
 export const REMOTE_SESSION_ERROR = 'RN_ISO_NO_REMOTE_SESSION';
@@ -212,6 +217,7 @@ export interface RemoteContext {
   // none: it is a guest on someone else's device.
   existingDaemon?: RemoteDaemon | null;
   easLedgerRoot?: string;
+  removeEasSessionClaim?: typeof removeEasSessionClaim;
 }
 
 // The live session for one `rn-iso ios` run. Held in a closure rather than in
@@ -342,7 +348,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
           } else {
             note(`Recorded session ${recorded.sessionId} is not usable; verifying it before replacement.`);
             const cleanup = teardownRemote(ctx, { sessionId: recorded.sessionId });
-            if (cleanup.status === 'failed') {
+            if (cleanup.status === 'failed' || cleanup.reason) {
               return {
                 failed: true,
                 code: 'RN_ISO_REMOTE_SESSION_CLEANUP',
@@ -788,6 +794,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   register = () => {},
   withProjectLock = withEasProjectLock,
   withLock = withRemoteSessionLock,
+  removeEasSessionClaim: removeClaim = removeEasSessionClaim,
   ledgerRoot = easMachineStateRoot(),
 }: {
   root: string;
@@ -801,6 +808,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   register?: () => unknown;
   withProjectLock?: typeof withEasProjectLock;
   withLock?: typeof withRemoteSessionLock;
+  removeEasSessionClaim?: typeof removeEasSessionClaim;
   ledgerRoot?: string;
 }): Promise<T | BootResult> {
   try {
@@ -830,12 +838,24 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
           } catch (err) {
             const cleanup = abandonCreatedSession();
             if (cleanup.ok) {
-              removeEasSessionClaim(sessionId, ledgerRoot);
+              let removalFailure = 'the claim store did not remove it';
+              try {
+                if (removeClaim(sessionId, ledgerRoot)) {
+                  return {
+                    failed: true,
+                    code: 'RN_ISO_REMOTE_SESSION_STATE',
+                    reason: `Could not record EAS session ${sessionId}: ${describe(err)}. The session was stopped.`,
+                    remedy: 'Fix workspace state storage, then retry the remote command.',
+                  };
+                }
+              } catch (error) {
+                removalFailure = describe(error);
+              }
               return {
                 failed: true,
-                code: 'RN_ISO_REMOTE_SESSION_STATE',
-                reason: `Could not record EAS session ${sessionId}: ${describe(err)}. The session was stopped.`,
-                remedy: 'Fix workspace state storage, then retry the remote command.',
+                code: 'RN_ISO_REMOTE_SESSION_CLEANUP',
+                reason: `Could not record EAS session ${sessionId}: ${describe(err)}. The session was stopped, but its ownership claim could not be removed: ${removalFailure}.`,
+                remedy: `The stopped session claim remains under ${ledgerRoot}. Repair that ownership ledger before retrying the remote command.`,
               };
             }
             return {
@@ -1083,13 +1103,23 @@ export function teardownRemote(
     // ordinary case here, and the session stop below is what matters.
   }
   if (!sessionId) return { status: 'torn-down' };
+  const ledger = readEasSessionLedger(ctx.easLedgerRoot);
+  const claimNeedsRemoval = !ledger.safe || ledger.claims.has(sessionId);
+  const removeClaim = (): string | undefined => {
+    try {
+      const removed = (ctx.removeEasSessionClaim ?? removeEasSessionClaim)(sessionId, ctx.easLedgerRoot);
+      if (removed || !claimNeedsRemoval) return undefined;
+      return `EAS session ${sessionId} is stopped, but its ownership claim could not be removed. The claim and workspace record were kept for reconciliation. Re-run stop.`;
+    } catch (error) {
+      return `EAS session ${sessionId} is stopped, but its ownership claim could not be removed: ${describe(error)}. The claim and workspace record were kept for reconciliation. Re-run stop.`;
+    }
+  };
   let sessionOutput: string;
   try {
     sessionOutput = getExecutor().runFile(ctx.easBin, getSessionArgs(sessionId), easBoundedExecOptions(ctx.root));
   } catch (err) {
     if (isDefinitiveMissingSessionError(err, sessionId)) {
-      removeEasSessionClaim(sessionId, ctx.easLedgerRoot);
-      return { status: 'torn-down' };
+      return { status: 'torn-down', reason: removeClaim() };
     }
     return {
       status: 'failed',
@@ -1101,8 +1131,7 @@ export function teardownRemote(
     return { status: 'failed', reason: `${inspection.reason} The session record was kept for retry.` };
   }
   if (inspection.action === 'already-stopped') {
-    removeEasSessionClaim(sessionId, ctx.easLedgerRoot);
-    return { status: 'torn-down' };
+    return { status: 'torn-down', reason: removeClaim() };
   }
 
   let stopOutput: string;
@@ -1116,8 +1145,7 @@ export function teardownRemote(
   }
   const verified = verifyStoppedSession(stopOutput, sessionId);
   if (!verified.ok) return { status: 'failed', reason: `${verified.reason} The session record was kept for retry.` };
-  removeEasSessionClaim(sessionId, ctx.easLedgerRoot);
-  return { status: 'torn-down' };
+  return { status: 'torn-down', reason: removeClaim() };
 }
 
 /**

@@ -158,6 +158,8 @@ Plain `gc` is a dry run. `gc --delete` can stop active rn-iso-* EAS sessions aft
 
 A fixed ownership record and lock live under ~/.rn-iso/machine/eas, independent of RN_ISO_HOME. An unclaimed session is reported but never stopped. A missing config.json does not authorize cleanup. The exact recorded workspace state path must prove that the session ID is absent.
 
+If claim removal fails after a verified stop, the session is stopped, but the workspace record is kept for reconciliation.
+
 Remote devices do not provide native device logs. Metro errors and redboxes remain available through `logs --errors`.
 
 ## When things go wrong

@@ -1130,6 +1130,8 @@ REMOTE EAS SESSIONS
   Missing config.json does not authorize cleanup.
   The exact recorded workspace state path must prove that the session ID is
   absent.
+  If claim removal fails after a verified stop, the session is stopped, but the
+  workspace record is kept for reconciliation.
 
   If a registered root is missing or unreadable, the EAS sweep fails closed and
   leaves the remote EAS session running. Independent local cleanup continues

@@ -196,6 +196,24 @@ test('a session that could not be stopped keeps the entry and names the manual f
   rmSync(root, { recursive: true, force: true });
 });
 
+test('a stopped session with an unreconciled claim keeps the workspace retry handle', async () => {
+  const root = workspaceWithSession('drs_43');
+  const result = await reclaimProject(root, {
+    stopSession: () => ({
+      status: 'torn-down',
+      reason: 'The ownership claim could not be removed. Re-run cleanup to reconcile it.',
+    }),
+  });
+
+  expect(result.stoppedSession).toBe('drs_43');
+  expect(result.keptEntry).toBe(true);
+  expect(result.failedDevices[0]?.reason).toMatch(/session is stopped/i);
+  expect(result.failedDevices[0]?.reason).toMatch(/ownership claim.*could not be removed/i);
+  expect(getProject(root)).toBeTruthy();
+  expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_43');
+  rmSync(root, { recursive: true, force: true });
+});
+
 test('a throwing stop is contained, so the caller still removes the tree', async () => {
   // A propagated throw would abort reclaim before `git worktree remove` runs,
   // and re-running would hit it forever.

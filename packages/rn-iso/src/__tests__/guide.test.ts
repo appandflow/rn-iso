@@ -157,6 +157,7 @@ test('the cleanup guide documents fail-closed EAS orphan recovery', () => {
   expect(cleanup).toMatch(/unclaimed[^.]*never stopped/i);
   expect(cleanup).toMatch(/missing config\.json[^.]*does not authorize/i);
   expect(cleanup).toMatch(/exact recorded workspace state path/i);
+  expect(cleanup).toMatch(/session is stopped[^.]*workspace record[^.]*kept[^.]*reconciliation/i);
   expect(cleanup).toMatch(/remote EAS session[^.]*running/i);
   expect(cleanup).toMatch(/local cleanup[^.]*continues/i);
   expect(cleanup).not.toMatch(/EAS session and local claim stay/i);
@@ -270,6 +271,7 @@ test('the skill teaches the complete remote-device contract', () => {
   expect(skill).toMatch(/unclaimed[^.]*never stopped/i);
   expect(skill).toMatch(/missing config\.json[^.]*does not authorize/i);
   expect(skill).toMatch(/exact recorded workspace state path/i);
+  expect(skill).toMatch(/session is stopped[^.]*workspace record[^.]*kept[^.]*reconciliation/i);
   expect(skill).toMatch(/remote EAS session[^.]*running/i);
   expect(skill).toMatch(/local cleanup[^.]*continues/i);
   expect(skill).not.toMatch(/including `stop`, is safe/i);
