@@ -2392,6 +2392,64 @@ describe('--remote', () => {
   });
 });
 
+// --- a diagnosed MISS: what changed since this workspace's previous build ---
+//
+// The fingerprint line alone says only "the hash moved". When the previous
+// build's cache entry stored its sources (fingerprint-sources.json, written by
+// storeBuild), a miss can NAME the inputs that moved: up to three on the phase
+// line, the capped full list in the build log as a fingerprint_diff record.
+test('a miss with a prior stored entry appends the changed-sources suffix and logs fingerprint_diff', async () => {
+  reserve();
+  // The previous build (Contract 4), pointing at an entry in the shared cache.
+  writeWorkspaceState(root, {
+    lastBuild: { platform: 'ios', fingerprint: 'oldhash', cacheKey: 'old-key' },
+  });
+  const entry = join(tmpHome, 'build-cache', 'ios', 'old-key');
+  mkdirSync(entry, { recursive: true });
+  writeFileSync(
+    join(entry, 'fingerprint-sources.json'),
+    JSON.stringify([
+      { type: 'file', filePath: 'ios/Podfile.lock', hash: 'aa' },
+      { type: 'contents', id: 'expoConfig', hash: 'bb' },
+    ]),
+  );
+
+  const { errs } = await run(
+    {},
+    {
+      fingerprintProject: async () => ({
+        hash: FINGERPRINT,
+        sources: [
+          { type: 'file', filePath: 'ios/Podfile.lock', hash: 'a2' },
+          { type: 'contents', id: 'expoConfig', hash: 'bb' },
+        ],
+      }),
+    },
+  );
+
+  const line = errs.find((e) => e.startsWith('fingerprint'));
+  assert(line);
+  expect(line).toMatch(/miss/);
+  expect(line).toMatch(/ -- 1 source changed: ios\/Podfile\.lock$/);
+
+  const record = buildRecords().find((r) => r.event === 'fingerprint_diff');
+  assert(record, 'expected a fingerprint_diff record in the build log');
+  expect(record.level).toBe('info');
+  expect(record.src).toBe('build');
+  expect(record.changed).toBe(1);
+  expect(record.sources).toEqual(['ios/Podfile.lock']);
+  expect(record.msg).toMatch(/oldhash -> a3f9b1c2d3e4f5/);
+});
+
+test('a miss with no prior entry (or a first build) prints the plain miss line, no suffix', async () => {
+  reserve();
+  const { errs } = await run();
+  const line = errs.find((e) => e.startsWith('fingerprint'));
+  assert(line);
+  expect(line).toMatch(/miss \(\d+m?\d*s\)$/);
+  expect(buildRecords().some((r) => r.event === 'fingerprint_diff')).toBe(false);
+});
+
 // --- release builds (--configuration, issue #57 phase 1) --------------------
 //
 // A non-Debug configuration is a different product: the JS is embedded by the
