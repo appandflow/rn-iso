@@ -98,7 +98,7 @@ function withDir(tmplStr, appDir) {
     .map((t) => (t === '{dir}' ? appDir : t));
 }
 
-export function createFixture({ framework, workDir, h }) {
+export function createFixture({ framework, platform, workDir, h }) {
   const appDir = join(workDir, 'app');
   const cmd = FIXTURE_COMMANDS[framework](appDir);
   h.log(`creating ${framework} fixture: ${cmd.map(quote).join(' ')}`);
@@ -114,6 +114,17 @@ export function createFixture({ framework, workDir, h }) {
       timeout: 15 * 60 * 1000,
     });
     if (r2.status !== 0) h.die('installing the expo fixture dependencies failed');
+  }
+
+  if (framework === 'bare' && platform === 'ios') {
+    h.log('installing the bare iOS fixture pods before its initial commit');
+    const r2 = spawnSync('pod', ['install'], {
+      cwd: join(appDir, 'ios'),
+      env: h.env,
+      stdio: 'inherit',
+      timeout: 20 * 60 * 1000,
+    });
+    if (r2.status !== 0) h.die('installing the bare iOS fixture pods failed');
   }
 
   gitInitWithRemote({ appDir, workDir, framework, h });

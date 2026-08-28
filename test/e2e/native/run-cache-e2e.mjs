@@ -125,7 +125,9 @@ function skipCheck(id, reason) {
 async function main() {
   preflight(h, PLATFORM);
 
-  const appDir = args.appDir ? resolve(args.appDir) : createFixture({ framework: FRAMEWORK, workDir: WORK_DIR, h });
+  const appDir = args.appDir
+    ? resolve(args.appDir)
+    : createFixture({ framework: FRAMEWORK, platform: PLATFORM, workDir: WORK_DIR, h });
   const expoSdk = FRAMEWORK === 'expo' ? readExpoSdkMajor(appDir) : null;
   log(`app: ${appDir}`);
   if (FRAMEWORK === 'expo') log(`Expo SDK: ${expoSdk ?? 'unknown'}`);

@@ -47,7 +47,9 @@ const created = [];
 async function main() {
   preflight(h, PLATFORM);
 
-  const appDir = args.appDir ? resolve(args.appDir) : createFixture({ framework: FRAMEWORK, workDir: WORK_DIR, h });
+  const appDir = args.appDir
+    ? resolve(args.appDir)
+    : createFixture({ framework: FRAMEWORK, platform: PLATFORM, workDir: WORK_DIR, h });
   if (args.fixtureOnly) {
     log(`fixture-only: app created at ${appDir}. Stopping before any build.`);
     return;
