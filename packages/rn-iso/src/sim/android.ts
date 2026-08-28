@@ -106,7 +106,7 @@ export function newestBuildTools(names: unknown): string | null {
   return (
     [...(Array.isArray(names) ? names : [])]
       .filter((n) => /^\d+(\.\d+)*(-\w+)?$/.test(String(n)))
-      .sort((a, b) => {
+      .toSorted((a, b) => {
         const pa = String(a).split(/[.-]/).map(Number);
         const pb = String(b).split(/[.-]/).map(Number);
         for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
@@ -229,7 +229,7 @@ export function pickDefaultSystemImage(
   if (matching.length === 0) return null;
   // matching.length > 0 was just checked, so [0] is present after the sort.
   return (
-    [...matching].sort(
+    matching.toSorted(
       (a, b) =>
         pageSizeRank(a) - pageSizeRank(b) ||
         b.api - a.api ||

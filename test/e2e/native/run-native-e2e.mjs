@@ -168,7 +168,7 @@ function worktreeCreate(name, appDir) {
   // build without a reinstall -- fast (APFS clone) on macOS, a full copy on the
   // Linux android runner but still correct. stdout is ONLY the path.
   const r = cli(['worktree', 'create', name, '--base', 'head', '--carry-ignored'], { cwd: appDir });
-  const path = r.stdout.trim().split('\n').filter(Boolean).pop();
+  const path = r.stdout.trim().split('\n').findLast(Boolean);
   assert(path && existsSync(path), `worktree create did not yield a real path: ${JSON.stringify(r.stdout)}`);
   created.push(path);
   log(`worktree ${name} -> ${path}`);
@@ -192,7 +192,7 @@ function startAndAssertMode(cwd) {
     }
     die(`rn-iso start failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
   }
-  const line = r.stdout.trim().split('\n').filter(Boolean).pop();
+  const line = r.stdout.trim().split('\n').findLast(Boolean);
   const facts = JSON.parse(line);
   assert(
     facts.mode === EXPECTED_MODE,
@@ -241,16 +241,16 @@ function handleLaunch(facts, label) {
 // any compile step. This is the on-disk proof that the cache short-circuited the
 // compiler, independent of the JSON's cacheHit field.
 function assertNoCompile(cwd) {
-  const log_ = buildLog(cwd);
-  if (!log_) {
+  const logPath = buildLog(cwd);
+  if (!logPath) {
     log('warn: no build-*.ndjson to inspect for compile signatures');
     return;
   }
-  const text = readFileSync(log_, 'utf-8');
+  const text = readFileSync(logPath, 'utf-8');
   for (const sign of COMPILE_SIGNS) {
     assert(
       !sign.test(text),
-      `the cached build's log contains a compile signature ${sign} -- it should have installed, not compiled:\n${log_}`,
+      `the cached build's log contains a compile signature ${sign} -- it should have installed, not compiled:\n${logPath}`,
     );
   }
   log('no-compile proof: the second worktree build log holds no compiler invocation.');

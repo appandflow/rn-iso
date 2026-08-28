@@ -267,9 +267,9 @@ describe('readProjectConfig', () => {
 describe('loadPlugin', () => {
   test('resolves a relative module reference against the PROJECT, and unwraps .default', async () => {
     writeProviderModule('fake-provider.cjs', RECORDING_PROVIDER(join(root, 'calls.log'), '/tmp/x.app'));
-    const plugin = await loadPlugin(root, './fake-provider.cjs');
-    expect(typeof plugin.resolveBuildCache).toBe('function');
-    expect(typeof plugin.uploadBuildCache).toBe('function');
+    const loadedPlugin = await loadPlugin(root, './fake-provider.cjs');
+    expect(typeof loadedPlugin.resolveBuildCache).toBe('function');
+    expect(typeof loadedPlugin.uploadBuildCache).toBe('function');
   });
 
   test('a module that is not a provider is refused by name', async () => {

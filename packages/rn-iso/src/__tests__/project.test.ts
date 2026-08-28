@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve, join } from 'path';
 import {
@@ -35,7 +35,6 @@ test('detectIsExpo false when expo is not in dependencies', () => {
 test('detectIsExpo trusts the ios script: react-native script wins even with expo dep', async () => {
   // Mimics rainbow: `expo` in deps for prebuild/modules, but the ios script
   // invokes react-native run-ios. Should NOT be flagged as Expo.
-  const { mkdtempSync, writeFileSync, rmSync } = await import('fs');
   const tmp = mkdtempSync(join((await import('os')).tmpdir(), 'rn-iso-detect-'));
   try {
     writeFileSync(
@@ -52,7 +51,6 @@ test('detectIsExpo trusts the ios script: react-native script wins even with exp
 });
 
 test('detectIsExpo trusts the ios script: expo run:ios wins', async () => {
-  const { mkdtempSync, writeFileSync, rmSync } = await import('fs');
   const tmp = mkdtempSync(join((await import('os')).tmpdir(), 'rn-iso-detect-'));
   try {
     writeFileSync(

@@ -806,7 +806,9 @@ describe('the debug_http_host script, run for real under sh', () => {
 
   test('a data directory that does not exist exits non-zero rather than pretending', () => {
     const script = debugHttpHostScript({ packageName: PKG, host: '10.0.2.2:8085', dataDir: join(dir, 'nope') });
-    expect(() => execFileSync('/bin/sh', ['-c', `sh -c ${deviceShellArg(script)}`], { stdio: 'ignore' })).toThrow();
+    expect(() => execFileSync('/bin/sh', ['-c', `sh -c ${deviceShellArg(script)}`], { stdio: 'ignore' })).toThrow(
+      Error,
+    );
   });
 
   test('the script is multi-line, and every line survives the quoting', () => {

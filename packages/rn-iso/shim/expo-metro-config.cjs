@@ -118,6 +118,7 @@ function loadProjectConfig(file) {
 }
 
 function then(value, next) {
+  // oxlint-disable-next-line promise/no-callback-in-promise -- Metro accepts synchronous values and promises.
   return value && typeof value.then === 'function' ? value.then(next) : next(value);
 }
 

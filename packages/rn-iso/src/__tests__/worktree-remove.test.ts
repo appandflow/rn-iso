@@ -514,10 +514,11 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
   // config entry. A future reorder (removeWorktree before reclaimProject)
   // would leave the entry present here and fail this assertion, even though
   // every pure removalBlockers test above would still pass unchanged.
+  let trackedWhenRemoved = true;
   const originalRunFile = exec.runFile.bind(exec);
   exec.runFile = (file, args = []) => {
     if (/worktree remove/.test([file, ...args].join(' '))) {
-      expect(getProject(wtDir)).toBe(null);
+      trackedWhenRemoved = getProject(wtDir) !== null;
     }
     return originalRunFile(file, args);
   };
@@ -527,6 +528,7 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
   await run(wtDir, {});
 
   expect(process.exitCode).not.toBe(1);
+  expect(trackedWhenRemoved).toBe(false);
   expect(getProject(wtDir)).toBe(null);
   expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });

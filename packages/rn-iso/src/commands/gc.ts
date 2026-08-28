@@ -150,6 +150,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // yet), so the device survives one full `gc --delete` and is only reaped
 // on the NEXT run. Excluding them here means dead-project pruning and its
 // device sweep land in the same run.
+function describeKept(ref: { path: string; mounted: boolean }): string {
+  return ref.mounted
+    ? `referenced by ${ref.path}`
+    : `referenced by ${ref.path} (volume not mounted; kept just in case)`;
+}
+
 export function findOrphanedDevices({
   sims = [],
   avds = [],
@@ -177,12 +183,6 @@ export function findOrphanedDevices({
     if (android?.avdName) {
       referenced.set(android.avdName, { path, mounted });
     }
-  }
-
-  function describeKept(ref: { path: string; mounted: boolean }) {
-    return ref.mounted
-      ? `referenced by ${ref.path}`
-      : `referenced by ${ref.path} (volume not mounted; kept just in case)`;
   }
 
   const orphaned: OrphanedDevice[] = [];
@@ -642,16 +642,19 @@ function machineGlobalReason(cache: CacheDescriptor): string | null {
 }
 
 function planCacheEmptying(caches: CacheDescriptor[], all: boolean): GcCache[] {
-  const annotated = caches.map((c) => ({ ...c, machineGlobal: machineGlobalReason(c) }));
+  const annotated = caches.map((c) => Object.assign({}, c, { machineGlobal: machineGlobalReason(c) }));
   if (!all) return annotated;
   return annotated.map((c) => {
     if (c.machineGlobal) {
-      return { ...c, willEmpty: false, emptySkipped: c.machineGlobal };
+      return Object.assign({}, c, { willEmpty: false, emptySkipped: c.machineGlobal });
     }
     if (!ownsItsDirectory(c)) {
-      return { ...c, willEmpty: false, emptySkipped: `${c.dir} is not a directory this cache owns` };
+      return Object.assign({}, c, {
+        willEmpty: false,
+        emptySkipped: `${c.dir} is not a directory this cache owns`,
+      });
     }
-    return { ...c, willEmpty: true, emptySkipped: null };
+    return Object.assign({}, c, { willEmpty: true, emptySkipped: null });
   });
 }
 

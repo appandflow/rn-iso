@@ -55,7 +55,7 @@ export default function doctorCommand(program: Command): void {
       }
 
       // Costs first: those are the ones silently spending time.
-      const ordered = [...findings].sort((a, b) => (a.level === b.level ? 0 : a.level === 'cost' ? -1 : 1));
+      const ordered = findings.toSorted((a, b) => (a.level === b.level ? 0 : a.level === 'cost' ? -1 : 1));
       for (const f of ordered) {
         const tag = f.level === 'cost' ? chalk.yellow('costs time') : chalk.dim('note');
         console.log(`\n${tag}  ${chalk.bold(f.title)}`);

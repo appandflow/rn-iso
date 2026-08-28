@@ -1,6 +1,10 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "oxc"],
+  "plugins": ["typescript", "unicorn", "oxc", "import", "node", "promise", "vitest"],
+  "options": {
+    "denyWarnings": true,
+    "reportUnusedDisableDirectives": "error"
+  },
   "categories": {
     "correctness": "error",
     "suspicious": "warn"
@@ -13,6 +17,34 @@
   "ignorePatterns": ["website/build/**", "website/.docusaurus/**"],
   "rules": {
     "no-unused-vars": "warn",
-    "typescript/no-explicit-any": "error"
-  }
+    "typescript/no-explicit-any": "error",
+    "vitest/no-commented-out-tests": "off",
+    "no-underscore-dangle": ["warn", { "allow": ["_load", "_resolveFilename", "_root", "__path"] }],
+    "import/export": "error",
+    "import/named": "error",
+    "import/no-cycle": "error",
+    "import/no-duplicates": "error",
+    "node/no-exports-assign": "error",
+    "node/no-new-require": "error",
+    "node/no-path-concat": "error",
+    "oxc/no-map-spread": "warn",
+    "promise/no-return-in-finally": "error",
+    "promise/no-return-wrap": "error",
+    "unicorn/prefer-array-find": "warn"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts"],
+      "rules": {
+        "unicorn/consistent-function-scoping": "off",
+        "vitest/no-standalone-expect": ["error", { "additionalTestBlockFunctions": ["test.skipIf", "withDir"] }]
+      }
+    },
+    {
+      "files": ["test/**/*.js", "test/**/*.mjs"],
+      "rules": {
+        "unicorn/consistent-function-scoping": "off"
+      }
+    }
+  ]
 }

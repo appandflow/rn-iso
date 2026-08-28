@@ -78,19 +78,20 @@ export function processGroupLeader(pid: number): number | null {
   return parsePsPgid(getExecutor().runQuiet(`ps -o pgid= -p ${pid}`));
 }
 
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
 // Canonicalize both sides before comparing: worktrees, and this machine's
 // /Users -> /Volumes symlink, both make a plain textual prefix check wrong.
 export function isInsideProject(cwd: string | null | undefined, projectPath: string | null | undefined): boolean {
   if (!cwd || !projectPath) return false;
-  const canon = (p: string): string => {
-    try {
-      return realpathSync(p);
-    } catch {
-      return p;
-    }
-  };
-  const a = canon(cwd);
-  const b = canon(projectPath);
+  const a = canonicalPath(cwd);
+  const b = canonicalPath(projectPath);
   return a === b || a.startsWith(b.endsWith(sep) ? b : b + sep);
 }
 

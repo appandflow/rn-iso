@@ -346,10 +346,8 @@ describe('logs command', () => {
     }
     // findProjectRoot walks to the filesystem root; on a dev machine tmpdir
     // has no package.json ancestor, so this is the not-in-a-project path.
-    if (exitCode !== null) {
-      expect(exitCode).toBe(1);
-      expect(errOut.join('\n')).toMatch(/project/i);
-    }
+    expect(exitCode).toBe(1);
+    expect(errOut.join('\n')).toMatch(/project/i);
   });
 
   test('--since is honoured against real timestamps', () => {

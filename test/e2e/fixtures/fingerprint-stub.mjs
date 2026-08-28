@@ -47,6 +47,9 @@ export async function createFingerprintAsync(projectRoot, options = {}) {
 
   const sortedFiles = files.toSorted((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   const hasher = createHash('sha256');
+  // Scope goes into the hash too, so an ['android'] fingerprint can never
+  // collide with an ['ios'] one even for a project whose two native trees
+  // happen to be byte-identical.
   hasher.update(`platforms:${[...platforms].toSorted().join(',')}\n`);
   for (const [path, contents] of sortedFiles) {
     hasher.update(path);

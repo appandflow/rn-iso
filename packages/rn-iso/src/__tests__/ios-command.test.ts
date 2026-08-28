@@ -1668,8 +1668,8 @@ describe('the collector', () => {
       udid: UDID,
       bundleId: 'com.example.app',
       appName: 'FixtureDev',
-      spawn: (cmd, args, opts) => {
-        spawns.push({ cmd, args, opts });
+      spawn: (cmd, args, spawnOptions) => {
+        spawns.push({ cmd, args, opts: spawnOptions });
         return makeChildProcess({ pid: 7001 });
       },
       kill: (pid, signal) => {

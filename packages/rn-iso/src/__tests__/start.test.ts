@@ -448,6 +448,7 @@ describe('action: spawning the supervisor', () => {
       metroListener(port).then((s) => {
         held.server = s;
         exec.listening = true;
+        return undefined;
       });
       return { pid: process.pid, unref() {}, on() {} };
     };
@@ -585,7 +586,7 @@ describe('the error contract', () => {
     setExecutor(metroExecutor({ listeners: {} }));
     const result = await runAction({ wait: 'soon' });
     expect(result.exitCode).toBe(1);
-    for (const line of result.logs) expect(() => JSON.parse(line)).toThrow();
+    for (const line of result.logs) expect(() => JSON.parse(line)).toThrow(SyntaxError);
     expect(result.errs.join('\n')).toMatch(/RN_ISO_BAD_ARG/);
   });
 });
@@ -700,6 +701,7 @@ describe('action: an existing supervisor that is not answering', () => {
     metroListener(port).then((s) => {
       held.server = s;
       exec.listening = true;
+      return undefined;
     });
 
     let result;
@@ -738,7 +740,7 @@ describe('output contract', () => {
     expect(result.logs.join('\n')).toMatch(/expo-child/);
     expect(result.logs.join('\n')).toMatch(new RegExp(workspaceLogsDir(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     for (const line of result.logs) {
-      expect(() => JSON.parse(line)).toThrow();
+      expect(() => JSON.parse(line)).toThrow(SyntaxError);
     }
   });
 });

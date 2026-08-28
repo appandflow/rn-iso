@@ -88,6 +88,10 @@ import { resolveSettings, unknownSettingKeys, type SettingsObject } from '../set
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 
+function writeNote(line: string): void {
+  console.error(line);
+}
+
 export const PLATFORM = 'ios';
 
 // --- local, flat shapes for engine results ---------------------------------
@@ -426,7 +430,7 @@ export function pickDevClientScheme(schemes: unknown): string | null {
     .filter((s) => !/^(?:https?|mailto|tel|sms|itms(?:-apps)?)$/i.test(s));
   const expo = all.filter((s) => s.startsWith('exp+'));
   const pool = expo.length ? expo : all.filter((s) => !THIRD_PARTY_SCHEME.test(s));
-  const sorted = [...pool].sort((a, b) => b.length - a.length);
+  const sorted = pool.toSorted((a, b) => b.length - a.length);
   return sorted[0] ?? null;
 }
 
@@ -943,7 +947,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // carries one line, and which line it is is the only difference --json
   // makes.
   const phase = (name: unknown, text: string) => console.error(phaseLine(name, text));
-  const note = (line: string) => console.error(line);
+  const note = writeNote;
 
   const started = d.now();
   const startedAt = new Date(started).toISOString();

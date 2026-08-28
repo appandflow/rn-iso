@@ -93,7 +93,7 @@ test('loadConfig reports a corrupt config by path instead of throwing a raw Synt
 test('loadConfig keeps a corrupt config on disk rather than resetting it', () => {
   const p = join(tmpHome, 'config.json');
   writeFileSync(p, 'not json at all');
-  expect(() => loadConfig()).toThrow();
+  expect(() => loadConfig()).toThrow(/not valid JSON/);
   expect(readFileSync(p, 'utf-8')).toBe('not json at all');
 });
 
@@ -244,7 +244,7 @@ test('allMetroPorts collects ports from all projects', () => {
   upsertProject('/b', { bundleId: 'com.b', androidPackage: 'com.b', isExpo: false });
   claimMetroPort('/a', 8082);
   claimMetroPort('/b', 8083);
-  expect(allMetroPorts().sort()).toEqual([8082, 8083]);
+  expect(allMetroPorts().toSorted()).toEqual([8082, 8083]);
 });
 
 test('allConsolePortsAndSerials collects android console ports across projects', () => {
@@ -255,7 +255,7 @@ test('allConsolePortsAndSerials collects android console ports across projects',
   setDevice(a, 'android', { avdName: 'Pixel_5', consolePort: 5556 });
   setDevice(b, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
   const result = allConsolePortsAndSerials();
-  expect(result.androidConsolePorts.sort()).toEqual([5554, 5556]);
+  expect(result.androidConsolePorts.toSorted()).toEqual([5554, 5556]);
 });
 
 test('allConsolePortsAndSerials collects physical serials (no avdName)', () => {

@@ -35,6 +35,13 @@ import {
 } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
 
+function delay(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    if (typeof timer.unref === 'function') timer.unref();
+  });
+}
+
 // THE PROJECT'S OWN expo binary, found by NODE RESOLUTION rather than by path
 // joining. `<root>/node_modules/.bin/expo` does not exist on a hoisted
 // monorepo -- neither a pnpm workspace nor a yarn-workspaces one puts it
@@ -503,11 +510,6 @@ export async function startExpoServer({
       const dead = new Promise<void>((resolve) => {
         child.once('exit', () => resolve());
       });
-      const expire = (ms: number) =>
-        new Promise<void>((resolve) => {
-          const t = setTimeout(resolve, ms);
-          if (typeof t.unref === 'function') t.unref();
-        });
       // The child pid, not its group: detached:false means it shares the
       // supervisor's group, so a group signal would kill the supervisor before
       // it could write its final record and clear its registration.
@@ -516,7 +518,7 @@ export async function startExpoServer({
       } catch {
         return;
       }
-      await Promise.race([dead, expire(killTimeoutMs)]);
+      await Promise.race([dead, delay(killTimeoutMs)]);
       if (!exited) {
         // An Expo that ignored SIGTERM would otherwise keep the port and
         // outlive the supervisor that is supposed to own it.
@@ -525,7 +527,7 @@ export async function startExpoServer({
         } catch {
           /* already gone */
         }
-        await Promise.race([dead, expire(killTimeoutMs)]);
+        await Promise.race([dead, delay(killTimeoutMs)]);
       }
     },
   };

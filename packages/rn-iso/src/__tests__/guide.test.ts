@@ -176,7 +176,7 @@ test('the skill points at the guide command and the topics it advertises', () =>
 // install a page that contradicts this one.
 test('exactly one skill ships, and the deleted init skill has not come back', () => {
   const dir = fileURLToPath(new URL('../../skill/', import.meta.url));
-  expect(readdirSync(dir).sort()).toEqual(['SKILL.md']);
+  expect(readdirSync(dir).toSorted()).toEqual(['SKILL.md']);
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   expect(skill).toMatch(/no separate init skill/);
   // And what the deleted playbook covered is reachable from where it matters.
@@ -199,7 +199,7 @@ test('the skill advertises exactly the commands bin/cli.js registers', () => {
   const registered = [...cli.matchAll(/^import (\w+)Command from '\.\.\/src\/commands\/([\w-]+)\.ts';$/gm)].map(
     (m) => m[2],
   );
-  expect(registered.sort()).toEqual([
+  expect(registered.toSorted()).toEqual([
     'android',
     'doctor',
     'gc',

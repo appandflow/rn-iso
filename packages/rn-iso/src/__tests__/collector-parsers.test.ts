@@ -103,7 +103,7 @@ describe('ios: log stream ndjson', () => {
 
   test('the record carries the executable name from processImagePath', () => {
     const records = lines.map((l) => parseLogStreamLine(l)).filter(isNotNull);
-    expect(records.map((r) => r.proc).sort()).toEqual(['gamecontrollerd', 'locationd', 'pairedsyncd']);
+    expect(records.map((r) => r.proc).toSorted()).toEqual(['gamecontrollerd', 'locationd', 'pairedsyncd']);
   });
 
   // Apple's stamp is "2026-08-25 13:18:05.196749-0400": a space separator and
@@ -368,7 +368,7 @@ describe('android: logcat -v time', () => {
       .map((l) => parseLogcatLine(l))
       .filter(isNotNull)
       .map((r) => r.level);
-    expect([...levels].sort()).toEqual(['debug', 'debug', 'error', 'info', 'warn']);
+    expect(levels.toSorted()).toEqual(['debug', 'debug', 'error', 'info', 'warn']);
   });
 
   test('the tag and pid become proc, and the message keeps its own colons', () => {

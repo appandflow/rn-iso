@@ -72,7 +72,7 @@ test('parseAvdList strips header and blanks', () => {
 test('parseAdbDevices extracts running emulator console ports and physical devices', () => {
   const out = `List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n0123456789ABCDEF\tdevice\n`;
   const result = parseAdbDevices(out);
-  expect(result.emulators.sort((a, b) => a.consolePort - b.consolePort)).toEqual([
+  expect(result.emulators.toSorted((a, b) => a.consolePort - b.consolePort)).toEqual([
     { serial: 'emulator-5554', consolePort: 5554 },
     { serial: 'emulator-5556', consolePort: 5556 },
   ]);

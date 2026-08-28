@@ -183,7 +183,7 @@ export function pickDefaultIosCreation(
   runtimes: IosRuntime[],
   { deviceType, runtime }: { deviceType?: string; runtime?: string } = {},
 ): IosCreationPick | null {
-  const rts = [...runtimes].sort((a, b) =>
+  const rts = runtimes.toSorted((a, b) =>
     String(b.version).localeCompare(String(a.version), undefined, { numeric: true }),
   );
   const wantedRts = runtime ? rts.filter((r) => r.version === runtime || r.name.endsWith(runtime)) : rts;
@@ -192,7 +192,7 @@ export function pickDefaultIosCreation(
       deviceType ? d.name === deviceType : /^iPhone/i.test(d.name),
     );
     if (supported.length === 0) continue;
-    const best = [...supported].sort((a, b) => {
+    const best = supported.toSorted((a, b) => {
       const ra = rankIphone(a.name),
         rb = rankIphone(b.name);
       return rb.gen - ra.gen || rb.variant - ra.variant || b.name.localeCompare(a.name, undefined, { numeric: true });

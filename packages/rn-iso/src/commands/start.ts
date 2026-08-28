@@ -37,6 +37,10 @@ const POLL_MS = 500;
 const LOG_TAIL_LINES = 5;
 const ERROR_EVIDENCE_RECORDS = 8;
 
+function writeNote(line: string): void {
+  console.error(line);
+}
+
 export function supervisorEntry(): string {
   return spawnEntry('supervisor-run');
 }
@@ -204,7 +208,7 @@ export function registerStart(program: Command): void {
         if (json) console.error(line);
         else console.log(line);
       };
-      const note = (line: string) => console.error(line);
+      const note = writeNote;
       // Every failure exits the same way: the diagnostic, whatever evidence
       // there is for it, the remedy, and -- under --json -- the error contract
       // as the single line on stdout. Same shape `ios` / `android` use, because

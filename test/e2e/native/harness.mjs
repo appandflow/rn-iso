@@ -63,7 +63,7 @@ export function createHarness({ env, cliPath, label }) {
     const r = cli(argv, opts);
     if (r.code !== 0) throw new Error(`rn-iso ${argv.join(' ')} failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
     // The --json contract: exactly one parseable line on stdout.
-    const line = r.stdout.trim().split('\n').filter(Boolean).pop();
+    const line = r.stdout.trim().split('\n').findLast(Boolean);
     try {
       return JSON.parse(line);
     } catch {
@@ -266,7 +266,7 @@ export function buildLog(cwd) {
   const candidates = readdirSync(dir)
     .filter((f) => /^build-.*\.ndjson$/.test(f))
     .map((f) => join(dir, f));
-  return candidates.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0] || null;
+  return candidates.toSorted((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0] || null;
 }
 
 export function workspaceLogsDir(cwd) {
@@ -289,13 +289,13 @@ export function workspaceLogsDir(cwd) {
 export function dumpDiagnostics(h, created) {
   h.banner('DIAGNOSTICS (build log tails)');
   for (const wt of created) {
-    const log_ = buildLog(wt);
-    if (!log_) {
+    const logPath = buildLog(wt);
+    if (!logPath) {
       h.log(`no build log under ${wt}`);
       continue;
     }
-    h.log(`--- ${log_} (tail) ---`);
-    process.stderr.write(lastLines(readFileSync(log_, 'utf-8'), 60) + '\n');
+    h.log(`--- ${logPath} (tail) ---`);
+    process.stderr.write(lastLines(readFileSync(logPath, 'utf-8'), 60) + '\n');
   }
 }
 

@@ -1,7 +1,6 @@
 import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
-import { join } from 'node:path';
 import { register, readManifest, registeredCaches, unregister, manifestPath } from '../cache-manifest.ts';
 import type { CacheEntry } from '../cache-manifest.ts';
 

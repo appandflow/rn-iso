@@ -170,7 +170,7 @@ export function pickDebugApk(files: unknown): string | null | undefined {
   // Shortest name first, then alphabetical: among app-debug.apk and
   // app-debug-androidTest.apk the app itself is the shorter one, and the
   // ordering is total so the answer does not depend on readdir order.
-  return [...pool].sort((a, b) => baseName(a).length - baseName(b).length || baseName(a).localeCompare(baseName(b)))[0];
+  return pool.toSorted((a, b) => baseName(a).length - baseName(b).length || baseName(a).localeCompare(baseName(b)))[0];
 }
 
 // PURE. The APK an output listing names. AGP writes
@@ -292,7 +292,7 @@ function findDebugApksUnder(base: string): string[] {
       found.push(join(dir, name));
     }
   }
-  return found.sort();
+  return found.toSorted();
 }
 
 // What locateApk answers: the APK when exactly one candidate was found (with

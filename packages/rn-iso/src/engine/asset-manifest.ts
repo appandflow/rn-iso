@@ -166,7 +166,7 @@ export function pickGeneratedResDir(
   reactChildren: string[] = [],
 ): string | null {
   const wanted = (variant ?? '').trim().toLowerCase();
-  const modern = names.filter((n) => /^createBundle.+JsAndAssets$/.test(n)).sort();
+  const modern = names.filter((n) => /^createBundle.+JsAndAssets$/.test(n)).toSorted();
   if (wanted) {
     const match = modern.find((n) => n.toLowerCase() === `createbundle${wanted}jsandassets`);
     if (match) return match;
@@ -174,7 +174,7 @@ export function pickGeneratedResDir(
     return modern[0]!;
   }
   if (!names.includes('react')) return null;
-  const children = [...reactChildren].sort();
+  const children = reactChildren.toSorted();
   if (wanted) {
     const match = children.find((n) => n.toLowerCase() === wanted);
     if (match) return `react/${match}`;
@@ -197,7 +197,7 @@ export function androidModuleDirs(
   const others = list(android).filter(
     (name) => name !== 'app' && existsSync(join(android, name, 'build', 'generated', 'res')),
   );
-  return ['app', ...others.sort()];
+  return ['app', ...others.toSorted()];
 }
 
 /**

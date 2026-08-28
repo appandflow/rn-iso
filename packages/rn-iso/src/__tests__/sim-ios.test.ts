@@ -11,6 +11,7 @@ import {
   sanitizeDeviceLabel,
   ownedSimName,
   deleteIosSim,
+  occupyingApps,
 } from '../sim/ios.ts';
 import assert from 'node:assert';
 
@@ -43,7 +44,7 @@ const SIMCTL_OUTPUT = JSON.stringify({
 test('parseSimctlList flattens devices and filters unavailable', () => {
   const sims = parseSimctlList(SIMCTL_OUTPUT);
   expect(sims.length).toBe(3);
-  expect(sims.map((s) => s.udid).sort()).toEqual(['UDID-A', 'UDID-B', 'UDID-C']);
+  expect(sims.map((s) => s.udid).toSorted()).toEqual(['UDID-A', 'UDID-B', 'UDID-C']);
 });
 
 test('parseSimctlList includes runtime in each entry', () => {
@@ -73,7 +74,7 @@ test('listBootedIosSims filters by state', () => {
     spawn: () => null,
   });
   const booted = listBootedIosSims();
-  expect(booted.map((s) => s.udid).sort()).toEqual(['UDID-A', 'UDID-C']);
+  expect(booted.map((s) => s.udid).toSorted()).toEqual(['UDID-A', 'UDID-C']);
 });
 
 test('parseRuntimeVersion extracts major.minor from runtime id', async () => {
@@ -297,16 +298,12 @@ test('deleteIosSim no-ops quietly when the udid is already gone', () => {
 // by a foreign UI-test runner. This failed OPEN until 0.9.0, on a rationale
 // (never block device selection) whose model was deleted in 0.7.
 test('occupyingApps returns null (doubt, read as occupied) when the probe cannot answer', async () => {
-  const { setExecutor, resetExecutor } = await import('../exec.ts');
-  const { occupyingApps } = await import('../sim/ios.ts');
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
   expect(occupyingApps('UDID-X')).toBe(null);
   resetExecutor();
 });
 
 test('occupyingApps returns the counted xctrunner bundles, and [] for a free sim', async () => {
-  const { setExecutor, resetExecutor } = await import('../exec.ts');
-  const { occupyingApps } = await import('../sim/ios.ts');
   setExecutor({ run: () => '', runQuiet: () => '', spawn: () => {} });
   expect(occupyingApps('UDID-X')).toEqual([]);
   setExecutor({
@@ -323,8 +320,6 @@ test('occupyingApps returns the counted xctrunner bundles, and [] for a free sim
 // reads as occupied. That left a shut-down orphan permanently unreapable: gc
 // reported it and skipped it every run. The state check has to come first.
 test('occupyingApps reports a shut-down device free without probing', async () => {
-  const { setExecutor, resetExecutor } = await import('../exec.ts');
-  const { occupyingApps } = await import('../sim/ios.ts');
   const devices = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
@@ -349,8 +344,6 @@ test('occupyingApps reports a shut-down device free without probing', async () =
 // The state check must not weaken the guard for a device that IS booted: an
 // unanswerable probe there is still doubt, and doubt still means occupied.
 test('occupyingApps still returns null (doubt) for a booted device whose probe cannot answer', async () => {
-  const { setExecutor, resetExecutor } = await import('../exec.ts');
-  const { occupyingApps } = await import('../sim/ios.ts');
   const devices = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [

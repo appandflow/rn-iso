@@ -603,13 +603,12 @@ async function main() {
     c.ev(`both racers computed the same key: ${r3.facts.cacheKey}`);
 
     const waiters = [r3, r4].filter((r) => r.facts.waitedForBuild);
-    const builders = [r3, r4].filter((r) => !r.facts.waitedForBuild);
+    const builder = [r3, r4].find((r) => !r.facts.waitedForBuild);
     assert(
       waiters.length === 1,
       `exactly one racer must have waited; ${waiters.length} did. Both compiling is the duplicate-work the lock exists to prevent.`,
     );
-    const waiter = waiters[0];
-    const builder = builders[0];
+    const [waiter] = waiters;
     c.ev(`the builder returned in ${builder.facts.durationMs}ms; the waiter returned in ${waiter.facts.durationMs}ms`);
     assert(
       waiter.facts.cacheHit === 'local',
@@ -772,7 +771,7 @@ const PREBUILD_CHURN_PATHS = [/(^|\/)package\.json$/, /(^|\/)app\.(json|config\.
 
 function worktreeCreate(name, sourceDir) {
   const r = cli(['worktree', 'create', name, '--base', 'head', '--carry-ignored'], { cwd: sourceDir });
-  const path = r.stdout.trim().split('\n').filter(Boolean).pop();
+  const path = r.stdout.trim().split('\n').findLast(Boolean);
   assert(path && existsSync(path), `worktree create did not yield a real path: ${JSON.stringify(r.stdout)}`);
   created.push(path);
   log(`worktree ${name} (from ${sourceDir}) -> ${path}`);
@@ -786,7 +785,7 @@ function startAndAssertMode(cwd) {
     if (existsSync(supLog)) log(`--- supervisor.log (tail) ---\n${lastLines(readFileSync(supLog, 'utf-8'), 80)}`);
     die(`rn-iso start failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
   }
-  const facts = JSON.parse(r.stdout.trim().split('\n').filter(Boolean).pop());
+  const facts = JSON.parse(r.stdout.trim().split('\n').findLast(Boolean));
   assert(
     facts.mode === EXPECTED_MODE,
     `start mode for a ${FRAMEWORK} app must be ${EXPECTED_MODE}, got ${JSON.stringify(facts.mode)}`,
@@ -968,7 +967,7 @@ function cliAsync(argv, { cwd, env = ENV, timeout = 40 * 60 * 1000 } = {}) {
       clearTimeout(timer);
       let facts = {};
       try {
-        facts = JSON.parse(stdout.trim().split('\n').filter(Boolean).pop());
+        facts = JSON.parse(stdout.trim().split('\n').findLast(Boolean));
       } catch {
         // A run that failed before its JSON line still has a stderr worth
         // reporting; the caller asserts on the exit code first.
@@ -1149,7 +1148,7 @@ main().then(
   () => {
     const summary = emitSummary(Date.now() - startedAt, null);
     if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR]);
-    process.exit(summary.ok ? 0 : 1);
+    return process.exit(summary.ok ? 0 : 1);
   },
   (err) => {
     // A fatal setup failure (no fixture, no cold build) is not a check verdict:
@@ -1159,6 +1158,6 @@ main().then(
     dumpDiagnostics(h, created);
     emitSummary(Date.now() - startedAt, String(err?.message || err));
     if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR]);
-    process.exit(1);
+    return process.exit(1);
   },
 );
