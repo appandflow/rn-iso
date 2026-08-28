@@ -27,7 +27,13 @@ import { metroStoreInjectionEnabled } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { resolvePackageJson } from '../project.ts';
-import { metroShimPath, metroStoreEnv, metroStoreRoot, registerMetroStore } from './metro-store.ts';
+import {
+  metroShimPath,
+  metroStoreConfirmedRoot,
+  metroStoreEnv,
+  metroStoreRoot,
+  registerMetroStore,
+} from './metro-store.ts';
 import { supervisorError } from './errors.ts';
 
 // THE PROJECT'S OWN expo binary, found by NODE RESOLUTION rather than by path
@@ -241,6 +247,22 @@ export function cleanLine(line: unknown): string {
 export function recordFromLine(line: unknown, { stream = 'stdout' }: { stream?: string } = {}): NdjsonRecord | null {
   const msg = cleanLine(line);
   if (!msg.trim()) return null;
+  // THE ONE STRUCTURED LINE IN THIS STREAM. The cache shim runs inside this
+  // child, so its success line is the only evidence rn-iso can have that the
+  // shared transform store reached the config Metro loaded -- see
+  // resolveMetroStoreInjection below for why the record cannot be written on
+  // the way in. It is promoted out of the raw stream rather than stored as one
+  // more info line: `raw: true` would say the structure was inferred, and this
+  // one was reported.
+  const confirmed = metroStoreConfirmedRoot(msg);
+  if (confirmed) {
+    return {
+      src: 'metro',
+      level: 'debug',
+      event: 'cache_store_added',
+      msg: `sharing Metro transforms through ${confirmed} (the dev server process confirmed the store is in the config Metro loaded)`,
+    };
+  }
   const record: NdjsonRecord = {
     src: 'metro',
     level: inferLevel(msg),
@@ -339,11 +361,21 @@ function resolveMetroStoreInjection(
     return null;
   }
   registerMetroStore(storeRoot);
+  // WHAT RN-ISO DID, NOT WHAT HAPPENED. This record used to claim the store
+  // was shared, and it was written HERE -- before the child existed, let alone
+  // before the shim inside it had tried anything. On tlon that made the
+  // timeline report a shared store through three bundles while the shim was
+  // failing on every one of them (issue #73). The only thing this side can
+  // honestly report is the request it is about to make; the outcome belongs to
+  // the process that has it, and arrives as the shim's own line, which
+  // recordFromLine turns into `cache_store_added`.
   log.write({
     src: 'metro',
     level: 'debug',
-    event: 'cache_store_injected',
-    msg: `sharing Metro transforms through ${storeRoot} (injected with NODE_OPTIONS=--require, no metro.config.js change)`,
+    event: 'cache_store_requested',
+    msg:
+      `asked this project's Expo dev server to share Metro transforms through ${storeRoot} ` +
+      '(NODE_OPTIONS=--require, no metro.config.js change); the shim in that process reports the outcome',
   });
   return additions;
 }

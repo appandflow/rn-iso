@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
 import { readManifest } from '../cache-manifest.ts';
 import { sharedBuildCache, sharedMetroCache } from '../paths.ts';
+import { hasStoreAt } from '../supervisor/metro-store.ts';
 
 const PACKAGES = join(fileURLToPath(import.meta.url), '..', '..', '..', '..');
 
@@ -75,6 +76,13 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
     }
     const stores = sharedCacheStores('demo', { FileStore: FakeStore });
     expect((stores[0] as { root: string }).root).toBe(cacheRoot);
+    // THE THIRD THING THE PACKAGES MUST AGREE ON. A project that wires this
+    // function into its metro.config.js by hand and then runs `rn-iso start`
+    // must not end up with the same store twice, and since metro-cache 0.83.0
+    // made FileStore's root private there is nothing on the instance to
+    // compare -- so the store carries @rn-iso/core's tag and rn-iso's own
+    // predicate reads it.
+    expect(hasStoreAt(stores, cacheRoot)).toBe(true);
 
     const record = await waitForRegistration(cacheRoot);
     expect(record).toBeTruthy();

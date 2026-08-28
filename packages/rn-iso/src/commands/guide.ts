@@ -415,11 +415,14 @@ RN_ISO_NO_METRO
   and run \`rn-iso start\` to get a fresh reservation.
 
 RN_ISO_NO_FINGERPRINT
-  \`@expo/fingerprint\` is not resolvable from the project or from rn-iso, so
-  the shared build cache cannot be addressed. Install it in the project:
-  \`npm i -D @expo/fingerprint\`. It works on a bare project too. This is a
-  refusal rather than a silent full build because an unaddressable cache means
-  every workspace on the commit compiles from scratch, forever.
+  \`@expo/fingerprint\` produced no hash, so the shared build cache cannot be
+  addressed. rn-iso DEPENDS on @expo/fingerprint, so a missing module is not
+  the usual cause any more -- a bare project needs no package.json change.
+  The project's own copy is still preferred when it has one (the hash then
+  matches what its own tooling computes) and rn-iso's is the fallback, so a
+  broken rn-iso install is the thing to check first. This is a refusal rather
+  than a silent full build because an unaddressable cache means every
+  workspace on the commit compiles from scratch, forever.
 
 RN_ISO_PREBUILD_FAILED
   \`expo prebuild\` could not generate the missing native directory. The
@@ -1218,9 +1221,16 @@ feature exists to avoid:
 
 in ~/.rn-iso/config.json. It turns the store off on BOTH dev servers. Only the
 literal false does; anything else leaves it on. The shim also fails soft on its
-own: if it cannot resolve or patch metro-config it writes one line to stderr
-(which lands in the timeline) and the dev server runs with whatever cache it
-would have had.
+own: if it cannot resolve metro-config, or cannot substitute for it, it writes
+one line to stderr (which lands in the timeline) and the dev server runs with
+whatever cache it would have had.
+
+Reading the timeline for it: on Expo, \`cache_store_requested\` is rn-iso saying
+it asked (it set NODE_OPTIONS on a process it does not run, which is all this
+side can know), and \`cache_store_added\` is the SHIM reporting from inside that
+process that the store is in the config Metro loaded. Only the second one means
+transforms are being shared. A bare project writes \`cache_store_added\` directly,
+because there rn-iso adds the store itself.
 
 CACHE LOCATIONS ARE MACHINE-LEVEL TOO
 The shared build cache and Metro transform cache default to living under

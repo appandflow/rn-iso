@@ -20,7 +20,13 @@ import {
   startExpoServer,
   stripAnsi,
 } from '../supervisor/server-expo.ts';
-import { composeNodeOptions, metroShimPath, metroStoreEnv, metroStoreRoot } from '../supervisor/metro-store.ts';
+import {
+  composeNodeOptions,
+  metroShimPath,
+  metroStoreConfirmedRoot,
+  metroStoreEnv,
+  metroStoreRoot,
+} from '../supervisor/metro-store.ts';
 import { makeChildProcess } from './_factories.ts';
 
 const ESC = '\u001B';
@@ -526,5 +532,70 @@ describe('the Metro store injected into an Expo child', () => {
     expect(env.RN_ISO_METRO_STORE).toBe(undefined);
     const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
     expect(records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
+  });
+});
+
+// --- the record that used to lie (issue #73) --------------------------------
+//
+// rn-iso wrote `cache_store_injected` -- "sharing Metro transforms through
+// ..." -- before the child was even spawned, so on tlon the timeline reported
+// a shared store through three bundles while the shim inside that child was
+// failing on every one of them. Nothing on this side CAN know the outcome: it
+// happens in another process. So this side reports the REQUEST, and the shim
+// reports the outcome in a line only a working shim writes.
+describe('the honest record of the Metro store injection', () => {
+  test('what rn-iso writes on the way in is the request, not a claim of success', async () => {
+    fakeBin();
+    const logsDir = join(root, '.rn-iso', 'logs');
+    await startExpoServer({ root, port: 8122, logsDir, spawnFn: () => fakeChild() });
+    const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
+    const requested = records.filter((r) => r.event === 'cache_store_requested');
+    expect(requested.length).toBe(1);
+    expect(String(requested[0]?.msg)).toContain('asked this project');
+    expect(String(requested[0]?.msg)).toContain(metroStoreRoot(root));
+    // The claim itself is gone: nothing says the store IS shared until the
+    // process that would know says so.
+    expect(records.some((r) => r.event === 'cache_store_injected')).toBe(false);
+    expect(records.some((r) => r.event === 'cache_store_added')).toBe(false);
+  });
+
+  test("the shim's own line is what becomes the confirming record", () => {
+    const record = recordFromLine('rn-iso-metro-store: sharing Metro transforms through /cache/app');
+    assert(record);
+    expect(record.event).toBe('cache_store_added');
+    expect(record.level).toBe('debug');
+    expect(String(record.msg)).toContain('/cache/app');
+    // Reported, not inferred: this is the one line in this stream with
+    // structure behind it, so it does not carry Contract 1's `raw`.
+    expect(record.raw).toBe(undefined);
+  });
+
+  test('the confirmation parser only matches the shim, and only with a root', () => {
+    expect(metroStoreConfirmedRoot('rn-iso-metro-store: sharing Metro transforms through /cache/app')).toBe(
+      '/cache/app',
+    );
+    expect(metroStoreConfirmedRoot('rn-iso-metro-store: sharing Metro transforms through ')).toBe(null);
+    expect(metroStoreConfirmedRoot('warning: rn-iso could not share this project')).toBe(null);
+    expect(metroStoreConfirmedRoot('iOS Bundled 812ms index.js (1150 modules)')).toBe(null);
+  });
+
+  // The line arrives on the child's stderr, which the supervisor reads with
+  // the same reader as stdout -- a confirmation that landed in the timeline as
+  // an ordinary info line would be no better than the claim it replaced.
+  test('the confirmation is promoted on either stream', () => {
+    const line = 'rn-iso-metro-store: sharing Metro transforms through /cache/app';
+    expect(recordFromLine(line, { stream: 'stderr' })?.event).toBe('cache_store_added');
+    expect(recordFromLine(line, { stream: 'stdout' })?.event).toBe('cache_store_added');
+  });
+
+  // And the failure half still reads as a warning, so `logs --errors` and
+  // `status` see a shim that could not apply.
+  test("the shim's failure line is still an ordinary warn record", () => {
+    const record = recordFromLine(
+      "warning: rn-iso could not share this project's Metro transform cache (metro-cache exports no FileStore); the dev server is running with the cache it would have had anyway.",
+    );
+    assert(record);
+    expect(record.level).toBe('warn');
+    expect(record.raw).toBe(true);
   });
 });

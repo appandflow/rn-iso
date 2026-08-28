@@ -438,6 +438,34 @@ describe('the shared Metro cache store', () => {
     expect(hasStoreAt(undefined, '/cache/app')).toBe(false);
   });
 
+  // THE SHAPE EVERY CURRENT METRO HAS. metro-cache 0.83.0 made FileStore's
+  // `_root` a PRIVATE `#root`, so the old "does a store already point here"
+  // probe read undefined on 0.83.5 / 0.84.4 / 0.85.0 / 0.87.0 and answered no
+  // every time. Nothing can read a private field from outside, so the stores
+  // rn-iso creates carry a tag instead -- and that is what the predicate reads.
+  test('a store with no public root is still recognized, by the tag rn-iso puts on it', () => {
+    class PrivateRootStore {
+      #root: string;
+      constructor(options: { root: string }) {
+        this.#root = options.root;
+      }
+      get root() {
+        return this.#root;
+      }
+    }
+    const config: { cacheStores?: unknown } = {};
+    expect(appendCacheStore(config, { storeRoot: '/cache/app', FileStore: PrivateRootStore }).added).toBe(true);
+    const stores = config.cacheStores as unknown[];
+    expect(stores.length).toBe(1);
+    // Nothing public on the instance says where it points...
+    expect((stores[0] as { _root?: unknown })._root).toBe(undefined);
+    // ...but the predicate still answers, which is what stops a second append.
+    expect(hasStoreAt(stores, '/cache/app')).toBe(true);
+    expect(hasStoreAt(stores, '/cache/other')).toBe(false);
+    expect(appendCacheStore(config, { storeRoot: '/cache/app', FileStore: PrivateRootStore }).added).toBe(false);
+    expect((config.cacheStores as unknown[]).length).toBe(1);
+  });
+
   // Metro also accepts cacheStores as a function of its cache module. Calling
   // it here would evaluate it at the wrong time, so it is wrapped instead.
   test('a function-shaped cacheStores is wrapped, not evaluated', () => {
