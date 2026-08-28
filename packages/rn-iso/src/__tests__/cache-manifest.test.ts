@@ -1,8 +1,28 @@
-import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { register, readManifest, registeredCaches, unregister, manifestPath } from '../cache-manifest.ts';
 import type { CacheEntry } from '../cache-manifest.ts';
+
+const CORE_URL = new URL('../../../core/index.ts', import.meta.url).href;
+const CLI_URL = new URL('../cache-manifest.ts', import.meta.url).href;
+const CORE_WRITER_SCRIPT = `
+import fs from 'node:fs';
+const { updateCacheManifest } = await import(process.argv[1]);
+updateCacheManifest(process.argv[2], (caches) => {
+  fs.writeFileSync(process.argv[3], '');
+  while (!fs.existsSync(process.argv[4])) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  }
+  caches.push({ dir: process.argv[5], name: 'core-cache' });
+  return caches;
+});
+`;
+const CLI_WRITER_SCRIPT = `
+const { register } = await import(process.argv[1]);
+register({ dir: process.argv[3], name: 'cli-cache' }, process.argv[2]);
+`;
 
 let tmpHome: string;
 let cacheDir: string;
@@ -16,6 +36,37 @@ afterEach(() => {
   rmSync(cacheDir, { recursive: true, force: true });
   delete process.env.RN_ISO_HOME;
 });
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForFile(file: string, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(file)) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${file}`);
+    await delay(5);
+  }
+}
+
+function runChild(script: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let stderr = '';
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script, ...args], {
+      env: process.env,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    child.stderr?.setEncoding('utf-8');
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`manifest child failed (${signal || code}): ${stderr}`));
+    });
+  });
+}
 
 test('registering the same directory twice updates it instead of duplicating it', () => {
   register({ dir: cacheDir, name: 'first' });
@@ -89,4 +140,32 @@ test('a registration replaces the manifest atomically and leaves no temp file', 
   const leftovers = readdirSync(dirname(manifestPath())).filter((n) => n.includes('tmp'));
   expect(leftovers).toEqual([]);
   expect(readManifest().caches.map((c) => c.name)).toEqual(['second']);
+});
+
+test('CLI and core registrations use the same manifest transaction', async () => {
+  const manifest = manifestPath();
+  const ready = join(tmpHome, 'core-ready');
+  const go = join(tmpHome, 'core-go');
+  const coreDir = join(tmpHome, 'core-cache');
+  const cliDir = join(tmpHome, 'cli-cache');
+  mkdirSync(dirname(manifest), { recursive: true });
+  writeFileSync(manifest, JSON.stringify({ version: 1, caches: [] }));
+
+  const coreWriter = runChild(CORE_WRITER_SCRIPT, [CORE_URL, manifest, ready, go, coreDir]);
+  await waitForFile(ready);
+  const cliWriter = runChild(CLI_WRITER_SCRIPT, [CLI_URL, manifest, cliDir]);
+
+  const deadline = Date.now() + 500;
+  while (Date.now() < deadline) {
+    const names = (JSON.parse(readFileSync(manifest, 'utf-8')) as { caches: CacheEntry[] }).caches.map(
+      (entry) => entry.name,
+    );
+    if (names.includes('cli-cache')) break;
+    await delay(5);
+  }
+
+  writeFileSync(go, '');
+  await Promise.all([coreWriter, cliWriter]);
+
+  expect(new Set(readManifest().caches.map((entry) => entry.name))).toEqual(new Set(['core-cache', 'cli-cache']));
 });
