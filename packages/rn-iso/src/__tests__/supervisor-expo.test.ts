@@ -450,9 +450,16 @@ test('an explicit EXPO_PACKAGER_PROXY_URL is never overridden', () => {
 });
 
 describe('parseExpoWaitingOnUrl', () => {
-  test('reads the URL off the plain, non-interactive line Expo prints', () => {
-    expect(parseExpoWaitingOnUrl('Waiting on exp://abc123.exp.direct')).toBe('exp://abc123.exp.direct');
+  test('preserves an HTTP URL from the plain, non-interactive line Expo prints', () => {
     expect(parseExpoWaitingOnUrl('Waiting on http://localhost:8081')).toBe('http://localhost:8081');
+  });
+
+  test('converts native launch schemes to the HTTPS tunnel origin', () => {
+    expect(parseExpoWaitingOnUrl('Waiting on exp://abc123.exp.direct')).toBe('https://abc123.exp.direct');
+    expect(
+      parseExpoWaitingOnUrl('Waiting on exp+rniso-eas-test://c-appandflow-7jdyhu-mtcc9ftfejj3vw5r.on.expo.app'),
+    ).toBe('https://c-appandflow-7jdyhu-mtcc9ftfejj3vw5r.on.expo.app');
+    expect(parseExpoWaitingOnUrl('Waiting on myapp://custom.example.com')).toBe('https://custom.example.com');
   });
 
   test('a line that is not the waiting-on banner is not a match', () => {
@@ -516,7 +523,7 @@ describe('starting a tunnel', () => {
     child.stdout!.emit('data', 'Waiting on exp://abc123.exp.direct\n');
     // A reload reprints the same banner; only the first report matters.
     child.stdout!.emit('data', 'Waiting on exp://abc123.exp.direct\n');
-    expect(urls).toEqual(['exp://abc123.exp.direct']);
+    expect(urls).toEqual(['https://abc123.exp.direct']);
   });
 
   test('with no tunnel requested, a "Waiting on" line is logged but never reported as a tunnel', async () => {

@@ -314,11 +314,19 @@ export function expoProxyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 // whichever address is active, LAN, localhost, or a tunnel. `cleanLine` has
 // already stripped the ANSI underline Expo wraps the URL in by the time a
 // record reaches this, so the match is plain text.
+//
+// Expo prints a native launch scheme for a tunneled native app. The same
+// host serves Metro over HTTPS, which is the origin the remote gate probes.
 const WAITING_ON_RE = /^Waiting on (\S+)/;
+const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+const HTTP_SCHEME_RE = /^https?:\/\//i;
 
 export function parseExpoWaitingOnUrl(line: unknown): string | null {
   const match = WAITING_ON_RE.exec(String(line ?? ''));
-  return match ? (match[1] as string) : null;
+  if (!match) return null;
+  const url = match[1] as string;
+  if (HTTP_SCHEME_RE.test(url)) return url;
+  return URL_SCHEME_RE.test(url) ? url.replace(/^[^:]+:/, 'https:') : url;
 }
 
 // The ServerHandle runSupervisor drives, plus the pieces a test reaches for.
