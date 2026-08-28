@@ -733,6 +733,10 @@ interface SkippedDevice {
   reason: string;
 }
 
+interface RetainedResource extends SkippedDevice {
+  project: string;
+}
+
 function describeKeptDevice(s: SkippedDevice): string {
   return s.udid && s.udid !== s.name ? `${s.name} (${s.udid})` : s.name;
 }
@@ -746,6 +750,7 @@ interface ReclaimAllResult {
   deletedDevices: string[];
   skippedDevices: SkippedDevice[];
   keptEntries: string[];
+  retainedResources: RetainedResource[];
   // Every key that was reclaimed (the root plus the nested registered ones),
   // for the caller that deletes each key's own `.rn-iso/` rather than the
   // whole tree -- see reclaimEnvironment.
@@ -769,6 +774,7 @@ async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
   const deletedDevices: string[] = [];
   const skippedDevices: SkippedDevice[] = [];
   const keptEntries: string[] = [];
+  const retainedResources: RetainedResource[] = [];
   const stoppedSessions: string[] = [];
   const stoppedTunnels: string[] = [];
   for (const key of keys) {
@@ -779,7 +785,10 @@ async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
     skippedDevices.push(...r.skippedDevices);
     if (r.stoppedSession) stoppedSessions.push(r.stoppedSession);
     if (r.stoppedTunnel) stoppedTunnels.push(r.stoppedTunnel);
-    if (r.keptEntry) keptEntries.push(key);
+    if (r.keptEntry) {
+      keptEntries.push(key);
+      retainedResources.push(...r.failedDevices.map((resource) => ({ ...resource, project: key })));
+    }
   }
   return {
     dereferenced,
@@ -787,10 +796,25 @@ async function reclaimAll(rootPath: string): Promise<ReclaimAllResult> {
     deletedDevices,
     skippedDevices,
     keptEntries,
+    retainedResources,
     reclaimedKeys: [...keys],
     stoppedSessions,
     stoppedTunnels,
   };
+}
+
+function reportRetainedResources(root: string, result: ReclaimAllResult): void {
+  console.error(chalk.red(`Refusing to remove ${root}: rn-iso could not release owned resources.`));
+  for (const resource of result.retainedResources) {
+    console.error(chalk.yellow(`  - rn-iso still tracks ${describeKeptDevice(resource)} for ${resource.project}`));
+    console.error(chalk.dim(`    ${resource.reason}`));
+  }
+  for (const kept of result.keptEntries) {
+    if (result.retainedResources.some((resource) => resource.project === kept)) continue;
+    console.error(chalk.yellow(`  - retained rn-iso ownership state for ${kept}`));
+  }
+  console.error(chalk.dim('Fix the reported cause, then run `rn-iso worktree remove` again.'));
+  process.exitCode = 1;
 }
 
 // Whether rn-iso registered anything at or under `rootPath`. This is what
@@ -813,15 +837,16 @@ function hasRegisteredProjectUnder(rootPath: string): boolean {
 // this command's business and is not mentioned. Every line goes to stderr,
 // mirroring the normal removal's reporting.
 //
-// The exit code follows the normal removal's rule for a failed device
-// teardown: the record is kept (dropping it is what turns a failed teardown
-// into a simulator nothing references) and the command exits 1.
+// A retained owned-resource record keeps its `.rn-iso/` directory and makes
+// the command exit 1, so the next removal attempt can retry the teardown.
 async function reclaimEnvironment(root: string, why: string): Promise<void> {
   const result = await reclaimAll(root);
+  const kept = new Set(result.keptEntries);
   for (const key of result.reclaimedKeys) {
     // Contained by construction: every key is `root` itself or a registered
     // path-segment-prefix child of it (see reclaimAll), and only the key's
     // own `.rn-iso/` is touched -- never anything else in the tree.
+    if (kept.has(key)) continue;
     const dir = workspaceDir(key);
     if (!existsSync(dir)) continue;
     try {
@@ -835,18 +860,14 @@ async function reclaimEnvironment(root: string, why: string): Promise<void> {
   for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
   if (result.deletedDevices.length)
     console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+  if (result.keptEntries.length) {
+    reportRetainedResources(root, result);
+    return;
+  }
   for (const s of result.skippedDevices) {
     console.error(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
   }
-  for (const kept of result.keptEntries) {
-    console.error(
-      chalk.yellow(
-        `  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
-      ),
-    );
-  }
   console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
-  if (result.keptEntries.length) process.exitCode = 1;
 }
 
 // Deletes the workspace directories `git status` reported inside `root`, and
@@ -1095,6 +1116,11 @@ export function registerRemove(worktree: Command): void {
       // directory `git worktree remove` deletes.
       const result = await reclaimAll(path);
 
+      if (result.keptEntries.length) {
+        reportRetainedResources(path, result);
+        return;
+      }
+
       // ... and now the workspace directories themselves, so git's own
       // cleanliness check does not refuse over the one thing rn-iso just
       // decided was not work. Ordered after reclaimAll on purpose: the
@@ -1184,13 +1210,6 @@ export function registerRemove(worktree: Command): void {
         if (result.stoppedTunnels.length)
           console.error(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
         for (const s of result.skippedDevices) console.error(chalk.dim(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
-        for (const kept of result.keptEntries) {
-          console.error(
-            chalk.dim(
-              `  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
-            ),
-          );
-        }
         process.exitCode = 1;
         return;
       }
@@ -1206,13 +1225,6 @@ export function registerRemove(worktree: Command): void {
         console.log(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
       for (const s of result.skippedDevices) {
         console.log(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
-      }
-      for (const kept of result.keptEntries) {
-        console.log(
-          chalk.yellow(
-            `  rn-iso still tracks ${kept} because a device delete failed; re-run \`rn-iso gc --delete\` once the cause is fixed.`,
-          ),
-        );
       }
     });
 }

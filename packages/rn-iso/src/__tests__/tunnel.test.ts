@@ -453,7 +453,7 @@ describe('stopTunnel: idempotent, never throws', () => {
     const signalled: number[] = [];
     const result = await stopTunnel(fixtureRecord({ provider: 'ngrok', pid: 777 }), {
       isAlive: () => alive,
-      readProcessArgs: () => ['/opt/homebrew/bin/ngrok', 'http', '8081', '--log=stdout'],
+      readProcessArgs: () => ['/opt/homebrew/bin/ngrok', 'http', '8081', '--log=stdout', '--log-format=json'],
       kill: (pid) => {
         signalled.push(pid);
         alive = false;
@@ -461,6 +461,66 @@ describe('stopTunnel: idempotent, never throws', () => {
     });
     expect(signalled).toEqual([777]);
     expect(result).toEqual({ status: 'stopped' });
+  });
+
+  test('signals the exact ngrok command with the recorded stable URL', async () => {
+    let alive = true;
+    const signalled: number[] = [];
+    const result = await stopTunnel(fixtureRecord({ provider: 'ngrok', pid: 779, url: 'https://stable.ngrok.app' }), {
+      isAlive: () => alive,
+      readProcessArgs: () => [
+        'ngrok',
+        'http',
+        '8081',
+        '--log=stdout',
+        '--log-format=json',
+        '--url',
+        'https://stable.ngrok.app',
+      ],
+      kill: (pid) => {
+        signalled.push(pid);
+        alive = false;
+      },
+    });
+    expect(signalled).toEqual([779]);
+    expect(result.status).toBe('stopped');
+  });
+
+  test.each([
+    ['an unrelated flag', ['ngrok', 'http', '8081', '--log=stdout', '--log-format=json', '--inspect=false']],
+    ['an extra positional argument', ['ngrok', 'http', '8081', '--log=stdout', '--log-format=json', 'other']],
+    ['a different subcommand', ['ngrok', 'tcp', '8081', '--log=stdout', '--log-format=json']],
+    [
+      'a duplicate endpoint flag',
+      [
+        'ngrok',
+        'http',
+        '8081',
+        '--log=stdout',
+        '--log-format=json',
+        '--url',
+        'https://x.ngrok.app',
+        '--url',
+        'https://x.ngrok.app',
+      ],
+    ],
+    [
+      'a stable endpoint different from the record',
+      ['ngrok', 'http', '8081', '--log=stdout', '--log-format=json', '--url', 'https://other.ngrok.app'],
+    ],
+  ])('does not signal an ngrok command with %s', async (_name, args) => {
+    let alive = true;
+    const signalled: number[] = [];
+    const result = await stopTunnel(fixtureRecord({ provider: 'ngrok', url: 'https://x.ngrok.app' }), {
+      isAlive: () => alive,
+      readProcessArgs: () => args,
+      kill: (pid) => {
+        signalled.push(pid);
+        alive = false;
+      },
+    });
+    expect(signalled).toEqual([]);
+    expect(result.status).toBe('failed');
   });
 
   test('signals an alive pid only when its cloudflared command and local URL match', async () => {
@@ -512,6 +572,29 @@ describe('stopTunnel: idempotent, never throws', () => {
       isAlive: () => true,
       readProcessArgs: () => ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:9090'],
       kill: (pid) => signalled.push(pid),
+    });
+    expect(signalled).toEqual([]);
+    expect(result.status).toBe('failed');
+  });
+
+  test.each([
+    ['a run subcommand', ['cloudflared', 'tunnel', 'run', 'other', '--url', 'http://127.0.0.1:8081']],
+    ['an unrelated flag', ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081', '--no-autoupdate']],
+    [
+      'a duplicate endpoint flag',
+      ['cloudflared', 'tunnel', '--url', 'http://127.0.0.1:8081', '--url', 'http://127.0.0.1:8081'],
+    ],
+    ['an alternate endpoint', ['cloudflared', 'tunnel', '--url', 'http://localhost:8081']],
+  ])('does not signal a cloudflared command with %s', async (_name, args) => {
+    let alive = true;
+    const signalled: number[] = [];
+    const result = await stopTunnel(fixtureRecord({ provider: 'cloudflared' }), {
+      isAlive: () => alive,
+      readProcessArgs: () => args,
+      kill: (pid) => {
+        signalled.push(pid);
+        alive = false;
+      },
     });
     expect(signalled).toEqual([]);
     expect(result.status).toBe('failed');

@@ -589,26 +589,17 @@ export function readTunnelProcessArgs(
   }
 }
 
-function isExactLocalUrl(value: string, port: number): boolean {
+function isHttpsUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return (
-      url.protocol === 'http:' &&
-      (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]') &&
-      url.port === String(port) &&
-      url.username === '' &&
-      url.password === '' &&
-      url.pathname === '/' &&
-      url.search === '' &&
-      url.hash === ''
-    );
+    return url.protocol === 'https:';
   } catch {
     return false;
   }
 }
 
-function matchesLocalTarget(value: string | undefined, port: number): boolean {
-  return value === String(port) || (typeof value === 'string' && isExactLocalUrl(value, port));
+function sameArgs(actual: readonly string[], expected: readonly string[]): boolean {
+  return actual.length === expected.length && actual.every((arg, index) => arg === expected[index]);
 }
 
 function matchesTunnelProcess(record: TunnelRecord, args: readonly string[]): boolean {
@@ -616,23 +607,13 @@ function matchesTunnelProcess(record: TunnelRecord, args: readonly string[]): bo
   if (!executable || basename(executable) !== record.provider) return false;
 
   if (record.provider === 'ngrok') {
-    return commandArgs[0] === 'http' && matchesLocalTarget(commandArgs[1], record.port);
+    const owned = ['http', String(record.port), '--log=stdout', '--log-format=json'];
+    return (
+      sameArgs(commandArgs, owned) || (isHttpsUrl(record.url) && sameArgs(commandArgs, [...owned, '--url', record.url]))
+    );
   }
 
-  if (commandArgs[0] !== 'tunnel') return false;
-  const targets: string[] = [];
-  for (let index = 1; index < commandArgs.length; index += 1) {
-    const arg = commandArgs[index];
-    if (arg === '--url') {
-      const value = commandArgs[index + 1];
-      if (!value) return false;
-      targets.push(value);
-      index += 1;
-    } else if (arg?.startsWith('--url=')) {
-      targets.push(arg.slice('--url='.length));
-    }
-  }
-  return targets.length === 1 && isExactLocalUrl(targets[0]!, record.port);
+  return sameArgs(commandArgs, ['tunnel', '--url', `http://127.0.0.1:${record.port}`]);
 }
 
 /**

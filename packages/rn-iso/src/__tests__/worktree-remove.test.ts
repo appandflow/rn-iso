@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -310,15 +310,50 @@ function simctlJson(sims: unknown[]) {
 }
 
 let tmpHome: string, mainDir: string, wtDir: string;
+let liveProcesses: ChildProcess[];
+
+function liveUnrelatedProcess(): ChildProcess {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  if (!child.pid) throw new Error('test process did not start');
+  liveProcesses.push(child);
+  return child;
+}
+
+function writeManagedTunnel(root: string, pid: number): void {
+  mkdirSync(join(root, '.rn-iso'), { recursive: true });
+  writeFileSync(
+    join(root, '.rn-iso', 'state.json'),
+    JSON.stringify({
+      metroTunnel: {
+        kind: 'managed',
+        provider: 'ngrok',
+        pid,
+        url: 'https://recorded.ngrok.app',
+        port: 8081,
+        startedAt: 'T',
+      },
+    }),
+  );
+}
+
+function writeRemoteSession(root: string, sessionId: string): void {
+  mkdirSync(join(root, '.rn-iso'), { recursive: true });
+  writeFileSync(
+    join(root, '.rn-iso', 'state.json'),
+    JSON.stringify({ remoteDevice: { platform: 'ios', sessionId, startedAt: 'T' } }),
+  );
+}
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'rn-iso-test-home-'));
   process.env.RN_ISO_HOME = tmpHome;
   mainDir = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-main-')));
   wtDir = canon(mkdtempSync(join(tmpdir(), 'rn-iso-test-wt-')));
+  liveProcesses = [];
 });
 
 afterEach(() => {
+  for (const child of liveProcesses) child.kill('SIGKILL');
   resetExecutor();
   process.exitCode = 0;
   rmSync(tmpHome, { recursive: true, force: true });
@@ -468,6 +503,34 @@ test('action: a failed device teardown on the main checkout keeps the record and
   expect(errs.join('\n')).toMatch(/still tracks/);
 });
 
+test('action: a tunnel verification failure on the main checkout retains its state directory', async () => {
+  const child = liveUnrelatedProcess();
+  upsertProject(mainDir, { label: 'main' });
+  writeManagedTunnel(mainDir, child.pid!);
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+    mainTrees: [mainDir],
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => errs.push(String(message));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(mainDir)).not.toBeNull();
+  expect(existsSync(join(mainDir, '.rn-iso', 'state.json'))).toBe(true);
+  expect(errs.join('\n')).toMatch(/could not release owned resources/i);
+  expect(errs.join('\n')).toContain(`kill ${child.pid} by hand`);
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
+});
+
 // A registered directory that is not a git repo at all: there is no worktree
 // to hand to git and no git status to guard, so environment reclaim is the
 // only thing `remove` can mean there -- and it gets exactly that.
@@ -553,6 +616,87 @@ test('action: on success, reclaimProject clears rn-iso tracking before removeWor
   expect(process.exitCode).not.toBe(1);
   expect(getProject(wtDir)).toBe(null);
   expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
+});
+
+test('action: tunnel verification failure retains state and refuses worktree removal even with force', async () => {
+  const child = liveUnrelatedProcess();
+  upsertProject(wtDir, { label: 'feature' });
+  writeManagedTunnel(wtDir, child.pid!);
+  const exec = makeExecutor({
+    dirty: '?? .rn-iso/\n',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => errs.push(String(message));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, { force: true });
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(wtDir)).not.toBeNull();
+  expect(existsSync(join(wtDir, '.rn-iso', 'state.json'))).toBe(true);
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
+  expect(errs.join('\n')).toMatch(/Refusing to remove/);
+  expect(errs.join('\n')).toContain(`kill ${child.pid} by hand`);
+});
+
+test('action: a missing recorded tunnel does not block normal worktree removal', async () => {
+  upsertProject(wtDir, { label: 'feature' });
+  writeManagedTunnel(wtDir, 99_999_999);
+  const exec = makeExecutor({
+    dirty: '?? .rn-iso/\n',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(wtDir)).toBeNull();
+  expect(existsSync(join(wtDir, '.rn-iso'))).toBe(false);
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(true);
+});
+
+test('action: a retained EAS session prevents generic worktree removal', async () => {
+  upsertProject(wtDir, { label: 'feature' });
+  writeRemoteSession(wtDir, 'drs_retained');
+  const exec = makeExecutor({
+    dirty: '?? .rn-iso/\n',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => errs.push(String(message));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(wtDir)).not.toBeNull();
+  expect(existsSync(join(wtDir, '.rn-iso', 'state.json'))).toBe(true);
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
+  expect(errs.join('\n')).toContain('eas simulator:stop --id drs_retained');
 });
 
 // Regression: in a monorepo, `rn-iso ios` registers a nested app dir (e.g.
