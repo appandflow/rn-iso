@@ -53,6 +53,7 @@ import {
   type RemoteDaemon,
 } from './eas-simulator.ts';
 import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
+import { withEasProjectLock } from './eas-project-lock.ts';
 
 export const REMOTE_SESSION_ERROR = 'RN_ISO_NO_REMOTE_SESSION';
 const REMOTE_METRO_ERROR = 'RN_ISO_REMOTE_METRO_UNREACHABLE';
@@ -767,6 +768,8 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   createdSessionId,
   abandonCreatedSession,
   writeState,
+  register = () => {},
+  withProjectLock = withEasProjectLock,
   withLock = withRemoteSessionLock,
 }: {
   root: string;
@@ -776,35 +779,43 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   createdSessionId: () => string | null;
   abandonCreatedSession: () => AbandonCreatedSessionResult;
   writeState: (root: string, patch: Record<string, unknown>) => unknown;
+  register?: () => unknown;
+  withProjectLock?: typeof withEasProjectLock;
   withLock?: typeof withRemoteSessionLock;
 }): Promise<T | BootResult> {
   try {
-    return await withLock(root, async () => {
-      const booted = await boot();
-      if (booted.failed) return booted;
-      const sessionId = createdSessionId();
-      if (!sessionId) return booted;
-      try {
-        writeState(root, { remoteDevice: { platform, sessionId, startedAt } });
-        return booted;
-      } catch (err) {
-        const cleanup = abandonCreatedSession();
-        if (cleanup.ok) {
-          return {
-            failed: true,
-            code: 'RN_ISO_REMOTE_SESSION_STATE',
-            reason: `Could not record EAS session ${sessionId}: ${describe(err)}. The session was stopped.`,
-            remedy: 'Fix workspace state storage, then retry the remote command.',
-          };
-        }
-        return {
-          failed: true,
-          code: cleanup.code ?? 'RN_ISO_REMOTE_SESSION_CLEANUP',
-          reason: `Could not record EAS session ${sessionId}: ${describe(err)}. ${cleanup.reason ?? ''}`.trim(),
-          remedy: cleanup.remedy ?? `Run \`eas simulator:stop --id ${sessionId}\`.`,
-        };
-      }
-    });
+    return await withProjectLock(
+      root,
+      () =>
+        withLock(root, async () => {
+          register();
+          const booted = await boot();
+          if (booted.failed) return booted;
+          const sessionId = createdSessionId();
+          if (!sessionId) return booted;
+          try {
+            writeState(root, { remoteDevice: { platform, sessionId, startedAt } });
+            return booted;
+          } catch (err) {
+            const cleanup = abandonCreatedSession();
+            if (cleanup.ok) {
+              return {
+                failed: true,
+                code: 'RN_ISO_REMOTE_SESSION_STATE',
+                reason: `Could not record EAS session ${sessionId}: ${describe(err)}. The session was stopped.`,
+                remedy: 'Fix workspace state storage, then retry the remote command.',
+              };
+            }
+            return {
+              failed: true,
+              code: cleanup.code ?? 'RN_ISO_REMOTE_SESSION_CLEANUP',
+              reason: `Could not record EAS session ${sessionId}: ${describe(err)}. ${cleanup.reason ?? ''}`.trim(),
+              remedy: cleanup.remedy ?? `Run \`eas simulator:stop --id ${sessionId}\`.`,
+            };
+          }
+        }),
+      { ownerPurpose: 'EAS remote start' },
+    );
   } catch (err) {
     const code = (err as Error & { code?: string }).code ?? REMOTE_SESSION_ERROR;
     return {

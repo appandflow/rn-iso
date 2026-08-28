@@ -1138,7 +1138,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const release = isReleaseConfiguration(configuration);
 
   const isExpo = d.detectIsExpo(root);
-  d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
+  const remoteBackend = opts.remote ?? remoteIosSetting(settings);
+  const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
+  if (remoteBackend !== 'eas') registerProject();
   const proj = d.getProject(root);
   const label = d.projectShortcut(root, proj);
 
@@ -1147,7 +1149,6 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   // `--remote` swaps the device out and NOTHING else. The build, the
   // fingerprint, the cache and Metro all stay exactly where they were, which
   // is why this is four entries in the dep seam rather than a second command.
-  const remoteBackend = opts.remote ?? remoteIosSetting(settings);
   let remoteDevice: ReturnType<typeof d.remoteIosDeps> | null = null;
   if (remoteBackend) {
     const resolved = await d.resolveRemoteContext({
@@ -1320,6 +1321,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           createdSessionId: remoteDevice.createdSessionId,
           abandonCreatedSession: remoteDevice.abandonCreatedSession,
           writeState: d.writeWorkspaceState,
+          register: registerProject,
         })
       : boot()
   ).then((result) => {

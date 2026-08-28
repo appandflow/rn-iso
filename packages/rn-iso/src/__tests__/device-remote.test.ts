@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import {
+  ensureRemoteBootOwned,
   ensureMetroReachable,
   PUBLIC_METRO_ENV,
   remoteAndroidDeps,
@@ -348,6 +349,77 @@ await withWorkspaceProcessLock(process.argv[2], 'remote-session', async () => {
       expect(entered).toBe(true);
     } finally {
       if (owner.exitCode === null) owner.kill('SIGKILL');
+    }
+  });
+
+  test('workspaces with the same git common directory share the EAS project lock', async () => {
+    const otherRoot = join(root, 'other-worktree');
+    mkdirSync(otherRoot, { recursive: true });
+    const previousHome = process.env.RN_ISO_HOME;
+    process.env.RN_ISO_HOME = join(root, 'rn-iso-home');
+    setExecutor({
+      run() {
+        throw new Error('unexpected shell command');
+      },
+      runQuiet() {
+        return join(root, 'repository.git');
+      },
+      runFile() {
+        throw new Error('unexpected file command');
+      },
+      spawn() {
+        throw new Error('unexpected spawn');
+      },
+    });
+    let releaseFirst!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+    let secondBooted = false;
+
+    try {
+      const first = ensureRemoteBootOwned({
+        root,
+        platform: 'ios',
+        startedAt: '2026-08-28T00:00:00.000Z',
+        register: () => {},
+        boot: async () => {
+          firstEntered();
+          await held;
+          return { ok: true };
+        },
+        createdSessionId: () => null,
+        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
+        writeState: () => {},
+      });
+      await entered;
+      const second = ensureRemoteBootOwned({
+        root: otherRoot,
+        platform: 'ios',
+        startedAt: '2026-08-28T00:00:00.000Z',
+        register: () => {},
+        boot: async () => {
+          secondBooted = true;
+          return { ok: true };
+        },
+        createdSessionId: () => null,
+        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
+        writeState: () => {},
+      });
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(secondBooted).toBe(false);
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(secondBooted).toBe(true);
+    } finally {
+      releaseFirst();
+      if (previousHome === undefined) delete process.env.RN_ISO_HOME;
+      else process.env.RN_ISO_HOME = previousHome;
     }
   });
 });

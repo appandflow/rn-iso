@@ -54,6 +54,7 @@ import { listAvds } from '../sim/android.ts';
 import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches, type CacheDescriptor } from '../caches.ts';
 import { workspaceStateFile } from '../paths.ts';
 import { withRemoteSessionLock } from '../engine/device-remote.ts';
+import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { BuildLockInfo, BuildSlotInfo, Config, GcSkip, OrphanedDevice } from '../types.ts';
 
 // --- local report shapes ---------------------------------------------------
@@ -148,6 +149,7 @@ interface GcDependencies {
     options: { cwd: string; timeoutMs: number; omitEnv: readonly string[] },
   ) => string;
   withRemoteSessionLock?: typeof withRemoteSessionLock;
+  withEasProjectLock?: typeof withEasProjectLock;
   easMaxPages?: number;
   easCollectionTimeoutMs?: number;
   easNow?: () => number;
@@ -1221,9 +1223,26 @@ export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}):
   } catch {
     return runGcWithRemoteSessionLocksHeld(opts, deps);
   }
-  return withRemoteSessionGcLocks(projectRoot, deps, (coordinatedDeps) =>
-    runGcWithRemoteSessionLocksHeld(opts, coordinatedDeps),
-  );
+  const withProjectLock = deps.withEasProjectLock ?? withEasProjectLock;
+  let sweepStarted = false;
+  try {
+    return await withProjectLock(
+      projectRoot,
+      () => {
+        sweepStarted = true;
+        return withRemoteSessionGcLocks(projectRoot, deps, (coordinatedDeps) =>
+          runGcWithRemoteSessionLocksHeld(opts, coordinatedDeps),
+        );
+      },
+      { waitMs: 0, ownerPurpose: 'EAS orphan sweep' },
+    );
+  } catch (error) {
+    if (sweepStarted) throw error;
+    return runGcWithRemoteSessionLocksHeld(opts, {
+      ...deps,
+      easSweepBlockedNotice: `EAS session sweep skipped: EAS project lock acquisition failed: ${describeError(error)}`,
+    });
+  }
 }
 
 async function runGcWithRemoteSessionLocksHeld(opts: RunGcOptions, deps: GcDependencies): Promise<void> {

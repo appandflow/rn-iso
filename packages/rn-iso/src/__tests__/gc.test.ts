@@ -16,7 +16,8 @@ import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { saveConfig, loadConfig } from '../config.ts';
 import { register } from '../cache-manifest.ts';
-import { withRemoteSessionLock } from '../engine/device-remote.ts';
+import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
+import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import gcCommand, {
   collectGcReport,
   describeUnverifiableDevices,
@@ -424,6 +425,8 @@ interface EasCall {
   options: { cwd?: string; timeoutMs?: number; omitEnv?: readonly string[] };
 }
 
+type EasResponse = string | Error | ((options: EasCall['options']) => string | Error);
+
 function easGcHarness({
   project,
   list,
@@ -436,8 +439,8 @@ function easGcHarness({
     | Error
     | Record<string, string | Error>
     | ((after: string, page: number, options: EasCall['options']) => string | Error);
-  get?: Record<string, string | Error>;
-  stop?: Record<string, string | Error>;
+  get?: Record<string, EasResponse>;
+  stop?: Record<string, EasResponse>;
 }) {
   const calls: EasCall[] = [];
   let page = 0;
@@ -457,7 +460,8 @@ function easGcHarness({
             : typeof list === 'object' && !(list instanceof Error)
               ? list[after]
               : list;
-        const value = args[0] === 'simulator:list' ? listValue : args[0] === 'simulator:get' ? get[id] : stop[id];
+        const selected = args[0] === 'simulator:list' ? listValue : args[0] === 'simulator:get' ? get[id] : stop[id];
+        const value = typeof selected === 'function' ? selected(options) : selected;
         if (value instanceof Error) throw value;
         return value ?? '';
       },
@@ -641,6 +645,27 @@ describe('EAS orphan session sweep', () => {
     expect(existsSync(staleLock)).toBe(false);
   });
 
+  test('an active EAS start lock disables only the remote sweep while local cleanup continues', async () => {
+    const project = join(fakeHome, 'expo-app');
+    registerExpoProject(project);
+    writeFileSync(
+      join(project, 'app.json'),
+      JSON.stringify({ expo: { extra: { eas: { projectId: 'active-eas-project' } } } }),
+    );
+    installExecutor();
+    const staleLock = writeLock({ pid: 999999 });
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_hidden', name: 'rn-iso-hidden', status: 'IN_PROGRESS', platform: 'IOS' }]),
+    });
+
+    const output = await withEasProjectLock(project, () => captureLog(() => runGc({ delete: true }, harness.deps)));
+
+    expect(output).toMatch(/EAS project lock/i);
+    expect(harness.calls).toEqual([]);
+    expect(existsSync(staleLock)).toBe(false);
+  });
+
   test('dry run does not wait behind an active remote session creation lock', async () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
@@ -798,6 +823,74 @@ describe('EAS orphan session sweep', () => {
 
     expect(output).toMatch(/deletion refused.*registered workspace roots.*changed/i);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+  });
+
+  test('the project sweep lock covers worktrees with asymmetric static EAS config through the final stop', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const otherWorkspace = join(fakeHome, 'expo-app-worktree');
+    const gitCommon = join(fakeHome, 'repo.git');
+    registerExpoProject(project);
+    mkdirSync(otherWorkspace, { recursive: true });
+    mkdirSync(gitCommon, { recursive: true });
+    const appConfig = JSON.stringify({ expo: { extra: { eas: { projectId: 'shared-eas-project' } } } });
+    writeFileSync(join(project, 'app.json'), appConfig);
+    setExecutor({
+      run(cmd) {
+        throw new Error(`unexpected run: ${cmd}`);
+      },
+      runQuiet(cmd) {
+        return cmd.includes('--git-common-dir') ? gitCommon : null;
+      },
+      spawn(cmd) {
+        throw new Error(`unexpected spawn: ${cmd}`);
+      },
+    });
+    const order: string[] = [];
+    let startPromise: Promise<unknown> | null = null;
+    const harness = easGcHarness({
+      project,
+      list: easList([{ id: 'drs_old', name: 'rn-iso-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: {
+        drs_old: () => {
+          order.push('get');
+          startPromise = ensureRemoteBootOwned({
+            root: otherWorkspace,
+            platform: 'ios',
+            startedAt: '2026-08-28T00:00:00.000Z',
+            register: () => {
+              order.push('register');
+              const config = loadConfig();
+              saveConfig({
+                version: 2,
+                projects: { ...config?.projects, [otherWorkspace]: { isExpo: true } },
+                repos: config?.repos ?? {},
+              });
+            },
+            boot: async () => {
+              order.push('create');
+              return { ok: true, udid: 'drs_new' };
+            },
+            createdSessionId: () => 'drs_new',
+            abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_new' }),
+            writeState: () => {
+              order.push('publish');
+            },
+          });
+          return JSON.stringify({ id: 'drs_old', name: 'rn-iso-old', status: 'IN_PROGRESS' });
+        },
+      },
+      stop: {
+        drs_old: () => {
+          order.push('stop');
+          return JSON.stringify({ id: 'drs_old', status: 'STOPPED' });
+        },
+      },
+    });
+
+    await captureLog(() => runGc({ delete: true }, harness.deps));
+    await startPromise;
+
+    expect(order).toEqual(['get', 'stop', 'register', 'create', 'publish']);
   });
 
   test('collects every page before comparing current-project sessions', async () => {

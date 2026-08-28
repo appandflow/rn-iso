@@ -1097,21 +1097,23 @@ export async function runAndroid(
   // swap below).
   const release = isReleaseVariant(variant);
   const isExpo = detectIsExpo(root);
+  const remoteBackend = commandRemoteBackend ?? remoteAndroidSetting(settings);
   let androidPackage = detectAndroidPackage(root);
   // Recorded as soon as it is known, so a failure before the launch step
   // still says which app it was about.
   record.bundleId = androidPackage;
-  upsertProject(root, {
-    bundleId: detectBundleId(root) ?? undefined,
-    androidPackage: androidPackage ?? undefined,
-    isExpo,
-  });
+  const registerProject = () =>
+    upsertProject(root, {
+      bundleId: detectBundleId(root) ?? undefined,
+      androidPackage: androidPackage ?? undefined,
+      isExpo,
+    });
+  if (remoteBackend !== 'eas') registerProject();
   const project = getProject(root);
   const label = projectShortcut(root, project);
 
   // The backend name is known here, but no remote tool or device operation
   // runs until the local Metro gate below succeeds.
-  const remoteBackend = commandRemoteBackend ?? remoteAndroidSetting(settings);
   let remoteDevice: ReturnType<typeof makeRemoteDeviceDeps> | null = null;
 
   // ---- metro (fail fast, before remote resolution and device work) ----
@@ -1261,6 +1263,7 @@ export async function runAndroid(
           createdSessionId: remoteDevice.createdSessionId,
           abandonCreatedSession: remoteDevice.abandonCreatedSession,
           writeState,
+          register: registerProject,
         })
       : boot()
   ).then((result) => {
