@@ -314,7 +314,7 @@ export function cleanupTmp(dirs) {
 // THE REASON THIS FILE HAS A MEASUREMENT SECTION AT ALL. A cache that is
 // configured but stores nothing looks exactly like a cache that works, from
 // every angle except the directory it is supposed to be filling -- which is how
-// the Metro store shim shipped through green CI (issue #73) and was caught only
+// the old Expo Metro store hook shipped through green CI (issue #73) and was caught only
 // by measuring a directory. So "it seemed to work" is never evidence here: a
 // file count before and a file count after is.
 

@@ -10,7 +10,7 @@
 // the command line, the build still succeeds, and the only symptom is time.
 // Manual passes kept drifting -- one Android pass never checked Gradle caching
 // at all, a zero-config pass ran iOS-only and left `--build-cache` unproven,
-// and the Metro store shim shipped through green CI (#73) because nothing
+// and a broken Expo Metro store shipped through green CI (#73) because nothing
 // measured the directory it was supposed to be filling.
 //
 // THE THREE-PART RULE. For every cache, this suite proves three separate
@@ -21,7 +21,7 @@
 //             file's idea of what rn-iso should have done.
 //   STORES    the cache directory actually GREW: a file count before and a
 //             file count after. This is the one that matters. An engaged cache
-//             that stores nothing is exactly the shape of the shim bug, and it
+//             that stores nothing is exactly the shape of the old hook bug, and it
 //             is indistinguishable from a working one by every other means.
 //   REUSED    a SECOND workspace got the stored work back.
 //
@@ -214,7 +214,9 @@ async function main() {
   // The fixture and every worktree must remain project-tree clean: runtime state
   // is written to the isolated global RN_ISO_HOME.
   const appDir = args.appDir ? resolve(args.appDir) : createFixture({ framework: FRAMEWORK, workDir: WORK_DIR, h });
+  const expoSdk = FRAMEWORK === 'expo' ? readExpoSdkMajor(appDir) : null;
   log(`app: ${appDir}`);
+  if (FRAMEWORK === 'expo') log(`Expo SDK: ${expoSdk ?? 'unknown'}`);
   const baseline = snapshotRepo(appDir);
   log(`baseline: porcelain ${baseline.porcelain === '' ? 'CLEAN' : JSON.stringify(baseline.porcelain)}`);
   log(`baseline: .gitignore ${baseline.gitignoreExists ? `${baseline.gitignore.length} bytes` : 'ABSENT'}`);
@@ -267,6 +269,13 @@ async function main() {
 
   // ---- check 2: the Metro transform store ----------------------------------
   await runCheck('metro-store', (c) => {
+    if (FRAMEWORK === 'expo' && (expoSdk === null || expoSdk < 54)) {
+      return c.skip(
+        expoSdk === null
+          ? 'the Expo SDK could not be determined; rn-iso intentionally leaves its Metro cache unchanged'
+          : `Expo SDK ${expoSdk} predates the config override added in SDK 54; rn-iso intentionally leaves its Metro cache unchanged`,
+      );
+    }
     const rec1 = metroStoreRecords(wt1);
     const rec2 = metroStoreRecords(wt2);
 
@@ -278,7 +287,7 @@ async function main() {
     const problems = [];
 
     // (1) ENGAGED, per dev-server mode. For expo the confirming
-    // `cache_store_added` can only be written when the SHIM reports back from
+    // `cache_store_added` can only be written when the config adapter reports back from
     // inside the child; for bare it is the in-process append. rn-iso's own
     // `cache_store_requested` is explicitly NOT evidence: it records what
     // rn-iso ASKED for, before the process that has to honour it even exists.
@@ -299,7 +308,7 @@ async function main() {
         c.ev(`${label}: NO cache_store_added record in ${rec.file}`);
         problems.push(
           rec.requested
-            ? `${label} recorded cache_store_requested but the dev server never confirmed it and never warned: the shim was injected into a process that did not honour it`
+            ? `${label} recorded cache_store_requested but the dev server never confirmed it and never warned: the config adapter was loaded by a process that did not honour it`
             : `${label} wrote no cache_store_added record at all (${rec.file})`,
         );
       } else if (!rec.added.msg.includes(expectPhrase)) {
@@ -307,10 +316,10 @@ async function main() {
           `${label}'s record is not the ${EXPECTED_MODE} confirmation (wanted ${JSON.stringify(expectPhrase)}): ${JSON.stringify(rec.added.msg)}`,
         );
       }
-      // The shim fails SOFT by design, so its warning means a working dev
+      // The adapter fails SOFT by design, so its warning means a working dev
       // server with no shared cache -- green CI, no cache.
       if (rec.couldNotShare) {
-        problems.push(`${label} logged the shim's fail-soft warning, so the store never reached Metro`);
+        problems.push(`${label} logged the adapter's fail-soft warning, so the store never reached Metro`);
       }
     }
     if (!rec1.couldNotShare && !rec2.couldNotShare) {
@@ -331,7 +340,7 @@ async function main() {
     c.ev(describeGrowth(g2));
     if (g1.added <= 0) {
       problems.push(
-        `the shared Metro store did not gain a single file across wt1's build+launch (${g1.dir}). Engaged but not storing is EXACTLY the #73 shim bug.`,
+        `the shared Metro store did not gain a single file across wt1's build+launch (${g1.dir}). Engaged but not storing is exactly the #73 failure mode.`,
       );
     } else {
       const reusePct = Math.round(((g1.added - g2.added) / g1.added) * 100);
@@ -849,7 +858,7 @@ function annotateCasReuse(raceOutcome, casBefore1, casAfter1) {
 // ---- evidence readers -------------------------------------------------------
 
 // The metro.ndjson records that say what happened to the shared transform
-// store: the confirmation, and the shim's fail-soft warning.
+// store: the confirmation, and the adapter's fail-soft warning.
 function metroStoreRecords(cwd) {
   const file = join(workspaceLogsDir(cwd), 'metro.ndjson');
   const records = readNdjson(file);
@@ -866,6 +875,21 @@ function metroStoreRecords(cwd) {
     couldNotShare:
       records.find((r) => /could not share this project's Metro transform cache/.test(String(r.msg || ''))) || null,
   };
+}
+
+function readExpoSdkMajor(cwd) {
+  let dir = resolve(cwd);
+  while (true) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(dir, 'node_modules', 'expo', 'package.json'), 'utf8'));
+      const match = /^(\d+)/.exec(String(pkg.version || ''));
+      return match ? Number(match[1]) : null;
+    } catch {
+      const parent = dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
+    }
+  }
 }
 
 // The store root a workspace's own record names. Read from the record rather

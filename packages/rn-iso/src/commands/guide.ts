@@ -765,8 +765,9 @@ lines rn-iso composes rather than on files the project owns:
            no org.gradle.caching=true in gradle.properties.
   start    the dev server gets a shared Metro FileStore APPENDED to whatever
            the project configured -- in-process on a bare project, and through
-           NODE_OPTIONS=--require <shim> on an Expo child. Turn it off machine
-           -wide with { "caches": { "injectMetroStore": false } } in
+           Expo's config override on SDK 54+. Expo SDK 53 and older use their
+           normal Metro cache. Turn it off machine-wide with
+           { "caches": { "injectMetroStore": false } } in
            ~/.rn-iso/config.json; see \`guide settings\`.
 
 Each says so in one dim line. There is nothing to install, wire or commit, and
@@ -1206,8 +1207,9 @@ be setup steps are supplied by rn-iso on the command lines it composes itself:
   start        a shared Metro FileStore, APPENDED to whatever the project
                configured -- so no metro.config.js. On a bare project rn-iso
                hosts Metro itself and adds it to the config it loaded; on Expo
-               the child is spawned with NODE_OPTIONS extended by a --require
-               shim that does the same inside it.
+               SDK 54+ the child loads rn-iso's config adapter through
+               EXPO_OVERRIDE_METRO_CONFIG. Expo SDK 53 and older run with
+               their normal Metro cache.
 
 Each of those prints one dim line saying it happened. There is no setup skill
 and no init command; \`rn-iso doctor\` reports the project-side settings as
@@ -1223,17 +1225,17 @@ feature exists to avoid:
   }
 
 in ~/.rn-iso/config.json. It turns the store off on BOTH dev servers. Only the
-literal false does; anything else leaves it on. The shim also fails soft on its
-own: if it cannot resolve metro-config, or cannot substitute for it, it writes
-one line to stderr (which lands in the timeline) and the dev server runs with
-whatever cache it would have had.
+literal false does; anything else leaves it on. The Expo adapter also fails
+soft when it cannot create a FileStore: it writes one line to stderr (which
+lands in the timeline) and the dev server runs with whatever cache it would
+have had.
 
 Reading the timeline for it: on Expo, \`cache_store_requested\` is rn-iso saying
-it asked (it set NODE_OPTIONS on a process it does not run, which is all this
-side can know), and \`cache_store_added\` is the SHIM reporting from inside that
-process that the store is in the config Metro loaded. Only the second one means
-transforms are being shared. A bare project writes \`cache_store_added\` directly,
-because there rn-iso adds the store itself.
+it asked (it set EXPO_OVERRIDE_METRO_CONFIG on a process it does not run, which
+is all this side can know), and \`cache_store_added\` is the adapter reporting
+from inside that process that the store is in the config Metro loaded. Only the
+second one means transforms are being shared. A bare project writes
+\`cache_store_added\` directly, because there rn-iso adds the store itself.
 
 CACHE LOCATIONS ARE MACHINE-LEVEL TOO
 The shared build cache and Metro transform cache default to living under

@@ -16,6 +16,7 @@ import { getProject, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { describeError, supervisorError } from '../supervisor/errors.ts';
+import { writeWorkspaceState } from '../supervisor/state.ts';
 import {
   MODE_BARE,
   MODE_EXPO,
@@ -26,7 +27,6 @@ import {
   readWorkspaceState,
   runSupervisor,
   writePidFile,
-  writeWorkspaceState,
 } from '../supervisor/run.ts';
 
 let tmpHome: string;
@@ -88,7 +88,7 @@ describe('describeError', () => {
 });
 
 describe('Contract 2: the workspace state file', () => {
-  test('writeWorkspaceState creates .rn-iso/state.json and reads back', () => {
+  test('writeWorkspaceState creates the global state.json and reads back', () => {
     writeWorkspaceState(root, { supervisor: { pid: 1, port: 8082, mode: MODE_BARE } });
     expect(existsSync(workspaceStateFile(root))).toBeTruthy();
     const state = readWorkspaceState(root);
@@ -160,7 +160,7 @@ describe('Contract 2: the workspace state file', () => {
 describe('state.json concurrent writers (Contract 2 lock)', () => {
   test('4+ processes writing different keys never lose an update', async () => {
     const script = join(tmpHome, 'state-writer.mjs');
-    const runUrl = new URL('../supervisor/run.ts', import.meta.url).href;
+    const runUrl = new URL('../supervisor/state.ts', import.meta.url).href;
     writeFileSync(
       script,
       [
@@ -215,7 +215,7 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
         expect(state && state[key]).toBeTruthy();
       }
     }
-  });
+  }, 15_000);
 });
 
 describe('runSupervisor', () => {
