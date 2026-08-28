@@ -888,6 +888,37 @@ describe('action: an existing supervisor that is not answering', () => {
     expect(facts.alreadyRunning).toBe(true);
     expect(exec.calls.spawn).toEqual([]);
   });
+
+  test('a remote start refuses after the local Expo supervisor begins answering without a tunnel', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    const port = 8167;
+    const exec = metroExecutor({ listeners: {} });
+    const held: { server: Server | null } = { server: null };
+    const base = exec.runQuiet.bind(exec);
+    exec.runQuiet = (cmd) => {
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5153' : '';
+      return base(cmd);
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
+    metroListener(port).then((server) => {
+      held.server = server;
+      exec.listening = true;
+    });
+
+    let result;
+    try {
+      result = await runAction({ json: true, remote: true, wait: '10' });
+    } finally {
+      held.server?.close();
+    }
+
+    expect(result.exitCode).toBe(1);
+    expect(exec.calls.spawn).toEqual([]);
+    expect(JSON.parse(result.logs[0] ?? '').code).toBe('RN_ISO_REMOTE_START_REQUIRED');
+    expect(result.errs.join('\n')).toMatch(/rn-iso stop.*rn-iso start --remote/);
+  });
 });
 
 describe('output contract', () => {

@@ -325,17 +325,20 @@ export function registerStart(program: Command): void {
 
       let resolution = await resolveProjectMetro(port, root);
       let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
-
-      // Already up: the whole point of an idempotent start. Two `start` runs in
-      // a row must leave one supervisor, not two bundlers fighting for a port.
-      if (resolution.metro) {
+      const requireExpoTunnel = () => {
         if (tunnel && supervisor && readMetroTunnel(root)?.kind !== 'expo') {
-          return fail({
+          fail({
             code: 'RN_ISO_REMOTE_START_REQUIRED',
             message: `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`,
             remedy: 'Run `rn-iso stop`, then `rn-iso start --remote`.',
           });
         }
+      };
+
+      // Already up: the whole point of an idempotent start. Two `start` runs in
+      // a row must leave one supervisor, not two bundlers fighting for a port.
+      if (resolution.metro) {
+        requireExpoTunnel();
         if (!supervisor) {
           note(chalk.dim(`A dev server for this project already answers on port ${port}, started outside rn-iso.`));
           note(chalk.dim('Leaving it alone: rn-iso will not start a second bundler over a working one.'));
@@ -364,6 +367,7 @@ export function registerStart(program: Command): void {
           });
         }
         supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) || supervisor;
+        requireExpoTunnel();
         report({ json, out, port, supervisor, logsDir, alreadyRunning: true, waited: waitTimer() });
         return;
       }
