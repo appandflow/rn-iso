@@ -204,15 +204,18 @@ async function runSpawnedExpoStart({
   options = {},
   settings,
   tunnelDelayMs,
+  exitAfterTunnel = false,
 }: {
   port: number;
   options?: Record<string, unknown>;
   settings?: Record<string, unknown>;
   tunnelDelayMs?: number;
+  exitAfterTunnel?: boolean;
 }) {
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
   const exec = metroExecutor({ listeners: {} });
   const held: { server: Server | null } = { server: null };
+  const childHandlers: Record<string, (...args: unknown[]) => void> = {};
   let tunnelWritten: Promise<number | null> = Promise.resolve(null);
   exec.spawn = (cmd, args, opts) => {
     exec.calls.spawn.push({ cmd, args, opts });
@@ -225,11 +228,18 @@ async function runSpawnedExpoStart({
       tunnelWritten = new Promise((resolve) => {
         setTimeout(() => {
           writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://remote.exp.direct' } });
+          if (exitAfterTunnel) childHandlers.exit?.(1, null);
           resolve(Date.now());
         }, tunnelDelayMs);
       });
     }
-    return { pid: process.pid, unref() {}, on() {} };
+    return {
+      pid: process.pid,
+      unref() {},
+      on(event, cb) {
+        childHandlers[event] = cb;
+      },
+    };
   };
   const base = exec.runQuiet.bind(exec);
   exec.runQuiet = (cmd) => {
@@ -656,6 +666,18 @@ describe('action: spawning the supervisor', () => {
     expect(completedAt >= (tunnelWrittenAt as number)).toBe(true);
   });
 
+  test('start --remote refuses when the tunnel URL and supervisor exit arrive together', async () => {
+    const { result } = await runSpawnedExpoStart({
+      port: 8172,
+      options: { json: true, wait: '10', remote: true },
+      tunnelDelayMs: 1000,
+      exitAfterTunnel: true,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs[0] ?? '').code).toBe('RN_ISO_SUPERVISOR_EXITED');
+  });
+
   test('plain start does not pass --tunnel to an Expo supervisor in auto mode', async () => {
     const { exec } = await runSpawnedExpoStart({ port: 8163, options: { json: true, wait: '10' } });
     const spawned = exec.calls.spawn[0];
@@ -979,7 +1001,7 @@ describe('action: an existing supervisor that is not answering', () => {
 
     let result;
     try {
-      result = await runAction({ json: true, remote: true, wait: '10' });
+      result = await runAction({ json: true, remote: true, wait: '1' });
     } finally {
       held.server?.close();
     }
@@ -988,6 +1010,43 @@ describe('action: an existing supervisor that is not answering', () => {
     expect(exec.calls.spawn).toEqual([]);
     expect(JSON.parse(result.logs[0] ?? '').code).toBe('RN_ISO_REMOTE_START_REQUIRED');
     expect(result.errs.join('\n')).toMatch(/rn-iso stop.*rn-iso start --remote/);
+  });
+
+  test('a concurrent remote start waits when Metro becomes healthy before the Expo tunnel', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    const port = 8171;
+    const exec = metroExecutor({ listeners: {} });
+    const held: { server: Server | null } = { server: null };
+    const base = exec.runQuiet.bind(exec);
+    exec.runQuiet = (cmd) => {
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5154' : '';
+      return base(cmd);
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+    writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'expo-child', startedAt: 'T' } });
+    metroListener(port).then((server) => {
+      held.server = server;
+      exec.listening = true;
+    });
+    const tunnelWritten = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://concurrent.exp.direct' } });
+        resolve();
+      }, 1000);
+    });
+
+    let result;
+    try {
+      result = await runAction({ json: true, remote: true, wait: '10' });
+      await tunnelWritten;
+    } finally {
+      held.server?.close();
+    }
+
+    expect(result.exitCode).toBe(null);
+    expect(exec.calls.spawn).toEqual([]);
+    expect(JSON.parse(result.logs[0] ?? '').alreadyRunning).toBe(true);
   });
 });
 

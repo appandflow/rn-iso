@@ -366,7 +366,32 @@ export function registerStart(program: Command): void {
             remedy: 'Run `rn-iso stop` to halt it, then `rn-iso start` again.',
           });
         }
-        supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) || supervisor;
+        if (tunnel) {
+          const tunnelReady = await waitForExpoTunnel({
+            root,
+            seconds: waitSeconds,
+            aborted: () => !liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }),
+          });
+          if (!tunnelReady) {
+            const stillLive = liveSupervisor({
+              state: readWorkspaceState(root),
+              project: getProject(root),
+              port,
+            });
+            return fail({
+              code: 'RN_ISO_REMOTE_START_REQUIRED',
+              message: stillLive
+                ? `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`
+                : `The Expo dev server on port ${port} stopped before its tunnel became ready.`,
+              remedy: stillLive
+                ? 'Run `rn-iso stop`, then `rn-iso start --remote`.'
+                : 'Run `rn-iso start --remote` again.',
+            });
+          }
+        }
+        supervisor =
+          liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port }) ||
+          (tunnel ? null : supervisor);
         requireExpoTunnel();
         report({ json, out, port, supervisor, logsDir, alreadyRunning: true, waited: waitTimer() });
         return;
@@ -531,11 +556,11 @@ async function waitForExpoTunnel({
 }): Promise<boolean> {
   const deadline = Date.now() + seconds * 1000;
   while (Date.now() < deadline) {
-    if (readMetroTunnel(root)?.kind === 'expo') return true;
     if (aborted()) return false;
+    if (readMetroTunnel(root)?.kind === 'expo') return true;
     await sleep(POLL_MS);
   }
-  return readMetroTunnel(root)?.kind === 'expo';
+  return !aborted() && readMetroTunnel(root)?.kind === 'expo';
 }
 
 // The evidence a start failure carries: the last lines of the supervisor's raw
