@@ -500,7 +500,7 @@ describe('a cache miss', () => {
 
     expect(result.ok).toBe(true);
     expect(order).toEqual(['prebuild', 'build']);
-    expect(labelled(h.stderr, 'prebuild')[0]).toMatch(/android\/ generated \(12\.0s\)/);
+    expect(labelled(h.stderr, 'prebuild')[0]).toMatch(/android\/ generated \(12s\)/);
   });
 
   test('a bare project that already has android/ never prebuilds', async () => {
@@ -1012,7 +1012,7 @@ describe('the remote cache', () => {
       process.exit = originalExit;
     }
     expect(h.calls.build.length).toBe(1);
-    expect(labelled(h.stderr, 'cache')[0]).toMatch(/did not answer within 30\.0s; building instead/);
+    expect(labelled(h.stderr, 'cache')[0]).toMatch(/did not answer within 30s; building instead/);
     expect(exits).toEqual([0]);
   });
 
