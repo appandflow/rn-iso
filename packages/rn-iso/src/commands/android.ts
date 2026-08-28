@@ -583,8 +583,6 @@ interface RunAndroidOptions {
   useBuildCache?: boolean;
   variant?: string | null;
   readApkPackage?: (apkPath: string | null) => string | null;
-  // `--remote`. Named for the device rather than the flag because `remote`
-  // already means the build-cache provider in this file.
   remoteDevice?: RemoteDeviceBackend | null;
   resolveSettingsFor?: typeof resolveSettings;
   resolveRemoteDeviceContext?: typeof resolveRemoteContext;
@@ -1383,7 +1381,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return { ok: false, error: { code, message, remedy: remedy ?? null } };
   };
 
-  // ---- project facts -------------------------------------------------
   const settings = resolveSettingsFor({
     projectPath: root,
     gitCommonDir: gitCommonDir(root),
@@ -1397,10 +1394,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       `Set ios.remote and android.remote to one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`,
     );
   }
-  // The flavored variant drives the gradle task, the APK location and the
-  // cache key below. Precedence: the --variant flag (per-invocation judgment)
-  // over the android.variant setting (the repo-level default) over nothing --
-  // the plain assembleDebug flow, unchanged.
   const variant = resolveVariant(variantFlag, settings);
   const release = isReleaseVariant(variant);
   const isExpo = detectIsExpo(root);
@@ -1417,11 +1410,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const project = getProject(root);
   const label = projectShortcut(root, project);
 
-  // The backend name is known here, but no remote tool or device operation
-  // runs until the local Metro gate below succeeds.
   let remoteDevice: ReturnType<typeof makeRemoteDeviceDeps> | null = null;
 
-  // ---- metro (fail fast, before remote resolution and device work) ----
   const reservedPort = project?.metroPort ?? null;
   let metroPort: number | null = null;
   let phaseFailure: RunAndroidResult | null = null;
@@ -1470,11 +1460,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
   if (!(await resolveMetroPort())) return phaseFailure!;
 
-  // ---- remote device: five dep overrides, or none ----
-  //
-  // The local Metro identity is known before remote setup begins. A debug
-  // run then proves the public route before ensureDeviceBooted can connect a
-  // proxy device or create a billable EAS session.
   if (remoteBackend) {
     const resolved = await resolveRemoteDeviceContext({
       root,
@@ -1507,7 +1492,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     launch = remoteDevice.launch;
   }
 
-  // ---- concurrency: opt-in, unlimited by default ----
   const limits = getLimits();
   const capacity = checkCapacity({
     platform: PLATFORM,
@@ -1516,7 +1500,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   });
   if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
 
-  // ---- device --------------------------------------------------------
   const emuLog = emulatorLogFile(root);
   let device: OwnedDeviceRecord;
   try {
@@ -1544,13 +1527,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     });
   }
 
-  // Local boot is kicked off here and awaited only at install: gradle needs
-  // no device, so a cold AVD boot overlaps the build. Remote boot is awaited
-  // below because its EAS session must be recorded before build work starts.
-  // The catch converts a rare boot rejection into the normal result shape.
-  // The boot's own elapsed time, stamped the moment its promise settles: the
-  // boot overlaps the build by design, so reading the clock at the await
-  // would report the build's time, not the boot's.
   const bootTimer = stepTimer(now);
   let bootDuration = '';
   const boot = (): Promise<AndroidBootLike> =>
@@ -1578,8 +1554,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return result;
   });
 
-  // A remote session must be durable before fingerprinting, dependency
-  // setup, or a build can fail. Local boot keeps overlapping the build.
   if (remoteDevice) {
     const booted = await bootPromise;
     if (booted.failed) {

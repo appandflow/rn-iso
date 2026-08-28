@@ -94,8 +94,6 @@ describe('--remote', () => {
   });
 });
 
-// --- the harness -----------------------------------------------------------
-
 function fakeApk(name = 'app-debug.apk') {
   const dir = join(root, 'android', 'app', 'build', 'outputs', 'apk', 'debug');
   mkdirSync(dir, { recursive: true });
@@ -866,8 +864,6 @@ describe('explicit remote backend behavior', () => {
     expect(JSON.parse(json.stdout[0] ?? '{}')).toMatchObject({ launched: LAUNCH_UNVERIFIED, logs: null });
   });
 });
-
-// --- the flow --------------------------------------------------------------
 
 describe('a cache hit', () => {
   test('skips the build entirely and installs the cached artifact', async () => {

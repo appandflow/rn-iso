@@ -236,15 +236,6 @@ export function checkConcurrency({
   );
 }
 
-// The remote device, and ONLY when this project has asked for one.
-//
-// Silent by default, for the reason checkConcurrency is: a machine that never
-// uses a remote device should not read about one on every run. "Asked for
-// one" means `ios.remote` or `android.remote` names a backend.
-//
-// PURE: the caller resolves both facts. The one thing worth being loud about
-// is a configured remote with no agent-device, because that fails at the
-// device step AFTER the build, which is the expensive place to find out.
 export function checkRemoteDevice({
   configured = null,
   daemonInEnv = false,
@@ -301,8 +292,6 @@ export function checkRemoteDevice({
   );
 }
 
-// Runs every check against one project directory. Pure enough to test: all file
-// reads happen here, and each check is a function of the text it was given.
 export function runDoctor(
   projectRoot: string,
   {
@@ -372,9 +361,6 @@ export function runDoctor(
     });
   }
 
-  // The remote device. Both facts are cheap, and the check returns null unless
-  // one of them says this project actually uses one, so an ordinary project
-  // pays a settings read and nothing else.
   const projectSettings = resolveSettings({ projectPath: projectRoot, repoRoot: projectRoot });
   const remoteBackends = [
     ...new Set([remoteIosSetting(projectSettings), remoteAndroidSetting(projectSettings)]),
@@ -415,9 +401,6 @@ export function runDoctor(
   ].filter((f): f is Finding => Boolean(f));
 }
 
-// Fails CLOSED to "present": a `command -v` that itself fails must not turn a
-// working setup into a "install agent-device" finding. The real refusal at the
-// device step is the authority; this is advice.
 function agentDeviceIsOnPath(): boolean {
   try {
     return Boolean(getExecutor().runQuiet('command -v agent-device', { timeoutMs: 5000 }));
@@ -426,8 +409,6 @@ function agentDeviceIsOnPath(): boolean {
   }
 }
 
-// The thin I/O behind the concurrency note. Both fail OPEN (0): a flaky simctl
-// or adb must not turn a read-only advice command into an error.
 function countLiveDevices(): number {
   let sims: IosSimRecord[] = [];
   let adb: AdbDevices = { emulators: [], physical: [], unhealthy: [] };

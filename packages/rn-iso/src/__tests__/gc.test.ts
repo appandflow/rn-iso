@@ -1512,9 +1512,6 @@ describe('EAS orphan session sweep', () => {
   });
 });
 
-// A bare `gc` must never write. The unmounted-volume entry is the one that
-// matters: an unplugged external SSD makes a live project look dead, and
-// unregistering it would drop its device claim (CLAUDE.md item 8).
 test('a bare gc leaves every registered entry in place', async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');
   saveConfig({

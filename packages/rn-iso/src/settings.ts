@@ -90,17 +90,10 @@ export function resolveSettings({
 
 export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
 
-// Which remote backend this workspace's iOS device uses. Kept beside KNOWN_SETTINGS
-// for the reason stated above: the name of a setting and the code that reads
-// it drifting apart is how `worktree.install` became a silent no-op.
-//
-// Settings are Record<string, unknown> because they come from three JSON
-// layers, so the read narrows rather than asserts.
 export function remoteIosSetting(settings: SettingsObject): RemoteDeviceBackend | null {
   return remoteSetting(settings, 'ios');
 }
 
-// The Android half uses the same explicit backend values.
 export function remoteAndroidSetting(settings: SettingsObject): RemoteDeviceBackend | null {
   return remoteSetting(settings, 'android');
 }
@@ -125,10 +118,6 @@ export function remoteDeviceSettingError(settings: SettingsObject): string | nul
   return null;
 }
 
-// engine/metro-reach.ts's TunnelMode, committed once for the whole repo
-// rather than passed per invocation -- there is no `--tunnel` flag. Readers
-// return null for missing or invalid input; commands validate before using the
-// value so invalid input cannot silently select a default.
 export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
   const block = settings.metro;
   if (typeof block !== 'object' || block === null) return null;
@@ -155,8 +144,6 @@ export function metroTunnelSettingError(settings: SettingsObject): string | null
   return null;
 }
 
-// An operator-supplied tunnel URL that already exists. planMetroReach uses
-// this in place of starting one of its own, whatever metro.tunnel says.
 export function publicUrlSetting(settings: SettingsObject): string | null {
   const block = settings.metro;
   if (typeof block !== 'object' || block === null) return null;
@@ -164,10 +151,6 @@ export function publicUrlSetting(settings: SettingsObject): string | null {
   return typeof url === 'string' && url.trim() ? url : null;
 }
 
-// A stable URL for a managed ngrok process. It is deliberately scoped to an
-// explicit ngrok selection: `auto` can fall back to cloudflared, where an
-// ngrok-only URL has no meaning. HTTPS is required because remote development
-// clients must not receive a public clear-text origin.
 export function ngrokUrlSetting(settings: SettingsObject): string | null {
   const block = settings.metro;
   if (typeof block !== 'object' || block === null) return null;

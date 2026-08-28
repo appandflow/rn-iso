@@ -25,19 +25,7 @@ function reapCollectors(root: string): void {
   }
 }
 
-// End the remote session this workspace created, while the workspace still
-// exists.
-//
-// TIMING IS THE WHOLE CONSTRAINT. The session id lives in global workspace
-// state, and `eas simulator:stop` needs a project
-// directory to run in (its contextDefinition includes ProjectDir). Both are
-// gone the moment `git worktree remove` runs, so this must happen HERE, in
-// the shared reclaim that precedes the caller's removal step -- not in the
-// caller afterwards.
-//
-// Unlike a local simulator, a remote session is not occupancy-checked and is
-// never spared: it bills until its max duration, and the project that owned
-// it is going away.
+// eas simulator:stop needs a project cwd, so end the session before removing the worktree.
 function reclaimRemoteSession(
   root: string,
   { stopSession = defaultStopSession }: { stopSession?: StopSession } = {},
@@ -48,9 +36,6 @@ function reclaimRemoteSession(
   try {
     result = stopSession(root, sessionId);
   } catch (err) {
-    // Contained for the same reason every teardown here is: a throw would
-    // abort the reclaim before the caller's removal step, and re-running
-    // would hit it forever.
     result = { status: 'failed', reason: String((err as Error)?.message ?? err) };
   }
   if (result.status === 'torn-down') {
@@ -85,17 +70,6 @@ function defaultStopSession(root: string, sessionId: string) {
   return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null });
 }
 
-// End a tunnel `ios`/`android --remote` started for itself (a managed
-// provider; engine/tunnel.ts), for the same timing reason reclaimRemoteSession
-// runs here rather than in the caller: the record lives in the global
-// workspace directory, which `worktree remove` deletes.
-//
-// Unconditional, like the remote session -- not gated by deleteOwnedDevices.
-// That flag guards DESTROYING a local device, a real choice because a
-// shut-down simulator can be booted again; a tunnel process left running here
-// is simply leaked, since nothing else will ever reap it once its workspace
-// is gone. An Expo-hosted tunnel (kind 'expo') has no process of its own: it
-// dies with the expo child, which stopping the supervisor already ends.
 type StopMetroTunnelFn = (record: ManagedTunnelRecord) => Promise<StopTunnelResult>;
 
 function defaultStopMetroTunnel(record: ManagedTunnelRecord): Promise<StopTunnelResult> {
@@ -112,9 +86,6 @@ async function reclaimMetroTunnel(
   try {
     result = await stopMetroTunnel(record);
   } catch (err) {
-    // Contained for the same reason every teardown here is: a throw would
-    // abort the reclaim before the caller's removal step, and re-running
-    // would hit it forever.
     result = { status: 'failed', reason: String((err as Error)?.message ?? err) };
   }
   if (result.status === 'failed') {
@@ -142,9 +113,6 @@ async function reclaimMetroTunnel(
   return { stopped: record.provider, failed: null };
 }
 
-// A device this function skipped or failed to tear down: reported alongside
-// `deletedDevices` so a caller can tell what happened to every owned device,
-// not just the ones that went cleanly.
 interface SkippedDevice {
   platform: 'ios' | 'android';
   name: string;
@@ -216,11 +184,7 @@ export interface ReclaimResult {
   skippedDevices: SkippedDevice[];
   failedDevices: SkippedDevice[];
   keptEntry: boolean;
-  // The remote session this reclaim ended, if there was one.
   stoppedSession: string | null;
-  // The managed tunnel (ngrok/cloudflared) this reclaim ended, if there was
-  // one -- the provider name. null when there was none, or it was an
-  // Expo-hosted tunnel with no process of its own.
   stoppedTunnel: string | null;
   removedWorkspaceDirs: string[];
   failedWorkspaceDirs: string[];
@@ -249,30 +213,18 @@ export async function reclaimProject(
     failedDevices: SkippedDevice[];
   } = deleteOwnedDevices ? reclaimOwnedDevices(project) : { deletedDevices: [], skippedDevices: [], failedDevices: [] };
 
-  // Always, not only under deleteOwnedDevices. That flag guards DESTROYING a
-  // local device, which is a real choice because a shut-down simulator can be
-  // booted again. A remote session cannot be handed back: the workspace that
-  // holds its id is going away, so the choice is between ending it now and
-  // paying for it until its cap.
   const remote = reclaimRemoteSession(path, { stopSession });
   if (remote.failed) {
     skippedDevices.push(remote.failed);
     failedDevices.push(remote.failed);
   }
 
-  // Same unconditional treatment for a tunnel this workspace started for
-  // itself: it is not a local device deleteOwnedDevices guards, just a
-  // process nothing else will ever reap once the workspace is gone.
   const tunnel = await reclaimMetroTunnel(path, { stopMetroTunnel });
   if (tunnel.failed) {
     skippedDevices.push(tunnel.failed);
     failedDevices.push(tunnel.failed);
   }
 
-  // A Metro started from a deleted directory can outlive it and squat on the
-  // port, so the port is not genuinely free until the process is gone. Killing
-  // by port alone would repeat the Android console-port mistake, so identity is
-  // proven first and an unidentified listener is reported, never killed.
   let killedPid: number | null = null;
   let skippedMetro: string | null = null;
   if (typeof project?.metroPort === 'number') {

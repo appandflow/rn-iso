@@ -1,37 +1,9 @@
-// src/engine/eas-simulator.ts -- the EAS Simulator session, which is how a
-// remote device comes into existence.
-//
-// rn-iso does not drive the remote simulator through eas-cli. It only uses
-// eas-cli to CREATE, READ and DESTROY the session; everything after that
-// speaks to the agent-device daemon the session hands back. That split is
-// what lets one backend serve both EAS Simulator and a self-hosted
-// `agent-device proxy`, which produce the same two values.
-//
-// Every shape below is eas-cli's own, read from its source rather than from
-// docs, and cited where it is parsed:
-//   packages/eas-cli/src/commands/simulator/index.ts
-//     printJsonOnlyOutput({id, name, type, deviceRunSessionUrl, remoteConfig})
-//   packages/eas-cli/src/simulator/utils.ts
-//     getRemoteSessionEnvironmentVariables() -- the AgentDevice branch is the
-//     only one carrying agentDeviceRemoteSessionUrl / ...Token
-//   packages/eas-cli/src/commands/simulator/list.ts   {sessions, pageInfo}
-//   packages/eas-cli/src/commands/simulator/stop.ts   {id, status}
-//
-// NOTHING HERE PERSISTS THE TOKEN. The session id is the durable handle; the
-// token is re-read per command via `simulator:get`. A state file or a pasted
-// build log must never carry a live credential.
 import { sanitizeDeviceLabel } from '../sim/ios.ts';
 
-// The prefix that marks a session as rn-iso's own. Identical in role to the
-// `rn-iso-` simulator-name prefix the local backend checks before it shuts
-// anything down: ownership is decided by name, not by a record we might have
-// got wrong.
 const OWNED_PREFIX = 'rn-iso-';
 
-// eas-cli's own status values, lower-cased as its --status flag accepts them.
 const LIVE_STATUSES = ['new', 'in-progress'] as const;
 
-/** The two values an agent-device client needs, plus the human preview link. */
 export interface RemoteDaemon {
   baseUrl: string;
   token: string;
@@ -79,34 +51,15 @@ const LIVE_SESSION_STATUSES = new Set(['NEW', 'IN_PROGRESS']);
 const TERMINAL_SESSION_STATUSES = new Set(['STOPPED', 'ERRORED']);
 const SESSION_PLATFORMS = new Set(['ios', 'android']);
 
-// PURE. The `rn-iso-` prefix is the ownership marker, so it is not optional.
-// A label that already carries it (a worktree literally named `rn-iso-test`)
-// would otherwise produce `rn-iso-rn-iso-test`, so strip one leading copy
-// before prefixing. Same rule, and the same reasoning, as ownedSimName.
 export function ownedSessionName(label: string): string {
   const clean = sanitizeDeviceLabel(label);
   return `${OWNED_PREFIX}${clean.startsWith(OWNED_PREFIX) ? clean.slice(OWNED_PREFIX.length) : clean}`;
 }
 
-// PURE. Defense in depth for every destructive path, exactly as
-// resolveOwnedIosSim's name check is: a session rn-iso did not name is a
-// session rn-iso must not stop.
 export function isOwnedSessionName(name: string | null | undefined): name is string {
   return typeof name === 'string' && name.startsWith(OWNED_PREFIX);
 }
 
-// PURE. argv for `eas`, creating a detached session.
-//
-// `--out-config-type env` is load-bearing, not a preference. The default,
-// `dotenv`, writes `.env.eas-simulator` INTO THE PROJECT DIRECTORY, and it
-// does so even under --json (commands/simulator/index.ts, the
-// writeSimulatorEnvSafelyAsync call after the poll loop). rn-iso does not
-// edit a project's files -- the same rule engine/remote-cache.ts states for
-// the build-cache provider -- so the config is printed and parsed instead.
-//
-// `--json --non-interactive` together make the command PRINT and RETURN
-// rather than block until the session ends, which is what lets the session
-// outlive the command that made it, the same way the supervisor does.
 export function createSessionArgs({
   label,
   platform,
@@ -116,6 +69,7 @@ export function createSessionArgs({
   platform: 'ios' | 'android';
   maxDurationMinutes?: number | null;
 }): string[] {
+  // eas-cli's default output writes .env.eas-simulator; env output keeps project files unchanged.
   const args = [
     'sim',
     '--platform',
@@ -127,27 +81,20 @@ export function createSessionArgs({
     '--name',
     ownedSessionName(label),
   ];
+  // EAS duration limits vary by account, so omit the flag unless the caller sets a limit.
   if (maxDurationMinutes) args.push('--max-duration-minutes', String(maxDurationMinutes));
   return args;
 }
 
-// PURE. argv reading one session back, which is how the token is obtained
-// without ever having stored it.
 export function getSessionArgs(sessionId: string): string[] {
   return ['simulator:get', '--id', sessionId, '--json', '--non-interactive'];
 }
 
-// PURE. argv destroying one session.
-//
-// `--id` is always passed. Without it `simulator:stop` falls back to whatever
-// session `.env.eas-simulator` names, which in a repo with several worktrees
-// is a live session belonging to a different one.
 export function stopSessionArgs(sessionId: string): string[] {
+  // eas-cli otherwise selects the session in .env.eas-simulator, which can belong to another worktree.
   return ['simulator:stop', '--id', sessionId, '--json', '--non-interactive'];
 }
 
-// PURE. argv listing rn-iso's own LIVE sessions, which is what `gc` sweeps.
-// A stopped or errored session costs nothing and is not a leak.
 export function listOwnedSessionsArgs(after: string | null = null): string[] {
   const args = [
     'simulator:list',
@@ -163,34 +110,9 @@ export function listOwnedSessionsArgs(after: string | null = null): string[] {
   return args;
 }
 
-// PURE. The daemon coordinates, or null.
-//
-// Takes `unknown` because eas-cli's remoteConfig is genuinely dynamic
-// third-party output, narrowed field by field below rather than trusted
-// wholesale.
-//
-// IDENTIFIED BY ITS FIELDS, NOT BY __typename. eas-cli's own source switches
-// on `remoteConfig.__typename` to tell the union members apart, and an
-// earlier version of this function copied that -- but __typename exists only
-// on the in-memory GraphQL object. The JSON that `--json` prints does not
-// carry it, verified against a live session:
-//
-//   "remoteConfig": {
-//     "agentDeviceRemoteSessionUrl": "https://...ngrok.dev",
-//     "agentDeviceRemoteSessionToken": "...",
-//     "webPreviewUrl": "https://..."
-//   }
-//
-// so requiring it rejected every real agent-device session. The two fields
-// below ARE the discriminator: no other member of the union has them.
-//
-// Returns null rather than a partial record for a session of another type
-// (appium, argent, serve-sim). Those are real sessions this backend cannot
-// speak to, and a half-filled RemoteDaemon would fail later and further away.
 export function remoteDaemonFrom(config: unknown): RemoteDaemon | null {
   if (!isRecord(config)) return null;
-  // Honoured when present -- a caller reading the GraphQL object directly
-  // still gets the strict answer -- but never required.
+  // eas sim --json omits GraphQL __typename, so the agent-device URL and token identify the variant.
   const typename = str(config['__typename']);
   if (typename && typename !== 'AgentDeviceRunSessionRemoteConfig') return null;
   const baseUrl = str(config.agentDeviceRemoteSessionUrl);
@@ -202,10 +124,6 @@ export function remoteDaemonFrom(config: unknown): RemoteDaemon | null {
   return daemon;
 }
 
-// Every parse below returns a value or null/[] and never throws: eas-cli
-// prints diagnostics to stderr under --json, but a version bump, an auth
-// prompt or an outage can still put something unparseable on stdout, and a
-// device backend must not die reading it.
 function parseJson(stdout: string): unknown {
   try {
     return JSON.parse(stdout) as unknown;
@@ -222,7 +140,6 @@ function str(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-// PURE. Authorizes teardown from the current server record, not the stored id.
 export function inspectSessionForTeardown(stdout: string, sessionId: string): SessionTeardownInspection {
   const data = parseJson(stdout);
   if (!isRecord(data)) {
@@ -249,7 +166,6 @@ export function inspectSessionForTeardown(stdout: string, sessionId: string): Se
   return { action: 'stop', name, status };
 }
 
-// PURE. Only a session-specific missing result proves the stored resource is gone.
 export function isDefinitiveMissingSessionError(error: unknown, sessionId: string): boolean {
   const candidate = error as { stderr?: unknown; message?: unknown };
   const stderr = typeof candidate?.stderr === 'string' ? candidate.stderr : '';
@@ -280,8 +196,6 @@ export function verifyStoppedSession(stdout: string, sessionId: string): { ok: t
   return { ok: true };
 }
 
-// PURE. `eas sim --json` stdout -> the session, or null if there is no id.
-// No id means no session was created, whatever else the payload says.
 export function parseCreatedSession(stdout: string): CreatedSession | null {
   const data = parseJson(stdout);
   if (!isRecord(data)) return null;
@@ -295,9 +209,6 @@ export function parseCreatedSession(stdout: string): CreatedSession | null {
   };
 }
 
-// PURE. `eas simulator:list --json` stdout -> the sessions.
-// A record with no id cannot be acted on, so it is dropped rather than
-// carried as a partial that a later stop would fail on.
 export function parseSessionList(stdout: string): SessionSummary[] {
   const data = parseJson(stdout);
   if (!isRecord(data) || !Array.isArray(data.sessions)) return [];
@@ -335,9 +246,6 @@ export function parseSessionListPage(
   };
 }
 
-// PURE. Selects active sessions carrying rn-iso's ownership prefix that no
-// readable workspace state references. The EAS list is scoped by its cwd, so
-// every returned row carries that project directory as its explicit scope.
 export function findOrphanedOwnedSessions({
   sessions,
   recordedSessionIds,
@@ -432,7 +340,6 @@ export function findOrphanedOwnedSessions({
   return { orphaned: [...candidates.values()], notices };
 }
 
-// PURE. `eas simulator:stop --json` stdout -> what eas confirmed.
 export function parseStoppedSession(stdout: string): StoppedSession | null {
   const data = parseJson(stdout);
   if (!isRecord(data)) return null;

@@ -1,14 +1,3 @@
-// engine/device-remote.js -- the four dep overrides remote mode installs.
-//
-// These are asserted as exact argv against a mock executor, for the reason
-// CLAUDE.md item 9 gives: a mocked exec proves the right arguments were
-// composed, and that is the half a unit test can prove. The other half --
-// that `eas sim` and `agent-device` accept them -- is the field test.
-//
-// The ORDERING property is the one worth guarding. Locally the Metro gate
-// sits between ensureOwnedDevice (cheap) and ensureBooted (slow). Remote
-// inverts which step is expensive, so the session must be created in
-// ensureBooted, after the gate, and never in ensureOwnedDevice.
 import assert from 'node:assert';
 import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
@@ -31,11 +20,6 @@ import {
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 
-// The same-machine proxy: the simulator shares this host's loopback, so
-// localhost in the deep link reaches rn-iso's own Metro. Live-verified.
-// A same-machine `agent-device proxy`. The device sharing this host is now
-// ASSERTED with tunnelMode 'off' rather than inferred from the loopback URL --
-// `ssh -L` makes that inference false. See engine/metro-reach.ts.
 const LOOPBACK = { baseUrl: 'http://127.0.0.1:4310', token: 'tok_proxy' };
 
 const CREATED = JSON.stringify({
@@ -114,8 +98,6 @@ function ctx(overrides: Partial<Parameters<typeof remoteIosDeps>[0]> = {}) {
     easBin: '/bin/eas',
     agentDeviceBin: '/bin/agent-device',
     easLedgerRoot: tmpHome,
-    // The readiness poll is bounded at three minutes of real time; a test
-    // asserting the give-up path must not pay it.
     sleep: async () => {},
     ...overrides,
   };
@@ -300,9 +282,6 @@ process.stdout.write(${JSON.stringify(CREATED)});
 
 describe('the expensive step happens after the Metro gate', () => {
   test('ensureOwnedDevice creates no session and runs no command', async () => {
-    // The gate runs between ensureOwnedDevice and ensureBooted. Creating a
-    // billable cloud session in the first would mean paying for it and only
-    // then discovering the dev server is dead.
     const exec = mockExec();
     const deps = remoteIosDeps(ctx());
     const device = await deps.ensureOwnedDevice();
@@ -605,9 +584,6 @@ describe('session creation', () => {
   });
 
   test('sends no duration of its own, because the cap is per-account', async () => {
-    // Live: a hardcoded 120 was rejected with "must not exceed 115 minutes
-    // for this account", failing the command before a session existed. EAS
-    // has its own default; teardown is what bounds the cost.
     const exec = mockExec({ outputs: { sim: CREATED } });
     await remoteIosDeps(ctx()).ensureBooted({});
     expect(exec.calls[0]?.args ?? []).not.toContain('--max-duration-minutes');
@@ -625,7 +601,6 @@ describe('session creation', () => {
       id: 'drs_9',
       remoteConfig: { __typename: 'AppiumRunSessionRemoteConfig', appiumUrl: 'https://x' },
     });
-    // The get re-read returns the same unusable config.
     mockExec({ outputs: { sim: appium, 'simulator:get': appium } });
     const booted = await remoteIosDeps(ctx()).ensureBooted({});
     expect(booted.failed).toBe(true);
@@ -640,15 +615,11 @@ describe('session creation', () => {
   });
 
   test('an operator-supplied daemon creates no session at all', async () => {
-    // The `agent-device proxy` case: rn-iso is a guest on someone else's
-    // device, so it must not create a session and must not destroy one.
     const exec = mockExec();
     const deps = remoteIosDeps(ctx({ existingDaemon: { baseUrl: 'https://proxy.local/daemon', token: 'tok_proxy' } }));
     const booted = await deps.ensureBooted({});
     expect(booted.ok).toBe(true);
     expect(deps.createdSessionId()).toBeNull();
-    // close runs first, best-effort, to release any claim a previous run
-    // left on the device. See closeArgs.
     expect(exec.calls.map((c) => c.args[0])).toEqual(['close', 'connect']);
   });
 });
@@ -801,8 +772,6 @@ describe('install and launch match their local counterparts', () => {
   });
 
   test('a dev-client launch sends rn-iso own deep link, not agent-device metro hint', async () => {
-    // agent-device#1245: its hint writes bare-RN RCT_jsLocation, which a
-    // dev-client ignores. open <app> <url> runs simctl openurl verbatim.
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
@@ -846,8 +815,6 @@ describe('install and launch match their local counterparts', () => {
 
 describe('the local device cap does not apply', () => {
   test('checkDeviceCapacity never refuses', () => {
-    // maxDevices caps booted sims on THIS machine. Escaping that ceiling is
-    // the reason to go remote, so enforcing it here refuses the request.
     expect(remoteIosDeps(ctx()).checkDeviceCapacity()).toBeNull();
   });
 });
@@ -970,13 +937,6 @@ describe('teardown', () => {
 });
 
 describe('Metro reachability', () => {
-  // The hard part of a remote device, and the one agent-device does NOT solve
-  // for a self-hosted proxy: verified against 0.20.10, `agent-device proxy`
-  // serves no /api/metro route at all, so there is no bridge to lean on.
-  //
-  // Which address to use is now DECLARED (engine/metro-reach.ts), not inferred
-  // from the daemon's URL -- `ssh -L` made that inference false. These cover
-  // the wiring; the policy itself is pinned in metro-reach.test.ts.
   test('an asserted-local device uses localhost and needs no gate', () => {
     expect(resolveMetroOrigin({ metroPort: 8082, mode: 'off' })).toEqual({
       origin: 'http://localhost:8082',
@@ -992,8 +952,6 @@ describe('Metro reachability', () => {
   });
 
   test('no address and nothing to build one with is a refusal, never localhost', () => {
-    // The bug this replaced: `localhost` sent to a device on another machine
-    // resolves there, and the run reads as merely unverified.
     const r = resolveMetroOrigin({ metroPort: 8082, mode: 'auto', isExpo: false, available: [] });
     expect('failed' in r).toBe(true);
     assert('failed' in r);
@@ -1024,10 +982,6 @@ describe('Metro reachability', () => {
   });
 });
 
-// Reach planning, the tunnel and the gate run in ensureMetroReachable, which
-// commands/ios.ts calls AFTER the reserved port is known and the local Metro
-// gate has confirmed a dev server is on it -- and still before ensureBooted,
-// which is what creates the billable session.
 async function reach(over: Record<string, unknown> = {}) {
   const context = {
     root,
@@ -1056,8 +1010,6 @@ describe('the Metro refusal comes before anything billable', () => {
   });
 
   test('a loopback daemon is NOT taken as proof the device is local', async () => {
-    // `ssh -L 4310:localhost:4310 macmini` is exactly this shape and the
-    // device is on the other machine, so nothing may infer "local" from it.
     const { result } = await reach({ available: [] });
     expect('failed' in result).toBe(true);
   });
@@ -1153,7 +1105,6 @@ describe('a tunnel rn-iso starts for itself', () => {
     expect('failed' in result).toBe(true);
     assert('failed' in result);
     expect(result.code).toBe('RN_ISO_REMOTE_METRO_WRONG');
-    // Nothing downstream may treat this run as reachable.
     expect(context.publicMetroUrl).toBeNull();
   });
 
@@ -1175,10 +1126,6 @@ describe('a tunnel rn-iso starts for itself', () => {
 });
 
 describe('a session rn-iso created is never abandoned', () => {
-  // The window this closes: between `eas sim` succeeding and ensureBooted
-  // returning, the session exists and bills but its id is recorded nowhere,
-  // so stop/gc/worktree-remove cannot find it. Observed live -- a session
-  // with no endpoint yet left an IN_PROGRESS session nothing could reach.
   const NO_ENDPOINT = JSON.stringify({ id: 'drs_9', remoteConfig: null });
 
   test('a session that never becomes reachable is stopped, not left running', async () => {
@@ -1200,8 +1147,6 @@ describe('a session rn-iso created is never abandoned', () => {
   });
 
   test('when the stop also fails, the id and the manual command are reported', async () => {
-    // A leak nobody is told about is the worst outcome, so the message has to
-    // carry enough to fix it by hand.
     mockExec({ outputs: { sim: NO_ENDPOINT, 'simulator:get': NO_ENDPOINT }, fail: 'simulator:stop' });
     const booted = await remoteIosDeps(ctx({ existingDaemon: null })).ensureBooted({});
     expect(booted.reason).toContain('eas simulator:stop --id drs_9');
@@ -1260,8 +1205,6 @@ describe('a session rn-iso created is never abandoned', () => {
   });
 
   test('a connect failure against an operator daemon stops nothing', async () => {
-    // rn-iso created no session here, so it has none to end -- and ending
-    // someone else's would be destroying a device it does not own.
     const exec = mockExec({ existingDaemonMode: true, fail: 'connect' });
     const booted = await remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' })).ensureBooted({});
     expect(booted.failed).toBe(true);
@@ -1270,10 +1213,6 @@ describe('a session rn-iso created is never abandoned', () => {
 });
 
 describe('a re-run does not orphan the session it already has', () => {
-  // `eas sim` defaults to --force, so without this every run minted a fresh
-  // session while the previous one stayed live, unrecorded (state.json's id is
-  // overwritten) and billing to its cap. The documented loop re-runs `ios`
-  // after every native change, so it fired constantly.
   function recordSession(id: string): void {
     ensureWorkspaceStorage(root);
     writeFileSync(workspaceStateFile(root), JSON.stringify({ remoteDevice: { platform: 'ios', sessionId: id } }));
@@ -1296,7 +1235,6 @@ describe('a re-run does not orphan the session it already has', () => {
     const booted = await deps.ensureBooted({});
     expect(booted.ok).toBe(true);
     expect(deps.createdSessionId()).toBeNull();
-    // The whole point: `eas sim` never ran.
     expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
     const get = exec.calls.find((c) => c.args[0] === 'simulator:get');
     expect(get?.timeoutMs).toBe(30_000);
@@ -1356,8 +1294,6 @@ describe('a re-run does not orphan the session it already has', () => {
   });
 
   test('a STOPPED session is not reused, even though it still reports a config', async () => {
-    // eas still returns remoteConfig for a stopped session, so reusing on
-    // config alone would connect to a daemon that is gone.
     recordSession('drs_dead');
     const dead = JSON.stringify({
       id: 'drs_dead',
@@ -1452,8 +1388,6 @@ describe('a re-run does not orphan the session it already has', () => {
   });
 
   test('an operator-supplied daemon touches no recorded session at all', async () => {
-    // rn-iso is a guest there: it did not create that device and must not
-    // stop anything on the way in.
     recordSession('drs_old');
     const exec = mockExec();
     await remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' })).ensureBooted({});
@@ -1462,10 +1396,6 @@ describe('a re-run does not orphan the session it already has', () => {
 });
 
 describe("the alert rn-iso's own url open raises", () => {
-  // A cloud simulator is always fresh, so iOS asks "Open in <app>?" in front
-  // of the deep link on EVERY remote run. Nothing requests a bundle until it
-  // is answered, which made `verify` report UNVERIFIED on launches that were
-  // fine. Observed on a real EAS Simulator.
   test('a dev-client launch accepts it, so the bundle can actually load', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
@@ -1473,7 +1403,6 @@ describe("the alert rn-iso's own url open raises", () => {
     deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
     const after = exec.calls.map((c) => c.args.slice(0, 2).join(' '));
     expect(after).toContain('alert accept');
-    // Order matters: the alert exists only because `open` raised it.
     expect(after.indexOf('alert accept')).toBeGreaterThan(after.indexOf('open com.example.app'));
   });
 
@@ -1486,8 +1415,6 @@ describe("the alert rn-iso's own url open raises", () => {
   });
 
   test('no alert to accept still leaves the launch successful', async () => {
-    // The ordinary case once a device has seen one. `alert accept` exits
-    // non-zero with nothing showing, and that must not fail a good launch.
     const exec = mockExec({ outputs: { sim: CREATED }, fail: 'alert accept' });
     const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
@@ -1503,10 +1430,6 @@ describe("the alert rn-iso's own url open raises", () => {
 });
 
 describe('the android adapter', () => {
-  // On a REMOTE device the launch is the same operation as iOS: locally
-  // Android points the app at 10.0.2.2 (the emulator's route to its OWN host)
-  // and iOS at localhost, and the one public origin replaces both. So this is
-  // an adapter over the same core, not a second implementation.
   test('android creates its session with --platform android', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteAndroidDeps(ctx());
@@ -1539,9 +1462,6 @@ describe('the android adapter', () => {
   });
 
   test('the launch points at the public origin, never 10.0.2.2 or a reverse', async () => {
-    // Both local mechanisms are host-relative: a reverse maps to the host
-    // running adb, and 10.0.2.2 is the emulator's own host. On a remote
-    // emulator both name the wrong machine.
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteAndroidDeps(ctx({ publicMetroUrl: 'https://abc.trycloudflare.com' }));
     await deps.ensureDeviceBooted({});
@@ -1552,7 +1472,6 @@ describe('the android adapter', () => {
     const flat = (open?.args ?? []).join(' ');
     expect(flat).not.toContain('10.0.2.2');
     expect(flat).not.toContain('reverse');
-    // The hint agent-device turns into debug_http_host on the device.
     expect(open?.args[open.args.indexOf('--metro-host') + 1]).toBe('abc.trycloudflare.com');
     expect(open?.args[open.args.indexOf('--metro-port') + 1]).toBe('443');
   });
@@ -1572,10 +1491,6 @@ describe('the android adapter', () => {
 });
 
 describe('a release-shaped remote launch', () => {
-  // Upstream's release flow passes metroPort: null -- the JS is embedded and
-  // Metro is not part of the run. The reachability refusal below exists only
-  // for a dev build, so it must not fire here and turn a launch that needs no
-  // dev server into a failure.
   test('a null port launches without asking where Metro is', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx());
@@ -1584,13 +1499,11 @@ describe('a release-shaped remote launch', () => {
     expect(result.ok).toBe(true);
     expect(result.mode).toBe('launch');
     const open = exec.calls.find((c) => c.args[0] === 'open');
-    // No url, and no Metro hint: there is no dev server to point at.
     expect(open?.args[1]).toBe('com.example.app');
     expect(open?.args).not.toContain('--metro-host');
   });
 
   test('a dev launch on an unreachable device still refuses', async () => {
-    // The guard is not simply removed -- it still fires when a port IS given.
     mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx());
     await deps.ensureBooted({});

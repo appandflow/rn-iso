@@ -1,19 +1,3 @@
-// src/engine/tunnel.ts -- the lifecycle of a tunnel rn-iso starts for itself:
-// launch the provider named by engine/metro-reach.ts's `{ start: provider }`
-// plan, read the provider's own address back out of its (untrusted) output,
-// optionally prove that address serves, and reap the process again on `stop`.
-//
-// A provider PRINTING its URL is not the same fact as that URL being routable.
-// A cloudflared quick tunnel can take minutes to register with Cloudflare's
-// edge after its connection log appears. `requireReachable` selects the
-// startup contract: URL-only when Metro is not running yet, or a reachable URL
-// when it is.
-//
-// Parsing is kept pure and separate from invocation (CLAUDE.md item 3):
-// `parseCloudflaredLine` / `parseNgrokLine` take one line of a provider's
-// output and return a URL or null, with no process, no clock and no network
-// in sight, so the untrusted-output handling is tested without spawning
-// anything.
 import type { ChildProcess } from 'node:child_process';
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, unlinkSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -25,13 +9,8 @@ import { createLineReader } from '../process-output.ts';
 import type { ManagedProvider } from './metro-reach.ts';
 import { withWorkspaceProcessLock, type WorkspaceProcessLockOptions } from './workspace-process-lock.ts';
 
-// The signature every spawn-injection seam in this module accepts:
-// getExecutor().spawn's shape, loosened to a plain options bag so callers do
-// not have to import SpawnOptions (same seam as engine/gradle.ts and
-// engine/deps.ts).
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
-/** What `stop` needs to reap a tunnel this module started. */
 export interface TunnelRecord {
   provider: ManagedProvider;
   pid: number;
@@ -42,9 +21,6 @@ export interface TunnelRecord {
   logFile?: string | null;
 }
 
-// --- pure: argv and the untrusted-output parsers ---------------------------
-
-/** PURE. The argv rn-iso runs for a managed provider's own binary. */
 export function tunnelArgv(
   provider: ManagedProvider,
   port: number,
@@ -71,23 +47,14 @@ export function tunnelArgv(
 
 const CLOUDFLARED_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
 
-/**
- * PURE. cloudflared prints its quick-tunnel URL on STDERR inside a banner
- * line, not as a line of its own, so this matches the URL anywhere in the
- * line rather than requiring the whole line to be the URL.
- */
 export function parseCloudflaredLine(line: string): string | null {
+  // cloudflared prints the quick-tunnel URL inside a stderr banner.
   const match = line.match(CLOUDFLARED_URL_RE);
   return match ? match[0] : null;
 }
 
-/**
- * PURE. ngrok's `--log-format=json` prints one JSON object per line; the
- * tunnel's address is whichever line carries a `url` field. Parsed
- * defensively -- this is untrusted third-party output, and a provider
- * version bump that changes the schema must not throw.
- */
 export function parseNgrokLine(line: string): string | null {
+  // ngrok --log-format=json emits the public URL in a line-level url field.
   let data: unknown;
   try {
     data = JSON.parse(line);
@@ -103,23 +70,13 @@ function parserFor(provider: ManagedProvider): (line: string) => string | null {
   return provider === 'cloudflared' ? parseCloudflaredLine : parseNgrokLine;
 }
 
-// --- starting a tunnel -------------------------------------------------
-
-// Long enough for a slow-starting binary to print its banner, short enough
-// that a provider which will never print a URL (wrong version, no account
-// configured) is reported as a failure rather than left hanging.
 const URL_TIMEOUT_MS = 15_000;
 
-// A cloudflared quick tunnel is the case that needs minutes, not seconds; see
-// the header. ngrok routes immediately, but the same generous timeout is
-// applied to both rather than branching per provider, because a slow network
-// path can make either one late.
+// Cloudflare quick tunnels can take minutes to become routable after printing their URL.
 const REACHABLE_TIMEOUT_MS = 4 * 60_000;
 const REACHABLE_POLL_MS = 2_000;
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-// --- serializing one managed acquisition per workspace --------------------
 
 export async function withManagedTunnelLock<T>(
   root: string,
@@ -177,21 +134,16 @@ function managedRemoteWorktreeLockRoot(worktreeRoot: string): string {
   return join(getConfigDir(), 'process-locks', 'worktrees', key);
 }
 
-// Any HTTP response -- even a 404 from Metro's own router -- proves the
-// tunnel forwards traffic to something behind it; only a connection failure
-// means it is not routable yet.
 async function defaultProbeReachable(url: string, signal: AbortSignal): Promise<boolean> {
   try {
     const res = await fetch(url, { signal, redirect: 'follow' });
+    // Any HTTP response proves the tunnel is routable; only a connection failure means unavailable.
     return res.status > 0;
   } catch {
     return false;
   }
 }
 
-// Races the child's own stdout/stderr against its exit and a bounded
-// timeout. A provider that dies, or that never prints a matching line, ends
-// this the same way: url is null.
 function waitForUrl(
   child: ChildProcess,
   parseLine: (line: string) => string | null,
@@ -293,9 +245,6 @@ function removeRecordedTunnelLogFile(path: string | null | undefined): void {
   removeTunnelLogFile(resolved);
 }
 
-// Polls `url` until something answers or `timeoutMs` runs out. `now`/`sleep`
-// are the same clock-injection seam engine/metro-gate.ts uses, so a test
-// drives a four-minute timeout without spending four minutes.
 async function waitUntilReachable({
   url,
   now,
@@ -354,15 +303,6 @@ export type StartTunnelResult =
 const CLEANUP_TIMEOUT_MS = 1_000;
 const CLEANUP_POLL_MS = 25;
 
-/**
- * Start `provider`'s own binary against `port`, wait for it to print its
- * URL, then prove the URL actually serves before reporting success. Never
- * throws: every failure path (the binary would not start, it never printed a
- * URL, the URL never became reachable) is a returned `{ failed, reason }`.
- *
- * The process is left running, detached from this one, on success -- it is
- * `stopTunnel`'s job to reap it, not this call's caller exiting.
- */
 export async function startTunnel({
   provider,
   port,
@@ -387,9 +327,6 @@ export async function startTunnel({
   try {
     child = spawn(bin, args, {
       stdio: outputFile ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
-      // Detached: the tunnel outlives this call, exactly like the
-      // supervisor it fronts, and leads its own process group so `stopTunnel`
-      // can signal it without reaching whatever spawned it.
       detached: true,
     });
   } catch (err) {
@@ -456,7 +393,6 @@ export async function startTunnel({
   }
   if (!outputFile) resumeChildPipes(child);
 
-  // Reachable startup proves that the discovered URL forwards traffic.
   if (requireReachable) {
     const reachable = await waitUntilReachable({
       url,
@@ -503,7 +439,6 @@ export type StartTunnelSequenceResult =
     }
   | { failed: true; reason: string };
 
-/** Try the selected providers in order until one returns a public URL. */
 export async function startTunnelSequence({
   providers,
   port,
@@ -612,8 +547,6 @@ export async function terminateChild(
 function describe(err: unknown): string {
   return (err as Error)?.message || String(err);
 }
-
-// --- stopping a tunnel -------------------------------------------------
 
 export interface StopTunnelOptions {
   isAlive?: (pid: number) => boolean;
@@ -826,12 +759,6 @@ function matchesTunnelProcess(record: TunnelRecord, args: readonly string[]): bo
   return sameArgs(commandArgs, tunnelArgv('cloudflared', record.port, null, record.logFile).args);
 }
 
-/**
- * Reap a tunnel `startTunnel` started. Idempotent and never throws: a
- * missing or already-dead pid is `missing`, not an error, and a signal that
- * does not take effect is a returned `failed` status rather than a thrown
- * one (CLAUDE.md item 4's containment rule).
- */
 export async function stopTunnel(
   record: TunnelRecord | null | undefined,
   {

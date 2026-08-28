@@ -1,25 +1,3 @@
-// `gc` is the machine-hygiene command: it reports what rn-iso has left behind
-// and, with --delete, reclaims it.
-//
-// Six things still orphan, and none of them is a build artifact any more.
-//
-//   1. dead project entries   a directory deleted by hand leaves a registry
-//                             entry and a reserved Metro port behind
-//   2. owned devices          orphaned ones, plus (with --older-than) ones
-//                             whose project has gone untouched for weeks
-//   3. stale device records   the mirror image of 2: the DEVICE is gone and the
-//                             live project's record still points at it
-//   4. stale build locks      a single-flight lock (engine/build-lock.js) whose
-//                             builder is no longer running: a reboot or a
-//                             SIGKILL in the middle of a compile
-//   5. shared caches          alive by design, never dead, only bigger
-//   6. EAS sessions           an rn-iso-owned session whose workspace state
-//                             disappeared
-//
-// The cache paths are prescribed, so there is nothing to register or forget by
-// hand; gc just reports them, and there is no separate register / forget / list
-// verb. The programmatic `rn-iso/cache-manifest` export stays --
-// that is how @rn-iso/metro and src/build-cache.js self-register.
 import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
@@ -95,7 +73,6 @@ interface EasSessionSweep {
   deletionSafe: boolean;
 }
 
-// Everything gc knows, gathered by collectGcReport without writing anything.
 interface GcReport {
   skipped: GcSkip[];
   deadProjects: string[];
@@ -149,13 +126,7 @@ interface GcDependencies {
   precollectedEasSessionSweep?: EasSessionSweep;
 }
 
-// Bounds each device listing so a wedged simctl/emulator daemon can't hang
-// `gc` forever -- see the comment above the listAllIosSims/listAvds calls
-// in collectGcReport below.
-// 30s, not 10s: on a loaded machine (several booted emulators, a busy
-// CoreSimulator) `emulator -list-avds` / `simctl list` genuinely take longer
-// than 10s to answer, and a premature skip means an orphaned emulator holding
-// gigabytes never surfaces. A real hang still bounds out and prints the notice.
+// simctl and emulator listings can exceed 10 seconds on loaded hosts; 30 seconds still bounds hangs.
 const DEVICE_LIST_TIMEOUT_MS = 30000;
 const EAS_OPERATION_TIMEOUT_MS = 30000;
 const EAS_COLLECTION_TIMEOUT_MS = 60000;
@@ -613,10 +584,6 @@ async function withRemoteSessionGcLocks<T>(
   });
 }
 
-// A cache key is a 64-char fingerprint plus its variant and target. The whole
-// thing in a report line is noise; enough of it to match against a build's own
-// `fingerprint <hash>` line is not. Same rule, and the same shape, as
-// shortHash in commands/ios.js.
 function shortKey(key: unknown) {
   const text = String(key ?? '');
   return text.length > 6 ? `${text.slice(0, 6)}..` : text;
@@ -703,9 +670,6 @@ export function formatGcReport({
     }
   }
 
-  // A lock whose builder is gone. Harmless -- the next build takes it over on
-  // the pid-liveness check rather than waiting on it -- so this is tidiness,
-  // and the only thing --delete removes here.
   if (staleLocks.length) {
     lines.push(`Stale build locks (${staleLocks.length}) - the process that was building is gone:`);
     for (const lock of staleLocks) {
@@ -863,8 +827,6 @@ function emptyCache(cache: CacheDescriptor): {
   return { removed, bytes: failed ? 0 : (cache.bytes ?? 0), failed, skipped: null };
 }
 
-// Everything gc knows, gathered without writing anything. `runGc` prints this
-// and then, only with --delete, acts on it.
 export async function collectGcReport(
   {
     olderThan = null,
@@ -875,11 +837,6 @@ export async function collectGcReport(
   }: CollectGcReportOptions = {},
   deps: GcDependencies = {},
 ): Promise<GcReport> {
-  // Reported on every run: the cache paths are prescribed and there is no
-  // `cache list`, so this report is the only way to see a registered cache. Sizing walks
-  // the directories, which is the cost of the report being complete.
-  // With --all each row is annotated with whether it would be emptied and, if
-  // not, why -- decided here so the report and the action cannot disagree.
   const caches = planCacheEmptying(sizeCaches(discoverCaches({ declared: declaredCachePaths() })), all);
 
   const mountedVolumes = listMountedVolumes();
@@ -1001,9 +958,6 @@ export async function collectGcReport(
   };
 }
 
-// Report, then (only with --delete) act. Exported so the suite can drive the
-// device sweep with `unsafeAllowScopedDeviceSweep`; commander supplies only
-// the flags declared below.
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
   let projectRoot: string | null = null;
   try {
@@ -1092,9 +1046,6 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     easSessionSweep,
     caches,
   } = report;
-  // Caches only count as actionable with --older-than: emptying one whole is a
-  // performance decision aimed at a specific cache, not something a sweep
-  // should do on the way past.
   const actionable =
     deadProjects.length > 0 ||
     orphanedDevices.length > 0 ||
@@ -1135,8 +1086,6 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     if (result.stoppedTunnel) {
       console.log(chalk.dim(`  stopped ${result.stoppedTunnel} tunnel`));
     }
-    // A session whose stop failed is money still being spent, so it is a
-    // warning with the manual command in it, not a dim note.
     for (const s of result.skippedDevices) {
       console.log(chalk.yellow(`  ${s.name}: ${s.reason}`));
     }

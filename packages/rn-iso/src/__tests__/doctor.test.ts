@@ -559,23 +559,13 @@ test('detectFingerprintParity skips silently outside a git repo without invoking
   }
 });
 
-// --- the remote device ------------------------------------------------------
-//
-// Silent unless this project actually uses one. doctor's whole value is that
-// every line it prints is worth reading, so a note about a feature the machine
-// never touches is worse than no note.
-
 test('a project with no remote device gets no remote finding', () => {
   expect(checkRemoteDevice({})).toBeNull();
-  // Not even when the tools happen to be installed: having agent-device on
-  // PATH is not a request for a remote device.
   expect(checkRemoteDevice({ agentDeviceOnPath: true, easCliResolvable: true })).toBeNull();
   expect(checkRemoteDevice({ daemonInEnv: true, agentDeviceOnPath: true })).toBeNull();
 });
 
 test('a configured remote with no agent-device is a cost, not a note', () => {
-  // It fails at the device step, which is AFTER the build -- the expensive
-  // place to discover a missing tool.
   const f = checkRemoteDevice({ configured: 'eas', agentDeviceOnPath: false });
   assert(f);
   expect(f.level).toBe('cost');
@@ -589,7 +579,6 @@ test('the proxy backend reports that the operator owns the daemon', () => {
   const f = checkRemoteDevice({ configured: 'proxy', daemonInEnv: true, agentDeviceOnPath: true });
   assert(f);
   expect(f.level).toBe('note');
-  // The load-bearing half: rn-iso neither creates nor stops that session.
   expect(f.detail).toContain('does not create or stop the remote device');
 });
 

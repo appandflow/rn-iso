@@ -361,22 +361,11 @@ test('inferLevel classifies Expo bundling failures as errors', () => {
   expect(inferLevel('Bundling 100%')).toBe('info');
 });
 
-// --- the public Metro address -----------------------------------------------
-//
-// Expo composes the manifest's hostUri from the Host header it was called
-// with plus ITS OWN port. Behind a tunnel that yields
-// "<tunnel-host>:8085" while the tunnel listens on 443, and a remote device
-// following that manifest can never connect. Verified on a real EAS
-// Simulator; the manifest wins over the launch URL, so it cannot be fixed
-// from the device side.
-
 test('a workspace with no public URL sets nothing', () => {
   expect(expoProxyEnv({})).toEqual({});
 });
 
 test('the public URL becomes EXPO_PACKAGER_PROXY_URL', () => {
-  // One variable, not two that must agree by hand: this is the same value
-  // `ios --remote` points the device at.
   expect(expoProxyEnv({ RN_ISO_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com' })).toEqual({
     EXPO_PACKAGER_PROXY_URL: 'https://abc.trycloudflare.com',
   });
@@ -389,8 +378,6 @@ test('a trailing slash is dropped', () => {
 });
 
 test('an explicit EXPO_PACKAGER_PROXY_URL is never overridden', () => {
-  // A project that set it has said something more specific than rn-iso can
-  // infer.
   expect(
     expoProxyEnv({
       EXPO_PACKAGER_PROXY_URL: 'https://chosen.example.com',
@@ -471,7 +458,6 @@ describe('starting a tunnel', () => {
       onTunnelUrl: (url) => urls.push(url),
     });
     child.stdout!.emit('data', 'Waiting on exp://abc123.exp.direct\n');
-    // A reload reprints the same banner; only the first report matters.
     child.stdout!.emit('data', 'Waiting on exp://abc123.exp.direct\n');
     expect(urls).toEqual(['https://abc123.exp.direct']);
   });
@@ -491,12 +477,6 @@ describe('starting a tunnel', () => {
     expect(urls).toEqual([]);
   });
 });
-// --- the shared transform store, injected into the Expo child --------------
-//
-// The bare path appends a store to the config it hosts. Here the dev server is
-// the project's own `expo start`, so the only seam is the environment -- and
-// the rule that matters is that NODE_OPTIONS is APPENDED to, never replaced:
-// the caller may have set it for reasons rn-iso knows nothing about.
 describe('the Metro store injected into an Expo child', () => {
   const adapter = '/pkg/rn-iso/shim/expo-metro-config.cjs';
 
