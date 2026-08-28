@@ -124,6 +124,45 @@ test('the guide keeps Metro intent separate from the explicit device backend', (
   expect(errors).toContain('RN_ISO_REMOTE_EAS_UNAVAILABLE');
 });
 
+test('the guide documents remote providers and backend credential boundaries', () => {
+  const metro = renderTopic('metro');
+  const settings = renderTopic('settings');
+  assert(metro);
+  assert(settings);
+
+  expect(metro).toContain('rn-iso ios --remote proxy');
+  expect(metro).toContain('rn-iso android --remote eas');
+  expect(metro).toMatch(/AGENT_DEVICE_DAEMON_BASE_URL[\s\S]*AGENT_DEVICE_DAEMON_AUTH_TOKEN/);
+  expect(metro).toMatch(/another machine/i);
+  expect(metro).toMatch(/environment variables[^.]*never select the backend/i);
+  expect(metro).toMatch(/EAS[^.]*eas-cli[^.]*access/i);
+  expect(metro).toMatch(/EAS[^.]*billable/i);
+  expect(metro).toMatch(/EAS[^.]*does not inherit[^.]*proxy credentials/i);
+  expect(metro).toMatch(/stop[\s\S]*worktree remove[\s\S]*gc/);
+
+  for (const provider of ['auto', 'expo', 'ngrok', 'cloudflared', 'off']) {
+    expect(settings).toContain(`"${provider}"`);
+  }
+  expect(settings).toMatch(/Bare React Native[\s\S]*authenticated[\s\S]*ngrok[\s\S]*cloudflared/i);
+  expect(settings).toMatch(/auth[^.]*refus[^.]*cloudflared/i);
+  expect(settings).toMatch(/metro\.ngrokUrl[^.]*stable[^.]*managed ngrok URL/i);
+  expect(settings).toMatch(/metro\.ngrokUrl[\s\S]*requires metro\.tunnel\s+"ngrok"/i);
+  expect(settings).toMatch(/metro\.publicUrl[\s\S]*before[^.]*Expo[^.]*start/i);
+});
+
+test('the cleanup guide documents fail-closed EAS orphan recovery', () => {
+  const cleanup = renderTopic('cleanup');
+  assert(cleanup);
+
+  expect(cleanup).toMatch(/plain `rn-iso gc`[^.]*dry run/i);
+  expect(cleanup).toMatch(/gc --delete[\s\S]*active rn-iso-\* EAS\s+sessions/i);
+  expect(cleanup).toMatch(/workspace state[^.]*missing/i);
+  for (const proof of ['project', 'name', 'platform', 'status']) {
+    expect(cleanup).toMatch(new RegExp(`verified[^.]*${proof}`, 'i'));
+  }
+  expect(cleanup).toMatch(/registered root[^.]*missing[^.]*unreadable[^.]*fails closed/i);
+});
+
 // The commands v3 deleted. A guide that still teaches one of them is worse than
 // no guide: the agent runs it and gets "unknown command".
 test('no topic teaches a command this binary does not have', () => {
@@ -220,6 +259,21 @@ test('the skill still carries the rules an agent must not have to look up', () =
   for (const must of ['gc --delete', '--force', 'RN_ISO_NO_METRO', 'booted', 'rn-iso-']) {
     expect(skill.includes(must)).toBeTruthy();
   }
+});
+
+test('the skill teaches the complete remote-device contract', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+
+  expect(skill).toMatch(/plain `rn-iso start`[^.]*local/i);
+  expect(skill).toContain('rn-iso start --remote');
+  expect(skill).toContain('rn-iso ios --remote proxy');
+  expect(skill).toContain('rn-iso android --remote eas');
+  expect(skill).toMatch(/environment variables[^.]*never select the backend/i);
+  expect(skill).toMatch(/metro\.ngrokUrl[^.]*stable[^.]*managed ngrok URL/i);
+  expect(skill).toMatch(/auth[^.]*refus[^.]*cloudflared/i);
+  expect(skill).toMatch(/android\.remote[^.]*accept[^.]*"proxy"[^.]*"eas"/i);
+  expect(skill).toMatch(/gc --delete[\s\S]*active rn-iso-\* EAS sessions/i);
+  expect(skill).toMatch(/registered root[^.]*missing[^.]*unreadable[^.]*fails closed/i);
 });
 
 // The surface list in the skill IS the surface an agent reads first. A command

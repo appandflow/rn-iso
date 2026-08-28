@@ -1,7 +1,6 @@
 ---
 name: rn-iso
 description: The React Native / Expo CLI for AI agents. Each project (or worktree) gets its own owned simulator/emulator, a collision-free Metro port, a supervised dev server (`rn-iso start`), a build/install/launch that installs from a shared fingerprint cache when nothing native changed (`rn-iso ios` / `rn-iso android`), and a queryable log timeline (`rn-iso logs --errors`). Use to spin up a worktree, get a running app on a device that is yours, read the errors a build or a redbox produced, and discover which device to target for UI interactions.
-user_invocable: true
 ---
 
 # rn-iso -- the RN / Expo CLI for agents
@@ -89,7 +88,7 @@ One more consequence of "the clone matches the source, not the branch": a carrie
 Destruction lives in exactly **two** commands. Everything else, including `stop`, is safe.
 
 - **`worktree remove --force`** discards uncommitted changes and untracked files permanently. Plain `worktree remove` deletes the worktree and reaps its owned device; it refuses when the tree is dirty. **`pod install` churn no longer causes that refusal**: when the only dirt left is `<app>/ios/Podfile.lock` or `<app>/ios/*.xcodeproj/project.pbxproj`, tracked and unstaged, rn-iso restores those files itself and proceeds, printing `restored <path> (pod install churn; the worktree is being removed)` for each. They are inside a directory about to be deleted wholesale, and a lockfile change anyone intended would have been committed. **One other dirty path and the whole set is refused, churn included** -- that fail-closed rule is what keeps this from ever eating real work. When it does refuse over something else, **restore what it names and retry** rather than forcing. The refusal names the right command per class: `git checkout --` for modified tracked files, `git clean -fd` (or an `rm`) for untracked ones, which checkout cannot clear. The workspace's own `.rn-iso/` never counts as dirt -- it dies with the worktree by design -- and neither does a `.gitignore` that is nothing but the `.rn-iso/` entry `start`/`ios`/`android` add themselves: whether the block was appended to a tracked file (restored) or the whole file was created in a repo that had none (deleted), checked line by line, and one other line either way and it refuses again. So rn-iso's own writes can never be the reason for a refusal. It takes no argument: run it from anywhere inside the worktree, including a monorepo app dir, and it resolves the enclosing worktree root. `npx rn-iso guide errors` shows how. **On the main checkout it reclaims the environment only**: the owned device is deleted, the Metro port freed, the registry entries dropped and `.rn-iso/` removed -- and it never touches the tree itself (git cannot remove the main working tree, so nothing is deleted and the dirty-tree guard does not apply). It ends with `Reclaimed the environment; the working tree stays (it is the main checkout).` A registered project directory that is not a git repo at all gets the same environment reclaim.
-- **`gc --delete`** drops dead project entries and deletes the orphaned `rn-iso-*` devices it reported, potentially tens of GB of simulator. With `--older-than <days>` it also reaps the device of a project nothing has touched that long. With `--all` it empties the shared build caches, which every project on the machine then pays to refill. A bare `gc` only reports -- it writes nothing and is always safe.
+- **`gc --delete`** drops dead project entries and deletes the orphaned `rn-iso-*` devices it reported, potentially tens of GB of simulator. With `--older-than <days>` it also reaps the device of a project nothing has touched that long. With `--all` it empties the shared build caches, which every project on the machine then pays to refill. From an Expo project, `gc` also reports orphaned `rn-iso-*` EAS Simulator sessions for the current EAS project; `--delete` stops only verified owned sessions. A project-classification or lock failure skips the EAS sweep, reports a notice, and leaves local cleanup running. A bare `gc` only reports -- it writes nothing and is always safe.
 - **`stop --force`** is the one flag on a non-destructive command: it kills a process on the reserved port that rn-iso could not identify as yours. It deletes nothing. Plain `stop` halts the supervisor, reaps the device-log collectors, shuts the owned device down (**never** deletes it) and frees the port, so coming back to the branch costs a boot rather than a create and a reinstall. There is no `--delete` on it, deliberately -- an agent reaching for `stop` to reclaim memory must not have one within reach of a typo.
 
 ## Capacity
@@ -124,43 +123,31 @@ Ten commands: `doctor` (what is silently costing build time) · `worktree create
 
 That is all of it. There is no `init` and no setup skill -- rn-iso supplies its own caches, `doctor` reports the handful of things it cannot, and the one safe generated edit (`.rn-iso/` in `.gitignore`) is self-ensured by `start`/`ios`/`android`. There is also no `up`, no `release`, no `shutdown`, no `config`, no `build-cache`, no `worktree list` -- `status` covers the last one, `ios`/`android` absorbed the build cache, settings are files (`guide settings`), and destruction consolidated into `worktree remove` and `gc --delete`. Run `npx rn-iso <command> --help` for flags, or `npx rn-iso guide` for the reference.
 
-## A remote device (`--remote`)
+## Remote devices
 
-`ios --remote` and `android --remote` install and launch on a simulator or emulator that is not on this machine. **The build still runs here** -- the fingerprint, the shared cache and single-flight builds are unchanged, and only the device moves. Reach for it when the machine runs out of simulators before it runs out of work, not as a default: a cloud session is billable, and a local device is faster.
-
-**A device on another machine needs Metro to be reachable from ITS network.** By default (`metro.tunnel: auto`, `guide settings`) rn-iso arranges this itself, and which piece does it depends on the project:
-
-- **Expo project:** `rn-iso start` passes `--tunnel` to the project's own `expo start` and records the URL Expo reports. This has to happen at `start`, not at `ios --remote` -- a later run cannot add `--tunnel` to an already-running dev server.
-- **Bare RN project, or `metro.tunnel: cloudflared`/`ngrok` on any project:** `ios`/`android --remote` starts a managed tunnel (ngrok preferred, then cloudflared) for the reserved port BEFORE creating any billable session, records it, and reuses it across re-runs rather than starting a second one.
-
-Either way, before the device is handed the address, rn-iso proves it actually reaches THIS workspace's Metro (requests a bundle and watches for the request in this workspace's own log) and refuses with `RN_ISO_REMOTE_METRO_WRONG` rather than connecting a session to a tunnel that now serves a different project -- the same failure a stale port reservation can otherwise produce silently.
-
-`off` asserts the device shares this machine (a local `agent-device proxy`) and is the only mode that needs no tunnel and no gate. Bringing your own tunnel still works -- set `metro.publicUrl` (or, for one run, `RN_ISO_METRO_PUBLIC_URL`) to its URL and rn-iso uses it instead of starting one, whatever `metro.tunnel` says:
+Plain `rn-iso start` stays local. Prepare public Metro only when a remote device needs it:
 
 ```bash
-rn-iso start                                        # note the reserved port, e.g. 8085
-cloudflared tunnel --url http://127.0.0.1:8085      # wait for it -- a fresh quick tunnel takes a few minutes to route
-export RN_ISO_METRO_PUBLIC_URL=https://<that-url>   # or metro.publicUrl in .rn-iso.json
+rn-iso start --remote
+rn-iso ios --remote proxy
+rn-iso android --remote eas
 ```
 
-An operator-supplied tunnel is still gated the same way a managed one is -- rn-iso did not create it and cannot vouch for what it reaches -- but it is never reaped: `stop`/`gc`/`worktree remove` only ever stop a tunnel THEY started.
+The command selects the device backend. The `ios.remote` and `android.remote` settings accept `"proxy"` or `"eas"`. Environment variables never select the backend. The build and cache remain on this machine.
 
-Set `metro.publicUrl` (or export the env var) BEFORE `rn-iso start`, not just before `ios`, on an Expo project: `start` turns it into Expo's `EXPO_PACKAGER_PROXY_URL`, which is what makes the manifest advertise the tunnel. Without it Expo builds the manifest from its own port, the device is told to fetch `https://<tunnel-host>:8085/...`, and the launch dies at "Could not connect to development server" -- the manifest wins over the deep link, so it cannot be fixed from the device side. This does not apply when rn-iso starts the tunnel itself (Expo's own, or a managed one): Expo sets its own manifest host correctly when it is tunnelling itself, and forcing `EXPO_PACKAGER_PROXY_URL` too is how you get a manifest advertising a host that does not serve.
+The proxy backend connects to an `agent-device` daemon on another machine. It requires `AGENT_DEVICE_DAEMON_BASE_URL` and `AGENT_DEVICE_DAEMON_AUTH_TOKEN`. rn-iso does not create or stop the proxy device.
 
-It needs `agent-device` on PATH, plus one of:
+The EAS backend needs `eas-cli` and an account with EAS Simulator access. EAS does not inherit proxy credentials. An EAS session is billable, so always tear it down with `stop`, `worktree remove`, or `gc --delete`. Give the user the `webPreviewUrl` from the command payload. Do not open that browser URL on the device.
 
-- **`AGENT_DEVICE_DAEMON_BASE_URL` + `AGENT_DEVICE_DAEMON_AUTH_TOKEN` in the environment.** rn-iso uses that daemon and creates no session of its own. This is the `agent-device proxy` case, and it is also how you attach to a session someone else started.
-- **Nothing.** rn-iso creates an EAS Simulator session itself (`eas sim`, named `rn-iso-<label>`, bounded to two hours), which needs eas-cli and an account with EAS Simulator access.
+`metro.tunnel` accepts `"auto"`, `"expo"`, `"ngrok"`, `"cloudflared"`, or `"off"`. Expo `"auto"` uses the Expo tunnel. Bare React Native `"auto"` tries an authenticated and working ngrok first. After an auth refusal, or any failure before ngrok returns a URL, it uses cloudflared.
 
-`ios.remote: true` in settings does the same thing as the flag, per project or per repo.
+`metro.ngrokUrl` is the stable managed ngrok URL. It requires `metro.tunnel: "ngrok"`. `metro.publicUrl` is an operator-managed URL. Set `metro.publicUrl` before Expo start so the manifest advertises it. rn-iso stops only the managed tunnels it started.
 
-**Give the user the watch link.** When rn-iso creates an EAS Simulator session it prints `Watch this device: <url>` and puts the same value in the `--json` payload as `webPreviewUrl`. That browser preview is the ONLY way a person can see a device in a datacenter, so **put the URL in your reply to them, on its own line, whenever you run `--remote`** -- especially before a long build, and again if the launch comes back `unverified` so they can look at what the screen is actually showing. Never pass it to `agent-device open`: it is a browser page, not a deep link, and sending it to the device renders a browser inside the simulator. A local device and a bring-your-own daemon have no preview, and the key is then absent rather than null.
+rn-iso verifies that the public URL reaches this workspace before it creates a remote session. `metro.tunnel: "off"` is for a device that can already reach this machine.
 
-**`stop`, `worktree remove` and `gc` DESTROY a remote session**, unlike a local device which they only shut down (or delete, for `worktree remove`). A session bills until its max duration, so leaving one running is the worse failure. If the stop fails, the command exits non-zero and keeps the record so you can retry -- do not ignore that. The one case nothing can recover is a worktree you `rm -rf` by hand: that takes the session id with it, and the two-hour cap is all that stops the billing.
+Plain `gc` is a dry run. `gc --delete` can stop active rn-iso-* EAS sessions after workspace state is missing. The cleanup verifies the EAS project, session name, platform, and status. If a registered root is missing or unreadable, cleanup fails closed and keeps the claim.
 
-The same three commands also stop a MANAGED tunnel (ngrok/cloudflared) the same way, independently of the session -- it is its own process, not billed by the minute but still a leak if nothing ever kills it. An Expo-hosted tunnel has no process of its own to stop there: it dies with the `expo start` child, which stopping the supervisor already ends.
-
-**There are no device logs on a remote device yet.** `logs --source device` is empty because the collector is local-only. The Metro half -- JS errors, redboxes, bundling failures -- is unaffected and is where nearly everything useful comes from anyway. `--errors` still works and still means what it says.
+Remote devices do not provide native device logs. Metro errors and redboxes remain available through `logs --errors`.
 
 ## When things go wrong
 

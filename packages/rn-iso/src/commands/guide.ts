@@ -208,6 +208,25 @@ Plain \`rn-iso start\` is local and does not create a public tunnel. Remote inte
 comes from \`start --remote\`, \`ios.remote\`, or \`android.remote\`. The
 \`metro.tunnel\` setting selects the provider after remote intent exists.
 
+REMOTE DEVICE BACKENDS
+  Metro exposure and device selection are separate:
+
+    rn-iso start --remote          prepare public Metro
+    rn-iso ios --remote proxy      use an agent-device daemon
+    rn-iso android --remote eas    create an EAS Simulator session
+
+  The command or the matching ios.remote/android.remote setting selects the
+  backend. Environment variables never select the backend.
+
+  The proxy backend connects to an agent-device daemon on another machine. It
+  requires AGENT_DEVICE_DAEMON_BASE_URL and
+  AGENT_DEVICE_DAEMON_AUTH_TOKEN. rn-iso creates no remote session for it.
+
+  The EAS backend needs eas-cli and an account with EAS Simulator access. An
+  EAS session is billable. EAS does not inherit the proxy credentials. Always
+  tear the session down: \`stop\`, \`worktree remove\`, and \`gc --delete\`
+  can end sessions that rn-iso proves it owns.
+
 IDEMPOTENT
   A healthy dev server on the reserved port is a no-op: \`start\` prints the
   facts with alreadyRunning: true and starts nothing. A foreign process holding
@@ -1115,6 +1134,15 @@ nothing, always safe) reports those; \`gc --delete\` reaps them, and in the same
 run drops the dead config ENTRIES those projects left behind and frees their
 Metro ports.
 
+REMOTE EAS SESSIONS
+  Plain \`rn-iso gc\` is a dry run. \`gc --delete\` can stop active rn-iso-* EAS
+  sessions after workspace state is missing. The stop needs verified
+  project, name, platform, and status ownership. The same run also cleans the
+  local state that it can prove is stale.
+
+  If a registered root is missing or unreadable, cleanup fails closed. The
+  EAS session and local claim stay in place when rn-iso cannot prove ownership.
+
 THE MIRROR IMAGE: A STALE DEVICE RECORD
   A device deleted out from under a LIVE project (by hand, or by Xcode) leaves
   the opposite problem: the record points at a sim that is not on the machine,
@@ -1237,20 +1265,22 @@ KEYS RN-ISO READS
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
                         local. "auto" (default) uses Expo's own tunnel on Expo
-                        projects; on bare React Native it prefers ngrok, then
-                        cloudflared. "off" asserts the device shares this
-                        machine and is the only mode that needs no tunnel;
-                        "expo" lets the Expo dev server tunnel itself;
-                        "cloudflared" /
-                        "ngrok" name a managed provider explicitly. Any
-                        other value is refused as invalid.
-  metro.ngrokUrl        an HTTPS URL reserved for the managed ngrok provider.
-                        Requires metro.tunnel "ngrok" and passes --url to
-                        ngrok http. rn-iso owns this process.
+                        projects. On bare React Native, "auto" first tries an
+                        authenticated and working ngrok. After an auth refusal,
+                        or any failure before ngrok returns a URL, it falls back
+                        to cloudflared. "off" asserts the device
+                        shares this machine and is the only mode that needs no
+                        tunnel. "expo" lets the Expo dev server tunnel itself.
+                        "cloudflared" and "ngrok" name a managed provider
+                        explicitly. Any other value is refused as invalid.
+  metro.ngrokUrl        the stable managed ngrok URL. It requires metro.tunnel
+                        "ngrok" and passes --url to ngrok http. rn-iso owns
+                        this process.
   metro.publicUrl       an existing tunnel's URL. Takes precedence over
                         starting one, whatever metro.tunnel says -- rn-iso
                         did not create it, so a Metro request through it is
-                        still gated the same way a managed tunnel's is.
+                        still gated the same way a managed tunnel's is. Set it
+                        before Expo start so the manifest advertises it.
   worktreeDir           where worktrees are created
   worktree.baseRef      "fresh" (origin/HEAD) or "head"
   worktree.include      carry-over patterns, same role as .worktreeinclude
