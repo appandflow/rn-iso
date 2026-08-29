@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { launchEvidenceMessage, noCompileEvidenceMessage } from './assertions.mjs';
 import {
   FIXTURE_COMMANDS,
   assert,
@@ -139,31 +140,13 @@ function assertArtifact(appPath) {
 }
 
 function handleLaunch(facts, label) {
-  if (facts.launched === true) {
-    log(`${label} launched and verified.`);
-    return;
-  }
-  if (facts.launched === 'unverified') {
-    log(`${label} launched but UNVERIFIED (no bundle request seen) -- tolerated per protocol.`);
-    return;
-  }
-  throw new Error(`${label} did not launch (launched=${JSON.stringify(facts.launched)})`);
+  log(launchEvidenceMessage(facts.launched, label));
 }
 
 function assertNoCompile(cwd) {
   const logPath = buildLog(cwd);
-  if (!logPath) {
-    log('warn: no build-*.ndjson to inspect for compile signatures');
-    return;
-  }
-  const text = readFileSync(logPath, 'utf-8');
-  for (const sign of COMPILE_SIGNS) {
-    assert(
-      !sign.test(text),
-      `the cached build's log contains a compile signature ${sign} -- it should have installed, not compiled:\n${logPath}`,
-    );
-  }
-  log('no-compile proof: the second worktree build log holds no compiler invocation.');
+  const text = logPath ? readFileSync(logPath, 'utf-8') : '';
+  log(noCompileEvidenceMessage({ cwd, logPath, text, compileSigns: COMPILE_SIGNS }));
 }
 
 function worktreeRemove(path) {
