@@ -464,6 +464,27 @@ describe('explicit remote backend behavior', () => {
     },
   );
 
+  test('a remote ENOSPC boot failure keeps the remote-device remedy', async () => {
+    const { h } = remoteHarness('proxy', {
+      remoteDeviceDeps: () => ({
+        ctx: { root, label: 'app', backend: 'proxy', easBin: null, agentDeviceBin: '/bin/agent-device' },
+        checkCapacity: () => null,
+        ensureDevice: async () => ({ deviceName: 'remote device', owned: true, remote: true }),
+        ensureDeviceBooted: async () => ({ failed: true, reason: 'ENOSPC: remote profile write failed' }),
+        install: never('install'),
+        launch: never('launch'),
+        createdSessionId: () => null,
+        webPreviewUrl: () => null,
+      }),
+    });
+
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toContain('ENOSPC');
+    expect(result.error?.remedy).toMatch(/stim-cli status/);
+    expect(result.error?.remedy).not.toMatch(/~\/\.android\/avd|several GB/);
+  });
+
   test('android.remote selects the same explicit backend as the CLI', async () => {
     const selected: unknown[] = [];
     const h = harness({
@@ -1232,7 +1253,8 @@ describe('the other refusals', () => {
     assert(result.error);
     expect(result.error.code).toBe(NO_DEVICE);
     expect(result.error.message).toMatch(/Not enough space to create userdata partition/);
-    expect(result.error.remedy).toMatch(/Free disk space at the AVD directory/);
+    expect(result.error.remedy).toMatch(/Free disk space/);
+    expect(result.error.remedy).toMatch(/~\/.android\/avd/);
     expect(result.error.remedy).not.toMatch(/JAVA_HOME|stim-cli status/);
     expect(h.stderr.some((l) => l.includes(emulatorLogFile(root)))).toBeTruthy();
   });
@@ -1250,6 +1272,21 @@ describe('the other refusals', () => {
     expect(result.error.code).toBe(NO_DEVICE);
     expect(result.error.message).toMatch(/Missing emulator engine program/);
     expect(result.error.remedy).not.toMatch(/JAVA_HOME/);
+  });
+
+  test('an ENOSPC ensureDevice throw uses the disk-space remedy without an emulator log', async () => {
+    const h = harness({
+      ensureDevice: async () => {
+        throw new Error('ENOSPC: no space left on device, write');
+      },
+      build: never('the build'),
+    });
+    const result = await h.run();
+    assert(result.error);
+    expect(result.error.code).toBe(NO_DEVICE);
+    expect(result.error.message).toMatch(/ENOSPC/);
+    expect(result.error.remedy).toMatch(/~\/.android\/avd/);
+    expect(result.error.remedy).not.toMatch(/JAVA_HOME|ANDROID_HOME|sdkmanager/);
   });
 
   test('the generic remedy stands when emulator.log has no severity markers', async () => {
@@ -1943,6 +1980,35 @@ describe('the pure parts', () => {
     });
     expect(noLog.logPath).toBe(null);
     expect(noLog.remedy).toBe('Check JAVA_HOME.');
+
+    const noSpace = noDeviceDiagnostic({
+      reason: 'ENOSPC: no space left on device, write',
+      logFile: '/ws/.stim-cli/logs/emulator.log',
+      remedy: 'Check JAVA_HOME.',
+      readLog: () => '',
+    });
+    expect(noSpace.remedy).toMatch(/~\/.android\/avd/);
+    expect(noSpace.remedy).toMatch(/several GB/);
+    expect(noSpace.remedy).not.toMatch(/JAVA_HOME/);
+
+    const noSpaceWithUnrelatedFatal = noDeviceDiagnostic({
+      reason: 'ENOSPC: no space left on device, write',
+      logFile: '/ws/.stim-cli/logs/emulator.log',
+      remedy: 'Check JAVA_HOME.',
+      readLog: () => "PANIC: Missing emulator engine program for 'arm64' CPU.",
+    });
+    expect(noSpaceWithUnrelatedFatal.remedy).toMatch(/~\/.android\/avd/);
+    expect(noSpaceWithUnrelatedFatal.remedy).not.toMatch(/JAVA_HOME|Fix what the emulator reported/);
+
+    const remoteNoSpace = noDeviceDiagnostic({
+      reason: 'ENOSPC: remote profile write failed',
+      logFile: '/ws/.stim-cli/logs/emulator.log',
+      remedy: 'Inspect the remote device.',
+      localEmulator: false,
+      readLog: () => 'FATAL | Not enough space to create userdata partition.',
+    });
+    expect(remoteNoSpace.remedy).toBe('Inspect the remote device.');
+    expect(remoteNoSpace.logPath).toBe(null);
   });
 
   test('phaseLine lines the values up in one column', () => {

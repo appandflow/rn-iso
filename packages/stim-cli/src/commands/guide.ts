@@ -553,9 +553,11 @@ STIM_CLI_NO_DEVICE
   \`FATAL |\` / \`ERROR |\` / \`PANIC:\` line THAT is the message and the remedy
   you get -- the disk-space refusal ("Not enough space to create userdata
   partition") is the case this exists for. The generic toolchain remedy above
-  is only what you see when that log says nothing recognizable. A boot whose
-  emulator process exited is also reported at once rather than after the full
-  cold-boot timeout.
+  is only what you see when neither the log nor the failure itself identifies
+  the cause. An ENOSPC failure points at disk space instead: owned Android AVDs
+  normally live under ~/.android/avd, and a booted AVD can use several GB. A
+  boot whose emulator process exited is also reported at once rather than after
+  the full cold-boot timeout.
 
 STIM_CLI_AT_CAPACITY
   Only when concurrency.maxDevices is set (it is UNSET by default, so this never
@@ -1157,6 +1159,10 @@ DISK
   Logs, state, pidfiles and Xcode DerivedData are under the global workspace
   directory, and \`worktree remove\` reclaims them. Gradle retains its normal
   project build directories while sharing task outputs through its build cache.
+
+  Android AVDs normally live under ~/.android/avd, and a booted owned AVD can
+  use several GB. \`worktree remove\` deletes the workspace's owned AVD; plain
+  \`stop\` only shuts it down for reuse.
 
   So are the logs, and one of them is not small: build-ios.ndjson /
   build-android.ndjson hold the whole xcodebuild or gradle transcript at debug

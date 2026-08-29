@@ -116,6 +116,20 @@ test('the guide keeps Metro intent separate from the explicit device backend', (
   expect(errors).toContain('STIM_CLI_REMOTE_EAS_UNAVAILABLE');
 });
 
+test('the guide documents Android AVD disk-space diagnosis and cleanup', () => {
+  const errors = renderTopic('errors');
+  const cleanup = renderTopic('cleanup');
+  assert(errors);
+  assert(cleanup);
+
+  for (const topic of [errors, cleanup]) {
+    expect(topic).toMatch(/~\/\.android\/avd/);
+    expect(topic).toMatch(/several GB/);
+  }
+  expect(errors).toMatch(/ENOSPC[^.]*disk space/i);
+  expect(cleanup).toMatch(/worktree remove[^.]*deletes[^.]*owned AVD/i);
+});
+
 test('the guide documents remote providers and backend credential boundaries', () => {
   const metro = renderTopic('metro');
   const settings = renderTopic('settings');

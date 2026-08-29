@@ -595,7 +595,8 @@ test('extractEmulatorFailure keeps the emulator order: cause first, notes after'
 });
 
 test('emulatorFailureRemedy answers the disk case with free-space instructions', () => {
-  expect(emulatorFailureRemedy([REAL_DISK_LINE])).toMatch(/Free disk space at the AVD directory/);
+  expect(emulatorFailureRemedy([REAL_DISK_LINE])).toMatch(/Free disk space/);
+  expect(emulatorFailureRemedy([REAL_DISK_LINE])).toMatch(/~\/.android\/avd/);
   expect(emulatorFailureRemedy(["PANIC: Missing emulator engine program for 'arm64' CPU."])).toMatch(
     /Fix what the emulator reported above/,
   );
