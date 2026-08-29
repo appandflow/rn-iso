@@ -23,13 +23,12 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
           # Node 24 bundles an npm new enough for OIDC trusted publishing.
-          node-version: 24
-          cache: pnpm
-          registry-url: https://registry.npmjs.org
+          runtime: node@24
+          cache: true
+          install: false
       - name: Install (lifecycle scripts stay blocked)
         run: pnpm install --frozen-lockfile
       - name: Build

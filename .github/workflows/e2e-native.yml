@@ -96,12 +96,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node 22
-        uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - name: Set up pnpm and Node 22
+        uses: pnpm/setup@v2
         with:
-          node-version: 22
-          cache: pnpm
+          runtime: node@22
+          cache: true
+          install: false
 
       - name: Select a recent stable Xcode
         # REVIEWER: confirm the macos-latest image ships this Xcode. 'latest-stable'
@@ -126,7 +126,7 @@ jobs:
           path: ${{ env.STIM_CLI_BUILD_CACHE }}
           # Invalidated when the lockfile changes (a dep bump can move the
           # fingerprint); restore-keys let an older cache warm-start a new key.
-          key: stim-cli-buildcache-ios-${{ matrix.framework }}-${{ hashFiles('package-lock.json') }}
+          key: stim-cli-buildcache-ios-${{ matrix.framework }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             stim-cli-buildcache-ios-${{ matrix.framework }}-
 
@@ -197,12 +197,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node 22
-        uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - name: Set up pnpm and Node 22
+        uses: pnpm/setup@v2
         with:
-          node-version: 22
-          cache: pnpm
+          runtime: node@22
+          cache: true
+          install: false
 
       - name: Set up JDK 17
         # gradle for a modern RN/Expo Android build needs a JDK; 17 is the
@@ -225,7 +225,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.STIM_CLI_BUILD_CACHE }}
-          key: stim-cli-buildcache-android-${{ matrix.framework }}-${{ hashFiles('package-lock.json') }}
+          key: stim-cli-buildcache-android-${{ matrix.framework }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             stim-cli-buildcache-android-${{ matrix.framework }}-
 
