@@ -1,9 +1,17 @@
 import chalk from 'chalk';
-import { allConsolePortsAndSerials, loadConfig, setDevice, type Config, type ProjectRecord } from '../config.ts';
+import {
+  allConsolePortsAndSerials,
+  clearDevice,
+  loadConfig,
+  setDevice,
+  type Config,
+  type ProjectRecord,
+} from '../config.ts';
 import { isPidAlive } from '../metro.ts';
 import { bootIosSim, createOwnedIosSim, listAllIosSims, listIosDeviceTypes, resolveOwnedIosSim } from '../sim/ios.ts';
 import {
   bootAndroidEmulator,
+  configureNewOwnedAvdDataPartition,
   createOwnedAvd,
   listAdbDevices,
   listAvds,
@@ -12,6 +20,8 @@ import {
   resolveOwnedAvdSerial,
   waitForBoot,
 } from '../sim/android.ts';
+import { androidDataPartitionSizeGbSetting } from '../settings.ts';
+import { teardownOwnedAvd } from '../teardown.ts';
 
 export interface OwnedDeviceRecord {
   deviceUdid?: string;
@@ -21,11 +31,12 @@ export interface OwnedDeviceRecord {
   avdName?: string;
   consolePort?: number;
   serial?: string;
+  setupIncomplete?: boolean;
 }
 
 interface DeviceSettings {
   ios?: { deviceType?: string; runtime?: string };
-  android?: { systemImage?: string };
+  android?: { systemImage?: string; dataPartitionSizeGb?: number };
 }
 
 interface DeviceFlags {
@@ -65,6 +76,8 @@ export async function ensureOwnedDevice({
   out = () => {},
   logFile = null,
   alive = isPidAlive,
+  configureAvd = configureNewOwnedAvdDataPartition,
+  teardownAvd = teardownOwnedAvd,
 }: {
   platform: string;
   project?: ProjectRecord | null;
@@ -74,12 +87,26 @@ export async function ensureOwnedDevice({
   flags?: DeviceFlags;
   note?: Notify;
   out?: Notify;
+  configureAvd?: typeof configureNewOwnedAvdDataPartition;
+  teardownAvd?: typeof teardownOwnedAvd;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
   const record = (project?.platforms?.[platform] as OwnedDeviceRecord | undefined) ?? null;
   if (platform === 'ios') {
     return ensureOwnedIosDevice({ record, projectPath, label, settings, flags, note, out });
   }
-  return ensureOwnedAndroidDevice({ record, projectPath, label, settings, flags, note, out, logFile, alive });
+  return ensureOwnedAndroidDevice({
+    record,
+    projectPath,
+    label,
+    settings,
+    flags,
+    note,
+    out,
+    logFile,
+    alive,
+    configureAvd,
+    teardownAvd,
+  });
 }
 
 function ensureOwnedIosDevice({
@@ -177,6 +204,8 @@ async function ensureOwnedAndroidDevice({
   out,
   logFile,
   alive,
+  configureAvd,
+  teardownAvd,
 }: {
   record: OwnedDeviceRecord | null;
   projectPath: string;
@@ -185,7 +214,19 @@ async function ensureOwnedAndroidDevice({
   flags: DeviceFlags;
   note: Notify;
   out: Notify;
+  configureAvd: typeof configureNewOwnedAvdDataPartition;
+  teardownAvd: typeof teardownOwnedAvd;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
+  if (record?.setupIncomplete && record.avdName) {
+    const cleanup = teardownAvd(record.avdName, { del: true });
+    if (cleanup.status === 'failed' || cleanup.status === 'skipped') {
+      throw new Error(
+        `Owned AVD ${record.avdName} has incomplete setup and could not be deleted (${cleanup.reason || cleanup.status}). Fix the cause, then retry; stim-cli kept the device record for cleanup.`,
+      );
+    }
+    clearDevice(projectPath, 'android');
+    record = null;
+  }
   if (record?.avdName) {
     if (record.owned) {
       const resolved = resolveOwnedAvdSerial(record.avdName);
@@ -250,8 +291,10 @@ async function ensureOwnedAndroidDevice({
   }
 
   let created: { avdName: string };
+  let fresh = false;
   try {
     created = createOwnedAvd(label, { systemImage: flags.systemImage || settings.android?.systemImage });
+    fresh = true;
   } catch (e) {
     const message = String((e as Error)?.message || e);
     const avdName = ownedAvdName(label);
@@ -263,10 +306,40 @@ async function ensureOwnedAndroidDevice({
           { cause: e },
         );
       }
+      const current = loadConfig()?.projects?.[projectPath]?.platforms?.android;
+      if (current?.avdName === avdName) {
+        const state = current.setupIncomplete ? 'has incomplete setup' : 'was registered';
+        throw new Error(
+          `AVD ${avdName} ${state} by another concurrent stim-cli run. Retry after that run finishes so the recorded device is resolved safely.`,
+          { cause: e },
+        );
+      }
       created = { avdName };
       out(chalk.dim(`Recovered existing owned AVD ${avdName} (unrecorded from a prior run)`));
     } else {
       throw e;
+    }
+  }
+  if (fresh) {
+    setDevice(projectPath, 'android', {
+      avdName: created.avdName,
+      owned: true,
+      deviceName: created.avdName,
+      setupIncomplete: true,
+    });
+    try {
+      configureAvd(created.avdName, androidDataPartitionSizeGbSetting(settings));
+    } catch (error) {
+      const cleanup = teardownAvd(created.avdName, { del: true });
+      const kept = cleanup.status === 'failed' || cleanup.status === 'skipped';
+      if (!kept) clearDevice(projectPath, 'android');
+      const orphan = kept
+        ? ` The owned AVD remains tracked for cleanup (${cleanup.reason || cleanup.status}); fix the cause, then retry or run \`stim-cli gc --delete\`.`
+        : '';
+      throw new Error(
+        `Created owned AVD ${created.avdName}, but could not configure its data partition: ${String((error as Error)?.message || error)}${orphan}`,
+        { cause: error },
+      );
     }
   }
   out(chalk.dim(`Created owned AVD ${created.avdName}`));

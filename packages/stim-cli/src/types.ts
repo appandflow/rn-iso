@@ -25,6 +25,7 @@ interface AndroidDeviceRecord {
   kind?: string;
   deviceName?: string | null;
   owned?: boolean;
+  setupIncomplete?: boolean;
   [key: string]: unknown;
 }
 

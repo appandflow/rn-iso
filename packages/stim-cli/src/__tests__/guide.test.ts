@@ -279,6 +279,20 @@ test('the settings topic lists exactly the keys settings.js honours', () => {
   }
 });
 
+test('the Android data partition contract is consistent across user guidance', () => {
+  const settings = renderTopic('settings');
+  const cleanup = renderTopic('cleanup');
+  assert(settings);
+  assert(cleanup);
+  for (const body of [settings, cleanup]) {
+    expect(body).toMatch(/android\.dataPartitionSizeGb/i);
+    expect(body).toMatch(/8 GiB[^.]*default|defaults to 8/i);
+    expect(body).toMatch(/6 through 16384/i);
+    expect(body).toMatch(/newly created|new owned/i);
+    expect(body).toMatch(/never resized|does not shrink/i);
+  }
+});
+
 test('the skill points at the guide command and the topics it advertises', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   expect(skill).toMatch(/stim-cli guide/);

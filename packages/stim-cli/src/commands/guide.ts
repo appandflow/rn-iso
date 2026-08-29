@@ -642,8 +642,9 @@ STIM_CLI_SUPERVISOR_EXITED
   the full records. Fix that and run \`start\` again; nothing is left running.
 
 STIM_CLI_BAD_ARG / STIM_CLI_NO_PROJECT
-  \`start\` refused before doing anything: an unusable --wait value, an invalid
-  Metro tunnel setting, or a working directory with no package.json above it.
+  The command refused before doing anything: an unusable --wait value, an invalid
+  Metro tunnel setting, an invalid android.dataPartitionSizeGb value, or a
+  working directory with no package.json above it.
   These errors are caught before the port is reserved and before anything is
   spawned, so nothing was started.
 
@@ -1077,6 +1078,14 @@ Those are the only two commands that delete. \`stim-cli stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 
+New owned Android AVDs use an 8 GiB data partition by default. This leaves room
+for repeated app installs while capping userdata growth below the 10 GiB
+setting measured on the selected API 36 profile. Set
+\`android.dataPartitionSizeGb\` to a whole number from 6 through 16384 when a
+project needs another size. Android userdata grows but does not shrink, so the
+setting applies only to a newly created AVD; recreate the environment to adopt
+a changed value.
+
 ON THE MAIN CHECKOUT
   git cannot remove the main working tree, and deleting the source tree is not
   what anyone meant -- so there, and only there, \`worktree remove\` reclaims
@@ -1236,6 +1245,12 @@ KEYS STIM-CLI READS
                         as passing \`--remote proxy\` or \`--remote eas\`. The
                         build still runs here; only the device is elsewhere.
   android.systemImage   e.g. "system-images;android-36;google_apis;arm64-v8a"
+  android.dataPartitionSizeGb
+                        whole GiB for a newly created owned AVD's data
+                        partition. Defaults to 8; accepts 6 through 16384.
+                        Existing AVDs are never resized because Android
+                        userdata grows but does not shrink. Recreate the
+                        environment to adopt a changed value.
   android.variant       e.g. "productionDebug" -- the gradle variant to
                         assemble and install on a project with product
                         flavors. A repo like tlon-mobile with

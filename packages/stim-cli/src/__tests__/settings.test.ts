@@ -3,6 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
+  androidDataPartitionSizeBytes,
+  androidDataPartitionSizeGbSetting,
+  androidDataPartitionSizeGbSettingError,
   mergeSettingsLayers,
   ngrokUrlSetting,
   publicUrlSetting,
@@ -101,11 +104,38 @@ test('unknownSettingKeys accepts every key that is still honoured', () => {
   expect(
     unknownSettingKeys({
       ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2', configuration: 'Release' },
-      android: { systemImage: 'pkg', variant: 'productionDebug' },
+      android: { systemImage: 'pkg', dataPartitionSizeGb: 8, variant: 'productionDebug' },
       worktree: { baseRef: 'fresh', include: ['.env'] },
       worktreeDir: '/tmp/wt',
     }),
   ).toEqual([]);
+});
+
+describe('Android data partition size settings', () => {
+  test('defaults above the emulator minimum and converts GiB to exact bytes', () => {
+    expect(androidDataPartitionSizeGbSetting({})).toBe(8);
+    expect(androidDataPartitionSizeBytes(6)).toBe(6 * 1024 ** 3);
+  });
+
+  test('accepts an integer override through the emulator ext4 maximum', () => {
+    expect(androidDataPartitionSizeGbSetting({ android: { dataPartitionSizeGb: 12 } })).toBe(12);
+    expect(androidDataPartitionSizeGbSettingError({ android: { dataPartitionSizeGb: 16 * 1024 } })).toBeNull();
+  });
+
+  test('uses the ordinary first-layer-wins precedence', () => {
+    const merged = mergeSettingsLayers([
+      { android: { dataPartitionSizeGb: 12 } },
+      { android: { dataPartitionSizeGb: 10 } },
+      { android: { dataPartitionSizeGb: 8 } },
+    ]);
+    expect(androidDataPartitionSizeGbSetting(merged)).toBe(12);
+  });
+
+  test.each([5, 6.5, '8', 16 * 1024 + 1])('rejects invalid value %p', (value) => {
+    const settings = { android: { dataPartitionSizeGb: value } };
+    expect(androidDataPartitionSizeGbSettingError(settings)).toMatch(/integer from 6 through 16384 GiB/);
+    expect(() => androidDataPartitionSizeGbSetting(settings)).toThrow(/android\.dataPartitionSizeGb/);
+  });
 });
 
 describe('remote device settings', () => {

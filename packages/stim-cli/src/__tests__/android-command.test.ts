@@ -515,6 +515,19 @@ describe('explicit remote backend behavior', () => {
     expect(resolved).toBe(false);
   });
 
+  test('an invalid Android data partition size is refused before device work', async () => {
+    const h = harness({
+      resolveSettingsFor: () => ({ android: { dataPartitionSizeGb: 5 } }),
+      ensureDevice: never('the device'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_CLI_BAD_ARG');
+    expect(result.error?.message).toContain('Invalid android.dataPartitionSizeGb setting');
+    expect(result.error?.remedy).toContain('whole number of GiB');
+    expect(h.calls.ensureDevice).toEqual([]);
+  });
+
   test('the local path does not resolve a remote backend', async () => {
     let resolved = false;
     const h = harness({
