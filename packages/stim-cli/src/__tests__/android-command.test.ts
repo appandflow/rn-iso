@@ -934,7 +934,7 @@ describe('a cache hit', () => {
     expect(labelled(h.stderr, 'build').length).toBe(0);
   });
 
-  test("prints the phases the spec's worked example prints, and one line on stdout", async () => {
+  test('prints the phases and one complete agent-facts block on stdout', async () => {
     const h = harness({ resolveCached: () => '/cache/app-debug.apk', build: never('the build') });
     await h.run();
 
@@ -948,6 +948,11 @@ describe('a cache hit', () => {
     expect(labelled(h.stderr, 'launch')[0]).toMatch(/\(\d+m?\d*s\)$/);
     expect(h.stdout.length).toBe(1);
     expect(h.stdout[0]).toMatch(/OK: com\.example\.app launched on emulator-5584/);
+    expect(h.stdout[0]).toContain(phaseLine('device', 'stim-cli-app-412 (emulator-5584)'));
+    expect(h.stdout[0]).toContain(phaseLine('app', 'com.example.app'));
+    expect(h.stdout[0]).toContain(phaseLine('metro', 'running on port 8082'));
+    expect(h.stdout[0]).toContain(phaseLine('cache', 'cache hit'));
+    expect(h.stdout[0]).toContain(phaseLine('logs', workspaceLogsDir(root)));
     expect(h.stderr.length <= 9).toBeTruthy();
   });
 
@@ -994,7 +999,8 @@ describe('a cache miss', () => {
     expect(h.calls.storeCached[0]?.slice(0, 2)).toEqual(['android', CACHE_KEY]);
     expect(h.calls.install[0]?.apkPath).toBe(h.calls.storeCached[0]?.[2]);
     expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/miss/);
-    expect(labelled(h.stderr, 'build')[0]).toMatch(/app-debug\.apk \(2m41s\)/);
+    expect(labelled(h.stderr, 'build')[0]).toMatch(/compiling debug with Gradle/);
+    expect(labelled(h.stderr, 'build')[1]).toMatch(/app-debug\.apk \(2m41s\)/);
     assert(result.facts);
     expect(result.facts.cacheHit).toBe(false);
   });
@@ -1208,6 +1214,7 @@ describe('metro is verified before any build work', () => {
     expect(result.ok).toBe(true);
     expect(labelled(h.stderr, 'metro')[0]).toMatch(/not checked/);
     expect(h.calls.launch[0]?.metroPort).toBe(8082);
+    expect(h.stdout[0]).toContain(phaseLine('metro', 'check skipped on port 8082'));
   });
 
   test('in --json mode a refusal is the error contract, on stdout, alone', async () => {
@@ -1409,7 +1416,8 @@ describe('a failed build', () => {
     expect(result.ok).toBe(false);
     assert(result.error);
     expect(result.error.code).toBe(BUILD_ERROR);
-    expect(labelled(h.stderr, 'build')[0]).toMatch(/FAILED after 2m41s/);
+    expect(labelled(h.stderr, 'build')[0]).toMatch(/compiling debug with Gradle/);
+    expect(labelled(h.stderr, 'build')[1]).toMatch(/FAILED after 2m41s/);
     const errors = labelled(h.stderr, 'error');
     expect(errors.some((l) => /MainActivity\.kt:23:9: Unresolved reference 'Foo'\./.test(l))).toBeTruthy();
     expect(errors.some((l) => /and 3 more diagnostic/.test(l))).toBeTruthy();
@@ -2178,6 +2186,7 @@ describe('launch verification', () => {
     expect(text).toMatch(/adb -s emulator-5584 shell monkey -p com\.example\.app 1/);
     expect(text).not.toMatch(/simctl/);
     expect(h.stdout.join('\n')).toMatch(/UNVERIFIED/);
+    expect(h.stdout[0]).toContain(phaseLine('metro', 'state unverified on port 8082'));
   });
 });
 

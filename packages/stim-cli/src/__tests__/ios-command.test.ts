@@ -333,11 +333,12 @@ describe('the Metro gate', () => {
 
   test('--no-metro-check proceeds without probing the port at all', async () => {
     reserve();
-    const { exitCode, calls } = await run({ metroCheck: false });
+    const { exitCode, calls, logs } = await run({ metroCheck: false });
     expect(exitCode).toBe(null);
     expect(!calls.order.includes('resolveProjectMetro')).toBeTruthy();
     expect(calls.order.includes('buildIos')).toBeTruthy();
     expect(calls.args.launchIosApp.metroPort).toBe(8082);
+    expect(logs[0]).toContain(phaseLine('metro', 'check skipped on port 8082'));
   });
 
   test('--no-metro-check with no reservation still wires the app to 8081', async () => {
@@ -548,6 +549,7 @@ describe('launch verification', () => {
     reserve();
     const { logs } = await run({}, { verifyLaunch: async () => ({ verified: false, timedOut: true }) });
     expect(logs[0]).toMatch(/UNVERIFIED/);
+    expect(logs[0]).toContain(phaseLine('metro', 'state unverified on port 8082'));
   });
 });
 
@@ -1463,15 +1465,21 @@ describe('failure output', () => {
 });
 
 describe('success output', () => {
-  test('the phase lines are stderr and the summary is the only line on stdout', async () => {
+  test('the phase lines stream on stderr and the final stdout block has complete agent facts', async () => {
     reserve();
     const { logs, errs, exitCode } = await run({});
     expect(exitCode).toBe(null);
     expect(logs.length).toBe(1);
     expect(logs[0]).toMatch(/^OK: com\.example\.app on stim-cli-fixture \(BF2A\.\.\), Metro port 8082/);
+    expect(logs[0]).toContain(phaseLine('device', `stim-cli-fixture (${UDID})`));
+    expect(logs[0]).toContain(phaseLine('app', 'com.example.app'));
+    expect(logs[0]).toContain(phaseLine('metro', 'running on port 8082'));
+    expect(logs[0]).toContain(phaseLine('cache', 'built'));
+    expect(logs[0]).toContain(phaseLine('logs', workspaceLogsDir(root)));
     const text = errs.join('\n');
     expect(text).toMatch(/^  device {6}stim-cli-fixture \(BF2A\.\.\) booted \(\d+ms\)$/m);
     expect(text).toMatch(/^  fingerprint a3f9b1\.\. miss \(\d+ms\)$/m);
+    expect(text).toMatch(/^  build {7}compiling Debug with xcodebuild$/m);
     expect(text).toMatch(/^  build {7}ok \(2m41s\)$/m);
     expect(text).toMatch(/^  install {5}-> stim-cli-fixture \(BF2A\.\.\) \(\d+ms\)$/m);
     expect(text).toMatch(/^  launch {6}com\.example\.app \(\d+ms\)$/m);
