@@ -1162,7 +1162,10 @@ DISK
 
   Android AVDs normally live under ~/.android/avd, and a booted owned AVD can
   use several GB. \`worktree remove\` deletes the workspace's owned AVD; plain
-  \`stop\` only shuts it down for reuse.
+  \`stop\` only shuts it down for reuse. stim-cli neither loads nor saves Quick
+  Boot snapshots for owned AVDs, so every restart is a full boot but exit does
+  not retain a large snapshot. \`gc\` prints the on-disk size beside an
+  orphaned or stale owned Android AVD when its content directory can be read.
 
   So are the logs, and one of them is not small: build-ios.ndjson /
   build-android.ndjson hold the whole xcodebuild or gradle transcript at debug
