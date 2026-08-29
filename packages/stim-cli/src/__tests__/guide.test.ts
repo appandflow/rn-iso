@@ -203,6 +203,17 @@ test('the cleanup guide documents that the shared Gradle build cache is report-o
   expect(cleanup).toMatch(/never[^.]*prunes[^.]*empties/i);
 });
 
+test('the settings guide defines Metro overrides as parent roots and preserves legacy files', () => {
+  const settings = renderTopic('settings');
+  assert(settings);
+
+  expect(settings).toMatch(/Metro value is a PARENT root/i);
+  expect(settings).toMatch(/sanitized package name[^.]*appended/i);
+  expect(settings).toMatch(/older package[^.]*current gc ignores[^.]*unmarked legacy parent/i);
+  expect(settings).toMatch(/marked store[^.]*override parent[^.]*report-only/i);
+  expect(settings).toMatch(/root-level legacy files remain[^.]*untouched/i);
+});
+
 test('the guide distinguishes local stop behavior from EAS session teardown', () => {
   const lifecycle = renderTopic('lifecycle');
   assert(lifecycle);

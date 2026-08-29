@@ -160,6 +160,7 @@ function installSharedCacheStore({
   }
   const storeRoot = metroStoreRoot(root);
   const result = appendCacheStore(config, { storeRoot, FileStore });
+  registerMetroStore(storeRoot);
   if (!result.added) {
     writer?.write({
       src: 'metro',
@@ -169,7 +170,6 @@ function installSharedCacheStore({
     });
     return true;
   }
-  registerMetroStore(storeRoot);
   writer?.write({
     src: 'metro',
     level: 'debug',

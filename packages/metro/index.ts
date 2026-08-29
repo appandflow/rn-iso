@@ -1,7 +1,13 @@
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { metroCacheRoot, registerCache, tagSharedStore, workspaceLogDir } from '@stim-cli/core';
+import {
+  metroCacheRoot,
+  METRO_NAMED_CACHE_LAYOUT,
+  registerCache,
+  tagSharedStore,
+  workspaceLogDir,
+} from '@stim-cli/core';
 
 type FileStoreCtor = new (options: { root: string }) => object;
 
@@ -38,21 +44,46 @@ export function cacheRoot(name?: string | null): string {
   return metroCacheRoot(name);
 }
 
-function registerOnce(dir: string): void {
+function registerOnce(
+  dir: string,
+  replaces: Array<{
+    dir: string;
+    name: string;
+    prune: string;
+    entriesDepth: number;
+    layout: null;
+  }> = [],
+): void {
   registerCache({
     dir,
     name: 'Metro transform cache',
     prune: 'entries',
     entriesDepth: 2,
+    layout: METRO_NAMED_CACHE_LAYOUT,
     note: 'shared Metro transforms; no eviction of its own',
+    replaces,
   });
 }
 
 export function sharedCacheStores(name = 'app', { FileStore }: { FileStore?: FileStoreCtor } = {}): object[] {
   // metro-cache is a peer dependency that resolves at call time.
   const Store: FileStoreCtor = FileStore || (requireFromHere('metro-cache') as { FileStore: FileStoreCtor }).FileStore;
+  const parent = cacheRoot();
   const root = cacheRoot(name);
-  registerOnce(root);
+  registerOnce(
+    root,
+    root === parent
+      ? []
+      : [
+          {
+            dir: parent,
+            name: 'Metro transform cache',
+            prune: 'entries',
+            entriesDepth: 2,
+            layout: null,
+          },
+        ],
+  );
   return [tagSharedStore(new Store({ root }), root)];
 }
 

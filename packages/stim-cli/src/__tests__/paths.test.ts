@@ -123,13 +123,14 @@ describe('shared cache roots', () => {
     delete process.env.STIM_CLI_METRO_CACHE;
   });
 
-  test('explicit cache env overrides win over the layout', () => {
+  test('explicit cache env overrides win and remain parent roots', () => {
     process.env.STIM_CLI_BUILD_CACHE = '/tmp/custom-build';
     expect(sharedBuildCache()).toBe('/tmp/custom-build');
 
     process.env.STIM_CLI_METRO_CACHE = '/tmp/custom-metro';
     expect(sharedMetroCache()).toBe('/tmp/custom-metro');
-    expect(sharedMetroCache('demo')).toBe('/tmp/custom-metro');
+    expect(sharedMetroCache('demo')).toBe('/tmp/custom-metro/demo');
+    expect(sharedMetroCache('@scope/app')).toBe('/tmp/custom-metro/-scope-app');
   });
 
   test('a named Metro cache is a subdirectory, and cannot escape the root', () => {

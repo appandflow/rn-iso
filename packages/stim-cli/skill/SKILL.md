@@ -121,6 +121,8 @@ Also normal: `npx` may re-download stim-cli on every invocation (`npm warn exec 
 
 These caches can grow substantially. Every `npx stim-cli gc` run reports what they have grown to -- each one tagged _registered_ or _detected_ -- and `gc --delete --older-than <days>` trims the entries nothing has used. Trim rather than empty: `gc --delete --all` empties them whole -- the only way to clear an index-backed cache like Xcode's CAS -- and costs the next build in every project the time the cache was saving. The Gradle build cache under `GRADLE_USER_HOME` (default `~/.gradle`) has Gradle's own retention policy and is report-only to stim-cli: stim-cli reports its size because `--build-cache` contributes to it, but never prunes or empties that directory under any `gc` flags because every Gradle build on the machine shares it.
 
+`STIM_CLI_METRO_CACHE` and the machine-level `caches.metroCache` setting name a parent directory, not one flat Metro store. stim-cli appends the sanitized package name beneath that parent so each app stays independently reportable and prunable. A new registration marks the named layout and replaces an exact unmarked legacy parent entry. If an older cache package registers the parent again later, current `stim-cli gc` ignores that provably legacy entry while a marked child exists. A marked store that later becomes another override parent remains visible but report-only while its marked child exists. Root-level legacy files remain untouched for manual cleanup.
+
 ## Runtime workspace and fingerprint dependencies
 
 Runtime state is stored outside the project tree under

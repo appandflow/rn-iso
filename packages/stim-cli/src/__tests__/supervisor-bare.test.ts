@@ -1,8 +1,16 @@
 import assert from 'node:assert';
+import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { appendCacheStore, hasStoreAt, metroStoreName, metroStoreRoot } from '../supervisor/metro-store.ts';
+import {
+  appendCacheStore,
+  hasStoreAt,
+  metroStoreName,
+  metroStoreRoot,
+  registerMetroStore,
+} from '../supervisor/metro-store.ts';
+import { readManifest } from '../cache-manifest.ts';
 import {
   BARE_PACKAGES,
   checkBareApi,
@@ -38,6 +46,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_CLI_METRO_CACHE;
 });
 
 function fakeRequire(
@@ -471,6 +480,40 @@ describe('the shared Metro cache store', () => {
     } finally {
       rmSync(nameless, { recursive: true, force: true });
     }
+  });
+
+  test('the CLI replaces a legacy flat override registration with the named store', () => {
+    const parent = join(tmpHome, 'overridden-metro');
+    process.env.STIM_CLI_METRO_CACHE = parent;
+    writeFileSync(
+      join(tmpHome, 'caches.json'),
+      JSON.stringify({
+        version: 1,
+        caches: [
+          { dir: parent, name: 'Metro transform cache', prune: 'entries', entriesDepth: 2 },
+          {
+            dir: parent,
+            name: 'Metro transform cache',
+            prune: 'entries',
+            entriesDepth: 2,
+            layout: METRO_NAMED_CACHE_LAYOUT,
+          },
+        ],
+      }),
+    );
+
+    const storeRoot = metroStoreRoot(root);
+    expect(storeRoot).toBe(join(parent, 'bare'));
+    registerMetroStore(storeRoot);
+
+    const caches = readManifest().caches;
+    expect(caches.some((cache) => cache.dir === parent && cache.layout === undefined)).toBe(false);
+    expect(caches.some((cache) => cache.dir === parent && cache.layout === METRO_NAMED_CACHE_LAYOUT)).toBe(true);
+    expect(caches.find((cache) => cache.dir === storeRoot)).toMatchObject({
+      entriesDepth: 2,
+      prune: 'entries',
+      layout: METRO_NAMED_CACHE_LAYOUT,
+    });
   });
 });
 
