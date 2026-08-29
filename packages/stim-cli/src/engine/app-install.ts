@@ -720,7 +720,7 @@ export function unverifiedLaunchLines({
     push(
       'If an "Open in <app>?" alert or the expo-dev-launcher picker is showing on the remote device, confirm it with your device tool (`agent-device snapshot -i`, then `agent-device press`).',
     );
-    lines.push(`Then check \`stim-cli logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);
+    lines.push(`Then check \`stim logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);
     return lines;
   }
   if (platform === 'ios') {
@@ -743,6 +743,6 @@ export function unverifiedLaunchLines({
       );
     }
   }
-  lines.push(`Then check \`stim-cli logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);
+  lines.push(`Then check \`stim logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);
   return lines;
 }

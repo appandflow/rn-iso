@@ -17,7 +17,7 @@ test('an unknown topic renders nothing rather than throwing', () => {
 
 test('the index lists every topic and the running version', () => {
   const idx = renderIndex('9.9.9');
-  expect(idx).toMatch(/stim-cli 9\.9\.9/);
+  expect(idx).toMatch(/stim 9\.9\.9/);
   for (const name of topicNames()) expect(idx).toMatch(new RegExp(name));
 });
 
@@ -97,21 +97,17 @@ test('the flags the guide advertises are the flags the commands define', () => {
 test('the Metro guide documents explicit remote intent and the local default', () => {
   const body = renderTopic('metro');
   assert(body);
-  expect(body).toMatch(/stim-cli start --remote/);
-  expect(body).toMatch(/plain `stim-cli start`[^.]*local/i);
+  expect(body).toMatch(/stim start --remote/);
+  expect(body).toMatch(/plain `stim start`[^.]*local/i);
   expect(body).toMatch(/metro\.tunnel[^.]*provider/i);
 });
 
-test('the guide and skill document scoped iOS dev-client preapproval', () => {
+test('the guide documents scoped iOS dev-client preapproval', () => {
   const facts = renderTopic('facts');
   assert(facts);
   expect(facts).toMatch(/preapproves[^.]*CoreSimulatorBridge[^.]*bundle id[^.]*scheme/i);
   expect(facts).toMatch(/unrelated schemes remain[^.]*unapproved/i);
   expect(facts).not.toMatch(/confirmation alert[^.]*every first launch/i);
-
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  expect(skill).toMatch(/preapproves CoreSimulatorBridge[^.]*bundle id[^.]*scheme/i);
-  expect(skill).toMatch(/unrelated schemes remain unapproved/i);
 });
 
 test('the guide keeps Metro intent separate from the explicit device backend', () => {
@@ -143,10 +139,6 @@ test('the guide documents Android AVD disk-space diagnosis and cleanup', () => {
   expect(cleanup).toMatch(/worktree remove[^.]*deletes[^.]*owned AVD/i);
   expect(cleanup).toMatch(/neither loads nor saves[^.]*Quick\s+Boot snapshot/i);
   expect(cleanup).toMatch(/gc[^.]*on-disk size[^.]*orphaned[^.]*stale owned Android AVD/i);
-
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  expect(skill).toMatch(/neither load nor save[^.]*Quick Boot snapshot/i);
-  expect(skill).toMatch(/Android rows[^.]*on-disk size/i);
 });
 
 test('the guide documents remote providers and backend credential boundaries', () => {
@@ -155,8 +147,8 @@ test('the guide documents remote providers and backend credential boundaries', (
   assert(metro);
   assert(settings);
 
-  expect(metro).toContain('stim-cli ios --remote proxy');
-  expect(metro).toContain('stim-cli android --remote eas');
+  expect(metro).toContain('stim ios --remote proxy');
+  expect(metro).toContain('stim android --remote eas');
   expect(metro).toMatch(/AGENT_DEVICE_DAEMON_BASE_URL[\s\S]*AGENT_DEVICE_DAEMON_AUTH_TOKEN/);
   expect(metro).toMatch(/another machine/i);
   expect(metro).toMatch(/environment variables[^.]*never select the backend/i);
@@ -179,7 +171,7 @@ test('the cleanup guide documents fail-closed EAS orphan recovery', () => {
   const cleanup = renderTopic('cleanup');
   assert(cleanup);
 
-  expect(cleanup).toMatch(/plain `stim-cli gc`[^.]*dry run/i);
+  expect(cleanup).toMatch(/plain `stim gc`[^.]*dry run/i);
   expect(cleanup).toMatch(/gc --delete[\s\S]*active stim-cli-\* EAS\s+sessions/i);
   expect(cleanup).toMatch(/workspace state[^.]*missing/i);
   for (const proof of ['project', 'name', 'platform', 'status']) {
@@ -226,10 +218,10 @@ test('the guide distinguishes local stop behavior from EAS session teardown', ()
 
 test('no topic teaches a command this binary does not have', () => {
   const gone = [
-    'stim-cli up',
-    'stim-cli release',
-    'stim-cli shutdown',
-    'stim-cli device',
+    'stim up',
+    'stim release',
+    'stim shutdown',
+    'stim device',
     'build-cache resolve',
     '--wait-metro',
     '--serial',
@@ -240,9 +232,10 @@ test('no topic teaches a command this binary does not have', () => {
     for (const dead of gone) {
       expect(!body.includes(dead)).toBeTruthy();
     }
-    expect(body).not.toMatch(/stim-cli config (--repo|<key>|[a-z]+\.[a-z])/i);
+    expect(body).not.toMatch(/stim config (--repo|<key>|[a-z]+\.[a-z]+)/i);
   }
-  expect(renderTopic('settings')).toMatch(/no `stim-cli config` command/);
+  expect(renderTopic('errors')).not.toMatch(/Installed stim-cli skill/);
+  expect(renderTopic('settings')).toMatch(/no `stim config` command/);
 });
 
 test('the errors topic documents every code the build commands can emit', () => {
@@ -287,8 +280,7 @@ test('the safe Android AVD override contract is consistent across user guidance'
   const guide = renderTopic('settings');
   assert(guide);
   const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf-8');
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  for (const body of [guide, readme, skill]) {
+  for (const body of [guide, readme]) {
     expect(body).toMatch(/android\.avdConfigFile/);
     expect(body).toMatch(/android\.avdConfig/);
     expect(body).toMatch(/config\.ini/);
@@ -317,54 +309,69 @@ test('the Android data partition contract is consistent across user guidance', (
 
 test('the skill points at the guide command and the topics it advertises', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  expect(skill).toMatch(/stim-cli guide/);
+  expect(skill).toMatch(/stim guide/);
   for (const name of topicNames()) {
     expect(skill.includes(`guide ${name}`)).toBeTruthy();
   }
 });
 
-test('exactly one skill ships, and the deleted init skill has not come back', () => {
+test('exactly one compact skill ships', () => {
   const dir = fileURLToPath(new URL('../../skill/', import.meta.url));
   expect(readdirSync(dir).toSorted()).toEqual(['SKILL.md']);
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  expect(skill).toMatch(/no separate init skill/);
-  expect(skill).toMatch(/stim-cli doctor/);
-  expect(skill).toMatch(/\.fingerprintignore/);
+  const wordCount = skill.split(/\s+/).filter(Boolean).length;
+  expect(wordCount).toBeLessThanOrEqual(1200);
+  expect(skill).toMatch(/stim doctor/);
 });
 
 test('the skill still carries the rules an agent must not have to look up', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  for (const must of ['gc --delete', '--force', 'STIM_CLI_NO_METRO', 'booted', 'stim-cli-']) {
+  for (const must of [
+    'gc --delete',
+    '--force',
+    'STIM_CLI_NO_METRO',
+    'booted',
+    'stim-cli-',
+    'registry.npmjs.org',
+    '20.19.4',
+    'worktree remove',
+  ]) {
     expect(skill.includes(must)).toBeTruthy();
   }
 });
 
-test('the skill teaches the complete remote-device contract', () => {
+test('advanced contracts stay in guide topics instead of the skill', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  const advanced = [
+    ['AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'metro'],
+    ['metro.ngrokUrl', 'settings'],
+    ['waitedForBuild', 'facts'],
+    ['STIM_CLI_AT_CAPACITY', 'errors'],
+    ['.fingerprintignore', 'lifecycle'],
+    ['CoreSimulatorBridge', 'facts'],
+    ['~/.android/avd', 'cleanup'],
+    ['android.avdConfigFile', 'settings'],
+    ['productionRelease', 'lifecycle'],
+  ] as const;
 
-  expect(skill).toMatch(/plain `stim-cli start`[^.]*local/i);
-  expect(skill).toContain('stim-cli start --remote');
-  expect(skill).toContain('stim-cli ios --remote proxy');
-  expect(skill).toContain('stim-cli android --remote eas');
-  expect(skill).toMatch(/environment variables[^.]*never select the backend/i);
-  expect(skill).toMatch(/metro\.ngrokUrl[^.]*stable[^.]*managed ngrok URL/i);
-  expect(skill).toMatch(/auth[^.]*refus[^.]*cloudflared/i);
-  expect(skill).toMatch(/android\.remote[^.]*accept[^.]*"proxy"[^.]*"eas"/i);
-  expect(skill).toMatch(/gc --delete[\s\S]*active stim-cli-\* EAS sessions/i);
-  expect(skill).toMatch(/registered root[^.]*missing[^.]*unreadable[^.]*fails closed/i);
-  expect(skill).toMatch(/fixed[^.]*~\/\.stim-cli\/machine\/eas[^.]*independent of STIM_CLI_HOME/i);
-  expect(skill).toMatch(/unclaimed[^.]*never stopped/i);
-  expect(skill).toMatch(/missing config\.json[^.]*does not authorize/i);
-  expect(skill).toMatch(/exact recorded workspace state path/i);
-  expect(skill).toMatch(/session is stopped[^.]*workspace record[^.]*kept[^.]*reconciliation/i);
-  expect(skill).toMatch(/remote EAS session[^.]*running/i);
-  expect(skill).toMatch(/local cleanup[^.]*continues/i);
-  expect(skill).not.toMatch(/including `stop`, is safe/i);
-  expect(skill).toMatch(/recorded EAS session[^.]*irreversibly ends/i);
+  for (const [detail, topicName] of advanced) {
+    const topic = renderTopic(topicName);
+    assert(topic);
+    expect(topic).toContain(detail);
+    expect(skill).not.toContain(detail);
+  }
 });
 
-test('the skill advertises exactly the commands bin/cli.js registers', () => {
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+test('the package exposes only the stim binary', () => {
+  const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
+  expect(packageJson.bin).toEqual({ stim: 'dist/cli.mjs' });
+
+  const cli = readFileSync(new URL('../../bin/cli.ts', import.meta.url), 'utf-8');
+  expect(cli).toContain(".name('stim')");
+  expect(cli).not.toContain(".name('stim-cli')");
+});
+
+test('the binary command surface remains intentional', () => {
   const cli = readFileSync(new URL('../../bin/cli.ts', import.meta.url), 'utf-8');
   const registered = [...cli.matchAll(/^import (\w+)Command from '\.\.\/src\/commands\/([\w-]+)\.ts';$/gm)].map(
     (m) => m[2],
@@ -381,11 +388,4 @@ test('the skill advertises exactly the commands bin/cli.js registers', () => {
     'stop',
     'worktree',
   ]);
-  const surface = skill.slice(skill.indexOf('## Command surface'), skill.indexOf('## When things go wrong'));
-  for (const command of registered) {
-    expect(surface.includes(`\`${command}\``) || surface.includes(`\`${command} `)).toBeTruthy();
-  }
-  for (const gone of ['up', 'release', 'shutdown', 'config', 'build-cache', 'init']) {
-    expect(surface.includes(`no \`${gone}\``)).toBeTruthy();
-  }
 });

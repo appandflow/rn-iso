@@ -33,7 +33,7 @@ export function registerMetroStore(storeRoot: string): void {
     prune: 'entries',
     entriesDepth: 2,
     layout: METRO_NAMED_CACHE_LAYOUT,
-    note: 'shared Metro transforms, installed by stim-cli start; no eviction of its own',
+    note: 'shared Metro transforms, installed by stim start; no eviction of its own',
     replaces:
       dir === parent
         ? []

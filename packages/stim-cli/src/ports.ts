@@ -48,7 +48,7 @@ export async function computeNextPort(isFree: (port: number) => Promise<boolean>
   }
   throw new Error(
     `Found no free Metro port between ${FIRST_PORT} and ${FIRST_PORT + PORT_SCAN_LIMIT - 1}. ` +
-      'Free one up, or stop a stale bundler (`stim-cli status`, `stim-cli stop <port>`).',
+      'Free one up, or stop a stale bundler (`stim status`, `stim stop <port>`).',
   );
 }
 

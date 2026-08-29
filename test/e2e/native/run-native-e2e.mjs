@@ -108,7 +108,7 @@ function startAndAssertMode(cwd) {
     if (existsSync(supLog)) {
       log(`--- supervisor.log (tail) ---\n${lastLines(readFileSync(supLog, 'utf-8'), 80)}`);
     }
-    die(`stim-cli start failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
+    die(`stim start failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
   }
   const line = r.stdout.trim().split('\n').findLast(Boolean);
   const facts = JSON.parse(line);

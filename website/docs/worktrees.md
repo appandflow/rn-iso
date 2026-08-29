@@ -5,8 +5,8 @@ description: 'Isolated git worktrees with carried gitignored files, and teardown
 ---
 
 ```bash
-npx stim-cli worktree create feature-x        # creates ../<repo>-worktrees/feature-x
-npx stim-cli worktree remove                  # removes it, deleting its owned device(s) and freeing its Metro port
+npx --package=stim-cli stim worktree create feature-x        # creates ../<repo>-worktrees/feature-x
+npx --package=stim-cli stim worktree remove                  # removes it, deleting its owned device(s) and freeing its Metro port
 ```
 
 `worktree create <name>` does three things in one step: creates the git worktree itself (branched `worktree-<name>` off `origin/HEAD` by default -- pass `--base head` to branch off the current `HEAD` instead), carries over gitignored files (see "Carry-over" below), and registers a label for the worktree root so `stim-cli` shortcuts don't collide across a monorepo's worktrees (every worktree of a monorepo shares the same app-dir basename). Prefer it over a raw `git worktree add` for that reason. It prints only the resulting worktree path to stdout; everything else goes to stderr (see "Wiring into Claude Code" below).
@@ -15,7 +15,7 @@ It deliberately does **not** install dependencies. Which commands a repo actuall
 
 `worktree remove [<path>]` defaults to the current workspace. It reclaims the worktree's build artifacts, Metro port, and every owned device registered under it (deleting them, not just clearing the claim -- the environment dies whole) before removing the git worktree itself. It refuses if the worktree has uncommitted changes, untracked files, or commits that exist on no remote -- pass `--force` to override, but note `--force` only discards uncommitted/untracked state; committed work stays safe on the branch either way.
 
-There is no `worktree list`: `stim-cli status` shows the same worktrees _with_ their devices, ports and supervisors, including ones that have no environment yet.
+There is no `worktree list`: `stim status` shows the same worktrees _with_ their devices, ports and supervisors, including ones that have no environment yet.
 
 ### Carry-over
 
@@ -62,12 +62,14 @@ When the worktree's `--base` diverges from the source HEAD and the patch does no
 
 ### Wiring into Claude Code (`WorktreeCreate` hook)
 
-Claude Code's `WorktreeCreate` hook fires when a session for a new worktree starts, and uses the hook command's stdout as the directory for that session. `stim-cli worktree create` is built for exactly this contract -- it prints only the resulting path to stdout, and everything else goes to stderr. Wire it in `.claude/settings.json`:
+Claude Code's `WorktreeCreate` hook fires when a session for a new worktree starts, and uses the hook command's stdout as the directory for that session. `stim worktree create` is built for exactly this contract -- it prints only the resulting path to stdout, and everything else goes to stderr. Wire it in `.claude/settings.json`:
 
 ```json
 {
   "hooks": {
-    "WorktreeCreate": [{ "hooks": [{ "type": "command", "command": "stim-cli worktree create \"$(jq -r .name)\"" }] }]
+    "WorktreeCreate": [
+      { "hooks": [{ "type": "command", "command": "npx --package=stim-cli stim worktree create \"$(jq -r .name)\"" }] }
+    ]
   }
 }
 ```

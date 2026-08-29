@@ -15,10 +15,7 @@ import guideCommand from '../src/commands/guide.ts';
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 
 const program = new Command();
-program
-  .name('stim-cli')
-  .description('Isolated React Native dev environments per project/worktree')
-  .version(pkg.version);
+program.name('stim').description('Isolated React Native dev environments per project/worktree').version(pkg.version);
 
 doctorCommand(program);
 worktreeCommand(program);

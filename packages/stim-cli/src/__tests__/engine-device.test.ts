@@ -108,7 +108,7 @@ describe('ensureBooted: ios', () => {
     setExecutor({ run: () => simList([]), runQuiet: () => '', runFile: () => '', spawn: () => null });
     const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'GONE' } });
     expect(result.reason).toMatch(/no longer exists/);
-    expect(result.reason).toMatch(/stim-cli ios/);
+    expect(result.reason).toMatch(/stim ios/);
   });
 
   test('times out with a reason instead of hanging when the sim never boots', async () => {
@@ -874,7 +874,7 @@ describe('deviceCapacityRefusal', () => {
     });
     assert(refusal);
     expect(refusal.code).toBe('STIM_CLI_AT_CAPACITY');
-    expect(refusal.remedy).toMatch(/stim-cli stop|maxDevices/);
+    expect(refusal.remedy).toMatch(/stim stop|maxDevices/);
   });
 
   test('a workspace whose OWN sim is already booted is never refused', () => {

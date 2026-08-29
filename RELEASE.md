@@ -90,10 +90,7 @@ preparation, `git status --short` may show only the draft
    grep -H '"@stim-cli/' packages/stim-cli/package.json packages/expo-build-cache/package.json packages/metro/package.json
    ```
 
-2. **Refresh the skill's version stamp.** The last line of
-   `packages/stim-cli/skill/SKILL.md` names the version it was synced with;
-   update it to X.Y.Z.
-3. **Install and run the full pre-flight against those exact files:**
+2. **Install and run the full pre-flight against those exact files:**
 
    ```bash
    pnpm install --frozen-lockfile
@@ -109,7 +106,7 @@ preparation, `git status --short` may show only the draft
    test "$(node packages/stim-cli/dist/cli.mjs --version)" = "X.Y.Z"
    ```
 
-4. **Verify each npm tarball** ships only what should ship, and that each one
+3. **Verify each npm tarball** ships only what should ship, and that each one
    carries its own README:
 
    ```bash
@@ -122,8 +119,8 @@ preparation, `git status --short` may show only the draft
    `README.md` for the CLI; `dist`, `README.md`, `LICENSE` for the other
    packages). Every published JavaScript entry lives under `dist/`.
 
-5. **Inspect the candidate diff.** `git status --short` should contain only the
-   four package manifests, `pnpm-lock.yaml`, the skill stamp, and the draft
+4. **Inspect the candidate diff.** `git status --short` should contain only the
+   four package manifests, `pnpm-lock.yaml`, and the draft
    release notes. Resolve anything else before QA.
 
 ## 3. Pre-tag QA gate
@@ -260,7 +257,7 @@ Before continuing:
 
 8. **Smoke-test the published versions** from a scratch directory:
    ```bash
-   cd /tmp && npx stim-cli@latest --version
+   cd /tmp && npx --package=stim-cli@latest stim --version
    npm view stim-cli readme | head -c 200        # NOT "No README data found!"
    npm view @stim-cli/expo-build-cache version   # same number as stim-cli
    npm view @stim-cli/metro version              # same number as stim-cli

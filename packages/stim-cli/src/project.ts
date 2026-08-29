@@ -68,7 +68,7 @@ export function resolveRegisteredProject(arg?: string | null): ResolveResult {
     if (!projects[root])
       return {
         found: null,
-        error: `No stim-cli entry for ${root}. Run \`stim-cli start\` or \`stim-cli ios\` there first.`,
+        error: `No stim-cli entry for ${root}. Run \`stim start\` or \`stim ios\` there first.`,
       };
     return { found: root };
   }
@@ -96,7 +96,7 @@ export function resolveRegisteredProject(arg?: string | null): ResolveResult {
 
   return {
     found: null,
-    error: `No registered project matches "${arg}". See \`stim-cli status\` for the list.`,
+    error: `No registered project matches "${arg}". See \`stim status\` for the list.`,
   };
 }
 

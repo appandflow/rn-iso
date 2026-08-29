@@ -40,7 +40,7 @@ export function planMetroReach({ mode, metroPort, publicUrl = null, isExpo, avai
     if (!isExpo) {
       return {
         failed: 'metro.tunnel is "expo", but this workspace does not run an Expo dev server.',
-        remedy: 'Use "auto" to let stim-cli start a tunnel, or "off" if the device shares this machine.',
+        remedy: 'Use "auto" to let stim start a tunnel, or "off" if the device shares this machine.',
       };
     }
     return { expoTunnel: true };

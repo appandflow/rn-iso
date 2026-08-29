@@ -552,7 +552,7 @@ export function registerAndroid(program: Command): void {
     .command('android')
     .description(
       "Build (or install from the shared cache), install and launch this workspace's Android app on its owned " +
-        'emulator, wired to the reserved Metro port. Never starts the bundler -- run `stim-cli start` first.',
+        'emulator, wired to the reserved Metro port. Never starts the bundler -- run `stim start` first.',
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option(
@@ -724,7 +724,7 @@ async function verifyAndroidRun({
     phase(
       '',
       chalk.yellow(
-        'A release app that dies at startup usually crashed loading its embedded bundle; `stim-cli logs --errors` has the device log that says why.',
+        'A release app that dies at startup usually crashed loading its embedded bundle; `stim logs --errors` has the device log that says why.',
       ),
     );
     return LAUNCH_UNVERIFIED;
@@ -749,7 +749,7 @@ async function verifyAndroidRun({
     );
     phase(
       '',
-      chalk.dim('Nothing to do: `stim-cli logs --source metro` shows the build finishing, usually within a minute.'),
+      chalk.dim('Nothing to do: `stim logs --source metro` shows the build finishing, usually within a minute.'),
     );
     return LAUNCH_BUNDLING;
   }
@@ -975,7 +975,7 @@ async function finishAndroidRun({
       reason: booted.reason ?? 'The emulator did not boot.',
       logFile: emuLog,
       remedy:
-        'Run `stim-cli status` to see what stim-cli thinks it owns; re-running `stim-cli android` creates a fresh owned AVD.',
+        'Run `stim status` to see what stim-cli thinks it owns; re-running `stim android` creates a fresh owned AVD.',
     });
     return fail(NO_DEVICE, diag.message, diag.remedy, {
       lines: diag.lines,
@@ -1460,7 +1460,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         phaseFailure = fail(
           NO_METRO,
           'No Metro port is reserved for this workspace.',
-          'Run `stim-cli start` first, or pass --no-metro-check.',
+          'Run `stim start` first, or pass --no-metro-check.',
         );
         return false;
       }
@@ -1600,7 +1600,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       const diag = noDeviceDiagnostic({
         reason: booted.reason ?? 'The remote device did not boot.',
         logFile: emuLog,
-        remedy: 'Run `stim-cli status` to inspect the remote device, then retry the command.',
+        remedy: 'Run `stim status` to inspect the remote device, then retry the command.',
         localEmulator: false,
       });
       return fail(NO_DEVICE, diag.message, diag.remedy, {
@@ -1773,7 +1773,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           phaseFailure = fail(
             'STIM_CLI_BUILD_WAIT_TIMEOUT',
             wtErr.message,
-            `Check pid ${holder.pid}; if it is not really building, remove ${wtErr.lockPath} and run \`stim-cli android\` again.`,
+            `Check pid ${holder.pid}; if it is not really building, remove ${wtErr.lockPath} and run \`stim android\` again.`,
             { lastBuildStatus: true },
           );
           return false;

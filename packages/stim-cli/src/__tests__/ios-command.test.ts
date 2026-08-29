@@ -309,7 +309,7 @@ describe('the Metro gate', () => {
     expect(!calls.order.includes('fingerprintProject')).toBeTruthy();
     expect(!calls.order.includes('buildIos')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/STIM_CLI_NO_METRO/);
-    expect(errs.join('\n')).toMatch(/stim-cli start/);
+    expect(errs.join('\n')).toMatch(/stim start/);
   });
 
   test('a foreign listener on the reserved port is refused, not built against', async () => {
@@ -445,8 +445,8 @@ describe('the Metro gate retries an indexing Metro', () => {
     const text = errs.join('\n');
     expect(text).toMatch(/A supervisor record exists for port 8082/);
     expect(text).toMatch(/still be indexing/);
-    expect(text).toMatch(/stim-cli start --wait/);
-    expect(text).not.toMatch(/Run `stim-cli start` first/);
+    expect(text).toMatch(/stim start --wait/);
+    expect(text).not.toMatch(/Run `stim start` first/);
   });
 
   test('with no supervisor record the refusal is the plain one', async () => {
@@ -454,7 +454,7 @@ describe('the Metro gate retries an indexing Metro', () => {
     const { errs } = await run({}, { resolveProjectMetro: async () => ({ missing: true }) });
     const text = errs.join('\n');
     expect(text).toMatch(/Nothing is serving this workspace's dev server on port 8082/);
-    expect(text).toMatch(/Run `stim-cli start` first/);
+    expect(text).toMatch(/Run `stim start` first/);
   });
 
   test('noMetroMessage names a supervisor only when it is for THIS port and alive', () => {
@@ -1377,7 +1377,7 @@ describe('failure output', () => {
     const payload = parseFirst(logs);
     expect(payload.code).toBe('STIM_CLI_NO_METRO');
     expect(payload.message).toMatch(/no dev server/);
-    expect(payload.remedy).toMatch(/stim-cli start/);
+    expect(payload.remedy).toMatch(/stim start/);
   });
 
   test('without --json a failure still writes nothing to stdout', async () => {
@@ -1960,7 +1960,7 @@ describe('concurrency limits', () => {
           return {
             code: 'STIM_CLI_AT_CAPACITY',
             message: 'at capacity',
-            remedy: 'stop an environment (stim-cli stop) or raise concurrency.maxDevices',
+            remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
           };
         },
       },
@@ -1969,7 +1969,7 @@ describe('concurrency limits', () => {
     assert(capacity.args);
     expect(capacity.args.max).toBe(2);
     expect(errs.join('\n')).toMatch(/STIM_CLI_AT_CAPACITY/);
-    expect(errs.join('\n')).toMatch(/stim-cli stop/);
+    expect(errs.join('\n')).toMatch(/stim stop/);
     expect(!calls.order.includes('ensureOwnedDevice')).toBeTruthy();
   });
 
@@ -2384,7 +2384,7 @@ describe('release skips Metro entirely', () => {
     );
     expect(parseFirst(logs).launched).toBe('unverified');
     expect(errs.join('\n')).toMatch(/process exited within/);
-    expect(errs.join('\n')).toMatch(/stim-cli logs --errors/);
+    expect(errs.join('\n')).toMatch(/stim logs --errors/);
   });
 
   test('the ios.configuration setting is the repo default, and the flag overrides it back to Debug', async () => {

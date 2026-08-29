@@ -18,9 +18,9 @@ _detected_, and never counted in the reclaim total -- and a plain `gc --delete`
 _never_ touches them:
 
 ```bash
-npx stim-cli gc                            # report everything, caches included
-npx stim-cli gc --delete --older-than 30   # trim entries unused for 30 days
-npx stim-cli gc --delete --all             # empty them completely
+npx --package=stim-cli stim gc                            # report everything, caches included
+npx --package=stim-cli stim gc --delete --older-than 30   # trim entries unused for 30 days
+npx --package=stim-cli stim gc --delete --all             # empty them completely
 ```
 
 Prefer trimming. Most of these caches are a flat collection of independent
@@ -94,15 +94,15 @@ both work fine without stim-cli installed -- it is an optional peer.
   `expo.buildCacheProvider` on SDK 54+, or `expo.experiments.buildCacheProvider`
   on SDK 53, which reads only that key and ignores the top-level one in silence.
 
-Each package's README has the wiring. Neither is needed for `stim-cli ios` /
-`stim-cli android`, which address the build cache directly: the Expo provider is
+Each package's README has the wiring. Neither is needed for `stim ios` /
+`stim android`, which address the build cache directly: the Expo provider is
 for builds run _outside_ stim-cli (`expo run:ios` by hand, or EAS), so that the two
 share artifacts instead of filling two caches with the same builds. Bare React
 Native has no provider hook at all and needs none.
 
 What every entry point does need is `@expo/fingerprint`, resolved from the
 project, to compute the key. It works on a project with no Expo in it at all.
-Without it `stim-cli ios` refuses with `STIM_CLI_NO_FINGERPRINT` rather than
+Without it `stim ios` refuses with `STIM_CLI_NO_FINGERPRINT` rather than
 compiling from scratch forever.
 
 Entries are keyed `<fingerprintHash>-<variant>-<target>`, identically by every

@@ -413,9 +413,9 @@ export function noMetroRemedy({
   supervisorAlive?: boolean;
 }): string {
   if (supervisor && supervisor.port === port && supervisorAlive) {
-    return 'Re-run `stim-cli ios` in a few seconds, or give the dev server longer to verify with `stim-cli start --wait <seconds>`.';
+    return 'Re-run `stim ios` in a few seconds, or give the dev server longer to verify with `stim start --wait <seconds>`.';
   }
-  return 'Run `stim-cli start` first, or pass --no-metro-check.';
+  return 'Run `stim start` first, or pass --no-metro-check.';
 }
 
 export async function ensureWorkspaceStorageSafely(
@@ -730,7 +730,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .command('ios')
     .description(
       "Build (or restore from the fingerprint cache), install and launch this workspace's app on its owned " +
-        'simulator, wired to the reserved Metro port. Requires a running dev server (`stim-cli start`).',
+        'simulator, wired to the reserved Metro port. Requires a running dev server (`stim start`).',
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option('--no-metro-check', 'Skip the "is this workspace\'s dev server running?" gate and build anyway')
@@ -813,7 +813,7 @@ async function verifyIosRun({
       chalk.yellow(
         phaseLine(
           '',
-          'A release app that dies at startup usually crashed loading its embedded bundle; `stim-cli logs --errors` has the device log that says why.',
+          'A release app that dies at startup usually crashed loading its embedded bundle; `stim logs --errors` has the device log that says why.',
         ),
       ),
     );
@@ -839,10 +839,7 @@ async function verifyIosRun({
     );
     note(
       chalk.dim(
-        phaseLine(
-          '',
-          'Nothing to do: `stim-cli logs --source metro` shows the build finishing, usually within a minute.',
-        ),
+        phaseLine('', 'Nothing to do: `stim logs --source metro` shows the build finishing, usually within a minute.'),
       ),
     );
     return LAUNCH_BUNDLING;
@@ -1078,7 +1075,7 @@ async function finishIosRun({
       return fail({
         code: 'STIM_CLI_INSTALL_FAILED',
         message: `Could not read a bundle identifier from the cached app at ${appPath}.`,
-        remedy: 'Remove the cache entry (`stim-cli gc`) and run again to rebuild it.',
+        remedy: 'Remove the cache entry (`stim gc`) and run again to rebuild it.',
         build: { ...buildFailure, appPath },
       });
     }
@@ -1091,7 +1088,7 @@ async function finishIosRun({
     return fail({
       code: booted?.code || 'STIM_CLI_NO_DEVICE',
       message: booted?.reason || 'The owned simulator could not be booted.',
-      remedy: booted?.remedy || 'Run `stim-cli ios` again to re-establish an owned simulator for this workspace.',
+      remedy: booted?.remedy || 'Run `stim ios` again to re-establish an owned simulator for this workspace.',
     });
   }
   phase('device', `${deviceLabel(device, udid)} booted ${bootDuration()}`);
@@ -1349,7 +1346,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return fail({
       code: 'STIM_CLI_NO_DEVICE',
       message: `Could not ensure an owned iOS simulator: ${(e as Error)?.message || e}`,
-      remedy: 'Run `stim-cli doctor` to check the simulator toolchain, then try again.',
+      remedy: 'Run `stim doctor` to check the simulator toolchain, then try again.',
     });
   }
 
@@ -1382,7 +1379,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         fail({
           code: 'STIM_CLI_NO_METRO',
           message: 'No Metro port is reserved for this workspace, so there is no dev server to build against.',
-          remedy: 'Run `stim-cli start` first, or pass --no-metro-check.',
+          remedy: 'Run `stim start` first, or pass --no-metro-check.',
         });
         return false;
       }
@@ -1615,7 +1612,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           fail({
             code: 'STIM_CLI_BUILD_WAIT_TIMEOUT',
             message: err.message,
-            remedy: `Check pid ${held.pid}; if it is not really building, remove ${err.lockPath} and run \`stim-cli ios\` again.`,
+            remedy: `Check pid ${held.pid}; if it is not really building, remove ${err.lockPath} and run \`stim ios\` again.`,
             build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
           });
           return false;

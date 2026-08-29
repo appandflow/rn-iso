@@ -37,8 +37,8 @@ The cache registers itself with [`stim-cli`](https://www.npmjs.com/package/stim-
 if it is installed, so it can be reported and trimmed:
 
 ```bash
-npx stim-cli gc                            # what it has grown to (reported on every run)
-npx stim-cli gc --delete --older-than 30   # drop entries unused for 30 days
+npx --package=stim-cli stim gc                            # what it has grown to (reported on every run)
+npx --package=stim-cli stim gc --delete --older-than 30   # drop entries unused for 30 days
 ```
 
 stim-cli is an optional peer. Without it the cache works exactly the same; it is

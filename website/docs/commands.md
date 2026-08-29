@@ -9,17 +9,17 @@ description: 'The closed, ten-command surface, and what each one does'
 Run via `npx` from any RN/Expo project directory -- no install needed:
 
 ```bash
-npx stim-cli start             # dev server on a reserved port, under a supervisor
-npx stim-cli ios               # owned sim booted, app installed and launched on it
-npx stim-cli logs --errors     # no output + exit 0 = nothing is broken
-npx stim-cli stop              # supervisor down, sim shut down, port freed
+npx --package=stim-cli stim start             # dev server on a reserved port, under a supervisor
+npx --package=stim-cli stim ios               # owned sim booted, app installed and launched on it
+npx --package=stim-cli stim logs --errors     # no output + exit 0 = nothing is broken
+npx --package=stim-cli stim stop              # supervisor down, sim shut down, port freed
 ```
 
 ```
-$ npx stim-cli start
+$ npx --package=stim-cli stim start
 OK: dev server on port 8082, supervisor pid 41233 (expo-child) (6s)
 
-$ npx stim-cli ios
+$ npx --package=stim-cli stim ios
 device      stim-cli-myproject (BF2A..) booted (9s)
 fingerprint a3f9b1.. hit (2s)
 install     from cache (3s)
@@ -56,17 +56,17 @@ In a different worktree of the same app, the same two commands get a _different_
 **Setting a repo up is not a step.** stim-cli runs on a clean checkout: the Xcode
 compilation cache, Gradle's build cache and a shared Metro transform store all
 ride on the command lines stim-cli composes itself. When something IS blocked or
-slow, `stim-cli doctor` is the read-only second opinion:
+slow, `stim doctor` is the read-only second opinion:
 
 ```bash
-npx stim-cli doctor
+npx --package=stim-cli stim doctor
 ```
 
 It reports only what stim-cli cannot handle on its own -- a missing dev client,
 ccache, a checkout that does not fingerprint like a fresh worktree, a
 `buildCacheProvider` on a key this SDK ignores, a broken EAS session -- plus
 the settings that matter solely for builds you make outside stim-cli. There is no
-`stim-cli init` and no setup skill: the edits doctor names land in files the
+`stim init` and no setup skill: the edits doctor names land in files the
 project already owns (a `metro.config.js` with its own transformer, a `Podfile`
 with existing `post_install` logic, an app config that may be TypeScript),
 which is judgement, not templating. The one edit that needed no judgement,
@@ -85,7 +85,7 @@ npx skills add appandflow/stim-cli
 
 ## The ten commands
 
-All commands below take the same `npx stim-cli` prefix.
+All commands below take the same `npx --package=stim-cli stim` prefix.
 
 | Command                                                                                                        | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -106,7 +106,7 @@ All commands below take the same `npx stim-cli` prefix.
 Every project has a "shortcut": its `label` if one was set (e.g. via `worktree create --label`), else inherited from the enclosing worktree's label, else the directory basename. It is what names the owned device -- `stim-cli-<label>` -- and what `status` reports a workspace as.
 
 ```bash
-npx stim-cli worktree create feature-x --label agent-1   # its sim will be stim-cli-agent-1
+npx --package=stim-cli stim worktree create feature-x --label agent-1   # its sim will be stim-cli-agent-1
 ```
 
 Two projects sharing the same basename with no distinguishing label collide, which is why `worktree create` registers a label for the worktree root: every worktree of a monorepo otherwise shares the same app-dir basename.

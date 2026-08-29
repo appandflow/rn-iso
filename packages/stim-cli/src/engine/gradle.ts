@@ -58,7 +58,7 @@ export function discoverAndroidProject(root: string): AndroidProjectResult {
       code: BUILD_ERROR,
       reason: `No android/ directory in ${root}.`,
       remedy:
-        'Generate it (`npx expo prebuild -p android`, which `stim-cli android` runs itself on an Expo project) or check out the native sources.',
+        'Generate it (`npx expo prebuild -p android`, which `stim android` runs itself on an Expo project) or check out the native sources.',
     };
   }
   const gradlew = gradlewPath(root);

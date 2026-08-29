@@ -96,7 +96,7 @@ async function reclaimMetroTunnel(
         name: `${record.provider} tunnel (pid ${record.pid})`,
         reason:
           `${result.reason ?? 'stop failed'} The process identity could not be verified or the stop could not be confirmed. ` +
-          'The ownership record is kept. Inspect the process and retry `stim-cli worktree remove`.',
+          'The ownership record is kept. Inspect the process and retry `stim worktree remove`.',
       },
     };
   }
