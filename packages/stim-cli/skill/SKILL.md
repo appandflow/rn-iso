@@ -188,4 +188,4 @@ All paths described as logs below are relative to the global workspace directory
 
 ---
 
-Skill synced with stim-cli **1.5.0**. If `npx stim-cli --version` disagrees, refresh whichever half is older: `npx skills add appandflow/stim-cli` for this file, `npx stim-cli@latest` for the CLI.
+Skill synced with stim-cli **1.0.0**. If `npx stim-cli --version` disagrees, refresh whichever half is older: `npx skills add appandflow/stim-cli` for this file, `npx stim-cli@latest` for the CLI.
