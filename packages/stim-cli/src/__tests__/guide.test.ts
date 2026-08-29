@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
+import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 
 test('every advertised topic renders non-empty content', () => {
   for (const name of topicNames()) {
@@ -270,13 +271,34 @@ test('the settings topic lists exactly the keys settings.js honours', () => {
   const body = renderTopic('settings');
   assert(body);
   const src = readFileSync(new URL('../settings.ts', import.meta.url), 'utf-8');
-  const known = [...src.matchAll(/^\s*'([a-zA-Z.]+)',$/gm)]
+  const knownStart = src.indexOf('const KNOWN_SETTINGS');
+  const knownEnd = src.indexOf(']);', knownStart);
+  const knownSource = src.slice(knownStart, knownEnd);
+  const known = [...knownSource.matchAll(/^\s*'([a-zA-Z.]+)',$/gm)]
     .map((m) => m[1])
     .filter((k): k is string => k !== undefined);
   expect(known.length > 0).toBeTruthy();
   for (const key of known) {
     expect(body.includes(key)).toBeTruthy();
   }
+});
+
+test('the safe Android AVD override contract is consistent across user guidance', () => {
+  const guide = renderTopic('settings');
+  assert(guide);
+  const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf-8');
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  for (const body of [guide, readme, skill]) {
+    expect(body).toMatch(/android\.avdConfigFile/);
+    expect(body).toMatch(/android\.avdConfig/);
+    expect(body).toMatch(/config\.ini/);
+    expect(body).toMatch(/newly created|new owned/i);
+    expect(body).toMatch(/existing.*never|never.*existing/i);
+    expect(body).toMatch(/path|identity/i);
+    expect(body).toMatch(/displayless Linux/i);
+    expect(body).toMatch(/-noaudio/);
+  }
+  for (const line of ANDROID_AVD_CONFIG_HELP) expect(guide).toContain(line);
 });
 
 test('the Android data partition contract is consistent across user guidance', () => {

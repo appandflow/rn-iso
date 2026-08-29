@@ -528,6 +528,19 @@ describe('explicit remote backend behavior', () => {
     expect(h.calls.ensureDevice).toEqual([]);
   });
 
+  test('an unsafe Android AVD config key is refused before device work', async () => {
+    const h = harness({
+      resolveSettingsFor: () => ({ android: { avdConfig: { 'image.sysdir.1': '/tmp/image' } } }),
+      ensureDevice: never('the device'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_CLI_BAD_ARG');
+    expect(result.error?.message).toContain('Unsupported android.avdConfig key');
+    expect(result.error?.remedy).toContain('documented android.avdConfig keys');
+    expect(h.calls.ensureDevice).toEqual([]);
+  });
+
   test('the local path does not resolve a remote backend', async () => {
     let resolved = false;
     const h = harness({

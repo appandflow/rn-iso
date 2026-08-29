@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
+import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 
 interface GuideTopic {
   summary: string;
@@ -643,8 +644,9 @@ STIM_CLI_SUPERVISOR_EXITED
 
 STIM_CLI_BAD_ARG / STIM_CLI_NO_PROJECT
   The command refused before doing anything: an unusable --wait value, an invalid
-  Metro tunnel setting, an invalid android.dataPartitionSizeGb value, or a
-  working directory with no package.json above it.
+  Metro tunnel setting, an invalid android.dataPartitionSizeGb value, an unsafe
+  android.avdConfig key or fragment, or a working directory with no package.json
+  above it.
   These errors are caught before the port is reserved and before anything is
   spawned, so nothing was started.
 
@@ -1251,6 +1253,30 @@ KEYS STIM-CLI READS
                         Existing AVDs are never resized because Android
                         userdata grows but does not shrink. Recreate the
                         environment to adopt a changed value.
+  android.avdConfigFile
+                        path under the repository root (or project root
+                        outside Git) to a flat native key=value INI fragment,
+                        at most 64 KiB. stim-cli parses it and
+                        merges supported values into avdmanager's generated
+                        config.ini before first boot; it is never used as a
+                        replacement file. Absolute paths, repository or
+                        symlink escapes, malformed or duplicate lines, and
+                        unsupported keys are refused before AVD creation.
+  android.avdConfig     flat object of the same native keys. It merges key by
+                        key across settings layers and overrides the selected
+                        avdConfigFile fragment. Boolean values accept true,
+                        false, "yes", or "no"; numbers and enums are checked.
+                        Supported keys and values:
+${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).join('\n')}
+                        Identity, architecture, host path, storage, image,
+                        kernel, camera, snapshot, boot-lifecycle, and unknown
+                        keys are protected. The emulator may normalize a valid
+                        value. These overrides apply only to a newly created
+                        AVD; existing and recovered AVDs are never rewritten.
+                        On displayless Linux, stim-cli launches with
+                        -gpu swiftshader_indirect -noaudio; those arguments
+                        override hw.gpu.enabled, hw.gpu.mode, hw.audioInput,
+                        and hw.audioOutput for that headless launch.
   android.variant       e.g. "productionDebug" -- the gradle variant to
                         assemble and install on a project with product
                         flavors. A repo like tlon-mobile with

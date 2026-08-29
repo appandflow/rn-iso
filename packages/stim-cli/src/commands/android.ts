@@ -47,6 +47,7 @@ import {
 } from './ios.ts';
 import {
   REMOTE_DEVICE_BACKENDS,
+  androidAvdConfigSettingError,
   androidDataPartitionSizeGbSettingError,
   publicUrlSetting,
   remoteAndroidSetting,
@@ -1398,10 +1399,12 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return { ok: false, error: { code, message, remedy: remedy ?? null } };
   };
 
+  const settingsRepoRoot = repoRoot(root);
+  const settingsRoot = settingsRepoRoot ?? root;
   const settings = resolveSettingsFor({
     projectPath: root,
     gitCommonDir: gitCommonDir(root),
-    repoRoot: repoRoot(root),
+    repoRoot: settingsRepoRoot,
   });
   const dataPartitionSizeError = androidDataPartitionSizeGbSettingError(settings);
   if (dataPartitionSizeError) {
@@ -1409,6 +1412,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       'STIM_CLI_BAD_ARG',
       dataPartitionSizeError,
       'Set android.dataPartitionSizeGb to a whole number of GiB from 6 through 16384.',
+    );
+  }
+  const avdConfigError = androidAvdConfigSettingError(settings, settingsRoot);
+  if (avdConfigError) {
+    return fail(
+      'STIM_CLI_BAD_ARG',
+      avdConfigError,
+      'Use only documented android.avdConfig keys, or an android.avdConfigFile fragment contained by the repository/project settings root.',
     );
   }
   const remoteSettingError = remoteDeviceSettingError(settings);
@@ -1532,6 +1543,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       platform: PLATFORM,
       project,
       projectPath: root,
+      settingsRoot,
       label,
       settings,
       flags: {},

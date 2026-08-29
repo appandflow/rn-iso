@@ -642,6 +642,54 @@ describe('ensureOwnedDevice: android', () => {
     }
   });
 
+  test('a fresh owned AVD merges a repository INI fragment and inline hardware overrides before boot', async () => {
+    const root = projectDir();
+    try {
+      writeFileSync(join(root, 'android-avd.ini'), 'hw.ramSize=3072\nhw.keyboard=no\n');
+      const { exec } = androidExecutor();
+      setExecutor(exec);
+      await ensureOwnedDevice({
+        platform: 'android',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {
+          android: {
+            avdConfigFile: 'android-avd.ini',
+            avdConfig: { 'hw.keyboard': true, 'vm.heapSize': 512 },
+          },
+        },
+      });
+      expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-cli-app.avd', 'config.ini'), 'utf8')).toBe(
+        'hw.cpu.ncore=4\ndisk.dataPartition.size=8589934592\nhw.ramSize=3072\nhw.keyboard=yes\nvm.heapSize=512\n',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('invalid AVD overrides fail before creating, cleaning, or booting a device', async () => {
+    const root = projectDir();
+    try {
+      const { run, spawn, exec } = androidExecutor();
+      setExecutor(exec);
+      await expect(
+        ensureOwnedDevice({
+          platform: 'android',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { android: { avdConfig: { 'disk.dataPartition.path': '/tmp/outside' } } },
+        }),
+      ).rejects.toThrow(/Unsupported android\.avdConfig key/);
+      expect(run).toEqual([]);
+      expect(spawn).toEqual([]);
+      expect(getProject(root)?.platforms?.android).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('a failed new-AVD configuration is centrally deleted and never booted', async () => {
     const root = projectDir();
     try {
@@ -655,7 +703,7 @@ describe('ensureOwnedDevice: android', () => {
           label: 'app',
           settings: {},
         }),
-      ).rejects.toThrow(/could not configure its data partition/i);
+      ).rejects.toThrow(/could not configure its AVD settings/i);
       expect(run.some((cmd) => /delete avd -n "stim-cli-app"/.test(cmd))).toBe(true);
       expect(spawn).toEqual([]);
       expect(getProject(root)?.platforms?.android).toBeUndefined();
@@ -728,7 +776,7 @@ describe('ensureOwnedDevice: android', () => {
         project: getProject(root),
         projectPath: root,
         label: 'app',
-        settings: { android: { dataPartitionSizeGb: 6 } },
+        settings: { android: { dataPartitionSizeGb: 6, avdConfig: { 'hw.keyboard': true } } },
         configureAvd: () => {
           throw new Error('must not configure a recovered AVD');
         },

@@ -350,29 +350,38 @@ export function ownedAvdDirectory(
 }
 
 export function withAvdDataPartitionSize(contents: string, sizeBytes: number): string {
+  return withAvdConfigOverrides(contents, { 'disk.dataPartition.size': String(sizeBytes) });
+}
+
+export function withAvdConfigOverrides(contents: string, overrides: Readonly<Record<string, string>>): string {
   const newline = contents.includes('\r\n') ? '\r\n' : '\n';
   const trailingNewline = /\r?\n$/.test(contents);
   const lines = contents.split(/\r?\n/);
   if (trailingNewline) lines.pop();
   const updated: string[] = [];
-  let found = false;
+  const remaining = new Map(Object.entries(overrides));
   for (const line of lines) {
-    if (/^\s*disk\.dataPartition\.size\s*=/.test(line)) {
-      if (!found) updated.push(`disk.dataPartition.size=${sizeBytes}`);
-      found = true;
-    } else {
-      updated.push(line);
+    const separator = line.indexOf('=');
+    const key = separator >= 0 ? line.slice(0, separator).trim() : '';
+    if (!remaining.has(key)) {
+      if (!Object.hasOwn(overrides, key)) updated.push(line);
+      continue;
     }
+    updated.push(`${key}=${remaining.get(key)}`);
+    remaining.delete(key);
   }
-  if (!found) updated.push(`disk.dataPartition.size=${sizeBytes}`);
+  for (const [key, value] of remaining) updated.push(`${key}=${value}`);
   return updated.join(newline) + (trailingNewline ? newline : '');
 }
 
 let avdConfigWriteSequence = 0;
 
-export function configureNewOwnedAvdDataPartition(
+export function configureNewOwnedAvd(
   avdName: string,
-  sizeGb: number,
+  {
+    dataPartitionSizeGb,
+    avdConfig = {},
+  }: { dataPartitionSizeGb: number; avdConfig?: Readonly<Record<string, string>> },
   {
     avdDirectory = ownedAvdDirectory,
     readFile = (path: string) => readFileSync(path, 'utf8'),
@@ -387,12 +396,13 @@ export function configureNewOwnedAvdDataPartition(
     remove?: (path: string) => void;
   } = {},
 ): string {
-  const sizeBytes = androidDataPartitionSizeBytes(sizeGb);
+  const sizeBytes = androidDataPartitionSizeBytes(dataPartitionSizeGb);
   const directory = avdDirectory(avdName);
   if (!directory) throw new Error(`Could not resolve the content directory for newly created AVD ${avdName}.`);
   const configPath = join(directory, 'config.ini');
   const original = readFile(configPath);
-  const updated = withAvdDataPartitionSize(original, sizeBytes);
+  const expected = { ...avdConfig, 'disk.dataPartition.size': String(sizeBytes) };
+  const updated = withAvdConfigOverrides(original, expected);
   const tempPath = join(directory, `.config.ini.stim-cli-${process.pid}-${++avdConfigWriteSequence}.tmp`);
   try {
     writeFile(tempPath, updated);
@@ -404,8 +414,10 @@ export function configureNewOwnedAvdDataPartition(
     throw error;
   }
   const verified = readFile(configPath);
-  if (!verified.split(/\r?\n/).includes(`disk.dataPartition.size=${sizeBytes}`)) {
-    throw new Error(`Could not verify disk.dataPartition.size in ${configPath}.`);
+  for (const [key, value] of Object.entries(expected)) {
+    if (!verified.split(/\r?\n/).includes(`${key}=${value}`)) {
+      throw new Error(`Could not verify ${key} in ${configPath}.`);
+    }
   }
   return configPath;
 }
