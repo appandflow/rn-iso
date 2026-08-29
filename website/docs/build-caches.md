@@ -4,6 +4,8 @@ sidebar_position: 3
 description: 'Fingerprint-keyed native builds shared across worktrees, and single-flight compiles'
 ---
 
+import StimTabs from '@site/src/components/StimTabs';
+
 Everything `gc` reclaims is _dead_: a project entry whose directory no longer
 exists belongs to nobody, and a `stim-cli-*` simulator nothing references is
 never coming back. Shared build caches are the opposite -- alive by design,
@@ -17,11 +19,11 @@ So every `gc` run reports them -- in their own bucket, tagged _registered_ or
 _detected_, and never counted in the reclaim total -- and a plain `gc --delete`
 _never_ touches them:
 
-```bash
-npx --package=stim-cli stim gc                            # report everything, caches included
-npx --package=stim-cli stim gc --delete --older-than 30   # trim entries unused for 30 days
-npx --package=stim-cli stim gc --delete --all             # empty them completely
-```
+<StimTabs
+code={`stim gc                            # report everything, caches included
+stim gc --delete --older-than 30   # trim entries unused for 30 days
+stim gc --delete --all             # empty them completely`}
+/>
 
 Prefer trimming. Most of these caches are a flat collection of independent
 entries -- one file per key for Metro's `FileStore`, one directory per

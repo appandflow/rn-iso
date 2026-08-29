@@ -315,6 +315,35 @@ test('the skill points at the guide command and the topics it advertises', () =>
   }
 });
 
+test('the skill and guide explain the npx fallback for short stim commands', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  expect(skill.match(/npx stim-cli <command>/g)).toHaveLength(1);
+  expect(skill).toContain('npm install --global stim-cli');
+  expect(skill).toMatch(/replace `stim` with the `npx` form above/i);
+
+  for (const name of topicNames()) {
+    const topic = renderTopic(name);
+    assert(topic);
+    expect(topic).toMatch(/not installed globally[^.]*npx stim-cli/i);
+  }
+  expect(renderIndex('9.9.9')).toContain('stim guide <topic>');
+  expect(renderIndex('9.9.9')).toMatch(/not installed globally[^.]*npx stim-cli/i);
+});
+
+test('standalone package docs explain the npx fallback', () => {
+  for (const path of ['../../../metro/README.md', '../../../expo-build-cache/README.md']) {
+    const readme = readFileSync(new URL(path, import.meta.url), 'utf-8');
+    expect(readme).toMatch(/not installed globally[^.]*npx stim-cli/i);
+  }
+});
+
+test('website command tabs synchronize with Global as the default', () => {
+  const tabs = readFileSync(new URL('../../../../website/src/components/StimTabs.tsx', import.meta.url), 'utf-8');
+  expect(tabs).toContain("const groupId = 'stim-invocation'");
+  expect(tabs).toContain('defaultValue="global"');
+  expect(tabs).toContain("const npxPrefix = 'npx stim-cli'");
+});
+
 test('exactly one compact skill ships', () => {
   const dir = fileURLToPath(new URL('../../skill/', import.meta.url));
   expect(readdirSync(dir).toSorted()).toEqual(['SKILL.md']);

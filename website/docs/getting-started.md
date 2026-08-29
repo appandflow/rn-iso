@@ -4,6 +4,8 @@ sidebar_position: 2
 description: 'Install the skill, then tell your agent what you want built.'
 ---
 
+import StimTabs, { StimInstallTabs } from '@site/src/components/StimTabs';
+
 stim-cli is a CLI **humans never run** — your coding agent does.
 
 ## 1. Install the agent skill
@@ -17,6 +19,11 @@ That installs one skill into your agent's skill directory (`~/.claude/skills`,
 ownership model, the destructive-command rules). Re-run the same command after
 upgrading stim-cli to refresh it.
 
+The package exports only `stim`. Global installation is the default below.
+The selected tab applies to every command block on the website.
+
+<StimInstallTabs />
+
 ## 2. Tell your agent what you want
 
 ```
@@ -25,12 +32,12 @@ Build and run the app on the iOS simulator and fix anything that breaks.
 
 That's the whole interface. Under the hood the agent drives:
 
-```bash
-npx --package=stim-cli stim start             # dev server on a reserved port, under a supervisor
-npx --package=stim-cli stim ios               # owned simulator, cached native build, launch
-npx --package=stim-cli stim logs --errors     # no output + exit 0 = nothing is broken
-npx --package=stim-cli stim stop              # supervisor down, sim shut down, port freed
-```
+<StimTabs
+code={`stim start             # dev server on a reserved port, under a supervisor
+stim ios               # owned simulator, cached native build, launch
+stim logs --errors     # no output + exit 0 = nothing is broken
+stim stop              # supervisor down, sim shut down, port freed`}
+/>
 
 — its own dev server on a reserved port, its own **owned** simulator, a native
 build that installs from the shared cache when nothing native changed, and a
@@ -43,9 +50,7 @@ on the command lines stim-cli composes itself.
 
 ## If something is blocked or slow
 
-```bash
-npx --package=stim-cli stim doctor
-```
+<StimTabs code={`stim doctor`} />
 
 Read-only, always exits 0, and it reports **only what stim-cli cannot handle on
 its own** — a missing `expo-dev-client` (a native dependency: without it a
@@ -71,10 +76,7 @@ simulator it installed onto — as `udid`, and as `deviceName`, the
 `stim-cli-<label>` name it created the device under. Pass whichever the device
 tool addresses devices by, explicitly, every time:
 
-```bash
-device=$(npx --package=stim-cli stim ios --json | jq -r .deviceName)
-agent-device open com.example.app --device "$device" --foreground
-```
+<StimTabs code={`device=$(stim ios --json | jq -r .deviceName)\nagent-device open com.example.app --device "$device" --foreground`} />
 
 Never let a device tool pick "the booted one". On a machine running three
 agents, three simulators are booted and only one is yours — that is the whole
@@ -91,11 +93,11 @@ None of that is visible from a log. The build succeeds, nothing throws,
 
 **1. Get an isolated app running.**
 
-```bash
-cd "$(npx --package=stim-cli stim worktree create history-order --carry-ignored)"
-npx --package=stim-cli stim start
-device=$(npx --package=stim-cli stim ios --json | jq -r .deviceName)
-```
+<StimTabs
+code={`cd "$(stim worktree create history-order --carry-ignored)"
+stim start
+device=$(stim ios --json | jq -r .deviceName)`}
+/>
 
 On a second worktree of the same commit this costs a boot, not a build:
 `fingerprint <hash> hit` and the app installs from the shared cache.
@@ -125,10 +127,10 @@ switched windows.
 
 **4. Verify both halves.**
 
-```bash
-agent-device snapshot            # headers now read newest-first
-npx --package=stim-cli stim logs --errors         # empty, exit 0 — the fix broke nothing
-```
+<StimTabs
+code={`agent-device snapshot            # headers now read newest-first
+stim logs --errors         # empty, exit 0 — the fix broke nothing`}
+/>
 
 Two different questions. The device tool answers "is the screen right now
 correct", the log timeline answers "did fixing it break something quieter" — a
@@ -138,10 +140,10 @@ bug at all.
 
 **5. Tear it down.**
 
-```bash
-npx --package=stim-cli stim stop
-npx --package=stim-cli stim worktree remove
-```
+<StimTabs
+code={`stim stop
+stim worktree remove`}
+/>
 
 `stop` shuts the owned simulator down and frees the port, so coming back to the
 branch costs a boot rather than a rebuild. `worktree remove` reclaims the device

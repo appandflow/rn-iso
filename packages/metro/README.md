@@ -1,5 +1,8 @@
 # @stim-cli/metro
 
+> Commands use `stim`. If it is not installed globally, replace `stim` with
+> `npx stim-cli`.
+
 The two things [`stim-cli`](https://www.npmjs.com/package/stim-cli) wires into
 Metro: one transform cache shared by every worktree on the machine, and a
 reporter that writes the dev server's events as NDJSON.
@@ -29,8 +32,8 @@ the disk does. Registering it with
 [`stim-cli`](https://www.npmjs.com/package/stim-cli) makes it visible:
 
 ```bash
-npx --package=stim-cli stim gc                            # what it has grown to (reported on every run)
-npx --package=stim-cli stim gc --delete --older-than 30   # drop entries unused for 30 days
+stim gc                            # what it has grown to (reported on every run)
+stim gc --delete --older-than 30   # drop entries unused for 30 days
 ```
 
 Entries are trimmed individually — one file per cache key — so trimming costs

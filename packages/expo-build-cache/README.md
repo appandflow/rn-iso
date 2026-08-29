@@ -1,5 +1,8 @@
 # @stim-cli/expo-build-cache
 
+> Commands use `stim`. If it is not installed globally, replace `stim` with
+> `npx stim-cli`.
+
 A local Expo build cache provider. When no native input has changed, the CLI
 installs a cached `.app` / `.apk` instead of compiling — which is the difference
 between a JS-only change costing a simulator boot and costing a full native
@@ -37,8 +40,8 @@ The cache registers itself with [`stim-cli`](https://www.npmjs.com/package/stim-
 if it is installed, so it can be reported and trimmed:
 
 ```bash
-npx --package=stim-cli stim gc                            # what it has grown to (reported on every run)
-npx --package=stim-cli stim gc --delete --older-than 30   # drop entries unused for 30 days
+stim gc                            # what it has grown to (reported on every run)
+stim gc --delete --older-than 30   # drop entries unused for 30 days
 ```
 
 stim-cli is an optional peer. Without it the cache works exactly the same; it is
