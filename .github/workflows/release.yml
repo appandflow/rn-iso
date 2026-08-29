@@ -43,17 +43,41 @@ jobs:
             fi
           done
       - name: Publish @stim-cli/core
-        run: npm publish --provenance --access public
         working-directory: packages/core
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "@stim-cli/core@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/core@$version is already published"
+          else
+            npm publish --provenance --access public
+          fi
       - name: Publish @stim-cli/metro
-        run: npm publish --provenance --access public
         working-directory: packages/metro
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "@stim-cli/metro@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/metro@$version is already published"
+          else
+            npm publish --provenance --access public
+          fi
       - name: Publish @stim-cli/expo-build-cache
-        run: npm publish --provenance --access public
         working-directory: packages/expo-build-cache
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "@stim-cli/expo-build-cache@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/expo-build-cache@$version is already published"
+          else
+            npm publish --provenance --access public
+          fi
       - name: Publish stim-cli
-        run: npm publish --provenance --access public
         working-directory: packages/stim-cli
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "stim-cli@$version" version >/dev/null 2>&1; then
+            echo "stim-cli@$version is already published"
+          else
+            npm publish --provenance --access public
+          fi
       - name: Smoke-test the registry
         run: |
           sleep 10

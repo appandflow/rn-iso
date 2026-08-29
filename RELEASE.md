@@ -37,15 +37,24 @@ since the matching tag:
 
 ```bash
 git fetch --tags
-last=$(npm view stim-cli version)
-echo "Last published: v$last"
-git log "v$last..HEAD" --oneline
+if last=$(npm view stim-cli version 2>/dev/null); then
+  echo "Last published: v$last"
+  git log "v$last..HEAD" --oneline
+else
+  echo "No published stim-cli version"
+  git log --oneline
+fi
 ```
 
-If `git describe --tags --abbrev=0` is _higher_ than `v$last`, a previous
-release got tagged but never landed on npm. **Retry that publish before
-bumping again** (re-run step 7 with the existing version) rather than
-incrementing past it.
+An npm `E404` means this is the first release for that package name. Confirm
+all four names are available, use the intended first version, and review the
+full release diff. Complete the first-publication bootstrap in step 7 before
+pushing the first tag.
+
+When a published version exists, check `git describe --tags --abbrev=0`. If
+that tag is _higher_ than `v$last`, a previous release got tagged but never
+landed on npm. **Retry that publish before bumping again** (re-run step 7 with
+the existing version) rather than incrementing past it.
 
 Look at every commit in the list and decide:
 
@@ -154,7 +163,9 @@ If `git status` isn't clean, commit / discard before tagging.
    `stim-cli` release, create the `@stim-cli` npm organization, publish all four
    packages manually in dependency order, then configure each package's trusted
    publisher for `appandflow/stim-cli`, workflow `release.yml`, environment
-   `release`. The same commands are the manual fallback for later releases:
+   `release`. Do this before pushing the first tag. The tagged workflow skips an
+   exact package version that already exists, then verifies all four registry
+   versions. The same commands are the manual fallback for later releases:
 
    ```bash
    npm whoami                                          # confirm login; if 401, `npm login` first
