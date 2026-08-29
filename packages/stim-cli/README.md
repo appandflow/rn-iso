@@ -258,11 +258,14 @@ Resolution order: the project layer, then the repo layer, then that committed fi
 
 Everything `gc` reclaims is _dead_: a project entry whose directory no longer
 exists belongs to nobody, and a `stim-cli-*` simulator nothing references is
-never coming back. Shared build caches are the opposite -- alive by design,
-shared by every project on the machine, and pruned by nothing:
+never coming back. Shared build caches are the opposite -- alive by design and
+shared by projects on the machine:
 
 - **Metro's `FileStore`** has no eviction logic whatsoever.
 - **Xcode's compilation cache** has no size cap.
+- **Gradle's build cache** applies Gradle's own retention policy and is shared by
+  every Gradle build under the Gradle user home, including builds that did not
+  use stim-cli. stim-cli reports it but never deletes from it.
 - **Metro file maps** accumulate one file per project root ever served.
 
 So every `gc` run reports them -- in their own bucket, tagged _registered_ or
@@ -286,6 +289,12 @@ Xcode's compilation cache is the exception. It is an LLVM CAS whose `v4.actions`
 index references its `v9.*.leaf` data files, so removing leaves individually
 would leave the index pointing at data that is gone. `--older-than` reports it
 as left alone; it can only be emptied whole, which is what `--all` does.
+
+Gradle's build cache is report-only. stim-cli enables it with `--build-cache`,
+so `gc` detects and sizes `caches/build-cache-1` under `GRADLE_USER_HOME`
+(default `~/.gradle`). Because that directory is shared with every other Gradle
+build on the machine, stim-cli never prunes or empties it, even with
+`--delete --older-than` or `--delete --all`.
 
 Emptying is a performance decision, not cleanup: the next build in every
 project pays to refill what you removed. The summary says so.

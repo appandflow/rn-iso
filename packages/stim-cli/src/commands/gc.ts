@@ -773,6 +773,12 @@ function planCacheEmptying(caches: CacheDescriptor[], all: boolean): GcCache[] {
   const annotated = caches.map((c) => Object.assign({}, c, { machineGlobal: machineGlobalReason(c) }));
   if (!all) return annotated;
   return annotated.map((c) => {
+    if (c.prune === 'report-only') {
+      return Object.assign({}, c, {
+        willEmpty: false,
+        emptySkipped: 'report-only shared cache; stim-cli never deletes it',
+      });
+    }
     if (c.machineGlobal) {
       return Object.assign({}, c, { willEmpty: false, emptySkipped: c.machineGlobal });
     }
@@ -804,6 +810,9 @@ function emptyCache(cache: CacheDescriptor): {
   skipped: string | null;
   failed?: number;
 } {
+  if (cache.prune === 'report-only') {
+    return { removed: 0, bytes: 0, skipped: 'report-only shared cache; stim-cli never deletes it' };
+  }
   if (cache.prune !== 'atomic') {
     return pruneCache(cache, { olderThanDays: 0, now: Date.now() + DAY_MS });
   }

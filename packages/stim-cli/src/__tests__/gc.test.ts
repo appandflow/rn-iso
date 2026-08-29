@@ -1881,6 +1881,35 @@ test('--delete on its own never touches a shared cache', async () => {
   expect(existsSync(entry)).toBeTruthy();
 });
 
+test('gc reports but never deletes the shared Gradle build cache under any deletion mode', async () => {
+  const previous = process.env.GRADLE_USER_HOME;
+  const gradleHome = join(fakeHome, 'gradle-home');
+  const cachesRoot = join(gradleHome, 'caches');
+  const cacheDir = join(cachesRoot, 'build-cache-1');
+  const cacheAlias = join(gradleHome, 'caches-alias');
+  const entry = join(cacheDir, 'entry-a');
+  mkdirSync(cacheDir, { recursive: true });
+  symlinkSync(cachesRoot, cacheAlias, 'dir');
+  writeFileSync(entry, 'x'.repeat(1000));
+  const old = new Date(Date.now() - 400 * DAY_MS);
+  utimesSync(entry, old, old);
+  process.env.GRADLE_USER_HOME = gradleHome;
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  register({ dir: cacheAlias, name: 'Gradle build cache', prune: 'entries' });
+  installExecutor();
+
+  try {
+    for (const args of [['--delete'], ['--delete', '--older-than', '30'], ['--delete', '--all']]) {
+      const output = await captureLog(() => cli(args));
+      expect(output).toMatch(/Gradle build cache/);
+      expect(existsSync(entry)).toBeTruthy();
+    }
+  } finally {
+    if (previous === undefined) delete process.env.GRADLE_USER_HOME;
+    else process.env.GRADLE_USER_HOME = previous;
+  }
+});
+
 test('--delete --older-than trims the cache entries nothing has touched', async () => {
   const cacheDir = join(fakeHome, 'my-cache');
   const oldEntry = join(cacheDir, 'entry-old');
