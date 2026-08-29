@@ -46,7 +46,6 @@ so stim-cli cannot guess them. The cache names itself instead, once, from code:
 
 ```js
 // A setup script, a build-cache provider -- anywhere that creates the cache.
-// `stim-cli/cache-manifest` is ESM, so a CJS caller needs `await import(...)`.
 import { register } from 'stim-cli/cache-manifest';
 
 register({

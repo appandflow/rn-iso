@@ -10,8 +10,8 @@ export default defineConfig({
   format: 'esm',
   dts: true,
   outDir: 'dist',
-  target: 'node22',
+  target: 'node20.19',
   platform: 'node',
   tsconfig: 'tsconfig.json',
-  outExtensions: () => ({ js: '.js' }),
+  fixedExtension: true,
 });

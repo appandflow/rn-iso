@@ -23,7 +23,7 @@
     "directory": "packages/stim-cli"
   },
   "bin": {
-    "stim-cli": "dist/cli.js"
+    "stim-cli": "dist/cli.mjs"
   },
   "files": [
     "dist",
@@ -35,8 +35,9 @@
   "type": "module",
   "exports": {
     "./cache-manifest": {
-      "types": "./dist/cache-manifest.d.ts",
-      "default": "./dist/cache-manifest.js"
+      "types": "./dist/cache-manifest.d.mts",
+      "module-sync": "./dist/cache-manifest.mjs",
+      "default": "./dist/cache-manifest.mjs"
     }
   },
   "scripts": {
@@ -54,6 +55,6 @@
     "@stim-cli/expo-build-cache": "*"
   },
   "engines": {
-    "node": ">=22"
+    "node": "^20.19.4 || >=22.12.0"
   }
 }

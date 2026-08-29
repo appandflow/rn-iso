@@ -13,5 +13,5 @@ export function spawnEntry(name: SpawnEntryName): string {
   if (basename(dirname(here)) === 'src') {
     return fileURLToPath(new URL(DEV_ENTRIES[name], import.meta.url));
   }
-  return join(dirname(here), `${name}.js`);
+  return join(dirname(here), `${name}.mjs`);
 }

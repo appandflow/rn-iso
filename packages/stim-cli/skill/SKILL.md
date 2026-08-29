@@ -9,6 +9,8 @@ You are an AI agent working on a React Native / Expo project, possibly alongside
 
 Invoke the CLI via `npx`: `npx stim-cli <command>`. Don't `npm install -g`.
 
+stim-cli requires Node 20.19.4 or later on Node 20, or Node 22.12.0 or later.
+
 `npx` usually resolves the latest published version, but not always: a stale entry in the npm cache (or a different node version's cache) can serve an old one, and an old CLI silently lacks commands this file documents. **Check once per session** -- `npx stim-cli --version` -- and use `npx stim-cli@latest` if it disagrees with the version stamped at the bottom of this file.
 
 **In a repo whose `.npmrc` pins a private registry** (`registry=https://<host>/...`, common in company monorepos), `npx` tries to fetch `stim-cli` from THAT registry and fails -- typically `npm error code E401` (expired token) -- because stim-cli is published on the public npm registry. Point npx at the public registry for this one package: `npx --registry=https://registry.npmjs.org stim-cli <command>` (and the same on `stim-cli@latest`). An `E401`/`E404` on `npx stim-cli` is almost always this, not a broken install.

@@ -18,7 +18,7 @@ functions.
 npm run test:e2e
 ```
 
-Runs anywhere Node 20+ and git are available -- **no Xcode, no Android SDK**.
+Runs with Node 20.19.4 or later on Node 20, or Node 22.12.0 or later. Git is also required. The suite needs **no Xcode or Android SDK**.
 It drives the real CLI and the real cache library end to end under a throwaway
 `STIM_CLI_HOME` and a throwaway temp repo, so it never touches the machine's real
 caches, registry, or checkouts. What it proves:

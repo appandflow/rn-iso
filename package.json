@@ -13,6 +13,7 @@
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "test": "vitest run",
+    "test:runtime": "node test/runtime-floor.mjs",
     "test:watch": "vitest",
     "build": "pnpm -r --filter \"./packages/*\" run build",
     "test:e2e": "node --test test/e2e/*.e2e.js",
@@ -32,7 +33,7 @@
     "vite": "npm:rolldown-vite@7.3.1"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18.0"
   },
   "packageManager": "pnpm@10.33.0"
 }

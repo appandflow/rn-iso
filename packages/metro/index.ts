@@ -1,8 +1,11 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { metroCacheRoot, registerCache, tagSharedStore, workspaceLogDir } from '@stim-cli/core';
 
 type FileStoreCtor = new (options: { root: string }) => object;
+
+const requireFromHere = createRequire(import.meta.url);
 
 // A Metro reporter event. Metro's event union is large and version-dependent, so
 // only the fields this reporter reads are named; the rest ride along untyped.
@@ -46,10 +49,8 @@ function registerOnce(dir: string): void {
 }
 
 export function sharedCacheStores(name = 'app', { FileStore }: { FileStore?: FileStoreCtor } = {}): object[] {
-  // metro-cache is a peer dependency, resolved at call time so this package
-  // still loads on a machine that never installed it (the store can be
-  // injected instead). require() is native at runtime in the built CJS.
-  const Store: FileStoreCtor = FileStore || (require('metro-cache') as { FileStore: FileStoreCtor }).FileStore;
+  // metro-cache is a peer dependency that resolves at call time.
+  const Store: FileStoreCtor = FileStore || (requireFromHere('metro-cache') as { FileStore: FileStoreCtor }).FileStore;
   const root = cacheRoot(name);
   registerOnce(root);
   return [tagSharedStore(new Store({ root }), root)];

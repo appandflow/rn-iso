@@ -96,7 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node 20
+      - name: Set up Node 22
         uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -114,7 +114,7 @@ jobs:
       - name: Install (workspace root)
         run: pnpm install --frozen-lockfile
 
-      - name: Build (dist/cli.js is what the native e2e drives)
+      - name: Build (dist/cli.mjs is what the native e2e drives)
         run: pnpm run build
 
       - run: mkdir -p "$TMPDIR" "$STIM_CLI_BUILD_CACHE"
@@ -197,7 +197,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node 20
+      - name: Set up Node 22
         uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -215,7 +215,7 @@ jobs:
       - name: Install (workspace root)
         run: pnpm install --frozen-lockfile
 
-      - name: Build (dist/cli.js is what the native e2e drives)
+      - name: Build (dist/cli.mjs is what the native e2e drives)
         run: pnpm run build
 
       - run: mkdir -p "$TMPDIR" "$STIM_CLI_BUILD_CACHE"

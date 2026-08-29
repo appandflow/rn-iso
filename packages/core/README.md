@@ -8,6 +8,5 @@ shared caches live (env override > machine config > default), how a build
 cache key is derived, and how a cache registers itself for `stim-cli gc`.
 
 This is an internal dependency of those packages, not a user-facing API --
-install one of them instead. It is deliberately CJS with no dependencies, so
-a `metro.config.js` or an Expo build-cache provider can `require()` it on any
-supported Node.
+install one of them instead. It is ESM-only and has no dependencies. The
+`module-sync` export lets supported Node versions load it through `require()`.

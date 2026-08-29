@@ -27,7 +27,9 @@ tree. Do not restore `init`, project setup mutations, or the deleted
 ## Development
 
 The repository is an npm workspace. Published packages live under `packages/`.
-The CLI is TypeScript, ESM-only, and requires Node.js 22 or later.
+The packages are ESM-only. They require Node.js 20.19.4 or later on Node 20,
+or Node.js 22.12.0 or later. Repository development requires Node.js 22.18.0
+or later because tsdown uses that floor.
 
 ```bash
 npm install
