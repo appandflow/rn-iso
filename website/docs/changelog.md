@@ -28,12 +28,13 @@ specific remedies.
 
 ```bash
 npx skills add appandflow/stim-cli
+npm install --global stim-cli
 
-npx --package=stim-cli stim doctor
-npx --package=stim-cli stim start
-npx --package=stim-cli stim ios              # or: npx --package=stim-cli stim android
-npx --package=stim-cli stim logs --errors
-npx --package=stim-cli stim stop
+stim doctor
+stim start
+stim ios              # or: stim android
+stim logs --errors
+stim stop
 ```
 
 `doctor` reports project settings that can prevent correct or fast builds.
