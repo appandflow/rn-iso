@@ -4,7 +4,7 @@ sidebar_position: 2
 description: '@stim-cli/metro and @stim-cli/expo-build-cache: the shared transform cache and the local Expo build cache'
 ---
 
-Two small packages wire a project's own toolchain into the shared caches. Both are CJS on purpose (they are loaded by `require()` from `metro.config.js` and the Expo CLI), and neither imports stim-cli -- a missing or old CLI never breaks a bundler config or a build.
+Two small ESM packages wire a project's own toolchain into the shared caches. Their `module-sync` exports support `require()` from `metro.config.js` and the Expo CLI. Neither package imports stim-cli, so a missing or old CLI does not break a bundler config or build.
 
 # @stim-cli/metro
 

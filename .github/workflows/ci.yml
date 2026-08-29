@@ -1,7 +1,7 @@
 # Fast, BLOCKING CI. Runs on every push and pull request.
 #
 # Everything provable on a plain Linux box with no Xcode and no Android SDK:
-# lint, format, typecheck, build, the full vitest unit suite (all three
+# lint, format, typecheck, build, the full vitest unit suite (all four
 # packages), and the fast cross-platform e2e (test/e2e/cache-flow.e2e.js), which
 # drives the real CLI and the real cache library end to end with no compiler.
 # The SLOW native builds live in e2e-native.yml, gated so a flaky 15-minute
@@ -26,20 +26,20 @@ jobs:
     name: test (node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
-      # The engines floor is Node 22 (Node 20 is EOL). Prove 22 and the current
-      # LTS line 24. fail-fast off so a break on one still shows the other.
+      # Repository builds require Node 22.18 or later because tsdown uses that
+      # floor. Prove Node 22 and the current LTS line 24.
       fail-fast: false
       matrix:
         node: [22, 24]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node ${{ matrix.node }}
-        uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - name: Set up pnpm and Node ${{ matrix.node }}
+        uses: pnpm/setup@v2
         with:
-          node-version: ${{ matrix.node }}
-          cache: pnpm
+          runtime: node@${{ matrix.node }}
+          cache: true
+          install: false
 
       - name: Install (workspace root)
         run: pnpm install --frozen-lockfile
@@ -53,12 +53,12 @@ jobs:
       - name: Format check (oxfmt)
         run: pnpm run format:check
 
-      # Build every package with tsdown (stim-cli -> dist ESM, the two cache
-      # packages -> dist CJS). Proves the published artifacts compile.
+      # Build every package with tsdown as ESM. Proves the published artifacts
+      # compile.
       #
-      # BEFORE typecheck, and that order is load-bearing. The two cache
-      # packages are CJS and are consumed by stim-cli's suite as
-      # `@stim-cli/expo-build-cache` and `@stim-cli/metro`; their .d.ts files are
+      # BEFORE typecheck, and that order is load-bearing. The cache packages
+      # are consumed by stim-cli's suite as `@stim-cli/expo-build-cache` and
+      # `@stim-cli/metro`; their declaration files are
       # build OUTPUT, so a typecheck that runs first cannot resolve either
       # module and fails with TS2307 on a tree that is perfectly fine.
       - name: Build (tsdown, all packages)
@@ -83,3 +83,27 @@ jobs:
       # no Xcode, no Android SDK.
       - name: Cross-platform e2e
         run: pnpm run test:e2e
+
+  runtime-floor:
+    name: published runtime (node 20.19.4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up build Node
+        uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+          cache: pnpm
+
+      - name: Install and build
+        run: pnpm install --frozen-lockfile && pnpm run build
+
+      - name: Set up runtime Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.4
+
+      - name: Verify published runtime
+        run: node test/runtime-floor.mjs

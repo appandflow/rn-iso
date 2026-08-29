@@ -6,6 +6,9 @@ on:
     paths:
       - 'website/**'
       - 'docs/releases/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -23,16 +26,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - name: Set up pnpm and Node 22
+        uses: pnpm/setup@v2
         with:
-          node-version: 22
-          cache: pnpm
+          runtime: node@22
+          cache: true
+          install: false
       - name: Install
         run: pnpm install --frozen-lockfile --filter website
       - name: Build
-        working-directory: website
-        run: pnpm run build
+        run: pnpm --filter website run build
       - uses: actions/upload-pages-artifact@v3
         with:
           path: website/build

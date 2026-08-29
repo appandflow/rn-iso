@@ -26,7 +26,7 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
-const CLI = join(REPO, 'packages', 'stim-cli', 'dist', 'cli.js');
+const CLI = join(REPO, 'packages', 'stim-cli', 'dist', 'cli.mjs');
 
 const args = parseArgs(process.argv.slice(2));
 const FRAMEWORK = args.framework;

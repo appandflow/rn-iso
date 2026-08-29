@@ -26,20 +26,22 @@ tree. Do not restore `init`, project setup mutations, or the deleted
 
 ## Development
 
-The repository is an npm workspace. Published packages live under `packages/`.
-The CLI is TypeScript, ESM-only, and requires Node.js 22 or later.
+The repository is a pnpm workspace. Published packages live under `packages/`.
+The packages are ESM-only. They require Node.js 20.19.4 or later on Node 20,
+or Node.js 22.12.0 or later. Repository development requires Node.js 22.18.0
+or later because tsdown uses that floor.
 
 ```bash
-npm install
-npm run format:check
-npm run lint
-npm run typecheck
-npm test
-npm run build
+pnpm install
+pnpm run format:check
+pnpm run lint
+pnpm run build
+pnpm run typecheck
+pnpm test
 ```
 
 Use only the checks that apply while iterating. Run all defined checks before a
-commit. Run `npm run test:e2e` when a change affects an end-to-end workflow.
+commit. Run `pnpm run test:e2e` when a change affects an end-to-end workflow.
 
 ## Architecture rules
 

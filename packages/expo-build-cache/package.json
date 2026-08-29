@@ -13,13 +13,14 @@
     "README.md",
     "LICENSE"
   ],
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "require": "./dist/index.js",
-      "default": "./dist/index.js"
+      "types": "./dist/index.d.mts",
+      "module-sync": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
     }
   },
   "scripts": {
@@ -30,6 +31,6 @@
     "@stim-cli/core": "^1.5.0"
   },
   "engines": {
-    "node": ">=22"
+    "node": "^20.19.4 || >=22.12.0"
   }
 }

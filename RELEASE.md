@@ -61,10 +61,11 @@ If anything in the list is breaking, plan to call it out under "Removed
 From `main`, fully up to date with `origin/main`:
 
 ```bash
-pnpm test                                          # all tests pass
-node packages/stim-cli/bin/cli.js --help            # CLI loads cleanly
-node packages/stim-cli/bin/cli.js --version         # matches package.json (0.2.0 shipped with 0.1.0 once)
-git status --short                                # working tree clean
+pnpm run build                                      # generate the published ESM files
+pnpm test                                           # all tests pass
+node packages/stim-cli/dist/cli.mjs --help          # CLI loads cleanly
+node packages/stim-cli/dist/cli.mjs --version       # matches package.json
+git status --short                                  # working tree clean
 ```
 
 If `git status` isn't clean, commit / discard before tagging.
@@ -72,7 +73,7 @@ If `git status` isn't clean, commit / discard before tagging.
 ## 3. Cut the release
 
 1. **Bump the version in lockstep.** All four `package.json` files carry the
-   same number, and `bin/cli.js` reads it from its own `package.json`, so no
+   same number, and `dist/cli.mjs` reads it from its own `package.json`, so no
    source file needs editing:
 
    ```bash

@@ -298,7 +298,6 @@ so stim-cli cannot guess them. The cache names itself instead, once, from code:
 
 ```js
 // A setup script, a build-cache provider -- anywhere that creates the cache.
-// `stim-cli/cache-manifest` is ESM, so a CJS caller needs `await import(...)`.
 import { register } from 'stim-cli/cache-manifest';
 
 register({
@@ -500,7 +499,7 @@ The keys stim-cli reads are `ios.deviceType`, `ios.runtime`, `ios.configuration`
 ## Requirements
 
 - macOS (iOS); macOS or Linux (Android)
-- Node 20+
+- Node 20.19.4 or later on Node 20, or Node 22.12.0 or later
 - Xcode (iOS), Android SDK + at least one installed arm64 system image (Android)
 - `expo` or `react-native` in the project's `package.json`
 
