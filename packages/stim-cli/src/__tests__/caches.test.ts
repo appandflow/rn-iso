@@ -1,4 +1,13 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, existsSync, realpathSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  utimesSync,
+  existsSync,
+  realpathSync,
+  symlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -56,19 +65,21 @@ test('metro file maps are reported as an explicit file list, never as a director
   }
 });
 
-test('discoverCaches reports the Gradle build cache from GRADLE_USER_HOME', () => {
+test('discoverCaches reports the Gradle build cache from GRADLE_USER_HOME as report-only', () => {
   const gradleHome = mkdtempSync(join(tmpdir(), 'stim-cli-gradle-home-'));
   const previous = process.env.GRADLE_USER_HOME;
   const buildCache = join(gradleHome, 'caches', 'build-cache-1');
   mkdirSync(buildCache, { recursive: true });
   try {
     process.env.GRADLE_USER_HOME = gradleHome;
-    const found = discoverCaches().find((c) => c.name === 'Gradle build cache');
+    const caches = discoverCaches({ declared: [buildCache] });
+    const found = caches.find((c) => c.name === 'Gradle build cache');
     expect(found).toMatchObject({
       dir: buildCache,
-      prune: 'entries',
+      prune: 'report-only',
       source: 'detected',
     });
+    expect(caches.filter((c) => c.dir === buildCache)).toHaveLength(1);
   } finally {
     if (previous === undefined) delete process.env.GRADLE_USER_HOME;
     else process.env.GRADLE_USER_HOME = previous;
@@ -76,27 +87,52 @@ test('discoverCaches reports the Gradle build cache from GRADLE_USER_HOME', () =
   }
 });
 
-test('Gradle cache pruning keeps its lock and metadata files', () => {
-  const gradleHome = mkdtempSync(join(tmpdir(), 'stim-cli-gradle-prune-'));
+test('a registration cannot make the shared Gradle build cache deletable', () => {
+  const gradleHome = mkdtempSync(join(tmpdir(), 'stim-cli-gradle-registered-'));
   const previous = process.env.GRADLE_USER_HOME;
   const buildCache = join(gradleHome, 'caches', 'build-cache-1');
+  const alias = join(gradleHome, 'build-cache-alias');
+  const entry = join(buildCache, 'entry');
   mkdirSync(buildCache, { recursive: true });
-  const entry = join(buildCache, '0123456789abcdef0123456789abcdef');
-  const lock = join(buildCache, 'build-cache-1.lock');
-  const metadata = join(buildCache, 'gc.properties');
-  for (const file of [entry, lock, metadata]) {
-    writeFileSync(file, 'x');
-    age(file);
-  }
+  symlinkSync(buildCache, alias, 'dir');
+  writeFileSync(entry, 'x');
+  age(entry);
   try {
     process.env.GRADLE_USER_HOME = gradleHome;
-    const cache = discoverCaches().find((c) => c.name === 'Gradle build cache');
-    assert(cache);
-    const result = pruneCache(cache, { olderThanDays: 30 });
-    expect(result.removed).toBe(1);
-    expect(existsSync(entry)).toBe(false);
-    expect(existsSync(lock)).toBe(true);
-    expect(existsSync(metadata)).toBe(true);
+    register({ dir: alias, name: 'Registered Gradle cache', prune: 'entries' });
+    register({ dir: buildCache, name: 'Duplicate real Gradle cache', prune: 'atomic' });
+    const caches = discoverCaches();
+    const found = caches.find((c) => realpathSync(c.dir) === realpathSync(buildCache));
+    assert(found);
+    expect(found.prune).toBe('report-only');
+    expect(pruneCache(found, { olderThanDays: 30 }).skipped).toMatch(/report-only/);
+    expect(existsSync(entry)).toBe(true);
+    expect(caches.filter((c) => realpathSync(c.dir) === realpathSync(buildCache))).toHaveLength(1);
+  } finally {
+    if (previous === undefined) delete process.env.GRADLE_USER_HOME;
+    else process.env.GRADLE_USER_HOME = previous;
+    rmSync(gradleHome, { recursive: true, force: true });
+  }
+});
+
+test('a declared ancestor cannot delete its protected Gradle build-cache child', () => {
+  const gradleHome = mkdtempSync(join(tmpdir(), 'stim-cli-gradle-parent-'));
+  const previous = process.env.GRADLE_USER_HOME;
+  const cachesRoot = join(gradleHome, 'caches');
+  const buildCache = join(cachesRoot, 'build-cache-1');
+  const entry = join(buildCache, 'entry');
+  mkdirSync(buildCache, { recursive: true });
+  writeFileSync(entry, 'x');
+  age(entry);
+  try {
+    process.env.GRADLE_USER_HOME = gradleHome;
+    const caches = discoverCaches({ declared: [cachesRoot] });
+    const found = caches.find((c) => realpathSync(c.dir) === realpathSync(cachesRoot));
+    assert(found);
+    expect(found.prune).toBe('report-only');
+    expect(pruneCache(found, { olderThanDays: 30 }).skipped).toMatch(/report-only/);
+    expect(existsSync(entry)).toBe(true);
+    expect(caches.some((c) => realpathSync(c.dir) === realpathSync(buildCache))).toBe(false);
   } finally {
     if (previous === undefined) delete process.env.GRADLE_USER_HOME;
     else process.env.GRADLE_USER_HOME = previous;

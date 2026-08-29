@@ -1189,6 +1189,9 @@ SHARED BUILD CACHES
     stim-cli gc --delete --older-than 30   # trim entries nothing has used
     stim-cli gc --delete --all             # empty them whole, index-backed ones
                                          # (the Xcode CAS) included
+  The Gradle build cache under GRADLE_USER_HOME (default ~/.gradle) is
+  report-only because every Gradle build shares it. stim-cli reports its size
+  but never prunes or empties it, including with --older-than or --all.
   Trim rather than empty. Emptying costs the next build in every project the
   time the cache was saving.`,
   },

@@ -177,6 +177,14 @@ test('the cleanup guide documents fail-closed EAS orphan recovery', () => {
   expect(cleanup).not.toMatch(/EAS session and local claim stay/i);
 });
 
+test('the cleanup guide documents that the shared Gradle build cache is report-only', () => {
+  const cleanup = renderTopic('cleanup');
+  assert(cleanup);
+
+  expect(cleanup).toMatch(/Gradle build cache[\s\S]*report-only/i);
+  expect(cleanup).toMatch(/never[^.]*prunes[^.]*empties/i);
+});
+
 test('the guide distinguishes local stop behavior from EAS session teardown', () => {
   const lifecycle = renderTopic('lifecycle');
   assert(lifecycle);

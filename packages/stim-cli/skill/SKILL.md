@@ -119,7 +119,7 @@ Also normal: `npx` may re-download stim-cli on every invocation (`npm warn exec 
 
 **stim-cli needs no setup edits to run.** Runtime state, logs, pidfiles and Xcode DerivedData live under `$STIM_CLI_HOME/workspaces/<project>--<digest>/` (default `~/.stim-cli/workspaces/...`). Gradle keeps its normal project build directories but uses the shared build cache via stim-cli's command line. stim-cli supplies its caches on its own command lines, and `npx stim-cli doctor` reports the handful of things it cannot handle.
 
-These caches never evict themselves. Every `npx stim-cli gc` run reports what they have grown to -- each one tagged _registered_ or _detected_ -- and `gc --delete --older-than <days>` trims the entries nothing has used. Trim rather than empty: `gc --delete --all` empties them whole -- the only way to clear an index-backed cache like Xcode's CAS -- and costs the next build in every project the time the cache was saving.
+These caches can grow substantially. Every `npx stim-cli gc` run reports what they have grown to -- each one tagged _registered_ or _detected_ -- and `gc --delete --older-than <days>` trims the entries nothing has used. Trim rather than empty: `gc --delete --all` empties them whole -- the only way to clear an index-backed cache like Xcode's CAS -- and costs the next build in every project the time the cache was saving. The Gradle build cache under `GRADLE_USER_HOME` (default `~/.gradle`) has Gradle's own retention policy and is report-only to stim-cli: stim-cli reports its size because `--build-cache` contributes to it, but never prunes or empties that directory under any `gc` flags because every Gradle build on the machine shares it.
 
 ## Runtime workspace and fingerprint dependencies
 
