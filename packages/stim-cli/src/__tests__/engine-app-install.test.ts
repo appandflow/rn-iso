@@ -23,6 +23,7 @@ import {
   installAndroidApp,
   installConflictKind,
   installIosApp,
+  iosSchemeApprovalKeys,
   launchAndroidReleaseApp,
   parsePidof,
   parsePsPid,
@@ -98,6 +99,16 @@ describe('the two pure port-wiring shapes', () => {
     expect(devClientUrl('myapp', 8082)).toBe('myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082');
     expect(devClientUrl('scheme', 8081)).toBe('scheme://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081');
   });
+
+  test('iOS scheme approvals cover the bundle id and dev-client scheme without duplicates', () => {
+    expect(iosSchemeApprovalKeys('com.example.app', 'myapp')).toEqual([
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
+    ]);
+    expect(iosSchemeApprovalKeys('com.example.app', 'com.example.app')).toEqual([
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
+    ]);
+  });
 });
 
 describe('ios', () => {
@@ -115,6 +126,64 @@ describe('ios', () => {
     expect(result.reason).toMatch(/device not booted/);
   });
 
+  test('installIosApp approves the exact app and scheme after installation', () => {
+    const exec = recordingExec();
+    const appPath = '/tmp/My App.app';
+    expect(
+      installIosApp(
+        {
+          udid: 'U1',
+          appPath,
+          bundleId: 'com.example.app',
+          devClientScheme: 'myapp',
+        },
+        { exec },
+      ),
+    ).toEqual({ ok: true, appPath });
+    expect(exec.calls).toEqual([
+      ['xcrun', 'simctl', 'install', 'U1', appPath],
+      [
+        'xcrun',
+        'simctl',
+        'spawn',
+        'U1',
+        'defaults',
+        'write',
+        'com.apple.launchservices.schemeapproval',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
+        '-string',
+        'com.example.app',
+      ],
+      [
+        'xcrun',
+        'simctl',
+        'spawn',
+        'U1',
+        'defaults',
+        'write',
+        'com.apple.launchservices.schemeapproval',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
+        '-string',
+        'com.example.app',
+      ],
+    ]);
+  });
+
+  test('a failed scheme approval reports a failed install result', () => {
+    const exec = recordingExec({ fail: 'schemeapproval' });
+    const result = installIosApp(
+      {
+        udid: 'U1',
+        appPath: '/tmp/My App.app',
+        bundleId: 'com.example.app',
+        devClientScheme: 'myapp',
+      },
+      { exec },
+    );
+    expect(result.code).toBe(INSTALL_ERROR);
+    expect(result.reason).toMatch(/preapprove/);
+  });
+
   test('launchIosApp writes RCT_jsLocation before launching, bare RN path', () => {
     const exec = recordingExec();
     const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
@@ -126,7 +195,7 @@ describe('ios', () => {
     ]);
   });
 
-  test('launchIosApp opens the dev-client URL when a scheme is given, still after the defaults write', () => {
+  test('launchIosApp opens the preapproved dev-client URL after the RCT defaults write', () => {
     const exec = recordingExec();
     const result = launchIosApp(
       { udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
@@ -522,7 +591,7 @@ describe('verifyLaunch', () => {
 });
 
 describe('unverifiedLaunchLines', () => {
-  test('iOS names the picker, the iOS 26 alert, and the exact command to retry', () => {
+  test('iOS names the picker and the exact command to retry without an alert step', () => {
     const url = devClientUrl('io.tlon.groups', 8082);
     const text = unverifiedLaunchLines({
       platform: 'ios',
@@ -534,7 +603,7 @@ describe('unverifiedLaunchLines', () => {
     }).join('\n');
     expect(text).toMatch(/DEVELOPMENT SERVERS/);
     expect(text).toMatch(/localhost:8082/);
-    expect(text).toMatch(/Open in/);
+    expect(text).not.toMatch(/Open in/);
     expect(text).toMatch(/xcrun simctl openurl BF2A1C3D/);
     expect(text.includes(url)).toBeTruthy();
   });
@@ -569,20 +638,13 @@ describe('unverifiedLaunchLines: the action comes first', () => {
     });
   }
 
-  test('confirming the alert is step one, the picker is next, the retry is last', () => {
+  test('the picker is first and the retry is last', () => {
     const lines = iosLines();
-    const alert = lines.findIndex((l) => /confirm it with your device tool/.test(l));
     const picker = lines.findIndex((l) => /DEVELOPMENT SERVERS/.test(l));
     const retry = lines.findIndex((l) => /simctl openurl/.test(l));
-    expect(alert !== -1 && picker !== -1 && retry !== -1).toBeTruthy();
-    expect(alert < picker).toBeTruthy();
+    expect(picker !== -1 && retry !== -1).toBeTruthy();
     expect(picker < retry).toBeTruthy();
-    expect(lines[alert]).toMatch(/every first launch/);
-  });
-
-  test('the retry is conditioned on there being no alert, so it cannot loop', () => {
-    const retry = iosLines().find((l) => /simctl openurl/.test(l));
-    expect(retry).toMatch(/only if no alert is showing/i);
+    expect(lines.some((line) => /alert|Open in/.test(line))).toBe(false);
   });
 
   test('the picker line still carries THIS workspace port, from the facts', () => {

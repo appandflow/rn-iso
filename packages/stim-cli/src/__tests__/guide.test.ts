@@ -101,6 +101,18 @@ test('the Metro guide documents explicit remote intent and the local default', (
   expect(body).toMatch(/metro\.tunnel[^.]*provider/i);
 });
 
+test('the guide and skill document scoped iOS dev-client preapproval', () => {
+  const facts = renderTopic('facts');
+  assert(facts);
+  expect(facts).toMatch(/preapproves[^.]*CoreSimulatorBridge[^.]*bundle id[^.]*scheme/i);
+  expect(facts).toMatch(/unrelated schemes remain[^.]*unapproved/i);
+  expect(facts).not.toMatch(/confirmation alert[^.]*every first launch/i);
+
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  expect(skill).toMatch(/preapproves CoreSimulatorBridge[^.]*bundle id[^.]*scheme/i);
+  expect(skill).toMatch(/unrelated schemes remain unapproved/i);
+});
+
 test('the guide keeps Metro intent separate from the explicit device backend', () => {
   const lifecycle = renderTopic('lifecycle');
   const settings = renderTopic('settings');

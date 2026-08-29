@@ -1096,8 +1096,9 @@ async function finishIosRun({
   }
   phase('device', `${deviceLabel(device, udid)} booted ${bootDuration()}`);
 
+  const scheme = release ? undefined : d.devClientScheme(root, appPath);
   const installTimer = stepTimer(d.now);
-  const installed = d.installIosApp({ udid, appPath: appPath! });
+  const installed = d.installIosApp({ udid, appPath: appPath!, bundleId, devClientScheme: scheme });
   if (installed?.failed) {
     return fail({
       code: installed.code || 'STIM_CLI_INSTALL_FAILED',
@@ -1114,7 +1115,6 @@ async function finishIosRun({
     } catch {}
   }
 
-  const scheme = release ? undefined : d.devClientScheme(root, appPath);
   const launchTimer = stepTimer(d.now);
   const launchedAt = d.now();
   const launched = d.launchIosApp({ udid, bundleId: bundleId!, metroPort, devClientScheme: scheme });
