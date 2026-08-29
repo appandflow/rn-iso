@@ -101,7 +101,7 @@ If `git status` isn't clean, commit / discard before tagging.
 
 2. **Refresh the skill's version stamp.** The last line of
    `packages/stim-cli/skill/SKILL.md` names the version it was synced with;
-   update it to X.Y.Z (agents compare it against `npx stim-cli --version` to
+   update it to X.Y.Z (agents compare it against `npx --package=stim-cli stim --version` to
    detect a stale skill copy).
 3. **Verify each npm tarball** ships only what should ship, and that each one
    carries its own README (a package with no `README.md` in its own directory
@@ -174,7 +174,7 @@ If `git status` isn't clean, commit / discard before tagging.
 
 8. **Smoke-test the published versions** from a scratch directory:
    ```bash
-   cd /tmp && npx stim-cli@latest --version
+   cd /tmp && npx --package=stim-cli@latest stim --version
    npm view stim-cli readme | head -c 200        # NOT "No README data found!"
    npm view @stim-cli/expo-build-cache version   # same number as stim-cli
    npm view @stim-cli/metro version              # same number as stim-cli

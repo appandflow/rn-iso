@@ -4,7 +4,7 @@ sidebar_position: 1
 description: 'What breaks when coding agents share one machine, and what stim-cli does about it'
 ---
 
-The React Native / Expo CLI for AI agents. One isolated dev environment per project or worktree: `stim-cli start` runs the dev server on a reserved, collision-free Metro port under a detached supervisor; `stim-cli ios` / `stim-cli android` boot a dedicated, **owned** simulator/emulator, install a build from a shared fingerprint cache when nothing native changed, and launch the app wired to that port; `stim-cli logs --errors` answers "did that work" from a captured timeline instead of a scraped terminal. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
+The React Native / Expo CLI for AI agents. One isolated dev environment per project or worktree: `stim start` runs the dev server on a reserved, collision-free Metro port under a detached supervisor; `stim ios` / `stim android` boot a dedicated, **owned** simulator/emulator, install a build from a shared fingerprint cache when nothing native changed, and launch the app wired to that port; `stim logs --errors` answers "did that work" from a captured timeline instead of a scraped terminal. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
 
 It never prompts, prints on the order of ten lines, takes `--json` everywhere, and reports a failing build as the _extracted_ compiler diagnostic plus a log path rather than four thousand lines of transcript.
 

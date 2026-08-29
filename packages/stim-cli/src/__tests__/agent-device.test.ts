@@ -114,7 +114,7 @@ describe('argv', () => {
     expect(args).not.toContain('');
   });
 
-  test('open relaunches, so a second stim-cli ios does not attach to a stale process', () => {
+  test('open relaunches, so a second stim ios does not attach to a stale process', () => {
     expect(openArgs(profilePath, 'com.example.app', null)).toContain('--relaunch');
   });
 });

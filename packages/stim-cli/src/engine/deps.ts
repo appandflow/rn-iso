@@ -223,7 +223,7 @@ export async function runPodInstall(
       failed: true,
       code: DEPS_ERROR,
       reason: `No ios/ directory in ${root}, so there is nothing to pod install.`,
-      remedy: 'Run `stim-cli ios` on a project with native iOS sources, or let prebuild generate them.',
+      remedy: 'Run `stim ios` on a project with native iOS sources, or let prebuild generate them.',
       lastLines: [] as string[],
     };
   }

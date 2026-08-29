@@ -26,7 +26,7 @@ export function registerMetroStore(storeRoot: string): void {
       name: 'Metro transform cache',
       prune: 'entries',
       entriesDepth: 2,
-      note: 'shared Metro transforms, installed by stim-cli start; no eviction of its own',
+      note: 'shared Metro transforms, installed by stim start; no eviction of its own',
     });
   } catch {}
 }

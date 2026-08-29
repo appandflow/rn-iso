@@ -115,7 +115,7 @@ function ensureOwnedIosDevice({
         if (mismatch) {
           throw new Error(
             `${mismatch}. stim-cli will not silently boot a different model. ` +
-              'Run `stim-cli worktree remove` (or `stim-cli gc --delete`) to reap the current sim, then `stim-cli ios` again to create the requested one.',
+              'Run `stim worktree remove` (or `stim gc --delete`) to reap the current sim, then `stim ios` again to create the requested one.',
           );
         }
         if (sim.state !== 'Booted') {
@@ -137,7 +137,7 @@ function ensureOwnedIosDevice({
           );
           note(
             chalk.dim(
-              'Boot it yourself, or run `stim-cli gc --delete` to clear the assignment so stim-cli can create an owned sim.',
+              'Boot it yourself, or run `stim gc --delete` to clear the assignment so stim-cli can create an owned sim.',
             ),
           );
         }
@@ -232,7 +232,7 @@ async function ensureOwnedAndroidDevice({
           );
           note(
             chalk.dim(
-              'Boot it yourself, or run `stim-cli gc --delete` to clear the assignment so stim-cli can create an owned AVD.',
+              'Boot it yourself, or run `stim gc --delete` to clear the assignment so stim-cli can create an owned AVD.',
             ),
           );
         }
@@ -391,7 +391,7 @@ export function deviceCapacityRefusal({
   return {
     code: 'STIM_CLI_AT_CAPACITY',
     message: `${count} stim-cli device(s) are already booted and concurrency.maxDevices is ${max}, so booting another would exceed the cap.`,
-    remedy: 'stop an environment (stim-cli stop) or raise concurrency.maxDevices',
+    remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
   };
 }
 
@@ -494,7 +494,7 @@ async function ensureIosBooted({
   if (resolved.missing) {
     return {
       failed: true,
-      reason: `Simulator ${udid} no longer exists. Run \`stim-cli ios\` again to create a fresh owned sim.`,
+      reason: `Simulator ${udid} no longer exists. Run \`stim ios\` again to create a fresh owned sim.`,
     };
   }
   if (resolved.notOwned) {
@@ -552,7 +552,7 @@ async function ensureAndroidBooted({
   if (resolved.missing) {
     return {
       failed: true,
-      reason: `AVD ${device.avdName} no longer exists. Run \`stim-cli android\` again to create a fresh owned AVD.`,
+      reason: `AVD ${device.avdName} no longer exists. Run \`stim android\` again to create a fresh owned AVD.`,
     };
   }
   if (resolved.notOwned) {

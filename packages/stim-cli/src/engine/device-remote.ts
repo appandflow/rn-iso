@@ -207,7 +207,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
             failed: true,
             code: 'STIM_CLI_REMOTE_PLATFORM_MISMATCH',
             reason: `Session ${recorded.sessionId} belongs to ${recorded.platform ?? 'an unknown platform'}, not ${ctx.platform ?? 'ios'}.`,
-            remedy: 'Run `stim-cli stop` for this workspace before selecting a different remote platform.',
+            remedy: 'Run `stim stop` for this workspace before selecting a different remote platform.',
           };
         }
         if (recorded) {
@@ -224,7 +224,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
                 failed: true,
                 code: 'STIM_CLI_REMOTE_SESSION_CLEANUP',
                 reason: cleanup.reason ?? `Could not verify recorded EAS session ${recorded.sessionId}.`,
-                remedy: 'Inspect the recorded session, then run `stim-cli stop` again.',
+                remedy: 'Inspect the recorded session, then run `stim stop` again.',
               };
             }
             clearRemoteSession(ctx.root, recorded.sessionId);
@@ -417,7 +417,7 @@ export async function resolveRemoteContext({
   if (!agentDeviceBin) {
     return {
       failed: 'agent-device is not on PATH, and it is what drives a remote device.',
-      remedy: `Install it (\`npm i -g agent-device\`), then run \`stim-cli ${platform} --remote ${backend}\` again.`,
+      remedy: `Install it (\`npm i -g agent-device\`), then run \`stim ${platform} --remote ${backend}\` again.`,
     };
   }
 
@@ -928,7 +928,7 @@ export async function ensureMetroReachable({
       return {
         failed:
           "This workspace's Metro tunnels itself (metro.tunnel is expo, or auto on an Expo project), but no Expo tunnel URL is recorded.",
-        remedy: 'Run `stim-cli start --remote` so Expo can establish its own tunnel before a remote device connects.',
+        remedy: 'Run `stim start --remote` so Expo can establish its own tunnel before a remote device connects.',
       };
     }
     resolvedUrl = recorded.url;
@@ -947,7 +947,7 @@ export async function ensureMetroReachable({
     } else {
       return {
         failed: `No live managed Metro tunnel is recorded for port ${port}.`,
-        remedy: 'Run `stim-cli start --remote`, then retry the device command.',
+        remedy: 'Run `stim start --remote`, then retry the device command.',
       };
     }
     gate = true;

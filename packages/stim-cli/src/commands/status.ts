@@ -175,7 +175,7 @@ export default function statusCommand(program: Command): void {
           const which = tight.map((v) => v.volume).join(' and ');
           console.log(
             chalk.yellow(
-              `${line} A single iOS build can exhaust ${which} -- run \`stim-cli gc\` before starting another environment.`,
+              `${line} A single iOS build can exhaust ${which} -- run \`stim gc\` before starting another environment.`,
             ),
           );
         } else {

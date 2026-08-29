@@ -33,13 +33,12 @@ export function createHarness({ env, cliPath, label }) {
 
   const cliJson = (argv, opts = {}) => {
     const r = cli(argv, opts);
-    if (r.code !== 0)
-      throw new Error(`stim-cli ${argv.join(' ')} failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
+    if (r.code !== 0) throw new Error(`stim ${argv.join(' ')} failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
     const line = r.stdout.trim().split('\n').findLast(Boolean);
     try {
       return JSON.parse(line);
     } catch {
-      throw new Error(`stim-cli ${argv.join(' ')} did not emit a JSON line on stdout:\n${r.stdout}`);
+      throw new Error(`stim ${argv.join(' ')} did not emit a JSON line on stdout:\n${r.stdout}`);
     }
   };
 
@@ -55,8 +54,8 @@ export function createHarness({ env, cliPath, label }) {
 
 export function preflight(h, platform) {
   const v = h.cli(['--version'], { allowFail: true });
-  assert(v.code === 0, `stim-cli CLI does not run: ${v.stderr}`);
-  h.log(`stim-cli ${v.stdout.trim()}`);
+  assert(v.code === 0, `stim CLI does not run: ${v.stderr}`);
+  h.log(`stim ${v.stdout.trim()}`);
   if (platform === 'ios') {
     if (process.platform !== 'darwin') h.die('ios variant requires macOS + Xcode; this is not a macOS host.', 2);
     h.requireTool('xcrun', ['--version']);

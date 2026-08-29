@@ -55,8 +55,8 @@ export function checkDevClient(pkg: AnyJson | null, isExpo: boolean = true): Fin
   return finding(
     'cost',
     'expo-dev-client is not installed',
-    'A Metro port reserved by stim-cli cannot reach the app without it: the port travels in the dev-client deep link `stim-cli ios` opens, and without the dev client nothing handles that URL. The app falls back to port 8081 and shows "No script URL provided".',
-    'npx expo install expo-dev-client, then rebuild with `stim-cli ios` / `stim-cli android`. It is a NATIVE dependency: an app already on the device will not pick it up, and the first build after installing it is a cache miss by design because the native fingerprint moved. Do not solve this by compiling the port in (RCT_METRO_PORT, or the dev client defaultLaunchURL) -- the build cache does not key on the port, so a binary built for one workspace would silently talk to another workspace bundler.',
+    'A Metro port reserved by stim-cli cannot reach the app without it: the port travels in the dev-client deep link `stim ios` opens, and without the dev client nothing handles that URL. The app falls back to port 8081 and shows "No script URL provided".',
+    'npx expo install expo-dev-client, then rebuild with `stim ios` / `stim android`. It is a NATIVE dependency: an app already on the device will not pick it up, and the first build after installing it is a cache miss by design because the native fingerprint moved. Do not solve this by compiling the port in (RCT_METRO_PORT, or the dev client defaultLaunchURL) -- the build cache does not key on the port, so a binary built for one workspace would silently talk to another workspace bundler.',
   );
 }
 
@@ -69,7 +69,7 @@ export function checkMetroCache(metroConfigSource: string | null): Finding | nul
   return finding(
     'note',
     'metro.config.js mentions cacheStores, but not unconditionally',
-    `Every line naming it is inside a conditional, and doctor reads this file rather than executing it, so it cannot tell whether the store is installed. Under \`stim-cli start\` this costs nothing -- stim-cli appends its own store whether the project's is on or off -- but outside stim-cli a cacheStores that is off by default costs exactly what having none costs: ${mentions.map((l) => l.trim()).join(' / ')}`,
+    `Every line naming it is inside a conditional, and doctor reads this file rather than executing it, so it cannot tell whether the store is installed. Under \`stim start\` this costs nothing -- stim-cli appends its own store whether the project's is on or off -- but outside stim-cli a cacheStores that is off by default costs exactly what having none costs: ${mentions.map((l) => l.trim()).join(' / ')}`,
     'Only for Metro runs stim-cli does not host: confirm it applies without env vars -- a store behind an opt-in flag is not shared until every workspace sets the flag.',
   );
 }
@@ -112,7 +112,7 @@ export function checkCcacheConflict(podfileSource: string | null, podfilePropert
     'cost',
     'ccache is enabled, so stim-cli leaves Xcode compilation caching off',
     'The ccache launcher script is what disables explicitly built modules, which compilation caching requires -- so enabling both tends to mean neither works. stim-cli will not add its compilation-cache settings to a build whose project has apple.ccacheEnabled=true, and ccache itself keys on absolute paths, so it misses across worktrees anyway.',
-    'Pick one, and on Xcode 26 the compilation cache is the one that survives a different workspace path -- stim-cli supplies it on its own builds as soon as ccache is off. Turn it off where the value comes FROM: on Expo that is the expo-build-properties plugin in the app config (ios.ccacheEnabled), because prebuild rewrites ios/Podfile.properties.json from it; on a bare project edit ios/Podfile.properties.json directly. Then re-run pod install (or let `stim-cli ios` do it).',
+    'Pick one, and on Xcode 26 the compilation cache is the one that survives a different workspace path -- stim-cli supplies it on its own builds as soon as ccache is off. Turn it off where the value comes FROM: on Expo that is the expo-build-properties plugin in the app config (ios.ccacheEnabled), because prebuild rewrites ios/Podfile.properties.json from it; on a bare project edit ios/Podfile.properties.json directly. Then re-run pod install (or let `stim ios` do it).',
   );
 }
 
@@ -127,7 +127,7 @@ export function checkBuildCacheProvider(
     return finding(
       'note',
       `Cannot check the build cache provider in ${dynamicConfig}`,
-      'This config is code, so it is not readable without executing it. A provider is optional -- stim-cli ios/android have their own cache -- but if this project DOES set one, confirm by hand that it is on the key this SDK reads.',
+      'This config is code, so it is not readable without executing it. A provider is optional -- stim ios/android have their own cache -- but if this project DOES set one, confirm by hand that it is on the key this SDK reads.',
       `${
         sdkMajor && sdkMajor <= 53
           ? `SDK ${sdkMajor} reads expo.experiments.buildCacheProvider and ignores the top-level key in silence.`
@@ -230,7 +230,7 @@ export function checkConcurrency({
     'note',
     'Concurrency limits are set',
     `${caps}. Right now ${liveDevices} stim-cli device(s) are booted and ${activeBuilds} build slot(s) are in use on this machine. ` +
-      'At the device cap a new `stim-cli ios`/`android` is refused with STIM_CLI_AT_CAPACITY (stop an environment or raise it); ' +
+      'At the device cap a new `stim ios`/`android` is refused with STIM_CLI_AT_CAPACITY (stop an environment or raise it); ' +
       'at the build cap a compile waits for a free slot.',
     null,
   );
@@ -253,7 +253,7 @@ export function checkRemoteDevice({
     return finding(
       'cost',
       'A remote device is configured, but agent-device is missing',
-      `agent-device drives the selected remote backend. Without it, \`stim-cli ios --remote ${configured}\` and \`stim-cli android --remote ${configured}\` refuse before device work.`,
+      `agent-device drives the selected remote backend. Without it, \`stim ios --remote ${configured}\` and \`stim android --remote ${configured}\` refuse before device work.`,
       'npm i -g agent-device',
     );
   }

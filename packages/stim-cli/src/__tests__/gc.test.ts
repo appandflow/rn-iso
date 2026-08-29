@@ -345,7 +345,7 @@ function installExecutor() {
 async function cli(args: string[] = []) {
   const program = new Command();
   gcCommand(program);
-  await program.parseAsync(['node', 'stim-cli', 'gc', ...args]);
+  await program.parseAsync(['node', 'stim', 'gc', ...args]);
 }
 
 async function sweepingGc(opts = {}) {
@@ -2014,7 +2014,7 @@ test('rejects a non-numeric --older-than instead of silently skipping every entr
   const program = new Command();
   program.exitOverride();
   gcCommand(program);
-  await expect(() => program.parseAsync(['node', 'stim-cli', 'gc', '--older-than', 'lastweek'])).rejects.toThrow(
+  await expect(() => program.parseAsync(['node', 'stim', 'gc', '--older-than', 'lastweek'])).rejects.toThrow(
     /must be a whole number of days/,
   );
 });

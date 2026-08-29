@@ -336,10 +336,10 @@ export function emulatorFailureRemedy(lines: string[]): string {
   if (/not enough space|no space left|disk (?:is )?full/i.test(text)) {
     return (
       'Free disk space at the AVD directory named above (the emulator says how much it needs), ' +
-      'then run `stim-cli android` again.'
+      'then run `stim android` again.'
     );
   }
-  return 'Fix what the emulator reported above, then run `stim-cli android` again.';
+  return 'Fix what the emulator reported above, then run `stim android` again.';
 }
 
 // runQuiet returns null whenever the command fails, which is the normal state

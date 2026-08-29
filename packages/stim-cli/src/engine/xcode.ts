@@ -12,7 +12,7 @@ import { cleanLine } from '../supervisor/server-expo.ts';
 const IOS_DIR = 'ios';
 
 const PREBUILD_REMEDY =
-  'Generate it with `npx expo prebuild -p ios` (stim-cli ios does this automatically for an Expo project with no ios/ directory), or commit the native project.';
+  'Generate it with `npx expo prebuild -p ios` (stim ios does this automatically for an Expo project with no ios/ directory), or commit the native project.';
 
 interface XcodeProject {
   kind?: string;

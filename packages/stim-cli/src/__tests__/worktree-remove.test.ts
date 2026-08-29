@@ -1022,7 +1022,7 @@ test('action: a path inside no worktree at all is still refused, pointing at git
   expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
   const text = errs.join('\n');
   expect(text).toMatch(/git worktree list/);
-  expect(!/stim-cli worktree list/.test(text)).toBeTruthy();
+  expect(!/stim worktree list/.test(text)).toBeTruthy();
 });
 
 test('action: the dirty-tree remedy names the real worktree, not a placeholder', async () => {

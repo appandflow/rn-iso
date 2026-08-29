@@ -457,7 +457,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                       failed: {
                         code: 'STIM_CLI_REMOTE_START_REQUIRED',
                         message: `A different managed Metro tunnel is already running for this workspace.`,
-                        remedy: 'Run `stim-cli stop`, then `stim-cli start --remote`.',
+                        remedy: 'Run `stim stop`, then `stim start --remote`.',
                       },
                     };
                   }
@@ -485,7 +485,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                       failed: {
                         code: 'STIM_CLI_REMOTE_START_REQUIRED',
                         message: `The dev server on port ${port} is local-only and cannot gain a managed tunnel while it is running.`,
-                        remedy: 'Run `stim-cli stop`, then `stim-cli start --remote`.',
+                        remedy: 'Run `stim stop`, then `stim start --remote`.',
                       },
                     };
                   }
@@ -531,7 +531,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                         remedy:
                           stopped.status === 'failed'
                             ? `Cleanup failed. Unmanaged pid ${record.pid} may still be running: ${stopped.reason ?? 'unknown error'}`
-                            : 'The tunnel process was stopped. Fix the workspace write error, then retry `stim-cli start --remote`.',
+                            : 'The tunnel process was stopped. Fix the workspace write error, then retry `stim start --remote`.',
                       },
                     };
                   }
@@ -552,7 +552,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                         failed: {
                           code: 'STIM_CLI_REMOTE_START_REQUIRED',
                           message: `The dev server on port ${port} started before the managed tunnel was ready.`,
-                          remedy: `Tunnel cleanup failed for pid ${tracking.record.pid}: ${stopped.reason ?? 'unknown error'}. The tunnel record remains available to \`stim-cli stop\`.`,
+                          remedy: `Tunnel cleanup failed for pid ${tracking.record.pid}: ${stopped.reason ?? 'unknown error'}. The tunnel record remains available to \`stim stop\`.`,
                         },
                       };
                     }
@@ -561,7 +561,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                       failed: {
                         code: 'STIM_CLI_REMOTE_START_REQUIRED',
                         message: `The dev server on port ${port} started before the managed tunnel was ready.`,
-                        remedy: 'Run `stim-cli stop`, then `stim-cli start --remote`.',
+                        remedy: 'Run `stim stop`, then `stim start --remote`.',
                       },
                     };
                   }
@@ -576,7 +576,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                         failed: {
                           code: 'STIM_CLI_REMOTE_METRO_UNREACHABLE',
                           message: `The managed ${tracking.record.provider} tunnel exited before the supervisor started.`,
-                          remedy: `Cleanup failed. Unmanaged pid ${tracking.record.pid} may still be running: ${stopped.reason ?? 'unknown error'}. The tunnel record remains available to \`stim-cli stop\`.`,
+                          remedy: `Cleanup failed. Unmanaged pid ${tracking.record.pid} may still be running: ${stopped.reason ?? 'unknown error'}. The tunnel record remains available to \`stim stop\`.`,
                         },
                       };
                     }
@@ -586,7 +586,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                     failed: {
                       code: 'STIM_CLI_REMOTE_METRO_UNREACHABLE',
                       message: `The managed ${tracking.record.provider} tunnel exited before the supervisor started.`,
-                      remedy: 'Retry `stim-cli start --remote`.',
+                      remedy: 'Retry `stim start --remote`.',
                     },
                   };
                 }
@@ -599,7 +599,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                     failed: {
                       code: 'STIM_CLI_SUPERVISOR_EXITED',
                       message: `Could not spawn the dev server supervisor: ${(err as Error)?.message || err}`,
-                      remedy: 'Fix the spawn error, then retry `stim-cli start --remote`.',
+                      remedy: 'Fix the spawn error, then retry `stim start --remote`.',
                     },
                   };
                 }
@@ -620,7 +620,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                         code: 'STIM_CLI_SUPERVISOR_EXITED',
                         message: `Could not record supervisor pid ${child.pid ?? 'unknown'} before releasing the managed start lock.`,
                         remedy: stopped
-                          ? 'The supervisor process was stopped. Retry `stim-cli start --remote`.'
+                          ? 'The supervisor process was stopped. Retry `stim start --remote`.'
                           : `Cleanup failed. Unmanaged supervisor pid ${child.pid ?? 'unknown'} may still be running. Stop it before retrying.`,
                       },
                     };
@@ -632,7 +632,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
               return fail({
                 code: 'STIM_CLI_REMOTE_METRO_UNREACHABLE',
                 message: `Could not acquire the managed Metro tunnel lock: ${(err as Error)?.message || err}`,
-                remedy: 'Retry `stim-cli start --remote` after the other start command finishes.',
+                remedy: 'Retry `stim start --remote` after the other start command finishes.',
               });
             }
             if ('failed' in acquisition) {
@@ -656,8 +656,8 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             message: `The managed ${record.provider} tunnel exited before the dev server became ready.`,
             remedy:
               stopped.status === 'failed'
-                ? `The tunnel cleanup also failed: ${stopped.reason ?? 'unknown error'}. Run \`stim-cli stop\`, then retry.`
-                : 'Run `stim-cli stop`, then `stim-cli start --remote`.',
+                ? `The tunnel cleanup also failed: ${stopped.reason ?? 'unknown error'}. Run \`stim stop\`, then retry.`
+                : 'Run `stim stop`, then `stim start --remote`.',
           });
         };
 
@@ -666,7 +666,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             fail({
               code: 'STIM_CLI_REMOTE_START_REQUIRED',
               message: `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`,
-              remedy: 'Run `stim-cli stop`, then `stim-cli start --remote`.',
+              remedy: 'Run `stim stop`, then `stim start --remote`.',
             });
           }
         };
@@ -690,9 +690,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                 message: stillLive
                   ? `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`
                   : `The Expo dev server on port ${port} stopped before its tunnel became ready.`,
-                remedy: stillLive
-                  ? 'Run `stim-cli stop`, then `stim-cli start --remote`.'
-                  : 'Run `stim-cli start --remote` again.',
+                remedy: stillLive ? 'Run `stim stop`, then `stim start --remote`.' : 'Run `stim start --remote` again.',
               });
             }
             supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
@@ -725,7 +723,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
               code: 'STIM_CLI_METRO_TIMEOUT',
               message: `Supervisor pid ${supervisor.pid} did not serve port ${port} within ${waitSeconds}s.`,
               lines: logTailLines(logFile),
-              remedy: 'Run `stim-cli stop` to halt it, then `stim-cli start` again.',
+              remedy: 'Run `stim stop` to halt it, then `stim start` again.',
             });
           }
           if (tunnel) {
@@ -745,9 +743,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                 message: stillLive
                   ? `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`
                   : `The Expo dev server on port ${port} stopped before its tunnel became ready.`,
-                remedy: stillLive
-                  ? 'Run `stim-cli stop`, then `stim-cli start --remote`.'
-                  : 'Run `stim-cli start --remote` again.',
+                remedy: stillLive ? 'Run `stim stop`, then `stim start --remote`.' : 'Run `stim start --remote` again.',
               });
             }
           }
@@ -786,15 +782,13 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
                   code: 'STIM_CLI_SUPERVISOR_EXITED',
                   message: `The supervisor exited (${how}) before the dev server came up on port ${port}.`,
                   lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
-                  remedy:
-                    'Fix the error above and run `stim-cli start` again; `stim-cli logs --errors` has the full records.',
+                  remedy: 'Fix the error above and run `stim start` again; `stim logs --errors` has the full records.',
                 }
               : {
                   code: 'STIM_CLI_METRO_TIMEOUT',
                   message: `The dev server did not answer on port ${port} within ${waitSeconds}s.`,
                   lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
-                  remedy:
-                    'It may still be starting. Run `stim-cli stop` to halt it, or `stim-cli logs` to follow along.',
+                  remedy: 'It may still be starting. Run `stim stop` to halt it, or `stim logs` to follow along.',
                 },
           );
         }
@@ -814,7 +808,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
               message: gone
                 ? `The supervisor exited before the Expo tunnel became ready on port ${port}.`
                 : `Expo did not report a tunnel URL within ${waitSeconds}s.`,
-              remedy: 'Run `stim-cli stop`, then `stim-cli start --remote`.',
+              remedy: 'Run `stim stop`, then `stim start --remote`.',
             });
           }
         }
@@ -837,14 +831,14 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           return fail({
             code: 'STIM_CLI_WORKTREE_REMOVAL_IN_PROGRESS',
             message: `The worktree at ${worktreeRoot} is being removed.`,
-            remedy: 'Retry `stim-cli start --remote` after `stim-cli worktree remove` finishes.',
+            remedy: 'Retry `stim start --remote` after `stim worktree remove` finishes.',
           });
         }
         if (lockError === 'timeout') {
           return fail({
             code: 'STIM_CLI_REMOTE_METRO_UNREACHABLE',
             message: `Could not acquire the managed remote worktree lock: ${(err as Error)?.message || err}`,
-            remedy: 'Retry `stim-cli start --remote` after the other remote start command finishes.',
+            remedy: 'Retry `stim start --remote` after the other remote start command finishes.',
           });
         }
         throw err;
@@ -937,8 +931,7 @@ export function failureEvidence({
   for (const r of recent) {
     lines.push(`${String(r.src ?? '?')}: ${String(r.msg ?? '').split('\n')[0] ?? ''}`);
   }
-  if (recent.length > 0)
-    lines.push(fellBack ? 'Full records: `stim-cli logs`' : 'Full records: `stim-cli logs --errors`');
+  if (recent.length > 0) lines.push(fellBack ? 'Full records: `stim logs`' : 'Full records: `stim logs --errors`');
   return lines;
 }
 

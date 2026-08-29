@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/appandflow/stim-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/appandflow/stim-cli/actions/workflows/ci.yml)
 
-The React Native / Expo CLI for AI agents. One isolated dev environment per project or worktree: `stim-cli start` runs the dev server on a reserved, collision-free Metro port under a detached supervisor; `stim-cli ios` / `stim-cli android` boot a dedicated, **owned** simulator/emulator, install a build from a shared fingerprint cache when nothing native changed, and launch the app wired to that port; `stim-cli logs --errors` answers "did that work" from a captured timeline instead of a scraped terminal. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
+The React Native / Expo CLI for AI agents. One isolated dev environment per project or worktree: `stim start` runs the dev server on a reserved, collision-free Metro port under a detached supervisor; `stim ios` / `stim android` boot a dedicated, **owned** simulator/emulator, install a build from a shared fingerprint cache when nothing native changed, and launch the app wired to that port; `stim logs --errors` answers "did that work" from a captured timeline instead of a scraped terminal. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
 
 It never prompts, prints on the order of ten lines, takes `--json` everywhere, and reports a failing build as the _extracted_ compiler diagnostic plus a log path rather than four thousand lines of transcript.
 
@@ -53,20 +53,20 @@ The registry lives in `~/.stim-cli/config.json`, keyed by absolute project path,
 
 ## Quick start
 
-Run via `npx` from any RN/Expo project directory -- no install needed:
+The package exports only the `stim` executable. Run it via `npx` from any RN/Expo project directory -- no install needed:
 
 ```bash
-npx stim-cli start             # dev server on a reserved port, under a supervisor
-npx stim-cli ios               # owned sim booted, app installed and launched on it
-npx stim-cli logs --errors     # no output + exit 0 = nothing is broken
-npx stim-cli stop              # supervisor down, sim shut down, port freed
+npx --package=stim-cli stim start             # dev server on a reserved port, under a supervisor
+npx --package=stim-cli stim ios               # owned sim booted, app installed and launched on it
+npx --package=stim-cli stim logs --errors     # no output + exit 0 = nothing is broken
+npx --package=stim-cli stim stop              # supervisor down, sim shut down, port freed
 ```
 
 ```
-$ npx stim-cli start
+$ npx --package=stim-cli stim start
 OK: dev server on port 8082, supervisor pid 41233 (expo-child) (6s)
 
-$ npx stim-cli ios
+$ npx --package=stim-cli stim ios
 device      stim-cli-myproject (BF2A..) booted (9s)
 fingerprint a3f9b1.. hit (2s)
 install     from cache (3s)
@@ -127,7 +127,7 @@ change is needed.
 ### What `doctor` is for, then
 
 ```bash
-npx stim-cli doctor
+npx --package=stim-cli stim doctor
 ```
 
 **It reports what stim-cli cannot fix for itself.** The mere absence of a
@@ -144,7 +144,7 @@ you make OUTSIDE stim-cli (a `cacheStores` behind an env-var flag, a compilation
 CAS left at the per-workspace default). A clean run means there is nothing
 stim-cli needs from this repo.
 
-There is no `stim-cli init`, and no setup skill either. There is no longer a
+There is no `stim init`, and no setup skill either. There is no longer a
 setup playbook to follow: what little a repo can get wrong is reported by
 `doctor` at the moment it matters, and the edit it names lands in a file the
 project already owns -- a `metro.config.js` with its own transformer, a
@@ -183,7 +183,7 @@ If a delete fails, the failure is reported, the config record is **kept** so the
 
 ## Commands
 
-All commands below take the same `npx stim-cli` prefix.
+All commands below take the same `npx --package=stim-cli stim` prefix.
 
 | Command                                                                                                        | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -206,16 +206,16 @@ All commands below take the same `npx stim-cli` prefix.
 - **Owned device creation:** on iOS, `ios` creates the newest iPhone device type -- highest generation number, base model rather than Pro/Pro Max -- on the newest installed runtime by default (or reuses the project's already-recorded owned sim, booting it if shut down). On Android, it creates an AVD via `avdmanager create avd` against the newest installed arm64 system image (stim-cli never installs system images itself -- it errors with install instructions if none is found). Override the defaults with `ios.deviceType` / `ios.runtime` / `android.systemImage` in a settings file -- see "Settings" below.
 - **Runtime output is externalized.** Logs, state, pidfiles and Xcode DerivedData live under the global workspace directory, so `worktree remove` can reclaim them without project-tree state. Gradle still uses its normal project build directories; `--build-cache` points task caching at the shared Gradle user home.
 - **The port is never baked into a build.** The fingerprint cache shares binaries across workspaces, so a port compiled in would let a binary built for 8082 be served to a workspace holding 8083. iOS gets `RCT_jsLocation` written into the app's simulator defaults (or an `expo-development-client` deep link); Android gets `adb reverse tcp:8081 tcp:<port>`. `RCT_METRO_PORT` is deliberately not passed to builds.
-- **Starting the bundler yourself still works.** Both Expo and the RN CLI probe the port and skip spawning a second bundler when one already answers `/status`, and `ios`'s Metro gate accepts a server you started as long as it runs from inside the project -- but nothing is captured that way, so `stim-cli logs` stays empty. Teardown (`stop`, `worktree remove`, `gc`) finds Metro by port via `lsof` and only kills it after confirming it answers `/status` **and** runs from inside the project: a port is not identity, so an unidentified listener is reported instead of killed.
+- **Starting the bundler yourself still works.** Both Expo and the RN CLI probe the port and skip spawning a second bundler when one already answers `/status`, and `ios`'s Metro gate accepts a server you started as long as it runs from inside the project -- but nothing is captured that way, so `stim logs` stays empty. Teardown (`stop`, `worktree remove`, `gc`) finds Metro by port via `lsof` and only kills it after confirming it answers `/status` **and** runs from inside the project: a port is not identity, so an unidentified listener is reported instead of killed.
 
 If you need a single shared sim with a mutex instead of one owned device per project, see [`react-native-worktree`](https://github.com/aleqsio/react-native-worktree).
 
 ## The dev server and logs
 
-`stim-cli start` runs the dev server for you, on the port it reserves for this workspace, under a **detached per-workspace supervisor**. It blocks until the server both answers and verifies as this project's (the same identity check teardown uses, never a bare port probe), then exits leaving it running:
+`stim start` runs the dev server for you, on the port it reserves for this workspace, under a **detached per-workspace supervisor**. It blocks until the server both answers and verifies as this project's (the same identity check teardown uses, never a bare port probe), then exits leaving it running:
 
 ```bash
-npx stim-cli start --json
+npx --package=stim-cli stim start --json
 # {"port":8082,"supervisorPid":41233,"mode":"bare-inproc","logsDir":"/Users/me/.stim-cli/workspaces/my-app--0123456789abcdef/logs","alreadyRunning":false}
 ```
 
@@ -226,24 +226,24 @@ There is no machine-wide daemon: one supervisor process per workspace, recorded 
 - **`bare-inproc`** -- bare React Native: Metro is hosted _inside_ the supervisor, loaded from the project's own `node_modules`, with `@stim-cli/metro`'s NDJSON reporter attached. Bundler events, in-app `console.log` and redboxes all arrive structured. Hosting is the only way to get them: both CLIs overwrite `config.reporter` after loading `metro.config.js`, so a reporter wired in there is discarded.
 - **`expo-child`** -- Expo: the project's own `expo start --port <n>` runs as a child and its stdout is parsed into the same records. Expo's dev server is protocol-bearing (manifest, dev-client and expo-router middleware), so reimplementing it would be forking Expo; the cost is that levels are _inferred_ from each line, which those records mark with `raw: true`.
 
-Everything lands as one JSON object per line under the global workspace `logs/` directory, and `stim-cli logs` queries the files merged into one timeline:
+Everything lands as one JSON object per line under the global workspace `logs/` directory, and `stim logs` queries the files merged into one timeline:
 
 ```bash
-npx stim-cli logs --errors            # errors since the last marker; empty + exit 0 = healthy
-npx stim-cli logs --source client --since 5m --grep 'Profile'
-npx stim-cli logs --follow --level warn
-npx stim-cli logs --errors --json     # raw records, so stdout is valid NDJSON
+npx --package=stim-cli stim logs --errors            # errors since the last marker; empty + exit 0 = healthy
+npx --package=stim-cli stim logs --source client --since 5m --grep 'Profile'
+npx --package=stim-cli stim logs --follow --level warn
+npx --package=stim-cli stim logs --errors --json     # raw records, so stdout is valid NDJSON
 ```
 
-**Nothing matching is exit 0.** `logs --errors` returning nothing is the pass condition of a build loop, so an empty result must never read as a failure; the only exit-1 paths are a malformed query and no project. `--errors` means level `error` or `fatal` strictly after the most recent record carrying `marker: true`, and the marker is searched across every source, so a marker in one file closes the window for all of them. Markers are written when a bundle build finishes -- which is what stops an error you already fixed from being reported forever. `stim-cli status` reports the same count per workspace.
+**Nothing matching is exit 0.** `logs --errors` returning nothing is the pass condition of a build loop, so an empty result must never read as a failure; the only exit-1 paths are a malformed query and no project. `--errors` means level `error` or `fatal` strictly after the most recent record carrying `marker: true`, and the marker is searched across every source, so a marker in one file closes the window for all of them. Markers are written when a bundle build finishes -- which is what stops an error you already fixed from being reported forever. `stim status` reports the same count per workspace.
 
 The record is `{ ts, src, level, msg }` plus optional `event`, `stack`, `marker` and `raw`. `src` is one of `metro`, `client`, `device`, `build`: the supervisor writes `metro` (both modes) and `client` (bare only -- in `expo-child` mode Expo's client output arrives on the bundler stream), and `ios` / `android` write `build` (the transcript at level debug, the extracted diagnostics at level error) and `device` (via the `simctl log stream` / `logcat` collector they attach after launch). `logs/supervisor.log` is deliberately _not_ part of the timeline: it is the supervisor's raw stdio, and it is what `start` quotes when a supervisor dies before it can write a structured record. `logs/emulator.log` is outside the timeline for the same reason: it is the Android emulator's raw stdio, truncated on each boot, and it is what `android` quotes when a boot fails.
 
-`stim-cli stop` is the inverse: it halts the supervisor (identity-verified: a pid is only signalled when it is alive, recorded for this workspace, and holding the port this project reserved), SIGTERMs the device-log collectors recorded in the same `state.json`, shuts the owned device down without deleting it, and frees the port. It never escalates to `SIGKILL` -- a supervisor mid-write on the log files is exactly what `SIGTERM` handling exists to finish -- so a supervisor that will not exit is reported with its pid instead.
+`stim stop` is the inverse: it halts the supervisor (identity-verified: a pid is only signalled when it is alive, recorded for this workspace, and holding the port this project reserved), SIGTERMs the device-log collectors recorded in the same `state.json`, shuts the owned device down without deleting it, and frees the port. It never escalates to `SIGKILL` -- a supervisor mid-write on the log files is exactly what `SIGTERM` handling exists to finish -- so a supervisor that will not exit is reported with its pid instead.
 
 ## Device settings
 
-The device model, runtime and system image can be pinned per project so stim-cli's defaults are not what you get. There is no `stim-cli config` command -- stim-cli's commands take no device flags, so settings are **files**. See "Settings" below for the layers; the one that travels with the repo is `.stim-cli.json` at its root:
+The device model, runtime and system image can be pinned per project so stim-cli's defaults are not what you get. There is no `stim config` command -- stim-cli's commands take no device flags, so settings are **files**. See "Settings" below for the layers; the one that travels with the repo is `.stim-cli.json` at its root:
 
 ```json
 {
@@ -270,9 +270,9 @@ _detected_, and never counted in the reclaim total -- and a plain `gc --delete`
 _never_ touches them:
 
 ```bash
-npx stim-cli gc                            # report everything, caches included
-npx stim-cli gc --delete --older-than 30   # trim entries unused for 30 days
-npx stim-cli gc --delete --all             # empty them completely
+npx --package=stim-cli stim gc                            # report everything, caches included
+npx --package=stim-cli stim gc --delete --older-than 30   # trim entries unused for 30 days
+npx --package=stim-cli stim gc --delete --all             # empty them completely
 ```
 
 Prefer trimming. Most of these caches are a flat collection of independent
@@ -346,8 +346,8 @@ both work fine without stim-cli installed -- it is an optional peer.
   `expo.buildCacheProvider` on SDK 54+, or `expo.experiments.buildCacheProvider`
   on SDK 53, which reads only that key and ignores the top-level one in silence.
 
-Each package's README has the wiring. Neither is needed for `stim-cli ios` /
-`stim-cli android`, which address the build cache directly: the Expo provider is
+Each package's README has the wiring. Neither is needed for `stim ios` /
+`stim android`, which address the build cache directly: the Expo provider is
 for builds run _outside_ stim-cli (`expo run:ios` by hand, or EAS), so that the two
 share artifacts instead of filling two caches with the same builds. Bare React
 Native has no provider hook at all and needs none.
@@ -357,7 +357,7 @@ works on a project with no Expo in it at all. stim-cli uses its declared
 `@expo/fingerprint` dependency directly, independently of the target project's
 package graph, so a bare `@react-native-community/cli init` app needs no
 `package.json` change to use the build cache. When it cannot produce a hash,
-`stim-cli ios` refuses with `STIM_CLI_NO_FINGERPRINT` rather than compiling from
+`stim ios` refuses with `STIM_CLI_NO_FINGERPRINT` rather than compiling from
 scratch forever.
 
 Entries are keyed `<fingerprintHash>-<variant>-<target>`, identically by every
@@ -375,7 +375,7 @@ because the Expo provider and any future release path share the same keyspace.
 Every project has a "shortcut": its `label` if one was set (e.g. via `worktree create --label`), else inherited from the enclosing worktree's label, else the directory basename. It is what names the owned device -- `stim-cli-<label>` -- and what `status` reports a workspace as.
 
 ```bash
-npx stim-cli worktree create feature-x --label agent-1   # its sim will be stim-cli-agent-1
+npx --package=stim-cli stim worktree create feature-x --label agent-1   # its sim will be stim-cli-agent-1
 ```
 
 Two projects sharing the same basename with no distinguishing label collide, which is why `worktree create` registers a label for the worktree root: every worktree of a monorepo otherwise shares the same app-dir basename.
@@ -383,8 +383,8 @@ Two projects sharing the same basename with no distinguishing label collide, whi
 ## Worktrees
 
 ```bash
-npx stim-cli worktree create feature-x        # creates ../<repo>-worktrees/feature-x
-npx stim-cli worktree remove                  # removes it, deleting its owned device(s) and freeing its Metro port
+npx --package=stim-cli stim worktree create feature-x        # creates ../<repo>-worktrees/feature-x
+npx --package=stim-cli stim worktree remove                  # removes it, deleting its owned device(s) and freeing its Metro port
 ```
 
 `worktree create <name>` does three things in one step: creates the git worktree itself (branched `worktree-<name>` off `origin/HEAD` by default -- pass `--base head` to branch off the current `HEAD` instead), carries over gitignored files (see "Carry-over" below), and registers a label for the worktree root so `stim-cli` shortcuts don't collide across a monorepo's worktrees (every worktree of a monorepo shares the same app-dir basename). Prefer it over a raw `git worktree add` for that reason. It prints only the resulting worktree path to stdout; everything else goes to stderr (see "Wiring into Claude Code" below).
@@ -393,7 +393,7 @@ It deliberately does **not** install dependencies. Which commands a repo actuall
 
 `worktree remove [<path>]` defaults to the current workspace. It reclaims the global workspace's build artifacts, Metro port, logs and every owned device registered under it (deleting them, not just clearing the claim -- the environment dies whole) before removing the git worktree itself. It refuses if the worktree has uncommitted changes, untracked files, or commits that exist on no remote -- pass `--force` to override, but note `--force` only discards uncommitted/untracked state; committed work stays safe on the branch either way. On the main checkout it reclaims the environment only and leaves the tree itself untouched.
 
-There is no `worktree list`: `stim-cli status` shows the same worktrees _with_ their devices, ports and supervisors, including ones that have no environment yet.
+There is no `worktree list`: `stim status` shows the same worktrees _with_ their devices, ports and supervisors, including ones that have no environment yet.
 
 ### Carry-over
 
@@ -439,12 +439,12 @@ When the worktree's `--base` diverges from the source HEAD and the patch does no
 
 ### Wiring into Claude Code (`WorktreeCreate` hook)
 
-Claude Code's `WorktreeCreate` hook fires when a session for a new worktree starts, and uses the hook command's stdout as the directory for that session. `stim-cli worktree create` is built for exactly this contract -- it prints only the resulting path to stdout, and everything else goes to stderr. Wire it in `.claude/settings.json`:
+Claude Code's `WorktreeCreate` hook fires when a session for a new worktree starts, and uses the hook command's stdout as the directory for that session. `stim worktree create` is built for exactly this contract -- it prints only the resulting path to stdout, and everything else goes to stderr. Wire it in `.claude/settings.json`:
 
 ```json
 {
   "hooks": {
-    "WorktreeCreate": [{ "hooks": [{ "type": "command", "command": "stim-cli worktree create \"$(jq -r .name)\"" }] }]
+    "WorktreeCreate": [{ "hooks": [{ "type": "command", "command": "stim worktree create \"$(jq -r .name)\"" }] }]
   }
 }
 ```
@@ -464,12 +464,12 @@ npx skills add appandflow/stim-cli
 
 That installs the one bundled skill, `stim-cli`: how to drive the CLI. There is
 no separate setup skill -- stim-cli needs no project changes, and the handful of
-things it cannot handle itself are what `stim-cli doctor` reports, at the moment
+things it cannot handle itself are what `stim doctor` reports, at the moment
 they matter.
 
 The skill is deliberately thin: it carries the rules that don't change
 (the ownership model, the destructive-command rules, the parallel-agent rules)
-and defers everything version-specific to `npx stim-cli guide <topic>`, which is
+and defers everything version-specific to `npx --package=stim-cli stim guide <topic>`, which is
 generated by the installed binary and so cannot drift.
 
 ## Settings
