@@ -114,6 +114,84 @@ test('findOrphanedDevices proposes only stim-cli devices absent from config', ()
   expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['U1', 'stim-cli-old']);
 });
 
+test('gc sizes only listed owned Android AVDs after ownership classification', async () => {
+  const now = Date.now();
+  const project = join(tmpHome, 'stale-project');
+  mkdirSync(project, { recursive: true });
+  saveConfig({
+    version: 2,
+    projects: {
+      [project]: { platforms: { android: { avdName: 'stim-cli-stale', owned: true } } },
+    },
+    repos: {},
+  });
+  const sized: string[] = [];
+  const sizeTimeouts: Array<number | undefined> = [];
+  setExecutor({
+    run(cmd) {
+      if (cmd.includes('simctl list devices --json')) return JSON.stringify({ devices: {} });
+      if (cmd.endsWith(' -list-avds')) {
+        return 'stim-cli-orphan\nstim-cli-stale\nstim-cli-unreadable\nPixel_7\n';
+      }
+      throw new Error(`unexpected run: ${cmd}`);
+    },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+
+  const report = await collectGcReport(
+    {
+      olderThan: 30,
+      now,
+      lastTouched: () => now - 90 * DAY_MS,
+      unsafeAllowScopedDeviceSweep: true,
+    },
+    {
+      avdDirectory: (name) => `/avds/${name}.avd`,
+      directorySize: (dir, options) => {
+        sized.push(dir);
+        sizeTimeouts.push(options?.timeoutMs);
+        if (dir.includes('unreadable')) throw new Error('timed out');
+        return dir.includes('orphan') ? 5 * 1024 ** 3 : 2 * 1024 ** 3;
+      },
+      precollectedEasSessionSweep: {
+        projectScope: null,
+        orphaned: [],
+        notices: [],
+        deletionSafe: true,
+      },
+    },
+  );
+
+  expect(report.orphanedDevices).toContainEqual({
+    kind: 'android',
+    id: 'stim-cli-orphan',
+    name: 'stim-cli-orphan',
+    bytes: 5 * 1024 ** 3,
+  });
+  expect(report.staleDevices).toContainEqual({
+    kind: 'android',
+    id: 'stim-cli-stale',
+    name: 'stim-cli-stale',
+    project,
+    idleDays: 90,
+    bytes: 2 * 1024 ** 3,
+  });
+  expect(report.orphanedDevices).toContainEqual({
+    kind: 'android',
+    id: 'stim-cli-unreadable',
+    name: 'stim-cli-unreadable',
+  });
+  expect(sized).toEqual(['/avds/stim-cli-orphan.avd', '/avds/stim-cli-unreadable.avd', '/avds/stim-cli-stale.avd']);
+  expect(sizeTimeouts).toEqual([5000, 5000, 5000]);
+
+  const output = formatGcReport(report).join('\n');
+  expect(output).toMatch(/stim-cli-orphan.*5\.0G on disk/);
+  expect(output).toMatch(/stim-cli-stale.*2\.0G on disk/);
+  expect(output).not.toMatch(/stim-cli-unreadable.*on disk/);
+  expect(output).not.toMatch(/Pixel_7/);
+});
+
 test('devices referenced by a project on an unmounted volume are kept', () => {
   const result = findOrphanedDevices({
     sims: [makeIosSim({ udid: 'U1', name: 'stim-cli-ext' })],

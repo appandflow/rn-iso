@@ -150,4 +150,5 @@ export interface OrphanedDevice {
   kind: 'ios' | 'android';
   id: string;
   name: string;
+  bytes?: number;
 }

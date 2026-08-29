@@ -128,6 +128,12 @@ test('the guide documents Android AVD disk-space diagnosis and cleanup', () => {
   }
   expect(errors).toMatch(/ENOSPC[^.]*disk space/i);
   expect(cleanup).toMatch(/worktree remove[^.]*deletes[^.]*owned AVD/i);
+  expect(cleanup).toMatch(/neither loads nor saves[^.]*Quick\s+Boot snapshot/i);
+  expect(cleanup).toMatch(/gc[^.]*on-disk size[^.]*orphaned[^.]*stale owned Android AVD/i);
+
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  expect(skill).toMatch(/neither load nor save[^.]*Quick Boot snapshot/i);
+  expect(skill).toMatch(/Android rows[^.]*on-disk size/i);
 });
 
 test('the guide documents remote providers and backend credential boundaries', () => {

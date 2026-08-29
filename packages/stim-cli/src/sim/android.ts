@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, openSync, readdirSync } from 'fs';
+import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { homedir } from 'os';
-import { dirname, join } from 'path';
+import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
 
 export interface SystemImage {
@@ -265,10 +265,76 @@ export function headlessEmulatorArgs(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string[] {
+  const args = ['-no-snapshot-save', '-no-snapshot-load'];
   if (platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
-    return ['-no-window', '-noaudio', '-no-boot-anim', '-gpu', 'swiftshader_indirect'];
+    args.push('-no-window', '-noaudio', '-no-boot-anim', '-gpu', 'swiftshader_indirect');
   }
-  return [];
+  return args;
+}
+
+export function parseAvdRootIni(contents: string): { path: string | null; relativePath: string | null } {
+  let path: string | null = null;
+  let relativePath: string | null = null;
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    const separator = line.indexOf('=');
+    if (separator < 0) continue;
+    const key = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    if (!value) continue;
+    if (key === 'path') path = value;
+    if (key === 'path.rel') relativePath = value;
+  }
+  return { path, relativePath };
+}
+
+export function ownedAvdDirectory(
+  avdName: string,
+  {
+    env = process.env,
+    home = homedir(),
+    readFile = (path: string) => readFileSync(path, 'utf8'),
+    realpath = realpathSync,
+    isDirectory = (path: string) => statSync(path).isDirectory(),
+  }: {
+    env?: NodeJS.ProcessEnv;
+    home?: string;
+    readFile?: (path: string) => string;
+    realpath?: (path: string) => string;
+    isDirectory?: (path: string) => boolean;
+  } = {},
+): string | null {
+  if (!/^stim-cli-[A-Za-z0-9._-]+$/.test(avdName)) return null;
+  const roots = [
+    env.ANDROID_AVD_HOME,
+    env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, 'avd') : null,
+    join(home, '.android', 'avd'),
+  ];
+  for (const root of new Set(roots.filter((value): value is string => Boolean(value)))) {
+    let ini: string;
+    try {
+      ini = readFile(join(root, `${avdName}.ini`));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      return null;
+    }
+    const parsed = parseAvdRootIni(ini);
+    const candidates = [
+      parsed.relativePath && !isAbsolute(parsed.relativePath) ? resolve(dirname(root), parsed.relativePath) : null,
+      parsed.path && isAbsolute(parsed.path) ? parsed.path : null,
+    ];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      try {
+        const canonical = realpath(candidate);
+        if (isDirectory(canonical)) return canonical;
+      } catch {}
+    }
+    return null;
+  }
+  return null;
 }
 
 export function bootAndroidEmulator(
