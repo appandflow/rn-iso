@@ -331,15 +331,17 @@ export function extractEmulatorFailure(text: unknown): string[] {
     .map((entry) => entry.line);
 }
 
-export function emulatorFailureRemedy(lines: string[]): string {
+export function emulatorDiskSpaceRemedy(lines: string[]): string | null {
   const text = (Array.isArray(lines) ? lines : []).join('\n');
-  if (/not enough space|no space left|disk (?:is )?full/i.test(text)) {
-    return (
-      'Free disk space at the AVD directory named above (the emulator says how much it needs), ' +
-      'then run `stim-cli android` again.'
-    );
-  }
-  return 'Fix what the emulator reported above, then run `stim-cli android` again.';
+  if (!/ENOSPC|not enough space|no space left|disk (?:is )?full/i.test(text)) return null;
+  return (
+    'Free disk space (owned AVDs normally live under ~/.android/avd and can use several GB), ' +
+    'then run `stim-cli android` again.'
+  );
+}
+
+export function emulatorFailureRemedy(lines: string[]): string {
+  return emulatorDiskSpaceRemedy(lines) ?? 'Fix what the emulator reported above, then run `stim-cli android` again.';
 }
 
 // runQuiet returns null whenever the command fails, which is the normal state
