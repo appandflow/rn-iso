@@ -8,6 +8,9 @@ export const LAUNCH_ERROR = 'STIM_CLI_LAUNCH_FAILED';
 
 export const DEFAULT_METRO_PORT = 8081;
 
+const IOS_SCHEME_APPROVAL_DOMAIN = 'com.apple.launchservices.schemeapproval';
+const IOS_SCHEME_APPROVAL_OPENER = 'com.apple.CoreSimulator.CoreSimulatorBridge';
+
 interface ExecOpt {
   exec?: Executor | null;
 }
@@ -56,16 +59,44 @@ export type AndroidLaunchResult = {
 };
 
 export function installIosApp(
-  { udid, appPath }: { udid: string; appPath: string },
+  {
+    udid,
+    appPath,
+    bundleId = null,
+    devClientScheme = null,
+  }: { udid: string; appPath: string; bundleId?: string | null; devClientScheme?: string | null },
   { exec = null }: ExecOpt = {},
 ): IosInstallResult {
   const e = exec || getExecutor();
   try {
     e.runFile('xcrun', ['simctl', 'install', udid, appPath]);
-    return { ok: true, appPath };
   } catch (err) {
     return { failed: true, code: INSTALL_ERROR, reason: `simctl install failed for ${appPath}: ${describe(err)}` };
   }
+  if (bundleId && devClientScheme) {
+    try {
+      for (const key of iosSchemeApprovalKeys(bundleId, devClientScheme)) {
+        e.runFile('xcrun', [
+          'simctl',
+          'spawn',
+          udid,
+          'defaults',
+          'write',
+          IOS_SCHEME_APPROVAL_DOMAIN,
+          key,
+          '-string',
+          bundleId,
+        ]);
+      }
+    } catch (err) {
+      return {
+        failed: true,
+        code: INSTALL_ERROR,
+        reason: `Installed ${bundleId}, but could not preapprove dev-client scheme ${devClientScheme}: ${describe(err)}`,
+      };
+    }
+  }
+  return { ok: true, appPath };
 }
 
 export function jsLocationValue(metroPort: number | string): string {
@@ -74,6 +105,10 @@ export function jsLocationValue(metroPort: number | string): string {
 
 export function devClientUrl(scheme: string, metroPort: number | string, host = 'localhost'): string {
   return `${scheme}://expo-development-client/?url=${encodeURIComponent(`http://${host}:${metroPort}`)}`;
+}
+
+export function iosSchemeApprovalKeys(bundleId: string, devClientScheme: string): string[] {
+  return [...new Set([bundleId, devClientScheme])].map((target) => `${IOS_SCHEME_APPROVAL_OPENER}-->${target}`);
 }
 
 export function parseLaunchedPid(text: unknown): number | null {
@@ -689,14 +724,11 @@ export function unverifiedLaunchLines({
     return lines;
   }
   if (platform === 'ios') {
-    push(
-      'If an "Open in <app>?" alert is showing, confirm it with your device tool (iOS 26 raises it on every first launch on a fresh simulator, in front of the deep link); the bundle loads immediately after.',
-    );
     push(picker);
     if (url && udid) {
-      push(`Only if no alert is showing, retry the deep link: xcrun simctl openurl ${udid} '${url}'`);
+      push(`Retry the deep link: xcrun simctl openurl ${udid} '${url}'`);
     } else if (udid && bundleId) {
-      push(`Only if no alert is showing, re-launch: xcrun simctl launch --console ${udid} ${bundleId}`);
+      push(`Re-launch: xcrun simctl launch --console ${udid} ${bundleId}`);
     }
   } else {
     if (url && serial) {

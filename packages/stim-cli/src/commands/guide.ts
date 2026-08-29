@@ -83,16 +83,15 @@ other line goes to stderr, so it is always safe to pipe.
                                  no remedy list is printed for it -- and
                                  \`logs --source metro\` shows the build
                                  finishing
-                    "unverified" nothing was observed at all: an iOS 26
-                                 confirmation alert gating simctl openurl (it
-                                 appears on EVERY first launch on a fresh
-                                 sim), or a dev-client server picker awaiting
-                                 a tap
-                  The unverified warning on stderr is a numbered list in the
-                  order that clears it: confirm the alert first, then the
-                  picker, and only with no alert showing, the openurl retry it
-                  prints. On ANDROID there is no alert, so the list leads with
-                  the dev-client deep link (\`am start -a
+                    "unverified" nothing was observed at all: usually a
+                                 dev-client server picker awaiting a tap
+                  Before a local dev-client openurl, stim-cli preapproves
+                  CoreSimulatorBridge for exactly the installed bundle id and
+                  discovered scheme on its owned simulator. That suppresses
+                  iOS's first-launch confirmation; unrelated schemes remain
+                  unapproved. The unverified warning therefore leads with the
+                  picker, then prints the openurl retry. On ANDROID the list
+                  leads with the dev-client deep link (\`am start -a
                   android.intent.action.VIEW -d '<devClientUrl>'\`), which is
                   the whole answer when the app has a scheme.
   metroPort       the port the app was wired to; NULL on a non-Debug

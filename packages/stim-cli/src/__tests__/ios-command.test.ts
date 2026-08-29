@@ -499,7 +499,7 @@ describe('launch verification', () => {
     expect(text).toMatch(/localhost:8082/);
   });
 
-  test('the alert stall: the warning carries the exact openurl to retry', async () => {
+  test('a dev-client stall carries the exact openurl to retry without an alert step', async () => {
     reserve();
     writeFileSync(
       join(root, 'package.json'),
@@ -517,7 +517,7 @@ describe('launch verification', () => {
       },
     );
     const text = errs.join('\n');
-    expect(text).toMatch(/Open in/);
+    expect(text).not.toMatch(/Open in/);
     expect(text).toMatch(new RegExp(`xcrun simctl openurl ${UDID}`));
     expect(text).toMatch(/fixture:\/\/expo-development-client/);
     expect(parseFirst(logs).launched).toBe('unverified');
