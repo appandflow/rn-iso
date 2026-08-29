@@ -12,7 +12,7 @@ import {
 } from '../engine/prebuild.ts';
 import { makeChildProcess, makeWriter } from './_factories.ts';
 
-type WriteRecord = { src: string; level: string; msg: string };
+type WriteRecord = { src: string; level: string; msg: string; event?: string };
 
 type SpawnCall = { cmd: string; args: string[]; opts: Record<string, unknown> };
 
@@ -133,7 +133,8 @@ describe('runPrebuild', () => {
 
   test('a non-zero exit comes back as {failed, lastLines}', async () => {
     installFakeExpoBin();
-    const result = await runPrebuild(root, 'android', collectingWriter(), {
+    const writer = collectingWriter();
+    const result = await runPrebuild(root, 'android', writer, {
       isExpo: true,
       spawnFn: () => fakeExpoChild({ lines: ['Error: Cannot determine the package name'], code: 1 }),
     });
@@ -142,6 +143,12 @@ describe('runPrebuild', () => {
     expect(result.reason).toMatch(/exit code 1/);
     assert(result.lastLines);
     expect(result.lastLines.join('\n')).toMatch(/package name/);
+    expect(writer.records.at(-1)).toMatchObject({
+      src: 'build',
+      level: 'error',
+      event: 'prebuild_failed',
+      msg: '`expo prebuild -p android` failed (exit code 1).',
+    });
   });
 
   test('an exit-0 prebuild that produced no native directory is still a failure', async () => {

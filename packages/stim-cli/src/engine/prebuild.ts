@@ -59,6 +59,16 @@ export type RunPrebuildResult = {
   durationMs?: number;
 };
 
+function prebuildFailure(logWriter: NdjsonWriter | null | undefined, result: RunPrebuildResult): RunPrebuildResult {
+  logWriter?.write?.({
+    src: 'build',
+    level: 'error',
+    msg: result.reason || 'Expo prebuild failed.',
+    event: 'prebuild_failed',
+  });
+  return result;
+}
+
 export async function runPrebuild(
   root: string,
   platform: string,
@@ -76,26 +86,26 @@ export async function runPrebuild(
     nativeDirExists: dirExists,
   });
   if (refusal) {
-    return {
+    return prebuildFailure(logWriter, {
       failed: true,
       code: refusal.code,
       reason: refusal.message,
       remedy: refusal.remedy,
       error: refusal,
       lastLines: [],
-    };
+    });
   }
 
   const bin = expoBinPath(root);
   if (!bin) {
     const binRefusal = expoBinRefusal(root, 'prebuild');
-    return {
+    return prebuildFailure(logWriter, {
       failed: true,
       code: PREBUILD_ERROR,
       reason: binRefusal.message,
       remedy: binRefusal.remedy,
       lastLines: [],
-    };
+    });
   }
 
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
@@ -117,12 +127,12 @@ export async function runPrebuild(
       env: { ...process.env, FORCE_COLOR: '0', CI: '1' },
     });
   } catch (err) {
-    return {
+    return prebuildFailure(logWriter, {
       failed: true,
       code: PREBUILD_ERROR,
       reason: `Could not run \`expo prebuild\`: ${(err as Error)?.message || err}`,
       lastLines: [] as string[],
-    };
+    });
   }
 
   const outReader = createLineReader(push);
@@ -138,32 +148,32 @@ export async function runPrebuild(
   const durationMs = now() - startedAt;
 
   if (result.error) {
-    return {
+    return prebuildFailure(logWriter, {
       failed: true,
       code: PREBUILD_ERROR,
       reason: `Could not run \`expo prebuild\`: ${result.error?.message || result.error}`,
       lastLines: tail.slice(),
       durationMs,
-    };
+    });
   }
   if (result.code !== 0) {
     const how = result.signal ? `signal ${result.signal}` : `exit code ${result.code}`;
-    return {
+    return prebuildFailure(logWriter, {
       failed: true,
       code: PREBUILD_ERROR,
       reason: `\`expo prebuild -p ${platform}\` failed (${how}).`,
       lastLines: tail.slice(),
       durationMs,
-    };
+    });
   }
   if (!existsSync(nativeDir(root, platform))) {
-    return {
+    return prebuildFailure(logWriter, {
       failed: true,
       code: PREBUILD_ERROR,
       reason: `\`expo prebuild -p ${platform}\` succeeded but did not create ${nativeDirName(platform)}/.`,
       lastLines: tail.slice(),
       durationMs,
-    };
+    });
   }
   return { ok: true, durationMs, nativeDir: nativeDir(root, platform) };
 }
