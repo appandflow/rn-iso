@@ -25,11 +25,12 @@ npx skills add appandflow/stim-cli
 The package exports only `stim`. Run it without installing, or install it once:
 
 ```bash
-npx --package=stim-cli stim <command>
+npx stim-cli <command>
 npm install --global stim-cli
 ```
 
-The examples below use `stim`.
+Later examples use `stim`. If it is not installed globally, replace `stim`
+with the `npx` form above.
 
 Then tell your agent what you want:
 

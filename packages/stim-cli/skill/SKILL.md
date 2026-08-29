@@ -9,7 +9,7 @@ Use stim-cli to run React Native and Expo apps without sharing a Metro port or
 device with another workspace. Run it without installing:
 
 ```bash
-npx --package=stim-cli stim <command>
+npx stim-cli <command>
 ```
 
 The user can instead install it once, which provides the same `stim` command:
@@ -18,14 +18,14 @@ The user can instead install it once, which provides the same `stim` command:
 npm install --global stim-cli
 ```
 
-Do not change the installation mode unless the user asks. All examples below use
-`stim` regardless of the selected invocation mode.
+Do not change the installation mode unless the user asks. Later examples use
+`stim`. If it is not installed globally, replace `stim` with the `npx` form above.
 
 stim-cli requires Node 20.19.4 or later on Node 20, or Node 22.12.0 or
 later. If `npx` returns E401 or E404 in a repo with a private registry, use:
 
 ```bash
-npx --registry=https://registry.npmjs.org --package=stim-cli stim <command>
+npx --registry=https://registry.npmjs.org stim-cli <command>
 ```
 
 Prefer `--json` when another command or device tool needs a port, UDID, serial,

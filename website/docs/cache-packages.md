@@ -4,6 +4,8 @@ sidebar_position: 2
 description: '@stim-cli/metro and @stim-cli/expo-build-cache: the shared transform cache and the local Expo build cache'
 ---
 
+import StimTabs from '@site/src/components/StimTabs';
+
 Two small ESM packages wire a project's own toolchain into the shared caches. Their `module-sync` exports support `require()` from `metro.config.js` and the Expo CLI. Neither package imports stim-cli, so a missing or old CLI does not break a bundler config or build.
 
 # @stim-cli/metro
@@ -36,10 +38,10 @@ The `FileStore` itself is six lines; what this packages is the housekeeping.
 the disk does. Registering it with
 [`stim-cli`](https://www.npmjs.com/package/stim-cli) makes it visible:
 
-```bash
-stim gc                            # what it has grown to (reported on every run)
-stim gc --delete --older-than 30   # drop entries unused for 30 days
-```
+<StimTabs
+code={`stim gc                            # what it has grown to (reported on every run)
+stim gc --delete --older-than 30   # drop entries unused for 30 days`}
+/>
 
 Entries are trimmed individually — one file per cache key — so trimming costs
 only the entries nothing has touched, not the whole cache.
@@ -116,10 +118,10 @@ something native — or that you are the first workspace on this commit.
 The cache registers itself with [`stim-cli`](https://www.npmjs.com/package/stim-cli)
 if it is installed, so it can be reported and trimmed:
 
-```bash
-stim gc                            # what it has grown to (reported on every run)
-stim gc --delete --older-than 30   # drop entries unused for 30 days
-```
+<StimTabs
+code={`stim gc                            # what it has grown to (reported on every run)
+stim gc --delete --older-than 30   # drop entries unused for 30 days`}
+/>
 
 stim-cli is an optional peer. Without it the cache works exactly the same; it is
 just invisible to housekeeping.

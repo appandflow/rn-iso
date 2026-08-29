@@ -56,11 +56,12 @@ The registry lives in `~/.stim-cli/config.json`, keyed by absolute project path,
 The package exports only `stim`. Run it without installing, or install it once:
 
 ```bash
-npx --package=stim-cli stim <command>
+npx stim-cli <command>
 npm install --global stim-cli
 ```
 
-The examples below use `stim`:
+Later examples use `stim`. If it is not installed globally, replace `stim`
+with the `npx` form above.
 
 ```bash
 stim start             # dev server on a reserved port, under a supervisor
@@ -459,7 +460,7 @@ Claude Code's `WorktreeCreate` hook fires when a session for a new worktree star
 {
   "hooks": {
     "WorktreeCreate": [
-      { "hooks": [{ "type": "command", "command": "npx --package=stim-cli stim worktree create \"$(jq -r .name)\"" }] }
+      { "hooks": [{ "type": "command", "command": "npx stim-cli worktree create \"$(jq -r .name)\"" }] }
     ]
   }
 }

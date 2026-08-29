@@ -4,29 +4,28 @@ sidebar_position: 3
 description: 'The closed, ten-command surface, and what each one does'
 ---
 
+import StimTabs from '@site/src/components/StimTabs';
+
 ## Quick start
 
-The examples use `stim`. See [Getting started](/docs/getting-started) for how
-to run with `npx` or a global installation.
-
-```bash
-stim start             # dev server on a reserved port, under a supervisor
+<StimTabs
+code={`stim start             # dev server on a reserved port, under a supervisor
 stim ios               # owned sim booted, app installed and launched on it
 stim logs --errors     # no output + exit 0 = nothing is broken
-stim stop              # supervisor down, sim shut down, port freed
-```
+stim stop              # supervisor down, sim shut down, port freed`}
+/>
 
-```
-$ stim start
+<StimTabs
+code={`$ stim start
 OK: dev server on port 8082, supervisor pid 41233 (expo-child) (6s)
 
 $ stim ios
-device      stim-cli-myproject (BF2A..) booted (9s)
+device stim-cli-myproject (BF2A..) booted (9s)
 fingerprint a3f9b1.. hit (2s)
-install     from cache (3s)
-launch      com.example.app (1s)
-OK: com.example.app launched on BF2A..
-```
+install from cache (3s)
+launch com.example.app (1s)
+OK: com.example.app launched on BF2A..`}
+/>
 
 The order is not optional: `ios` / `android` never start the bundler, so with nothing holding the reserved port they refuse in about a second with `STIM_CLI_NO_METRO` instead of spending four minutes building an app that cannot load a bundle.
 
@@ -59,9 +58,7 @@ compilation cache, Gradle's build cache and a shared Metro transform store all
 ride on the command lines stim-cli composes itself. When something IS blocked or
 slow, `stim doctor` is the read-only second opinion:
 
-```bash
-stim doctor
-```
+<StimTabs code={`stim doctor`} />
 
 It reports only what stim-cli cannot handle on its own -- a missing dev client,
 ccache, a checkout that does not fingerprint like a fresh worktree, a
@@ -104,8 +101,6 @@ npx skills add appandflow/stim-cli
 
 Every project has a "shortcut": its `label` if one was set (e.g. via `worktree create --label`), else inherited from the enclosing worktree's label, else the directory basename. It is what names the owned device -- `stim-cli-<label>` -- and what `status` reports a workspace as.
 
-```bash
-stim worktree create feature-x --label agent-1   # its sim will be stim-cli-agent-1
-```
+<StimTabs code={`stim worktree create feature-x --label agent-1   # its sim will be stim-cli-agent-1`} />
 
 Two projects sharing the same basename with no distinguishing label collide, which is why `worktree create` registers a label for the worktree root: every worktree of a monorepo otherwise shares the same app-dir basename.

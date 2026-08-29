@@ -120,11 +120,14 @@ remedies change. Update the skill only when the normal workflow, a permanent
 safety rule, or topic routing changes. Only one skill ships; do not restore
 `stim-cli-init`.
 
-Document command invocation once in each standalone entry point. Show the
-no-install form, `npx --package=stim-cli stim <command>`, and the global install,
-`npm install --global stim-cli`. Use `stim` alone in all later examples. Keep
-the full `npx` form where execution cannot assume a global install, such as a
-hook, release check, or registry remedy.
+Document command invocation once in each main entry point. Show the no-install
+form, `npx stim-cli <command>`, and the global install,
+`npm install --global stim-cli`. Use `stim` alone in later examples. In a
+document that does not explain installation, add one short note that tells
+readers to replace `stim` with `npx stim-cli` when it is not
+installed globally. On the website, use synchronized Global and npx tabs with
+Global as the default. Keep the full `npx` form in runnable hooks, release
+checks, and registry remedies, which cannot assume a global install.
 
 ### 2. Use only owned devices
 

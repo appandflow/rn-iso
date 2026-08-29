@@ -1,5 +1,8 @@
 # @stim-cli/expo-build-cache
 
+> Commands use `stim`. If it is not installed globally, replace `stim` with
+> `npx stim-cli`.
+
 A local Expo build cache provider. When no native input has changed, the CLI
 installs a cached `.app` / `.apk` instead of compiling — which is the difference
 between a JS-only change costing a simulator boot and costing a full native

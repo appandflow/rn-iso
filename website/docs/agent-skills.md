@@ -4,6 +4,9 @@ sidebar_position: 3
 description: 'Installing and refreshing the bundled skill with npx skills'
 ---
 
+> Commands use `stim`. If it is not installed globally, replace `stim` with
+> `npx stim-cli`.
+
 For AI coding agents, install the bundled skill so the agent knows how to drive the CLI (the lifecycle, the facts contract, and the destructive-command rules). It installs with the skills CLI, straight from GitHub:
 
 ```bash

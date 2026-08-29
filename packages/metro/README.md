@@ -1,5 +1,8 @@
 # @stim-cli/metro
 
+> Commands use `stim`. If it is not installed globally, replace `stim` with
+> `npx stim-cli`.
+
 The two things [`stim-cli`](https://www.npmjs.com/package/stim-cli) wires into
 Metro: one transform cache shared by every worktree on the machine, and a
 reporter that writes the dev server's events as NDJSON.
