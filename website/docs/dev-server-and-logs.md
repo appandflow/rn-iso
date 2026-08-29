@@ -4,12 +4,16 @@ sidebar_position: 2
 description: 'A detached per-workspace supervisor, and a queryable NDJSON timeline instead of a scraped terminal'
 ---
 
+import StimTabs from '@site/src/components/StimTabs';
+
 `stim start` runs the dev server for you, on the port it reserves for this workspace, under a **detached per-workspace supervisor**. It blocks until the server both answers and verifies as this project's (the same identity check teardown uses, never a bare port probe), then exits leaving it running:
 
-```bash
-npx --package=stim-cli stim start --json
-# {"port":8082,"supervisorPid":41233,"mode":"bare-inproc","logsDir":"/path/.stim-cli/logs","alreadyRunning":false}
-```
+<StimTabs
+code={`stim start --json
+
+# {"port":8082,"supervisorPid":41233,"mode":"bare-inproc","logsDir":"/path/.stim-cli/logs","alreadyRunning":false}`}
+
+/>
 
 It has two flags and will not grow more: `--json` and `--wait <seconds>` (default 60). Anything a project needs beyond that belongs in its own bundler command. Running `start` twice leaves one supervisor -- a healthy dev server on the port is a no-op, including one you started yourself, which is reported with `supervisorPid: null` and left alone rather than fought over.
 
@@ -20,12 +24,12 @@ There is no machine-wide daemon: one supervisor process per workspace, recorded 
 
 Everything lands as one JSON object per line under `<root>/.stim-cli/logs`, and `stim logs` queries the files merged into one timeline:
 
-```bash
-npx --package=stim-cli stim logs --errors            # errors since the last marker; empty + exit 0 = healthy
-npx --package=stim-cli stim logs --source client --since 5m --grep 'Profile'
-npx --package=stim-cli stim logs --follow --level warn
-npx --package=stim-cli stim logs --errors --json     # raw records, so stdout is valid NDJSON
-```
+<StimTabs
+code={`stim logs --errors            # errors since the last marker; empty + exit 0 = healthy
+stim logs --source client --since 5m --grep 'Profile'
+stim logs --follow --level warn
+stim logs --errors --json     # raw records, so stdout is valid NDJSON`}
+/>
 
 **Nothing matching is exit 0.** `logs --errors` returning nothing is the pass condition of a build loop, so an empty result must never read as a failure; the only exit-1 paths are a malformed query and no project. `--errors` means level `error` or `fatal` strictly after the most recent record carrying `marker: true`, and the marker is searched across every source, so a marker in one file closes the window for all of them. Markers are written when a bundle build finishes -- which is what stops an error you already fixed from being reported forever. `stim status` reports the same count per workspace.
 

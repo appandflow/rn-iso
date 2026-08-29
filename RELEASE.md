@@ -276,7 +276,7 @@ Before continuing:
 8. **Smoke-test the published versions** from a scratch directory:
    ```bash
    version=X.Y.Z
-   cd /tmp && npx --package="stim-cli@$version" stim --version
+   cd /tmp && npx "stim-cli@$version" --version
    npm view "stim-cli@$version" readme | head -c 200        # NOT "No README data found!"
    npm view "@stim-cli/expo-build-cache@$version" version
    npm view "@stim-cli/metro@$version" version

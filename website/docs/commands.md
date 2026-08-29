@@ -4,28 +4,28 @@ sidebar_position: 3
 description: 'The closed, ten-command surface, and what each one does'
 ---
 
+import StimTabs from '@site/src/components/StimTabs';
+
 ## Quick start
 
-Run via `npx` from any RN/Expo project directory -- no install needed:
+<StimTabs
+code={`stim start             # dev server on a reserved port, under a supervisor
+stim ios               # owned sim booted, app installed and launched on it
+stim logs --errors     # no output + exit 0 = nothing is broken
+stim stop              # supervisor down, sim shut down, port freed`}
+/>
 
-```bash
-npx --package=stim-cli stim start             # dev server on a reserved port, under a supervisor
-npx --package=stim-cli stim ios               # owned sim booted, app installed and launched on it
-npx --package=stim-cli stim logs --errors     # no output + exit 0 = nothing is broken
-npx --package=stim-cli stim stop              # supervisor down, sim shut down, port freed
-```
-
-```
-$ npx --package=stim-cli stim start
+<StimTabs
+code={`$ stim start
 OK: dev server on port 8082, supervisor pid 41233 (expo-child) (6s)
 
-$ npx --package=stim-cli stim ios
-device      stim-cli-myproject (BF2A..) booted (9s)
+$ stim ios
+device stim-cli-myproject (BF2A..) booted (9s)
 fingerprint a3f9b1.. hit (2s)
-install     from cache (3s)
-launch      com.example.app (1s)
-OK: com.example.app launched on BF2A..
-```
+install from cache (3s)
+launch com.example.app (1s)
+OK: com.example.app launched on BF2A..`}
+/>
 
 The order is not optional: `ios` / `android` never start the bundler, so with nothing holding the reserved port they refuse in about a second with `STIM_CLI_NO_METRO` instead of spending four minutes building an app that cannot load a bundle.
 
@@ -58,9 +58,7 @@ compilation cache, Gradle's build cache and a shared Metro transform store all
 ride on the command lines stim-cli composes itself. When something IS blocked or
 slow, `stim doctor` is the read-only second opinion:
 
-```bash
-npx --package=stim-cli stim doctor
-```
+<StimTabs code={`stim doctor`} />
 
 It reports only what stim-cli cannot handle on its own -- a missing dev client,
 ccache, a checkout that does not fingerprint like a fresh worktree, a
@@ -85,8 +83,6 @@ npx skills add appandflow/stim-cli
 
 ## The ten commands
 
-All commands below take the same `npx --package=stim-cli stim` prefix.
-
 | Command                                                                                                        | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `start [--json] [--wait <seconds>]`                                                                            | Start this workspace's dev server on the reserved port under a detached supervisor, and block until it answers _and_ verifies as this project's (default 60s). Idempotent: a healthy dev server on the port is a no-op. Bare RN is hosted in-process with stim-cli's NDJSON reporter; Expo runs the project's own `expo start --port <n>` as a child. Structured logs land in `<root>/.stim-cli/logs`, and `.stim-cli/` is added to the project's `.gitignore` if it is not already there. A failure under `--json` still puts one line on stdout: the `{code, message, remedy}` contract (`STIM_CLI_METRO_TIMEOUT`, `STIM_CLI_SUPERVISOR_EXITED`, ...).                                                                                                                                                                                                                                                                        |
@@ -105,8 +101,6 @@ All commands below take the same `npx --package=stim-cli stim` prefix.
 
 Every project has a "shortcut": its `label` if one was set (e.g. via `worktree create --label`), else inherited from the enclosing worktree's label, else the directory basename. It is what names the owned device -- `stim-cli-<label>` -- and what `status` reports a workspace as.
 
-```bash
-npx --package=stim-cli stim worktree create feature-x --label agent-1   # its sim will be stim-cli-agent-1
-```
+<StimTabs code={`stim worktree create feature-x --label agent-1   # its sim will be stim-cli-agent-1`} />
 
 Two projects sharing the same basename with no distinguishing label collide, which is why `worktree create` registers a label for the worktree root: every worktree of a monorepo otherwise shares the same app-dir basename.

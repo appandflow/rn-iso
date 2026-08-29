@@ -4,10 +4,12 @@ sidebar_position: 4
 description: 'Isolated git worktrees with carried gitignored files, and teardown that reclaims everything'
 ---
 
-```bash
-npx --package=stim-cli stim worktree create feature-x        # creates ../<repo>-worktrees/feature-x
-npx --package=stim-cli stim worktree remove                  # removes it, deleting its owned device(s) and freeing its Metro port
-```
+import StimTabs from '@site/src/components/StimTabs';
+
+<StimTabs
+code={`stim worktree create feature-x        # creates ../<repo>-worktrees/feature-x
+stim worktree remove                  # removes it, deleting its owned device(s) and freeing its Metro port`}
+/>
 
 `worktree create <name>` does three things in one step: creates the git worktree itself (branched `worktree-<name>` off `origin/HEAD` by default -- pass `--base head` to branch off the current `HEAD` instead), carries over gitignored files (see "Carry-over" below), and registers a label for the worktree root so `stim-cli` shortcuts don't collide across a monorepo's worktrees (every worktree of a monorepo shares the same app-dir basename). Prefer it over a raw `git worktree add` for that reason. It prints only the resulting worktree path to stdout; everything else goes to stderr (see "Wiring into Claude Code" below).
 
@@ -68,7 +70,7 @@ Claude Code's `WorktreeCreate` hook fires when a session for a new worktree star
 {
   "hooks": {
     "WorktreeCreate": [
-      { "hooks": [{ "type": "command", "command": "npx --package=stim-cli stim worktree create \"$(jq -r .name)\"" }] }
+      { "hooks": [{ "type": "command", "command": "npx stim-cli worktree create \"$(jq -r .name)\"" }] }
     ]
   }
 }

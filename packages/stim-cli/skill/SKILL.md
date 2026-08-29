@@ -6,17 +6,26 @@ description: The React Native / Expo CLI for AI agents. Use when an agent needs 
 # stim-cli
 
 Use stim-cli to run React Native and Expo apps without sharing a Metro port or
-device with another workspace. Run it through `npx`; do not install it globally.
+device with another workspace. Run it without installing:
 
 ```bash
-npx --package=stim-cli stim <command>
+npx stim-cli <command>
 ```
+
+The user can instead install it once, which provides the same `stim` command:
+
+```bash
+npm install --global stim-cli
+```
+
+Do not change the installation mode unless the user asks. Later examples use
+`stim`. If it is not installed globally, replace `stim` with the `npx` form above.
 
 stim-cli requires Node 20.19.4 or later on Node 20, or Node 22.12.0 or
 later. If `npx` returns E401 or E404 in a repo with a private registry, use:
 
 ```bash
-npx --registry=https://registry.npmjs.org --package=stim-cli stim <command>
+npx --registry=https://registry.npmjs.org stim-cli <command>
 ```
 
 Prefer `--json` when another command or device tool needs a port, UDID, serial,
@@ -29,26 +38,26 @@ needs another branch or environment in parallel.
 
 ```bash
 # Optional. The command prints the new absolute path.
-npx --package=stim-cli stim worktree create app-412 --carry-ignored
+stim worktree create app-412 --carry-ignored
 cd <printed-path>
 
-npx --package=stim-cli stim start
-npx --package=stim-cli stim ios                    # or: npx --package=stim-cli stim android
-npx --package=stim-cli stim logs --errors --json
+stim start
+stim ios                    # or: stim android
+stim logs --errors --json
 
 # Edit JavaScript or TypeScript. Fast Refresh applies the change.
-npx --package=stim-cli stim logs --since 30s --level error
+stim logs --since 30s --level error
 
-npx --package=stim-cli stim stop
+stim stop
 
 # If this workflow created a worktree, ask the user before deleting it.
-npx --package=stim-cli stim worktree remove
+stim worktree remove
 ```
 
 Follow these rules during the loop:
 
 - Run `start` before a debug `ios` or `android` build. If the build returns
-  `STIM_CLI_NO_METRO`, run `npx --package=stim-cli stim start` and retry.
+  `STIM_CLI_NO_METRO`, run `stim start` and retry.
 - Run `ios` or `android` again after a native input changes. A JavaScript-only
   change does not need another native build.
 - A cold native build can outlive a shell timeout. Run the same build command
@@ -61,8 +70,8 @@ Follow these rules during the loop:
   follow the printed remedy before you claim success.
 - Empty output from `logs --errors` with exit code 0 is the pass condition.
   Do not read the NDJSON files directly.
-- Use `npx --package=stim-cli stim status` to find this workspace's device, port, server state,
-  and last build. Use `npx --package=stim-cli stim doctor` when a build is unexpectedly slow
+- Use `stim status` to find this workspace's device, port, server state,
+  and last build. Use `stim doctor` when a build is unexpectedly slow
   or the environment looks incomplete.
 
 ## Ownership and deletion
@@ -91,14 +100,14 @@ codes, remote devices, release builds, caches, and cleanup. Read the relevant
 topic before an advanced operation:
 
 ```bash
-npx --package=stim-cli stim guide             # list topics
-npx --package=stim-cli stim guide lifecycle   # full flow, flags, worktrees, builds, and capacity
-npx --package=stim-cli stim guide facts       # JSON payload fields
-npx --package=stim-cli stim guide metro       # supervisor, custom Metro, tunnels, and remote devices
-npx --package=stim-cli stim guide logs        # filters, record shape, and capture limits
-npx --package=stim-cli stim guide errors      # error codes and remedies
-npx --package=stim-cli stim guide cleanup     # destructive behavior and disk cleanup
-npx --package=stim-cli stim guide settings    # configuration files and supported keys
+stim guide             # list topics
+stim guide lifecycle   # full flow, flags, worktrees, builds, and capacity
+stim guide facts       # JSON payload fields
+stim guide metro       # supervisor, custom Metro, tunnels, and remote devices
+stim guide logs        # filters, record shape, and capture limits
+stim guide errors      # error codes and remedies
+stim guide cleanup     # destructive behavior and disk cleanup
+stim guide settings    # configuration files and supported keys
 ```
 
 Run the guide before tasks that involve any of these cases:
