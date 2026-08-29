@@ -1370,6 +1370,14 @@ The shared build cache and Metro transform cache default to living under
 STIM_CLI_BUILD_CACHE / STIM_CLI_METRO_CACHE in the environment override the file.
 The CLI and both cache packages resolve these identically, so every process
 finds the same store regardless of shell profile. A relative path is ignored.
+The Metro value is a PARENT root. The sanitized package name is appended below
+it, so apps remain separately reportable and prunable. Earlier releases used an
+overridden Metro root as one flat store. A new registration replaces that legacy
+parent entry and marks the named layout. If an older package registers it again,
+current gc ignores the exact unmarked legacy parent while a marked child exists.
+A marked store that later becomes another override parent remains visible but is
+report-only while its marked child exists. Root-level legacy files remain
+untouched for manual cleanup.
 
 PREFER SELF-REGISTRATION OVER THE 'caches' SETTING
 There is no 'cache' command. A cache registers itself from code instead, once,

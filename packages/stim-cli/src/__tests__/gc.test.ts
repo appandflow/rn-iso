@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { saveConfig, loadConfig } from '../config.ts';
@@ -2006,6 +2007,103 @@ test('--delete --older-than trims the cache entries nothing has touched', async 
 
   expect(existsSync(oldEntry)).toBe(false);
   expect(existsSync(freshEntry)).toBeTruthy();
+});
+
+test('--delete --older-than ignores a legacy Metro parent registered after its named child', async () => {
+  const parent = join(tmpHome, 'metro-cache');
+  const child = join(parent, 'demo');
+  const shard = join(child, '0a');
+  const currentTransform = join(shard, 'current');
+  const legacyShard = join(parent, '1b');
+  const legacyTransform = join(legacyShard, 'legacy');
+  mkdirSync(shard, { recursive: true });
+  mkdirSync(legacyShard, { recursive: true });
+  writeFileSync(currentTransform, 'current');
+  writeFileSync(legacyTransform, 'legacy');
+  const old = new Date(Date.now() - 400 * DAY_MS);
+  utimesSync(shard, old, old);
+  utimesSync(legacyTransform, old, old);
+  register({
+    dir: child,
+    name: 'Metro transform cache',
+    prune: 'entries',
+    entriesDepth: 2,
+    layout: METRO_NAMED_CACHE_LAYOUT,
+  });
+  register({ dir: parent, name: 'Metro transform cache', prune: 'entries', entriesDepth: 2 });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+
+  await cli(['--delete', '--older-than', '30']);
+
+  expect(existsSync(currentTransform)).toBe(true);
+  expect(existsSync(legacyTransform)).toBe(true);
+});
+
+test('--delete --older-than ignores a legacy Metro parent whose named child is a symlink', async () => {
+  const parent = join(tmpHome, 'metro-cache');
+  const target = join(tmpHome, 'metro-target');
+  const child = join(parent, 'demo');
+  const shard = join(target, '0a');
+  const currentTransform = join(shard, 'current');
+  mkdirSync(parent, { recursive: true });
+  mkdirSync(shard, { recursive: true });
+  writeFileSync(currentTransform, 'current');
+  symlinkSync(target, child, 'dir');
+  const old = new Date(Date.now() - 400 * DAY_MS);
+  utimesSync(shard, old, old);
+  register({
+    dir: child,
+    name: 'Metro transform cache',
+    prune: 'entries',
+    entriesDepth: 2,
+    layout: METRO_NAMED_CACHE_LAYOUT,
+  });
+  register({ dir: parent, name: 'Metro transform cache', prune: 'entries', entriesDepth: 2 });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+
+  await cli(['--delete', '--older-than', '30']);
+
+  expect(existsSync(currentTransform)).toBe(true);
+});
+
+test('--delete --older-than keeps a current Metro store that is also a current override parent', async () => {
+  const parent = join(tmpHome, 'metro-cache', 'first-app');
+  const child = join(parent, 'second-app');
+  const parentTransform = join(parent, '0a', 'old-parent-transform');
+  const childTransform = join(child, '1b', 'current-child-transform');
+  mkdirSync(dirname(parentTransform), { recursive: true });
+  mkdirSync(dirname(childTransform), { recursive: true });
+  writeFileSync(parentTransform, 'parent');
+  writeFileSync(childTransform, 'child');
+  const old = new Date(Date.now() - 400 * DAY_MS);
+  utimesSync(parentTransform, old, old);
+  utimesSync(dirname(childTransform), old, old);
+  register({
+    dir: parent,
+    name: 'Metro transform cache',
+    prune: 'entries',
+    entriesDepth: 2,
+    layout: METRO_NAMED_CACHE_LAYOUT,
+  });
+  register({
+    dir: child,
+    name: 'Metro transform cache',
+    prune: 'entries',
+    entriesDepth: 2,
+    layout: METRO_NAMED_CACHE_LAYOUT,
+  });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+
+  const report = await collectGcReport({ olderThan: 30 });
+  expect(report.caches.find((cache) => cache.dir === parent)?.prune).toBe('report-only');
+  expect(report.caches.find((cache) => cache.dir === child)?.prune).toBe('entries');
+  await cli(['--delete', '--older-than', '30']);
+
+  expect(existsSync(parentTransform)).toBe(true);
+  expect(existsSync(childTransform)).toBe(true);
 });
 
 test('--delete --all empties an index-backed cache that --older-than cannot trim', async () => {

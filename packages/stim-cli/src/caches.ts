@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
-import { isAbsolute, join, relative, resolve } from 'path';
+import { dirname, isAbsolute, join, relative, resolve } from 'path';
+import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { directorySize } from './fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
 import { findProjectRoot } from './project.ts';
@@ -13,6 +14,7 @@ export interface CacheDescriptor {
   prune: 'atomic' | 'entries' | 'report-only';
   note: string;
   entriesDepth?: number;
+  layout?: string;
   files?: string[];
   bytes?: number;
   source?: 'registered' | 'detected';
@@ -92,18 +94,65 @@ export function declaredCachePaths(cwd: string = process.cwd()): string[] {
 export function discoverCaches({ declared = [] }: { declared?: string[] } = {}): CacheDescriptor[] {
   const gradle = gradleBuildCache();
   const gradleDir = gradle ? canonicalCacheDir(gradle.dir) : null;
-  const registered = registeredCaches().map((c): CacheDescriptor =>
-    Object.assign({}, c, {
-      name: c.name ?? c.dir,
-      note: c.note ?? 'registered',
-      prune: c.prune,
-      source: 'registered' as const,
-    }),
+  const registered = protectNestedMetroAncestors(
+    suppressLegacyMetroAncestors(
+      registeredCaches().map((c): CacheDescriptor =>
+        Object.assign({}, c, {
+          name: c.name ?? c.dir,
+          note: c.note ?? 'registered',
+          prune: c.prune,
+          source: 'registered' as const,
+        }),
+      ),
+    ),
   );
   const detected = [compilationCache(), gradle, metroFileMaps(), ...declaredCaches(declared)]
     .filter((c): c is CacheDescriptor => Boolean(c))
     .map((c): CacheDescriptor => Object.assign({}, c, { source: 'detected' as const }));
   return mergeCacheDescriptors([...registered, ...detected], gradleDir);
+}
+
+function suppressLegacyMetroAncestors(caches: CacheDescriptor[]): CacheDescriptor[] {
+  const current = caches.filter(isCurrentMetroStore);
+  return caches.filter((cache) => {
+    if (!isLegacyMetroStore(cache)) return true;
+    return !current.some((candidate) => isNamedMetroChild(cache.dir, candidate.dir));
+  });
+}
+
+function protectNestedMetroAncestors(caches: CacheDescriptor[]): CacheDescriptor[] {
+  const current = caches.filter(isCurrentMetroStore);
+  return caches.map((cache) => {
+    if (!isCurrentMetroStore(cache)) return cache;
+    if (!current.some((candidate) => isNamedMetroChild(cache.dir, candidate.dir))) return cache;
+    return Object.assign({}, cache, {
+      prune: 'report-only' as const,
+      note: 'named Metro store is also an override parent; report only while its child is registered',
+    });
+  });
+}
+
+function isLegacyMetroStore(cache: CacheDescriptor): boolean {
+  return isMetroStore(cache) && cache.layout === undefined;
+}
+
+function isCurrentMetroStore(cache: CacheDescriptor): boolean {
+  return isMetroStore(cache) && cache.layout === METRO_NAMED_CACHE_LAYOUT;
+}
+
+function isMetroStore(cache: CacheDescriptor): boolean {
+  return (
+    cache.source === 'registered' &&
+    cache.name === 'Metro transform cache' &&
+    cache.prune === 'entries' &&
+    cache.entriesDepth === 2
+  );
+}
+
+function isNamedMetroChild(parent: string, candidate: string): boolean {
+  const dir = canonicalCacheDir(parent);
+  const child = canonicalCacheDir(candidate);
+  return dirname(child) === dir || canonicalCacheDir(dirname(candidate)) === dir;
 }
 
 function mergeCacheDescriptors(caches: CacheDescriptor[], gradleDir: string | null): CacheDescriptor[] {

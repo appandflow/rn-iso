@@ -16,6 +16,7 @@ import { register } from '../cache-manifest.ts';
 import { makeCacheDescriptor } from './_factories.ts';
 import { setProjectSetting, upsertProject } from '../config.ts';
 import assert from 'node:assert';
+import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 
 const LONG_AGO = new Date(Date.now() - 90 * 24 * 3600 * 1000);
 
@@ -349,4 +350,75 @@ test('a declared path that only differs in spelling dedups against the registrat
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('a named Metro store suppresses only its known legacy parent registration', () => {
+  const ancestor = join(tmpHome, 'cache-owner');
+  const parent = join(ancestor, 'metro');
+  const child = join(parent, 'demo');
+  mkdirSync(child, { recursive: true });
+  writeFileSync(
+    join(tmpHome, 'caches.json'),
+    JSON.stringify({
+      version: 1,
+      caches: [
+        {
+          dir: child,
+          name: 'Metro transform cache',
+          prune: 'entries',
+          entriesDepth: 2,
+          layout: METRO_NAMED_CACHE_LAYOUT,
+        },
+        { dir: parent, name: 'Metro transform cache', prune: 'entries', entriesDepth: 2 },
+        { dir: parent, name: 'Unrelated same-root cache', prune: 'entries', entriesDepth: 1 },
+        { dir: ancestor, name: 'Unrelated ancestor cache', prune: 'entries', entriesDepth: 1 },
+      ],
+    }),
+  );
+
+  const caches = discoverCaches();
+
+  expect(caches.some((cache) => cache.dir === parent && cache.name === 'Metro transform cache')).toBe(false);
+  expect(caches.some((cache) => cache.dir === child && cache.name === 'Metro transform cache')).toBe(true);
+  expect(caches.some((cache) => cache.dir === parent && cache.name === 'Unrelated same-root cache')).toBe(true);
+  expect(caches.some((cache) => cache.dir === ancestor && cache.name === 'Unrelated ancestor cache')).toBe(true);
+});
+
+test('current nested Metro stores preserve the parent as report-only and unmarked children prove no migration', () => {
+  const currentParent = join(tmpHome, 'current');
+  const currentChild = join(currentParent, 'child');
+  const unmarkedParent = join(tmpHome, 'unmarked');
+  const unmarkedChild = join(unmarkedParent, 'child');
+  for (const dir of [currentChild, unmarkedChild]) mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(tmpHome, 'caches.json'),
+    JSON.stringify({
+      version: 1,
+      caches: [
+        {
+          dir: currentParent,
+          name: 'Metro transform cache',
+          prune: 'entries',
+          entriesDepth: 2,
+          layout: METRO_NAMED_CACHE_LAYOUT,
+        },
+        {
+          dir: currentChild,
+          name: 'Metro transform cache',
+          prune: 'entries',
+          entriesDepth: 2,
+          layout: METRO_NAMED_CACHE_LAYOUT,
+        },
+        { dir: unmarkedParent, name: 'Metro transform cache', prune: 'entries', entriesDepth: 2 },
+        { dir: unmarkedChild, name: 'Metro transform cache', prune: 'entries', entriesDepth: 2 },
+      ],
+    }),
+  );
+
+  const caches = discoverCaches();
+
+  expect(caches.find((cache) => cache.dir === currentParent)?.prune).toBe('report-only');
+  expect(caches.find((cache) => cache.dir === currentChild)?.prune).toBe('entries');
+  expect(caches.some((cache) => cache.dir === unmarkedParent)).toBe(true);
+  expect(caches.some((cache) => cache.dir === unmarkedChild)).toBe(true);
 });
