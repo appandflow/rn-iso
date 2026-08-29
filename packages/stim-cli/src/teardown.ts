@@ -1,4 +1,4 @@
-import { occupyingApps, resolveOwnedIosSim, shutdownIosSim, deleteIosSim } from './sim/ios.ts';
+import { resolveOwnedIosSim, shutdownIosSim, deleteIosSim } from './sim/ios.ts';
 import { resolveOwnedAvdSerial, shutdownAndroidEmulator, deleteAvd } from './sim/android.ts';
 
 export interface TeardownOutcome {
@@ -24,17 +24,6 @@ export function teardownOwnedIosSim(
       };
     }
     if (resolved.missing) return { status: 'missing' };
-    if (!del) {
-      const apps = occupyingApps(udid);
-      if (apps === null || apps.length > 0) {
-        return {
-          status: 'skipped',
-          kind: 'occupied',
-          reason: 'in use by another process (occupied)',
-          ...(apps ? { holders: apps } : {}),
-        };
-      }
-    }
     shutdownIosSim(udid);
     if (del) deleteIosSim(udid);
     return { status: 'torn-down', label: label ?? resolved.sim?.name ?? udid };
@@ -43,8 +32,6 @@ export function teardownOwnedIosSim(
   }
 }
 
-// Android has no occupancy probe, so an owned, identity-verified AVD is always
-// eligible: there is no equivalent of the iOS occupancy skip here.
 export function teardownOwnedAvd(avdName: string, { del = false }: { del?: boolean } = {}): TeardownOutcome {
   try {
     const resolved = resolveOwnedAvdSerial(avdName);

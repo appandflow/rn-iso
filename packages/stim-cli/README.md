@@ -183,9 +183,7 @@ The one workspace `worktree remove` never destroys is the main checkout: git can
 
 In particular `stop` does not, by design: it shuts the owned device down and leaves it assigned, so returning to a branch costs a boot rather than a create, a provision and a reinstall. There is no `--delete` on it, because an agent reaching for `stop` to reclaim memory must not have one within reach of a typo. Destruction lives in `worktree remove` and `gc`, never here.
 
-**A delete is not occupancy-guarded.** An owned sim goes away even if another tool is still attached to it. It is a device stim-cli created, for a project that is going away, and the process holding it is almost always the caller's own UI-test runner, which has nothing to return to. Skipping occupied sims there leaked booted sims and live `xcodebuild test-without-building` runners out of `worktree remove`, and "left for a later gc" only asked the same question again forever.
-
-`stop` _is_ occupancy-guarded, because the device it spares survives the call and is still there to come back to: an iOS sim actively driven by a foreign UI-test runner is left running and reported instead of shut down. (Android has no occupancy probe, so an owned, identity-verified AVD is always eligible.)
+Device teardown is not occupancy-guarded. An explicit `stop`, `worktree remove`, or `gc --delete` shuts down the Stim-owned device even if another tool still uses it. These commands never shut down an unowned device.
 
 If a delete fails, the failure is reported, the config record is **kept** so the device stays tracked, and the command exits 1. Dropping the record on a failed teardown is exactly what turns it into a simulator nothing references.
 

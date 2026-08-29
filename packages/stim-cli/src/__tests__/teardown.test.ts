@@ -77,16 +77,30 @@ test('teardownOwnedIosSim reports missing without erroring', () => {
   expect(teardownOwnedIosSim('U1', { del: true })).toEqual({ status: 'missing' });
 });
 
-test('teardownOwnedIosSim skips an occupied sim it is only shutting down', () => {
+test('teardownOwnedIosSim shuts down an owned sim without checking occupancy', () => {
   const exec = iosExecutor({
     sims: [OWNED],
     occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n',
   });
   setExecutor(exec);
   const r = teardownOwnedIosSim('U1', { del: false });
-  expect(r.status).toBe('skipped');
-  expect(r.reason).toMatch(/occupied/);
-  expect(!exec.calls.some((c) => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
+  expect(r.status).toBe('torn-down');
+  expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
+  expect(exec.calls.some((c) => /launchctl list/.test(c))).toBe(false);
+});
+
+test('teardownOwnedIosSim does not check occupancy or shut down a sim that is not owned', () => {
+  const exec = iosExecutor({
+    sims: [{ ...OWNED, name: 'My Real Sim' }],
+    occupied: '\t123\t0\tUIKitApplication:com.callstack.agentdevice.runner.uitests.xctrunner[0x1][rb-legacy]\n',
+  });
+  setExecutor(exec);
+
+  const r = teardownOwnedIosSim('U1', { del: false });
+
+  expect(r.kind).toBe('not-owned');
+  expect(exec.calls.some((c) => /launchctl list/.test(c))).toBe(false);
+  expect(exec.calls.some((c) => /simctl shutdown/.test(c))).toBe(false);
 });
 
 test('teardownOwnedIosSim deletes an occupied sim anyway, without needing force', () => {
@@ -184,13 +198,9 @@ test('teardownOwnedAvd contains a throw instead of propagating it', () => {
   expect(r.reason).toMatch(/boom/);
 });
 
-test('skip outcomes carry a machine-readable kind, so callers need not match prose', () => {
+test('ownership skip outcomes carry a machine-readable kind', () => {
   setExecutor(iosExecutor({ sims: [{ ...OWNED, name: 'My Real Sim' }] }));
   expect(teardownOwnedIosSim('U1', { del: true }).kind).toBe('not-owned');
-  resetExecutor();
-
-  setExecutor(iosExecutor({ sims: [OWNED], occupied: '\t1\t0\tUIKitApplication:com.x.xctrunner[0x1]\n' }));
-  expect(teardownOwnedIosSim('U1', { del: false }).kind).toBe('occupied');
   resetExecutor();
 
   setExecutor(androidExecutor({ avds: ['Pixel_6'], adb: 'List of devices attached\n' }));
