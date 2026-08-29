@@ -8,427 +8,148 @@ description: "Release notes, generated from docs/releases/ -- the single source 
 
 Full release history is also on [GitHub Releases](https://github.com/appandflow/stim-cli/releases).
 
-## 1.5.0
-
-Android product flavors, self-diagnosing cache misses, and a workspace
-model that treats the main checkout as a first-class citizen. Everything
-here was field- or live-verified on real repos before merging.
-
-### New
-
-- **Android product flavors.** `stim-cli android --variant productionDebug`
-  (the flag wins; an `android.variant` settings key sets a repo default)
-  drives `assemble<Variant>`, finds the APK in the flavor's output dir,
-  keys the cache per variant, and reads the applicationId from the built
-  APK -- the binary is the truth, as on iOS. A stale carried APK is
-  refused by mtime rather than installed as fresh.
-- **`worktree remove` works on the main checkout**: it reclaims the
-  environment -- owned devices deleted, port freed, registry and
-  `.stim-cli/` gone -- and leaves the source tree byte-for-byte untouched.
-- **`--carry-ignored` carries the working state whole**: the source's
-  uncommitted tracked changes are applied when they fit the base (a
-  conflict warns and applies nothing), so carried artifacts and the
-  files they were built for travel together.
-- **Cache misses diagnose themselves**: entries store their fingerprint
-  sources, and a miss with a prior entry names the changed files on the
-  fingerprint line, with the full diff in the build log.
-- **doctor: fingerprint parity and Gradle build cache.** Parity compares
-  the project against a temporary worktree of HEAD and names what
-  diverges; the Gradle note flags `org.gradle.caching` off. The Expo
-  build-cache-provider nudge is gone -- stim-cli's own cache covers
-  stim-cli-driven builds, providers are optional.
-
-### Faster and clearer
-
-- Every phase line prints how long the step took; the device line
-  reports the boot's own elapsed time (boot overlaps the build).
-- `isolatedDeclarations`: every exported symbol carries an explicit
-  type, and .d.ts emit uses the fast isolated path.
-
-## 1.4.0
-
-A performance release, plus a fourth package. Everything here came out of one
-question -- "are we parallelizing what we can?" -- and two field-filed issues.
-
-### New
-
-- **`@stim-cli/core`.** The primitives the CLI and the two cache packages must
-  agree on -- config-dir and cache-root resolution, the build cache key, cache
-  self-registration -- now live in one small CJS package all three depend on,
-  instead of three deliberately maintained copies. Internal dependency, not a
-  user-facing API; public surfaces are unchanged.
-- **Cache locations in the machine config.** `caches.buildCache` /
-  `caches.metroCache` in `~/.stim-cli/config.json` relocate the shared caches
-  (say, to an external disk) for every process, shell profile or not. The
-  `STIM_CLI_BUILD_CACHE` / `STIM_CLI_METRO_CACHE` env vars still win; same
-  config-plus-env, no-CLI pattern as the concurrency limits.
-
-### Faster
-
-- **The device boots in parallel with the build.** `ios` / `android` kick the
-  boot off after the Metro gate and only await it at install -- the first step
-  that needs a live device. xcodebuild takes a Shutdown sim as its
-  destination and gradle needs no device at all, so a cold boot (up to
-  minutes for a software-rendered emulator) no longer sits in front of a
-  multi-minute compile. A boot failure surfaces at install with the same
-  `STIM_CLI_NO_DEVICE`, and the build that ran anyway is in the shared cache,
-  so the retry installs instead of compiling.
-- **Artifacts are stored as APFS clones.** The several-hundred-MB copy into
-  the build cache on every miss is now `cp -c` -- milliseconds on the same
-  volume -- with the plain copy as the cross-volume/non-APFS fallback. Both
-  the CLI store and the Expo provider's twin.
-
-### Fixes
-
-- **#43** -- `pod install` runs with a UTF-8 locale even when the caller
-  exports none (the normal state of an agent shell, where CocoaPods
-  otherwise fails every first build). A locale the caller set is honoured.
-- **#44** -- a repo pinning `.ruby-version` gets that ruby prepended to the
-  `pod install` subprocess PATH when rbenv/rvm/asdf/mise has it installed
-  (rvm's layout gets `GEM_HOME`/`GEM_PATH` too). When the bundler
-  "Could not find proper version of cocoapods" failure still fires with a
-  pin present, the remedy names the ruby mismatch instead of repeating
-  bundler's circular `bundle install` advice.
-
-## 1.3.3
-
-The polish left over from the 1.3.2 verification passes (issue #36).
-
-### Fixes
-
-- Expo prints some fatal lines to both stdout and stderr; identical lines
-  arriving within a second are now written to the timeline once, so a config
-  death cry no longer appears twice in `logs --errors` and in `start`'s
-  failure evidence.
-- `ios` / `android` persist the RESOLVED bundle id / package (read from the
-  built or cached artifact) into the project record, so `status` shows the
-  app id for a managed workspace instead of `app: ?` after a successful
-  build.
-- doctor's dev-client finding names `stim-cli ios` as what opens the deep
-  link, not `expo run:ios`.
-
-### Docs
-
-- Skill: after confirming the first-launch alert, allow ~10 seconds before
-  reading the logs for the bundle record -- an instant poll reads empty.
-
-## 1.3.2
-
-Everything the three-repo fresh-agent pass (a virgin `create-expo-app`,
-tlon-apps, th3rdwave) surfaced. All three passed on 1.3.1; this releases the
-friction they logged.
-
-### Fixes
-
-- **A dying expo child is no longer invisible to the error surface.**
-  Node-exception lines (`PluginError: ...`, `CommandError: ...`) were stored
-  at level info by the expo output parser, so `logs --errors` -- and the
-  failure evidence `start` prints -- both missed the actual death cry of a
-  dev server that failed on a config error. They infer as error now, and
-  `start`'s evidence additionally falls back to the attempt's last raw
-  records when nothing reached error level, since inference on raw output is
-  best-effort by nature.
-- **`doctor`'s `.stim-cli/` check asks git, not one file.** Adding `.stim-cli/`
-  to a monorepo ROOT `.gitignore` ignores the app dir's workspace state --
-  git says so -- but doctor kept flagging it because it only read the app
-  dir's own file. It now uses `git check-ignore` (file read stays as the
-  no-git fallback). The finding also no longer claims a fresh repo's
-  self-write "failed or was reverted", and the no-metro.config.js finding
-  states the real default ($TMPDIR/metro-cache, purgeable) instead of a
-  per-project cache that is not what Metro does.
-- **Stale carried dependencies get a targeted warning.** `worktree create
---carry-ignored` now compares each carried node_modules' source lockfile
-  with the branch's checked-out one (npm/yarn/pnpm/bun) and says exactly
-  what happened -- "installed for a different lockfile than this branch's,
-  reinstall" -- instead of only the generic staleness note, which cost the
-  tlon pass a failed `start` and a diagnosis detour.
-- **Env-passthrough semantics pinned and documented.** The supervisor (and a
-  metro config evaluated inside the expo child) inherits the environment of
-  the `start` call that spawned it -- now pinned by a test; the guide and
-  skill document the corollary that an idempotent re-run cannot inject new
-  env into a running supervisor (`stop`, then `start` with it set).
-
-### Docs
-
-- Skill: a UI-test-runner device tool pins the simulator through `stop` /
-  `worktree remove` (the occupied skip names the holder; tear the tool down
-  first); builds longer than a shell tool's timeout are re-attachable by
-  re-running the idempotent `ios --json`; npx per-invocation reinstall churn
-  is harmless; the init loop names the two doctor notes that can never clear;
-  and SKILL.md finally carries the version stamp its own staleness check
-  referred to (RELEASE.md gains the refresh step).
-
-## 1.3.1
-
-A patch release: everything the 1.3.0 field test and the native e2e matrix
-shook out. Two groups of fixes -- the ones CI forced (stim-cli now has a
-2x2 native e2e, real apps built on real simulators and emulators on GitHub
-runners, and getting it green found real product bugs) -- and the diagnostics
-issues the field test filed (#24, #25, #26).
-
-### Fixes
-
-Found by the native e2e (they bit CI first, but any Linux or Intel host hits
-them):
-
-- **Metro identity on hosts where `lsof -d cwd` answers nothing.** GitHub's
-  ubuntu runners do exactly this, so a healthy dev server could never verify
-  as the project's own and every `start` timed out. Linux now reads
-  `/proc/<pid>/cwd` directly; lsof stays the macOS path and the fallback.
-- **Android system images are picked for the host's architecture.** The
-  arm64-only filter returned nothing on an x86_64 host; the pick now matches
-  the machine (arm64 -> arm64-v8a, otherwise x86_64).
-- **The emulator boots headless on a displayless Linux host.** Without
-  `-no-window` it died in display init and never registered with adb; stim-cli
-  detects the absence of DISPLAY/WAYLAND_DISPLAY rather than asking for
-  configuration. A desktop session keeps its window.
-- **A cold first AVD boot gets 240s** (was 120), which software rendering on a
-  loaded machine genuinely needs.
-- **`android` launches cache-hit builds in projects with no `android/`
-  directory** by reading the package name from the APK's own manifest --
-  mirroring what iOS already did with the cached app's Info.plist.
-
-From the field-test issues:
-
-- **#24** -- a failed `start` now quotes this attempt's error records from the
-  log timeline, not just supervisor.log. In expo-child mode a dev server that
-  dies on a config error (the field case: a `PluginError` from a stale
-  worktree) leaves supervisor.log empty and its death cry in metro.ndjson;
-  the failure used to point at the empty file.
-- **#25** -- the `logs --json` zero-match contract is pinned in `guide logs`
-  and the flag help: zero matches is zero bytes on stdout with exit 0 (an
-  empty NDJSON stream -- parse line by line, never as one JSON document).
-- **#26** -- the occupied-sim skip names only the foreign `.xctrunner`
-  bundles the occupancy decider actually counted, instead of a `ps` scan that
-  dragged in the sim's own runtime and the app stim-cli itself launched; the
-  "current as of the last `git fetch`" note no longer prints for
-  `--base head` (it only applies to `fresh`); and the 30s heartbeat now also
-  covers the pod-install phase (a 2m33s `pod install` used to be silent).
-
-### Docs
-
-- **[Getting started](/docs/getting-started)** -- the quickest integration in
-  four steps: zero-install first run, agent skills via `npx skills add
-appandflow/stim-cli`, the ten-minute cache wiring, parallel worktrees. Linked
-  from both READMEs.
-- The lingering `npx stim-cli skill install` instructions are gone from the
-  README (the command was removed in 1.3.0).
-- Skill caveat: `--carry-ignored` against a base whose `.gitignore` differs
-  can leave carried paths as untracked churn that `worktree remove` later,
-  correctly, refuses over -- with the per-class restore commands.
-
-## 1.3.0
-
-Everything since v1.1.0 — the TypeScript migration (the unpublished 1.2.0 bump)
-plus a hardening pass, a four-round code review, and the full field-test issue
-backlog. All three packages move together, as always.
-
-### New
-
-- **TypeScript, end to end.** The codebase is strict TS 7 (native), bundled
-  with tsdown — `stim-cli` ships ESM, the two cache packages stay deliberate
-  CJS. Tests run on vitest and typecheck in the same strict pass as
-  production; oxlint (`no-explicit-any` as an error) and oxfmt gate style, and
-  knip gates dead code in CI.
-- **Build heartbeat.** `ios` / `android` print a stderr line about every 30s
-  while the compiler runs — elapsed time plus the current transcript line — so
-  a five-minute build is never indistinguishable from a wedged one. stdout
-  still carries exactly one `--json` payload.
-- **Per-run build transcript.** `build-<platform>.ndjson` now truncates on
-  each run's first write; "see the log for the transcript" always opens on
-  this run. Device/metro logs still append.
-- **`status --json`: `labelOnly`.** A monorepo worktree-root entry that only
-  holds the label reservation is now flagged, so JSON consumers can count
-  workspaces without double-counting.
-- **`worktree create` staleness note.** `fresh` / `head` branch from a
-  remote-tracking ref that is only as current as the last `git fetch`; the
-  command now says so instead of silently building on stale code.
-
-### Removed (breaking)
-
-- **The `skill` command.** Bundled skills are installed with `npx skills`;
-  a built-in copy-into-`~/.claude` command (and its staleness warning on
-  `start`) was redundant. The surface is now ten commands.
-- **Node 20.** The floor is Node >= 22 (Node 20 reaches end of life
-  2026-04-30, and the toolchain runs TypeScript natively).
-
-### Fixes
-
-Found by a four-round adversarial code review:
-
-- **spawn-entry** resolved its dev/dist layout by matching `/src/` anywhere in
-  the module URL, so a package installed under a path containing `/src/`
-  spawned a supervisor from files that do not exist. It now checks only the
-  module's own parent directory.
-- **Single-flight builds** could double-acquire: the stale-lock takeover did an
-  unconditional `rmSync` on a stale read, so a late waiter could delete the new
-  holder's fresh lock (build-lock) or over-subscribe `maxBuilds` (build-slots).
-  Takeover is atomic now (`renameSync`), and `gc --delete` re-checks liveness
-  right before removing a stale lock or slot.
-- **`killMetroTree`** signalled the process-group leader — the shell, not
-  Metro — when a backgrounded Metro shared stim-cli's own group. It now signals
-  the listener pid in that case.
-- **`reclaimProject`** (`worktree remove` / `gc`) never reaped device-log
-  collectors the way `stop` does; a collector outliving a failed device
-  teardown could resurrect a zombie `.stim-cli/` after the tree was deleted.
-- **`removeWorktree`** ran a destructive `git worktree remove` through the
-  shell with the path interpolated; it uses `runFile` with `--` now.
-- The Expo build-cache provider guards its readdir/touch/rename against a
-  concurrent prune, matching the CLI-side twin; `doctor` also reads
-  `metro.config.cjs`.
-- **Metro identity on Linux** reads `/proc/<pid>/cwd` directly (lsof stays the
-  macOS path and the fallback): on hosts where `lsof -d cwd` returns nothing --
-  GitHub's ubuntu runners do exactly this -- a healthy dev server could never
-  verify as the project's own, and every `start` timed out.
-
-From the field-test issue backlog:
-
-- **#8** — `worktree remove` no longer counts commits inherited from a
-  local-only base ref as unpushed; only commits reachable from nowhere else
-  refuse removal, and the remedy is followable.
-- **#9** — pod-install failures print the CocoaPods `[!]` blocks / Ruby
-  exception head instead of the log tail (which held deferred warnings).
-- **#13** — `logs --errors` no longer accumulates across consecutive failed
-  bundles: every bundle attempt writes a marker when it finishes, success or
-  failure, so only the newest failure is reported; a client redbox is never
-  retired by a failed rebuild.
-- **#14** — `gc`'s device sweep waits 30s (was 10s) before giving up, so
-  orphaned emulators surface on a loaded machine.
-- **#18** — Android tooling (`emulator`, `adb`, `avdmanager`) is resolved via
-  `ANDROID_HOME` / `ANDROID_SDK_ROOT` / `~/Library/Android/sdk` before falling
-  back to `PATH`, so teardown from a shell without the SDK exported succeeds
-  instead of permanently orphaning the registry entry.
-- **#16** — the skill documents the private-registry `.npmrc` failure mode of
-  `npx stim-cli` (E401) and the `--registry` workaround.
-
-### Docs
-
-- Clean-slate pass: comments and docs describe the tool as it is, without
-  version archaeology; executed implementation plans removed.
-
-## 1.1.0
-
-A security + concurrency release. **1.0.0 users should upgrade** — this closes
-two confirmed remote-code-execution holes.
-
-### Security (fix before relying on 1.0.0)
-
-- **Two shell-injection RCEs closed.** A committed `.stim-cli.json`'s
-  `worktree.baseRef` / `worktreeDir`, and `--base`, flowed unvalidated into
-  `git` shell strings — arbitrary code execution on `worktree create`, the
-  hook-driven first command of the lifecycle. A gitignored filename containing
-  `$(...)` did the same through `--carry-ignored`'s `cp`. Both now run through
-  argv arrays (no shell), with leading-dash / metacharacter guards. Found by an
-  adversarial codebase review, reproduced red-then-green.
-- **`--carry-ignored` no longer overwrites tracked files.** Ignore state is a
-  per-worktree fact from branch-varying `.gitignore` files, so "ignored in the
-  source" never implied "safe to overwrite in the destination." A
-  tracked-paths guard refuses the copy.
-
-### Features
-
-- **Single-flight builds.** Two workspaces building the same fingerprint no
-  longer both compile — one builds, the rest wait for its artifact and install
-  it. Proven live: three workspaces, one 40s compile, two waited-then-installed
-  a byte-identical build.
-- **Opt-in concurrency limits**, unlimited by default. `concurrency.maxBuilds`
-  (a slot semaphore — excess builds queue) and `concurrency.maxDevices` (refuse
-  a new device at capacity with a remedy), set in `config.json` or via
-  `STIM_CLI_MAX_BUILDS` / `STIM_CLI_MAX_DEVICES`. Unset = today's behavior exactly.
-- **EAS build-cache auth in `doctor`.** When a project configures the `eas`
-  provider, `doctor` checks eas-cli is installed, logged in, and on the right
-  account; builds name the fix in their degrade note instead of silently
-  falling back. The provider tier is now also reachable on hoisted (pnpm/yarn
-  workspace) monorepos — it was dead code there before.
-
-### Fixes
-
-- `--carry-ignored` skips `.DerivedData` (Clang module caches bake absolute
-  paths and broke builds with `missing required module 'SwiftShims'`).
-- `state.json` writes are now locked, so a supervisor / collector / build
-  record can't be lost to an interleaved write (which leaked a log-stream pid).
-
-### Infrastructure
-
-- End-to-end test suite (`npm run test:e2e`) and GitHub Actions CI: a fast
-  cross-platform cache-flow job on every PR, and a nightly / label-gated native
-  job that builds real bare + Expo apps on iOS and Android.
-
 ## 1.0.0
 
-stim-cli 1.0 is a rewrite. v2 was a pure environment broker: it gave each
-workspace an owned simulator and a reserved Metro port, and left starting the
-bundler and running the build to you. 1.0 keeps the broker underneath and adds
-the loop on top, reimplemented for agent use with a deliberately small option
-surface: never interactive, small stdout, everything captured, `--json`
-everywhere, structured errors with remedies.
+This is the first public release of the `stim-cli` package family.
 
-```
-cd "$(stim-cli worktree create task-123 --carry-ignored)"
-stim-cli start          # supervised dev server on this workspace's reserved port
-stim-cli ios            # cache-or-build, install, launch -- wired to that port
-stim-cli logs --errors  # the crash, symbolicated; empty = pass
-stim-cli worktree remove
-```
+`stim-cli` gives each React Native or Expo workspace an isolated local
+development environment. Each workspace gets its own Metro port and its own
+simulator or emulator. Native builds and Metro transforms use shared caches, so
+parallel worktrees can reuse work without sharing runtime state.
 
-### Highlights
+The CLI is designed for coding agents. Commands never prompt. Status and
+progress go to stderr. Commands with `--json` print one machine-readable result
+to stdout. Failures include stable error codes, focused diagnostics, and
+specific remedies.
 
-- **`start`** — a detached per-workspace supervisor hosts the dev server
-  (bare RN: Metro in-process with a structured NDJSON reporter; Expo: the
-  project's own `expo start`, stdout parsed). Idempotent; health is identity,
-  never a bare port probe.
-- **`ios` / `android`** — fingerprint the native inputs, install from the
-  shared cache when another workspace already built this commit, otherwise
-  prebuild/sync-deps/build with the transcript streamed to a queryable log and
-  failures reduced to the extracted compiler diagnostic. Field-measured on two
-  production monorepos: 18m17s -> 61s and 18m56s -> 19s in a second worktree.
-  A configured Expo build-cache provider (`"eas"` included) is respected and
-  consulted as a second cache tier; `--no-build-cache` builds fresh and
-  replaces the entry.
-- **Launch is verified, not assumed** — `launched` is `true` only when the
-  app fetched a bundle from THIS workspace's dev server; otherwise
-  `"unverified"` plus the exact command to recover. Cached binaries are
-  port-agnostic: the port is wired at launch (`RCT_jsLocation` on iOS,
-  `debug_http_host` + `adb reverse` on Android), never baked in.
-- **`logs`** — one merged NDJSON timeline (bundler, client, build, device).
-  `logs --errors` reports errors since the last build/launch marker, with iOS
-  syslog noise demoted and capped output.
-- **`stop`** — the non-destructive inverse of `start`. Destruction lives in
-  exactly two commands: `worktree remove` and `gc --delete`.
-- **Zero setup** — no init step. `start` adds the one `.gitignore` line
-  itself; build output lives in `<worktree>/.stim-cli/` and dies with the
-  worktree; content-addressed caches share under `~/.stim-cli/`. Repo tuning
-  (compilation cache, shared Metro stores) is a documented playbook in the
-  bundled `stim-cli-init` skill, applied by you or your agent in your repo's
-  own style.
+### New
 
-### Removed (breaking)
+### One complete agent loop
 
-`up`, `device`, `release`, `shutdown`, `config`, `build-cache`, `prune`,
-`cache`, `worktree list`, `init`, `--serial`, and physical-device support are
-gone. The surface is:
+```bash
+npx skills add appandflow/stim-cli
 
-```
-doctor  worktree (create|remove)  start  stop  ios  android
-logs  status  gc  guide  skill
+npx stim-cli doctor
+npx stim-cli start
+npx stim-cli ios              # or: npx stim-cli android
+npx stim-cli logs --errors
+npx stim-cli stop
 ```
 
-- `up`'s facts payload -> `start --json` and `ios|android --json`.
-- `release`/`shutdown` -> `stop` (non-destructive) and `worktree remove` /
-  `gc --delete` (destructive).
-- `config` -> edit `.stim-cli.json` directly (`guide settings`).
-- `build-cache resolve|store` -> internal to `ios`/`android`.
-- Physical devices: out of scope; simulators/emulators only, every device
-  stim-cli touches is one it created.
+`doctor` reports project settings that can prevent correct or fast builds.
+`start` runs the project dev server under a detached supervisor. `ios` and
+`android` build or restore the app, install it, and launch it on the owned
+device. `logs --errors` gives the agent a direct pass or fail check. An empty
+result with exit code 0 means that the current error window is clean.
 
-### Migration notes
+### Isolated workspaces and owned devices
 
-- **Caches moved**: `~/.stim-cli-build-cache` and `~/.<name>-metro-cache` are
-  no longer read. Delete the old directories; the new locations are
-  `~/.stim-cli/build-cache` and `~/.stim-cli/metro-cache` (`STIM_CLI_BUILD_CACHE` /
-  `STIM_CLI_METRO_CACHE` still override).
-- **`@stim-cli/metro-cache` is now `@stim-cli/metro`** (same `sharedCacheStores`,
-  plus the NDJSON log reporter). The old package is deprecated on npm.
-- Xcode compilation caching replaces ccache support; the bundled skill
-  documents the Podfile loop with the CAS pinned outside DerivedData.
-- Refresh installed skills: `npx stim-cli skill install`.
+- Each project or worktree gets a reserved Metro port.
+- Each environment gets a simulator or emulator named `stim-cli-<label>`.
+- stim-cli operates only on devices that it created and recorded as owned.
+- Physical devices and user-created virtual devices are outside the product
+  scope.
+- `worktree create` creates an isolated git worktree and prints only its path
+  to stdout.
+- `worktree remove` checks git state before it removes a worktree and its
+  environment.
+- `stop` stops the supervisor and shuts down the device without deleting it.
+- `gc` reports stale state. Only `worktree remove` and `gc --delete` delete
+  owned resources.
+
+Several agents can work in parallel without sharing a bundler, device, runtime
+state, or project log stream.
+
+### Supervised dev servers and structured logs
+
+`start` runs bare React Native Metro in process. It runs the project Expo dev
+server as a child when the project uses Expo. Both modes use the workspace's
+reserved port and verify server identity before reporting success.
+
+The CLI merges bundler, client, build, and device records into one NDJSON
+timeline. `logs` can filter by time, source, level, text, or the current error
+window. `logs --follow` streams new records. `status` summarizes all managed
+environments and reports active processes, assigned devices, ports, cache
+results, and errors.
+
+### Shared native build cache
+
+`ios` and `android` calculate a native fingerprint with
+`@expo/fingerprint`. A matching artifact can be reused by another worktree.
+The cache key includes the platform, build configuration or variant, and target
+class.
+
+- iOS supports `--configuration <name>`.
+- Android supports `--variant <name>`, including product flavors.
+- Release builds skip Metro and contain the current JavaScript bundle.
+- A release cache hit receives the current JavaScript before installation.
+- A failed JavaScript swap falls back to a full build.
+- Concurrent requests for one fingerprint use a single build.
+- A configured Expo build cache provider can act as a second cache tier.
+
+stim-cli also enables Xcode's compilation cache when the installed Xcode
+supports it. Android builds use Gradle's shared build cache. Device boot starts
+in parallel with compilation.
+
+### Shared Metro transform cache
+
+`@stim-cli/metro` provides a Metro transform cache shared by every worktree.
+The package also provides the NDJSON reporter used by bare React Native dev
+servers. stim-cli injects the shared store without requiring a project change
+when the installed React Native or Expo version supports that path.
+
+### Cache inspection and cleanup
+
+Cache packages register their storage with the shared cache manifest.
+`stim-cli gc` reports registered and detected caches without deleting them.
+
+```bash
+npx stim-cli gc
+npx stim-cli gc --delete --older-than 30
+npx stim-cli gc --delete --all
+```
+
+Age-based cleanup removes independent entries. Atomic stores, such as Xcode's
+content-addressed store, are emptied only with `--all`.
+
+### Machine and project settings
+
+Project settings can select the iOS device type, iOS runtime, Android system
+image, Android build variant, worktree defaults, and project label. Machine
+settings can move cache roots and set optional build or device concurrency
+limits. Environment variables override machine cache and concurrency settings.
+
+The CLI keeps runtime state under `$STIM_CLI_HOME`, which defaults to
+`~/.stim-cli`. The normal workflow does not require generated project files
+or an initialization command.
+
+### Built-in agent guidance
+
+The `stim-cli` package includes an agent skill and version-matched guidance.
+`guide` prints the reference for the installed CLI version. Topics cover
+facts, lifecycle, Metro, logs, errors, cleanup, and settings.
+
+### Packages
+
+- **`stim-cli`** - the command-line interface and bundled agent guidance.
+- **`@stim-cli/core`** - shared cache paths, cache keys, locks, and cache
+  registration primitives.
+- **`@stim-cli/metro`** - the shared Metro transform cache and NDJSON
+  reporter.
+- **`@stim-cli/expo-build-cache`** - a local Expo build cache provider for
+  Expo-driven native builds.
+
+All four packages use version `1.0.0` and are released together.
+
+### Requirements and limits
+
+- Node.js 20.19.4 or later on Node 20, or Node.js 22.12.0 or later.
+- Xcode and an installed iOS Simulator runtime for iOS work.
+- Android SDK tools and an installed emulator system image for Android work.
+- Bare React Native and Expo projects are supported.
+- Store signing, distribution builds, and physical devices are outside scope.
+- The package surface is new and can change as the first production users
+  report real workflows.
+
+The source, package documentation, and issue tracker are available at
+[appandflow/stim-cli](https://github.com/appandflow/stim-cli).
