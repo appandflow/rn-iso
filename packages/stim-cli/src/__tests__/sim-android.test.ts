@@ -1,5 +1,15 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -12,6 +22,7 @@ import {
   findBuildTool,
   headlessEmulatorArgs,
   bootAndroidEmulator,
+  configureNewOwnedAvdDataPartition,
   listAvds,
   parseAvdList,
   parseAdbDevices,
@@ -23,6 +34,7 @@ import {
   deleteAvd,
   resolveOwnedAvdSerial,
   waitForBoot,
+  withAvdDataPartitionSize,
 } from '../sim/android.ts';
 
 let tmpHome: string;
@@ -220,6 +232,50 @@ test('ownedAvdDirectory returns null when every emulator root is missing and ign
       home: join(tmpHome, 'missing-home'),
     }),
   ).toBe(null);
+});
+
+test('withAvdDataPartitionSize replaces duplicates and preserves unrelated config', () => {
+  expect(
+    withAvdDataPartitionSize(
+      'hw.cpu.ncore=4\r\ndisk.dataPartition.size=10G\r\ntag.id=google_apis\r\ndisk.dataPartition.size=8G\r\n',
+      6 * 1024 ** 3,
+    ),
+  ).toBe('hw.cpu.ncore=4\r\ndisk.dataPartition.size=6442450944\r\ntag.id=google_apis\r\n');
+});
+
+test('withAvdDataPartitionSize appends a missing value without changing newline termination', () => {
+  expect(withAvdDataPartitionSize('hw.cpu.ncore=4', 8 * 1024 ** 3)).toBe(
+    'hw.cpu.ncore=4\ndisk.dataPartition.size=8589934592',
+  );
+});
+
+test('configureNewOwnedAvdDataPartition atomically writes and verifies config.ini', () => {
+  const content = join(tmpHome, 'stim-cli-app.avd');
+  mkdirSync(content, { recursive: true });
+  const config = join(content, 'config.ini');
+  writeFileSync(config, 'hw.cpu.ncore=4\ndisk.dataPartition.size=10G\n');
+
+  expect(configureNewOwnedAvdDataPartition('stim-cli-app', 6, { avdDirectory: () => content })).toBe(config);
+  expect(readFileSync(config, 'utf8')).toBe('hw.cpu.ncore=4\ndisk.dataPartition.size=6442450944\n');
+  expect(readdirSync(content).filter((name) => name.includes('.stim-cli-'))).toEqual([]);
+});
+
+test('configureNewOwnedAvdDataPartition removes its temporary file when replacement fails', () => {
+  const content = join(tmpHome, 'stim-cli-app.avd');
+  mkdirSync(content, { recursive: true });
+  const config = join(content, 'config.ini');
+  writeFileSync(config, 'disk.dataPartition.size=10G\n');
+
+  expect(() =>
+    configureNewOwnedAvdDataPartition('stim-cli-app', 6, {
+      avdDirectory: () => content,
+      rename: () => {
+        throw new Error('rename failed');
+      },
+    }),
+  ).toThrow(/rename failed/);
+  expect(readFileSync(config, 'utf8')).toBe('disk.dataPartition.size=10G\n');
+  expect(readdirSync(content).filter((name) => name.includes('.stim-cli-'))).toEqual([]);
 });
 
 test('pickDefaultSystemImage prefers highest api, then google_apis, arm64 only', () => {

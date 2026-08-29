@@ -30,6 +30,7 @@ const KNOWN_SETTINGS = new Set([
   'ios.configuration',
   'ios.remote',
   'android.systemImage',
+  'android.dataPartitionSizeGb',
   'android.variant',
   'android.keystore',
   'android.keystorePassword',
@@ -43,6 +44,48 @@ const KNOWN_SETTINGS = new Set([
   'worktree.exclude',
   'caches',
 ]);
+
+export const MIN_ANDROID_DATA_PARTITION_SIZE_GB: number = 6;
+export const DEFAULT_ANDROID_DATA_PARTITION_SIZE_GB: number = 8;
+export const MAX_ANDROID_DATA_PARTITION_SIZE_GB: number = 16 * 1024;
+
+function validateAndroidDataPartitionSizeGb(raw: unknown): number {
+  if (
+    typeof raw !== 'number' ||
+    !Number.isSafeInteger(raw) ||
+    raw < MIN_ANDROID_DATA_PARTITION_SIZE_GB ||
+    raw > MAX_ANDROID_DATA_PARTITION_SIZE_GB
+  ) {
+    throw new Error(
+      `Invalid android.dataPartitionSizeGb setting ${JSON.stringify(raw)}. Expected an integer from ${MIN_ANDROID_DATA_PARTITION_SIZE_GB} through ${MAX_ANDROID_DATA_PARTITION_SIZE_GB} GiB.`,
+    );
+  }
+  return raw;
+}
+
+export function androidDataPartitionSizeBytes(sizeGb: unknown): number {
+  return validateAndroidDataPartitionSizeGb(sizeGb) * 1024 ** 3;
+}
+
+function androidDataPartitionSizeGbRaw(settings: unknown): unknown {
+  if (!isPlainObject(settings) || !isPlainObject(settings.android)) return undefined;
+  return settings.android.dataPartitionSizeGb;
+}
+
+export function androidDataPartitionSizeGbSetting(settings: unknown): number {
+  const raw = androidDataPartitionSizeGbRaw(settings);
+  if (raw === undefined) return DEFAULT_ANDROID_DATA_PARTITION_SIZE_GB;
+  return validateAndroidDataPartitionSizeGb(raw);
+}
+
+export function androidDataPartitionSizeGbSettingError(settings: unknown): string | null {
+  try {
+    androidDataPartitionSizeGbSetting(settings);
+    return null;
+  } catch (error) {
+    return String((error as Error)?.message || error);
+  }
+}
 
 export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   if (!isPlainObject(settings)) return [];

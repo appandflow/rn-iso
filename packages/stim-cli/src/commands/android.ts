@@ -47,6 +47,7 @@ import {
 } from './ios.ts';
 import {
   REMOTE_DEVICE_BACKENDS,
+  androidDataPartitionSizeGbSettingError,
   publicUrlSetting,
   remoteAndroidSetting,
   remoteDeviceSettingError,
@@ -1402,6 +1403,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     gitCommonDir: gitCommonDir(root),
     repoRoot: repoRoot(root),
   });
+  const dataPartitionSizeError = androidDataPartitionSizeGbSettingError(settings);
+  if (dataPartitionSizeError) {
+    return fail(
+      'STIM_CLI_BAD_ARG',
+      dataPartitionSizeError,
+      'Set android.dataPartitionSizeGb to a whole number of GiB from 6 through 16384.',
+    );
+  }
   const remoteSettingError = remoteDeviceSettingError(settings);
   if (remoteSettingError) {
     return fail(

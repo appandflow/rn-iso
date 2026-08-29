@@ -1,7 +1,19 @@
-import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs';
 import { homedir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
+import { androidDataPartitionSizeBytes } from '../settings.ts';
 
 export interface SystemImage {
   api: number;
@@ -335,6 +347,67 @@ export function ownedAvdDirectory(
     return null;
   }
   return null;
+}
+
+export function withAvdDataPartitionSize(contents: string, sizeBytes: number): string {
+  const newline = contents.includes('\r\n') ? '\r\n' : '\n';
+  const trailingNewline = /\r?\n$/.test(contents);
+  const lines = contents.split(/\r?\n/);
+  if (trailingNewline) lines.pop();
+  const updated: string[] = [];
+  let found = false;
+  for (const line of lines) {
+    if (/^\s*disk\.dataPartition\.size\s*=/.test(line)) {
+      if (!found) updated.push(`disk.dataPartition.size=${sizeBytes}`);
+      found = true;
+    } else {
+      updated.push(line);
+    }
+  }
+  if (!found) updated.push(`disk.dataPartition.size=${sizeBytes}`);
+  return updated.join(newline) + (trailingNewline ? newline : '');
+}
+
+let avdConfigWriteSequence = 0;
+
+export function configureNewOwnedAvdDataPartition(
+  avdName: string,
+  sizeGb: number,
+  {
+    avdDirectory = ownedAvdDirectory,
+    readFile = (path: string) => readFileSync(path, 'utf8'),
+    writeFile = (path: string, contents: string) => writeFileSync(path, contents, { encoding: 'utf8', flag: 'wx' }),
+    rename = renameSync,
+    remove = (path: string) => rmSync(path, { force: true }),
+  }: {
+    avdDirectory?: typeof ownedAvdDirectory;
+    readFile?: (path: string) => string;
+    writeFile?: (path: string, contents: string) => void;
+    rename?: (from: string, to: string) => void;
+    remove?: (path: string) => void;
+  } = {},
+): string {
+  const sizeBytes = androidDataPartitionSizeBytes(sizeGb);
+  const directory = avdDirectory(avdName);
+  if (!directory) throw new Error(`Could not resolve the content directory for newly created AVD ${avdName}.`);
+  const configPath = join(directory, 'config.ini');
+  const original = readFile(configPath);
+  const updated = withAvdDataPartitionSize(original, sizeBytes);
+  const tempPath = join(directory, `.config.ini.stim-cli-${process.pid}-${++avdConfigWriteSequence}.tmp`);
+  try {
+    writeFile(tempPath, updated);
+    rename(tempPath, configPath);
+  } catch (error) {
+    try {
+      remove(tempPath);
+    } catch {}
+    throw error;
+  }
+  const verified = readFile(configPath);
+  if (!verified.split(/\r?\n/).includes(`disk.dataPartition.size=${sizeBytes}`)) {
+    throw new Error(`Could not verify disk.dataPartition.size in ${configPath}.`);
+  }
+  return configPath;
 }
 
 export function bootAndroidEmulator(
