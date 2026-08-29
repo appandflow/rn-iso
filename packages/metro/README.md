@@ -29,8 +29,8 @@ the disk does. Registering it with
 [`stim-cli`](https://www.npmjs.com/package/stim-cli) makes it visible:
 
 ```bash
-npx stim-cli gc                            # what it has grown to (reported on every run)
-npx stim-cli gc --delete --older-than 30   # drop entries unused for 30 days
+npx --package=stim-cli stim gc                            # what it has grown to (reported on every run)
+npx --package=stim-cli stim gc --delete --older-than 30   # drop entries unused for 30 days
 ```
 
 Entries are trimmed individually — one file per cache key — so trimming costs
@@ -39,7 +39,20 @@ only the entries nothing has touched, not the whole cache.
 stim-cli is an optional peer. Without it the cache works exactly the same; it is
 just invisible to housekeeping.
 
-The location can be overridden by `STIM_CLI_METRO_CACHE`, or machine-wide by `caches.metroCache` in `~/.stim-cli/config.json` (an absolute path; the env var wins). The CLI and this package resolve both identically, so they always share one store.
+The parent location can be overridden by `STIM_CLI_METRO_CACHE`, or
+machine-wide by `caches.metroCache` in `~/.stim-cli/config.json` (an absolute
+path; the env var wins). The sanitized name passed to `sharedCacheStores` is
+always appended below that parent, so `sharedCacheStores('@scope/app')` uses
+`<parent>/-scope-app`. The CLI and this package resolve both identically.
+
+Earlier versions wrote a named store directly into an overridden parent. A new
+registration marks the named layout and replaces an exact unmarked legacy
+parent entry. If an older package registers the parent again later, current
+`stim gc` ignores that provably legacy entry while a marked child is
+registered, so it cannot prune the child at the wrong depth. A marked named
+store that later becomes another override parent remains visible but report-only
+while its marked child exists. The old root-level cache files are left untouched
+for manual cleanup.
 
 ## The NDJSON log reporter
 
@@ -60,12 +73,12 @@ await Metro.runServer(config, { host, port });
 **It only survives when you host Metro yourself.** Both the Expo CLI and the
 React Native CLI overwrite `config.reporter` after loading `metro.config.js`, so
 a reporter set there is discarded without a word. Setting it on a config you
-pass to `Metro.runServer` is the path that works, and it is how `stim-cli start`
+pass to `Metro.runServer` is the path that works, and it is how `stim start`
 captures a bare React Native project's logs.
 
 Each record is `{ ts, src, level, msg }` plus, when they apply, `event` (the
 Metro event name), `stack` (passed through as Metro gave it) and `marker: true`
-(written on a finished bundle build, which is what `stim-cli logs --errors` counts
+(written on a finished bundle build, which is what `stim logs --errors` counts
 errors from). When used by stim-cli, `dir` defaults to
 `$STIM_CLI_HOME/workspaces/<readable-project-slug>--<16hex-path-digest>/logs`
 (by default `~/.stim-cli/workspaces/...`), outside the working directory.

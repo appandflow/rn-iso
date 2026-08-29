@@ -118,7 +118,7 @@ export function registerCreate(worktree: Command): void {
           ),
         );
         console.error(chalk.dim('  Either create it under a different name:'));
-        console.error(chalk.dim(`    stim-cli worktree create <other-name> --base ${base}`));
+        console.error(chalk.dim(`    stim worktree create <other-name> --base ${base}`));
         console.error(
           chalk.dim(
             '  or delete the leftover branch (it is what an earlier `worktree remove` left behind; removing a worktree never deletes its branch) and retry:',
@@ -462,7 +462,7 @@ function reportRetainedResources(root: string, result: ReclaimAllResult): void {
     if (result.retainedResources.some((resource) => resource.project === kept)) continue;
     console.error(chalk.yellow(`  - retained stim-cli ownership state for ${kept}`));
   }
-  console.error(chalk.dim('Fix the reported cause, then run `stim-cli worktree remove` again.'));
+  console.error(chalk.dim('Fix the reported cause, then run `stim worktree remove` again.'));
   process.exitCode = 1;
 }
 
@@ -573,7 +573,7 @@ function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
   for (const kept of result.keptEntries) {
     print(
       (failed ? chalk.dim : chalk.yellow)(
-        `  stim-cli still tracks ${kept} because environment cleanup failed; re-run \`stim-cli gc --delete\` once the cause is fixed.`,
+        `  stim-cli still tracks ${kept} because environment cleanup failed; re-run \`stim gc --delete\` once the cause is fixed.`,
       ),
     );
   }

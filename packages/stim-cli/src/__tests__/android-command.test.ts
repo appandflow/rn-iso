@@ -481,7 +481,7 @@ describe('explicit remote backend behavior', () => {
     const result = await h.run();
     expect(result.ok).toBe(false);
     expect(result.error?.message).toContain('ENOSPC');
-    expect(result.error?.remedy).toMatch(/stim-cli status/);
+    expect(result.error?.remedy).toMatch(/stim status/);
     expect(result.error?.remedy).not.toMatch(/~\/\.android\/avd|several GB/);
   });
 
@@ -513,6 +513,32 @@ describe('explicit remote backend behavior', () => {
     expect(result.error?.code).toBe('STIM_CLI_BAD_ARG');
     expect(result.error?.message).toContain('Invalid android.remote setting');
     expect(resolved).toBe(false);
+  });
+
+  test('an invalid Android data partition size is refused before device work', async () => {
+    const h = harness({
+      resolveSettingsFor: () => ({ android: { dataPartitionSizeGb: 5 } }),
+      ensureDevice: never('the device'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_CLI_BAD_ARG');
+    expect(result.error?.message).toContain('Invalid android.dataPartitionSizeGb setting');
+    expect(result.error?.remedy).toContain('whole number of GiB');
+    expect(h.calls.ensureDevice).toEqual([]);
+  });
+
+  test('an unsafe Android AVD config key is refused before device work', async () => {
+    const h = harness({
+      resolveSettingsFor: () => ({ android: { avdConfig: { 'image.sysdir.1': '/tmp/image' } } }),
+      ensureDevice: never('the device'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_CLI_BAD_ARG');
+    expect(result.error?.message).toContain('Unsupported android.avdConfig key');
+    expect(result.error?.remedy).toContain('documented android.avdConfig keys');
+    expect(h.calls.ensureDevice).toEqual([]);
   });
 
   test('the local path does not resolve a remote backend', async () => {
@@ -590,7 +616,7 @@ describe('explicit remote backend behavior', () => {
       }),
       ensureMetroReachable: async () => ({
         failed: 'The public Metro origin is unavailable.',
-        remedy: 'Run `stim-cli start --remote`.',
+        remedy: 'Run `stim start --remote`.',
         code: 'STIM_CLI_REMOTE_METRO_UNREACHABLE',
       }),
       remoteDeviceDeps: () => ({
@@ -1117,7 +1143,7 @@ describe('metro is verified before any build work', () => {
     assert(result.error);
     expect(result.error.code).toBe(NO_METRO);
     expect(result.error.message).toMatch(/port 8082/);
-    expect(result.error.remedy).toMatch(/stim-cli start/);
+    expect(result.error.remedy).toMatch(/stim start/);
     expect(result.error.remedy).toMatch(/--no-metro-check/);
     expect(h.stderr.at(-2)).toMatch(/STIM_CLI_NO_METRO/);
     expect(existsSync(workspaceStateFile(root))).toBe(false);
@@ -1255,7 +1281,7 @@ describe('the other refusals', () => {
     expect(result.error.message).toMatch(/Not enough space to create userdata partition/);
     expect(result.error.remedy).toMatch(/Free disk space/);
     expect(result.error.remedy).toMatch(/~\/.android\/avd/);
-    expect(result.error.remedy).not.toMatch(/JAVA_HOME|stim-cli status/);
+    expect(result.error.remedy).not.toMatch(/JAVA_HOME|stim status/);
     expect(h.stderr.some((l) => l.includes(emulatorLogFile(root)))).toBeTruthy();
   });
 
@@ -1298,7 +1324,7 @@ describe('the other refusals', () => {
     const result = await h.run();
     assert(result.error);
     expect(result.error.message).toBe('AVD stim-cli-app-412 no longer exists.');
-    expect(result.error.remedy).toMatch(/stim-cli status/);
+    expect(result.error.remedy).toMatch(/stim status/);
     expect(h.stderr.some((l) => l.includes(emulatorLogFile(root)))).toBeTruthy();
   });
 
@@ -2460,7 +2486,7 @@ describe('concurrency limits', () => {
         return {
           code: 'STIM_CLI_AT_CAPACITY',
           message: 'at capacity',
-          remedy: 'stop an environment (stim-cli stop) or raise concurrency.maxDevices',
+          remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
         };
       },
     });
@@ -2472,7 +2498,7 @@ describe('concurrency limits', () => {
     assert(capacityArgs);
     expect(capacityArgs.max).toBe(3);
     expect(h.calls.ensureDevice.length).toBe(0);
-    expect(h.stderr.join('\n')).toMatch(/stim-cli stop/);
+    expect(h.stderr.join('\n')).toMatch(/stim stop/);
   });
 
   test('maxBuilds takes a slot to build and releases it, with the right args', async () => {
@@ -2610,7 +2636,7 @@ describe('release skips Metro entirely', () => {
     assert(result.facts);
     expect(result.facts.launched).toBe('unverified');
     expect(h.stderr.join('\n')).toMatch(/UNVERIFIED: no com\.example\.app process/);
-    expect(h.stderr.join('\n')).toMatch(/stim-cli logs --errors/);
+    expect(h.stderr.join('\n')).toMatch(/stim logs --errors/);
   });
 
   test('the android.variant setting is the repo default, and the flag overrides it back to debug', async () => {

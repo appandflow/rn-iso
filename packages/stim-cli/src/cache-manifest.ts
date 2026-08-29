@@ -11,6 +11,7 @@ export interface CacheEntry {
   entriesDepth?: number;
   note?: string;
   registeredBy?: string;
+  layout?: string;
 }
 
 export function manifestPath(): string {
@@ -40,6 +41,7 @@ export function register(entry: CacheEntry, path: string = manifestPath()): Cach
     note: entry.note || 'registered by the project',
     registeredBy: entry.registeredBy || process.cwd(),
   };
+  if (entry.layout) record.layout = entry.layout;
   updateCacheManifest(path, (caches) => {
     const others = cacheEntries(caches).filter((cache) => expand(cache.dir) !== dir);
     return [...others, record];
@@ -71,6 +73,7 @@ export function registeredCaches(path: string = manifestPath()): {
   prune: 'atomic' | 'entries';
   entriesDepth: number;
   note: string | undefined;
+  layout: string | undefined;
 }[] {
   return readManifest(path)
     .caches.filter((c) => c.dir && existsSync(c.dir))
@@ -80,5 +83,6 @@ export function registeredCaches(path: string = manifestPath()): {
       prune: c.prune === 'atomic' ? 'atomic' : 'entries',
       entriesDepth: normalizeDepth(c.entriesDepth),
       note: c.note,
+      layout: c.layout,
     }));
 }

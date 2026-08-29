@@ -37,8 +37,8 @@ the disk does. Registering it with
 [`stim-cli`](https://www.npmjs.com/package/stim-cli) makes it visible:
 
 ```bash
-npx stim-cli gc                            # what it has grown to (reported on every run)
-npx stim-cli gc --delete --older-than 30   # drop entries unused for 30 days
+npx --package=stim-cli stim gc                            # what it has grown to (reported on every run)
+npx --package=stim-cli stim gc --delete --older-than 30   # drop entries unused for 30 days
 ```
 
 Entries are trimmed individually — one file per cache key — so trimming costs
@@ -66,12 +66,12 @@ await Metro.runServer(config, { host, port });
 **It only survives when you host Metro yourself.** Both the Expo CLI and the
 React Native CLI overwrite `config.reporter` after loading `metro.config.js`, so
 a reporter set there is discarded without a word. Setting it on a config you
-pass to `Metro.runServer` is the path that works, and it is how `stim-cli start`
+pass to `Metro.runServer` is the path that works, and it is how `stim start`
 captures a bare React Native project's logs.
 
 Each record is `{ ts, src, level, msg }` plus, when they apply, `event` (the
 Metro event name), `stack` (passed through as Metro gave it) and `marker: true`
-(written on a finished bundle build, which is what `stim-cli logs --errors` counts
+(written on a finished bundle build, which is what `stim logs --errors` counts
 errors from). `dir` defaults to `.stim-cli/logs` under the working directory.
 
 A logging failure is never a server failure: an unwritable directory or an event
@@ -117,8 +117,8 @@ The cache registers itself with [`stim-cli`](https://www.npmjs.com/package/stim-
 if it is installed, so it can be reported and trimmed:
 
 ```bash
-npx stim-cli gc                            # what it has grown to (reported on every run)
-npx stim-cli gc --delete --older-than 30   # drop entries unused for 30 days
+npx --package=stim-cli stim gc                            # what it has grown to (reported on every run)
+npx --package=stim-cli stim gc --delete --older-than 30   # drop entries unused for 30 days
 ```
 
 stim-cli is an optional peer. Without it the cache works exactly the same; it is

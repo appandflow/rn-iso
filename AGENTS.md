@@ -108,9 +108,17 @@ the exact symbol as `MUST KILL`. Do not add `MUST KILL` markers to source files.
 
 ### 1. Keep agent guidance current
 
-Update `packages/stim-cli/skill/SKILL.md` when user-facing behavior changes.
+Treat `packages/stim-cli/skill/SKILL.md` as a compact entry point, not a manual.
+Keep it under 1,200 words. Include only the normal local workflow, permanent
+ownership and deletion rules, and routing to `guide` topics. Put exact flags,
+payload schemas, uncommon backends, release builds, cache mechanics, settings,
+capacity details, cleanup internals, and remedies in `guide`. Do not duplicate
+that reference text in the skill.
+
 Update `guide` output and its contract tests when commands, flags, defaults, or
-remedies change. Only one skill ships; do not restore `stim-cli-init`.
+remedies change. Update the skill only when the normal workflow, a permanent
+safety rule, or topic routing changes. Only one skill ships; do not restore
+`stim-cli-init`.
 
 ### 2. Use only owned devices
 

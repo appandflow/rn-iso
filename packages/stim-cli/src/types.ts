@@ -25,6 +25,7 @@ interface AndroidDeviceRecord {
   kind?: string;
   deviceName?: string | null;
   owned?: boolean;
+  setupIncomplete?: boolean;
   [key: string]: unknown;
 }
 
@@ -150,4 +151,5 @@ export interface OrphanedDevice {
   kind: 'ios' | 'android';
   id: string;
   name: string;
+  bytes?: number;
 }

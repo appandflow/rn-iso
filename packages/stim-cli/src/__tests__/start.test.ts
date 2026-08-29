@@ -452,7 +452,7 @@ describe('failureEvidence (issue #24)', () => {
     expect(lines).toContain('metro: PluginError: Failed to resolve plugin');
     expect(lines).toContain('metro: at loadConfig');
     expect(lines.some((l) => l.includes('old noise'))).toBe(false);
-    expect(lines.at(-1)).toBe('Full records: `stim-cli logs`');
+    expect(lines.at(-1)).toBe('Full records: `stim logs`');
   });
 
   test('nothing anywhere is an empty evidence list, not a throw', () => {
@@ -597,7 +597,7 @@ describe('action: already running', () => {
     expect(JSON.parse(result.logs[0] ?? '')).toEqual({
       code: 'STIM_CLI_REMOTE_START_REQUIRED',
       message: `The dev server on port ${port} is local-only and cannot gain a managed tunnel while it is running.`,
-      remedy: 'Run `stim-cli stop`, then `stim-cli start --remote`.',
+      remedy: 'Run `stim stop`, then `stim start --remote`.',
     });
   });
 
@@ -639,7 +639,7 @@ describe('action: already running', () => {
     expect(JSON.parse(result.logs[0] ?? '')).toEqual({
       code: 'STIM_CLI_REMOTE_START_REQUIRED',
       message: `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`,
-      remedy: 'Run `stim-cli stop`, then `stim-cli start --remote`.',
+      remedy: 'Run `stim stop`, then `stim start --remote`.',
     });
   });
 
@@ -1463,7 +1463,7 @@ describe('action: spawning the supervisor', () => {
     const error = JSON.parse(result.logs[0] ?? '');
     expect(result.exitCode).toBe(1);
     expect(error.code).toBe('STIM_CLI_REMOTE_METRO_UNREACHABLE');
-    expect(error.remedy).toMatch(/cleanup.*failed.*stim-cli stop/i);
+    expect(error.remedy).toMatch(/cleanup.*failed.*stim stop/i);
     expect(readMetroTunnel(root)).toMatchObject({ pid: 4242, url: 'https://cleanup-failed.ngrok.app' });
   });
 
@@ -1619,7 +1619,7 @@ describe('action: spawning the supervisor', () => {
     expect(JSON.parse(result.logs[0] ?? '')).toEqual({
       code: 'STIM_CLI_METRO_TIMEOUT',
       message: 'The dev server did not answer on port 8155 within 1s.',
-      remedy: 'It may still be starting. Run `stim-cli stop` to halt it, or `stim-cli logs` to follow along.',
+      remedy: 'It may still be starting. Run `stim stop` to halt it, or `stim logs` to follow along.',
     });
     const stderr = result.errs.join('\n');
     expect(stderr).toMatch(/did not answer on port 8155 within 1s/);
@@ -1774,7 +1774,7 @@ describe('action: an existing supervisor that is not answering', () => {
     expect(exec.calls.spawn).toEqual([]);
     expect(result.exitCode).toBe(1);
     expect(result.errs.join('\n')).toMatch(/did not serve port 8158/);
-    expect(result.errs.join('\n')).toMatch(/stim-cli stop/);
+    expect(result.errs.join('\n')).toMatch(/stim stop/);
   });
 
   test('and reports success once that supervisor answers', async () => {
@@ -1838,7 +1838,7 @@ describe('action: an existing supervisor that is not answering', () => {
     expect(result.exitCode).toBe(1);
     expect(exec.calls.spawn).toEqual([]);
     expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_CLI_REMOTE_START_REQUIRED');
-    expect(result.errs.join('\n')).toMatch(/stim-cli stop.*stim-cli start --remote/);
+    expect(result.errs.join('\n')).toMatch(/stim stop.*stim start --remote/);
   });
 
   test('a concurrent remote start waits when Metro becomes healthy before the Expo tunnel', async () => {

@@ -5,25 +5,30 @@ Per-workspace runtime state and logs live outside the project tree under
 default `~/.stim-cli/workspaces/...`). stim-cli does not create a project
 `.gitignore` entry for this state.
 
-stim-cli has three test layers. The unit suite (`npm test`, ~1350 `node:test`
-cases across the three packages) is the bulk of the coverage. On top of it sit
+stim-cli has three test layers. The unit suite (`pnpm test`, Vitest, more than
+2,000 cases across four packages) is the bulk of the coverage. On top of it sit
 two end-to-end layers that exercise the _published loop_ rather than individual
-functions.
+functions. The separately built runtime-floor job loads every published ESM
+entry point on Node 20.19.4.
 
 ## The fast cross-platform e2e
 
 `test/e2e/cache-flow.e2e.js`, run with:
 
 ```bash
-npm run test:e2e
+pnpm run test:e2e
 ```
 
-Runs with Node 20.19.4 or later on Node 20, or Node 22.12.0 or later. Git is also required. The suite needs **no Xcode or Android SDK**.
+Published packages support Node 20.19.4 or later on Node 20, or Node 22.12.0
+or later. Repository development, including this suite, uses Node 22.18 or
+later. CI runs the suite on Node 22 and 24; the separate runtime-floor job loads
+every published entry point under exactly Node 20.19.4. Git is also required.
+The suite needs **no Xcode or Android SDK**.
 It drives the real CLI and the real cache library end to end under a throwaway
 `STIM_CLI_HOME` and a throwaway temp repo, so it never touches the machine's real
 caches, registry, or checkouts. What it proves:
 
-1. `stim-cli worktree create` makes two real git worktrees at one commit and keeps
+1. `stim worktree create` makes two real git worktrees at one commit and keeps
    its stdout-is-only-the-path contract.
 2. Two worktrees of one commit **fingerprint identically when scoped to a
    platform** (the cross-worktree cache premise) -- and diverge under `ios/`
@@ -33,7 +38,7 @@ caches, registry, or checkouts. What it proves:
    and the hit becomes a miss.
 4. Two real node processes racing the single-flight build lock: **exactly one
    builds**, the other waits and resolves the artifact the first one stored.
-5. `stim-cli worktree remove` refuses a dirty tree, then removes a clean one
+5. `stim worktree remove` refuses a dirty tree, then removes a clean one
    leaving no dirs, no config entries, and a clean `git worktree list`.
 
 The one non-real piece is the leaf hash function: the real CLI has a direct `@expo/fingerprint` dependency, while this fast suite injects a deterministic platform-scoping stub (`test/e2e/fixtures/fingerprint-stub.mjs`) through the `load` seam. Everything else -- `buildCacheKey`, `storeBuild`, `resolveBuild`, `acquireBuildLock`, the worktree CLI -- is the real library.
@@ -113,7 +118,7 @@ refuses to take one as evidence of another:
 | `zero-config`       | stim-cli writes no runtime state into the repo; global workspace state needs no ignore rule | `git status --porcelain` before and after; a change to `metro.config.js` / `Podfile` / `gradle.properties` is a CRITICAL failure; every worktree is removed WITHOUT `--force` and no project `.gitignore` mutation is expected                                                                                                                                                            |
 | `metro-store`       | the shared transform store is engaged per dev-server mode, stores, and is reused            | the `cache_store_added` record in the global workspace `logs/metro.ndjson` (Expo SDK 54+: the config adapter's confirmation from inside the child; bare: the in-process append), the absence of a "could not share" warning, one store root for both workspaces, then a file count around each workspace's build+launch                                                                   |
 | `xcode-cas`         | Xcode 26 compilation caching                                                                | the five build settings read verbatim off the `build_start` record in `build-ios.ndjson`, CAS directory growth across the cold compile, and near-zero growth when a never-compiled workspace compiles the same sources                                                                                                                                                                    |
-| `gradle-cache`      | the Gradle build cache                                                                      | `--build-cache` read off the `build_start` record in `build-android.ndjson` (added in #78 so this need not race `ps`), growth of `<gradle user home>/caches/build-cache-1`, and `FROM-CACHE` tasks in a second worktree forced to run gradle with `stim-cli android --no-build-cache`                                                                                                     |
+| `gradle-cache`      | the Gradle build cache                                                                      | `--build-cache` read off the `build_start` record in `build-android.ndjson` (added in #78 so this need not race `ps`), growth of `<gradle user home>/caches/build-cache-1`, and `FROM-CACHE` tasks in a second worktree forced to run gradle with `stim android --no-build-cache`                                                                                                         |
 | `fingerprint-cache` | the entry is complete and under the right key                                               | the entry holds the artifact AND `fingerprint-sources.json` (and, for an Android release entry, `assets-manifest.json`); a second run in the SAME tree must HIT what the first stored, which is what proves the entry landed under the POST-mutation key that prebuild and `pod install` shift it to                                                                                      |
 | `pods-reuse`        | carried Pods skip `pod install`                                                             | the racing worktrees are cloned from wt1 with `--carry-ignored`, so they carry its `ios/` and its installed Pods; the one that takes the BUILD path must print no `pods` phase line at all                                                                                                                                                                                                |
 | `single-flight`     | two workspaces racing one uncached fingerprint compile once                                 | both racers point at an EMPTY build-cache root (so the fingerprint is identical to the one already stored and misses only because that root is empty, which keeps the check about the lock and nothing else) while the build lock stays shared through `STIM_CLI_HOME`; exactly one compiles, the other reports `waited ... -> installed from cache` with `waitedForBuild` in its payload |
@@ -166,34 +171,31 @@ and the PR label behave exactly as they always have.
 
 #### What its first run found
 
-Recorded so that a red run is not mysterious. First full local run,
+Recorded so that the contracts behind the suite are not mysterious. First full local run,
 2026-08-27, `expo-ios`, Expo SDK 57 / RN 0.86 / Xcode 26.6, 769s:
 `xcode-cas`, `fingerprint-cache`, `single-flight` and `pods-reuse` PASS,
-`gradle-cache` SKIP (iOS), and **two checks fail on real product bugs, both
-still open**:
+`gradle-cache` SKIP (iOS), and two checks exposed product bugs that are now
+fixed:
 
 - **`metro-store` (fixed)** -- the old Expo implementation intercepted Node's
   module loader and missed Expo's vendored Metro path. Expo SDK 54+'s
   `EXPO_OVERRIDE_METRO_CONFIG` now loads a small adapter instead, so the project
   config is composed through an explicit config seam and no module interception
   remains. SDK 53 and older intentionally use Expo's normal Metro cache.
-- **`gc-view`** -- stim-cli points `COMPILATION_CACHE_CAS_PATH` at
-  `<config dir>/compilation-cache`, but nothing registers that directory in the
-  cache manifest, and `caches.ts` only DETECTS Xcode's default CAS under
-  `~/Library/Developer/Xcode/DerivedData`. So `gc` reports a 28 KB cache nobody
-  is filling and misses the 201 MB one a single build just wrote. Nothing will
-  ever trim it -- the same hazard `registerMetroStore`'s own comment names for
-  the Metro store.
+- **`gc-view` (fixed)** -- the Xcode compilation cache and Gradle build cache
+  are detected and reported with their ownership-safe cleanup policies.
 
 ## CI
 
 Two workflows under `.github/workflows/`:
 
-- **`ci.yml`** -- on every push and pull request. Ubuntu, Node matrix `[20, 22]`
-  (20 is the `engines` floor, proven). Steps: `npm ci`, `npm test`,
-  `npm run test:e2e`. Fast and **blocking**. (A lint/typecheck step is left as a
-  commented placeholder for the planned TypeScript migration -- neither tool is
-  set up yet.)
+- **`ci.yml`** -- fast and **blocking** on every push to `main` and every pull request. The
+  repository build matrix uses Node 22 and 24, runs frozen pnpm install, lint,
+  format check, ESM build, typecheck, knip, Vitest, and the cross-platform E2E.
+  A separate job builds on Node 22.18 and then runs `test/runtime-floor.mjs`
+  under exactly Node 20.19.4, the published Node 20 floor. Published packages
+  also support Node 22.12 or later; repository development needs Node 22.18 or
+  later because tsdown has the higher floor.
 
 - **`e2e-native.yml`** -- the native matrix. **Gated**: it runs nightly
   (schedule), on demand (`workflow_dispatch`), and on a pull request **only when

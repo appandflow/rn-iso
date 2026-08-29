@@ -570,9 +570,9 @@ test('a configured remote with no agent-device is a cost, not a note', () => {
   assert(f);
   expect(f.level).toBe('cost');
   expect(f.fix).toContain('agent-device');
-  expect(f.detail).toContain('stim-cli ios --remote eas');
-  expect(f.detail).toContain('stim-cli android --remote eas');
-  expect(f.detail).not.toContain('`stim-cli ios --remote`');
+  expect(f.detail).toContain('stim ios --remote eas');
+  expect(f.detail).toContain('stim android --remote eas');
+  expect(f.detail).not.toContain('`stim ios --remote`');
 });
 
 test('the proxy backend reports that the operator owns the daemon', () => {

@@ -53,7 +53,7 @@ async function runStatus() {
   const originalLog = console.log;
   console.log = (msg) => logs.push(msg);
   try {
-    await program.parseAsync(['node', 'stim-cli', 'status']);
+    await program.parseAsync(['node', 'stim', 'status']);
   } finally {
     console.log = originalLog;
   }
@@ -163,7 +163,7 @@ async function runStatusJson() {
   const originalLog = console.log;
   console.log = (msg) => logs.push(msg);
   try {
-    await program.parseAsync(['node', 'stim-cli', 'status', '--json']);
+    await program.parseAsync(['node', 'stim', 'status', '--json']);
   } finally {
     console.log = originalLog;
   }

@@ -23,7 +23,7 @@
     "directory": "packages/stim-cli"
   },
   "bin": {
-    "stim-cli": "dist/cli.mjs"
+    "stim": "dist/cli.mjs"
   },
   "files": [
     "dist",

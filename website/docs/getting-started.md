@@ -26,10 +26,10 @@ Build and run the app on the iOS simulator and fix anything that breaks.
 That's the whole interface. Under the hood the agent drives:
 
 ```bash
-npx stim-cli start             # dev server on a reserved port, under a supervisor
-npx stim-cli ios               # owned simulator, cached native build, launch
-npx stim-cli logs --errors     # no output + exit 0 = nothing is broken
-npx stim-cli stop              # supervisor down, sim shut down, port freed
+npx --package=stim-cli stim start             # dev server on a reserved port, under a supervisor
+npx --package=stim-cli stim ios               # owned simulator, cached native build, launch
+npx --package=stim-cli stim logs --errors     # no output + exit 0 = nothing is broken
+npx --package=stim-cli stim stop              # supervisor down, sim shut down, port freed
 ```
 
 — its own dev server on a reserved port, its own **owned** simulator, a native
@@ -44,7 +44,7 @@ on the command lines stim-cli composes itself.
 ## If something is blocked or slow
 
 ```bash
-npx stim-cli doctor
+npx --package=stim-cli stim doctor
 ```
 
 Read-only, always exits 0, and it reports **only what stim-cli cannot handle on
@@ -66,13 +66,13 @@ device tool for that half. The examples below use
 [agent-device](https://agent-device.dev), which drives the simulator from the
 same kind of small, JSON-shaped surface.
 
-The join between the two is one field. `stim-cli ios --json` reports the **owned**
+The join between the two is one field. `stim ios --json` reports the **owned**
 simulator it installed onto — as `udid`, and as `deviceName`, the
 `stim-cli-<label>` name it created the device under. Pass whichever the device
 tool addresses devices by, explicitly, every time:
 
 ```bash
-device=$(npx stim-cli ios --json | jq -r .deviceName)
+device=$(npx --package=stim-cli stim ios --json | jq -r .deviceName)
 agent-device open com.example.app --device "$device" --foreground
 ```
 
@@ -92,9 +92,9 @@ None of that is visible from a log. The build succeeds, nothing throws,
 **1. Get an isolated app running.**
 
 ```bash
-cd "$(npx stim-cli worktree create history-order --carry-ignored)"
-npx stim-cli start
-device=$(npx stim-cli ios --json | jq -r .deviceName)
+cd "$(npx --package=stim-cli stim worktree create history-order --carry-ignored)"
+npx --package=stim-cli stim start
+device=$(npx --package=stim-cli stim ios --json | jq -r .deviceName)
 ```
 
 On a second worktree of the same commit this costs a boot, not a build:
@@ -127,7 +127,7 @@ switched windows.
 
 ```bash
 agent-device snapshot            # headers now read newest-first
-npx stim-cli logs --errors         # empty, exit 0 — the fix broke nothing
+npx --package=stim-cli stim logs --errors         # empty, exit 0 — the fix broke nothing
 ```
 
 Two different questions. The device tool answers "is the screen right now
@@ -139,8 +139,8 @@ bug at all.
 **5. Tear it down.**
 
 ```bash
-npx stim-cli stop
-npx stim-cli worktree remove
+npx --package=stim-cli stim stop
+npx --package=stim-cli stim worktree remove
 ```
 
 `stop` shuts the owned simulator down and frees the port, so coming back to the
@@ -151,7 +151,7 @@ and the build artifacts along with the tree.
 
 Each git worktree is its own environment — own port, own device — so two
 agents build the same app side by side without fighting. Agents create and
-tear these down themselves (`stim-cli worktree create` / `remove`); teardown
+tear these down themselves (`stim worktree create` / `remove`); teardown
 reclaims the device, the port and the build artifacts with the tree.
 
 ## Where next

@@ -1,7 +1,19 @@
-import { existsSync, mkdirSync, openSync, readdirSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs';
 import { homedir } from 'os';
-import { dirname, join } from 'path';
+import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
+import { androidDataPartitionSizeBytes } from '../settings.ts';
 
 export interface SystemImage {
   api: number;
@@ -265,10 +277,149 @@ export function headlessEmulatorArgs(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string[] {
+  const args = ['-no-snapshot-save', '-no-snapshot-load'];
   if (platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
-    return ['-no-window', '-noaudio', '-no-boot-anim', '-gpu', 'swiftshader_indirect'];
+    args.push('-no-window', '-noaudio', '-no-boot-anim', '-gpu', 'swiftshader_indirect');
   }
-  return [];
+  return args;
+}
+
+export function parseAvdRootIni(contents: string): { path: string | null; relativePath: string | null } {
+  let path: string | null = null;
+  let relativePath: string | null = null;
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    const separator = line.indexOf('=');
+    if (separator < 0) continue;
+    const key = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    if (!value) continue;
+    if (key === 'path') path = value;
+    if (key === 'path.rel') relativePath = value;
+  }
+  return { path, relativePath };
+}
+
+export function ownedAvdDirectory(
+  avdName: string,
+  {
+    env = process.env,
+    home = homedir(),
+    readFile = (path: string) => readFileSync(path, 'utf8'),
+    realpath = realpathSync,
+    isDirectory = (path: string) => statSync(path).isDirectory(),
+  }: {
+    env?: NodeJS.ProcessEnv;
+    home?: string;
+    readFile?: (path: string) => string;
+    realpath?: (path: string) => string;
+    isDirectory?: (path: string) => boolean;
+  } = {},
+): string | null {
+  if (!/^stim-cli-[A-Za-z0-9._-]+$/.test(avdName)) return null;
+  const roots = [
+    env.ANDROID_AVD_HOME,
+    env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, 'avd') : null,
+    join(home, '.android', 'avd'),
+  ];
+  for (const root of new Set(roots.filter((value): value is string => Boolean(value)))) {
+    let ini: string;
+    try {
+      ini = readFile(join(root, `${avdName}.ini`));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      return null;
+    }
+    const parsed = parseAvdRootIni(ini);
+    const candidates = [
+      parsed.relativePath && !isAbsolute(parsed.relativePath) ? resolve(dirname(root), parsed.relativePath) : null,
+      parsed.path && isAbsolute(parsed.path) ? parsed.path : null,
+    ];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      try {
+        const canonical = realpath(candidate);
+        if (isDirectory(canonical)) return canonical;
+      } catch {}
+    }
+    return null;
+  }
+  return null;
+}
+
+export function withAvdDataPartitionSize(contents: string, sizeBytes: number): string {
+  return withAvdConfigOverrides(contents, { 'disk.dataPartition.size': String(sizeBytes) });
+}
+
+export function withAvdConfigOverrides(contents: string, overrides: Readonly<Record<string, string>>): string {
+  const newline = contents.includes('\r\n') ? '\r\n' : '\n';
+  const trailingNewline = /\r?\n$/.test(contents);
+  const lines = contents.split(/\r?\n/);
+  if (trailingNewline) lines.pop();
+  const updated: string[] = [];
+  const remaining = new Map(Object.entries(overrides));
+  for (const line of lines) {
+    const separator = line.indexOf('=');
+    const key = separator >= 0 ? line.slice(0, separator).trim() : '';
+    if (!remaining.has(key)) {
+      if (!Object.hasOwn(overrides, key)) updated.push(line);
+      continue;
+    }
+    updated.push(`${key}=${remaining.get(key)}`);
+    remaining.delete(key);
+  }
+  for (const [key, value] of remaining) updated.push(`${key}=${value}`);
+  return updated.join(newline) + (trailingNewline ? newline : '');
+}
+
+let avdConfigWriteSequence = 0;
+
+export function configureNewOwnedAvd(
+  avdName: string,
+  {
+    dataPartitionSizeGb,
+    avdConfig = {},
+  }: { dataPartitionSizeGb: number; avdConfig?: Readonly<Record<string, string>> },
+  {
+    avdDirectory = ownedAvdDirectory,
+    readFile = (path: string) => readFileSync(path, 'utf8'),
+    writeFile = (path: string, contents: string) => writeFileSync(path, contents, { encoding: 'utf8', flag: 'wx' }),
+    rename = renameSync,
+    remove = (path: string) => rmSync(path, { force: true }),
+  }: {
+    avdDirectory?: typeof ownedAvdDirectory;
+    readFile?: (path: string) => string;
+    writeFile?: (path: string, contents: string) => void;
+    rename?: (from: string, to: string) => void;
+    remove?: (path: string) => void;
+  } = {},
+): string {
+  const sizeBytes = androidDataPartitionSizeBytes(dataPartitionSizeGb);
+  const directory = avdDirectory(avdName);
+  if (!directory) throw new Error(`Could not resolve the content directory for newly created AVD ${avdName}.`);
+  const configPath = join(directory, 'config.ini');
+  const original = readFile(configPath);
+  const expected = { ...avdConfig, 'disk.dataPartition.size': String(sizeBytes) };
+  const updated = withAvdConfigOverrides(original, expected);
+  const tempPath = join(directory, `.config.ini.stim-cli-${process.pid}-${++avdConfigWriteSequence}.tmp`);
+  try {
+    writeFile(tempPath, updated);
+    rename(tempPath, configPath);
+  } catch (error) {
+    try {
+      remove(tempPath);
+    } catch {}
+    throw error;
+  }
+  const verified = readFile(configPath);
+  for (const [key, value] of Object.entries(expected)) {
+    if (!verified.split(/\r?\n/).includes(`${key}=${value}`)) {
+      throw new Error(`Could not verify ${key} in ${configPath}.`);
+    }
+  }
+  return configPath;
 }
 
 export function bootAndroidEmulator(
@@ -336,12 +487,12 @@ export function emulatorDiskSpaceRemedy(lines: string[]): string | null {
   if (!/ENOSPC|not enough space|no space left|disk (?:is )?full/i.test(text)) return null;
   return (
     'Free disk space (owned AVDs normally live under ~/.android/avd and can use several GB), ' +
-    'then run `stim-cli android` again.'
+    'then run `stim android` again.'
   );
 }
 
 export function emulatorFailureRemedy(lines: string[]): string {
-  return emulatorDiskSpaceRemedy(lines) ?? 'Fix what the emulator reported above, then run `stim-cli android` again.';
+  return emulatorDiskSpaceRemedy(lines) ?? 'Fix what the emulator reported above, then run `stim android` again.';
 }
 
 // runQuiet returns null whenever the command fails, which is the normal state

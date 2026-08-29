@@ -39,7 +39,7 @@ const NO_SUCH_SCHEME = /does not contain a scheme named/;
 
 function remedyFor(message: string): string | null {
   if (PODS_OUT_OF_SYNC.test(message)) {
-    return 'Run `pod install` in ios/ (stim-cli ios does this when Podfile.lock and Pods/Manifest.lock disagree), then build again.';
+    return 'Run `pod install` in ios/ (stim ios does this when Podfile.lock and Pods/Manifest.lock disagree), then build again.';
   }
   if (NO_SUCH_SCHEME.test(message)) {
     return 'Run `xcodebuild -list` in ios/ to see the schemes this project defines, and share the app scheme so it is visible to the build.';
