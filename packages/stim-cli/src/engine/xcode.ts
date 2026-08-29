@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import chalk from 'chalk';
+import { register } from '../cache-manifest.ts';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { sharedCompilationCache, workspaceDerivedData } from '../paths.ts';
@@ -245,6 +246,12 @@ function resolveCompilationCacheSettings({
     ccache: ccacheEnabled(readPodfileProperties(root)),
   });
   if (settings.length > 0) {
+    register({
+      dir: casPath,
+      name: 'Xcode compilation cache',
+      prune: 'atomic',
+      note: 'shared Xcode compilation cache',
+    });
     onNote(
       chalk.dim(
         `compilation cache on for this build: CAS at ${casPath} (stim-cli sets it on its own xcodebuild; the Podfile is not touched)`,

@@ -5,20 +5,25 @@ Per-workspace runtime state and logs live outside the project tree under
 default `~/.stim-cli/workspaces/...`). stim-cli does not create a project
 `.gitignore` entry for this state.
 
-stim-cli has three test layers. The unit suite (`npm test`, ~1350 `node:test`
-cases across the three packages) is the bulk of the coverage. On top of it sit
+stim-cli has three test layers. The unit suite (`pnpm test`, Vitest, more than
+2,000 cases across four packages) is the bulk of the coverage. On top of it sit
 two end-to-end layers that exercise the _published loop_ rather than individual
-functions.
+functions. The separately built runtime-floor job loads every published ESM
+entry point on Node 20.19.4.
 
 ## The fast cross-platform e2e
 
 `test/e2e/cache-flow.e2e.js`, run with:
 
 ```bash
-npm run test:e2e
+pnpm run test:e2e
 ```
 
-Runs with Node 20.19.4 or later on Node 20, or Node 22.12.0 or later. Git is also required. The suite needs **no Xcode or Android SDK**.
+Published packages support Node 20.19.4 or later on Node 20, or Node 22.12.0
+or later. Repository development, including this suite, uses Node 22.18 or
+later. CI runs the suite on Node 22 and 24; the separate runtime-floor job loads
+every published entry point under exactly Node 20.19.4. Git is also required.
+The suite needs **no Xcode or Android SDK**.
 It drives the real CLI and the real cache library end to end under a throwaway
 `STIM_CLI_HOME` and a throwaway temp repo, so it never touches the machine's real
 caches, registry, or checkouts. What it proves:
@@ -166,34 +171,31 @@ and the PR label behave exactly as they always have.
 
 #### What its first run found
 
-Recorded so that a red run is not mysterious. First full local run,
+Recorded so that the contracts behind the suite are not mysterious. First full local run,
 2026-08-27, `expo-ios`, Expo SDK 57 / RN 0.86 / Xcode 26.6, 769s:
 `xcode-cas`, `fingerprint-cache`, `single-flight` and `pods-reuse` PASS,
-`gradle-cache` SKIP (iOS), and **two checks fail on real product bugs, both
-still open**:
+`gradle-cache` SKIP (iOS), and two checks exposed product bugs that are now
+fixed:
 
 - **`metro-store` (fixed)** -- the old Expo implementation intercepted Node's
   module loader and missed Expo's vendored Metro path. Expo SDK 54+'s
   `EXPO_OVERRIDE_METRO_CONFIG` now loads a small adapter instead, so the project
   config is composed through an explicit config seam and no module interception
   remains. SDK 53 and older intentionally use Expo's normal Metro cache.
-- **`gc-view`** -- stim-cli points `COMPILATION_CACHE_CAS_PATH` at
-  `<config dir>/compilation-cache`, but nothing registers that directory in the
-  cache manifest, and `caches.ts` only DETECTS Xcode's default CAS under
-  `~/Library/Developer/Xcode/DerivedData`. So `gc` reports a 28 KB cache nobody
-  is filling and misses the 201 MB one a single build just wrote. Nothing will
-  ever trim it -- the same hazard `registerMetroStore`'s own comment names for
-  the Metro store.
+- **`gc-view` (fixed)** -- the Xcode compilation cache and Gradle build cache
+  are detected and reported with their ownership-safe cleanup policies.
 
 ## CI
 
 Two workflows under `.github/workflows/`:
 
-- **`ci.yml`** -- on every push and pull request. Ubuntu, Node matrix `[20, 22]`
-  (20 is the `engines` floor, proven). Steps: `npm ci`, `npm test`,
-  `npm run test:e2e`. Fast and **blocking**. (A lint/typecheck step is left as a
-  commented placeholder for the planned TypeScript migration -- neither tool is
-  set up yet.)
+- **`ci.yml`** -- fast and **blocking** on every push to `main` and every pull request. The
+  repository build matrix uses Node 22 and 24, runs frozen pnpm install, lint,
+  format check, ESM build, typecheck, knip, Vitest, and the cross-platform E2E.
+  A separate job builds on Node 22.18 and then runs `test/runtime-floor.mjs`
+  under exactly Node 20.19.4, the published Node 20 floor. Published packages
+  also support Node 22.12 or later; repository development needs Node 22.18 or
+  later because tsdown has the higher floor.
 
 - **`e2e-native.yml`** -- the native matrix. **Gated**: it runs nightly
   (schedule), on demand (`workflow_dispatch`), and on a pull request **only when

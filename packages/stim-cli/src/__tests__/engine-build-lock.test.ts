@@ -458,6 +458,7 @@ describe('a real race between real processes', () => {
         'const { join } = await import("node:path");',
         `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: process.argv[2], logFile: join(process.argv[2], "build.ndjson") });`,
         'if (!got.acquired) { console.log(JSON.stringify({ raced: true })); process.exit(0); }',
+        'writeFileSync(join(process.argv[2], "lock-ready"), "");',
         'try {',
         '  await new Promise(r => setTimeout(r, 900));',
         '  const app = join(process.argv[2], "Fixture.app");',
@@ -485,7 +486,11 @@ describe('a real race between real processes', () => {
     const buildRoot = join(root, 'builder');
     mkdirSync(buildRoot, { recursive: true });
     const started = runNode(builder, [buildRoot]);
-    await new Promise((r) => setTimeout(r, 300));
+    const ready = join(buildRoot, 'lock-ready');
+    for (let attempts = 0; attempts < 100 && !existsSync(ready); attempts += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(existsSync(ready)).toBe(true);
     const [built, waited] = await Promise.all([started, runNode(waiter, [join(root, 'waiter')])]);
 
     const builderOut = JSON.parse(built.stdout.trim());

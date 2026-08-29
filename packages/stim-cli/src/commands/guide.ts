@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
+import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 
 interface GuideTopic {
   summary: string;
@@ -83,16 +84,15 @@ other line goes to stderr, so it is always safe to pipe.
                                  no remedy list is printed for it -- and
                                  \`logs --source metro\` shows the build
                                  finishing
-                    "unverified" nothing was observed at all: an iOS 26
-                                 confirmation alert gating simctl openurl (it
-                                 appears on EVERY first launch on a fresh
-                                 sim), or a dev-client server picker awaiting
-                                 a tap
-                  The unverified warning on stderr is a numbered list in the
-                  order that clears it: confirm the alert first, then the
-                  picker, and only with no alert showing, the openurl retry it
-                  prints. On ANDROID there is no alert, so the list leads with
-                  the dev-client deep link (\`am start -a
+                    "unverified" nothing was observed at all: usually a
+                                 dev-client server picker awaiting a tap
+                  Before a local dev-client openurl, stim-cli preapproves
+                  CoreSimulatorBridge for exactly the installed bundle id and
+                  discovered scheme on its owned simulator. That suppresses
+                  iOS's first-launch confirmation; unrelated schemes remain
+                  unapproved. The unverified warning therefore leads with the
+                  picker, then prints the openurl retry. On ANDROID the list
+                  leads with the dev-client deep link (\`am start -a
                   android.intent.action.VIEW -d '<devClientUrl>'\`), which is
                   the whole answer when the app has a scheme.
   metroPort       the port the app was wired to; NULL on a non-Debug
@@ -553,9 +553,11 @@ STIM_CLI_NO_DEVICE
   \`FATAL |\` / \`ERROR |\` / \`PANIC:\` line THAT is the message and the remedy
   you get -- the disk-space refusal ("Not enough space to create userdata
   partition") is the case this exists for. The generic toolchain remedy above
-  is only what you see when that log says nothing recognizable. A boot whose
-  emulator process exited is also reported at once rather than after the full
-  cold-boot timeout.
+  is only what you see when neither the log nor the failure itself identifies
+  the cause. An ENOSPC failure points at disk space instead: owned Android AVDs
+  normally live under ~/.android/avd, and a booted AVD can use several GB. A
+  boot whose emulator process exited is also reported at once rather than after
+  the full cold-boot timeout.
 
 STIM_CLI_AT_CAPACITY
   Only when concurrency.maxDevices is set (it is UNSET by default, so this never
@@ -641,8 +643,10 @@ STIM_CLI_SUPERVISOR_EXITED
   the full records. Fix that and run \`start\` again; nothing is left running.
 
 STIM_CLI_BAD_ARG / STIM_CLI_NO_PROJECT
-  \`start\` refused before doing anything: an unusable --wait value, an invalid
-  Metro tunnel setting, or a working directory with no package.json above it.
+  The command refused before doing anything: an unusable --wait value, an invalid
+  Metro tunnel setting, an invalid android.dataPartitionSizeGb value, an unsafe
+  android.avdConfig key or fragment, or a working directory with no package.json
+  above it.
   These errors are caught before the port is reserved and before anything is
   spawned, so nothing was started.
 
@@ -757,10 +761,6 @@ too; commit deliberately."  (worktree create --carry-ignored)
   stim-cli requires Node 20.19.4 or later on Node 20, or Node 22.12.0 or later.
   Switch Node versions, then run the command again.
 
-"Installed stim-cli skill is X but this CLI is Y"
-  The skill is a plain file copy, so upgrading stim-cli never refreshes it, and
-  npx can serve a cached older CLI. Refresh the skill with \`npx skills\`. If the
-  CLI itself is the old half, \`npx --package=stim-cli@latest stim\` bypasses the stale cache.
 
 "Found no free Metro port between ..."
   200 consecutive ports are claimed or occupied. \`stim status\` shows what
@@ -1089,6 +1089,14 @@ Those are the only two commands that delete. \`stim stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 
+New owned Android AVDs use an 8 GiB data partition by default. This leaves room
+for repeated app installs while capping userdata growth below the 10 GiB
+setting measured on the selected API 36 profile. Set
+\`android.dataPartitionSizeGb\` to a whole number from 6 through 16384 when a
+project needs another size. Android userdata grows but does not shrink, so the
+setting applies only to a newly created AVD; recreate the environment to adopt
+a changed value.
+
 ON THE MAIN CHECKOUT
   git cannot remove the main working tree, and deleting the source tree is not
   what anyone meant -- so there, and only there, \`worktree remove\` reclaims
@@ -1171,6 +1179,13 @@ DISK
   directory, and \`worktree remove\` reclaims them. Gradle retains its normal
   project build directories while sharing task outputs through its build cache.
 
+  Android AVDs normally live under ~/.android/avd, and a booted owned AVD can
+  use several GB. \`worktree remove\` deletes the workspace's owned AVD; plain
+  \`stop\` only shuts it down for reuse. stim-cli neither loads nor saves Quick
+  Boot snapshots for owned AVDs, so every restart is a full boot but exit does
+  not retain a large snapshot. \`gc\` prints the on-disk size beside an
+  orphaned or stale owned Android AVD when its content directory can be read.
+
   So are the logs, and one of them is not small: build-ios.ndjson /
   build-android.ndjson hold the whole xcodebuild or gradle transcript at debug
   level, which for a cold build is tens of megabytes (74 MB measured on one
@@ -1196,6 +1211,9 @@ SHARED BUILD CACHES
     stim gc --delete --older-than 30   # trim entries nothing has used
     stim gc --delete --all             # empty them whole, index-backed ones
                                          # (the Xcode CAS) included
+  The Gradle build cache under GRADLE_USER_HOME (default ~/.gradle) is
+  report-only because every Gradle build shares it. stim-cli reports its size
+  but never prunes or empties it, including with --older-than or --all.
   Trim rather than empty. Emptying costs the next build in every project the
   time the cache was saving.`,
   },
@@ -1238,6 +1256,36 @@ KEYS STIM-CLI READS
                         as passing \`--remote proxy\` or \`--remote eas\`. The
                         build still runs here; only the device is elsewhere.
   android.systemImage   e.g. "system-images;android-36;google_apis;arm64-v8a"
+  android.dataPartitionSizeGb
+                        whole GiB for a newly created owned AVD's data
+                        partition. Defaults to 8; accepts 6 through 16384.
+                        Existing AVDs are never resized because Android
+                        userdata grows but does not shrink. Recreate the
+                        environment to adopt a changed value.
+  android.avdConfigFile
+                        path under the repository root (or project root
+                        outside Git) to a flat native key=value INI fragment,
+                        at most 64 KiB. stim-cli parses it and
+                        merges supported values into avdmanager's generated
+                        config.ini before first boot; it is never used as a
+                        replacement file. Absolute paths, repository or
+                        symlink escapes, malformed or duplicate lines, and
+                        unsupported keys are refused before AVD creation.
+  android.avdConfig     flat object of the same native keys. It merges key by
+                        key across settings layers and overrides the selected
+                        avdConfigFile fragment. Boolean values accept true,
+                        false, "yes", or "no"; numbers and enums are checked.
+                        Supported keys and values:
+${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).join('\n')}
+                        Identity, architecture, host path, storage, image,
+                        kernel, camera, snapshot, boot-lifecycle, and unknown
+                        keys are protected. The emulator may normalize a valid
+                        value. These overrides apply only to a newly created
+                        AVD; existing and recovered AVDs are never rewritten.
+                        On displayless Linux, stim-cli launches with
+                        -gpu swiftshader_indirect -noaudio; those arguments
+                        override hw.gpu.enabled, hw.gpu.mode, hw.audioInput,
+                        and hw.audioOutput for that headless launch.
   android.variant       e.g. "productionDebug" -- the gradle variant to
                         assemble and install on a project with product
                         flavors. A repo like tlon-mobile with
@@ -1372,6 +1420,14 @@ The shared build cache and Metro transform cache default to living under
 STIM_CLI_BUILD_CACHE / STIM_CLI_METRO_CACHE in the environment override the file.
 The CLI and both cache packages resolve these identically, so every process
 finds the same store regardless of shell profile. A relative path is ignored.
+The Metro value is a PARENT root. The sanitized package name is appended below
+it, so apps remain separately reportable and prunable. Earlier releases used an
+overridden Metro root as one flat store. A new registration replaces that legacy
+parent entry and marks the named layout. If an older package registers it again,
+current gc ignores the exact unmarked legacy parent while a marked child exists.
+A marked store that later becomes another override parent remains visible but is
+report-only while its marked child exists. Root-level legacy files remain
+untouched for manual cleanup.
 
 PREFER SELF-REGISTRATION OVER THE 'caches' SETTING
 There is no 'cache' command. A cache registers itself from code instead, once,

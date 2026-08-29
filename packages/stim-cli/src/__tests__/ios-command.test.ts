@@ -355,8 +355,37 @@ describe('the Metro gate', () => {
   });
 });
 
+describe('the simulator boot gate', () => {
+  test('waits for a new simulator to boot before fingerprinting and building', async () => {
+    reserve();
+    let booted = false;
+    const { exitCode, calls } = await run(
+      {},
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-cli-fixture',
+          owned: true,
+          created: true,
+        }),
+        ensureBooted: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          booted = true;
+          return { ok: true, udid: UDID };
+        },
+        fingerprintProject: async () => {
+          expect(booted).toBe(true);
+          return { hash: FINGERPRINT, sources: [] };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('buildIos')).toBe(true);
+  });
+});
+
 describe('the Metro gate retries an indexing Metro', () => {
-  test('a port that verifies on the third attempt is not refused', async () => {
+  test('a port that verifies after the 20-second indexing window is not refused', async () => {
     reserve();
     let attempts = 0;
     const { exitCode, calls } = await run(
@@ -364,14 +393,14 @@ describe('the Metro gate retries an indexing Metro', () => {
       {
         resolveProjectMetro: async () => {
           attempts += 1;
-          if (attempts < 3)
+          if (attempts < 4)
             return { notOurs: "pid 42 on port 8082 does not answer Metro's /status", kind: 'unresponsive' };
           return { metro: { pid: 42, leader: 42, cwd: root } };
         },
       },
     );
     expect(exitCode).toBe(null);
-    expect(attempts).toBe(3);
+    expect(attempts).toBe(4);
     expect(calls.order.includes('buildIos')).toBeTruthy();
   });
 
@@ -470,7 +499,7 @@ describe('launch verification', () => {
     expect(text).toMatch(/localhost:8082/);
   });
 
-  test('the alert stall: the warning carries the exact openurl to retry', async () => {
+  test('a dev-client stall carries the exact openurl to retry without an alert step', async () => {
     reserve();
     writeFileSync(
       join(root, 'package.json'),
@@ -488,7 +517,7 @@ describe('launch verification', () => {
       },
     );
     const text = errs.join('\n');
-    expect(text).toMatch(/Open in/);
+    expect(text).not.toMatch(/Open in/);
     expect(text).toMatch(new RegExp(`xcrun simctl openurl ${UDID}`));
     expect(text).toMatch(/fixture:\/\/expo-development-client/);
     expect(parseFirst(logs).launched).toBe('unverified');

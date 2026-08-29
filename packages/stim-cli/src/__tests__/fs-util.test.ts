@@ -1,7 +1,8 @@
 import { mkdtempSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { volumeRootFor, isRealMount, isOnMountedVolume } from '../fs-util.ts';
+import { setExecutor, resetExecutor } from '../exec.ts';
+import { directorySize, volumeRootFor, isRealMount, isOnMountedVolume } from '../fs-util.ts';
 
 test('volumeRootFor identifies external and boot volumes', () => {
   expect(volumeRootFor('/Volumes/ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
@@ -52,4 +53,23 @@ test('isOnMountedVolume returns false for a path it cannot resolve', () => {
   expect(isOnMountedVolume('relative/path/app', ['/'])).toBe(false);
   expect(isOnMountedVolume('~/Developer/app', ['/'])).toBe(false);
   expect(isOnMountedVolume('/Volumes/StimCliTestVolumeThatDoesNotExist/app', ['/'])).toBe(false);
+});
+
+test('directorySize forwards its optional timeout and contains a timeout failure', () => {
+  let seenTimeout: number | undefined;
+  let seenArgs: string[] | undefined;
+  setExecutor({
+    runFile(_file, args, options) {
+      seenArgs = args;
+      seenTimeout = options?.timeoutMs;
+      throw new Error('timed out');
+    },
+  });
+  try {
+    expect(directorySize('/tmp/stim-cli-avd', { timeoutMs: 5000 })).toBe(0);
+    expect(seenArgs).toEqual(['-sk', '/tmp/stim-cli-avd']);
+    expect(seenTimeout).toBe(5000);
+  } finally {
+    resetExecutor();
+  }
 });

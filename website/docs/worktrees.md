@@ -67,7 +67,9 @@ Claude Code's `WorktreeCreate` hook fires when a session for a new worktree star
 ```json
 {
   "hooks": {
-    "WorktreeCreate": [{ "hooks": [{ "type": "command", "command": "stim worktree create \"$(jq -r .name)\"" }] }]
+    "WorktreeCreate": [
+      { "hooks": [{ "type": "command", "command": "npx --package=stim-cli stim worktree create \"$(jq -r .name)\"" }] }
+    ]
   }
 }
 ```

@@ -39,7 +39,20 @@ only the entries nothing has touched, not the whole cache.
 stim-cli is an optional peer. Without it the cache works exactly the same; it is
 just invisible to housekeeping.
 
-The location can be overridden by `STIM_CLI_METRO_CACHE`, or machine-wide by `caches.metroCache` in `~/.stim-cli/config.json` (an absolute path; the env var wins). The CLI and this package resolve both identically, so they always share one store.
+The parent location can be overridden by `STIM_CLI_METRO_CACHE`, or
+machine-wide by `caches.metroCache` in `~/.stim-cli/config.json` (an absolute
+path; the env var wins). The sanitized name passed to `sharedCacheStores` is
+always appended below that parent, so `sharedCacheStores('@scope/app')` uses
+`<parent>/-scope-app`. The CLI and this package resolve both identically.
+
+Earlier versions wrote a named store directly into an overridden parent. A new
+registration marks the named layout and replaces an exact unmarked legacy
+parent entry. If an older package registers the parent again later, current
+`stim gc` ignores that provably legacy entry while a marked child is
+registered, so it cannot prune the child at the wrong depth. A marked named
+store that later becomes another override parent remains visible but report-only
+while its marked child exists. The old root-level cache files are left untouched
+for manual cleanup.
 
 ## The NDJSON log reporter
 

@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
+import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 
 test('every advertised topic renders non-empty content', () => {
   for (const name of topicNames()) {
@@ -101,6 +102,14 @@ test('the Metro guide documents explicit remote intent and the local default', (
   expect(body).toMatch(/metro\.tunnel[^.]*provider/i);
 });
 
+test('the guide documents scoped iOS dev-client preapproval', () => {
+  const facts = renderTopic('facts');
+  assert(facts);
+  expect(facts).toMatch(/preapproves[^.]*CoreSimulatorBridge[^.]*bundle id[^.]*scheme/i);
+  expect(facts).toMatch(/unrelated schemes remain[^.]*unapproved/i);
+  expect(facts).not.toMatch(/confirmation alert[^.]*every first launch/i);
+});
+
 test('the guide keeps Metro intent separate from the explicit device backend', () => {
   const lifecycle = renderTopic('lifecycle');
   const settings = renderTopic('settings');
@@ -114,6 +123,22 @@ test('the guide keeps Metro intent separate from the explicit device backend', (
   expect(settings).toMatch(/android\.remote[^\n]*"proxy" or "eas"/);
   expect(errors).toContain('STIM_CLI_REMOTE_PROXY_CONFIG');
   expect(errors).toContain('STIM_CLI_REMOTE_EAS_UNAVAILABLE');
+});
+
+test('the guide documents Android AVD disk-space diagnosis and cleanup', () => {
+  const errors = renderTopic('errors');
+  const cleanup = renderTopic('cleanup');
+  assert(errors);
+  assert(cleanup);
+
+  for (const topic of [errors, cleanup]) {
+    expect(topic).toMatch(/~\/\.android\/avd/);
+    expect(topic).toMatch(/several GB/);
+  }
+  expect(errors).toMatch(/ENOSPC[^.]*disk space/i);
+  expect(cleanup).toMatch(/worktree remove[^.]*deletes[^.]*owned AVD/i);
+  expect(cleanup).toMatch(/neither loads nor saves[^.]*Quick\s+Boot snapshot/i);
+  expect(cleanup).toMatch(/gc[^.]*on-disk size[^.]*orphaned[^.]*stale owned Android AVD/i);
 });
 
 test('the guide documents remote providers and backend credential boundaries', () => {
@@ -163,6 +188,25 @@ test('the cleanup guide documents fail-closed EAS orphan recovery', () => {
   expect(cleanup).not.toMatch(/EAS session and local claim stay/i);
 });
 
+test('the cleanup guide documents that the shared Gradle build cache is report-only', () => {
+  const cleanup = renderTopic('cleanup');
+  assert(cleanup);
+
+  expect(cleanup).toMatch(/Gradle build cache[\s\S]*report-only/i);
+  expect(cleanup).toMatch(/never[^.]*prunes[^.]*empties/i);
+});
+
+test('the settings guide defines Metro overrides as parent roots and preserves legacy files', () => {
+  const settings = renderTopic('settings');
+  assert(settings);
+
+  expect(settings).toMatch(/Metro value is a PARENT root/i);
+  expect(settings).toMatch(/sanitized package name[^.]*appended/i);
+  expect(settings).toMatch(/older package[^.]*current gc ignores[^.]*unmarked legacy parent/i);
+  expect(settings).toMatch(/marked store[^.]*override parent[^.]*report-only/i);
+  expect(settings).toMatch(/root-level legacy files remain[^.]*untouched/i);
+});
+
 test('the guide distinguishes local stop behavior from EAS session teardown', () => {
   const lifecycle = renderTopic('lifecycle');
   assert(lifecycle);
@@ -190,6 +234,7 @@ test('no topic teaches a command this binary does not have', () => {
     }
     expect(body).not.toMatch(/stim config (--repo|<key>|[a-z]+\.[a-z]+)/i);
   }
+  expect(renderTopic('errors')).not.toMatch(/Installed stim-cli skill/);
   expect(renderTopic('settings')).toMatch(/no `stim config` command/);
 });
 
@@ -219,12 +264,46 @@ test('the settings topic lists exactly the keys settings.js honours', () => {
   const body = renderTopic('settings');
   assert(body);
   const src = readFileSync(new URL('../settings.ts', import.meta.url), 'utf-8');
-  const known = [...src.matchAll(/^\s*'([a-zA-Z.]+)',$/gm)]
+  const knownStart = src.indexOf('const KNOWN_SETTINGS');
+  const knownEnd = src.indexOf(']);', knownStart);
+  const knownSource = src.slice(knownStart, knownEnd);
+  const known = [...knownSource.matchAll(/^\s*'([a-zA-Z.]+)',$/gm)]
     .map((m) => m[1])
     .filter((k): k is string => k !== undefined);
   expect(known.length > 0).toBeTruthy();
   for (const key of known) {
     expect(body.includes(key)).toBeTruthy();
+  }
+});
+
+test('the safe Android AVD override contract is consistent across user guidance', () => {
+  const guide = renderTopic('settings');
+  assert(guide);
+  const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf-8');
+  for (const body of [guide, readme]) {
+    expect(body).toMatch(/android\.avdConfigFile/);
+    expect(body).toMatch(/android\.avdConfig/);
+    expect(body).toMatch(/config\.ini/);
+    expect(body).toMatch(/newly created|new owned/i);
+    expect(body).toMatch(/existing.*never|never.*existing/i);
+    expect(body).toMatch(/path|identity/i);
+    expect(body).toMatch(/displayless Linux/i);
+    expect(body).toMatch(/-noaudio/);
+  }
+  for (const line of ANDROID_AVD_CONFIG_HELP) expect(guide).toContain(line);
+});
+
+test('the Android data partition contract is consistent across user guidance', () => {
+  const settings = renderTopic('settings');
+  const cleanup = renderTopic('cleanup');
+  assert(settings);
+  assert(cleanup);
+  for (const body of [settings, cleanup]) {
+    expect(body).toMatch(/android\.dataPartitionSizeGb/i);
+    expect(body).toMatch(/8 GiB[^.]*default|defaults to 8/i);
+    expect(body).toMatch(/6 through 16384/i);
+    expect(body).toMatch(/newly created|new owned/i);
+    expect(body).toMatch(/never resized|does not shrink/i);
   }
 });
 
@@ -247,7 +326,16 @@ test('exactly one compact skill ships', () => {
 
 test('the skill still carries the rules an agent must not have to look up', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  for (const must of ['gc --delete', '--force', 'STIM_CLI_NO_METRO', 'booted', 'stim-cli-']) {
+  for (const must of [
+    'gc --delete',
+    '--force',
+    'STIM_CLI_NO_METRO',
+    'booted',
+    'stim-cli-',
+    'registry.npmjs.org',
+    '20.19.4',
+    'worktree remove',
+  ]) {
     expect(skill.includes(must)).toBeTruthy();
   }
 });
@@ -259,9 +347,10 @@ test('advanced contracts stay in guide topics instead of the skill', () => {
     ['metro.ngrokUrl', 'settings'],
     ['waitedForBuild', 'facts'],
     ['STIM_CLI_AT_CAPACITY', 'errors'],
-    ['registry.npmjs.org', 'errors'],
-    ['20.19.4', 'errors'],
     ['.fingerprintignore', 'lifecycle'],
+    ['CoreSimulatorBridge', 'facts'],
+    ['~/.android/avd', 'cleanup'],
+    ['android.avdConfigFile', 'settings'],
     ['productionRelease', 'lifecycle'],
   ] as const;
 

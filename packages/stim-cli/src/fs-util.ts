@@ -91,11 +91,13 @@ export function isOnMountedVolume(path: string, mountedVolumes?: string[]): bool
   return mounted.has(volume);
 }
 
-const SHELL_METACHARS = /[`$"\\]/;
-
-export function directorySize(dir: string): number {
-  if (SHELL_METACHARS.test(dir)) return 0;
-  const out = getExecutor().runQuiet(`du -sk "${dir}"`);
+export function directorySize(dir: string, { timeoutMs }: { timeoutMs?: number } = {}): number {
+  let out: string;
+  try {
+    out = getExecutor().runFile('du', ['-sk', dir], { timeoutMs });
+  } catch {
+    return 0;
+  }
   if (!out) return 0;
   const kb = parseInt(out.split(/\s+/)[0] ?? '', 10);
   return isNaN(kb) ? 0 : kb * 1024;

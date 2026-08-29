@@ -12,6 +12,13 @@ device with another workspace. Run it through `npx`; do not install it globally.
 npx --package=stim-cli stim <command>
 ```
 
+stim-cli requires Node 20.19.4 or later on Node 20, or Node 22.12.0 or
+later. If `npx` returns E401 or E404 in a repo with a private registry, use:
+
+```bash
+npx --registry=https://registry.npmjs.org --package=stim-cli stim <command>
+```
+
 Prefer `--json` when another command or device tool needs a port, UDID, serial,
 bundle ID, or path.
 
@@ -33,6 +40,9 @@ npx --package=stim-cli stim logs --errors --json
 npx --package=stim-cli stim logs --since 30s --level error
 
 npx --package=stim-cli stim stop
+
+# If this workflow created a worktree, ask the user before deleting it.
+npx --package=stim-cli stim worktree remove
 ```
 
 Follow these rules during the loop:

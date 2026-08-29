@@ -8,6 +8,7 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { createNdjsonWriter, parseNdjsonText } from '../ndjson.ts';
 import { workspaceDerivedData, workspaceLogsDir } from '../paths.ts';
+import { readManifest } from '../cache-manifest.ts';
 import {
   buildIos,
   ccacheEnabled,
@@ -707,6 +708,13 @@ describe('buildIos with a mocked executor', () => {
     const args = spawnCalls[0]?.args ?? [];
     expect(args).toContain('COMPILATION_CACHE_ENABLE_CACHING=YES');
     expect(args).toContain(`CLANG_OTHER_PREFIX_MAPPINGS=${tmp}=/^src ${workspaceDerivedData(tmp)}=/^derived-data`);
+    expect(readManifest().caches).toContainEqual(
+      expect.objectContaining({
+        dir: join(stateHome, 'compilation-cache'),
+        name: 'Xcode compilation cache',
+        prune: 'atomic',
+      }),
+    );
   });
 
   test('a build that carries no settings says nothing at all', async () => {

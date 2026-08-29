@@ -347,7 +347,7 @@ function readJson(file: string): unknown {
   }
 }
 
-export const GATE_RETRY_DELAYS_MS: number[] = [3000, 7000];
+export const GATE_RETRY_DELAYS_MS: number[] = [3000, 7000, 10000];
 
 export function gateShouldRetry(resolution: MetroResolutionLike | null | undefined): boolean {
   if (resolution?.metro) return false;
@@ -1093,8 +1093,9 @@ async function finishIosRun({
   }
   phase('device', `${deviceLabel(device, udid)} booted ${bootDuration()}`);
 
+  const scheme = release ? undefined : d.devClientScheme(root, appPath);
   const installTimer = stepTimer(d.now);
-  const installed = d.installIosApp({ udid, appPath: appPath! });
+  const installed = d.installIosApp({ udid, appPath: appPath!, bundleId, devClientScheme: scheme });
   if (installed?.failed) {
     return fail({
       code: installed.code || 'STIM_CLI_INSTALL_FAILED',
@@ -1111,7 +1112,6 @@ async function finishIosRun({
     } catch {}
   }
 
-  const scheme = release ? undefined : d.devClientScheme(root, appPath);
   const launchTimer = stepTimer(d.now);
   const launchedAt = d.now();
   const launched = d.launchIosApp({ udid, bundleId: bundleId!, metroPort, devClientScheme: scheme });
@@ -1454,7 +1454,12 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       bootDuration = bootTimer();
       return result;
     });
-    udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
+    if (!remoteDevice && device.created) {
+      const booted = await bootPromise;
+      udid = (device.deviceUdid as string | undefined) ?? booted?.udid ?? '';
+    } else {
+      udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
+    }
 
     const fingerprintTimer = stepTimer(d.now);
     let computedFingerprint: string | null;

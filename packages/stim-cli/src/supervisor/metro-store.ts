@@ -1,8 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { metroCacheRoot, sharedStoreRoot, tagSharedStore } from '@stim-cli/core';
-import { register } from '../cache-manifest.ts';
+import {
+  metroCacheRoot,
+  METRO_NAMED_CACHE_LAYOUT,
+  registerCache,
+  sharedStoreRoot,
+  tagSharedStore,
+} from '@stim-cli/core';
 
 type FileStoreCtor = new (options: { root: string }) => object;
 
@@ -20,15 +25,28 @@ export function metroStoreRoot(root: string): string {
 }
 
 export function registerMetroStore(storeRoot: string): void {
-  try {
-    register({
-      dir: storeRoot,
-      name: 'Metro transform cache',
-      prune: 'entries',
-      entriesDepth: 2,
-      note: 'shared Metro transforms, installed by stim start; no eviction of its own',
-    });
-  } catch {}
+  const parent = resolve(metroCacheRoot());
+  const dir = resolve(storeRoot);
+  registerCache({
+    dir,
+    name: 'Metro transform cache',
+    prune: 'entries',
+    entriesDepth: 2,
+    layout: METRO_NAMED_CACHE_LAYOUT,
+    note: 'shared Metro transforms, installed by stim start; no eviction of its own',
+    replaces:
+      dir === parent
+        ? []
+        : [
+            {
+              dir: parent,
+              name: 'Metro transform cache',
+              prune: 'entries',
+              entriesDepth: 2,
+              layout: null,
+            },
+          ],
+  });
 }
 
 export function hasStoreAt(stores: unknown, storeRoot: string): boolean {

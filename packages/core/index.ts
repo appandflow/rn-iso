@@ -153,9 +153,8 @@ export function buildCacheRoot(): string {
 }
 
 export function metroCacheRoot(name?: string | null): string {
-  const override = process.env.STIM_CLI_METRO_CACHE || cachePathSetting('metroCache');
-  if (override) return override;
-  const root = path.join(configDir(), 'metro-cache');
+  const root =
+    process.env.STIM_CLI_METRO_CACHE || cachePathSetting('metroCache') || path.join(configDir(), 'metro-cache');
   return name === undefined || name === null || name === '' ? root : path.join(root, cacheNameSegment(name));
 }
 
@@ -221,7 +220,19 @@ export interface RegisterOptions {
   prune: string;
   note: string;
   entriesDepth?: number;
+  layout?: string;
+  replaces?: CacheRegistrationMatch[];
 }
+
+export interface CacheRegistrationMatch {
+  dir: string;
+  name?: string;
+  prune?: string;
+  entriesDepth?: number;
+  layout?: string | null;
+}
+
+export const METRO_NAMED_CACHE_LAYOUT = 'metro-named-v1';
 
 export interface CacheManifest {
   version: number;
@@ -264,14 +275,26 @@ export function updateCacheManifest(
   );
 }
 
-export function registerCache({ dir, name, prune, note, entriesDepth }: RegisterOptions): void {
+export function registerCache({ dir, name, prune, note, entriesDepth, layout, replaces = [] }: RegisterOptions): void {
   try {
     updateCacheManifest(path.join(configDir(), 'caches.json'), (caches) => {
-      const others = caches.filter((cache) => cache.dir !== dir);
+      const others = caches.filter(
+        (cache) => cache.dir !== dir && !replaces.some((match) => matchesCache(cache, match)),
+      );
       const record: Record<string, unknown> = { dir, name, prune, note, registeredBy: process.cwd() };
       if (entriesDepth) record.entriesDepth = entriesDepth;
+      if (layout) record.layout = layout;
       others.push(record);
       return others;
     });
   } catch {}
+}
+
+function matchesCache(cache: Record<string, unknown>, match: CacheRegistrationMatch): boolean {
+  if (cache.dir !== match.dir) return false;
+  if (match.name !== undefined && cache.name !== match.name) return false;
+  if (match.prune !== undefined && cache.prune !== match.prune) return false;
+  if (match.entriesDepth !== undefined && cache.entriesDepth !== match.entriesDepth) return false;
+  if (match.layout === null) return !Object.hasOwn(cache, 'layout');
+  return match.layout === undefined || cache.layout === match.layout;
 }

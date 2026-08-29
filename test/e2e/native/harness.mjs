@@ -97,7 +97,7 @@ function withDir(tmplStr, appDir) {
     .map((t) => (t === '{dir}' ? appDir : t));
 }
 
-export function createFixture({ framework, workDir, h }) {
+export function createFixture({ framework, platform, workDir, h }) {
   const appDir = join(workDir, 'app');
   const cmd = FIXTURE_COMMANDS[framework](appDir);
   h.log(`creating ${framework} fixture: ${cmd.map(quote).join(' ')}`);
@@ -113,6 +113,17 @@ export function createFixture({ framework, workDir, h }) {
       timeout: 15 * 60 * 1000,
     });
     if (r2.status !== 0) h.die('installing the expo fixture dependencies failed');
+  }
+
+  if (framework === 'bare' && platform === 'ios') {
+    h.log('installing the bare iOS fixture pods before its initial commit');
+    const r2 = spawnSync('pod', ['install'], {
+      cwd: join(appDir, 'ios'),
+      env: h.env,
+      stdio: 'inherit',
+      timeout: 20 * 60 * 1000,
+    });
+    if (r2.status !== 0) h.die('installing the bare iOS fixture pods failed');
   }
 
   gitInitWithRemote({ appDir, workDir, framework, h });
@@ -175,8 +186,14 @@ export function verifyCleanup({ h, platform, appDir, created }) {
 
   const porcelain = h.sh('git', ['-C', appDir, 'status', '--porcelain']).stdout.trim();
   assert(porcelain === '', `main checkout is dirty after the run:\n${porcelain}`);
-  const wl = h.sh('git', ['-C', appDir, 'worktree', 'list']).stdout;
-  assert(!/e2e-/.test(wl), `a worktree registration survived:\n${wl}`);
+  const wl = h.sh('git', ['-C', appDir, 'worktree', 'list', '--porcelain']).stdout;
+  const registered = new Set(
+    wl
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '))
+      .map((line) => line.slice('worktree '.length)),
+  );
+  assert(!created.some((path) => registered.has(resolve(path))), `a worktree registration survived:\n${wl}`);
   h.log('(4) main checkout byte-clean, no worktrees linger');
 
   const gc = h.cli(['gc'], { allowFail: true });

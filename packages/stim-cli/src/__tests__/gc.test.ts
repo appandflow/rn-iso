@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { saveConfig, loadConfig } from '../config.ts';
@@ -112,6 +113,84 @@ test('findOrphanedDevices proposes only stim-cli devices absent from config', ()
     isMounted: () => true,
   });
   expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['U1', 'stim-cli-old']);
+});
+
+test('gc sizes only listed owned Android AVDs after ownership classification', async () => {
+  const now = Date.now();
+  const project = join(tmpHome, 'stale-project');
+  mkdirSync(project, { recursive: true });
+  saveConfig({
+    version: 2,
+    projects: {
+      [project]: { platforms: { android: { avdName: 'stim-cli-stale', owned: true } } },
+    },
+    repos: {},
+  });
+  const sized: string[] = [];
+  const sizeTimeouts: Array<number | undefined> = [];
+  setExecutor({
+    run(cmd) {
+      if (cmd.includes('simctl list devices --json')) return JSON.stringify({ devices: {} });
+      if (cmd.endsWith(' -list-avds')) {
+        return 'stim-cli-orphan\nstim-cli-stale\nstim-cli-unreadable\nPixel_7\n';
+      }
+      throw new Error(`unexpected run: ${cmd}`);
+    },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+
+  const report = await collectGcReport(
+    {
+      olderThan: 30,
+      now,
+      lastTouched: () => now - 90 * DAY_MS,
+      unsafeAllowScopedDeviceSweep: true,
+    },
+    {
+      avdDirectory: (name) => `/avds/${name}.avd`,
+      directorySize: (dir, options) => {
+        sized.push(dir);
+        sizeTimeouts.push(options?.timeoutMs);
+        if (dir.includes('unreadable')) throw new Error('timed out');
+        return dir.includes('orphan') ? 5 * 1024 ** 3 : 2 * 1024 ** 3;
+      },
+      precollectedEasSessionSweep: {
+        projectScope: null,
+        orphaned: [],
+        notices: [],
+        deletionSafe: true,
+      },
+    },
+  );
+
+  expect(report.orphanedDevices).toContainEqual({
+    kind: 'android',
+    id: 'stim-cli-orphan',
+    name: 'stim-cli-orphan',
+    bytes: 5 * 1024 ** 3,
+  });
+  expect(report.staleDevices).toContainEqual({
+    kind: 'android',
+    id: 'stim-cli-stale',
+    name: 'stim-cli-stale',
+    project,
+    idleDays: 90,
+    bytes: 2 * 1024 ** 3,
+  });
+  expect(report.orphanedDevices).toContainEqual({
+    kind: 'android',
+    id: 'stim-cli-unreadable',
+    name: 'stim-cli-unreadable',
+  });
+  expect(sized).toEqual(['/avds/stim-cli-orphan.avd', '/avds/stim-cli-unreadable.avd', '/avds/stim-cli-stale.avd']);
+  expect(sizeTimeouts).toEqual([5000, 5000, 5000]);
+
+  const output = formatGcReport(report).join('\n');
+  expect(output).toMatch(/stim-cli-orphan.*5\.0G on disk/);
+  expect(output).toMatch(/stim-cli-stale.*2\.0G on disk/);
+  expect(output).not.toMatch(/stim-cli-unreadable.*on disk/);
+  expect(output).not.toMatch(/Pixel_7/);
 });
 
 test('devices referenced by a project on an unmounted volume are kept', () => {
@@ -1881,6 +1960,35 @@ test('--delete on its own never touches a shared cache', async () => {
   expect(existsSync(entry)).toBeTruthy();
 });
 
+test('gc reports but never deletes the shared Gradle build cache under any deletion mode', async () => {
+  const previous = process.env.GRADLE_USER_HOME;
+  const gradleHome = join(fakeHome, 'gradle-home');
+  const cachesRoot = join(gradleHome, 'caches');
+  const cacheDir = join(cachesRoot, 'build-cache-1');
+  const cacheAlias = join(gradleHome, 'caches-alias');
+  const entry = join(cacheDir, 'entry-a');
+  mkdirSync(cacheDir, { recursive: true });
+  symlinkSync(cachesRoot, cacheAlias, 'dir');
+  writeFileSync(entry, 'x'.repeat(1000));
+  const old = new Date(Date.now() - 400 * DAY_MS);
+  utimesSync(entry, old, old);
+  process.env.GRADLE_USER_HOME = gradleHome;
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  register({ dir: cacheAlias, name: 'Gradle build cache', prune: 'entries' });
+  installExecutor();
+
+  try {
+    for (const args of [['--delete'], ['--delete', '--older-than', '30'], ['--delete', '--all']]) {
+      const output = await captureLog(() => cli(args));
+      expect(output).toMatch(/Gradle build cache/);
+      expect(existsSync(entry)).toBeTruthy();
+    }
+  } finally {
+    if (previous === undefined) delete process.env.GRADLE_USER_HOME;
+    else process.env.GRADLE_USER_HOME = previous;
+  }
+});
+
 test('--delete --older-than trims the cache entries nothing has touched', async () => {
   const cacheDir = join(fakeHome, 'my-cache');
   const oldEntry = join(cacheDir, 'entry-old');
@@ -1899,6 +2007,103 @@ test('--delete --older-than trims the cache entries nothing has touched', async 
 
   expect(existsSync(oldEntry)).toBe(false);
   expect(existsSync(freshEntry)).toBeTruthy();
+});
+
+test('--delete --older-than ignores a legacy Metro parent registered after its named child', async () => {
+  const parent = join(tmpHome, 'metro-cache');
+  const child = join(parent, 'demo');
+  const shard = join(child, '0a');
+  const currentTransform = join(shard, 'current');
+  const legacyShard = join(parent, '1b');
+  const legacyTransform = join(legacyShard, 'legacy');
+  mkdirSync(shard, { recursive: true });
+  mkdirSync(legacyShard, { recursive: true });
+  writeFileSync(currentTransform, 'current');
+  writeFileSync(legacyTransform, 'legacy');
+  const old = new Date(Date.now() - 400 * DAY_MS);
+  utimesSync(shard, old, old);
+  utimesSync(legacyTransform, old, old);
+  register({
+    dir: child,
+    name: 'Metro transform cache',
+    prune: 'entries',
+    entriesDepth: 2,
+    layout: METRO_NAMED_CACHE_LAYOUT,
+  });
+  register({ dir: parent, name: 'Metro transform cache', prune: 'entries', entriesDepth: 2 });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+
+  await cli(['--delete', '--older-than', '30']);
+
+  expect(existsSync(currentTransform)).toBe(true);
+  expect(existsSync(legacyTransform)).toBe(true);
+});
+
+test('--delete --older-than ignores a legacy Metro parent whose named child is a symlink', async () => {
+  const parent = join(tmpHome, 'metro-cache');
+  const target = join(tmpHome, 'metro-target');
+  const child = join(parent, 'demo');
+  const shard = join(target, '0a');
+  const currentTransform = join(shard, 'current');
+  mkdirSync(parent, { recursive: true });
+  mkdirSync(shard, { recursive: true });
+  writeFileSync(currentTransform, 'current');
+  symlinkSync(target, child, 'dir');
+  const old = new Date(Date.now() - 400 * DAY_MS);
+  utimesSync(shard, old, old);
+  register({
+    dir: child,
+    name: 'Metro transform cache',
+    prune: 'entries',
+    entriesDepth: 2,
+    layout: METRO_NAMED_CACHE_LAYOUT,
+  });
+  register({ dir: parent, name: 'Metro transform cache', prune: 'entries', entriesDepth: 2 });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+
+  await cli(['--delete', '--older-than', '30']);
+
+  expect(existsSync(currentTransform)).toBe(true);
+});
+
+test('--delete --older-than keeps a current Metro store that is also a current override parent', async () => {
+  const parent = join(tmpHome, 'metro-cache', 'first-app');
+  const child = join(parent, 'second-app');
+  const parentTransform = join(parent, '0a', 'old-parent-transform');
+  const childTransform = join(child, '1b', 'current-child-transform');
+  mkdirSync(dirname(parentTransform), { recursive: true });
+  mkdirSync(dirname(childTransform), { recursive: true });
+  writeFileSync(parentTransform, 'parent');
+  writeFileSync(childTransform, 'child');
+  const old = new Date(Date.now() - 400 * DAY_MS);
+  utimesSync(parentTransform, old, old);
+  utimesSync(dirname(childTransform), old, old);
+  register({
+    dir: parent,
+    name: 'Metro transform cache',
+    prune: 'entries',
+    entriesDepth: 2,
+    layout: METRO_NAMED_CACHE_LAYOUT,
+  });
+  register({
+    dir: child,
+    name: 'Metro transform cache',
+    prune: 'entries',
+    entriesDepth: 2,
+    layout: METRO_NAMED_CACHE_LAYOUT,
+  });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+
+  const report = await collectGcReport({ olderThan: 30 });
+  expect(report.caches.find((cache) => cache.dir === parent)?.prune).toBe('report-only');
+  expect(report.caches.find((cache) => cache.dir === child)?.prune).toBe('entries');
+  await cli(['--delete', '--older-than', '30']);
+
+  expect(existsSync(parentTransform)).toBe(true);
+  expect(existsSync(childTransform)).toBe(true);
 });
 
 test('--delete --all empties an index-backed cache that --older-than cannot trim', async () => {

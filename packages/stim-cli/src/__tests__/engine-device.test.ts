@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
@@ -186,7 +186,35 @@ describe('ensureBooted: android', () => {
       timeoutMs: 5000,
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5556' });
-    expect(spawned).toEqual([['emulator', '-avd', 'stim-cli-app', '-port', '5556']]);
+    expect(spawned).toEqual([
+      ['emulator', '-avd', 'stim-cli-app', '-port', '5556', '-no-snapshot-save', '-no-snapshot-load'],
+    ]);
+  });
+
+  test('reuses the serial returned by a fresh owned AVD boot when adb listing briefly misses it', async () => {
+    setExecutor({
+      run: (cmd) => {
+        if (cmd === 'emulator -list-avds') return 'stim-cli-app';
+        if (cmd === 'adb devices') return 'List of devices attached';
+        return '';
+      },
+      runQuiet: (cmd) => (cmd.includes('sys.boot_completed') ? '1' : ''),
+      runFile: () => '',
+      spawn: () => {
+        throw new Error('must not boot the fresh AVD a second time');
+      },
+    });
+    const result = await ensureBooted({
+      platform: 'android',
+      device: {
+        avdName: 'stim-cli-app',
+        consolePort: 5556,
+        serial: 'emulator-5556',
+        owned: true,
+      },
+      timeoutMs: 5000,
+    });
+    expect(result).toEqual({ ok: true, serial: 'emulator-5556' });
   });
 
   test('allocates a fresh console port when the recorded one is taken by a foreign emulator', async () => {
@@ -449,6 +477,7 @@ describe('ensureOwnedDevice: ios', () => {
       expect(run.some((c) => /simctl create/.test(c))).toBeTruthy();
       expect(result.deviceUdid).toBe('NEW-UDID');
       expect(result.owned).toBe(true);
+      expect(result.created).toBe(true);
       expect(notes.some((n) => /not stim-cli-owned by name/i.test(n))).toBeTruthy();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -484,25 +513,37 @@ describe('ensureOwnedDevice: ios', () => {
 describe('ensureOwnedDevice: android', () => {
   let androidHome: string;
   let prevAndroidHome: string | undefined;
+  let prevAndroidAvdHome: string | undefined;
 
   beforeEach(() => {
     androidHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-sdk-'));
     mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'arm64-v8a'), { recursive: true });
     mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'x86_64'), { recursive: true });
     prevAndroidHome = process.env.ANDROID_HOME;
+    prevAndroidAvdHome = process.env.ANDROID_AVD_HOME;
     process.env.ANDROID_HOME = androidHome;
+    process.env.ANDROID_AVD_HOME = join(androidHome, 'avd');
   });
 
   afterEach(() => {
     rmSync(androidHome, { recursive: true, force: true });
     if (prevAndroidHome === undefined) delete process.env.ANDROID_HOME;
     else process.env.ANDROID_HOME = prevAndroidHome;
+    if (prevAndroidAvdHome === undefined) delete process.env.ANDROID_AVD_HOME;
+    else process.env.ANDROID_AVD_HOME = prevAndroidAvdHome;
   });
 
   function androidExecutor({
     avds = [],
     createAvdError = null,
-  }: { avds?: string[]; createAvdError?: string | null } = {}) {
+    writeAvdFiles = true,
+    beforeCreateAvdError = () => {},
+  }: {
+    avds?: string[];
+    createAvdError?: string | null;
+    writeAvdFiles?: boolean;
+    beforeCreateAvdError?: () => void;
+  } = {}) {
     const run: string[] = [];
     const spawn: { cmd: string; args: readonly string[]; opts?: object }[] = [];
     return {
@@ -513,9 +554,23 @@ describe('ensureOwnedDevice: android', () => {
           run.push(cmd);
           if (cmd === 'emulator -list-avds') return avds.length ? `${avds.join('\n')}\n` : '';
           if (/create avd/.test(cmd)) {
-            if (createAvdError) throw new Error(createAvdError);
+            if (createAvdError) {
+              beforeCreateAvdError();
+              throw new Error(createAvdError);
+            }
+            const name = / -n "([^"]+)"/.exec(cmd)?.[1];
+            assert(name);
+            avds.push(name);
+            if (writeAvdFiles) {
+              const root = process.env.ANDROID_AVD_HOME!;
+              const content = join(root, `${name}.avd`);
+              mkdirSync(content, { recursive: true });
+              writeFileSync(join(root, `${name}.ini`), `path=${content}\n`);
+              writeFileSync(join(content, 'config.ini'), 'hw.cpu.ncore=4\ndisk.dataPartition.size=10G\n');
+            }
             return '';
           }
+          if (/delete avd/.test(cmd)) return '';
           if (cmd === 'adb devices') return 'List of devices attached\n';
           if (/emu avd name/.test(cmd)) return '';
           if (/getprop sys\.boot_completed/.test(cmd)) return '1';
@@ -559,6 +614,205 @@ describe('ensureOwnedDevice: android', () => {
       expect(result.avdName).toBe('stim-cli-app');
       expect(result.owned).toBe(true);
       expect(notes.some((n) => /no longer supports physical devices/i.test(n))).toBeTruthy();
+      expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-cli-app.avd', 'config.ini'), 'utf8')).toContain(
+        'disk.dataPartition.size=8589934592',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a fresh owned AVD uses the configured integer GiB override', async () => {
+    const root = projectDir();
+    try {
+      const { exec } = androidExecutor();
+      setExecutor(exec);
+      await ensureOwnedDevice({
+        platform: 'android',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { android: { dataPartitionSizeGb: 10 } },
+      });
+      expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-cli-app.avd', 'config.ini'), 'utf8')).toContain(
+        'disk.dataPartition.size=10737418240',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a fresh owned AVD merges a repository INI fragment and inline hardware overrides before boot', async () => {
+    const root = projectDir();
+    try {
+      writeFileSync(join(root, 'android-avd.ini'), 'hw.ramSize=3072\nhw.keyboard=no\n');
+      const { exec } = androidExecutor();
+      setExecutor(exec);
+      await ensureOwnedDevice({
+        platform: 'android',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {
+          android: {
+            avdConfigFile: 'android-avd.ini',
+            avdConfig: { 'hw.keyboard': true, 'vm.heapSize': 512 },
+          },
+        },
+      });
+      expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-cli-app.avd', 'config.ini'), 'utf8')).toBe(
+        'hw.cpu.ncore=4\ndisk.dataPartition.size=8589934592\nhw.ramSize=3072\nhw.keyboard=yes\nvm.heapSize=512\n',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('invalid AVD overrides fail before creating, cleaning, or booting a device', async () => {
+    const root = projectDir();
+    try {
+      const { run, spawn, exec } = androidExecutor();
+      setExecutor(exec);
+      await expect(
+        ensureOwnedDevice({
+          platform: 'android',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { android: { avdConfig: { 'disk.dataPartition.path': '/tmp/outside' } } },
+        }),
+      ).rejects.toThrow(/Unsupported android\.avdConfig key/);
+      expect(run).toEqual([]);
+      expect(spawn).toEqual([]);
+      expect(getProject(root)?.platforms?.android).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a failed new-AVD configuration is centrally deleted and never booted', async () => {
+    const root = projectDir();
+    try {
+      const { run, spawn, exec } = androidExecutor({ writeAvdFiles: false });
+      setExecutor(exec);
+      await expect(
+        ensureOwnedDevice({
+          platform: 'android',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+        }),
+      ).rejects.toThrow(/could not configure its AVD settings/i);
+      expect(run.some((cmd) => /delete avd -n "stim-cli-app"/.test(cmd))).toBe(true);
+      expect(spawn).toEqual([]);
+      expect(getProject(root)?.platforms?.android).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a failed configuration rollback stays tracked and cannot be recovered or booted', async () => {
+    const root = projectDir();
+    try {
+      const { run, spawn, exec } = androidExecutor();
+      setExecutor(exec);
+      const configureAvd = () => {
+        throw new Error('EEXIST: file already exists');
+      };
+      const teardownAvd = () => ({ status: 'failed' as const, reason: 'delete failed' });
+      await expect(
+        ensureOwnedDevice({
+          platform: 'android',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+          configureAvd,
+          teardownAvd,
+        }),
+      ).rejects.toThrow(/could not configure.*already exists.*tracked for cleanup/i);
+      expect(getProject(root)?.platforms?.android).toMatchObject({
+        avdName: 'stim-cli-app',
+        owned: true,
+        setupIncomplete: true,
+      });
+      expect(spawn).toEqual([]);
+      expect(run.filter((cmd) => /create avd/.test(cmd))).toHaveLength(1);
+
+      await expect(
+        ensureOwnedDevice({
+          platform: 'android',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+          configureAvd,
+          teardownAvd,
+        }),
+      ).rejects.toThrow(/incomplete setup.*could not be deleted/i);
+      expect(spawn).toEqual([]);
+      expect(run.filter((cmd) => /create avd/.test(cmd))).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an unrecorded existing owned AVD is recovered without resizing it', async () => {
+    const root = projectDir();
+    const avdRoot = process.env.ANDROID_AVD_HOME!;
+    const content = join(avdRoot, 'stim-cli-app.avd');
+    mkdirSync(content, { recursive: true });
+    writeFileSync(join(avdRoot, 'stim-cli-app.ini'), `path=${content}\n`);
+    writeFileSync(join(content, 'config.ini'), 'disk.dataPartition.size=10G\n');
+    try {
+      const { exec } = androidExecutor({
+        avds: ['stim-cli-app'],
+        createAvdError: 'Error: AVD stim-cli-app already exists.',
+      });
+      setExecutor(exec);
+      await ensureOwnedDevice({
+        platform: 'android',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { android: { dataPartitionSizeGb: 6, avdConfig: { 'hw.keyboard': true } } },
+        configureAvd: () => {
+          throw new Error('must not configure a recovered AVD');
+        },
+      });
+      expect(readFileSync(join(content, 'config.ini'), 'utf8')).toBe('disk.dataPartition.size=10G\n');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a stale project snapshot cannot recover an AVD another concurrent run just recorded', async () => {
+    const root = projectDir();
+    try {
+      const staleProject = getProject(root);
+      const { spawn, exec } = androidExecutor({
+        avds: ['stim-cli-app'],
+        createAvdError: 'Error: AVD stim-cli-app already exists.',
+        beforeCreateAvdError: () => {
+          setDevice(root, 'android', { avdName: 'stim-cli-app', owned: true, setupIncomplete: true });
+        },
+      });
+      setExecutor(exec);
+      await expect(
+        ensureOwnedDevice({
+          platform: 'android',
+          project: staleProject,
+          projectPath: root,
+          label: 'app',
+          settings: {},
+        }),
+      ).rejects.toThrow(/incomplete setup.*concurrent stim-cli run/i);
+      expect(spawn).toEqual([]);
+      expect(getProject(root)?.platforms?.android).toMatchObject({
+        avdName: 'stim-cli-app',
+        setupIncomplete: true,
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { clearDevice, getConfigDir, loadConfig } from '../config.ts';
-import { formatBytes, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
+import { directorySize, formatBytes, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
 import { listBuildLocks, readBuildLock } from '../engine/build-lock.ts';
 import { listBuildSlots, readBuildSlot } from '../engine/build-slots.ts';
 import {
@@ -25,7 +25,7 @@ import { detectIsExpo, findProjectRoot } from '../project.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { listAllIosSims, type IosSimRecord } from '../sim/ios.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
-import { listAvds } from '../sim/android.ts';
+import { listAvds, ownedAvdDirectory } from '../sim/android.ts';
 import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches, type CacheDescriptor } from '../caches.ts';
 import { workspaceDir, workspaceStateFile } from '../paths.ts';
 import { withRemoteSessionLock } from '../engine/device-remote.ts';
@@ -44,6 +44,7 @@ interface StaleProjectDevice {
   name: string;
   project: string;
   idleDays: number;
+  bytes?: number;
 }
 
 interface StaleDeviceRecord {
@@ -124,10 +125,13 @@ interface GcDependencies {
   easLedgerRoot?: string;
   removeEasSessionClaim?: typeof removeEasSessionClaim;
   precollectedEasSessionSweep?: EasSessionSweep;
+  avdDirectory?: typeof ownedAvdDirectory;
+  directorySize?: typeof directorySize;
 }
 
 // simctl and emulator listings can exceed 10 seconds on loaded hosts; 30 seconds still bounds hangs.
 const DEVICE_LIST_TIMEOUT_MS = 30000;
+const AVD_SIZE_TIMEOUT_MS = 5000;
 const EAS_OPERATION_TIMEOUT_MS = 30000;
 const EAS_COLLECTION_TIMEOUT_MS = 60000;
 const EAS_MAX_LIST_PAGES = 100;
@@ -640,13 +644,13 @@ export function formatGcReport({
 
   if (orphanedDevices.length) {
     lines.push(`Orphaned devices (${orphanedDevices.length}):`);
-    for (const d of orphanedDevices) lines.push(`  ${d.kind} ${d.name} (${d.id})`);
+    for (const d of orphanedDevices) lines.push(`  ${d.kind} ${d.name} (${d.id})${deviceSizeSuffix(d)}`);
   }
 
   if (staleDevices.length) {
     lines.push(`Stale owned devices (${staleDevices.length}) - project untouched for ${olderThan ?? '?'}d or more:`);
     for (const d of staleDevices) {
-      lines.push(`  ${d.kind} ${d.name} (${d.id})`);
+      lines.push(`  ${d.kind} ${d.name} (${d.id})${deviceSizeSuffix(d)}`);
       lines.push(`              ${d.project} (idle ${d.idleDays}d)`);
     }
   }
@@ -731,6 +735,30 @@ export function formatGcReport({
   return lines;
 }
 
+function deviceSizeSuffix(device: { kind: 'ios' | 'android'; bytes?: number }): string {
+  return device.kind === 'android' && device.bytes !== undefined ? ` - ${formatBytes(device.bytes)} on disk` : '';
+}
+
+function withAndroidAvdSizes<T extends { kind: 'ios' | 'android'; id: string; bytes?: number }>(
+  devices: T[],
+  {
+    avdDirectory = ownedAvdDirectory,
+    size = directorySize,
+  }: { avdDirectory?: typeof ownedAvdDirectory; size?: typeof directorySize } = {},
+): T[] {
+  return devices.map((device) => {
+    if (device.kind !== 'android') return device;
+    const dir = avdDirectory(device.id);
+    if (!dir) return device;
+    try {
+      const bytes = size(dir, { timeoutMs: AVD_SIZE_TIMEOUT_MS });
+      return bytes > 0 ? { ...device, bytes } : device;
+    } catch {
+      return device;
+    }
+  });
+}
+
 function projectLastTouched(path: string): number {
   try {
     return statSync(path).mtimeMs;
@@ -773,6 +801,12 @@ function planCacheEmptying(caches: CacheDescriptor[], all: boolean): GcCache[] {
   const annotated = caches.map((c) => Object.assign({}, c, { machineGlobal: machineGlobalReason(c) }));
   if (!all) return annotated;
   return annotated.map((c) => {
+    if (c.prune === 'report-only') {
+      return Object.assign({}, c, {
+        willEmpty: false,
+        emptySkipped: 'report-only shared cache; stim-cli never deletes it',
+      });
+    }
     if (c.machineGlobal) {
       return Object.assign({}, c, { willEmpty: false, emptySkipped: c.machineGlobal });
     }
@@ -804,6 +838,9 @@ function emptyCache(cache: CacheDescriptor): {
   skipped: string | null;
   failed?: number;
 } {
+  if (cache.prune === 'report-only') {
+    return { removed: 0, bytes: 0, skipped: 'report-only shared cache; stim-cli never deletes it' };
+  }
   if (cache.prune !== 'atomic') {
     return pruneCache(cache, { olderThanDays: 0, now: Date.now() + DAY_MS });
   }
@@ -911,7 +948,13 @@ export async function collectGcReport(
     }
 
     const isMounted = (path: string) => isOnMountedVolume(path, mountedVolumes);
-    orphanedDevices = findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects }).orphaned;
+    orphanedDevices = withAndroidAvdSizes(
+      findOrphanedDevices({ sims, avds, config: cfg, isMounted, deadProjects }).orphaned,
+      {
+        avdDirectory: deps.avdDirectory ?? ownedAvdDirectory,
+        size: deps.directorySize ?? directorySize,
+      },
+    );
     staleDeviceRecords = findStaleDeviceRecords({
       config: cfg,
       sims,
@@ -921,15 +964,21 @@ export async function collectGcReport(
       avdsChecked,
     });
     if (olderThan !== null) {
-      staleDevices = findStaleProjectDevices({
-        config: cfg,
-        sims,
-        avds,
-        olderThanDays: olderThan,
-        now,
-        lastTouched,
-        deadProjects,
-      });
+      staleDevices = withAndroidAvdSizes(
+        findStaleProjectDevices({
+          config: cfg,
+          sims,
+          avds,
+          olderThanDays: olderThan,
+          now,
+          lastTouched,
+          deadProjects,
+        }),
+        {
+          avdDirectory: deps.avdDirectory ?? ownedAvdDirectory,
+          size: deps.directorySize ?? directorySize,
+        },
+      );
     }
   }
 

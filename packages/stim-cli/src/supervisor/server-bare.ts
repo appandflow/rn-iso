@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { metroStoreInjectionEnabled } from '../config.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-store.ts';
@@ -139,7 +139,7 @@ function installSharedCacheStore({
   writer?: NdjsonWriter | null;
   enabled: boolean;
   FileStore: (new (options: { root: string }) => { _root?: string }) | null;
-}): void {
+}): boolean {
   if (!enabled) {
     writer?.write({
       src: 'metro',
@@ -147,7 +147,7 @@ function installSharedCacheStore({
       event: 'cache_store_skipped',
       msg: 'the shared Metro transform store is off (caches.injectMetroStore is false in ~/.stim-cli/config.json)',
     });
-    return;
+    return false;
   }
   if (!FileStore) {
     writer?.write({
@@ -156,10 +156,11 @@ function installSharedCacheStore({
       event: 'cache_store_skipped',
       msg: `metro-cache is not resolvable from ${root}, so this dev server runs on whatever transform cache the project configured`,
     });
-    return;
+    return false;
   }
   const storeRoot = metroStoreRoot(root);
   const result = appendCacheStore(config, { storeRoot, FileStore });
+  registerMetroStore(storeRoot);
   if (!result.added) {
     writer?.write({
       src: 'metro',
@@ -167,15 +168,24 @@ function installSharedCacheStore({
       event: 'cache_store_present',
       msg: `the shared Metro transform store at ${storeRoot} was already configured (${result.reason})`,
     });
-    return;
+    return true;
   }
-  registerMetroStore(storeRoot);
   writer?.write({
     src: 'metro',
     level: 'debug',
     event: 'cache_store_added',
     msg: `appended the shared Metro transform store at ${storeRoot} to this project's cacheStores`,
   });
+  return true;
+}
+
+export function normalizeMetroTransformerPaths(config: BareModule, root: string): boolean {
+  const current = config?.transformer?.asyncRequireModulePath;
+  if (typeof current !== 'string' || !isAbsolute(current)) return false;
+  const local = relative(root, current);
+  if (local === '' || local === '..' || local.startsWith(`..${sep}`) || isAbsolute(local)) return false;
+  config.transformer.asyncRequireModulePath = `./${local.split(sep).join('/')}`;
+  return true;
 }
 
 export function ensureNativePlatform(config: BareModule): boolean {
@@ -257,13 +267,21 @@ export async function startBareServer({
   const makeReporter = reporterFactory === undefined ? loadNdjsonReporter(root) : reporterFactory;
 
   const config = await metro.loadConfig({ cwd: root, port });
-  installSharedCacheStore({
+  const sharedStoreInstalled = installSharedCacheStore({
     root,
     config,
     writer,
     enabled: cacheStore === undefined ? metroStoreInjectionEnabled() : cacheStore,
     FileStore: fileStore === undefined ? loadFileStore(root) : fileStore,
   });
+  if (sharedStoreInstalled && normalizeMetroTransformerPaths(config, root)) {
+    writer?.write({
+      src: 'metro',
+      level: 'debug',
+      event: 'config_adjusted',
+      msg: 'normalized the project-local asyncRequireModulePath for cross-worktree transform keys',
+    });
+  }
   if (ensureNativePlatform(config)) {
     writer?.write({
       src: 'metro',

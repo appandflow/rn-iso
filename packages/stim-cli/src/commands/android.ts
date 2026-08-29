@@ -47,6 +47,8 @@ import {
 } from './ios.ts';
 import {
   REMOTE_DEVICE_BACKENDS,
+  androidAvdConfigSettingError,
+  androidDataPartitionSizeGbSettingError,
   publicUrlSetting,
   remoteAndroidSetting,
   remoteDeviceSettingError,
@@ -68,7 +70,13 @@ import {
   verifyAndroidReleaseLaunch,
   verifyLaunch,
 } from '../engine/app-install.ts';
-import { androidHome, emulatorFailureRemedy, extractEmulatorFailure, findBuildTool } from '../sim/android.ts';
+import {
+  androidHome,
+  emulatorDiskSpaceRemedy,
+  emulatorFailureRemedy,
+  extractEmulatorFailure,
+  findBuildTool,
+} from '../sim/android.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import {
   REMOTE_SESSION_ERROR,
@@ -363,20 +371,30 @@ export function noDeviceDiagnostic({
   reason,
   logFile,
   remedy,
+  localEmulator = true,
   readLog = readEmulatorLogTail,
 }: {
   reason: string;
   logFile: string;
   remedy: string;
+  localEmulator?: boolean;
   readLog?: (file: string) => string;
 }): { message: string; remedy: string; lines: string[]; logPath: string | null } {
-  const text = readLog(logFile);
+  const text = localEmulator ? readLog(logFile) : '';
   const logPath = text.trim() ? logFile : null;
   const found = extractEmulatorFailure(text);
-  if (found.length === 0) return { message: reason, remedy, lines: [], logPath };
+  const diskRemedy = localEmulator ? emulatorDiskSpaceRemedy([reason, ...found]) : null;
+  if (found.length === 0) {
+    return {
+      message: reason,
+      remedy: diskRemedy ?? remedy,
+      lines: [],
+      logPath,
+    };
+  }
   return {
     message: `${reason} The emulator reported: ${found[0]}`,
-    remedy: emulatorFailureRemedy(found),
+    remedy: diskRemedy ?? emulatorFailureRemedy(found),
     lines: found.slice(1),
     logPath,
   };
@@ -1381,11 +1399,29 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return { ok: false, error: { code, message, remedy: remedy ?? null } };
   };
 
+  const settingsRepoRoot = repoRoot(root);
+  const settingsRoot = settingsRepoRoot ?? root;
   const settings = resolveSettingsFor({
     projectPath: root,
     gitCommonDir: gitCommonDir(root),
-    repoRoot: repoRoot(root),
+    repoRoot: settingsRepoRoot,
   });
+  const dataPartitionSizeError = androidDataPartitionSizeGbSettingError(settings);
+  if (dataPartitionSizeError) {
+    return fail(
+      'STIM_CLI_BAD_ARG',
+      dataPartitionSizeError,
+      'Set android.dataPartitionSizeGb to a whole number of GiB from 6 through 16384.',
+    );
+  }
+  const avdConfigError = androidAvdConfigSettingError(settings, settingsRoot);
+  if (avdConfigError) {
+    return fail(
+      'STIM_CLI_BAD_ARG',
+      avdConfigError,
+      'Use only documented android.avdConfig keys, or an android.avdConfigFile fragment contained by the repository/project settings root.',
+    );
+  }
   const remoteSettingError = remoteDeviceSettingError(settings);
   if (remoteSettingError) {
     return fail(
@@ -1507,6 +1543,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       platform: PLATFORM,
       project,
       projectPath: root,
+      settingsRoot,
       label,
       settings,
       flags: {},
@@ -1564,6 +1601,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         reason: booted.reason ?? 'The remote device did not boot.',
         logFile: emuLog,
         remedy: 'Run `stim status` to inspect the remote device, then retry the command.',
+        localEmulator: false,
       });
       return fail(NO_DEVICE, diag.message, diag.remedy, {
         lines: diag.lines,

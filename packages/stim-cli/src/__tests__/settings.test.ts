@@ -1,10 +1,16 @@
 import assert from 'node:assert';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
+  androidAvdConfigSetting,
+  androidAvdConfigSettingError,
+  androidDataPartitionSizeBytes,
+  androidDataPartitionSizeGbSetting,
+  androidDataPartitionSizeGbSettingError,
   mergeSettingsLayers,
   ngrokUrlSetting,
+  parseAndroidAvdConfigIni,
   publicUrlSetting,
   readCommittedSettings,
   remoteAndroidSetting,
@@ -47,6 +53,16 @@ test('merges nested objects key by key rather than replacing them', () => {
     { worktree: { baseRef: 'fresh', install: ['pnpm install'] } },
   ]);
   expect(merged).toEqual({ worktree: { baseRef: 'head', install: ['pnpm install'] } });
+});
+
+test('merges android.avdConfig keys across settings layers with earlier values winning', () => {
+  const merged = mergeSettingsLayers([
+    { android: { avdConfig: { 'hw.ramSize': 4096 } } },
+    { android: { avdConfig: { 'hw.ramSize': 2048, 'hw.keyboard': true } } },
+  ]);
+  expect(merged).toEqual({
+    android: { avdConfig: { 'hw.ramSize': 4096, 'hw.keyboard': true } },
+  });
 });
 
 test('ignores null and undefined layers', () => {
@@ -101,11 +117,121 @@ test('unknownSettingKeys accepts every key that is still honoured', () => {
   expect(
     unknownSettingKeys({
       ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2', configuration: 'Release' },
-      android: { systemImage: 'pkg', variant: 'productionDebug' },
+      android: {
+        systemImage: 'pkg',
+        dataPartitionSizeGb: 8,
+        avdConfigFile: '.stim-cli/android-avd.ini',
+        avdConfig: { 'hw.ramSize': 3072, 'hw.keyboard': true },
+        variant: 'productionDebug',
+      },
       worktree: { baseRef: 'fresh', include: ['.env'] },
       worktreeDir: '/tmp/wt',
     }),
   ).toEqual([]);
+});
+
+describe('Android AVD config settings', () => {
+  test('reads a repository-contained INI fragment and applies inline overrides on top', () => {
+    writeFileSync(join(tmpHome, 'android-avd.ini'), 'hw.ramSize=3072\nhw.keyboard=no\n');
+    expect(
+      androidAvdConfigSetting(
+        {
+          android: {
+            avdConfigFile: 'android-avd.ini',
+            avdConfig: { 'hw.keyboard': true, 'vm.heapSize': 512 },
+          },
+        },
+        tmpHome,
+      ),
+    ).toEqual({ 'hw.ramSize': '3072', 'hw.keyboard': 'yes', 'vm.heapSize': '512' });
+  });
+
+  test('parses comments and values containing equals, and rejects malformed or duplicate lines', () => {
+    expect(parseAndroidAvdConfigIni('# device\n; local\nhw.keyboard=true\nruntime.network.speed=5g\n')).toEqual({
+      'hw.keyboard': 'yes',
+      'runtime.network.speed': '5g',
+    });
+    expect(() => parseAndroidAvdConfigIni('[hardware]\n')).toThrow(/line 1.*key=value/);
+    expect(() => parseAndroidAvdConfigIni('hw.keyboard=yes\nhw.keyboard=no\n')).toThrow(/duplicate key/);
+  });
+
+  test.each([
+    ['disk.dataPartition.path', '/tmp/elsewhere'],
+    ['image.sysdir.1', '../image'],
+    ['hw.cpu.arch', 'arm64'],
+    ['hw.camera.back', 'webcam0'],
+    ['hw.unknownFutureControl', 'yes'],
+    ['toString', 'yes'],
+  ])('rejects protected or unknown key %s', (key, value) => {
+    expect(androidAvdConfigSettingError({ android: { avdConfig: { [key]: value } } }, tmpHome)).toMatch(
+      /Unsupported android\.avdConfig key/,
+    );
+  });
+
+  test.each([
+    ['hw.ramSize', 1024],
+    ['hw.cpu.ncore', 0],
+    ['hw.keyboard', 'on'],
+    ['hw.gpu.mode', 'swiftshader_indirect'],
+    ['runtime.network.speed', 'unlimited'],
+  ])('rejects invalid value %p for %s', (key, value) => {
+    expect(androidAvdConfigSettingError({ android: { avdConfig: { [key]: value } } }, tmpHome)).toMatch(
+      /Invalid android\.avdConfig value/,
+    );
+  });
+
+  test('rejects non-scalar and line-injecting inline values', () => {
+    expect(androidAvdConfigSettingError({ android: { avdConfig: { 'hw.keyboard': ['yes'] } } }, tmpHome)).toMatch(
+      /Invalid android\.avdConfig value/,
+    );
+    expect(
+      androidAvdConfigSettingError(
+        { android: { avdConfig: { 'hw.keyboard': 'yes\ndisk.dataPartition.path=/tmp/outside' } } },
+        tmpHome,
+      ),
+    ).toMatch(/expected one line/);
+  });
+
+  test('rejects absolute paths, traversal, symlink escapes, and oversized fragments', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'stim-cli-outside-'));
+    try {
+      writeFileSync(join(outside, 'outside.ini'), 'hw.keyboard=yes\n');
+      symlinkSync(join(outside, 'outside.ini'), join(tmpHome, 'linked.ini'));
+      writeFileSync(join(tmpHome, 'large.ini'), `#${'x'.repeat(64 * 1024)}\n`);
+      for (const path of [join(outside, 'outside.ini'), '../outside.ini', 'linked.ini', 'large.ini']) {
+        expect(androidAvdConfigSettingError({ android: { avdConfigFile: path } }, tmpHome)).toBeTruthy();
+      }
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Android data partition size settings', () => {
+  test('defaults above the emulator minimum and converts GiB to exact bytes', () => {
+    expect(androidDataPartitionSizeGbSetting({})).toBe(8);
+    expect(androidDataPartitionSizeBytes(6)).toBe(6 * 1024 ** 3);
+  });
+
+  test('accepts an integer override through the emulator ext4 maximum', () => {
+    expect(androidDataPartitionSizeGbSetting({ android: { dataPartitionSizeGb: 12 } })).toBe(12);
+    expect(androidDataPartitionSizeGbSettingError({ android: { dataPartitionSizeGb: 16 * 1024 } })).toBeNull();
+  });
+
+  test('uses the ordinary first-layer-wins precedence', () => {
+    const merged = mergeSettingsLayers([
+      { android: { dataPartitionSizeGb: 12 } },
+      { android: { dataPartitionSizeGb: 10 } },
+      { android: { dataPartitionSizeGb: 8 } },
+    ]);
+    expect(androidDataPartitionSizeGbSetting(merged)).toBe(12);
+  });
+
+  test.each([5, 6.5, '8', 16 * 1024 + 1])('rejects invalid value %p', (value) => {
+    const settings = { android: { dataPartitionSizeGb: value } };
+    expect(androidDataPartitionSizeGbSettingError(settings)).toMatch(/integer from 6 through 16384 GiB/);
+    expect(() => androidDataPartitionSizeGbSetting(settings)).toThrow(/android\.dataPartitionSizeGb/);
+  });
 });
 
 describe('remote device settings', () => {
