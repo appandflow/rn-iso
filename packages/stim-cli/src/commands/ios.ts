@@ -931,6 +931,7 @@ interface ReportIosResultArgs {
   json: boolean;
   release: boolean;
   configuration: string | null;
+  metroCheck: boolean;
   metroPort: number | null;
   logsDir: string;
   device: DeviceLike;
@@ -956,6 +957,7 @@ function reportIosResult({
   json,
   release,
   configuration,
+  metroCheck,
   metroPort,
   logsDir,
   device,
@@ -1016,12 +1018,30 @@ function reportIosResult({
       `OK: ${bundleId} on ${deviceLabel(device, udid)}, ` +
       (release ? `${configuration} (embedded JS, no Metro)` : `Metro port ${metroPort}`) +
       ` (${cacheDescription(cacheHit, remote?.name)}, ${formatDuration(durationMs)})`;
-    console.log(
+    const outcome =
       launchState === LAUNCH_UNVERIFIED
         ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
         : launchState === LAUNCH_BUNDLING
           ? chalk.green(`${summary} -- bundle requested, still building`)
-          : chalk.green(summary),
+          : chalk.green(summary);
+    const deviceName = device?.deviceName ?? device?.name ?? udid;
+    const cacheResult = useBuildCache ? cacheDescription(cacheHit, remote?.name) : 'bypassed; built';
+    const metroResult = release
+      ? `embedded (${configuration})`
+      : !metroCheck
+        ? `check skipped on port ${metroPort}`
+        : launchState === LAUNCH_UNVERIFIED
+          ? `state unverified on port ${metroPort}`
+          : `running on port ${metroPort}`;
+    console.log(
+      [
+        outcome,
+        phaseLine('device', `${deviceName} (${udid})`),
+        phaseLine('app', bundleId),
+        phaseLine('metro', metroResult),
+        phaseLine('cache', cacheResult),
+        phaseLine('logs', logsDir),
+      ].join('\n'),
     );
     if (facts.webPreviewUrl) console.error(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));
   }
@@ -1208,6 +1228,7 @@ async function finishIosRun({
     json,
     release,
     configuration,
+    metroCheck,
     metroPort,
     logsDir,
     device,
@@ -1812,6 +1833,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         }
 
         if (!appPath) {
+          phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
           const result: BuildIosResultLike = await d.buildIos({
             root,
             udid,

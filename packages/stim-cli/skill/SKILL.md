@@ -28,8 +28,9 @@ later. If `npx` returns E401 or E404 in a repo with a private registry, use:
 npx --registry=https://registry.npmjs.org stim-cli <command>
 ```
 
-Prefer `--json` when another command or device tool needs a port, UDID, serial,
-bundle ID, or path.
+Prefer plain output for agent workflows. It streams each phase and ends with the
+full device ID, app ID, Metro state, cache result, and log path. Use `--json`
+only when a script must parse a stable payload.
 
 ## Normal workflow
 
@@ -43,7 +44,7 @@ cd <printed-path>
 
 stim start
 stim ios                    # or: stim android
-stim logs --errors --json
+stim logs --errors
 
 # Edit JavaScript or TypeScript. Fast Refresh applies the change.
 stim logs --since 30s --level error
@@ -62,17 +63,20 @@ Follow these rules during the loop:
   change does not need another native build.
 - A cold native build can outlive a shell timeout. Run the same build command
   again. The second call joins the active build or returns its result.
-- Target only the UDID, serial, and Metro port from this workspace's current
-  JSON output. Never assume that the device named `booted` is yours. Never
-  hardcode a Metro port.
-- `launched: true` proves the launch. `launched: "bundling"` means Metro still
-  builds the bundle. Wait and query the logs. For `launched: "unverified"`,
-  follow the printed remedy before you claim success.
+- Target only the full UDID, serial, app ID, and Metro port from this
+  workspace's current output. Never assume that the device named `booted` is
+  yours. Never hardcode a Metro port.
+- An `OK` summary with no launch qualifier proves the launch. When the summary
+  says `bundle requested, still building`, Metro has not completed the bundle;
+  wait and query the logs. For `launch UNVERIFIED`, follow the printed remedy
+  before you claim success. JSON reports these states as `true`, `"bundling"`,
+  and `"unverified"` in `launched`.
 - Empty output from `logs --errors` with exit code 0 is the pass condition.
   Do not read the NDJSON files directly.
-- Use `stim status` to find this workspace's device, port, server state,
-  and last build. Use `stim doctor` when a build is unexpectedly slow
-  or the environment looks incomplete.
+- Use `stim status` when resuming a workspace or recovering missing device,
+  port, server, or build facts. A normal `start` and platform run already print
+  the facts needed for the next step. Use `stim doctor` when a build is
+  unexpectedly slow or the environment looks incomplete.
 
 ## Ownership and deletion
 

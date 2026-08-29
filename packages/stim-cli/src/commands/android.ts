@@ -833,6 +833,7 @@ interface ReportAndroidResultArgs {
   useBuildCache: boolean;
   variant: string | null;
   release: boolean;
+  metroCheck: boolean;
   metroPort: number | null;
   logsDir: string | null;
   serial: string;
@@ -854,6 +855,7 @@ function reportAndroidResult({
   useBuildCache,
   variant,
   release,
+  metroCheck,
   metroPort,
   logsDir,
   serial,
@@ -897,12 +899,30 @@ function reportAndroidResult({
       `OK: ${androidPackage} launched on ${serial}, ` +
       `${release ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
       `(${cacheOutcome(record.cacheHit, remote?.name)})`;
-    emit(
+    const outcome =
       launchState === LAUNCH_UNVERIFIED
         ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
         : launchState === LAUNCH_BUNDLING
           ? chalk.green(`${summary} -- bundle requested, still building`)
-          : chalk.green(summary),
+          : chalk.green(summary);
+    const deviceName = record.avdName || record.deviceName || serial;
+    const cacheResult = useBuildCache ? cacheOutcome(record.cacheHit, remote?.name) : 'bypassed; built';
+    const metroResult = release
+      ? `embedded (${variant})`
+      : !metroCheck
+        ? `check skipped on port ${metroPort}`
+        : launchState === LAUNCH_UNVERIFIED
+          ? `state unverified on port ${metroPort}`
+          : `running on port ${metroPort}`;
+    emit(
+      [
+        outcome,
+        phaseLine('device', `${deviceName} (${serial})`),
+        phaseLine('app', androidPackage),
+        phaseLine('metro', metroResult),
+        phaseLine('cache', cacheResult),
+        phaseLine('logs', logsDir || 'unavailable (remote device)'),
+      ].join('\n'),
     );
   }
   return facts;
@@ -1162,6 +1182,7 @@ async function finishAndroidRun({
     useBuildCache,
     variant,
     release,
+    metroCheck,
     metroPort,
     logsDir: remoteRelease ? null : logsDir,
     serial,
@@ -1964,6 +1985,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         }
 
         if (!apkPath) {
+          phase('build', `compiling ${variant || 'debug'} with Gradle`);
           const built: BuildAndroidResultLike = await build({ root, logWriter: writer, variant });
           if (built.failed) {
             const diagnostics = built.diagnostics || [];
