@@ -49,7 +49,9 @@ jobs:
           if npm view "@stim-cli/core@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/core@$version is already published"
           else
-            npm publish --provenance --access public
+            tag=latest
+            if [[ "$version" == *-* ]]; then tag=next; fi
+            npm publish --provenance --access public --tag "$tag"
           fi
       - name: Publish @stim-cli/metro
         working-directory: packages/metro
@@ -58,7 +60,9 @@ jobs:
           if npm view "@stim-cli/metro@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/metro@$version is already published"
           else
-            npm publish --provenance --access public
+            tag=latest
+            if [[ "$version" == *-* ]]; then tag=next; fi
+            npm publish --provenance --access public --tag "$tag"
           fi
       - name: Publish @stim-cli/expo-build-cache
         working-directory: packages/expo-build-cache
@@ -67,7 +71,9 @@ jobs:
           if npm view "@stim-cli/expo-build-cache@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/expo-build-cache@$version is already published"
           else
-            npm publish --provenance --access public
+            tag=latest
+            if [[ "$version" == *-* ]]; then tag=next; fi
+            npm publish --provenance --access public --tag "$tag"
           fi
       - name: Publish stim-cli
         working-directory: packages/stim-cli
@@ -76,13 +82,16 @@ jobs:
           if npm view "stim-cli@$version" version >/dev/null 2>&1; then
             echo "stim-cli@$version is already published"
           else
-            npm publish --provenance --access public
+            tag=latest
+            if [[ "$version" == *-* ]]; then tag=next; fi
+            npm publish --provenance --access public --tag "$tag"
           fi
       - name: Smoke-test the registry
         run: |
           sleep 10
+          version="${GITHUB_REF_NAME#v}"
           for p in @stim-cli/core stim-cli @stim-cli/expo-build-cache @stim-cli/metro; do
-            v=$(npm view "$p" version)
+            v=$(npm view "$p@$version" version)
             echo "$p -> $v"
-            [ "$v" = "${GITHUB_REF_NAME#v}" ] || exit 1
+            [ "$v" = "$version" ] || exit 1
           done

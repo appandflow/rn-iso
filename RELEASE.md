@@ -51,6 +51,10 @@ all four names are available, use the intended first version, and review the
 full release diff. Complete the first-publication bootstrap in section 4,
 step 7 before pushing the first tag.
 
+Use `X.Y.Z-rc.N` for a release candidate. Publish prereleases under the npm
+`next` dist-tag and query the current candidate with
+`npm view stim-cli@next version`. Stable releases use the `latest` dist-tag.
+
 When a published version exists, check `git describe --tags --abbrev=0`. If
 that tag is _higher_ than `v$last`, a previous release got tagged but never
 landed on npm. **Retry that publish before bumping again** (re-run section 4,
@@ -223,6 +227,7 @@ Before continuing:
    tail -n +2 docs/releases/X.Y.Z.md > /tmp/notes.md
    gh release create vX.Y.Z --title "vX.Y.Z" --notes-file /tmp/notes.md
    ```
+   Add `--prerelease` when `X.Y.Z` contains a prerelease suffix.
    Do not add claims here. Once the tag is remote, a correction requires a new
    version; never move or force-push the published tag.
 7. **Publish to npm.** Pushing the tag in step 5 triggers the
@@ -247,8 +252,10 @@ Before continuing:
    packages manually in dependency order, then configure each package's trusted
    publisher for `appandflow/stim-cli`, workflow `release.yml`, environment
    `release`. Do this before pushing the first tag. The tagged workflow skips an
-   exact package version that already exists, then verifies all four registry
-   versions. The same commands are the manual fallback for later releases:
+   exact package version that already exists, uses the npm `next` dist-tag for
+   prereleases, then verifies all four registry versions. The same commands are
+   the manual fallback for later releases. Add `--tag next` to every command
+   when publishing a prerelease:
 
    ```bash
    npm whoami                                          # confirm login; if 401, `npm login` first
@@ -268,10 +275,11 @@ Before continuing:
 
 8. **Smoke-test the published versions** from a scratch directory:
    ```bash
-   cd /tmp && npx --package=stim-cli@latest stim --version
-   npm view stim-cli readme | head -c 200        # NOT "No README data found!"
-   npm view @stim-cli/expo-build-cache version   # same number as stim-cli
-   npm view @stim-cli/metro version              # same number as stim-cli
+   version=X.Y.Z
+   cd /tmp && npx --package="stim-cli@$version" stim --version
+   npm view "stim-cli@$version" readme | head -c 200        # NOT "No README data found!"
+   npm view "@stim-cli/expo-build-cache@$version" version
+   npm view "@stim-cli/metro@$version" version
    ```
    `npm view stim-cli` reported "No README data found" for every release up to
    0.14.0, because the only README lived at the repo root while the package

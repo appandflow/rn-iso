@@ -9,13 +9,25 @@ const here = dirname(fileURLToPath(import.meta.url));
 const releasesDir = join(here, '..', '..', 'docs', 'releases');
 const out = join(here, '..', 'docs', 'changelog.md');
 
+const parseVersion = (version) => {
+  const [core, ...prereleaseParts] = version.split('-');
+  return {
+    core: core.split('.').map(Number),
+    prerelease: prereleaseParts.join('-') || null,
+  };
+};
+
 const versions = readdirSync(releasesDir)
-  .filter((f) => /^\d+\.\d+\.\d+\.md$/.test(f))
+  .filter((f) => /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\.md$/.test(f))
   .map((f) => f.replace(/\.md$/, ''))
   .toSorted((a, b) => {
-    const pa = a.split('.').map(Number);
-    const pb = b.split('.').map(Number);
-    return pb[0] - pa[0] || pb[1] - pa[1] || pb[2] - pa[2];
+    const pa = parseVersion(a);
+    const pb = parseVersion(b);
+    const coreOrder = pb.core[0] - pa.core[0] || pb.core[1] - pa.core[1] || pb.core[2] - pa.core[2];
+    if (coreOrder) return coreOrder;
+    if (pa.prerelease === null) return -1;
+    if (pb.prerelease === null) return 1;
+    return pb.prerelease.localeCompare(pa.prerelease, undefined, { numeric: true });
   });
 
 const sections = versions.map((v) => {
