@@ -353,6 +353,18 @@ test('exactly one compact skill ships', () => {
   expect(skill).toMatch(/stim doctor/);
 });
 
+test('the skill and guide shut down owned simulators without an occupancy check', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  const cleanup = renderTopic('cleanup');
+  assert(cleanup);
+
+  expect(skill).toMatch(/explicit `stop` shuts down a Stim-owned simulator even when[\s\S]*another process uses it/i);
+  expect(skill).toMatch(/never shuts down an unowned simulator/i);
+  expect(cleanup).toMatch(/do not check simulator occupancy/i);
+  expect(cleanup).toMatch(/never shuts down an unowned simulator/i);
+  expect(skill).not.toContain('agent-device close --shutdown');
+});
+
 test('the skill still carries the rules an agent must not have to look up', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   for (const must of [

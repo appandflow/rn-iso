@@ -1113,10 +1113,9 @@ ON THE MAIN CHECKOUT
   A registered project directory that is not a git repo at all gets the same
   environment reclaim -- there is nothing else remove could mean there.
 
-Neither delete path checks occupancy: a device being deleted goes away even if
-something is still driving it, because it is one stim-cli created for a project
-that is going away. \`stop\` DOES spare an occupied sim, because there the
-device survives the call.
+The delete paths and \`stop\` do not check simulator occupancy. An explicit
+\`stim stop\` shuts down this workspace's Stim-owned simulator, including a
+simulator used by a UI-test runner. It never shuts down an unowned simulator.
 
 If a delete fails, the device's config record is KEPT and the command reports
 it. A record is what makes the device findable again, so it outlives a failed
