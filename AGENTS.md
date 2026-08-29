@@ -43,6 +43,26 @@ pnpm test
 Use only the checks that apply while iterating. Run all defined checks before a
 commit. Run `pnpm run test:e2e` when a change affects an end-to-end workflow.
 
+## Issue and pull request workflow
+
+When you find a bug or improvement, search the open GitHub issues first. If no
+issue already describes it, create one before implementation. Refresh the
+remote refs, then confirm that an existing issue still applies to current
+`origin/main`; close stale issues with the fixing commit and verification
+evidence instead of creating duplicate work.
+
+Implement each valid issue in its own git worktree and branch created from the
+refreshed `origin/main`. Independent issues may run in parallel worktrees. Keep
+the branch limited to that issue, run the required checks, and open a pull
+request that links the issue.
+
+As soon as the pull request is open, assign a fresh agent that did not implement
+the change to review the issue, diff, tests, and user-facing guidance. Address
+every actionable finding and rerun the affected checks. Mark the pull request
+ready only after that fresh review is clear. Merge only after all required CI
+checks pass; if CI fails, fix the branch, repeat the review when behavior
+changes, and wait for the new checks.
+
 ## Architecture rules
 
 - **Single exec wrapper.** Route all child processes through
