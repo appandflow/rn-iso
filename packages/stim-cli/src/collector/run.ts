@@ -156,7 +156,7 @@ export async function runCollector({
     if (finished) return;
     finished = true;
     watcher?.stop();
-    writer.write({ src: 'device', level, event, msg });
+    writer.write({ src: 'device', platform, level, event, msg });
     try {
       unregisterCollector(root, platform);
     } catch {}
@@ -199,6 +199,7 @@ export async function runCollector({
 
   writer.write({
     src: 'device',
+    platform,
     level: 'info',
     event: 'collector_started',
     msg:
@@ -210,7 +211,7 @@ export async function runCollector({
   const parse = platform === 'ios' ? parseLogStreamLine : parseLogcatLine;
   const onLine = (line: string) => {
     const record = parse(line, { now });
-    if (record) writer.write(record);
+    if (record) writer.write({ ...record, platform });
   };
 
   const attach = (streamPid: number | null): ChildProcess => {
@@ -222,7 +223,9 @@ export async function runCollector({
     const outReader = createLineReader(onLine);
     const errReader = createLineReader((line: string) => {
       const text = String(line).trimEnd();
-      if (text.trim()) writer.write({ src: 'device', level: 'debug', raw: true, event: 'collector_stderr', msg: text });
+      if (text.trim()) {
+        writer.write({ src: 'device', platform, level: 'debug', raw: true, event: 'collector_stderr', msg: text });
+      }
     });
     flushReaders = () => {
       outReader.flush();
@@ -259,6 +262,7 @@ export async function runCollector({
     child = null;
     writer.write({
       src: 'device',
+      platform,
       level: 'info',
       event: 'collector_reattached',
       msg: `${why}: ${packageName} is now pid ${nextPid} on ${serial} (was ${previous}); reattaching the log stream`,

@@ -106,7 +106,7 @@ export function loadNdjsonReporter(
   root: string,
   { requireFrom = createRequire }: { requireFrom?: (id: string) => NodeJS.Require } = {},
 ): ((opts: { dir: string }) => BareModule) | null {
-  for (const from of [join(root, 'package.json'), import.meta.url]) {
+  for (const from of [import.meta.url, join(root, 'package.json')]) {
     try {
       const factory = requireFrom(from)('@stim-cli/metro').ndjsonReporter;
       if (typeof factory === 'function') return factory;

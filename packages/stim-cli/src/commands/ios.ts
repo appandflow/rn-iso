@@ -22,9 +22,11 @@ import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import {
   DEFAULT_METRO_PORT,
   LAUNCH_BUNDLING,
+  LAUNCH_FATAL,
   LAUNCH_UNVERIFIED,
   devClientUrl,
   installIosApp,
+  iosAppProcess,
   launchIosApp,
   unverifiedLaunchLines,
   verifyLaunch,
@@ -164,6 +166,9 @@ interface VerifyLaunchResultLike {
   verified?: boolean;
   skipped?: boolean;
   requested?: boolean;
+  fatal?: boolean;
+  processAlive?: boolean | null;
+  errors?: Array<{ msg?: unknown }>;
   waitedMs?: number;
 }
 
@@ -817,14 +822,43 @@ async function verifyIosRun({
         ),
       ),
     );
-    return LAUNCH_UNVERIFIED;
+    return processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED;
   }
 
   const verification: VerifyLaunchResultLike = metroCheck
-    ? await d.verifyLaunch({ logsDir, since: launchedAt, metroPort, mode: isExpo ? MODE_EXPO : MODE_BARE })
+    ? await d.verifyLaunch({
+        logsDir,
+        since: launchedAt,
+        metroPort,
+        platform: 'ios',
+        mode: isExpo ? MODE_EXPO : MODE_BARE,
+        processAlive: remoteDevice
+          ? null
+          : () => {
+              if (launched?.pid) return d.isPidAlive(launched.pid);
+              const pid = iosAppProcess(udid, bundleId);
+              return pid === undefined ? null : pid !== null;
+            },
+      })
     : { verified: false, skipped: true };
+  if (verification?.fatal) {
+    const reason = verification.processAlive === false ? 'the app process exited' : 'Metro could not build the bundle';
+    phase('verify', chalk.red(`FATAL after ${formatDuration(verification.waitedMs ?? 0)}: ${reason}`));
+    for (const record of verification.errors ?? []) {
+      if (record.msg) note(chalk.red(phaseLine('', String(record.msg))));
+    }
+    return LAUNCH_FATAL;
+  }
   if (verification?.verified) {
-    phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
+    phase(
+      'verify',
+      `ready: bundle loaded, stable for 3s` +
+        (verification.processAlive === true ? ', process alive' : '') +
+        ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
+    );
+    for (const record of verification.errors ?? []) {
+      if (record.msg) note(chalk.yellow(phaseLine('launch err', String(record.msg))));
+    }
     return true;
   }
   if (verification?.skipped) {
@@ -1156,6 +1190,15 @@ async function finishIosRun({
     remoteDevice: Boolean(remoteDevice),
     metroOrigin: typeof launched?.jsLocation === 'string' ? launched.jsLocation : null,
   });
+  if (launchState === LAUNCH_FATAL) {
+    return fail({
+      code: 'STIM_CLI_LAUNCH_FAILED',
+      message: 'The app failed its launch readiness check.',
+      remedy: `Read the launch error above or run \`stim logs --errors\`. The full timeline is in ${logsDir}.`,
+      logPath: logsDir,
+      build: { ...buildFailure, appPath, bundleId },
+    });
+  }
   logWriter().write(launchOutcomeRecord({ launchState, release, bundleId, configuration, metroPort }));
 
   const uploadWasAbandoned = await finishIosUpload(uploadPending, remote, phase, note);

@@ -191,6 +191,16 @@ describe('ios: demoting device noise', () => {
     );
     assert(record);
     expect(record.level).toBe('info');
+    const simulatorRecord = parseLogStreamLine(
+      JSON.stringify(
+        event({
+          messageType: 'Fault',
+          eventMessage: '`UIScene` lifecycle will soon be required. Failure to adopt will result in an assert.',
+        }),
+      ),
+    );
+    assert(simulatorRecord);
+    expect(simulatorRecord.level).toBe('info');
     expect(
       noiseRuleId(
         JSON.parse(JSON.stringify(event({ eventMessage: 'The app must migrate to UIScene lifecycle before iOS 27.' }))),

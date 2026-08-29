@@ -42,6 +42,7 @@ export const NOISE_RULES: NoiseRule[] = [
     id: 'uiscene-deprecation',
     messageIncludes: [
       'UIScene lifecycle will soon be required',
+      '`UIScene` lifecycle will soon be required',
       'must migrate to UIScene',
       'migrate to UIScene lifecycle',
     ],
