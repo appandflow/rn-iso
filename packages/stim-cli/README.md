@@ -53,20 +53,27 @@ The registry lives in `~/.stim-cli/config.json`, keyed by absolute project path,
 
 ## Quick start
 
-The package exports only the `stim` executable. Run it via `npx` from any RN/Expo project directory -- no install needed:
+The package exports only `stim`. Run it without installing, or install it once:
 
 ```bash
-npx --package=stim-cli stim start             # dev server on a reserved port, under a supervisor
-npx --package=stim-cli stim ios               # owned sim booted, app installed and launched on it
-npx --package=stim-cli stim logs --errors     # no output + exit 0 = nothing is broken
-npx --package=stim-cli stim stop              # supervisor down, sim shut down, port freed
+npx --package=stim-cli stim <command>
+npm install --global stim-cli
+```
+
+The examples below use `stim`:
+
+```bash
+stim start             # dev server on a reserved port, under a supervisor
+stim ios               # owned sim booted, app installed and launched on it
+stim logs --errors     # no output + exit 0 = nothing is broken
+stim stop              # supervisor down, sim shut down, port freed
 ```
 
 ```
-$ npx --package=stim-cli stim start
+$ stim start
 OK: dev server on port 8082, supervisor pid 41233 (expo-child) (6s)
 
-$ npx --package=stim-cli stim ios
+$ stim ios
 device      stim-cli-myproject (BF2A..) booted (9s)
 fingerprint a3f9b1.. hit (2s)
 install     from cache (3s)
@@ -127,7 +134,7 @@ change is needed.
 ### What `doctor` is for, then
 
 ```bash
-npx --package=stim-cli stim doctor
+stim doctor
 ```
 
 **It reports what stim-cli cannot fix for itself.** The mere absence of a
@@ -183,8 +190,6 @@ If a delete fails, the failure is reported, the config record is **kept** so the
 
 ## Commands
 
-All commands below take the same `npx --package=stim-cli stim` prefix.
-
 | Command                                                                                                        | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `start [--json] [--wait <seconds>]`                                                                            | Start this workspace's dev server on the reserved port under a detached supervisor, and block until it answers _and_ verifies as this project's (default 60s). Idempotent: a healthy dev server on the port is a no-op. Bare RN is hosted in-process with stim-cli's NDJSON reporter; Expo runs the project's own `expo start --port <n>` as a child. Structured logs land in `$STIM_CLI_HOME/workspaces/<project>--<digest>/logs`. A failure under `--json` still puts one line on stdout: the `{code, message, remedy}` contract (`STIM_CLI_METRO_TIMEOUT`, `STIM_CLI_SUPERVISOR_EXITED`, ...).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -215,7 +220,7 @@ If you need a single shared sim with a mutex instead of one owned device per pro
 `stim start` runs the dev server for you, on the port it reserves for this workspace, under a **detached per-workspace supervisor**. It blocks until the server both answers and verifies as this project's (the same identity check teardown uses, never a bare port probe), then exits leaving it running:
 
 ```bash
-npx --package=stim-cli stim start --json
+stim start --json
 # {"port":8082,"supervisorPid":41233,"mode":"bare-inproc","logsDir":"/Users/me/.stim-cli/workspaces/my-app--0123456789abcdef/logs","alreadyRunning":false}
 ```
 
@@ -229,10 +234,10 @@ There is no machine-wide daemon: one supervisor process per workspace, recorded 
 Everything lands as one JSON object per line under the global workspace `logs/` directory, and `stim logs` queries the files merged into one timeline:
 
 ```bash
-npx --package=stim-cli stim logs --errors            # errors since the last marker; empty + exit 0 = healthy
-npx --package=stim-cli stim logs --source client --since 5m --grep 'Profile'
-npx --package=stim-cli stim logs --follow --level warn
-npx --package=stim-cli stim logs --errors --json     # raw records, so stdout is valid NDJSON
+stim logs --errors            # errors since the last marker; empty + exit 0 = healthy
+stim logs --source client --since 5m --grep 'Profile'
+stim logs --follow --level warn
+stim logs --errors --json     # raw records, so stdout is valid NDJSON
 ```
 
 **Nothing matching is exit 0.** `logs --errors` returning nothing is the pass condition of a build loop, so an empty result must never read as a failure; the only exit-1 paths are a malformed query and no project. `--errors` means level `error` or `fatal` strictly after the most recent record carrying `marker: true`, and the marker is searched across every source, so a marker in one file closes the window for all of them. Markers are written when a bundle build finishes -- which is what stops an error you already fixed from being reported forever. `stim status` reports the same count per workspace.
@@ -273,9 +278,9 @@ _detected_, and never counted in the reclaim total -- and a plain `gc --delete`
 _never_ touches them:
 
 ```bash
-npx --package=stim-cli stim gc                            # report everything, caches included
-npx --package=stim-cli stim gc --delete --older-than 30   # trim entries unused for 30 days
-npx --package=stim-cli stim gc --delete --all             # empty them completely
+stim gc                            # report everything, caches included
+stim gc --delete --older-than 30   # trim entries unused for 30 days
+stim gc --delete --all             # empty them completely
 ```
 
 Prefer trimming. Most of these caches are a flat collection of independent
@@ -384,7 +389,7 @@ because the Expo provider and any future release path share the same keyspace.
 Every project has a "shortcut": its `label` if one was set (e.g. via `worktree create --label`), else inherited from the enclosing worktree's label, else the directory basename. It is what names the owned device -- `stim-cli-<label>` -- and what `status` reports a workspace as.
 
 ```bash
-npx --package=stim-cli stim worktree create feature-x --label agent-1   # its sim will be stim-cli-agent-1
+stim worktree create feature-x --label agent-1   # its sim will be stim-cli-agent-1
 ```
 
 Two projects sharing the same basename with no distinguishing label collide, which is why `worktree create` registers a label for the worktree root: every worktree of a monorepo otherwise shares the same app-dir basename.
@@ -392,8 +397,8 @@ Two projects sharing the same basename with no distinguishing label collide, whi
 ## Worktrees
 
 ```bash
-npx --package=stim-cli stim worktree create feature-x        # creates ../<repo>-worktrees/feature-x
-npx --package=stim-cli stim worktree remove                  # removes it, deleting its owned device(s) and freeing its Metro port
+stim worktree create feature-x        # creates ../<repo>-worktrees/feature-x
+stim worktree remove                  # removes it, deleting its owned device(s) and freeing its Metro port
 ```
 
 `worktree create <name>` does three things in one step: creates the git worktree itself (branched `worktree-<name>` off `origin/HEAD` by default -- pass `--base head` to branch off the current `HEAD` instead), carries over gitignored files (see "Carry-over" below), and registers a label for the worktree root so `stim-cli` shortcuts don't collide across a monorepo's worktrees (every worktree of a monorepo shares the same app-dir basename). Prefer it over a raw `git worktree add` for that reason. It prints only the resulting worktree path to stdout; everything else goes to stderr (see "Wiring into Claude Code" below).
@@ -480,7 +485,7 @@ they matter.
 
 The skill is deliberately thin: it carries the rules that don't change
 (the ownership model, the destructive-command rules, the parallel-agent rules)
-and defers everything version-specific to `npx --package=stim-cli stim guide <topic>`, which is
+and defers everything version-specific to `stim guide <topic>`, which is
 generated by the installed binary and so cannot drift.
 
 ## Settings

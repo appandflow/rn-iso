@@ -30,7 +30,7 @@ For a standalone field pass of the published release:
 
 ```bash
 published_version=$(npm view stim-cli version)
-stim() { npx "stim-cli@$published_version" "$@"; }
+stim() { npx --package="stim-cli@$published_version" stim "$@"; }
 test "$(stim --version)" = "$published_version"
 npx skills add appandflow/stim-cli # then READ the installed skill before starting
 stim guide lifecycle

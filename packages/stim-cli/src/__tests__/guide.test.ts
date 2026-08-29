@@ -315,6 +315,20 @@ test('the skill points at the guide command and the topics it advertises', () =>
   }
 });
 
+test('the skill and guide use the short stim command after bootstrap', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  expect(skill.match(/npx --package=stim-cli stim <command>/g)).toHaveLength(1);
+  expect(skill).toContain('npm install --global stim-cli');
+
+  for (const name of topicNames()) {
+    const topic = renderTopic(name);
+    assert(topic);
+    expect(topic).not.toContain('npx --package=stim-cli stim');
+  }
+  expect(renderIndex('9.9.9')).toContain('stim guide <topic>');
+  expect(renderIndex('9.9.9')).not.toContain('npx --package=stim-cli stim');
+});
+
 test('exactly one compact skill ships', () => {
   const dir = fileURLToPath(new URL('../../skill/', import.meta.url));
   expect(readdirSync(dir).toSorted()).toEqual(['SKILL.md']);

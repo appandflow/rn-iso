@@ -15,7 +15,7 @@ const TOPICS: Record<string, GuideTopic> = {
 Every command with \`--json\` prints exactly ONE line of JSON on stdout. Every
 other line goes to stderr, so it is always safe to pipe.
 
-  npx --package=stim-cli stim start --json
+  stim start --json
 
   port            the Metro port RESERVED for this workspace
   supervisorPid   the detached supervisor's pid, or NULL when a dev server was
@@ -24,7 +24,7 @@ other line goes to stderr, so it is always safe to pipe.
   logsDir         where the NDJSON timeline is written
   alreadyRunning  true when nothing needed starting
 
-  npx --package=stim-cli stim ios --json
+  stim ios --json
 
   platform        "ios"
   udid            the owned simulator this workspace installed onto
@@ -106,7 +106,7 @@ other line goes to stderr, so it is always safe to pipe.
   logs            { dir }
   durationMs      wall time for the whole run
 
-  npx --package=stim-cli stim android --json
+  stim android --json
 
   platform        "android"
   serial          the owned emulator (always "emulator-<consolePort>")
@@ -171,8 +171,8 @@ RULES
     summary: 'The dev server: `stim start`, the supervisor, and starting your own',
     body: () => `THE DEV SERVER
 
-  npx --package=stim-cli stim start
-  npx --package=stim-cli stim start --remote   # prepare Metro for a remote device
+  stim start
+  stim start --remote   # prepare Metro for a remote device
 
 Reserves (or reuses) this workspace's Metro port, starts the dev server under a
 detached SUPERVISOR, and waits until it both answers AND verifies as this
@@ -294,7 +294,7 @@ STARTING YOUR OWN BUNDLER STILL WORKS
     summary: 'Querying the merged NDJSON timeline, and what --errors means',
     body: () => `LOGS
 
-  npx --package=stim-cli stim logs [filters]
+  stim logs [filters]
 
 Reads every *.ndjson file in the global workspace logs directory, merges them into one timeline
 ordered by timestamp, prints what matches, and EXITS. The file set is
@@ -754,8 +754,8 @@ too; commit deliberately."  (worktree create --carry-ignored)
 
     npx --registry=https://registry.npmjs.org --package=stim-cli stim <command>
 
-  A line such as \`npm warn exec ... will be installed\` on each invocation is
-  normal. Do not install stim-cli globally to hide it.
+  A line such as \`npm warn exec ... will be installed\` is normal when using
+  the no-install form.
 
 "Unsupported engine" or a syntax error before stim-cli starts
   stim-cli requires Node 20.19.4 or later on Node 20, or Node 22.12.0 or later.
@@ -789,36 +789,36 @@ too; commit deliberately."  (worktree create --carry-ignored)
 
   # 1. Isolated worktree (skip if you are already in one).
   #    It does NOT install dependencies -- that is yours.
-  cd "$(npx --package=stim-cli stim worktree create app-412 --carry-ignored)"
+  cd "$(stim worktree create app-412 --carry-ignored)"
 
   # 2. The dev server, under a detached supervisor. Blocks until it is
   #    verifiably THIS project's, then hands your shell back.
-  npx --package=stim-cli stim start
+  stim start
     port       8082 (reserved)
     supervisor pid 41233
 
   # 3. Owned device booted, native inputs fingerprinted, cached build
   #    installed (or built), app launched wired to port 8082, device-log
   #    collector attached.
-  npx --package=stim-cli stim ios          # or: npx --package=stim-cli stim android
+  stim ios          # or: stim android
     device      stim-cli-app-412 (BF2A..) booted (9s)
     fingerprint a3f9b1.. hit (2s)
     install     from cache (3s)
     launch      com.example.app (1s)
 
   # 4. Did it work? Empty output and exit 0 is the pass condition.
-  npx --package=stim-cli stim logs --errors --json
+  stim logs --errors --json
 
   # 5. Edit the JS. Fast Refresh applies it; no stim-cli command is involved.
   #    Then ask again.
-  npx --package=stim-cli stim logs --since 30s --level error
+  stim logs --since 30s --level error
 
   # 6. Pausing: supervisor halted, collectors reaped, owned device SHUT DOWN
   #    (never deleted), port freed. Coming back costs a boot, not a create.
-  npx --package=stim-cli stim stop
+  stim stop
 
   # 7. Done with the branch: the environment dies whole.
-  npx --package=stim-cli stim worktree remove
+  stim worktree remove
 
 Steps 2 and 3 are ordered, not interchangeable: \`ios\` and \`android\` never
 start the bundler, and refuse with STIM_CLI_NO_METRO when nothing holds the
@@ -1358,7 +1358,7 @@ machine's. They live under a top-level \`concurrency\` key in
 
 or via the environment, which overrides the file:
 
-  STIM_CLI_MAX_BUILDS=2 STIM_CLI_MAX_DEVICES=3 npx --package=stim-cli stim ios
+  STIM_CLI_MAX_BUILDS=2 STIM_CLI_MAX_DEVICES=3 stim ios
 
 Unset, 0, or any non-positive value means NO enforcement -- the default, where
 stim-cli limits nothing. See \`guide lifecycle\` for what each cap does.
@@ -1471,7 +1471,7 @@ export function renderIndex(version: string): string {
   for (const name of topicNames()) {
     lines.push(`  ${name.padEnd(width)}  ${TOPICS[name]?.summary ?? ''}`);
   }
-  lines.push('', 'Read one with:  npx --package=stim-cli stim guide <topic>');
+  lines.push('', 'Read one with:  stim guide <topic>');
   return lines.join('\n');
 }
 

@@ -6,20 +6,21 @@ description: 'The closed, ten-command surface, and what each one does'
 
 ## Quick start
 
-Run via `npx` from any RN/Expo project directory -- no install needed:
+The examples use `stim`. See [Getting started](/docs/getting-started) for how
+to run with `npx` or a global installation.
 
 ```bash
-npx --package=stim-cli stim start             # dev server on a reserved port, under a supervisor
-npx --package=stim-cli stim ios               # owned sim booted, app installed and launched on it
-npx --package=stim-cli stim logs --errors     # no output + exit 0 = nothing is broken
-npx --package=stim-cli stim stop              # supervisor down, sim shut down, port freed
+stim start             # dev server on a reserved port, under a supervisor
+stim ios               # owned sim booted, app installed and launched on it
+stim logs --errors     # no output + exit 0 = nothing is broken
+stim stop              # supervisor down, sim shut down, port freed
 ```
 
 ```
-$ npx --package=stim-cli stim start
+$ stim start
 OK: dev server on port 8082, supervisor pid 41233 (expo-child) (6s)
 
-$ npx --package=stim-cli stim ios
+$ stim ios
 device      stim-cli-myproject (BF2A..) booted (9s)
 fingerprint a3f9b1.. hit (2s)
 install     from cache (3s)
@@ -59,7 +60,7 @@ ride on the command lines stim-cli composes itself. When something IS blocked or
 slow, `stim doctor` is the read-only second opinion:
 
 ```bash
-npx --package=stim-cli stim doctor
+stim doctor
 ```
 
 It reports only what stim-cli cannot handle on its own -- a missing dev client,
@@ -85,8 +86,6 @@ npx skills add appandflow/stim-cli
 
 ## The ten commands
 
-All commands below take the same `npx --package=stim-cli stim` prefix.
-
 | Command                                                                                                        | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `start [--json] [--wait <seconds>]`                                                                            | Start this workspace's dev server on the reserved port under a detached supervisor, and block until it answers _and_ verifies as this project's (default 60s). Idempotent: a healthy dev server on the port is a no-op. Bare RN is hosted in-process with stim-cli's NDJSON reporter; Expo runs the project's own `expo start --port <n>` as a child. Structured logs land in `<root>/.stim-cli/logs`, and `.stim-cli/` is added to the project's `.gitignore` if it is not already there. A failure under `--json` still puts one line on stdout: the `{code, message, remedy}` contract (`STIM_CLI_METRO_TIMEOUT`, `STIM_CLI_SUPERVISOR_EXITED`, ...).                                                                                                                                                                                                                                                                        |
@@ -106,7 +105,7 @@ All commands below take the same `npx --package=stim-cli stim` prefix.
 Every project has a "shortcut": its `label` if one was set (e.g. via `worktree create --label`), else inherited from the enclosing worktree's label, else the directory basename. It is what names the owned device -- `stim-cli-<label>` -- and what `status` reports a workspace as.
 
 ```bash
-npx --package=stim-cli stim worktree create feature-x --label agent-1   # its sim will be stim-cli-agent-1
+stim worktree create feature-x --label agent-1   # its sim will be stim-cli-agent-1
 ```
 
 Two projects sharing the same basename with no distinguishing label collide, which is why `worktree create` registers a label for the worktree root: every worktree of a monorepo otherwise shares the same app-dir basename.

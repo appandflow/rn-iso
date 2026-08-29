@@ -18,9 +18,9 @@ _detected_, and never counted in the reclaim total -- and a plain `gc --delete`
 _never_ touches them:
 
 ```bash
-npx --package=stim-cli stim gc                            # report everything, caches included
-npx --package=stim-cli stim gc --delete --older-than 30   # trim entries unused for 30 days
-npx --package=stim-cli stim gc --delete --all             # empty them completely
+stim gc                            # report everything, caches included
+stim gc --delete --older-than 30   # trim entries unused for 30 days
+stim gc --delete --all             # empty them completely
 ```
 
 Prefer trimming. Most of these caches are a flat collection of independent

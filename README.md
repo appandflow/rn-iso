@@ -22,6 +22,15 @@ Install the agent skill:
 npx skills add appandflow/stim-cli
 ```
 
+The package exports only `stim`. Run it without installing, or install it once:
+
+```bash
+npx --package=stim-cli stim <command>
+npm install --global stim-cli
+```
+
+The examples below use `stim`.
+
 Then tell your agent what you want:
 
 ```
@@ -33,8 +42,8 @@ server on a reserved port, an owned simulator, a build that installs from a
 shared cache when nothing native changed, and `logs --errors` to check its own
 work — in about ten lines of output per cycle, `--json` everywhere.
 
-If a build is ever blocked or slower than it should be, `npx --package=stim-cli stim doctor`
-says why, read-only.
+If a build is ever blocked or slower than it should be, `stim doctor` says why,
+read-only.
 
 ## What's in the box
 
