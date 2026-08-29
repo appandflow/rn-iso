@@ -22,7 +22,7 @@ import {
   findBuildTool,
   headlessEmulatorArgs,
   bootAndroidEmulator,
-  configureNewOwnedAvdDataPartition,
+  configureNewOwnedAvd,
   listAvds,
   parseAvdList,
   parseAdbDevices,
@@ -34,6 +34,7 @@ import {
   deleteAvd,
   resolveOwnedAvdSerial,
   waitForBoot,
+  withAvdConfigOverrides,
   withAvdDataPartitionSize,
 } from '../sim/android.ts';
 
@@ -249,30 +250,51 @@ test('withAvdDataPartitionSize appends a missing value without changing newline 
   );
 });
 
-test('configureNewOwnedAvdDataPartition atomically writes and verifies config.ini', () => {
+test('withAvdConfigOverrides replaces duplicates once and preserves protected generated values', () => {
+  expect(
+    withAvdConfigOverrides(
+      'image.sysdir.1=system-images/android-36/google_apis/arm64-v8a/\nhw.keyboard=no\nhw.keyboard=no\n',
+      { 'hw.keyboard': 'yes', 'hw.ramSize': '3072' },
+    ),
+  ).toBe('image.sysdir.1=system-images/android-36/google_apis/arm64-v8a/\nhw.keyboard=yes\nhw.ramSize=3072\n');
+});
+
+test('configureNewOwnedAvd atomically writes and verifies managed and user settings', () => {
   const content = join(tmpHome, 'stim-cli-app.avd');
   mkdirSync(content, { recursive: true });
   const config = join(content, 'config.ini');
   writeFileSync(config, 'hw.cpu.ncore=4\ndisk.dataPartition.size=10G\n');
 
-  expect(configureNewOwnedAvdDataPartition('stim-cli-app', 6, { avdDirectory: () => content })).toBe(config);
-  expect(readFileSync(config, 'utf8')).toBe('hw.cpu.ncore=4\ndisk.dataPartition.size=6442450944\n');
+  expect(
+    configureNewOwnedAvd(
+      'stim-cli-app',
+      { dataPartitionSizeGb: 6, avdConfig: { 'hw.keyboard': 'yes', 'hw.ramSize': '3072' } },
+      { avdDirectory: () => content },
+    ),
+  ).toBe(config);
+  expect(readFileSync(config, 'utf8')).toBe(
+    'hw.cpu.ncore=4\ndisk.dataPartition.size=6442450944\nhw.keyboard=yes\nhw.ramSize=3072\n',
+  );
   expect(readdirSync(content).filter((name) => name.includes('.stim-cli-'))).toEqual([]);
 });
 
-test('configureNewOwnedAvdDataPartition removes its temporary file when replacement fails', () => {
+test('configureNewOwnedAvd removes its temporary file when replacement fails', () => {
   const content = join(tmpHome, 'stim-cli-app.avd');
   mkdirSync(content, { recursive: true });
   const config = join(content, 'config.ini');
   writeFileSync(config, 'disk.dataPartition.size=10G\n');
 
   expect(() =>
-    configureNewOwnedAvdDataPartition('stim-cli-app', 6, {
-      avdDirectory: () => content,
-      rename: () => {
-        throw new Error('rename failed');
+    configureNewOwnedAvd(
+      'stim-cli-app',
+      { dataPartitionSizeGb: 6 },
+      {
+        avdDirectory: () => content,
+        rename: () => {
+          throw new Error('rename failed');
+        },
       },
-    }),
+    ),
   ).toThrow(/rename failed/);
   expect(readFileSync(config, 'utf8')).toBe('disk.dataPartition.size=10G\n');
   expect(readdirSync(content).filter((name) => name.includes('.stim-cli-'))).toEqual([]);

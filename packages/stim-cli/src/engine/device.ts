@@ -11,7 +11,7 @@ import { isPidAlive } from '../metro.ts';
 import { bootIosSim, createOwnedIosSim, listAllIosSims, listIosDeviceTypes, resolveOwnedIosSim } from '../sim/ios.ts';
 import {
   bootAndroidEmulator,
-  configureNewOwnedAvdDataPartition,
+  configureNewOwnedAvd,
   createOwnedAvd,
   listAdbDevices,
   listAvds,
@@ -20,7 +20,7 @@ import {
   resolveOwnedAvdSerial,
   waitForBoot,
 } from '../sim/android.ts';
-import { androidDataPartitionSizeGbSetting } from '../settings.ts';
+import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting } from '../settings.ts';
 import { teardownOwnedAvd } from '../teardown.ts';
 
 export interface OwnedDeviceRecord {
@@ -36,7 +36,12 @@ export interface OwnedDeviceRecord {
 
 interface DeviceSettings {
   ios?: { deviceType?: string; runtime?: string };
-  android?: { systemImage?: string; dataPartitionSizeGb?: number };
+  android?: {
+    systemImage?: string;
+    dataPartitionSizeGb?: number;
+    avdConfigFile?: string;
+    avdConfig?: Record<string, unknown>;
+  };
 }
 
 interface DeviceFlags {
@@ -69,6 +74,7 @@ export async function ensureOwnedDevice({
   platform,
   project,
   projectPath,
+  settingsRoot = projectPath,
   label,
   settings,
   flags = {},
@@ -76,18 +82,19 @@ export async function ensureOwnedDevice({
   out = () => {},
   logFile = null,
   alive = isPidAlive,
-  configureAvd = configureNewOwnedAvdDataPartition,
+  configureAvd = configureNewOwnedAvd,
   teardownAvd = teardownOwnedAvd,
 }: {
   platform: string;
   project?: ProjectRecord | null;
   projectPath: string;
+  settingsRoot?: string;
   label: string;
   settings: DeviceSettings;
   flags?: DeviceFlags;
   note?: Notify;
   out?: Notify;
-  configureAvd?: typeof configureNewOwnedAvdDataPartition;
+  configureAvd?: typeof configureNewOwnedAvd;
   teardownAvd?: typeof teardownOwnedAvd;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
   const record = (project?.platforms?.[platform] as OwnedDeviceRecord | undefined) ?? null;
@@ -97,6 +104,7 @@ export async function ensureOwnedDevice({
   return ensureOwnedAndroidDevice({
     record,
     projectPath,
+    settingsRoot,
     label,
     settings,
     flags,
@@ -197,6 +205,7 @@ function findOtherProjectOwningAvd(avdName: string, projectPath: string): string
 async function ensureOwnedAndroidDevice({
   record,
   projectPath,
+  settingsRoot,
   label,
   settings,
   flags,
@@ -209,14 +218,16 @@ async function ensureOwnedAndroidDevice({
 }: {
   record: OwnedDeviceRecord | null;
   projectPath: string;
+  settingsRoot: string;
   label: string;
   settings: DeviceSettings;
   flags: DeviceFlags;
   note: Notify;
   out: Notify;
-  configureAvd: typeof configureNewOwnedAvdDataPartition;
+  configureAvd: typeof configureNewOwnedAvd;
   teardownAvd: typeof teardownOwnedAvd;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
+  const avdConfig = androidAvdConfigSetting(settings, settingsRoot);
   if (record?.setupIncomplete && record.avdName) {
     const cleanup = teardownAvd(record.avdName, { del: true });
     if (cleanup.status === 'failed' || cleanup.status === 'skipped') {
@@ -328,7 +339,10 @@ async function ensureOwnedAndroidDevice({
       setupIncomplete: true,
     });
     try {
-      configureAvd(created.avdName, androidDataPartitionSizeGbSetting(settings));
+      configureAvd(created.avdName, {
+        dataPartitionSizeGb: androidDataPartitionSizeGbSetting(settings),
+        avdConfig,
+      });
     } catch (error) {
       const cleanup = teardownAvd(created.avdName, { del: true });
       const kept = cleanup.status === 'failed' || cleanup.status === 'skipped';
@@ -337,7 +351,7 @@ async function ensureOwnedAndroidDevice({
         ? ` The owned AVD remains tracked for cleanup (${cleanup.reason || cleanup.status}); fix the cause, then retry or run \`stim-cli gc --delete\`.`
         : '';
       throw new Error(
-        `Created owned AVD ${created.avdName}, but could not configure its data partition: ${String((error as Error)?.message || error)}${orphan}`,
+        `Created owned AVD ${created.avdName}, but could not configure its AVD settings: ${String((error as Error)?.message || error)}${orphan}`,
         { cause: error },
       );
     }
