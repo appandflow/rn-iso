@@ -121,7 +121,7 @@ interface RecordedArgs {
   readBundleId: unknown;
   storeBuild: { options?: unknown; platform?: unknown; path?: unknown; key?: unknown };
   resolveBuild: { key?: unknown };
-  verifyLaunch: { since?: unknown; logsDir?: unknown };
+  verifyLaunch: { since?: unknown; logsDir?: unknown; platform?: unknown };
   uploadRemote: { fingerprintHash?: unknown; buildPath?: unknown };
   resolveRemote: { projectRoot?: unknown; platform?: unknown; fingerprintHash?: unknown };
   replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown };
@@ -477,9 +477,10 @@ describe('launch verification', () => {
     const { logs, errs, exitCode, calls } = await run({ json: true });
     expect(exitCode).toBe(null);
     expect(parseFirst(logs).launched).toBe(true);
-    expect(errs.join('\n')).toMatch(/verify.*bundle requested from Metro port 8082/);
+    expect(errs.join('\n')).toMatch(/verify.*bundle loaded, stable for 3s/);
     expect(calls.args.verifyLaunch.logsDir).toBe(workspaceLogsDir(root));
     expect(Number.isFinite(calls.args.verifyLaunch.since)).toBeTruthy();
+    expect(calls.args.verifyLaunch.platform).toBe('ios');
   });
 
   test('the picker: an unverified launch is launched: "unverified", exit 0, and a loud warning', async () => {
@@ -2375,14 +2376,15 @@ describe('release skips Metro entirely', () => {
     expect(facts.cacheKey).toBe(`${FINGERPRINT}-release-sim`);
   });
 
-  test('a dead app process is launched: "unverified", with the device-log pointer', async () => {
-    const { logs, errs } = await run(
+  test('a dead app process fails the readiness check with the device-log pointer', async () => {
+    const { logs, errs, exitCode } = await run(
       { configuration: 'Release', json: true },
       {
         verifyReleaseLaunch: async () => ({ verified: false, reason: 'exited', waitedMs: 3000 }),
       },
     );
-    expect(parseFirst(logs).launched).toBe('unverified');
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs).code).toBe('STIM_CLI_LAUNCH_FAILED');
     expect(errs.join('\n')).toMatch(/process exited within/);
     expect(errs.join('\n')).toMatch(/stim logs --errors/);
   });

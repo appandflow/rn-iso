@@ -238,9 +238,11 @@ describe('the ios collector, spawned for real against a fake xcrun', () => {
     assert(first);
     expect(first.msg).toMatch(/LocationProvider/);
     expect(first.proc).toBe('locationd');
+    expect(first.platform).toBe('ios');
     const firstLog = deviceLog()[0];
     assert(firstLog);
     expect(firstLog.event).toBe('collector_started');
+    expect(firstLog.platform).toBe('ios');
 
     process.kill(childPid(child), 'SIGTERM');
     const result = await exited(child);
@@ -396,6 +398,7 @@ describe('runCollector seams', () => {
     assert(failed);
     expect(failed.msg).toMatch(/no process appeared/);
     expect(failed.level).toBe('error');
+    expect(failed.platform).toBe('android');
     expect('collectors' in (state() || {})).toBe(false);
   });
 

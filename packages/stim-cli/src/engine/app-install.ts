@@ -119,6 +119,27 @@ export function parseLaunchedPid(text: unknown): number | null {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
+export function iosAppProcess(
+  udid: string,
+  bundleId: string,
+  { exec = null }: ExecOpt = {},
+): number | null | undefined {
+  const e = exec || getExecutor();
+  let out = '';
+  try {
+    out = e.runFile('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list']);
+  } catch {
+    return undefined;
+  }
+  const label = `UIKitApplication:${bundleId}[`;
+  for (const line of out.split('\n')) {
+    if (!line.includes(label)) continue;
+    const pid = Number(line.trim().split(/\s+/)[0]);
+    if (Number.isInteger(pid) && pid > 0) return pid;
+  }
+  return null;
+}
+
 export function launchIosApp(
   {
     udid,
@@ -467,6 +488,9 @@ function describe(err: unknown) {
 export type VerifyLaunchResult = {
   verified: boolean;
   record?: NdjsonRecord;
+  errors?: NdjsonRecord[];
+  fatal?: boolean;
+  processAlive?: boolean | null;
   timedOut?: boolean;
   requested?: boolean;
   mode: string | null;
@@ -477,7 +501,7 @@ const RELEASE_VERIFY_WAIT_MS = 3000;
 
 export type ReleaseVerifyResult = {
   verified: boolean;
-  reason?: 'no-pid' | 'exited';
+  reason?: 'no-pid' | 'exited' | 'probe-failed';
   waitedMs: number;
 };
 
@@ -520,6 +544,23 @@ export function parsePsPid(text: unknown, packageName: string): number | null {
   return null;
 }
 
+export function androidAppProcess(
+  serial: string,
+  packageName: string,
+  { exec = null }: ExecOpt = {},
+): number | null | undefined {
+  const e = exec || getExecutor();
+  try {
+    const pid = parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', packageName]));
+    if (pid !== null) return pid;
+  } catch {}
+  try {
+    return parsePsPid(e.runFile('adb', ['-s', serial, 'shell', 'ps', '-A']), packageName);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function verifyAndroidReleaseLaunch({
   serial,
   packageName,
@@ -538,20 +579,9 @@ export async function verifyAndroidReleaseLaunch({
   const e = exec || getExecutor();
   const startedAt = now();
   await sleep(Math.max(0, waitMs));
-  let pid: number | null = null;
-  try {
-    pid = parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', packageName]));
-  } catch {
-    pid = null;
-  }
-  if (pid === null) {
-    try {
-      pid = parsePsPid(e.runFile('adb', ['-s', serial, 'shell', 'ps', '-A']), packageName);
-    } catch {
-      pid = null;
-    }
-  }
+  const pid = androidAppProcess(serial, packageName, { exec: e });
   const waitedMs = now() - startedAt;
+  if (pid === undefined) return { verified: false, reason: 'probe-failed', waitedMs };
   return pid === null ? { verified: false, reason: 'exited', waitedMs, pid: null } : { verified: true, waitedMs, pid };
 }
 
@@ -568,7 +598,10 @@ export const LAUNCH_UNVERIFIED = 'unverified';
 
 export const LAUNCH_BUNDLING = 'bundling';
 
+export const LAUNCH_FATAL = 'fatal';
+
 export const VERIFY_TIMEOUT_MS = 20000;
+export const STABILITY_WINDOW_MS = 3000;
 const VERIFY_POLL_MS = 500;
 
 const BUNDLE_EVENTS = new Set([
@@ -579,11 +612,16 @@ const BUNDLE_EVENTS = new Set([
   'transformer_error',
 ]);
 
-export function isBundleProof(record: unknown, since: number | string = 0): boolean {
+export function isBundleProof(
+  record: unknown,
+  since: number | string = 0,
+  platform: 'ios' | 'android' | null = null,
+): boolean {
   if (!record || typeof record !== 'object') return false;
   const rec = record as NdjsonRecord;
   const ts = Number(rec.ts);
   if (!Number.isFinite(ts) || ts < Number(since || 0)) return false;
+  if (platform && recordPlatform(rec) !== platform) return false;
   if (typeof rec.event === 'string' && BUNDLE_EVENTS.has(rec.event)) return true;
   if (rec.src === 'metro' && typeof rec.msg === 'string' && expoBundleLine(rec.msg)) return true;
   return false;
@@ -595,6 +633,7 @@ export function isBundleRequestProof(
   record: unknown,
   since: number | string = 0,
   port: number | string | null = null,
+  platform: 'ios' | 'android' | null = null,
 ): boolean {
   if (!record || typeof record !== 'object' || !port) return false;
   const rec = record as NdjsonRecord;
@@ -602,6 +641,8 @@ export function isBundleRequestProof(
   if (!Number.isFinite(ts) || ts < Number(since || 0)) return false;
   if (typeof rec.msg !== 'string') return false;
   if (rec.level === 'error' || rec.level === 'fatal') return false;
+  const sourcePlatform = recordPlatform(rec);
+  if (platform && sourcePlatform && sourcePlatform !== platform) return false;
   const digits = String(port).replace(/[^0-9]/g, '');
   if (!digits) return false;
   if (!new RegExp(`:${digits}\\b`).test(rec.msg)) return false;
@@ -616,54 +657,172 @@ export async function verifyLaunch({
   logsDir,
   since,
   metroPort = null,
+  platform = null,
   mode = null,
   timeoutMs = VERIFY_TIMEOUT_MS,
+  stabilityMs = STABILITY_WINDOW_MS,
   pollMs = VERIFY_POLL_MS,
   readRecords = null,
   readDeviceRecords = null,
+  readClientRecords = null,
+  processAlive = null,
   now = Date.now,
   sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
 }: {
   logsDir?: string;
   since?: number | string;
   metroPort?: number | string | null;
+  platform?: 'ios' | 'android' | null;
   mode?: string | null;
   timeoutMs?: number;
+  stabilityMs?: number;
   pollMs?: number;
   readRecords?: (() => NdjsonRecord[]) | null;
   readDeviceRecords?: (() => NdjsonRecord[]) | null;
+  readClientRecords?: (() => NdjsonRecord[]) | null;
+  processAlive?: (() => boolean | null) | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
 } = {}): Promise<VerifyLaunchResult> {
   const read = readRecords || (() => readMetroRecords(logsDir));
   const readDevice = readDeviceRecords || (() => readNdjson(logsDir, 'device.ndjson'));
+  const readClient = readClientRecords || (() => readNdjson(logsDir, 'client.ndjson'));
   const startedAt = now();
-  const deadline = startedAt + Math.max(0, timeoutMs);
+  const bundleDeadline = startedAt + Math.max(0, timeoutMs);
+  let proof: NdjsonRecord | null = null;
+  let activity: NdjsonRecord | null = null;
+  let stabilityDeadline: number | null = null;
   while (true) {
-    for (const record of read()) {
-      if (isBundleProof(record, since)) {
-        return { verified: true, record, mode, waitedMs: now() - startedAt };
+    const metroRecords = read().filter((record) => after(record, since));
+    for (const record of metroRecords) {
+      if (isBundleProof(record, since, platform)) activity = record;
+      if (!proof && isBundleReadyProof(record, since, platform)) {
+        proof = record;
+        stabilityDeadline = Number(record.ts) + Math.max(0, stabilityMs);
       }
     }
-    if (now() >= deadline) {
-      const requested = findBundleRequest(readDevice(), since, metroPort);
+    const bundleErrors = metroRecords.filter((record) => isFatalLaunchError(record, platform));
+    if (bundleErrors.length) {
+      const alive = processAlive ? processAlive() : null;
+      const fatalRecord = bundleErrors[bundleErrors.length - 1];
+      const fatalAt = Number(fatalRecord?.ts ?? since ?? 0);
+      const errors = metroRecords.filter(
+        (record) =>
+          after(record, fatalAt) && recordCouldBelongToPlatform(record, platform) && isLaunchError(record, platform),
+      );
+      return {
+        verified: false,
+        fatal: true,
+        errors,
+        processAlive: alive,
+        record: fatalRecord,
+        mode,
+        waitedMs: now() - startedAt,
+      };
+    }
+
+    if (proof && stabilityDeadline !== null && now() >= stabilityDeadline) {
+      const errorSince = Number(proof.ts ?? since ?? 0);
+      const deviceRecords = readDevice().filter((record) => after(record, errorSince));
+      const clientRecords = readClient().filter((record) => after(record, errorSince));
+      const errors = [
+        ...metroRecords.filter((record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform)),
+        ...deviceRecords.filter((record) => recordCouldBelongToPlatform(record, platform)),
+        ...clientRecords,
+      ].filter((record) => isLaunchError(record, platform));
+      const alive = processAlive ? processAlive() : null;
       const waitedMs = now() - startedAt;
-      if (requested) return { verified: false, timedOut: true, requested: true, record: requested, mode, waitedMs };
+      if (alive === false) {
+        return {
+          verified: false,
+          fatal: true,
+          errors,
+          processAlive: alive,
+          record: proof,
+          mode,
+          waitedMs,
+        };
+      }
+      return { verified: true, record: proof, errors, processAlive: alive, mode, waitedMs };
+    }
+
+    if (!proof && now() >= bundleDeadline) {
+      const deviceRecords = readDevice().filter((record) => after(record, since));
+      const requested = findBundleRequest(deviceRecords, since, metroPort, platform) ?? activity;
+      const waitedMs = now() - startedAt;
+      if (requested) {
+        return {
+          verified: false,
+          timedOut: true,
+          requested: true,
+          record: requested,
+          mode,
+          waitedMs,
+        };
+      }
       return { verified: false, timedOut: true, mode, waitedMs };
     }
+    const deadline = stabilityDeadline ?? bundleDeadline;
     await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
   }
+}
+
+function after(record: NdjsonRecord, since: number | string | undefined): boolean {
+  const ts = Number(record.ts);
+  return Number.isFinite(ts) && ts >= Number(since ?? 0);
+}
+
+function isLaunchError(record: NdjsonRecord, platform: 'ios' | 'android' | null): boolean {
+  return record.level === 'error' || record.level === 'fatal' || isFatalLaunchError(record, platform);
+}
+
+function isFatalLaunchError(record: NdjsonRecord, platform: 'ios' | 'android' | null): boolean {
+  if (platform && recordPlatform(record) !== platform) return false;
+  return (
+    record.event === 'bundle_build_failed' ||
+    record.event === 'bundling_error' ||
+    record.event === 'transformer_error' ||
+    ((record.event === 'expo_stdout' || record.event === 'expo_stderr') &&
+      typeof record.msg === 'string' &&
+      /\bBundling failed\b/.test(record.msg))
+  );
+}
+
+function isBundleReadyProof(
+  record: unknown,
+  since: number | string = 0,
+  platform: 'ios' | 'android' | null = null,
+): boolean {
+  if (!isBundleProof(record, since, platform)) return false;
+  const rec = record as NdjsonRecord;
+  if (rec.event === 'bundle_build_done') return true;
+  return rec.src === 'metro' && typeof rec.msg === 'string' && /\bBundled\b/.test(rec.msg);
 }
 
 function findBundleRequest(
   records: NdjsonRecord[],
   since: number | string | undefined,
   port: number | string | null,
+  platform: 'ios' | 'android' | null,
 ): NdjsonRecord | null {
   for (const record of records) {
-    if (isBundleRequestProof(record, since ?? 0, port)) return record;
+    if (isBundleRequestProof(record, since ?? 0, port, platform)) return record;
   }
   return null;
+}
+
+function recordCouldBelongToPlatform(record: NdjsonRecord, platform: 'ios' | 'android' | null): boolean {
+  if (!platform) return true;
+  const sourcePlatform = recordPlatform(record);
+  return sourcePlatform === null || sourcePlatform === platform;
+}
+
+function recordPlatform(record: NdjsonRecord): 'ios' | 'android' | null {
+  if (record.platform === 'ios' || record.platform === 'android') return record.platform;
+  if (typeof record.msg !== 'string') return null;
+  const match = record.msg.match(/\b(iOS|Android)\s+Bundl(?:ed|ing)\b/i);
+  if (!match) return null;
+  return match[1]!.toLowerCase() === 'ios' ? 'ios' : 'android';
 }
 
 export function readMetroRecords(logsDir: string | undefined): NdjsonRecord[] {

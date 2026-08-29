@@ -109,6 +109,26 @@ test('bundle_build_failed is a marker too, written before the bundling_error it 
   });
 });
 
+test('overlapping bundle records keep their build id and platform', () => {
+  withDir((dir) => {
+    const reporter = ndjsonReporter({ dir });
+    reporter.update({ type: 'bundle_build_started', buildID: 'ios_1', bundleDetails: { platform: 'ios' } });
+    reporter.update({ type: 'bundle_build_started', buildID: 'android_1', bundleDetails: { platform: 'android' } });
+    reporter.update({ type: 'bundle_build_done', buildID: 'android_1' });
+    reporter.update({ type: 'bundle_build_failed', buildID: 'ios_1' });
+    reporter.update({ type: 'bundling_error', error: new Error('Unable to resolve module ./ios-only') });
+
+    const lines = records(dir, 'metro.ndjson');
+    expect(lines.map((record) => [record.event, record.buildID, record.platform])).toEqual([
+      ['bundle_build_started', 'ios_1', 'ios'],
+      ['bundle_build_started', 'android_1', 'android'],
+      ['bundle_build_done', 'android_1', 'android'],
+      ['bundle_build_failed', 'ios_1', 'ios'],
+      ['bundling_error', 'ios_1', 'ios'],
+    ]);
+  });
+});
+
 test('unstable_server_log carries its own level', () => {
   withDir((dir) => {
     const reporter = ndjsonReporter({ dir });

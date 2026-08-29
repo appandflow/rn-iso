@@ -74,10 +74,14 @@ other line goes to stderr, so it is always safe to pipe.
   bundleId        the iOS bundle id that was launched
   launched        true, "bundling", or "unverified". THE THREE ARE DIFFERENT
                   FACTS and only the last one is a problem.
-                    true         a bundle request from this app reached this
-                                 workspace's Metro within ~20s of the launch
+                    true         Metro finished the bundle, then the app stayed
+                                 alive through a three-second stability window.
+                                 The command checks process liveness when the
+                                 platform exposes it. Errors from that window
+                                 are printed even when the app stays alive; the
+                                 agent decides whether a nonfatal error matters
                     "bundling"   the request DID arrive and Metro was still
-                                 building the bundle when the window closed.
+                                 building when the bundle timeout closed.
                                  The wiring is proven; the JS has simply not
                                  run yet (a cold bundle of ~10k modules takes
                                  longer than the window). Nothing to do --
@@ -100,9 +104,9 @@ other line goes to stderr, so it is always safe to pipe.
                   with no dev server at all. There, \`launched\` is verified
                   by the app process staying alive after launch (a bad
                   embedded bundle crashes within seconds), not by a bundle
-                  request -- "unverified" means the process died or could not
-                  be checked, and \`stim logs --errors\` has the device
-                  log that says why
+                  request. A process that exits fails the command. An iOS
+                  launch with no process id is "unverified", and
+                  \`stim logs --errors\` has the device log that says why
   logs            { dir }
   durationMs      wall time for the whole run
 
@@ -130,8 +134,8 @@ other line goes to stderr, so it is always safe to pipe.
                   There, \`launched\` is verified by the app PROCESS being
                   alive on the device a moment after launch (\`pidof\`, then
                   \`ps -A\`), not by a bundle request -- "unverified" means
-                  no process was found, and \`stim logs --errors\` has the
-                  device log that says why
+                  no process was found fails the command, and
+                  \`stim logs --errors\` has the device log that says why
   bundleId        the ANDROID PACKAGE NAME the launch, the port wiring and
                   the remedies all target -- read from the BUILT APK's
                   manifest, which on a flavored project is the flavor's

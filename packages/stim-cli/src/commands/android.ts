@@ -61,6 +61,7 @@ import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '.
 import {
   DEFAULT_METRO_PORT,
   LAUNCH_BUNDLING,
+  LAUNCH_FATAL,
   LAUNCH_UNVERIFIED,
   androidDevClientUrl,
   installAndroidApp,
@@ -68,6 +69,7 @@ import {
   launchAndroidReleaseApp,
   unverifiedLaunchLines,
   verifyAndroidReleaseLaunch,
+  androidAppProcess,
   verifyLaunch,
 } from '../engine/app-install.ts';
 import {
@@ -190,6 +192,9 @@ interface VerifyLaunchResultLike {
   verified?: boolean;
   skipped?: boolean;
   requested?: boolean;
+  fatal?: boolean;
+  processAlive?: boolean | null;
+  errors?: Array<{ msg?: unknown }>;
   waitedMs?: number;
 }
 
@@ -715,6 +720,10 @@ async function verifyAndroidRun({
       );
       return true;
     }
+    if (processCheck?.reason === 'probe-failed') {
+      phase('verify', chalk.yellow('UNVERIFIED: the app process check failed'));
+      return LAUNCH_UNVERIFIED;
+    }
     phase(
       'verify',
       chalk.yellow(
@@ -727,14 +736,40 @@ async function verifyAndroidRun({
         'A release app that dies at startup usually crashed loading its embedded bundle; `stim logs --errors` has the device log that says why.',
       ),
     );
-    return LAUNCH_UNVERIFIED;
+    return LAUNCH_FATAL;
   }
 
   const verification: VerifyLaunchResultLike = metroCheck
-    ? await verifyLaunched({ logsDir, since: launchedAt, metroPort, mode: isExpo ? MODE_EXPO : MODE_BARE })
+    ? await verifyLaunched({
+        logsDir,
+        since: launchedAt,
+        metroPort,
+        platform: 'android',
+        mode: isExpo ? MODE_EXPO : MODE_BARE,
+        processAlive: () => {
+          const pid = androidAppProcess(serial, androidPackage);
+          return pid === undefined ? null : pid !== null;
+        },
+      })
     : { verified: false, skipped: true };
+  if (verification?.fatal) {
+    const reason = verification.processAlive === false ? 'the app process exited' : 'Metro could not build the bundle';
+    phase('verify', chalk.red(`FATAL after ${formatDuration(verification.waitedMs ?? 0)}: ${reason}`));
+    for (const record of verification.errors ?? []) {
+      if (record.msg) phase('', chalk.red(String(record.msg)));
+    }
+    return LAUNCH_FATAL;
+  }
   if (verification?.verified) {
-    phase('verify', `bundle requested from Metro port ${metroPort} (${formatDuration(verification.waitedMs ?? 0)})`);
+    phase(
+      'verify',
+      `ready: bundle loaded, stable for 3s` +
+        (verification.processAlive === true ? ', process alive' : '') +
+        ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
+    );
+    for (const record of verification.errors ?? []) {
+      if (record.msg) phase('launch err', chalk.yellow(String(record.msg)));
+    }
     return true;
   }
   if (verification?.skipped) {
@@ -1110,6 +1145,14 @@ async function finishAndroidRun({
     scheme,
     phase,
   });
+  if (launchState === LAUNCH_FATAL) {
+    return fail(
+      LAUNCH_FAILED,
+      'The app failed its launch readiness check.',
+      `Read the launch error above or run \`stim logs --errors\`. The full timeline is in ${logsDir}.`,
+      { lastBuildStatus: true, logPath: displayPath(root, logsDir) },
+    );
+  }
   writer.write(
     launchOutcomeRecord({ launchState, release, bundleId: androidPackage, configuration: variant, metroPort }),
   );

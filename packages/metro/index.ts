@@ -22,6 +22,7 @@ interface MetroEvent {
   error?: unknown;
   stack?: string;
   buildID?: string;
+  bundleDetails?: { platform?: string | null };
 }
 
 interface LogRecord {
@@ -32,6 +33,8 @@ interface LogRecord {
   event?: string;
   stack?: string;
   marker?: boolean;
+  buildID?: string;
+  platform?: string;
 }
 
 export interface NdjsonReporter {
@@ -142,6 +145,8 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
   const logDir = dir || workspaceLogDir(process.cwd());
   let ensured = false;
   let drops = 0;
+  const builds = new Map<string, string | null>();
+  let failedBuild: { buildID: string; platform: string | null } | null = null;
 
   function write(file: string, record: LogRecord): void {
     try {
@@ -161,6 +166,25 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
       const type = event && typeof event.type === 'string' ? event.type : '';
       const record: LogRecord = { ts: Date.now(), src: 'metro', level: 'debug', msg: '' };
       if (type) record.event = type;
+
+      if (type !== 'bundling_error') failedBuild = null;
+
+      if (type === 'bundle_build_started' && event.buildID) {
+        const platform = event.bundleDetails?.platform || null;
+        builds.set(event.buildID, platform);
+        record.buildID = event.buildID;
+        if (platform) record.platform = platform;
+      } else if ((type === 'bundle_build_done' || type === 'bundle_build_failed') && event.buildID) {
+        const platform = builds.get(event.buildID) || null;
+        record.buildID = event.buildID;
+        if (platform) record.platform = platform;
+        builds.delete(event.buildID);
+        if (type === 'bundle_build_failed') failedBuild = { buildID: event.buildID, platform };
+      } else if (type === 'bundling_error' && failedBuild) {
+        record.buildID = failedBuild.buildID;
+        if (failedBuild.platform) record.platform = failedBuild.platform;
+        failedBuild = null;
+      }
 
       if (type === 'client_log') {
         record.src = 'client';

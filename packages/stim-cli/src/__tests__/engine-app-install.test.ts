@@ -10,6 +10,7 @@ import {
   DEFAULT_METRO_PORT,
   INSTALL_ERROR,
   LAUNCH_ERROR,
+  STABILITY_WINDOW_MS,
   VERIFY_TIMEOUT_MS,
   devClientUrl,
   isBundleProof,
@@ -17,12 +18,14 @@ import {
   unverifiedLaunchLines,
   verifyLaunch,
   amStartError,
+  androidAppProcess,
   androidDevClientUrl,
   debugHttpHostScript,
   deviceShellArg,
   installAndroidApp,
   installConflictKind,
   installIosApp,
+  iosAppProcess,
   iosSchemeApprovalKeys,
   launchAndroidReleaseApp,
   parsePidof,
@@ -243,6 +246,26 @@ describe('ios', () => {
     expect(parseLaunchedPid('something went wrong')).toBe(null);
     expect(parseLaunchedPid(null)).toBe(null);
     expect(parseLaunchedPid('com.example.app: 0')).toBe(null);
+  });
+
+  test('iosAppProcess finds the app pid in the simulator launchctl list', () => {
+    const exec = recordingExec({
+      outputs: {
+        'launchctl list': '-\t0\tcom.apple.foo\n4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n',
+      },
+    });
+    expect(iosAppProcess('U1', 'com.example.app', { exec })).toBe(4242);
+    expect(exec.calls[0]).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list']);
+  });
+
+  test('iosAppProcess returns null when the app is not running', () => {
+    const exec = recordingExec({ outputs: { 'launchctl list': '-\t0\tcom.apple.foo\n' } });
+    expect(iosAppProcess('U1', 'com.example.app', { exec })).toBe(null);
+  });
+
+  test('iosAppProcess returns undefined when the process probe fails', () => {
+    const exec = recordingExec({ fail: 'launchctl list' });
+    expect(iosAppProcess('U1', 'com.example.app', { exec })).toBeUndefined();
   });
 });
 
@@ -487,6 +510,9 @@ describe('isBundleProof', () => {
     ).toBe(true);
     expect(isBundleActivityLine('Android Bundling failed 91ms')).toBe(true);
     expect(isBundleProof({ ts: 150, src: 'metro', msg: 'Android Bundling failed 91ms' }, 100)).toBe(true);
+    expect(isBundleProof({ ts: 150, src: 'metro', msg: 'Android Bundled 91ms' }, 100, 'ios')).toBe(false);
+    expect(isBundleProof({ ts: 150, src: 'metro', msg: 'iOS Bundled 91ms' }, 100, 'ios')).toBe(true);
+    expect(isBundleProof({ ts: 150, event: 'bundle_build_done', platform: 'android' }, 100, 'ios')).toBe(false);
   });
 
   test('a record from BEFORE the launch is not proof of this launch', () => {
@@ -506,7 +532,7 @@ describe('isBundleProof', () => {
 });
 
 describe('verifyLaunch', () => {
-  test('verified: the poll returns as soon as a bundle request lands', async () => {
+  test('verified: the stability window starts after bundle completion', async () => {
     const clock = fakeClock();
     const records: NdjsonRecord[] = [];
     let reads = 0;
@@ -516,14 +542,14 @@ describe('verifyLaunch', () => {
       sleep: clock.sleep,
       readRecords: () => {
         reads += 1;
-        if (reads === 3) records.push({ ts: clock.at(), event: 'bundle_build_started' });
+        if (reads === 3) records.push({ ts: clock.at(), event: 'bundle_build_done' });
         return records;
       },
     });
     expect(result.verified).toBe(true);
     assert(result.record);
-    expect(result.record.event).toBe('bundle_build_started');
-    expect(result.waitedMs > 0 && result.waitedMs < VERIFY_TIMEOUT_MS).toBeTruthy();
+    expect(result.record.event).toBe('bundle_build_done');
+    expect(result.waitedMs).toBeGreaterThanOrEqual(STABILITY_WINDOW_MS);
   });
 
   test('the picker: an app that fetches nothing times out as UNVERIFIED, not as a failure', async () => {
@@ -577,13 +603,13 @@ describe('verifyLaunch', () => {
       writeFileSync(
         join(dir, 'metro.ndjson'),
         `${JSON.stringify({ ts: clock.at() - 5, event: 'bundle_build_done' })}\n` +
-          `${JSON.stringify({ ts: clock.at() + 10, event: 'bundle_build_started' })}\n` +
+          `${JSON.stringify({ ts: clock.at() + 10, event: 'bundle_build_done' })}\n` +
           '{"ts":123,"event":"half-writ',
       );
       const result = await verifyLaunch({ logsDir: dir, since: clock.at(), now: clock.now, sleep: clock.sleep });
       expect(result.verified).toBe(true);
       assert(result.record);
-      expect(result.record.ts).toBe(clock.at() + 10);
+      expect(result.record.ts).toBe(1010);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1083,6 +1109,18 @@ describe('the android release process proof', () => {
     expect(result.reason).toBe('exited');
     expect(result.pid).toBe(null);
   });
+
+  test('a failed process probe is unverified without claiming the app exited', async () => {
+    const exec = recordingExec({ fail: 'adb' });
+    expect(androidAppProcess('emulator-5584', 'com.example.app', { exec })).toBeUndefined();
+    const result = await verifyAndroidReleaseLaunch({
+      serial: 'emulator-5584',
+      packageName: 'com.example.app',
+      exec,
+      sleep: async () => {},
+    });
+    expect(result).toMatchObject({ verified: false, reason: 'probe-failed' });
+  });
 });
 
 describe('isBundleRequestProof', () => {
@@ -1109,6 +1147,22 @@ describe('isBundleRequestProof', () => {
     ).toBe(false);
   });
 
+  test("another platform's device request is not proof", () => {
+    expect(
+      isBundleRequestProof(
+        {
+          ts: 150,
+          src: 'device',
+          platform: 'android',
+          msg: 'Loading http://10.0.2.2:8082/index.bundle?platform=android',
+        },
+        100,
+        8082,
+        'ios',
+      ),
+    ).toBe(false);
+  });
+
   test('an error-level line naming the same URL is a request that FAILED, not one in flight', () => {
     expect(
       isBundleRequestProof(
@@ -1132,6 +1186,21 @@ describe('isBundleRequestProof', () => {
 });
 
 describe('verifyLaunch: still bundling', () => {
+  test('a bundle that only started reports requested after the readiness window', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      metroPort: 8082,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: since + 10, event: 'bundle_build_started' }],
+      readDeviceRecords: () => [],
+    });
+    expect(result).toMatchObject({ verified: false, timedOut: true, requested: true });
+    expect(result.record?.event).toBe('bundle_build_started');
+  });
+
   test('a timeout with a device-log request reports requested, not a bare unverified', async () => {
     const clock = fakeClock();
     const since = clock.at();
@@ -1166,7 +1235,7 @@ describe('verifyLaunch: still bundling', () => {
     expect(result.timedOut).toBe(true);
   });
 
-  test('a bundle that actually built still verifies: the device log is only consulted on a timeout', async () => {
+  test('a completed bundle verifies after stability-window device logs are checked', async () => {
     const clock = fakeClock();
     let deviceReads = 0;
     const result = await verifyLaunch({
@@ -1174,13 +1243,259 @@ describe('verifyLaunch: still bundling', () => {
       metroPort: 8082,
       now: clock.now,
       sleep: clock.sleep,
-      readRecords: () => [{ ts: clock.at(), event: 'bundle_build_started' }],
+      readRecords: () => [{ ts: clock.at(), event: 'bundle_build_done' }],
       readDeviceRecords: () => {
         deviceReads += 1;
         return [];
       },
     });
     expect(result.verified).toBe(true);
-    expect(deviceReads).toBe(0);
+    expect(deviceReads).toBe(1);
+    expect(result.waitedMs).toBe(STABILITY_WINDOW_MS);
+  });
+
+  test('a delayed bundle completion starts a fresh stability window', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    let processChecks = 0;
+    const result = await verifyLaunch({
+      since,
+      timeoutMs: 10000,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => (clock.at() >= since + 5000 ? [{ ts: since + 5000, event: 'bundle_build_done' }] : []),
+      readDeviceRecords: () => [],
+      processAlive: () => {
+        processChecks += 1;
+        return true;
+      },
+    });
+    expect(result).toMatchObject({ verified: true, processAlive: true, waitedMs: 8000 });
+    expect(processChecks).toBe(1);
+  });
+
+  test('overlapping native bundles wait for the requested platform', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const iosStarted = { ts: since, event: 'bundle_build_started', buildID: 'ios_1', platform: 'ios' };
+    const androidStarted = {
+      ts: since,
+      event: 'bundle_build_started',
+      buildID: 'android_1',
+      platform: 'android',
+    };
+    const androidDone = {
+      ts: since + 1000,
+      event: 'bundle_build_done',
+      buildID: 'android_1',
+      platform: 'android',
+    };
+    const iosDone = { ts: since + 5000, event: 'bundle_build_done', buildID: 'ios_1', platform: 'ios' };
+    const result = await verifyLaunch({
+      since,
+      platform: 'ios',
+      timeoutMs: 10000,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => {
+        const records = [iosStarted, androidStarted];
+        if (clock.at() >= since + 1000) records.push(androidDone);
+        if (clock.at() >= since + 5000) records.push(iosDone);
+        return records;
+      },
+      readDeviceRecords: () => [],
+    });
+    expect(result).toMatchObject({ verified: true, waitedMs: 8000 });
+    expect(result.record).toMatchObject({ buildID: 'ios_1', platform: 'ios' });
+  });
+
+  test("another platform's bundle failure does not fail this launch", async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      platform: 'ios',
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [
+        {
+          ts: since + 10,
+          event: 'bundle_build_failed',
+          buildID: 'android_1',
+          platform: 'android',
+          level: 'error',
+          msg: 'Android failed',
+        },
+        {
+          ts: since + 11,
+          event: 'bundling_error',
+          buildID: 'android_1',
+          platform: 'android',
+          level: 'error',
+          msg: 'Unable to resolve AndroidOnly',
+        },
+        { ts: since + 20, event: 'bundle_build_done', buildID: 'ios_1', platform: 'ios' },
+      ],
+      readDeviceRecords: () => [],
+      processAlive: () => true,
+    });
+    expect(result).toMatchObject({ verified: true, processAlive: true });
+    expect(result.errors).toEqual([]);
+  });
+
+  test('Expo text markers match their named platform', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      platform: 'ios',
+      timeoutMs: 10000,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => {
+        const records = [{ ts: since, src: 'metro', event: 'expo_stdout', msg: 'Android Bundled 80ms index.js' }];
+        if (clock.at() >= since + 2000) {
+          records.push({ ts: since + 2000, src: 'metro', event: 'expo_stdout', msg: 'iOS Bundled 90ms index.js' });
+        }
+        return records;
+      },
+      readDeviceRecords: () => [],
+    });
+    expect(result).toMatchObject({ verified: true, waitedMs: 5000 });
+    expect(result.record?.msg).toMatch(/^iOS Bundled/);
+  });
+
+  test('the stability window starts at the Metro completion timestamp', async () => {
+    const clock = fakeClock(5000);
+    const result = await verifyLaunch({
+      since: 1000,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: 2000, event: 'bundle_build_done' }],
+      readDeviceRecords: () => [],
+    });
+    expect(result).toMatchObject({ verified: true, waitedMs: 0 });
+  });
+
+  test('a second bundle completion does not shorten the first stability window', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const first = { ts: since, event: 'bundle_build_done', msg: 'first bundle' };
+    const second = { ts: since + 2500, event: 'bundle_build_done', msg: 'second bundle' };
+    const result = await verifyLaunch({
+      since,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => (clock.at() >= since + 2500 ? [first, second] : [first]),
+      readDeviceRecords: () => [],
+    });
+    expect(result).toMatchObject({ verified: true, waitedMs: STABILITY_WINDOW_MS });
+    expect(result.record?.msg).toBe('first bundle');
+  });
+
+  test('a client console error is returned with a live, verified app', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: since + 10, event: 'bundle_build_done' }],
+      readDeviceRecords: () => [],
+      readClientRecords: () => [
+        { ts: since + 20, src: 'client', event: 'client_log', level: 'error', msg: 'console.error during launch' },
+      ],
+      processAlive: () => true,
+    });
+    expect(result).toMatchObject({ verified: true, processAlive: true });
+    expect(result.errors?.[0]?.msg).toBe('console.error during launch');
+  });
+
+  test('errors before bundle completion are outside the stability window', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: since + 100, event: 'bundle_build_done' }],
+      readDeviceRecords: () => [
+        { ts: since + 50, level: 'error', msg: 'pre-bundle warning' },
+        { ts: since + 200, level: 'error', msg: 'post-bundle warning' },
+      ],
+      processAlive: () => true,
+    });
+    expect(result.errors?.map((record) => record.msg)).toEqual(['post-bundle warning']);
+  });
+
+  test('a bundle failure is fatal and includes its error text', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [
+        { ts: since + 10, level: 'error', event: 'bundle_build_failed', msg: 'Unable to resolve module X' },
+      ],
+      readDeviceRecords: () => [],
+      processAlive: () => true,
+    });
+    expect(result).toMatchObject({ verified: false, fatal: true, processAlive: true });
+    expect(result.errors?.[0]?.msg).toBe('Unable to resolve module X');
+  });
+
+  test('an Expo text bundle failure is fatal', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [
+        { ts: since + 10, src: 'metro', event: 'expo_stderr', level: 'error', msg: 'iOS Bundling failed 893ms' },
+        {
+          ts: since + 11,
+          src: 'metro',
+          event: 'expo_stderr',
+          level: 'error',
+          msg: 'Unable to resolve module Missing from App.tsx',
+        },
+      ],
+      readDeviceRecords: () => [],
+      processAlive: () => true,
+    });
+    expect(result).toMatchObject({ verified: false, fatal: true, processAlive: true });
+    expect(result.errors?.map((record) => record.msg)).toEqual([
+      'iOS Bundling failed 893ms',
+      'Unable to resolve module Missing from App.tsx',
+    ]);
+  });
+
+  test('an unknown process state does not fail a verified bundle', async () => {
+    const clock = fakeClock();
+    const result = await verifyLaunch({
+      since: clock.at(),
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: clock.at(), event: 'bundle_build_done' }],
+      readDeviceRecords: () => [],
+      processAlive: () => null,
+    });
+    expect(result).toMatchObject({ verified: true, processAlive: null });
+  });
+
+  test('a process exit during the readiness window is fatal', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: since + 10, event: 'bundle_build_done' }],
+      readDeviceRecords: () => [],
+      processAlive: () => false,
+    });
+    expect(result).toMatchObject({ verified: false, fatal: true, processAlive: false });
   });
 });

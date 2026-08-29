@@ -160,6 +160,7 @@ interface VerifyArgs {
   logsDir?: string;
   since?: string | number;
   metroPort?: string | number | null;
+  platform?: string | null;
 }
 
 interface Calls {
@@ -2161,7 +2162,8 @@ describe('launch verification', () => {
     expect(result.facts.launched).toBe(true);
     expect(h.calls.verify[0]?.logsDir).toBe(workspaceLogsDir(root));
     expect(Number.isFinite(h.calls.verify[0]?.since)).toBeTruthy();
-    expect(h.stderr.some((l) => /verify.*bundle requested from Metro port 8082/.test(l))).toBeTruthy();
+    expect(h.calls.verify[0]?.platform).toBe('android');
+    expect(h.stderr.some((l) => /verify.*bundle loaded, stable for 3s/.test(l))).toBeTruthy();
   });
 
   test('the picker: no bundle request makes it launched: "unverified", still exit ok', async () => {
@@ -2627,16 +2629,28 @@ describe('release skips Metro entirely', () => {
     expect(h.stdout[0]).toMatch(/productionRelease \(embedded JS, no Metro\)/);
   });
 
-  test('a dead app process is launched: "unverified", with the device-log pointer', async () => {
+  test('a dead app process fails the readiness check with the device-log pointer', async () => {
     const h = harness({
       variant: 'productionRelease',
       verifyReleaseLaunched: async () => ({ verified: false, reason: 'exited', waitedMs: 3000, pid: null }),
     });
     const result = await h.run();
-    assert(result.facts);
-    expect(result.facts.launched).toBe('unverified');
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_CLI_LAUNCH_FAILED');
     expect(h.stderr.join('\n')).toMatch(/UNVERIFIED: no com\.example\.app process/);
     expect(h.stderr.join('\n')).toMatch(/stim logs --errors/);
+  });
+
+  test('a failed release process probe stays unverified without claiming an exit', async () => {
+    const h = harness({
+      variant: 'productionRelease',
+      verifyReleaseLaunched: async () => ({ verified: false, reason: 'probe-failed', waitedMs: 3000 }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(result.facts?.launched).toBe('unverified');
+    expect(h.stderr.join('\n')).toMatch(/UNVERIFIED: the app process check failed/);
+    expect(h.stderr.join('\n')).not.toMatch(/no com\.example\.app process/);
   });
 
   test('the android.variant setting is the repo default, and the flag overrides it back to debug', async () => {

@@ -230,6 +230,23 @@ describe('loadNdjsonReporter', () => {
     };
     expect(loadNdjsonReporter(root, { requireFrom: nothing })).toBe(null);
   });
+
+  test('prefers the reporter bundled with this CLI over an older project copy', () => {
+    const projectPackage = join(root, 'package.json');
+    const bundled = () => ({ update() {} });
+    const projectLocal = () => ({ update() {} });
+    const seen: string[] = [];
+    const factory = loadNdjsonReporter(root, {
+      requireFrom: (from) => {
+        seen.push(from);
+        return asRequire(() => ({ ndjsonReporter: from === projectPackage ? projectLocal : bundled }));
+      },
+    });
+
+    expect(factory).toBe(bundled);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toBe(projectPackage);
+  });
 });
 
 describe('startBareServer wiring', () => {
