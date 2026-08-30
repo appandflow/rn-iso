@@ -23,7 +23,7 @@ function clock(start = 1_000) {
 const successfulTunnelCleanup = async () => ({ status: 'stopped' as const });
 
 function startVerified(options: Parameters<typeof startTunnel>[0]) {
-  return startTunnel({ ...options, readProcessToken: () => 'linux:100' });
+  return startTunnel({ isChildAlive: () => false, ...options, readProcessToken: () => 'linux:100' });
 }
 
 describe('tunnelArgv', () => {

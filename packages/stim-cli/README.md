@@ -1,6 +1,6 @@
 # stim-cli
 
-[![CI](https://github.com/appandflow/stim-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/appandflow/stim-cli/actions/workflows/ci.yml)
+[![CI](https://github.com/appandflow/stim/actions/workflows/ci.yml/badge.svg)](https://github.com/appandflow/stim/actions/workflows/ci.yml)
 
 The React Native / Expo CLI for AI agents. One isolated dev environment per project or worktree: `stim start` runs the dev server on a reserved, collision-free Metro port under a detached supervisor; `stim ios` / `stim android` boot a dedicated, **owned** simulator/emulator, install a build from a shared fingerprint cache when nothing native changed, and launch the app wired to that port; `stim logs --errors` answers "did that work" from a captured timeline instead of a scraped terminal. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
 
@@ -162,10 +162,10 @@ TypeScript -- which is judgement, not templating.
 For AI coding agents, install the bundled skill so the agent knows how to drive the CLI (the lifecycle, the facts contract, and the destructive-command rules). It installs with the skills CLI, straight from GitHub:
 
 ```bash
-npx skills add appandflow/stim-cli
+npx skills add appandflow/stim
 ```
 
-[Getting started](https://appandflow.github.io/stim-cli/docs/getting-started) is the whole human-side setup: install the skill, then describe what you want built.
+[Getting started](https://appandflow.github.io/stim/docs/getting-started) is the whole human-side setup: install the skill, then describe what you want built.
 
 ## Owned devices
 
@@ -474,7 +474,7 @@ following instructions that no longer match the binary.
 After upgrading, refresh it the same way it was installed:
 
 ```bash
-npx skills add appandflow/stim-cli
+npx skills add appandflow/stim
 ```
 
 That installs the one bundled skill, `stim-cli`: how to drive the CLI. There is

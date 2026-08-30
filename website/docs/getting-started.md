@@ -11,7 +11,7 @@ stim-cli is a CLI **humans never run** — your coding agent does.
 ## 1. Install the agent skill
 
 ```bash
-npx skills add appandflow/stim-cli
+npx skills add appandflow/stim
 ```
 
 That installs one skill into your agent's skill directory (`~/.claude/skills`,

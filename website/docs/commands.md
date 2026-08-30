@@ -76,7 +76,7 @@ worktree.
 For AI coding agents, install the bundled skill so the agent knows how to drive the CLI (the lifecycle, the facts contract, and the destructive-command rules). It installs with the skills CLI, straight from GitHub:
 
 ```bash
-npx skills add appandflow/stim-cli
+npx skills add appandflow/stim
 ```
 
 [Getting started](/docs/getting-started) is the whole human-side setup: install the skill, then describe what you want built.

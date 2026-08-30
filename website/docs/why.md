@@ -8,7 +8,7 @@ The React Native / Expo CLI for AI agents. One isolated dev environment per proj
 
 It never prompts, prints on the order of ten lines, takes `--json` everywhere, and reports a failing build as the _extracted_ compiler diagnostic plus a log path rather than four thousand lines of transcript.
 
-> **Experimental.** APIs, flags, and on-disk state may change. [File issues](https://github.com/appandflow/stim-cli/issues) if anything breaks.
+> **Experimental.** APIs, flags, and on-disk state may change. [File issues](https://github.com/appandflow/stim/issues) if anything breaks.
 
 ## The problem
 

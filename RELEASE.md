@@ -73,7 +73,7 @@ Before pre-flight, write `docs/releases/X.Y.Z.md`. This is the evidence index
 for the QA gate, not a post-tag changelog exercise. Use the sections `New`,
 `Removed (breaking)`, `Fixes`, `Docs`, and `Migration notes`, omitting empty
 sections. Link prior commits with
-`[<short-sha>](https://github.com/appandflow/stim-cli/commit/<sha>)`, and say
+`[<short-sha>](https://github.com/appandflow/stim/commit/<sha>)`, and say
 which package a line concerns when it is not the CLI. The version commit later
 includes this already-reviewed file.
 
@@ -250,7 +250,7 @@ Before continuing:
    on the package page, which does not exist until then. For the first
    `stim-cli` release, create the `@stim-cli` npm organization, publish all four
    packages manually in dependency order, then configure each package's trusted
-   publisher for `appandflow/stim-cli`, workflow `release.yml`, environment
+   publisher for `appandflow/stim`, workflow `release.yml`, environment
    `release`. Do this before pushing the first tag. The tagged workflow skips an
    exact package version that already exists, uses the npm `next` dist-tag for
    prereleases, then verifies all four registry versions. The same commands are
