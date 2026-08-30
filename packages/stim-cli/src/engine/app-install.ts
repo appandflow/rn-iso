@@ -743,7 +743,8 @@ export async function verifyLaunch({
           waitedMs,
         };
       }
-      const actionableErrors = errors.filter((record) => !isConfirmedHealthyLaunchNoise(record, platform));
+      const actionableErrors =
+        alive === true ? errors.filter((record) => !isConfirmedHealthyLaunchNoise(record, platform)) : errors;
       return { verified: true, record: proof, errors: actionableErrors, processAlive: alive, mode, waitedMs };
     }
 

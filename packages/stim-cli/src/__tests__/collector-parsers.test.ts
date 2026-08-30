@@ -209,7 +209,7 @@ describe('ios: demoting device noise', () => {
   });
 
   test('the rest of the proven offenders are demoted, each by its own rule', () => {
-    const cases = [
+    const cases: [string, Record<string, unknown>][] = [
       [
         'sectrust',
         event({ subsystem: 'com.apple.securityd', category: 'SecTrust', eventMessage: 'SecTrustEvaluateIfNecessary' }),
@@ -253,7 +253,12 @@ describe('ios: demoting device noise', () => {
     ];
     for (const [id, e] of cases) {
       expect(noiseRuleId(e)).toBe(id);
-      expect(levelForEvent(e)).toBe('info');
+      const record = parseLogStreamLine(JSON.stringify(e));
+      assert(record);
+      expect(record.level).toBe('info');
+      expect(record.msg).toBe(e.eventMessage);
+      expect(record.src).toBe('device');
+      expect(record.proc).toBe('MyApp');
     }
     const covered = new Set([
       ...cases.map(([id]) => id),

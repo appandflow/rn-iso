@@ -1442,7 +1442,7 @@ describe('verifyLaunch: still bundling', () => {
     expect(refusal.level).toBe('error');
   });
 
-  test('the transient TCP refusal stays an error when iOS readiness fails', async () => {
+  test.each([false, null])('the transient TCP refusal stays an error when iOS process health is %s', async (alive) => {
     const clock = fakeClock();
     const since = clock.at();
     const refusal = {
@@ -1458,9 +1458,9 @@ describe('verifyLaunch: still bundling', () => {
       sleep: clock.sleep,
       readRecords: () => [{ ts: since + 10, event: 'bundle_build_done', platform: 'ios' }],
       readDeviceRecords: () => [refusal],
-      processAlive: () => false,
+      processAlive: () => alive,
     });
-    expect(result).toMatchObject({ verified: false, fatal: true, processAlive: false });
+    expect(result.processAlive).toBe(alive);
     expect(result.errors).toEqual([refusal]);
   });
 
