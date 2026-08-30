@@ -1412,6 +1412,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   });
   if (capacity) return fail(capacity);
 
+  let metroPort = proj?.metroPort ?? null;
+  if (!(await resolveMetroPort())) return null;
+
   let device: Awaited<ReturnType<typeof ensureOwnedDevice>>;
   try {
     device = await d.ensureOwnedDevice({
@@ -1433,7 +1436,6 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     });
   }
 
-  let metroPort = proj?.metroPort ?? null;
   let bootDuration = '';
   let bootPromise!: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>;
   let udid = '';
@@ -1905,7 +1907,6 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return true;
   }
 
-  if (!(await resolveMetroPort())) return null;
   if (!(await resolveInitialFingerprint())) return null;
   await resolveRemoteArtifact();
   if (!(await waitForSharedBuild())) return null;

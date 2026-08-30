@@ -5,7 +5,7 @@ import { getExecutor } from './exec.ts';
 import { detectIsExpo } from './project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
-import { dirtyFingerprintFiles } from './worktree.ts';
+import { dirtyFingerprintFiles, gitCommonDir, repoRoot } from './worktree.ts';
 import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from './config.ts';
 import { liveOwnedDeviceCount } from './engine/device.ts';
 import { simslimIsOnPath } from './engine/simslim.ts';
@@ -390,11 +390,16 @@ export function runDoctor(
     });
   }
 
-  const projectSettings = resolveSettings({ projectPath: projectRoot, repoRoot: projectRoot });
+  const settingsRepoRoot = repoRoot(projectRoot) ?? projectRoot;
+  const projectSettings = resolveSettings({
+    projectPath: projectRoot,
+    gitCommonDir: gitCommonDir(projectRoot),
+    repoRoot: settingsRepoRoot,
+  });
   let simslimProfile: string | null = null;
   let simslimProfileError: string | null = null;
   try {
-    simslimProfile = iosSimSlimProfileSetting(projectSettings, projectRoot);
+    simslimProfile = iosSimSlimProfileSetting(projectSettings, settingsRepoRoot);
   } catch (error) {
     simslimProfileError = String((error as Error)?.message || error);
   }

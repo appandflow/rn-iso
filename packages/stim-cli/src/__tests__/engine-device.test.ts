@@ -531,6 +531,37 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
+  test('records SimSlim management before profile application can fail', async () => {
+    const root = projectDir();
+    try {
+      const profilePath = join(root, 'simslim.json');
+      writeFileSync(profilePath, '{}\n');
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-cli-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-cli-app', state: 'Booted', isAvailable: true }]);
+      setExecutor(exec);
+      let managedBeforeRun = false;
+
+      await expect(
+        ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { ios: { simslimProfile: 'simslim.json' } },
+          reconcileIosSimulator: async () => {
+            managedBeforeRun = getProject(root)?.platforms?.ios?.simslimManaged === true;
+            throw new Error('partial SimSlim failure');
+          },
+        }),
+      ).rejects.toThrow('partial SimSlim failure');
+
+      expect(managedBeforeRun).toBe(true);
+      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('restores stock services when Stim previously managed SimSlim and the setting is removed', async () => {
     const root = projectDir();
     try {

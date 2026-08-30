@@ -295,7 +295,7 @@ function buildRecords() {
 }
 
 describe('the Metro gate', () => {
-  test('fires before the boot and before fingerprinting: a dead port costs a second, not a build', async () => {
+  test('fires before the device, boot, and fingerprint: a dead port costs a second, not a build', async () => {
     reserve();
     const { errs, exitCode, calls } = await run(
       {},
@@ -304,7 +304,7 @@ describe('the Metro gate', () => {
       },
     );
     expect(exitCode).toBe(1);
-    expect(calls.order.includes('ensureOwnedDevice')).toBeTruthy();
+    expect(!calls.order.includes('ensureOwnedDevice')).toBeTruthy();
     expect(!calls.order.includes('ensureBooted')).toBeTruthy();
     expect(!calls.order.includes('fingerprintProject')).toBeTruthy();
     expect(!calls.order.includes('buildIos')).toBeTruthy();
@@ -2172,7 +2172,7 @@ describe('--remote', () => {
       { ...remote.deps, resolveProjectMetro: async () => ({ metro: null }) },
     );
     expect(exitCode).toBe(1);
-    expect(remote.hits.includes('ensureOwnedDevice')).toBeTruthy();
+    expect(remote.hits.includes('ensureOwnedDevice')).toBeFalsy();
     expect(remote.hits.includes('ensureBooted')).toBeFalsy();
   });
 

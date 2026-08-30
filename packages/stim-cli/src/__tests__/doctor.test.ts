@@ -691,6 +691,28 @@ test('runDoctor checks one shared backend once', () => {
   }
 });
 
+test('runDoctor resolves a SimSlim profile from the repository root in a monorepo', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'stim-cli-doc-monorepo-'));
+  const project = join(repo, 'apps', 'mobile');
+  try {
+    mkdirSync(project, { recursive: true });
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'mobile' }));
+    writeFileSync(join(repo, 'simslim.json'), '{}\n');
+    writeFileSync(join(repo, '.stim-cli.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
+    execSync('git init -q', { cwd: repo });
+
+    const findings = runDoctor(project, {
+      concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      lookupSimSlim: () => false,
+    });
+
+    expect(findings.some((finding) => finding.title.includes('SimSlim is not installed'))).toBe(true);
+    expect(findings.some((finding) => finding.title === 'The SimSlim profile is invalid')).toBe(false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test.each([
   ['AGENT_DEVICE_DAEMON_BASE_URL', '   ', 'proxy-token-fixture'],
   ['AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'https://proxy.example/agent-device', '\t\n'],

@@ -245,10 +245,16 @@ async function configureOwnedIosSim({
   if (profile) out(chalk.dim(`Applying the configured SimSlim profile to ${record.deviceUdid}...`));
   else if (record.simslimManaged) out(chalk.dim(`Restoring stock simulator services on ${record.deviceUdid}...`));
 
+  const previouslyManaged = Boolean(record.simslimManaged);
+  if (profile && !record.simslimManaged) {
+    const pending = { ...record, simslimManaged: true };
+    setDevice(projectPath, 'ios', pending);
+    record = pending;
+  }
   const result = await reconcileIosSimulator({
     udid: record.deviceUdid,
     profile,
-    previouslyManaged: Boolean(record.simslimManaged),
+    previouslyManaged,
     out,
   });
   const updated = { ...record };
