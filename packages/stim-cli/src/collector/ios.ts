@@ -49,16 +49,19 @@ export const NOISE_RULES: NoiseRule[] = [
   },
   {
     id: 'react-native-focus-cache',
-    messageIncludes: [
+    exactSubsystem: 'com.apple.UIKit',
+    category: 'UIFocus',
+    messageEquals:
       'RCTScrollViewComponentView implements focusItemsInRect: - caching for linear focus movement is limited as long as this view is on screen.',
-    ],
   },
 ];
 
 interface NoiseRule {
   id: string;
   subsystem?: string;
+  exactSubsystem?: string;
   category?: string;
+  messageEquals?: string;
   messagePrefix?: string[];
   messageIncludes?: string[];
 }
@@ -71,7 +74,9 @@ function ruleMatches(
   { subsystem, category, message }: { subsystem: string; category: string; message: string },
 ): boolean {
   if (rule.subsystem && subsystem !== rule.subsystem && !subsystem.startsWith(`${rule.subsystem}.`)) return false;
+  if (rule.exactSubsystem && subsystem !== rule.exactSubsystem) return false;
   if (rule.category && category !== rule.category) return false;
+  if (rule.messageEquals && message !== rule.messageEquals) return false;
   if (rule.messagePrefix && !rule.messagePrefix.some((p) => message.startsWith(p))) return false;
   if (rule.messageIncludes && !rule.messageIncludes.some((p) => message.includes(p))) return false;
   return true;

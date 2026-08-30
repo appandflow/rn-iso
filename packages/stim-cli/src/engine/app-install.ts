@@ -743,8 +743,9 @@ export async function verifyLaunch({
           waitedMs,
         };
       }
-      const actionableErrors =
-        alive === true ? errors.filter((record) => !isConfirmedHealthyLaunchNoise(record, platform)) : errors;
+      const actionableErrors = errors.filter(
+        (record) => !isRecoveredIosConnectionRefusal(record, deviceRecords, platform),
+      );
       return { verified: true, record: proof, errors: actionableErrors, processAlive: alive, mode, waitedMs };
     }
 
@@ -778,14 +779,32 @@ function isLaunchError(record: NdjsonRecord, platform: 'ios' | 'android' | null)
   return record.level === 'error' || record.level === 'fatal' || isFatalLaunchError(record, platform);
 }
 
-function isConfirmedHealthyLaunchNoise(record: NdjsonRecord, platform: 'ios' | 'android' | null): boolean {
-  return (
-    platform === 'ios' &&
-    record.src === 'device' &&
-    record.level === 'error' &&
-    typeof record.msg === 'string' &&
-    /^TCP Conn 0x[0-9a-f]+ Failed : error 0:61 \[61\]$/i.test(record.msg)
-  );
+const TCP_REFUSAL = /^TCP Conn (0x[0-9a-f]+) Failed : error 0:61 \[61\]$/i;
+const TCP_SUCCESS = /^TCP Conn (0x[0-9a-f]+) complete\. fd: \d+, err: 0$/i;
+
+function isRecoveredIosConnectionRefusal(
+  record: NdjsonRecord,
+  deviceRecords: NdjsonRecord[],
+  platform: 'ios' | 'android' | null,
+): boolean {
+  if (platform !== 'ios' || record.src !== 'device' || record.level !== 'error' || typeof record.msg !== 'string') {
+    return false;
+  }
+  const refusal = TCP_REFUSAL.exec(record.msg);
+  const refusalTs = Number(record.ts);
+  if (!refusal?.[1] || !Number.isFinite(refusalTs)) return false;
+  const pointer = refusal[1].toLowerCase();
+  return deviceRecords.some((candidate) => {
+    const success = typeof candidate.msg === 'string' ? TCP_SUCCESS.exec(candidate.msg) : null;
+    return (
+      candidate.src === 'device' &&
+      candidate.proc === record.proc &&
+      candidate.level !== 'error' &&
+      candidate.level !== 'fatal' &&
+      Number(candidate.ts) > refusalTs &&
+      success?.[1]?.toLowerCase() === pointer
+    );
+  });
 }
 
 function isFatalLaunchError(record: NdjsonRecord, platform: 'ios' | 'android' | null): boolean {

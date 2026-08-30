@@ -1420,6 +1420,12 @@ describe('verifyLaunch: still bundling', () => {
       level: 'error',
       msg: 'TCP Conn 0x11e8cb020 Failed : error 0:61 [61]',
     };
+    const recovered = {
+      ts: since + 25,
+      src: 'device',
+      level: 'info',
+      msg: 'TCP Conn 0x11e8cb020 complete. fd: 25, err: 0',
+    };
     const applicationError = {
       ts: since + 30,
       src: 'client',
@@ -1433,7 +1439,7 @@ describe('verifyLaunch: still bundling', () => {
       now: clock.now,
       sleep: clock.sleep,
       readRecords: () => [{ ts: since + 10, event: 'bundle_build_done', platform: 'ios' }],
-      readDeviceRecords: () => [refusal],
+      readDeviceRecords: () => [refusal, recovered],
       readClientRecords: () => [applicationError],
       processAlive: () => true,
     });
@@ -1442,7 +1448,32 @@ describe('verifyLaunch: still bundling', () => {
     expect(refusal.level).toBe('error');
   });
 
-  test.each([false, null])('the transient TCP refusal stays an error when iOS process health is %s', async (alive) => {
+  test.each([true, false, null])(
+    'the TCP refusal stays an error without a later pointer recovery when process health is %s',
+    async (alive) => {
+      const clock = fakeClock();
+      const since = clock.at();
+      const refusal = {
+        ts: since + 20,
+        src: 'device',
+        level: 'error',
+        msg: 'TCP Conn 0x11e8cb020 Failed : error 0:61 [61]',
+      };
+      const result = await verifyLaunch({
+        since,
+        platform: 'ios',
+        now: clock.now,
+        sleep: clock.sleep,
+        readRecords: () => [{ ts: since + 10, event: 'bundle_build_done', platform: 'ios' }],
+        readDeviceRecords: () => [refusal],
+        processAlive: () => alive,
+      });
+      expect(result.processAlive).toBe(alive);
+      expect(result.errors).toEqual([refusal]);
+    },
+  );
+
+  test('the TCP refusal stays an error when only an earlier or different pointer succeeds', async () => {
     const clock = fakeClock();
     const since = clock.at();
     const refusal = {
@@ -1457,10 +1488,13 @@ describe('verifyLaunch: still bundling', () => {
       now: clock.now,
       sleep: clock.sleep,
       readRecords: () => [{ ts: since + 10, event: 'bundle_build_done', platform: 'ios' }],
-      readDeviceRecords: () => [refusal],
-      processAlive: () => alive,
+      readDeviceRecords: () => [
+        { ts: since + 15, src: 'device', level: 'info', msg: 'TCP Conn 0x11e8cb020 complete. fd: 24, err: 0' },
+        refusal,
+        { ts: since + 25, src: 'device', level: 'info', msg: 'TCP Conn 0x11e8cb160 complete. fd: 25, err: 0' },
+      ],
+      processAlive: () => true,
     });
-    expect(result.processAlive).toBe(alive);
     expect(result.errors).toEqual([refusal]);
   });
 

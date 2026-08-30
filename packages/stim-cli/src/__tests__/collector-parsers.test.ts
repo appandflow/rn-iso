@@ -138,6 +138,8 @@ describe('ios: log stream ndjson', () => {
 describe('ios: demoting device noise', () => {
   const app =
     '/Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/ABC/MyApp.app/MyApp';
+  const focusCacheMessage =
+    'RCTScrollViewComponentView implements focusItemsInRect: - caching for linear focus movement is limited as long as this view is on screen.';
   const event = (over: Record<string, unknown>): Record<string, unknown> => ({
     eventType: 'logEvent',
     messageType: 'Error',
@@ -246,8 +248,9 @@ describe('ios: demoting device noise', () => {
       [
         'react-native-focus-cache',
         event({
-          eventMessage:
-            'RCTScrollViewComponentView implements focusItemsInRect: - caching for linear focus movement is limited as long as this view is on screen.',
+          subsystem: 'com.apple.UIKit',
+          category: 'UIFocus',
+          eventMessage: focusCacheMessage,
         }),
       ],
     ];
@@ -267,6 +270,18 @@ describe('ios: demoting device noise', () => {
       'uiscene-deprecation',
     ]);
     expect(NOISE_RULES.map((r) => r.id).filter((id) => !covered.has(id))).toEqual([]);
+  });
+
+  test('the focus-cache rule requires the exact UIKit focus event', () => {
+    const nearMisses = [
+      event({ subsystem: 'com.apple.UIKit.child', category: 'UIFocus', eventMessage: focusCacheMessage }),
+      event({ subsystem: 'com.apple.UIKit', category: 'default', eventMessage: focusCacheMessage }),
+      event({ subsystem: 'com.apple.UIKit', category: 'UIFocus', eventMessage: `${focusCacheMessage} Extra` }),
+    ];
+    for (const nearMiss of nearMisses) {
+      expect(noiseRuleId(nearMiss)).toBe(null);
+      expect(levelForEvent(nearMiss)).toBe('error');
+    }
   });
 
   test("the app's own error is untouched, and so is an unlisted system one", () => {
