@@ -129,7 +129,7 @@ describe('ios', () => {
     expect(result.reason).toMatch(/device not booted/);
   });
 
-  test('installIosApp approves the exact app and scheme after installation', () => {
+  test('installIosApp skips the dev menu and approves the exact app and scheme after installation', () => {
     const exec = recordingExec();
     const appPath = '/tmp/My App.app';
     expect(
@@ -145,6 +145,30 @@ describe('ios', () => {
     ).toEqual({ ok: true, appPath });
     expect(exec.calls).toEqual([
       ['xcrun', 'simctl', 'install', 'U1', appPath],
+      [
+        'xcrun',
+        'simctl',
+        'spawn',
+        'U1',
+        'defaults',
+        'write',
+        'com.example.app',
+        'EXDevMenuIsOnboardingFinished',
+        '-bool',
+        'true',
+      ],
+      [
+        'xcrun',
+        'simctl',
+        'spawn',
+        'U1',
+        'defaults',
+        'write',
+        'com.example.app',
+        'EXDevMenuShowsAtLaunch',
+        '-bool',
+        'false',
+      ],
       [
         'xcrun',
         'simctl',
@@ -172,6 +196,21 @@ describe('ios', () => {
     ]);
   });
 
+  test('a failed dev-client preference write reports a failed install result', () => {
+    const exec = recordingExec({ fail: 'EXDevMenuIsOnboardingFinished' });
+    const result = installIosApp(
+      {
+        udid: 'U1',
+        appPath: '/tmp/My App.app',
+        bundleId: 'com.example.app',
+        devClientScheme: 'myapp',
+      },
+      { exec },
+    );
+    expect(result.code).toBe(INSTALL_ERROR);
+    expect(result.reason).toMatch(/prepare the dev client/);
+  });
+
   test('a failed scheme approval reports a failed install result', () => {
     const exec = recordingExec({ fail: 'schemeapproval' });
     const result = installIosApp(
@@ -184,7 +223,7 @@ describe('ios', () => {
       { exec },
     );
     expect(result.code).toBe(INSTALL_ERROR);
-    expect(result.reason).toMatch(/preapprove/);
+    expect(result.reason).toMatch(/prepare the dev client/);
   });
 
   test('launchIosApp writes RCT_jsLocation before launching, bare RN path', () => {

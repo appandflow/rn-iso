@@ -100,8 +100,10 @@ other line goes to stderr, so it is always safe to pipe.
                   CoreSimulatorBridge for exactly the installed bundle id and
                   discovered scheme on its owned simulator. That suppresses
                   iOS's first-launch confirmation; unrelated schemes remain
-                  unapproved. The unverified warning therefore leads with the
-                  picker, then prints the openurl retry. On ANDROID the list
+                  unapproved. It also finishes Expo dev-menu onboarding and
+                  disables the menu's automatic launch, so device automation
+                  opens on the app. The unverified warning therefore leads
+                  with the picker, then prints the openurl retry. On ANDROID the list
                   leads with the dev-client deep link (\`am start -a
                   android.intent.action.VIEW -d '<devClientUrl>'\`), which is
                   the whole answer when the app has a scheme.

@@ -10,6 +10,8 @@ export const DEFAULT_METRO_PORT = 8081;
 
 const IOS_SCHEME_APPROVAL_DOMAIN = 'com.apple.launchservices.schemeapproval';
 const IOS_SCHEME_APPROVAL_OPENER = 'com.apple.CoreSimulator.CoreSimulatorBridge';
+const IOS_DEV_MENU_ONBOARDING_KEY = 'EXDevMenuIsOnboardingFinished';
+const IOS_DEV_MENU_SHOWS_AT_LAUNCH_KEY = 'EXDevMenuShowsAtLaunch';
 
 interface ExecOpt {
   exec?: Executor | null;
@@ -75,6 +77,28 @@ export function installIosApp(
   }
   if (bundleId && devClientScheme) {
     try {
+      e.runFile('xcrun', [
+        'simctl',
+        'spawn',
+        udid,
+        'defaults',
+        'write',
+        bundleId,
+        IOS_DEV_MENU_ONBOARDING_KEY,
+        '-bool',
+        'true',
+      ]);
+      e.runFile('xcrun', [
+        'simctl',
+        'spawn',
+        udid,
+        'defaults',
+        'write',
+        bundleId,
+        IOS_DEV_MENU_SHOWS_AT_LAUNCH_KEY,
+        '-bool',
+        'false',
+      ]);
       for (const key of iosSchemeApprovalKeys(bundleId, devClientScheme)) {
         e.runFile('xcrun', [
           'simctl',
@@ -92,7 +116,7 @@ export function installIosApp(
       return {
         failed: true,
         code: INSTALL_ERROR,
-        reason: `Installed ${bundleId}, but could not preapprove dev-client scheme ${devClientScheme}: ${describe(err)}`,
+        reason: `Installed ${bundleId}, but could not prepare the dev client: ${describe(err)}`,
       };
     }
   }

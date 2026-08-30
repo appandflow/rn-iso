@@ -525,6 +525,26 @@ test('warmCarryCategories inspects a collapsed ignored directory', () => {
   }
 });
 
+test('warmCarryCategories ignores native build paths that contain a node_modules directory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-cli-test-warm-native-node-modules-'));
+  try {
+    const nativeOutput = 'android/app/.cxx/debug/Users/example/app/node_modules/react-native-screens';
+    mkdirSync(join(root, nativeOutput), { recursive: true });
+    mkdirSync(join(root, 'android/app/build'), { recursive: true });
+    expect(warmCarryCategories(['android/app/.cxx', 'android/app/build'], root)).toEqual({
+      dependencies: false,
+      pods: false,
+      nativeOutput: true,
+    });
+
+    writeFileSync(join(root, 'package.json'), '{"name":"app"}\n');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    expect(warmCarryCategories(['android/app/.cxx', 'node_modules'], root).dependencies).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('create action: a plain create reports the exact warm-worktree command when warm state exists', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-warm-hint-')));
@@ -532,9 +552,10 @@ test('create action: a plain create reports the exact warm-worktree command when
   try {
     const git = initScratchRepo(repo);
     writeFileSync(join(repo, '.gitignore'), 'node_modules/\nios/Pods/\nios/build/\n');
+    writeFileSync(join(repo, 'package.json'), '{"name":"app"}\n');
     mkdirSync(join(repo, 'ios'), { recursive: true });
     writeFileSync(join(repo, 'ios', 'Podfile'), "platform :ios, '15.1'\n");
-    git('git add .gitignore ios/Podfile');
+    git('git add .gitignore package.json ios/Podfile');
     git('git commit -q -m ignored');
     for (const rel of ['node_modules/pkg/index.js', 'ios/Pods/Manifest.lock', 'ios/build/generated.cpp']) {
       mkdirSync(dirname(join(repo, rel)), { recursive: true });
@@ -560,9 +581,10 @@ test('create action: --carry-ignored reports warm categories and the copy mode',
   try {
     const git = initScratchRepo(repo);
     writeFileSync(join(repo, '.gitignore'), 'node_modules/\nios/Pods/\nios/build/\n');
+    writeFileSync(join(repo, 'package.json'), '{"name":"app"}\n');
     mkdirSync(join(repo, 'ios'), { recursive: true });
     writeFileSync(join(repo, 'ios', 'Podfile'), "platform :ios, '15.1'\n");
-    git('git add .gitignore ios/Podfile');
+    git('git add .gitignore package.json ios/Podfile');
     git('git commit -q -m ignored');
     for (const rel of ['node_modules/pkg/index.js', 'ios/Pods/Manifest.lock', 'ios/build/generated.cpp']) {
       mkdirSync(dirname(join(repo, rel)), { recursive: true });
@@ -574,6 +596,7 @@ test('create action: --carry-ignored reports warm categories and the copy mode',
     expect(
       errs.some((e) => /Carried warm state: dependencies=yes, CocoaPods=yes, native build output=yes/.test(e)),
     ).toBe(true);
+    expect(errs.some((e) => /Worktree ready\. Cloned dependencies may be stale/.test(e))).toBe(true);
     expect(errs.some((e) => /Copy mode: (APFS copy-on-write clone|full byte copy)/.test(e))).toBe(true);
   } finally {
     process.exitCode = 0;
@@ -612,6 +635,7 @@ test('create action: a cold --carry-ignored create prints one exact dependency r
     const remedies = errs.filter((e) => /Dependencies were not carried/.test(e));
     expect(remedies).toHaveLength(1);
     expect(remedies[0]).toContain('npm ci');
+    expect(errs.some((e) => /Worktree ready\. Install dependencies yourself/.test(e))).toBe(true);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });

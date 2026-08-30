@@ -56,7 +56,7 @@ export interface WarmCarryCategories {
 
 export function warmCarryCategories(entries: string[], root?: string): WarmCarryCategories {
   const categories = {
-    dependencies: entries.some((rel) => rel === 'node_modules' || rel.endsWith('/node_modules')),
+    dependencies: root ? false : entries.some((rel) => rel === 'node_modules' || rel.endsWith('/node_modules')),
     pods: entries.some((rel) => rel === 'Pods' || rel.endsWith('/Pods')),
     nativeOutput: entries.some(
       (rel) =>
@@ -68,7 +68,7 @@ export function warmCarryCategories(entries: string[], root?: string): WarmCarry
   const inspect = (rel: string): void => {
     if (categories.dependencies && categories.pods && categories.nativeOutput) return;
     if (rel === 'node_modules' || rel.endsWith('/node_modules')) {
-      categories.dependencies = true;
+      categories.dependencies = existsSync(resolve(root, dirname(rel), 'package.json'));
       return;
     }
     if (rel === 'Pods' || rel.endsWith('/Pods')) {
@@ -243,14 +243,12 @@ export function registerCreate(worktree: Command): void {
         console.error(chalk.yellow(`Failed to carry over ${f.file}: ${f.error}`));
       }
 
-      let carriedIgnored = false;
       let carriedDeps = false;
       let warmSource: string[] = [];
       if (opts.carryIgnored) {
         const excluded = readWorktreeExclude(root);
         const skip = excluded && excluded.length ? excluded : settings?.worktree?.exclude || [];
         const res = cloneIgnoredEntries({ root, target, patterns: skip });
-        carriedIgnored = res.copied.length > 0;
         carriedDeps = warmCarryCategories(res.copied, target).dependencies;
         if (res.copied.length) {
           console.error(chalk.dim(`Cloned ${res.copied.length} gitignored path(s).`));
@@ -319,7 +317,7 @@ export function registerCreate(worktree: Command): void {
 
       console.error(
         chalk.dim(
-          carriedIgnored
+          carriedDeps
             ? 'Worktree ready. Cloned dependencies may be stale; reinstall if this branch changes them.'
             : 'Worktree ready. Install dependencies yourself before building.',
         ),
