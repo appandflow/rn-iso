@@ -14,6 +14,7 @@ import {
   detectFingerprintParity,
   checkRemoteDevice,
   checkSimSlim,
+  checkMainCheckout,
   runDoctor,
   detectXcodeMajor,
   parseXcodeMajor,
@@ -22,6 +23,107 @@ import {
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
 import assert from 'node:assert';
+
+test('checkMainCheckout reports missing dependencies, Pods, and native output', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-source-cold-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(join(project, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
+    mkdirSync(join(project, 'ios'), { recursive: true });
+    writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
+
+    const findings = checkMainCheckout(project, { brokenPods: [], upstream: null });
+    expect(findings.map((finding) => finding.title)).toEqual([
+      'The main checkout has no installed dependencies',
+      'The main checkout CocoaPods state is missing',
+      'The main checkout has no iOS warm build output',
+    ]);
+    expect(findings[0]?.fix).toMatch(/npm ci/);
+    expect(findings[1]?.fix).toMatch(/pod install/);
+    expect(findings[2]?.fix).toMatch(/stim ios/);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('checkMainCheckout recognizes non-npm dependency installs', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-main-pnpm-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(join(project, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+
+    const cold = checkMainCheckout(project, { brokenPods: [], upstream: null });
+    expect(cold.find((finding) => /installed dependencies/.test(finding.title))?.fix).toMatch(/pnpm install/);
+
+    mkdirSync(join(project, 'node_modules'));
+    const warm = checkMainCheckout(project, { brokenPods: [], upstream: null });
+    expect(warm.some((finding) => /installed dependencies/.test(finding.title))).toBe(false);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('checkMainCheckout reads warm state from the Git main checkout', () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-main-worktree-'));
+  const repo = join(base, 'repo');
+  const linked = join(base, 'linked');
+  try {
+    mkdirSync(join(repo, 'apps', 'mobile'), { recursive: true });
+    writeFileSync(join(repo, 'apps', 'mobile', 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(join(repo, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
+    execSync('git init -q', { cwd: repo });
+    execSync('git config user.email test@example.com', { cwd: repo });
+    execSync('git config user.name test', { cwd: repo });
+    execSync('git add .', { cwd: repo });
+    execSync('git -c commit.gpgsign=false commit -q -m init', { cwd: repo });
+    execSync(`git worktree add -q -b linked ${JSON.stringify(linked)}`, { cwd: repo });
+    mkdirSync(join(linked, 'apps', 'mobile', 'node_modules'));
+
+    const findings = checkMainCheckout(join(linked, 'apps', 'mobile'), { brokenPods: [], upstream: null });
+    expect(findings.some((finding) => /no installed dependencies/.test(finding.title))).toBe(true);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('checkMainCheckout reports broken CocoaPods links even when lockfiles match', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-source-broken-pods-'));
+  try {
+    mkdirSync(join(project, 'ios', 'Pods'), { recursive: true });
+    writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
+    writeFileSync(join(project, 'ios', 'Pods', 'Manifest.lock'), 'pods\n');
+
+    const findings = checkMainCheckout(project, {
+      brokenPods: [join(project, 'ios', 'Pods', 'Headers', 'sqlite3.h')],
+      upstream: null,
+    });
+    const broken = findings.find((finding) => /broken links/.test(finding.title));
+    expect(broken?.level).toBe('cost');
+    expect(broken?.fix).toMatch(/pod install --clean-install/);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('checkMainCheckout reports stale dependencies and the locally known upstream gap', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-source-stale-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(join(project, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
+    mkdirSync(join(project, 'node_modules'), { recursive: true });
+
+    const findings = checkMainCheckout(project, {
+      npmTreeValid: false,
+      upstream: { name: 'origin/main', ahead: 0, behind: 2 },
+    });
+    expect(findings.some((finding) => /dependency tree is stale/.test(finding.title))).toBe(true);
+    expect(findings.some((finding) => /2 commits behind origin\/main/.test(finding.title))).toBe(true);
+    expect(findings.find((finding) => /behind/.test(finding.title))?.detail).toMatch(/locally known/);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
 
 test('buildCacheProvider at the top level on SDK 53 is reported as a silent no-op', () => {
   const f = checkBuildCacheProvider({ expo: { buildCacheProvider: './p.js' } }, 53);
@@ -587,6 +689,24 @@ test('detectFingerprintParity skips silently outside a git repo without invoking
     expect(called).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('detectFingerprintParity skips a cold comparison when dependencies are installed', async () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'stim-cli-parity-installed-'));
+  try {
+    execSync('git init -q', { cwd: base });
+    mkdirSync(join(base, 'node_modules'));
+    let called = false;
+    const createFingerprint = async () => {
+      called = true;
+      return { hash: 'x', sources: [] };
+    };
+    expect(await detectFingerprintParity(base, { createFingerprint })).toBe(null);
+    expect(called).toBe(false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
   }
 });
 

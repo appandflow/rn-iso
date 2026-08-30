@@ -12,7 +12,7 @@ export default function doctorCommand(program: Command): void {
   program
     .command('doctor')
     .description(
-      'Report what stim-cli cannot handle on its own: project configuration that will silently defeat stim-cli or the builds you run outside it. Read-only; changes nothing.',
+      'Inspect the main checkout and report project state that can make native worktrees slow or invalid. Read-only; changes nothing.',
     )
     .option('--json', 'print the findings as JSON')
     .action(async (opts: DoctorOptions) => {
@@ -39,7 +39,7 @@ export default function doctorCommand(program: Command): void {
         console.log(chalk.green('Nothing to flag.'));
         console.log(
           chalk.dim(
-            'Checked: dev client, ccache, a conditionally-wired Metro cacheStores, a compilation-cache CAS left per-workspace, the build cache provider key, the EAS session, a configured SimSlim profile, fingerprint parity.',
+            'Checked: main-checkout dependencies, CocoaPods, native warm state and local upstream; dev client, ccache, Metro cacheStores, compilation cache, build cache provider, EAS session, SimSlim profile and fingerprint parity.',
           ),
         );
         console.log(
@@ -60,7 +60,7 @@ export default function doctorCommand(program: Command): void {
 
       console.log(
         chalk.dim(
-          `\n${findings.length} finding(s). Nothing here fails a build -- these are the things stim-cli cannot supply or work around on its own.`,
+          `\n${findings.length} finding(s). Fix relevant "costs time" findings before copying the main checkout into a native worktree.`,
         ),
       );
     });

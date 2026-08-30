@@ -38,9 +38,23 @@ Work in the current checkout by default. When the agent creates an app worktree
 for isolation or parallel work, carry its installed dependencies and native
 outputs.
 
+Before a native worktree task, run `stim doctor`. Doctor checks the main
+checkout even when it runs from a linked worktree. Fix its main-checkout
+dependency and CocoaPods findings. Inspect any locally known upstream gap.
+
 ```bash
+stim doctor
+
+# When more native worktrees are expected, build the main checkout once to
+# seed the shared build caches. Run these commands in the main checkout. Skip
+# this for one-off or JavaScript-only work.
+stim start
+stim ios                    # or: stim android
+stim stop
+
 # By default, this branches from the current HEAD. The warm flag carries installed
-# dependencies and native output. The command prints the new absolute path.
+# dependencies and native output. Use it on the first creation. Do not create a
+# cold worktree first and retry. The command prints the new absolute path.
 stim worktree create <name> --carry-ignored
 cd <printed-path>
 

@@ -1,11 +1,12 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join, relative, resolve } from 'path';
 import { getExecutor } from './exec.ts';
 import { detectIsExpo } from './project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
-import { dirtyFingerprintFiles, gitCommonDir, repoRoot } from './worktree.ts';
+import { dirtyFingerprintFiles, gitCommonDir, listWorktrees, repoRoot } from './worktree.ts';
+import { workspaceDerivedData } from './paths.ts';
 import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from './config.ts';
 import { liveOwnedDeviceCount } from './engine/device.ts';
 import { simslimIsOnPath } from './engine/simslim.ts';
@@ -44,6 +45,226 @@ function readJson(path: string): AnyJson | null {
   } catch {
     return null;
   }
+}
+
+interface UpstreamState {
+  name: string;
+  ahead: number;
+  behind: number;
+}
+
+function mainCheckoutProjectRoot(projectRoot: string): string {
+  const currentRepoRoot = repoRoot(projectRoot);
+  if (!currentRepoRoot) return projectRoot;
+  try {
+    // Git lists the main working tree before all linked worktrees.
+    const main = listWorktrees(currentRepoRoot)[0];
+    if (!main) return projectRoot;
+    const projectRel = relative(currentRepoRoot, realpathSync(projectRoot));
+    if (projectRel.startsWith('..')) return projectRoot;
+    return resolve(main.path, projectRel);
+  } catch {
+    return projectRoot;
+  }
+}
+
+function installedNpmTreeIsValid(projectRoot: string): boolean {
+  try {
+    getExecutor().runFile('npm', ['ls', '--all', '--json', '--silent'], { cwd: projectRoot, timeoutMs: 30_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const DEPENDENCY_STATES = [
+  { lock: 'pnpm-lock.yaml', installed: ['node_modules'], command: 'pnpm install' },
+  { lock: 'yarn.lock', installed: ['node_modules', '.pnp.cjs', '.pnp.js'], command: 'yarn install' },
+  { lock: 'bun.lock', installed: ['node_modules'], command: 'bun install' },
+  { lock: 'bun.lockb', installed: ['node_modules'], command: 'bun install' },
+  { lock: 'package-lock.json', installed: ['node_modules'], command: 'npm ci' },
+];
+
+function dependencyState(projectRoot: string) {
+  const root = repoRoot(projectRoot) ?? projectRoot;
+  let dir = projectRoot;
+  while (true) {
+    const state = DEPENDENCY_STATES.find((candidate) => existsSync(join(dir, candidate.lock)));
+    if (state) return { ...state, root: dir };
+    if (dir === root) return null;
+    const parent = dirname(dir);
+    if (parent === dir || relative(root, parent).startsWith('..')) return null;
+    dir = parent;
+  }
+}
+
+function hasInstalledDependencies(projectRoot: string, markers: string[] = ['node_modules', '.pnp.cjs', '.pnp.js']) {
+  return markers.some((entry) => existsSync(join(projectRoot, entry)));
+}
+
+function locallyKnownUpstream(projectRoot: string): UpstreamState | null {
+  try {
+    const name = getExecutor().runFile(
+      'git',
+      ['-C', projectRoot, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
+      { timeoutMs: 5000 },
+    );
+    const counts = getExecutor()
+      .runFile('git', ['-C', projectRoot, 'rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], {
+        timeoutMs: 5000,
+      })
+      .trim()
+      .split(/\s+/)
+      .map(Number);
+    const ahead = counts[0] ?? NaN;
+    const behind = counts[1] ?? NaN;
+    if (!name || !Number.isInteger(ahead) || !Number.isInteger(behind)) return null;
+    return { name, ahead, behind };
+  } catch {
+    return null;
+  }
+}
+
+function quotedPath(path: string): string {
+  return `'${path.replaceAll("'", "'\\''")}'`;
+}
+
+function brokenPodLinks(podsRoot: string): string[] {
+  try {
+    const output = getExecutor().runFile('find', ['-L', podsRoot, '-type', 'l', '-print'], { timeoutMs: 10_000 });
+    return output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export function checkMainCheckout(
+  projectRoot: string,
+  {
+    npmTreeValid,
+    brokenPods = undefined,
+    upstream = undefined,
+  }: {
+    npmTreeValid?: boolean | null;
+    brokenPods?: string[];
+    upstream?: UpstreamState | null;
+  } = {},
+): Finding[] {
+  const mainRoot = mainCheckoutProjectRoot(projectRoot);
+  const findings: Finding[] = [];
+  const dependencies = dependencyState(mainRoot);
+
+  if (dependencies) {
+    const installed = hasInstalledDependencies(dependencies.root, dependencies.installed);
+    const installCommand = `cd ${quotedPath(dependencies.root)} && ${dependencies.command}`;
+    if (!installed) {
+      findings.push(
+        finding(
+          'cost',
+          'The main checkout has no installed dependencies',
+          `A worktree cannot carry dependencies from ${dependencies.root}, so its first build must install them from scratch.`,
+          `Run \`${installCommand}\` before creating native worktrees.`,
+        ),
+      );
+    } else if (dependencies.lock === 'package-lock.json') {
+      const valid = npmTreeValid === undefined ? installedNpmTreeIsValid(dependencies.root) : npmTreeValid;
+      if (valid === false) {
+        findings.push(
+          finding(
+            'cost',
+            'The main checkout dependency tree is stale',
+            `npm reports that ${dependencies.root}/node_modules does not match the project dependency graph. Copying it makes each worktree start from the same invalid state.`,
+            `Run \`${installCommand}\` before creating native worktrees.`,
+          ),
+        );
+      }
+    }
+  }
+
+  const podfileLock = join(mainRoot, 'ios', 'Podfile.lock');
+  const podManifest = join(mainRoot, 'ios', 'Pods', 'Manifest.lock');
+  const podsRoot = join(mainRoot, 'ios', 'Pods');
+  if (existsSync(podfileLock)) {
+    let podsState: 'missing' | 'stale' | null = null;
+    if (!existsSync(podManifest)) podsState = 'missing';
+    else {
+      try {
+        if (readFileSync(podfileLock, 'utf-8') !== readFileSync(podManifest, 'utf-8')) podsState = 'stale';
+      } catch {
+        podsState = 'stale';
+      }
+    }
+    if (podsState) {
+      const iosRoot = join(mainRoot, 'ios');
+      const podCommand = existsSync(join(mainRoot, 'Gemfile'))
+        ? `cd ${quotedPath(iosRoot)} && bundle exec pod install`
+        : `cd ${quotedPath(iosRoot)} && pod install`;
+      findings.push(
+        finding(
+          'cost',
+          `The main checkout CocoaPods state is ${podsState}`,
+          `ios/Pods cannot be reused safely because its Manifest.lock ${podsState === 'missing' ? 'is absent' : 'does not match ios/Podfile.lock'}.`,
+          `Run \`${podCommand}\` before creating native worktrees.`,
+        ),
+      );
+    }
+
+    const broken = brokenPods === undefined && existsSync(podsRoot) ? brokenPodLinks(podsRoot) : brokenPods || [];
+    if (broken.length) {
+      const iosRoot = join(mainRoot, 'ios');
+      const podCommand = existsSync(join(mainRoot, 'Gemfile'))
+        ? `cd ${quotedPath(iosRoot)} && bundle exec pod install --clean-install`
+        : `cd ${quotedPath(iosRoot)} && pod install --clean-install`;
+      findings.push(
+        finding(
+          'cost',
+          'The main checkout CocoaPods state has broken links',
+          `${broken.length} symlink${broken.length === 1 ? '' : 's'} under ios/Pods point to missing files. Worktrees copy these broken links and can fail during compilation. First: ${broken[0]}.`,
+          `Run \`${podCommand}\` before creating native worktrees.`,
+        ),
+      );
+    }
+  }
+
+  const coldPlatforms = [
+    existsSync(join(mainRoot, 'ios')) &&
+    !existsSync(join(mainRoot, 'ios', 'build')) &&
+    !existsSync(join(workspaceDerivedData(mainRoot), 'Build', 'Products'))
+      ? 'iOS'
+      : null,
+    existsSync(join(mainRoot, 'android')) &&
+    !existsSync(join(mainRoot, 'android', 'build')) &&
+    !existsSync(join(mainRoot, 'android', 'app', 'build'))
+      ? 'Android'
+      : null,
+  ].filter((platform): platform is string => platform !== null);
+  if (coldPlatforms.length) {
+    findings.push(
+      finding(
+        'note',
+        `The main checkout has no ${coldPlatforms.join(' or ')} warm build output`,
+        'The shared Stim artifact or compilation cache can still be warm. Building the main checkout once gives later native worktrees the strongest warm starting point.',
+        `When more native worktrees are expected, run \`stim start\`, \`stim ${coldPlatforms[0] === 'iOS' ? 'ios' : 'android'}\`, and \`stim stop\` from ${mainRoot}.`,
+      ),
+    );
+  }
+
+  const knownUpstream = upstream === undefined ? locallyKnownUpstream(mainRoot) : upstream;
+  if (knownUpstream && knownUpstream.behind > 0) {
+    findings.push(
+      finding(
+        'note',
+        `The main checkout is ${knownUpstream.behind} commit${knownUpstream.behind === 1 ? '' : 's'} behind ${knownUpstream.name}`,
+        'The count uses the locally known upstream ref. A fetch can reveal additional commits. A later rebase or merge can change native inputs and invalidate work done from the older base.',
+        `Run \`git -C ${quotedPath(mainRoot)} fetch --prune\`, then inspect the branch before creating the worktree.`,
+      ),
+    );
+  }
+
+  return findings;
 }
 
 export function checkDevClient(pkg: AnyJson | null, isExpo: boolean = true): Finding | null {
@@ -436,6 +657,7 @@ export function runDoctor(
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
 
   return [
+    ...checkMainCheckout(projectRoot),
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
     checkCompilationCache(podfile, xcodeMajor),
@@ -522,6 +744,7 @@ export async function detectFingerprintParity(
   const exec = getExecutor();
   const quotedRoot = JSON.stringify(projectRoot);
   if (exec.runQuiet(`git -C ${quotedRoot} rev-parse --git-dir`, { timeoutMs: 10000 }) == null) return null;
+  if (hasInstalledDependencies(projectRoot)) return null;
 
   const platform = existsSync(join(projectRoot, 'ios'))
     ? 'ios'
