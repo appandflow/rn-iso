@@ -39,7 +39,8 @@ for isolation or parallel work, carry its installed dependencies and native
 outputs.
 
 ```bash
-# For an agent-created app worktree. The command prints the new absolute path.
+# For an agent-created app worktree. It branches from the current HEAD and
+# prints the new absolute path.
 stim worktree create <name> --carry-ignored
 cd <printed-path>
 

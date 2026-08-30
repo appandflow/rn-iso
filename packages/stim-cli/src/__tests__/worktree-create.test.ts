@@ -129,6 +129,31 @@ test('create action: success path writes exactly one stdout line, the worktree p
   }
 });
 
+test('create action: defaults to the source checkout HEAD when origin/HEAD differs', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-default-head-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    const freshSha = git('git rev-parse HEAD').trim();
+    git(`git update-ref refs/remotes/origin/main ${freshSha}`);
+    git('git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main');
+    writeFileSync(join(repo, 'CURRENT'), 'current checkout');
+    git('git add CURRENT');
+    git('git commit -q -m current');
+    const headSha = git('git rev-parse HEAD').trim();
+
+    await runCreateInRepo(repo, 'feat-default-head', {});
+    const target = join(defaultWorktreeDir(repo), 'feat-default-head');
+
+    expect(execSync('git rev-parse HEAD', { cwd: target, encoding: 'utf-8' }).trim()).toBe(headSha);
+    expect(headSha).not.toBe(freshSha);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('create action: rejects a --base this repo cannot resolve, before creating anything, on stderr, exit 1', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-badbase-')));

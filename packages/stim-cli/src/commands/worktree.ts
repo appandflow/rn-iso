@@ -50,7 +50,7 @@ export function registerCreate(worktree: Command): void {
     .description('Create a git worktree with its environment set up. Prints the worktree path on stdout.')
     .option(
       '--base <ref>',
-      'base ref: "fresh" (origin/HEAD, default), "head", or any ref this repo resolves (branch, tag, sha)',
+      'base ref: "head" (current HEAD, default), "fresh" (origin/HEAD), or any ref this repo resolves (branch, tag, sha)',
     )
     .option('--label <label>', 'stim-cli shortcut for the worktree (defaults to the worktree name)')
     .option(
@@ -78,7 +78,7 @@ export function registerCreate(worktree: Command): void {
         console.error(chalk.yellow(`Warning: setting "${key}" is not read by stim-cli and will be ignored.`));
       }
 
-      const base = opts.base || settings?.worktree?.baseRef || 'fresh';
+      const base = opts.base || settings?.worktree?.baseRef || 'head';
 
       const dir = settings.worktreeDir || defaultWorktreeDir(root);
       const target = worktreePath({ worktreeDir: dir, name });
