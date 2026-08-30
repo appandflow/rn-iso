@@ -848,6 +848,22 @@ and produces an app that cannot load a bundle.
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for.
 
+OPTIONAL SIMSLIM PROFILE
+  Install SimSlim once on each Mac:
+
+    brew install mobai-app/tap/simslim
+
+  Then commit a profile and select it in .stim-cli.json:
+
+    { "ios": { "simslimProfile": ".simslim/dev.json" } }
+
+  SimSlim requires an iOS 18 or newer simulator. On each local \`stim ios\`,
+  Stim reconciles that profile on the owned simulator before the app build.
+  The first change can update services and reboot the simulator. A matching
+  profile is a fast no-op on later launches. The settings persist across normal
+  shutdowns and reboots. Removing the setting restores stock services when
+  Stim applied the profile. Stim never changes an unowned or remote simulator.
+
 NOTHING ABOVE NEEDS A CHANGE TO THE REPO
 Runtime state is stored outside the project tree under
 $STIM_CLI_HOME/workspaces/<project>--<digest>/ (default ~/.stim-cli/workspaces/).
@@ -1255,7 +1271,11 @@ repo, so a device model or a carry-over rule every worktree should share
 belongs there:
 
   {
-    "ios": { "deviceType": "iPhone 17 Pro", "runtime": "26.2" },
+    "ios": {
+      "deviceType": "iPhone 17 Pro",
+      "runtime": "26.2",
+      "simslimProfile": ".simslim/dev.json"
+    },
     "android": { "variant": "productionDebug" },
     "worktree": { "baseRef": "head" },
     "caches": ["~/.myapp-metro-cache"]
@@ -1274,6 +1294,18 @@ KEYS STIM-CLI READS
   ios.remote            "proxy" or "eas" to use that remote backend, the same
                         as passing \`--remote proxy\` or \`--remote eas\`. The
                         build still runs here; only the device is elsewhere.
+  ios.simslimProfile    a SimSlim JSON profile under the repository root (or
+                        project root outside Git), at most 64 KiB. Install the
+                        external tool once with
+                        \`brew install mobai-app/tap/simslim\`. SimSlim requires
+                        an iOS 18 or newer simulator. Each local \`stim ios\`
+                        reconciles the profile on its Stim-owned simulator.
+                        The first change can reboot it; a matching profile is a
+                        fast no-op. Removing the setting restores stock services
+                        when Stim applied the profile. Absolute paths, root or
+                        symlink escapes, and missing files are refused before
+                        simulator creation. Remote and unowned simulators are
+                        never changed.
   android.systemImage   e.g. "system-images;android-36;google_apis;arm64-v8a"
   android.dataPartitionSizeGb
                         whole GiB for a newly created owned AVD's data

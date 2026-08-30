@@ -13,6 +13,7 @@ import {
   checkMetroCache,
   detectFingerprintParity,
   checkRemoteDevice,
+  checkSimSlim,
   runDoctor,
   detectXcodeMajor,
   parseXcodeMajor,
@@ -415,6 +416,36 @@ test('runDoctor emits one concurrency note when a limit is set', () => {
   rmSync(project, { recursive: true, force: true });
 });
 
+test('checkSimSlim reports only configured profiles that cannot run', () => {
+  expect(checkSimSlim()).toBeNull();
+  expect(checkSimSlim({ configured: true, onPath: true })).toBeNull();
+  const missing = checkSimSlim({ configured: true, onPath: false });
+  assert(missing);
+  expect(missing.level).toBe('cost');
+  expect(missing.fix).toMatch(/brew install/);
+
+  const invalid = checkSimSlim({ profileError: 'missing profile.json' });
+  assert(invalid);
+  expect(invalid.title).toMatch(/invalid/i);
+  expect(invalid.detail).toMatch(/missing profile/);
+});
+
+test('runDoctor reports a configured SimSlim profile when the binary is missing', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-simslim-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(join(project, 'simslim.json'), '{}\n');
+    writeFileSync(join(project, '.stim-cli.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
+    const findings = runDoctor(project, {
+      concurrency: { maxBuilds: 0, maxDevices: 0 },
+      lookupSimSlim: () => false,
+    });
+    expect(findings.some((finding) => /SimSlim/.test(finding.title) && finding.level === 'cost')).toBe(true);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('a project with no provider configured at all is reported as nothing', () => {
   expect(checkBuildCacheProvider({ expo: {} }, 57)).toBe(null);
   expect(checkBuildCacheProvider({ expo: {} }, 53)).toBe(null);
@@ -657,6 +688,28 @@ test('runDoctor checks one shared backend once', () => {
     expect(findings.filter((finding) => finding.title === 'This project uses a remote proxy')).toHaveLength(1);
   } finally {
     rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('runDoctor resolves a SimSlim profile from the repository root in a monorepo', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'stim-cli-doc-monorepo-'));
+  const project = join(repo, 'apps', 'mobile');
+  try {
+    mkdirSync(project, { recursive: true });
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'mobile' }));
+    writeFileSync(join(repo, 'simslim.json'), '{}\n');
+    writeFileSync(join(repo, '.stim-cli.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
+    execSync('git init -q', { cwd: repo });
+
+    const findings = runDoctor(project, {
+      concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      lookupSimSlim: () => false,
+    });
+
+    expect(findings.some((finding) => finding.title.includes('SimSlim is not installed'))).toBe(true);
+    expect(findings.some((finding) => finding.title === 'The SimSlim profile is invalid')).toBe(false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
   }
 });
 

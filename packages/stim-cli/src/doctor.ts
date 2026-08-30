@@ -5,9 +5,10 @@ import { getExecutor } from './exec.ts';
 import { detectIsExpo } from './project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
-import { dirtyFingerprintFiles } from './worktree.ts';
+import { dirtyFingerprintFiles, gitCommonDir, repoRoot } from './worktree.ts';
 import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from './config.ts';
 import { liveOwnedDeviceCount } from './engine/device.ts';
+import { simslimIsOnPath } from './engine/simslim.ts';
 import { listBuildSlots } from './engine/build-slots.ts';
 import { type IosSimRecord, listAllIosSims } from './sim/ios.ts';
 import { ccacheEnabled, COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from './engine/xcode.ts';
@@ -19,7 +20,7 @@ import {
   providerFromConfig,
   resolveEasCliBin,
 } from './engine/remote-cache.ts';
-import { remoteAndroidSetting, remoteIosSetting, resolveSettings } from './settings.ts';
+import { iosSimSlimProfileSetting, remoteAndroidSetting, remoteIosSetting, resolveSettings } from './settings.ts';
 import type { RemoteDeviceBackend } from './types.ts';
 
 type AnyJson = Record<string, unknown>;
@@ -292,6 +293,32 @@ export function checkRemoteDevice({
   );
 }
 
+export function checkSimSlim({
+  configured = false,
+  profileError = null,
+  onPath = false,
+}: {
+  configured?: boolean;
+  profileError?: string | null;
+  onPath?: boolean;
+} = {}): Finding | null {
+  if (profileError) {
+    return finding(
+      'cost',
+      'The SimSlim profile is invalid',
+      profileError,
+      'Set ios.simslimProfile to a readable JSON profile inside the repository.',
+    );
+  }
+  if (!configured || onPath) return null;
+  return finding(
+    'cost',
+    'A SimSlim profile is configured, but SimSlim is not installed',
+    '`stim ios` needs the `simslim` command to apply the profile to its owned simulator.',
+    'brew install mobai-app/tap/simslim',
+  );
+}
+
 export function runDoctor(
   projectRoot: string,
   {
@@ -304,6 +331,7 @@ export function runDoctor(
     remoteEnv = process.env,
     lookupAgentDevice = null,
     lookupEasCli = null,
+    lookupSimSlim = null,
   }: {
     readFile?: typeof readFileSync;
     xcodeMajor?: number | null;
@@ -314,6 +342,7 @@ export function runDoctor(
     remoteEnv?: NodeJS.ProcessEnv;
     lookupAgentDevice?: (() => boolean) | null;
     lookupEasCli?: (() => boolean) | null;
+    lookupSimSlim?: (() => boolean) | null;
   } = {},
 ): Finding[] {
   const read = (rel: string): string | null => {
@@ -361,7 +390,24 @@ export function runDoctor(
     });
   }
 
-  const projectSettings = resolveSettings({ projectPath: projectRoot, repoRoot: projectRoot });
+  const settingsRepoRoot = repoRoot(projectRoot) ?? projectRoot;
+  const projectSettings = resolveSettings({
+    projectPath: projectRoot,
+    gitCommonDir: gitCommonDir(projectRoot),
+    repoRoot: settingsRepoRoot,
+  });
+  let simslimProfile: string | null = null;
+  let simslimProfileError: string | null = null;
+  try {
+    simslimProfile = iosSimSlimProfileSetting(projectSettings, settingsRepoRoot);
+  } catch (error) {
+    simslimProfileError = String((error as Error)?.message || error);
+  }
+  const simslimFinding = checkSimSlim({
+    configured: Boolean(simslimProfile),
+    profileError: simslimProfileError,
+    onPath: simslimProfile ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
+  });
   const remoteBackends = [
     ...new Set([remoteIosSetting(projectSettings), remoteAndroidSetting(projectSettings)]),
   ].filter((backend): backend is RemoteDeviceBackend => backend !== null);
@@ -397,6 +443,7 @@ export function runDoctor(
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
     easFinding,
     concurrencyFinding,
+    simslimFinding,
     ...remoteFindings,
   ].filter((f): f is Finding => Boolean(f));
 }

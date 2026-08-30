@@ -29,6 +29,7 @@ const KNOWN_SETTINGS = new Set([
   'ios.runtime',
   'ios.configuration',
   'ios.remote',
+  'ios.simslimProfile',
   'android.systemImage',
   'android.dataPartitionSizeGb',
   'android.avdConfigFile',
@@ -281,6 +282,46 @@ export function androidAvdConfigSetting(settings: unknown, settingsRoot: string)
 export function androidAvdConfigSettingError(settings: unknown, projectPath: string): string | null {
   try {
     androidAvdConfigSetting(settings, projectPath);
+    return null;
+  } catch (error) {
+    return String((error as Error)?.message || error);
+  }
+}
+
+export function iosSimSlimProfileSetting(settings: unknown, settingsRoot: string): string | null {
+  if (!isPlainObject(settings) || !isPlainObject(settings.ios) || !('simslimProfile' in settings.ios)) return null;
+  const value = settings.ios.simslimProfile;
+  if (
+    typeof value !== 'string' ||
+    !value.trim() ||
+    value !== value.trim() ||
+    /[\r\n\0]/.test(value) ||
+    isAbsolute(value)
+  ) {
+    throw new Error(
+      'Invalid ios.simslimProfile setting. Expected a relative JSON file path inside the settings root (repository root, or project root outside Git).',
+    );
+  }
+  try {
+    const root = realpathSync(settingsRoot);
+    const candidate = resolve(root, value);
+    if (pathEscapesRoot(root, candidate)) throw new Error('path escapes the settings root');
+    const path = realpathSync(candidate);
+    if (pathEscapesRoot(root, path)) throw new Error('symlink target escapes the settings root');
+    const stat = statSync(path);
+    if (!stat.isFile()) throw new Error('path is not a regular file');
+    if (stat.size > 64 * 1024) throw new Error('file exceeds 64 KiB');
+    return path;
+  } catch (error) {
+    throw new Error(`Could not read ios.simslimProfile ${value}: ${String((error as Error)?.message || error)}`, {
+      cause: error,
+    });
+  }
+}
+
+export function iosSimSlimProfileSettingError(settings: unknown, settingsRoot: string): string | null {
+  try {
+    iosSimSlimProfileSetting(settings, settingsRoot);
     return null;
   } catch (error) {
     return String((error as Error)?.message || error);

@@ -1353,10 +1353,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return null;
   };
 
+  const settingsRepoRoot = d.repoRoot(root);
   const settings = d.resolveSettings({
     projectPath: root,
     gitCommonDir: d.gitCommonDir(root),
-    repoRoot: d.repoRoot(root),
+    repoRoot: settingsRepoRoot,
   });
   for (const key of unknownSettingKeys(settings)) {
     note(chalk.yellow(`Warning: setting "${key}" is not read by stim-cli and will be ignored.`));
@@ -1411,12 +1412,16 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   });
   if (capacity) return fail(capacity);
 
+  let metroPort = proj?.metroPort ?? null;
+  if (!(await resolveMetroPort())) return null;
+
   let device: Awaited<ReturnType<typeof ensureOwnedDevice>>;
   try {
     device = await d.ensureOwnedDevice({
       platform: PLATFORM,
       project: proj,
       projectPath: root,
+      settingsRoot: settingsRepoRoot ?? root,
       label,
       settings,
       flags: {},
@@ -1431,7 +1436,6 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     });
   }
 
-  let metroPort = proj?.metroPort ?? null;
   let bootDuration = '';
   let bootPromise!: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>;
   let udid = '';
@@ -1903,7 +1907,6 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return true;
   }
 
-  if (!(await resolveMetroPort())) return null;
   if (!(await resolveInitialFingerprint())) return null;
   await resolveRemoteArtifact();
   if (!(await waitForSharedBuild())) return null;

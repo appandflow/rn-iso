@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -8,6 +8,8 @@ import {
   androidDataPartitionSizeBytes,
   androidDataPartitionSizeGbSetting,
   androidDataPartitionSizeGbSettingError,
+  iosSimSlimProfileSetting,
+  iosSimSlimProfileSettingError,
   mergeSettingsLayers,
   ngrokUrlSetting,
   parseAndroidAvdConfigIni,
@@ -116,7 +118,12 @@ test('unknownSettingKeys reports keys stim-cli no longer reads', () => {
 test('unknownSettingKeys accepts every key that is still honoured', () => {
   expect(
     unknownSettingKeys({
-      ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2', configuration: 'Release' },
+      ios: {
+        deviceType: 'iPhone 17 Pro',
+        runtime: '26.2',
+        configuration: 'Release',
+        simslimProfile: '.simslim/dev.json',
+      },
       android: {
         systemImage: 'pkg',
         dataPartitionSizeGb: 8,
@@ -128,6 +135,29 @@ test('unknownSettingKeys accepts every key that is still honoured', () => {
       worktreeDir: '/tmp/wt',
     }),
   ).toEqual([]);
+});
+
+describe('iOS SimSlim profile settings', () => {
+  test('resolves a repository-contained profile and treats an absent setting as disabled', () => {
+    writeFileSync(join(tmpHome, 'simslim.json'), '{}\n');
+    expect(iosSimSlimProfileSetting({ ios: { simslimProfile: 'simslim.json' } }, tmpHome)).toBe(
+      realpathSync(join(tmpHome, 'simslim.json')),
+    );
+    expect(iosSimSlimProfileSetting({}, tmpHome)).toBeNull();
+  });
+
+  test('rejects invalid paths, missing profiles, and symlink escapes', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'stim-cli-simslim-outside-'));
+    try {
+      writeFileSync(join(outside, 'profile.json'), '{}\n');
+      symlinkSync(join(outside, 'profile.json'), join(tmpHome, 'linked.json'));
+      for (const path of ['', '../profile.json', join(outside, 'profile.json'), 'missing.json', 'linked.json']) {
+        expect(iosSimSlimProfileSettingError({ ios: { simslimProfile: path } }, tmpHome)).toBeTruthy();
+      }
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('Android AVD config settings', () => {

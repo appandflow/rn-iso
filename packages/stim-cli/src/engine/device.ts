@@ -20,8 +20,9 @@ import {
   resolveOwnedAvdSerial,
   waitForBoot,
 } from '../sim/android.ts';
-import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting } from '../settings.ts';
+import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting, iosSimSlimProfileSetting } from '../settings.ts';
 import { teardownOwnedAvd } from '../teardown.ts';
+import { reconcileSimSlim } from './simslim.ts';
 
 export interface OwnedDeviceRecord {
   deviceUdid?: string;
@@ -32,10 +33,11 @@ export interface OwnedDeviceRecord {
   consolePort?: number;
   serial?: string;
   setupIncomplete?: boolean;
+  simslimManaged?: boolean;
 }
 
 interface DeviceSettings {
-  ios?: { deviceType?: string; runtime?: string };
+  ios?: { deviceType?: string; runtime?: string; simslimProfile?: string };
   android?: {
     systemImage?: string;
     dataPartitionSizeGb?: number;
@@ -84,6 +86,7 @@ export async function ensureOwnedDevice({
   alive = isPidAlive,
   configureAvd = configureNewOwnedAvd,
   teardownAvd = teardownOwnedAvd,
+  reconcileIosSimulator = reconcileSimSlim,
 }: {
   platform: string;
   project?: ProjectRecord | null;
@@ -96,10 +99,21 @@ export async function ensureOwnedDevice({
   out?: Notify;
   configureAvd?: typeof configureNewOwnedAvd;
   teardownAvd?: typeof teardownOwnedAvd;
+  reconcileIosSimulator?: typeof reconcileSimSlim;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
   const record = (project?.platforms?.[platform] as OwnedDeviceRecord | undefined) ?? null;
   if (platform === 'ios') {
-    return ensureOwnedIosDevice({ record, projectPath, label, settings, flags, note, out });
+    return ensureOwnedIosDevice({
+      record,
+      projectPath,
+      settingsRoot,
+      label,
+      settings,
+      flags,
+      note,
+      out,
+      reconcileIosSimulator,
+    });
   }
   return ensureOwnedAndroidDevice({
     record,
@@ -117,23 +131,28 @@ export async function ensureOwnedDevice({
   });
 }
 
-function ensureOwnedIosDevice({
+async function ensureOwnedIosDevice({
   record,
   projectPath,
+  settingsRoot,
   label,
   settings,
   flags,
   note,
   out,
+  reconcileIosSimulator,
 }: {
   record: OwnedDeviceRecord | null;
   projectPath: string;
+  settingsRoot: string;
   label: string;
   settings: DeviceSettings;
   flags: DeviceFlags;
   note: Notify;
   out: Notify;
-}): OwnedDeviceRecord {
+  reconcileIosSimulator: typeof reconcileSimSlim;
+}): Promise<OwnedDeviceRecord> {
+  const simslimProfile = iosSimSlimProfileSetting(settings, settingsRoot);
   if (record?.deviceUdid) {
     if (record.owned) {
       const resolved = resolveOwnedIosSim(record.deviceUdid);
@@ -158,9 +177,19 @@ function ensureOwnedIosDevice({
           out(chalk.dim(`Booting owned sim ${sim.name} (${sim.udid})...`));
           bootIosSim(sim.udid);
         }
-        const updated = { deviceUdid: sim.udid, owned: true, deviceName: record.deviceName ?? sim.name };
-        setDevice(projectPath, 'ios', updated);
-        return updated;
+        const updated = {
+          deviceUdid: sim.udid,
+          owned: true,
+          deviceName: record.deviceName ?? sim.name,
+          ...(record.simslimManaged ? { simslimManaged: true } : {}),
+        };
+        return configureOwnedIosSim({
+          record: updated,
+          projectPath,
+          profile: simslimProfile,
+          out,
+          reconcileIosSimulator,
+        });
       }
     } else {
       const sim = listAllIosSims().find((s) => s.udid === record.deviceUdid);
@@ -190,7 +219,49 @@ function ensureOwnedIosDevice({
   const newRecord = { deviceUdid: created.udid, owned: true, deviceName: created.name };
   setDevice(projectPath, 'ios', newRecord);
   bootIosSim(created.udid);
-  return { ...newRecord, created: true };
+  const configured = await configureOwnedIosSim({
+    record: newRecord,
+    projectPath,
+    profile: simslimProfile,
+    out,
+    reconcileIosSimulator,
+  });
+  return { ...configured, created: true };
+}
+
+async function configureOwnedIosSim({
+  record,
+  projectPath,
+  profile,
+  out,
+  reconcileIosSimulator,
+}: {
+  record: OwnedDeviceRecord & { deviceUdid: string };
+  projectPath: string;
+  profile: string | null;
+  out: Notify;
+  reconcileIosSimulator: typeof reconcileSimSlim;
+}): Promise<OwnedDeviceRecord> {
+  if (profile) out(chalk.dim(`Applying the configured SimSlim profile to ${record.deviceUdid}...`));
+  else if (record.simslimManaged) out(chalk.dim(`Restoring stock simulator services on ${record.deviceUdid}...`));
+
+  const previouslyManaged = Boolean(record.simslimManaged);
+  if (profile && !record.simslimManaged) {
+    const pending = { ...record, simslimManaged: true };
+    setDevice(projectPath, 'ios', pending);
+    record = pending;
+  }
+  const result = await reconcileIosSimulator({
+    udid: record.deviceUdid,
+    profile,
+    previouslyManaged,
+    out,
+  });
+  const updated = { ...record };
+  if (result.managed) updated.simslimManaged = true;
+  else delete updated.simslimManaged;
+  setDevice(projectPath, 'ios', updated);
+  return updated;
 }
 
 function findOtherProjectOwningAvd(avdName: string, projectPath: string): string | null {
