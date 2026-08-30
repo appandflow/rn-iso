@@ -88,6 +88,13 @@ interface LogsInfo {
   dir?: string;
 }
 
+export interface CompilationCacheActivity {
+  status: 'reported' | 'unavailable' | 'not-run';
+  hits: number | null;
+  cacheableTasks: number | null;
+  hitRatePercent: number | null;
+}
+
 export interface IosFacts {
   platform: string;
   udid: string;
@@ -97,6 +104,7 @@ export interface IosFacts {
   cacheKey?: string | null;
   cacheHit: CacheHitLevel;
   cacheSkipped: boolean;
+  compilationCache: CompilationCacheActivity;
   waitedForBuild: { pid: number | null; ms: number } | null;
   appPath?: string | null;
   bundleId?: string | null;

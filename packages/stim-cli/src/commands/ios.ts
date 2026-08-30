@@ -70,9 +70,15 @@ import {
   type LoadProjectProviderResult,
 } from '../engine/remote-cache.ts';
 import { swapJsBundle } from '../engine/js-swap.ts';
-import { buildIos, readBundleId } from '../engine/xcode.ts';
+import {
+  buildIos,
+  compilationCacheActivityLine,
+  COMPILATION_CACHE_NOT_RUN,
+  COMPILATION_CACHE_UNAVAILABLE,
+  readBundleId,
+} from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
-import type { CacheHitLevel, IosFacts, RemoteDeviceBackend } from '../types.ts';
+import type { CacheHitLevel, CompilationCacheActivity, IosFacts, RemoteDeviceBackend } from '../types.ts';
 import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.ts';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../paths.ts';
@@ -160,6 +166,7 @@ interface BuildIosResultLike {
   exitCode?: number | null;
   appPath?: string;
   bundleId?: string;
+  compilationCache?: CompilationCacheActivity;
 }
 
 interface VerifyLaunchResultLike {
@@ -482,6 +489,7 @@ export function iosFacts({
   cacheKey,
   cacheHit,
   cacheSkipped = false,
+  compilationCache = COMPILATION_CACHE_NOT_RUN,
   waitedForBuild = null,
   appPath,
   bundleId,
@@ -498,6 +506,7 @@ export function iosFacts({
   cacheKey?: string | null;
   cacheHit?: boolean | string;
   cacheSkipped?: boolean;
+  compilationCache?: CompilationCacheActivity;
   waitedForBuild?: WaitedForBuild | null;
   appPath?: string | null;
   bundleId?: string | null;
@@ -516,6 +525,7 @@ export function iosFacts({
     cacheKey,
     cacheHit: cacheLevel(cacheHit),
     cacheSkipped: Boolean(cacheSkipped),
+    compilationCache,
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath,
     bundleId,
@@ -943,6 +953,7 @@ interface ReportIosResultArgs {
   storeHash: string;
   storeKey: string;
   cacheHit: CacheHitLevel;
+  compilationCache: CompilationCacheActivity;
   useBuildCache: boolean;
   waitedForBuild: WaitedForBuild | null;
   launchState: boolean | string;
@@ -969,6 +980,7 @@ function reportIosResult({
   storeHash,
   storeKey,
   cacheHit,
+  compilationCache,
   useBuildCache,
   waitedForBuild,
   launchState,
@@ -1001,6 +1013,7 @@ function reportIosResult({
     configuration,
     cacheKey: storeKey,
     cacheHit,
+    compilationCache,
     cacheSkipped: !useBuildCache,
     waitedForBuild,
     appPath,
@@ -1040,6 +1053,7 @@ function reportIosResult({
         phaseLine('app', bundleId),
         phaseLine('metro', metroResult),
         phaseLine('cache', cacheResult),
+        phaseLine('compilation cache', compilationCacheActivityLine(compilationCache)),
         phaseLine('logs', logsDir),
       ].join('\n'),
     );
@@ -1080,6 +1094,7 @@ interface FinishIosRunArgs {
   storeHash: string;
   storeKey: string;
   cacheHit: CacheHitLevel;
+  compilationCache: CompilationCacheActivity;
   useBuildCache: boolean;
   waitedForBuild: WaitedForBuild | null;
   closeWriter: () => void;
@@ -1117,6 +1132,7 @@ async function finishIosRun({
   storeHash,
   storeKey,
   cacheHit,
+  compilationCache,
   useBuildCache,
   waitedForBuild,
   closeWriter,
@@ -1240,6 +1256,7 @@ async function finishIosRun({
     storeHash,
     storeKey,
     cacheHit,
+    compilationCache,
     useBuildCache,
     waitedForBuild,
     launchState,
@@ -1427,6 +1444,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   let appPath: string | null = null;
   let bundleId: string | null = null;
   let cacheHit: CacheHitLevel = false;
+  let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
   let remote: LoadProjectProviderResult | null = null;
   let abandonedRemote = false;
   let uploadPending: Promise<RemoteUploadLike> | null = null;
@@ -1854,6 +1872,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             });
             return false;
           }
+          compilationCache = result.compilationCache ?? COMPILATION_CACHE_UNAVAILABLE;
           phase('build', `ok (${formatDuration(result.durationMs)})`);
           appPath = result.appPath ?? null;
           bundleId = result.bundleId ?? null;
@@ -1923,6 +1942,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     storeHash,
     storeKey,
     cacheHit,
+    compilationCache,
     useBuildCache,
     waitedForBuild,
     closeWriter: () => writer?.close?.(),

@@ -9,6 +9,7 @@ import { sharedCompilationCache, workspaceDerivedData } from '../paths.ts';
 import { createLineReader } from '../process-output.ts';
 import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagnostics } from './errors-xcode.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
+import type { CompilationCacheActivity } from '../types.ts';
 
 const IOS_DIR = 'ios';
 
@@ -446,7 +447,42 @@ export type BuildIosResult = {
   productsDir?: string;
   durationMs: number;
   transcriptLines: number;
+  compilationCache?: CompilationCacheActivity;
 };
+
+export const COMPILATION_CACHE_UNAVAILABLE: CompilationCacheActivity = {
+  status: 'unavailable',
+  hits: null,
+  cacheableTasks: null,
+  hitRatePercent: null,
+};
+
+export const COMPILATION_CACHE_NOT_RUN: CompilationCacheActivity = {
+  status: 'not-run',
+  hits: null,
+  cacheableTasks: null,
+  hitRatePercent: null,
+};
+
+export function parseCompilationCacheActivity(line: unknown): CompilationCacheActivity | null {
+  if (typeof line !== 'string') return null;
+  const match = line.match(/(?:note:\s*)?(\d+) hits \/ (\d+) cacheable tasks \((\d+(?:\.\d+)?)%\)/);
+  if (!match) return null;
+  return {
+    status: 'reported',
+    hits: Number(match[1]),
+    cacheableTasks: Number(match[2]),
+    hitRatePercent: Number(match[3]),
+  };
+}
+
+export function compilationCacheActivityLine(activity: CompilationCacheActivity): string {
+  if (activity.status === 'reported') {
+    return `${activity.hits}/${activity.cacheableTasks} hits (${activity.hitRatePercent}%)`;
+  }
+  if (activity.status === 'not-run') return 'not run; artifact cache supplied the app';
+  return 'unavailable; Xcode did not report reliable statistics';
+}
 
 export async function buildIos({
   root,
@@ -558,6 +594,7 @@ export async function buildIos({
   });
 
   const transcript: string[] = [];
+  let compilationCacheActivity: CompilationCacheActivity = COMPILATION_CACHE_UNAVAILABLE;
   let lastTranscriptLine = '';
   const onLine = (line: unknown) => {
     const msg = cleanLine(line);
@@ -565,6 +602,20 @@ export async function buildIos({
     if (msg.trim() === '') return;
     lastTranscriptLine = msg;
     logWriter.write({ src: 'build', level: 'debug', msg });
+    const activity = parseCompilationCacheActivity(msg);
+    if (activity) {
+      compilationCacheActivity = activity;
+      logWriter.write({
+        src: 'build',
+        level: 'info',
+        msg: compilationCacheActivityLine(activity),
+        event: 'compilation_cache',
+        hits: activity.hits,
+        cacheableTasks: activity.cacheableTasks,
+        hitRatePercent: activity.hitRatePercent,
+      });
+      onNote(`compilation cache ${compilationCacheActivityLine(activity)}`);
+    }
   };
 
   let child: ChildProcess;
@@ -701,5 +752,6 @@ export async function buildIos({
     derivedDataPath: dd,
     productsDir: products,
     transcriptLines: transcript.length,
+    compilationCache: compilationCacheActivity,
   };
 }

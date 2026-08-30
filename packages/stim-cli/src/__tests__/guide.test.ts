@@ -39,6 +39,7 @@ test('the facts topic documents the fields each --json payload actually carries'
       'cacheKey',
       'cacheHit',
       'cacheSkipped',
+      'compilationCache',
       'waitedForBuild',
       'appPath',
       'bundleId',
