@@ -95,6 +95,7 @@ Each command takes `--json` and then prints exactly one line of JSON on stdout, 
   "cacheKey": "...",
   "cacheHit": "local",
   "cacheSkipped": false,
+  "compilationCache": { "status": "not-run", "hits": null, "cacheableTasks": null, "hitRatePercent": null },
   "appPath": "/...",
   "bundleId": "com.example.app",
   "launched": true,
@@ -105,6 +106,8 @@ Each command takes `--json` and then prints exactly one line of JSON on stdout, 
 ```
 
 `cacheHit` is a LEVEL, not a boolean: `"local"` (this machine's shared cache), `"remote"` (the project's own Expo `buildCacheProvider`, whose artifact is copied into the local cache on the way past) or `false` (it was compiled). `cacheSkipped` is true only when `--no-build-cache` was passed, which is "nothing was looked up" rather than "nothing was found".
+
+`compilationCache` reports Xcode's compilation-cache summary when Xcode builds the app. Its status is `"not-run"` when the artifact cache supplies the app. Its status is `"unavailable"` when Xcode does not report reliable statistics.
 
 In a different worktree of the same app, the same two commands get a _different_ owned sim and Metro port, so both run side by side.
 

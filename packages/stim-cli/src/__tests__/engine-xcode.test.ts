@@ -9,6 +9,7 @@ import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { createNdjsonWriter, parseNdjsonText } from '../ndjson.ts';
 import { workspaceDerivedData, workspaceLogsDir } from '../paths.ts';
 import { readManifest } from '../cache-manifest.ts';
+import type { CompilationCacheActivity } from '../types.ts';
 import {
   buildIos,
   ccacheEnabled,
@@ -18,6 +19,7 @@ import {
   findAppBundle,
   listSchemes,
   parseBundleId,
+  parseCompilationCacheActivity,
   parseSchemeList,
   prefixMapping,
   readPodfileProperties,
@@ -32,6 +34,17 @@ import {
   tailLines,
   xcodebuildArgs,
 } from '../engine/xcode.ts';
+
+test('parseCompilationCacheActivity reads Xcode 26 compilation-cache metrics from a fixture', () => {
+  const fixture = readFileSync(new URL('./fixtures/xcode-compilation-cache.txt', import.meta.url), 'utf-8');
+  expect(parseCompilationCacheActivity(fixture)).toEqual({
+    status: 'reported',
+    hits: 1394,
+    cacheableTasks: 1520,
+    hitRatePercent: 91.7,
+  });
+  expect(parseCompilationCacheActivity('Cache hit')).toBe(null);
+});
 
 const REAL_PROJECT_LIST_JSON = `{
   "project" : {
@@ -124,6 +137,7 @@ type BuildIosResultLike = {
     remedy?: string;
     [key: string]: unknown;
   }>;
+  compilationCache?: CompilationCacheActivity;
 };
 
 function asResult(value: unknown): BuildIosResultLike {
@@ -792,6 +806,43 @@ describe('buildIos with a mocked executor', () => {
     makeProduct(dd);
     child.emit('close', 0, null);
     await promise;
+  });
+
+  test('streams and returns the Xcode compilation-cache summary', async () => {
+    const child = fakeChild();
+    harness(tmp, { child });
+    const writer = recordingWriter();
+    const notes: string[] = [];
+    const dd = join(tmp, 'dd');
+    const promise = buildIos({
+      root: tmp,
+      udid: 'u',
+      logWriter: writer,
+      derivedDataPath: dd,
+      compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES'],
+      onNote: (line) => notes.push(line),
+    });
+
+    child.stdout.emit('data', 'CompilationCacheMetrics\nnote: 1394 hits / 1520 cacheable tasks (91.7%)\n');
+    makeProduct(dd);
+    child.emit('close', 0, null);
+    const result = asResult(await promise);
+
+    expect(result.compilationCache).toEqual({
+      status: 'reported',
+      hits: 1394,
+      cacheableTasks: 1520,
+      hitRatePercent: 91.7,
+    });
+    expect(notes).toEqual(['compilation cache 1394/1520 hits (91.7%)']);
+    expect(writer.records).toContainEqual(
+      expect.objectContaining({
+        event: 'compilation_cache',
+        hits: 1394,
+        cacheableTasks: 1520,
+        hitRatePercent: 91.7,
+      }),
+    );
   });
 
   test('a line left unterminated by a dying child is still recorded', async () => {

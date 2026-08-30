@@ -1475,6 +1475,7 @@ describe('success output', () => {
     expect(logs[0]).toContain(phaseLine('app', 'com.example.app'));
     expect(logs[0]).toContain(phaseLine('metro', 'running on port 8082'));
     expect(logs[0]).toContain(phaseLine('cache', 'built'));
+    expect(logs[0]).toContain(phaseLine('compilation cache', 'unavailable; Xcode did not report reliable statistics'));
     expect(logs[0]).toContain(phaseLine('logs', workspaceLogsDir(root)));
     const text = errs.join('\n');
     expect(text).toMatch(/^  device {6}stim-cli-fixture \(BF2A\.\.\) booted \(\d+ms\)$/m);
@@ -1496,6 +1497,12 @@ describe('success output', () => {
     expect(facts.fingerprint).toBe(FINGERPRINT);
     expect(facts.cacheKey).toMatch(new RegExp(`^${FINGERPRINT}-debug-sim$`));
     expect(facts.cacheHit).toBe(false);
+    expect(facts.compilationCache).toEqual({
+      status: 'unavailable',
+      hits: null,
+      cacheableTasks: null,
+      hitRatePercent: null,
+    });
     expect(facts.appPath).toBe(appPath);
     expect(facts.bundleId).toBe('com.example.app');
     expect(facts.launched).toBe(true);
@@ -1860,6 +1867,7 @@ describe('iosFacts', () => {
       cacheKey: 'abc-debug-sim',
       cacheHit: 'local',
       cacheSkipped: false,
+      compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
       waitedForBuild: null,
       appPath: '/a/b.app',
       bundleId: 'com.x',

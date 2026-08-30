@@ -62,6 +62,12 @@ other line goes to stderr, so it is always safe to pipe.
                   the device; it is a page, not a deep link.
   cacheSkipped    true only when --no-build-cache was passed: "nothing was
                   looked up", which is a different fact from "nothing was found"
+  compilationCache
+                  Xcode compilation-cache activity for a compiled iOS app:
+                    { status: "reported", hits, cacheableTasks, hitRatePercent }
+                  status is "not-run" when the artifact cache supplied the app.
+                  status is "unavailable" when Xcode did not print reliable
+                  statistics. This field is separate from cacheHit
   waitedForBuild  { pid, ms } when ANOTHER workspace was already compiling this
                   exact fingerprint and this run waited for its artifact instead
                   of compiling a second copy (see \`guide lifecycle\`, "one
