@@ -22,6 +22,7 @@ import {
   hasUncommittedWork,
   isMainWorkingTree,
   isPodInstallChurn,
+  listCarryableIgnoredEntries,
   listWorktrees,
   podsOutOfSync,
   readWorktreeExclude,
@@ -44,6 +45,45 @@ interface WorktreeSettings {
     include?: string[];
     exclude?: string[];
   };
+}
+
+export interface WarmCarryCategories {
+  dependencies: boolean;
+  pods: boolean;
+  nativeOutput: boolean;
+}
+
+export function warmCarryCategories(entries: string[]): WarmCarryCategories {
+  return {
+    dependencies: entries.some((rel) => rel === 'node_modules' || rel.endsWith('/node_modules')),
+    pods: entries.some((rel) => rel === 'Pods' || rel.endsWith('/Pods')),
+    nativeOutput: entries.some(
+      (rel) =>
+        /(?:^|\/)ios\/build(?:\/|$)/.test(rel) || /(?:^|\/)android\/(?:.*\/)?(?:build|\.gradle)(?:\/|$)/.test(rel),
+    ),
+  };
+}
+
+function warmCategoryNames(categories: WarmCarryCategories): string[] {
+  const names: string[] = [];
+  if (categories.dependencies) names.push('dependencies');
+  if (categories.pods) names.push('CocoaPods');
+  if (categories.nativeOutput) names.push('native build output');
+  return names;
+}
+
+export function warmCarrySummary(entries: string[]): string {
+  const categories = warmCarryCategories(entries);
+  return `Carried warm state: dependencies=${categories.dependencies ? 'yes' : 'no'}, CocoaPods=${categories.pods ? 'yes' : 'no'}, native build output=${categories.nativeOutput ? 'yes' : 'no'}.`;
+}
+
+function dependencyInstallCommand(target: string): string {
+  let command = 'npm install';
+  if (existsSync(resolve(target, 'pnpm-lock.yaml'))) command = 'pnpm install';
+  else if (existsSync(resolve(target, 'yarn.lock'))) command = 'yarn install';
+  else if (existsSync(resolve(target, 'bun.lock')) || existsSync(resolve(target, 'bun.lockb'))) command = 'bun install';
+  else if (existsSync(resolve(target, 'package-lock.json'))) command = 'npm ci';
+  return `cd ${JSON.stringify(target)} && ${command}`;
 }
 
 export function registerCreate(worktree: Command): void {
@@ -165,35 +205,38 @@ export function registerCreate(worktree: Command): void {
 
       let carriedIgnored = false;
       let carriedDeps = false;
+      let warmSource: string[] = [];
       if (opts.carryIgnored) {
         const excluded = readWorktreeExclude(root);
         const skip = excluded && excluded.length ? excluded : settings?.worktree?.exclude || [];
         const res = cloneIgnoredEntries({ root, target, patterns: skip });
         carriedIgnored = res.copied.length > 0;
         carriedDeps = res.copied.some((rel) => rel === 'node_modules' || rel.endsWith('/node_modules'));
-        if (res.copied.length) console.error(chalk.dim(`Cloned ${res.copied.length} gitignored path(s).`));
-        if (carriedIgnored && !carriedDeps) {
+        if (res.copied.length) {
+          console.error(chalk.dim(`Cloned ${res.copied.length} gitignored path(s).`));
+          console.error(chalk.dim(warmCarrySummary(res.copied)));
           console.error(
-            chalk.yellow(
-              'No node_modules among them -- the source worktree has none. Install dependencies before building.',
+            chalk.dim(
+              res.cloned
+                ? 'Copy mode: APFS copy-on-write clone.'
+                : 'Copy mode: full byte copy. APFS copy-on-write clone was unavailable.',
             ),
           );
         }
-        if (!res.cloned) {
+        if (!carriedDeps) {
           console.error(
-            chalk.yellow(
-              'Copy-on-write clone unavailable (not APFS, or a different volume) -- these are full copies using real disk.',
-            ),
+            chalk.yellow(`Dependencies were not carried. Run \`${dependencyInstallCommand(target)}\` before building.`),
           );
         }
         for (const f of res.failed) {
           console.error(chalk.yellow(`Failed to clone ${f.file}: ${f.error}`));
         }
-        for (const d of depsOutOfSync(root, target, res.copied)) {
-          const where = d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`;
+        const staleDeps = depsOutOfSync(root, target, res.copied);
+        if (staleDeps.length) {
+          const manifests = staleDeps.map((d) => (d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`)).join(', ');
           console.error(
             chalk.yellow(
-              `Carried ${d.dir === '.' ? 'node_modules' : `${d.dir}/node_modules`} was installed for a different ${d.lockfile} than this branch's ${where}. Reinstall dependencies before building, or the dev server can die on a module the branch added.`,
+              `Carried dependencies do not match ${manifests}. Run \`${dependencyInstallCommand(target)}\` before building.`,
             ),
           );
         }
@@ -213,6 +256,10 @@ export function registerCreate(worktree: Command): void {
         } else if (changes?.conflicted) {
           console.error(chalk.yellow(carryConflictWarning(changes.files)));
         }
+      } else {
+        const excluded = readWorktreeExclude(root);
+        const skip = excluded && excluded.length ? excluded : settings?.worktree?.exclude || [];
+        warmSource = warmCategoryNames(warmCarryCategories(listCarryableIgnoredEntries(root, skip)));
       }
 
       const mainRoot = listWorktrees(root).find((candidate) => isMainWorkingTree(candidate.path))?.path || root;
@@ -231,6 +278,13 @@ export function registerCreate(worktree: Command): void {
             : 'Worktree ready. Install dependencies yourself before building.',
         ),
       );
+      if (warmSource.length) {
+        console.error(
+          chalk.yellow(
+            `Warm source not carried: ${warmSource.join(', ')}. For the next worktree, use: stim worktree create <name> --carry-ignored`,
+          ),
+        );
+      }
 
       console.log(target);
     });

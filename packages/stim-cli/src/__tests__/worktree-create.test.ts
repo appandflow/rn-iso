@@ -1,9 +1,15 @@
 import { execSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import type { Command } from 'commander';
-import { carriedChangesLine, carryConflictWarning, registerCreate } from '../commands/worktree.ts';
+import {
+  carriedChangesLine,
+  carryConflictWarning,
+  registerCreate,
+  warmCarryCategories,
+  warmCarrySummary,
+} from '../commands/worktree.ts';
 import { resetExecutor } from '../exec.ts';
 import { defaultWorktreeDir } from '../worktree.ts';
 import { findEnclosingWorktreeRoot, getProject, upsertProject } from '../config.ts';
@@ -483,6 +489,113 @@ test('create action: a plain create (no --carry-ignored) is pure HEAD -- no diff
     expect(readFileSync(join(wt, 'app.json'), 'utf-8')).toBe('{"expo":{}}\n');
     expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe('');
     expect(errs.some((e) => /Carried .* uncommitted|Could not carry/.test(e))).toBe(false);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('warmCarryCategories recognizes dependency, CocoaPods, and native output paths', () => {
+  expect(
+    warmCarryCategories([
+      'apps/mobile/node_modules',
+      'apps/mobile/ios/Pods',
+      'apps/mobile/ios/build',
+      'apps/mobile/android/app/build',
+    ]),
+  ).toEqual({ dependencies: true, pods: true, nativeOutput: true });
+  expect(warmCarrySummary(['node_modules'])).toBe(
+    'Carried warm state: dependencies=yes, CocoaPods=no, native build output=no.',
+  );
+});
+
+test('create action: a plain create reports the exact warm-worktree command when warm state exists', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-warm-hint-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    writeFileSync(join(repo, '.gitignore'), 'node_modules/\nios/Pods/\nios/build/\n');
+    mkdirSync(join(repo, 'ios'), { recursive: true });
+    writeFileSync(join(repo, 'ios', 'Podfile'), "platform :ios, '15.1'\n");
+    git('git add .gitignore ios/Podfile');
+    git('git commit -q -m ignored');
+    for (const rel of ['node_modules/pkg/index.js', 'ios/Pods/Manifest.lock', 'ios/build/generated.cpp']) {
+      mkdirSync(dirname(join(repo, rel)), { recursive: true });
+      writeFileSync(join(repo, rel), 'warm');
+    }
+
+    const { errs } = await runCreateInRepo(repo, 'feat-warm-hint', { base: 'head' });
+
+    expect(errs.some((e) => /Warm source not carried: dependencies, CocoaPods, native build output/.test(e))).toBe(
+      true,
+    );
+    expect(errs.some((e) => /stim worktree create <name> --carry-ignored/.test(e))).toBe(true);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: --carry-ignored reports warm categories and the copy mode', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-warm-summary-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    writeFileSync(join(repo, '.gitignore'), 'node_modules/\nios/Pods/\nios/build/\n');
+    mkdirSync(join(repo, 'ios'), { recursive: true });
+    writeFileSync(join(repo, 'ios', 'Podfile'), "platform :ios, '15.1'\n");
+    git('git add .gitignore ios/Podfile');
+    git('git commit -q -m ignored');
+    for (const rel of ['node_modules/pkg/index.js', 'ios/Pods/Manifest.lock', 'ios/build/generated.cpp']) {
+      mkdirSync(dirname(join(repo, rel)), { recursive: true });
+      writeFileSync(join(repo, rel), 'warm');
+    }
+
+    const { errs } = await runCreateInRepo(repo, 'feat-warm-summary', { base: 'head', carryIgnored: true });
+
+    expect(
+      errs.some((e) => /Carried warm state: dependencies=yes, CocoaPods=yes, native build output=yes/.test(e)),
+    ).toBe(true);
+    expect(errs.some((e) => /Copy mode: (APFS copy-on-write clone|full byte copy)/.test(e))).toBe(true);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: a cold plain create does not recommend --carry-ignored', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-cold-hint-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+
+    const { errs } = await runCreateInRepo(repo, 'feat-cold-hint', { base: 'head' });
+
+    expect(errs.some((e) => /Warm source not carried|--carry-ignored/.test(e))).toBe(false);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: a cold --carry-ignored create prints one exact dependency remedy', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-cold-carry-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    writeFileSync(join(repo, 'package-lock.json'), '{"lockfileVersion":3}\n');
+    git('git add package-lock.json');
+    git('git commit -q -m lockfile');
+
+    const { errs } = await runCreateInRepo(repo, 'feat-cold-carry', { base: 'head', carryIgnored: true });
+
+    const remedies = errs.filter((e) => /Dependencies were not carried/.test(e));
+    expect(remedies).toHaveLength(1);
+    expect(remedies[0]).toContain('npm ci');
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });

@@ -39,8 +39,8 @@ for isolation or parallel work, carry its installed dependencies and native
 outputs.
 
 ```bash
-# For an agent-created app worktree. By default, it branches from the current
-# HEAD and prints the new absolute path.
+# By default, this branches from the current HEAD. The warm flag carries installed
+# dependencies and native output. The command prints the new absolute path.
 stim worktree create <name> --carry-ignored
 cd <printed-path>
 

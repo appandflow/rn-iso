@@ -46,7 +46,13 @@ That carry-over is file-by-file, which suits a handful of small config files but
 
 It is a skip list rather than a copy list on purpose: forgetting to name something you needed shows up months later as a confusing build error, while forgetting to skip something only costs a needless copy.
 
-Each path is cloned with `cp -Rc`, so on APFS the copy is copy-on-write -- a 3.6 GB tree costs roughly 12s and tens of MB of real disk. Off by default because that only holds on APFS, within one volume: elsewhere the clone is refused and the fallback is a real copy of every byte, which `worktree create` warns about.
+Each path is cloned with `cp -Rc`, so on APFS the copy is copy-on-write -- a 3.6 GB tree costs roughly 12s and tens of MB of real disk. Off by default because that only holds on APFS, within one volume: elsewhere the clone is refused and the fallback is a real copy of every byte, which `worktree create` reports separately. The command also reports whether it carried dependencies, CocoaPods, and native build output.
+
+When a plain create detects those warm paths in the source, stderr gives the exact command for the next worktree:
+
+```
+Warm source not carried: dependencies, CocoaPods, native build output. For the next worktree, use: stim worktree create <name> --carry-ignored
+```
 
 Cloned dependencies match the source worktree, not necessarily the new branch's manifests -- the same contract as restoring a CI cache. Reinstall if the branch changes them.
 

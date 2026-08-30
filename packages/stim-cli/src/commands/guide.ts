@@ -725,10 +725,19 @@ but --base <ref> resolves to <sha>"  (worktree create)
   yourself does not fail in its LAST phase with
     error: The sandbox is not in sync with the Podfile.lock
 
-"No node_modules among them"  (worktree create --carry-ignored)
-  The clone can only carry what the source worktree has, and the source has no
-  node_modules. The path count above that line is not evidence of a usable
-  worktree. Install dependencies before building.
+"Warm source not carried: ... For the next worktree, use: stim worktree create
+<name> --carry-ignored"  (worktree create)
+  A plain create found installed dependencies, CocoaPods, or native build output
+  in the source. The new worktree stays clean. Use the printed command for the
+  next worktree to clone that warm state.
+
+"Carried warm state: dependencies=..., CocoaPods=..., native build output=..."
+  The line reports each useful warm category. The following copy-mode line says
+  whether APFS used a copy-on-write clone or Stim made a full byte copy.
+
+"Dependencies were not carried. Run ... before building."
+  The source has no node_modules to clone. Run the printed package-manager
+  command in the new worktree.
 
 "Carried N uncommitted change(s) from the source (...) -- uncommitted here
 too; commit deliberately."  (worktree create --carry-ignored)
