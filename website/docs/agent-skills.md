@@ -10,7 +10,7 @@ description: 'Installing and refreshing the bundled skill with npx skills'
 For AI coding agents, install the bundled skill so the agent knows how to drive the CLI (the lifecycle, the facts contract, and the destructive-command rules). It installs with the skills CLI, straight from GitHub:
 
 ```bash
-npx skills add appandflow/stim-cli
+npx skills add appandflow/stim
 ```
 
 ## Keeping the agent skill in sync
@@ -23,7 +23,7 @@ following instructions that no longer match the binary.
 After upgrading, refresh it the same way it was installed:
 
 ```bash
-npx skills add appandflow/stim-cli
+npx skills add appandflow/stim
 ```
 
 That installs the one bundled skill, `stim-cli`: how to drive the CLI. There is

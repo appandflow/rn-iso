@@ -32,7 +32,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/appandflow/stim-cli/tree/main/website/',
+          editUrl: 'https://github.com/appandflow/stim/tree/main/website/',
         },
         blog: false,
         theme: {
@@ -63,7 +63,7 @@ const config: Config = {
           position: 'right',
         },
         {
-          href: 'https://github.com/appandflow/stim-cli',
+          href: 'https://github.com/appandflow/stim',
           label: 'GitHub',
           position: 'right',
         },
@@ -94,8 +94,8 @@ const config: Config = {
         {
           title: 'More',
           items: [
-            { label: 'GitHub', href: 'https://github.com/appandflow/stim-cli' },
-            { label: 'Issues', href: 'https://github.com/appandflow/stim-cli/issues' },
+            { label: 'GitHub', href: 'https://github.com/appandflow/stim' },
+            { label: 'Issues', href: 'https://github.com/appandflow/stim/issues' },
           ],
         },
       ],

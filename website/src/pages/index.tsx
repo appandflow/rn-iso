@@ -6,7 +6,7 @@ import CodeBlock from '@theme/CodeBlock';
 import Heading from '@theme/Heading';
 
 const quickStart = `# the only command a human runs:
-npx skills add appandflow/stim-cli
+npx skills add appandflow/stim
 
 # then tell your agent:
 #   "Build and run the app on the iOS simulator and fix anything that breaks."

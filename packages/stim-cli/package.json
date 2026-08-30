@@ -11,15 +11,15 @@
     "simulator",
     "worktree"
   ],
-  "homepage": "https://github.com/appandflow/stim-cli#readme",
+  "homepage": "https://github.com/appandflow/stim#readme",
   "bugs": {
-    "url": "https://github.com/appandflow/stim-cli/issues"
+    "url": "https://github.com/appandflow/stim/issues"
   },
   "license": "MIT",
   "author": "Janic Duplessis",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/appandflow/stim-cli.git",
+    "url": "git+https://github.com/appandflow/stim.git",
     "directory": "packages/stim-cli"
   },
   "bin": {

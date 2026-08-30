@@ -1,6 +1,6 @@
 # stim-cli
 
-[![CI](https://github.com/appandflow/stim-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/appandflow/stim-cli/actions/workflows/ci.yml)
+[![CI](https://github.com/appandflow/stim/actions/workflows/ci.yml/badge.svg)](https://github.com/appandflow/stim/actions/workflows/ci.yml)
 
 The React Native / Expo CLI for AI agents. Humans never run it — your agent
 does. Each agent gets an isolated dev environment: its own Metro port, its own
@@ -19,7 +19,7 @@ costs no PR.
 Install the agent skill:
 
 ```bash
-npx skills add appandflow/stim-cli
+npx skills add appandflow/stim
 ```
 
 The package exports only `stim`. Run it without installing, or install it once:
