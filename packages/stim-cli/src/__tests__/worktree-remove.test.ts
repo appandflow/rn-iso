@@ -8,6 +8,7 @@ import {
   matchWorktreeEntry,
   porcelainPath,
   removalBlockers,
+  removalPath,
   registerRemove,
   removalRemedy,
 } from '../commands/worktree.ts';
@@ -30,6 +31,12 @@ interface CommandStub {
 
 test('no blockers for a clean worktree', async () => {
   expect(removalBlockers({ dirty: false, unpushed: [] })).toEqual([]);
+});
+
+test('removalPath canonicalizes a missing path through its nearest existing parent', () => {
+  expect(removalPath('/tmp/stim-cli-missing/worktree')).toBe(
+    join(realpathSync('/tmp'), 'stim-cli-missing', 'worktree'),
+  );
 });
 
 test('reports uncommitted changes', async () => {
@@ -189,6 +196,7 @@ interface MakeExecutorOptions {
   mainTrees?: string[];
   worktreeRemoveError?: string;
   branchDeleteError?: string;
+  refSha?: string | null;
 }
 
 function makeExecutor({
@@ -202,6 +210,7 @@ function makeExecutor({
   mainTrees = [],
   worktreeRemoveError,
   branchDeleteError,
+  refSha = 'abc123',
 }: MakeExecutorOptions = {}) {
   const runCalls: string[] = [];
   const runQuietCalls: string[] = [];
@@ -224,6 +233,7 @@ function makeExecutor({
         if (branchDeleteError) throw new Error(branchDeleteError);
         return '';
       }
+      if (/rev-parse/.test(cmd)) return refSha;
       throw new Error(`unexpected runFile: ${cmd}`);
     },
     runQuiet(cmd: string) {
@@ -689,11 +699,27 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
     worktreeBranch: 'worktree-feat-x',
     worktreeBranchOwned: true,
     worktreeRemovalComplete: true,
+    worktreePendingBranchSha: 'abc123',
   });
 
   rmSync(wtDir, { recursive: true, force: true });
   process.exitCode = 0;
-  const retryExec = makeExecutor();
+  const changedExec = makeExecutor({ refSha: 'def456' });
+  const changedRunQuiet = changedExec.runQuiet.bind(changedExec);
+  changedExec.runQuiet = (cmd) => {
+    if (/rev-parse --verify --quiet/.test(cmd)) return 'def456';
+    return changedRunQuiet(cmd);
+  };
+  setExecutor(changedExec);
+
+  await run(wtDir, {});
+
+  expect(process.exitCode).toBe(1);
+  expect(changedExec.calls.run.some((call) => /branch -D/.test(call))).toBe(false);
+  expect(getProject(wtDir)).not.toBe(null);
+
+  process.exitCode = 0;
+  const retryExec = makeExecutor({ refSha: 'abc123' });
   const originalRunQuiet = retryExec.runQuiet.bind(retryExec);
   retryExec.runQuiet = (cmd) => {
     if (/rev-parse --verify --quiet/.test(cmd)) return 'abc123';

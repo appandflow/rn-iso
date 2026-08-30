@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from 'fs';
-import { resolve } from 'path';
+import { basename, dirname, resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { resolveSettings, unknownSettingKeys } from '../settings.ts';
@@ -517,13 +517,17 @@ interface RemovalInspection {
   blockers: string[];
 }
 
-function removalPath(target: string | undefined): string {
+export function removalPath(target: string | undefined): string {
   const resolved = resolve(target ?? process.cwd());
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
+  let existing = resolved;
+  const missing: string[] = [];
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) return resolved;
+    missing.unshift(basename(existing));
+    existing = parent;
   }
+  return resolve(realpathSync(existing), ...missing);
 }
 
 function inspectRemoval(path: string): RemovalInspection {
@@ -597,7 +601,8 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
       pending?.worktreeRemovalComplete === true &&
       pending.worktreeBranchOwned === true &&
       pending.worktreeBranch &&
-      pending.worktreeMainRoot
+      pending.worktreeMainRoot &&
+      pending.worktreePendingBranchSha
     ) {
       const branch = pending.worktreeBranch;
       const mainRoot = pending.worktreeMainRoot;
@@ -610,6 +615,17 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
       if (!branchExists(mainRoot, branch)) {
         removeProject(path);
         console.log(chalk.green(`Branch ${branch} is already absent; cleared its pending cleanup record.`));
+        return;
+      }
+      const currentSha = resolveRef(mainRoot, branch);
+      if (currentSha !== pending.worktreePendingBranchSha) {
+        console.error(
+          chalk.red(
+            `Refusing pending cleanup for ${branch}: its tip changed from ${pending.worktreePendingBranchSha} to ${currentSha || 'an unknown commit'}.`,
+          ),
+        );
+        console.error(chalk.dim('The branch can contain new work. Inspect it and delete it manually if appropriate.'));
+        process.exitCode = 1;
         return;
       }
       try {
@@ -666,6 +682,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
   const branch = entry.branch;
   const ownsBranch = Boolean(branch && project?.worktreeBranchOwned === true && project.worktreeBranch === branch);
   const deleteOwnedBranch = Boolean(ownsBranch && inspection.unpushed?.length === 0);
+  const approvedBranchSha = deleteOwnedBranch ? resolveRef(path, 'HEAD') : null;
   const retainedBranchReason = !branch
     ? null
     : !ownsBranch
@@ -696,7 +713,13 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
       }
       console.log(chalk.green(`Removed worktree ${path}`));
       if (deleteOwnedBranch && branch) {
-        upsertProject(path, { worktreeRemovalComplete: true });
+        if (!approvedBranchSha) {
+          console.error(chalk.yellow(`  kept branch ${branch}: Stim could not record its commit before removal`));
+          process.exitCode = 1;
+          printRemovalCleanup(result, false);
+          return;
+        }
+        upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha });
         if (!branchDeleteCwd) {
           console.error(chalk.yellow(`  kept branch ${branch}: Stim could not find the main worktree`));
           console.error(chalk.dim(`  Retry with: stim worktree remove ${path}`));
