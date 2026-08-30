@@ -215,12 +215,13 @@ export function registerCreate(worktree: Command): void {
         }
       }
 
+      const mainRoot = listWorktrees(root).find((candidate) => isMainWorkingTree(candidate.path))?.path || root;
       upsertProject(target, {
         label: opts.label || name,
         worktreeRoot: true,
         worktreeBranch: branch,
         worktreeBranchOwned: !reusedBranch,
-        worktreeMainRoot: root,
+        worktreeMainRoot: mainRoot,
       });
 
       console.error(

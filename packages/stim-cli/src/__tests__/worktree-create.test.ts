@@ -134,6 +134,25 @@ test('create action: success path writes exactly one stdout line, the worktree p
   }
 });
 
+test('create action: a nested create records the repository main checkout', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-nested-')));
+  const repo = join(base, 'repo');
+  const parent = join(base, 'parent');
+  try {
+    const git = initScratchRepo(repo);
+    git(`git worktree add -q -b parent ${JSON.stringify(parent)}`);
+
+    await runCreateInRepo(parent, 'child', { base: 'head' });
+
+    const child = join(defaultWorktreeDir(parent), 'child');
+    expect(getProject(child)).toMatchObject({ worktreeMainRoot: repo });
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('create action: defaults to the source checkout HEAD when origin/HEAD differs', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-default-head-')));
