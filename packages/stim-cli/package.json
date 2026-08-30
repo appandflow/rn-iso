@@ -1,6 +1,6 @@
 {
   "name": "stim-cli",
-  "version": "1.0.0-rc.0",
+  "version": "1.0.0-rc.1",
   "description": "Isolated React Native dev environments per project/worktree",
   "keywords": [
     "agent",
@@ -46,8 +46,8 @@
   },
   "dependencies": {
     "@expo/fingerprint": "^0.20.10",
-    "@stim-cli/core": "^1.0.0-rc.0",
-    "@stim-cli/metro": "^1.0.0-rc.0",
+    "@stim-cli/core": "^1.0.0-rc.1",
+    "@stim-cli/metro": "^1.0.0-rc.1",
     "chalk": "^5.4.1",
     "commander": "^13.1.0"
   },

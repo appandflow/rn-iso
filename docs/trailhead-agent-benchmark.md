@@ -30,7 +30,7 @@ output in the coordinator report.
 
 1. Build the merged Stim candidate and install that exact candidate locally.
    Install Agent Device 0.20.10. Record both versions and the candidate commit.
-   Use Codex CLI 0.142.0, model `gpt-5.6-sol`, reasoning effort `high`, and
+   Use Codex CLI 0.151.0, model `gpt-5.6-sol`, reasoning effort `high`, and
    service tier `priority` for both timed arms.
 2. Archive the first benchmark artifacts. Do not reuse its worktrees, branches,
    simulators, logs, or Metro processes.
@@ -48,7 +48,18 @@ output in the coordinator report.
    result, and log directory.
 7. Build the same main checkout with
    `npx expo run:ios --device <udid> --no-bundler`, using the simulator from step 6. This warms Xcode's normal DerivedData path for the control arm.
-8. Run `stim stop`. Confirm that the main checkout is still clean.
+8. Create one disposable validation worktree for each arm from the fixed commit.
+   Install dependencies with the same commands that the timed agents will use.
+   Calculate the iOS native fingerprint in the main checkout and both validation
+   worktrees with the exact Stim candidate. All three fingerprints must match the
+   prepared fingerprint from step 6. Also confirm that the benchmark
+   `STIM_CLI_HOME` contains a complete iOS artifact for that fingerprint. Remove
+   both validation worktrees. A mismatch blocks timing.
+9. Run `stim stop`. Confirm that the main checkout is still clean.
+10. Record available disk space on every volume used by the checkout, Xcode,
+    CoreSimulator, the results root, and `STIM_CLI_HOME`. Record this preflight
+    again immediately before each arm. Do not start an arm unless each volume
+    has enough space for a native build and its retained evidence.
 
 Do not tell either timed agent that a build or cache was prepared. The timed
 prompt must not contain the words `warm`, `cache`, `DerivedData`, `incremental`,
@@ -83,32 +94,36 @@ Run `codex login status` against each isolated home before timing. Then run
 prompt input must contain no skills block. The Stim prompt input must list
 exactly `stim-cli` and `agent-device`. Any other result blocks the run.
 
-Launch both agents with the same explicit runtime flags:
+Launch both agents with the same explicit runtime flags. The approval and
+sandbox flags are global Codex flags, so they must appear before `exec`:
 
 ```text
-codex --strict-config exec --ephemeral --json \
+codex --strict-config \
+  --ask-for-approval never \
+  --sandbox danger-full-access \
+  exec --ephemeral --json \
   --model gpt-5.6-sol \
   --config model_reasoning_effort='"high"' \
   --config service_tier='"priority"' \
-  --sandbox workspace-write \
-  --ask-for-approval never \
-  --cd <trailhead-main> \
-  --add-dir <worktree-parent> \
-  --add-dir <results-root> \
-  [--add-dir <required-native-tool-write-root> ...]
+  --cd <trailhead-main>
 ```
 
 Use the applicable isolated `CODEX_HOME`. Keep its path, configuration, and
 launch command outside the timed prompt. Record `codex --version`, the model,
-reasoning effort, service tier, sandbox, approval policy, and every write root
-in the coordinator report.
+reasoning effort, service tier, sandbox, and approval policy in the coordinator
+report.
 
 The main checkout is the primary workspace because `git worktree add` must
 write its Git metadata. The agent must place its worktree under the declared
-worktree parent and its evidence under the declared results root. Add only the
-native tool roots required for package storage, CocoaPods, Xcode DerivedData,
-CoreSimulator, Agent Device, and the benchmark-specific `STIM_CLI_HOME`. Do not
-give the control arm access to `STIM_CLI_HOME`.
+worktree parent and its evidence under the declared results root.
+
+The validated local run requires `danger-full-access`. The `workspace-write`
+sandbox blocked Git worktree metadata, loopback and process access, and
+CoreSimulator services. Get explicit coordinator approval for this local
+permission profile before dispatch. Do not export the benchmark-specific
+`STIM_CLI_HOME` to the control arm or mention its path in the control prompt.
+The permission profile does not enforce that separation, so audit the control
+transcript for access to that home.
 
 Before timing, run one no-op agent with each exact permission profile. Verify
 that it can create and remove a disposable worktree, write a result file, and
@@ -134,6 +149,13 @@ evidence outside the temporary worktree, under:
 
 Run one arm at a time. Use `control` then `stim` for the first v2 run. Reverse
 the order if the benchmark is repeated.
+
+If an arm becomes invalid, stop its owned resources and preserve its complete
+transcript and evidence under a unique `invalid-<arm>-<attempt>` directory.
+Record the invalidation reason and cleanup result. Do not overwrite the invalid
+evidence or reuse its worktree, branch, device, result directory, or run id.
+Verify the main checkout, repeat the disk preflight, and use new unique names
+before a replacement arm starts.
 
 ## Stim prompt
 
@@ -225,6 +247,14 @@ Use UTC timestamps. `timeToProof` is the primary speed result. Immediately
 before each `codex exec` dispatch, the coordinator records `[DISPATCHED_AT]` in
 its own log and inserts it into the prompt. The agent must copy that value to
 `startedAt`. This includes agent startup and skill loading in the primary timer.
+
+The coordinator validates every agent metric against the JSONL transcript and
+command log. If the agent omits `timeToProof`, the coordinator calculates it as
+the elapsed seconds from `[DISPATCHED_AT]` to the completion timestamp of the
+successful proof capture command. The coordinator records the source command,
+both timestamps, and the calculated value. Do not use the proof file
+modification time or a later report timestamp. If the successful proof command
+completion is not present in the retained evidence, the arm is invalid.
 
 ```json
 {

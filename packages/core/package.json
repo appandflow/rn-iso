@@ -1,6 +1,6 @@
 {
   "name": "@stim-cli/core",
-  "version": "1.0.0-rc.0",
+  "version": "1.0.0-rc.1",
   "description": "Shared primitives for stim-cli and its cache packages: config-dir and cache-root resolution, the build cache key, and cache self-registration. Not a user-facing API.",
   "license": "MIT",
   "repository": {

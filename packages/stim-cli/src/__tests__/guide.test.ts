@@ -353,6 +353,19 @@ test('exactly one compact skill ships', () => {
   expect(skill).toMatch(/stim doctor/);
 });
 
+test('the skill shows the fast worktree and Agent Device path', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  expect(skill).toContain('stim worktree create <name> --carry-ignored');
+  expect(skill).toContain('agent-device open <app-id> --foreground --metro-port <stim-reported-port>');
+  expect(skill).toMatch(/exact app ID and Metro port printed by Stim/i);
+});
+
+test('the skill keeps ordinary authorized cleanup on the fast path', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  expect(skill).toMatch(/Ordinary `stim stop` and an authorized clean `stim worktree remove` do not need/);
+  expect(skill).toMatch(/`gc`, `--force`, cleanup failures, or unfamiliar cleanup states/);
+});
+
 test('the skill and guide shut down owned simulators without an occupancy check', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   const cleanup = renderTopic('cleanup');

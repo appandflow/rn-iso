@@ -108,6 +108,7 @@ export function bootIosSim(udid: string): void {
   } catch (e) {
     if (!String((e as Error)?.message || e).includes('Booted')) throw e;
   }
+  exec.run(`xcrun simctl bootstatus ${udid} -b`, { timeoutMs: 240000 });
   exec.runQuiet('open -a Simulator');
 }
 
