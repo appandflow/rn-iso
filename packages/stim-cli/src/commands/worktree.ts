@@ -1,9 +1,9 @@
 import { existsSync, realpathSync } from 'fs';
-import { resolve } from 'path';
+import { basename, dirname, resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { resolveSettings, unknownSettingKeys } from '../settings.ts';
-import { isPathPrefix, loadConfig, upsertProject } from '../config.ts';
+import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
@@ -13,6 +13,7 @@ import {
   carryOverFiles,
   carryUncommittedChanges,
   depsOutOfSync,
+  deleteBranch,
   cloneIgnoredEntries,
   defaultWorktreeDir,
   dirtyPaths,
@@ -28,6 +29,7 @@ import {
   removeWorktree,
   repoRoot,
   resolveBaseRef,
+  resolveFullRef,
   resolveRef,
   restoreFile,
   unpushedCommits,
@@ -121,7 +123,7 @@ export function registerCreate(worktree: Command): void {
         console.error(chalk.dim(`    stim worktree create <other-name> --base ${base}`));
         console.error(
           chalk.dim(
-            '  or delete the leftover branch (it is what an earlier `worktree remove` left behind; removing a worktree never deletes its branch) and retry:',
+            '  or delete the existing branch (Stim keeps branches it did not create and branches with unique commits) and retry:',
           ),
         );
         console.error(chalk.dim(`    git -C ${root} branch -D ${branch}`));
@@ -213,7 +215,14 @@ export function registerCreate(worktree: Command): void {
         }
       }
 
-      upsertProject(target, { label: opts.label || name, worktreeRoot: true });
+      const mainRoot = listWorktrees(root).find((candidate) => isMainWorkingTree(candidate.path))?.path || root;
+      upsertProject(target, {
+        label: opts.label || name,
+        worktreeRoot: true,
+        worktreeBranch: branch,
+        worktreeBranchOwned: !reusedBranch,
+        worktreeMainRoot: mainRoot,
+      });
 
       console.error(
         chalk.dim(
@@ -274,9 +283,8 @@ export function excludePodChurn(lines: string[] | null | undefined): PodChurnRes
   return { lines: kept, restore };
 }
 
-interface MatchedWorktreeEntry {
+interface MatchedWorktreeEntry extends WorktreeEntry {
   index: number;
-  path: string;
 }
 
 export function matchWorktreeEntry(
@@ -286,7 +294,7 @@ export function matchWorktreeEntry(
   let best: MatchedWorktreeEntry | null = null;
   (entries || []).forEach((entry, index) => {
     if (!entry?.path || !isPathPrefix(entry.path, path)) return;
-    if (!best || entry.path.length > best.path.length) best = { index, path: entry.path };
+    if (!best || entry.path.length > best.path.length) best = { ...entry, index };
   });
   return best;
 }
@@ -387,6 +395,7 @@ async function withReclaimLocks<T>(rootPath: string, fn: (lockedKeys: readonly s
 async function reclaimAll(
   rootPath: string,
   keys: readonly string[] = reclaimKeys(rootPath),
+  { preserveRootProject = false }: { preserveRootProject?: boolean } = {},
 ): Promise<ReclaimAllResult> {
   const dereferenced: string[] = [];
   const killedPids: number[] = [];
@@ -399,7 +408,10 @@ async function reclaimAll(
   const removedWorkspaceDirs: string[] = [];
   const failedWorkspaceDirs: string[] = [];
   for (const key of keys) {
-    const r = await reclaimProject(key, { deleteOwnedDevices: true });
+    const r = await reclaimProject(key, {
+      deleteOwnedDevices: true,
+      preserveProjectRecord: preserveRootProject && key === rootPath,
+    });
     dereferenced.push(...r.dereferenced);
     if (r.killedPid) killedPids.push(r.killedPid);
     deletedDevices.push(...r.deletedDevices);
@@ -507,13 +519,17 @@ interface RemovalInspection {
   blockers: string[];
 }
 
-function removalPath(target: string | undefined): string {
+export function removalPath(target: string | undefined): string {
   const resolved = resolve(target ?? process.cwd());
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
+  let existing = resolved;
+  const missing: string[] = [];
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) return resolved;
+    missing.unshift(basename(existing));
+    existing = parent;
   }
+  return resolve(realpathSync(existing), ...missing);
 }
 
 function inspectRemoval(path: string): RemovalInspection {
@@ -582,12 +598,65 @@ function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
 async function runRemove(target: string | undefined, opts: RemoveOptions = {}): Promise<void> {
   let path = removalPath(target);
   if (!existsSync(path)) {
+    const pending = getProject(path);
+    if (
+      pending?.worktreeRemovalComplete === true &&
+      pending.worktreeBranchOwned === true &&
+      pending.worktreeBranch &&
+      pending.worktreeMainRoot &&
+      pending.worktreePendingBranchSha
+    ) {
+      const branch = pending.worktreeBranch;
+      const mainRoot = pending.worktreeMainRoot;
+      if (!existsSync(mainRoot)) {
+        console.error(chalk.red(`Cannot finish branch cleanup for ${path}: main worktree ${mainRoot} is missing.`));
+        console.error(chalk.dim(`Delete ${branch} from the repository, then run \`stim gc --delete\`.`));
+        process.exitCode = 1;
+        return;
+      }
+      if (!branchExists(mainRoot, branch)) {
+        removeProject(path);
+        console.log(chalk.green(`Branch ${branch} is already absent; cleared its pending cleanup record.`));
+        return;
+      }
+      const checkedOutAt = listWorktrees(mainRoot).find(
+        (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
+      )?.path;
+      if (checkedOutAt) {
+        console.error(chalk.red(`Refusing pending cleanup for ${branch}: it is checked out at ${checkedOutAt}.`));
+        console.error(chalk.dim('Switch that worktree to another branch, then retry this command.'));
+        process.exitCode = 1;
+        return;
+      }
+      const currentSha = resolveFullRef(mainRoot, branch);
+      if (currentSha !== pending.worktreePendingBranchSha) {
+        console.error(
+          chalk.red(
+            `Refusing pending cleanup for ${branch}: its tip changed from ${pending.worktreePendingBranchSha} to ${currentSha || 'an unknown commit'}.`,
+          ),
+        );
+        console.error(chalk.dim('The branch can contain new work. Inspect it and delete it manually if appropriate.'));
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        deleteBranch(mainRoot, branch, pending.worktreePendingBranchSha);
+        removeProject(path);
+        console.log(chalk.green(`Deleted branch ${branch} and cleared its pending cleanup record.`));
+      } catch (error) {
+        console.error(chalk.red(`Could not delete branch ${branch}: ${String((error as Error)?.message || error)}`));
+        console.error(chalk.dim(`Retry with: stim worktree remove ${path}`));
+        process.exitCode = 1;
+      }
+      return;
+    }
     console.error(chalk.red(`No such worktree: ${path}`));
     process.exitCode = 1;
     return;
   }
 
-  const entry = matchWorktreeEntry(listWorktrees(path), path);
+  const worktrees = listWorktrees(path);
+  const entry = matchWorktreeEntry(worktrees, path);
   if (!entry) {
     if (gitCommonDir(path) === null && hasRegisteredProjectUnder(path)) {
       await reclaimEnvironment(path, 'it is not a git repository');
@@ -614,15 +683,31 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
     path = entry.path;
   }
 
+  const project = getProject(path);
+  const branch = entry.branch;
+  const ownsBranch = Boolean(branch && project?.worktreeBranchOwned === true && project.worktreeBranch === branch);
+  const approvedBranchSha = ownsBranch ? resolveFullRef(path, 'HEAD') : null;
   const inspection = inspectRemoval(path);
   if (inspection.blockers.length && !opts.force) {
     printRemovalRefusal(path, inspection);
     return;
   }
 
+  const deleteOwnedBranch = Boolean(ownsBranch && approvedBranchSha && inspection.unpushed?.length === 0);
+  const retainedBranchReason = !branch
+    ? null
+    : !ownsBranch
+      ? 'Stim did not create it'
+      : inspection.unpushed === null
+        ? 'Stim could not verify whether it has unique commits'
+        : inspection.unpushed.length > 0
+          ? `it has ${inspection.unpushed.length} unique commit(s)`
+          : null;
+  const branchDeleteCwd = worktrees.find((candidate) => isMainWorkingTree(candidate.path))?.path;
+
   await withManagedRemoteWorktreeRemovalLock(path, () =>
     withReclaimLocks(path, async (lockedKeys) => {
-      const result = await reclaimAll(path, lockedKeys);
+      const result = await reclaimAll(path, lockedKeys, { preserveRootProject: true });
       if (result.keptEntries.length) {
         reportRetainedResources(path, result);
         return;
@@ -632,14 +717,53 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
         removeWorktree(path, { force: opts.force });
       } catch (error) {
         console.error(chalk.red(`git worktree remove failed: ${String((error as Error)?.message || error)}`));
-        console.error(
-          chalk.dim(`The directory at ${path} was not removed; stim-cli's own tracking for it was already cleared.`),
-        );
+        console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
         printRemovalCleanup(result, true);
         process.exitCode = 1;
         return;
       }
       console.log(chalk.green(`Removed worktree ${path}`));
+      if (deleteOwnedBranch && branch) {
+        if (!approvedBranchSha) {
+          console.error(chalk.yellow(`  kept branch ${branch}: Stim could not record its commit before removal`));
+          process.exitCode = 1;
+          printRemovalCleanup(result, false);
+          return;
+        }
+        upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha });
+        if (!branchDeleteCwd) {
+          console.error(chalk.yellow(`  kept branch ${branch}: Stim could not find the main worktree`));
+          console.error(chalk.dim(`  Retry with: stim worktree remove ${path}`));
+          process.exitCode = 1;
+          printRemovalCleanup(result, false);
+          return;
+        }
+        const checkedOutAt = listWorktrees(branchDeleteCwd).find(
+          (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
+        )?.path;
+        if (checkedOutAt) {
+          console.error(chalk.yellow(`  kept branch ${branch}: it is checked out at ${checkedOutAt}`));
+          console.error(
+            chalk.dim(`  Switch that worktree to another branch, then retry: stim worktree remove ${path}`),
+          );
+          process.exitCode = 1;
+          printRemovalCleanup(result, false);
+          return;
+        }
+        try {
+          deleteBranch(branchDeleteCwd, branch, approvedBranchSha);
+          console.log(chalk.dim(`  deleted branch ${branch}`));
+        } catch (error) {
+          console.error(chalk.yellow(`  kept branch ${branch}: ${String((error as Error)?.message || error)}`));
+          console.error(chalk.dim(`  Retry with: git -C ${branchDeleteCwd} branch -D -- ${branch}`));
+          process.exitCode = 1;
+          printRemovalCleanup(result, false);
+          return;
+        }
+      } else if (branch && retainedBranchReason) {
+        console.log(chalk.dim(`  kept branch ${branch}: ${retainedBranchReason}`));
+      }
+      removeProject(path);
       printRemovalCleanup(result, false);
     }),
   );
@@ -649,7 +773,7 @@ export function registerRemove(worktree: Command): void {
   worktree
     .command('remove [target]')
     .description(
-      'Remove a worktree and reclaim its build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the main checkout it reclaims the environment only and leaves the tree in place.',
+      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the main checkout it reclaims the environment only and leaves the tree in place.',
     )
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work')
     .action(runRemove);

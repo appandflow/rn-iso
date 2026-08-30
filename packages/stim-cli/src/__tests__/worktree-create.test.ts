@@ -6,7 +6,7 @@ import type { Command } from 'commander';
 import { carriedChangesLine, carryConflictWarning, registerCreate } from '../commands/worktree.ts';
 import { resetExecutor } from '../exec.ts';
 import { defaultWorktreeDir } from '../worktree.ts';
-import { upsertProject, findEnclosingWorktreeRoot } from '../config.ts';
+import { findEnclosingWorktreeRoot, getProject, upsertProject } from '../config.ts';
 
 type ActionFn = (name: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
 
@@ -122,7 +122,31 @@ test('create action: success path writes exactly one stdout line, the worktree p
 
     const expected = join(defaultWorktreeDir(repo), 'feat-x');
     expect(logs).toEqual([expected]);
+    expect(getProject(expected)).toMatchObject({
+      worktreeBranch: 'worktree-feat-x',
+      worktreeBranchOwned: true,
+      worktreeMainRoot: repo,
+    });
     expect(process.exitCode).not.toBe(1);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: a nested create records the repository main checkout', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-nested-')));
+  const repo = join(base, 'repo');
+  const parent = join(base, 'parent');
+  try {
+    const git = initScratchRepo(repo);
+    git(`git worktree add -q -b parent ${JSON.stringify(parent)}`);
+
+    await runCreateInRepo(parent, 'child', { base: 'head' });
+
+    const child = join(defaultWorktreeDir(parent), 'child');
+    expect(getProject(child)).toMatchObject({ worktreeMainRoot: repo });
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
@@ -266,6 +290,11 @@ test('create action: an existing branch is reported as attached, not as branched
     const { logs, errs } = await runCreateInRepo(repo, 'feat-again', { install: false });
 
     expect(logs).toEqual([join(defaultWorktreeDir(repo), 'feat-again')]);
+    expect(getProject(join(defaultWorktreeDir(repo), 'feat-again'))).toMatchObject({
+      worktreeBranch: 'worktree-feat-again',
+      worktreeBranchOwned: false,
+      worktreeMainRoot: repo,
+    });
     expect(errs.some((e) => /Attached to the existing branch worktree-feat-again/.test(String(e)))).toBeTruthy();
     expect(!errs.some((e) => String(e).startsWith('Branched '))).toBeTruthy();
   } finally {

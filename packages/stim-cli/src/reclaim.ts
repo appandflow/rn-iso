@@ -194,9 +194,15 @@ export async function reclaimProject(
   path: string,
   {
     deleteOwnedDevices = false,
+    preserveProjectRecord = false,
     stopSession = defaultStopSession,
     stopMetroTunnel = defaultStopMetroTunnel,
-  }: { deleteOwnedDevices?: boolean; stopSession?: StopSession; stopMetroTunnel?: StopMetroTunnelFn } = {},
+  }: {
+    deleteOwnedDevices?: boolean;
+    preserveProjectRecord?: boolean;
+    stopSession?: StopSession;
+    stopMetroTunnel?: StopMetroTunnelFn;
+  } = {},
 ): Promise<ReclaimResult> {
   const project = getProject(path);
   const dereferenced = describeDereferenced(project);
@@ -252,7 +258,7 @@ export async function reclaimProject(
   }
 
   const keptEntry = failedDevices.length > 0 || failedWorkspaceDirs.length > 0;
-  if (project && !keptEntry) removeProject(path);
+  if (project && !keptEntry && !preserveProjectRecord) removeProject(path);
 
   return {
     path,

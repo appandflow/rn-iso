@@ -43,6 +43,11 @@ export interface ProjectRecord {
   supervisor?: SupervisorRecord;
   settings?: SettingsObject;
   worktreeRoot?: boolean;
+  worktreeBranch?: string;
+  worktreeBranchOwned?: boolean;
+  worktreeMainRoot?: string;
+  worktreeRemovalComplete?: boolean;
+  worktreePendingBranchSha?: string;
   label?: string;
   bundleId?: string;
   androidPackage?: string;
