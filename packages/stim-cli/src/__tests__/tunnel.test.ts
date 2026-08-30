@@ -458,7 +458,14 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
   });
 
   test('a process whose start token cannot be captured is cleaned up and not returned as owned', async () => {
-    const child = makeChildProcess();
+    const signals: Array<NodeJS.Signals | number | undefined> = [];
+    const child = makeChildProcess({
+      kill(signal) {
+        signals.push(signal);
+        child.emit('exit', null, signal);
+        return true;
+      },
+    });
     const promise = startTunnel({
       provider: 'ngrok',
       port: 8081,
@@ -469,6 +476,7 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     child.stdout?.emit('data', `${JSON.stringify({ url: 'https://x.ngrok-free.app' })}\n`);
     const result = await promise;
     expect(result).toEqual({ failed: true, reason: expect.stringContaining('process identity token') });
+    expect(signals).toEqual(['SIGTERM']);
   });
 });
 
