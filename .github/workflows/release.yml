@@ -88,10 +88,22 @@ jobs:
           fi
       - name: Smoke-test the registry
         run: |
-          sleep 10
           version="${GITHUB_REF_NAME#v}"
+          max_attempts=12
+          retry_delay=10
           for p in @stim-cli/core stim-cli @stim-cli/expo-build-cache @stim-cli/metro; do
-            v=$(npm view "$p@$version" version)
-            echo "$p -> $v"
-            [ "$v" = "$version" ] || exit 1
+            for attempt in $(seq 1 "$max_attempts"); do
+              if v=$(npm view "$p@$version" version 2>/dev/null) && [ "$v" = "$version" ]; then
+                echo "$p -> $v"
+                break
+              fi
+
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "$p@$version was not visible after $max_attempts attempts"
+                exit 1
+              fi
+
+              echo "$p@$version is not visible yet (attempt $attempt/$max_attempts); retrying in ${retry_delay}s"
+              sleep "$retry_delay"
+            done
           done
