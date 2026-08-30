@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
@@ -479,6 +479,90 @@ function iosExecutor(devices: SimEntry[]) {
 }
 
 describe('ensureOwnedDevice: ios', () => {
+  test('rejects an invalid SimSlim profile before creating or booting a simulator', async () => {
+    const root = projectDir();
+    try {
+      const { run, exec } = iosExecutor([]);
+      setExecutor(exec);
+
+      await expect(
+        ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { ios: { simslimProfile: 'missing.json' } },
+        }),
+      ).rejects.toThrow('Could not read ios.simslimProfile missing.json');
+
+      expect(run).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('applies the configured SimSlim profile to an owned simulator and records management', async () => {
+    const root = projectDir();
+    try {
+      const profilePath = join(root, 'simslim.json');
+      writeFileSync(profilePath, '{}\n');
+      const profile = realpathSync(profilePath);
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-cli-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-cli-app', state: 'Booted', isAvailable: true }]);
+      setExecutor(exec);
+      const calls: unknown[] = [];
+
+      await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslimProfile: 'simslim.json' } },
+        reconcileIosSimulator: async (args) => {
+          calls.push(args);
+          return { managed: true, profile };
+        },
+      });
+
+      expect(calls).toMatchObject([{ udid: 'U1', profile, previouslyManaged: false }]);
+      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('restores stock services when Stim previously managed SimSlim and the setting is removed', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', {
+        deviceUdid: 'U1',
+        owned: true,
+        deviceName: 'stim-cli-app',
+        simslimManaged: true,
+      });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-cli-app', state: 'Booted', isAvailable: true }]);
+      setExecutor(exec);
+      const calls: unknown[] = [];
+
+      await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        reconcileIosSimulator: async (args) => {
+          calls.push(args);
+          return { managed: false, profile: null };
+        },
+      });
+
+      expect(calls).toMatchObject([{ udid: 'U1', profile: null, previouslyManaged: true }]);
+      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('an owned record renamed away from stim-cli- ownership is never booted; a fresh owned sim is created', async () => {
     const root = projectDir();
     try {

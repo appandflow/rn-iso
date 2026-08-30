@@ -39,7 +39,7 @@ export default function doctorCommand(program: Command): void {
         console.log(chalk.green('Nothing to flag.'));
         console.log(
           chalk.dim(
-            'Checked: dev client, ccache, a conditionally-wired Metro cacheStores, a compilation-cache CAS left per-workspace, the build cache provider key, the EAS session, fingerprint parity.',
+            'Checked: dev client, ccache, a conditionally-wired Metro cacheStores, a compilation-cache CAS left per-workspace, the build cache provider key, the EAS session, a configured SimSlim profile, fingerprint parity.',
           ),
         );
         console.log(

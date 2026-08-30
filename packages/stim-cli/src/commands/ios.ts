@@ -1353,10 +1353,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return null;
   };
 
+  const settingsRepoRoot = d.repoRoot(root);
   const settings = d.resolveSettings({
     projectPath: root,
     gitCommonDir: d.gitCommonDir(root),
-    repoRoot: d.repoRoot(root),
+    repoRoot: settingsRepoRoot,
   });
   for (const key of unknownSettingKeys(settings)) {
     note(chalk.yellow(`Warning: setting "${key}" is not read by stim-cli and will be ignored.`));
@@ -1417,6 +1418,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       platform: PLATFORM,
       project: proj,
       projectPath: root,
+      settingsRoot: settingsRepoRoot ?? root,
       label,
       settings,
       flags: {},
