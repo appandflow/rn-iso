@@ -1077,7 +1077,7 @@ describe('action: spawning the supervisor', () => {
     let listening = false;
     const base = exec.runQuiet.bind(exec);
     exec.runQuiet = (cmd) => {
-      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return listening ? '5159' : '';
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return listening ? String(DEAD_LISTENER_PID) : '';
       return base(cmd);
     };
     setExecutor(exec);
