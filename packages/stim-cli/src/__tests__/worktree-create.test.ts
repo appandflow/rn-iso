@@ -154,6 +154,53 @@ test('create action: defaults to the source checkout HEAD when origin/HEAD diffe
   }
 });
 
+test('create action: --base fresh selects origin/HEAD when it differs from the source checkout', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-explicit-fresh-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    const freshSha = git('git rev-parse HEAD').trim();
+    git(`git update-ref refs/remotes/origin/main ${freshSha}`);
+    git('git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main');
+    writeFileSync(join(repo, 'CURRENT'), 'current checkout');
+    git('git add CURRENT');
+    git('git commit -q -m current');
+
+    await runCreateInRepo(repo, 'feat-explicit-fresh', { base: 'fresh' });
+    const target = join(defaultWorktreeDir(repo), 'feat-explicit-fresh');
+
+    expect(execSync('git rev-parse HEAD', { cwd: target, encoding: 'utf-8' }).trim()).toBe(freshSha);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: configured worktree.baseRef overrides the default', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-configured-fresh-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    const freshSha = git('git rev-parse HEAD').trim();
+    git(`git update-ref refs/remotes/origin/main ${freshSha}`);
+    git('git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main');
+    writeFileSync(join(repo, 'CURRENT'), 'current checkout');
+    git('git add CURRENT');
+    git('git commit -q -m current');
+    writeFileSync(join(repo, '.stim-cli.json'), JSON.stringify({ worktree: { baseRef: 'fresh' } }));
+
+    await runCreateInRepo(repo, 'feat-configured-fresh', {});
+    const target = join(defaultWorktreeDir(repo), 'feat-configured-fresh');
+
+    expect(execSync('git rev-parse HEAD', { cwd: target, encoding: 'utf-8' }).trim()).toBe(freshSha);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('create action: rejects a --base this repo cannot resolve, before creating anything, on stderr, exit 1', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-badbase-')));

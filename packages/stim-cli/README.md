@@ -506,7 +506,7 @@ The keys stim-cli reads are `ios.deviceType`, `ios.runtime`, `ios.configuration`
     "avdConfig": { "hw.keyboard": true }
   },
   "worktree": {
-    "baseRef": "fresh",
+    "baseRef": "head",
     "include": [".env", ".env.*"]
   }
 }

@@ -1242,7 +1242,7 @@ belongs there:
   {
     "ios": { "deviceType": "iPhone 17 Pro", "runtime": "26.2" },
     "android": { "variant": "productionDebug" },
-    "worktree": { "baseRef": "fresh" },
+    "worktree": { "baseRef": "head" },
     "caches": ["~/.myapp-metro-cache"]
   }
 
