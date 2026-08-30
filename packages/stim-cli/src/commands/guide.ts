@@ -792,6 +792,7 @@ too; commit deliberately."  (worktree create --carry-ignored)
     body: () => `ENVIRONMENT LIFECYCLE
 
   # 1. Isolated worktree (skip if you are already in one).
+  #    It branches from the current HEAD. Use --base fresh for origin/HEAD.
   #    It does NOT install dependencies -- that is yours.
   cd "$(stim worktree create app-412 --carry-ignored)"
 
@@ -1241,7 +1242,7 @@ belongs there:
   {
     "ios": { "deviceType": "iPhone 17 Pro", "runtime": "26.2" },
     "android": { "variant": "productionDebug" },
-    "worktree": { "baseRef": "fresh" },
+    "worktree": { "baseRef": "head" },
     "caches": ["~/.myapp-metro-cache"]
   }
 
@@ -1339,7 +1340,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         still gated the same way a managed tunnel's is. Set it
                         before Expo start so the manifest advertises it.
   worktreeDir           where worktrees are created
-  worktree.baseRef      "fresh" (origin/HEAD) or "head"
+  worktree.baseRef      "head" (current HEAD) or "fresh" (origin/HEAD).
+                        Unset means "head".
   worktree.include      carry-over patterns, same role as .worktreeinclude
   worktree.exclude      --carry-ignored skip list, same role as .worktreeexclude
   caches                extra shared-cache paths for \`gc\` to report. A JSON

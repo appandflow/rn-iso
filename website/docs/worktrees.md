@@ -11,7 +11,7 @@ code={`stim worktree create feature-x        # creates ../<repo>-worktrees/featu
 stim worktree remove                  # removes it, deleting its owned device(s) and freeing its Metro port`}
 />
 
-`worktree create <name>` does three things in one step: creates the git worktree itself (branched `worktree-<name>` off `origin/HEAD` by default -- pass `--base head` to branch off the current `HEAD` instead), carries over gitignored files (see "Carry-over" below), and registers a label for the worktree root so `stim-cli` shortcuts don't collide across a monorepo's worktrees (every worktree of a monorepo shares the same app-dir basename). Prefer it over a raw `git worktree add` for that reason. It prints only the resulting worktree path to stdout; everything else goes to stderr (see "Wiring into Claude Code" below).
+`worktree create <name>` does three things in one step: creates the git worktree itself (branched `worktree-<name>` off the current `HEAD` by default -- pass `--base fresh` to use `origin/HEAD` instead), carries over gitignored files (see "Carry-over" below), and registers a label for the worktree root so `stim-cli` shortcuts don't collide across a monorepo's worktrees (every worktree of a monorepo shares the same app-dir basename). Prefer it over a raw `git worktree add` for that reason. It prints only the resulting worktree path to stdout; everything else goes to stderr (see "Wiring into Claude Code" below).
 
 It deliberately does **not** install dependencies. Which commands a repo actually needs -- a plain install, a workspace filter, a codegen step after it -- is project-specific judgment. Install them yourself (or from your agent) before building, or use `--carry-ignored` to clone the source worktree's `node_modules`.
 

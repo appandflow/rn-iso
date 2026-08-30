@@ -16,7 +16,7 @@ The keys stim-cli reads are `ios.deviceType`, `ios.runtime`, `android.systemImag
 {
   "ios": { "deviceType": "iPhone 17 Pro" },
   "worktree": {
-    "baseRef": "fresh",
+    "baseRef": "head",
     "include": [".env", ".env.*"]
   }
 }
