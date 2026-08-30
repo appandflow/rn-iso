@@ -23,6 +23,7 @@ import {
   isMainWorkingTree,
   isPodInstallChurn,
   listCarryableIgnoredEntries,
+  listTrackedPaths,
   listWorktrees,
   podsOutOfSync,
   readWorktreeExclude,
@@ -103,7 +104,7 @@ export function warmCarrySummary(entries: string[], root?: string): string {
   return `Carried warm state: dependencies=${categories.dependencies ? 'yes' : 'no'}, CocoaPods=${categories.pods ? 'yes' : 'no'}, native build output=${categories.nativeOutput ? 'yes' : 'no'}.`;
 }
 
-function dependencyInstallCommand(target: string, dir = '.'): string {
+export function dependencyInstallCommand(target: string, dir = '.'): string {
   const installRoot = resolve(target, dir);
   let command = 'npm install';
   if (existsSync(resolve(installRoot, 'pnpm-lock.yaml'))) command = 'pnpm install';
@@ -111,7 +112,18 @@ function dependencyInstallCommand(target: string, dir = '.'): string {
   else if (existsSync(resolve(installRoot, 'bun.lock')) || existsSync(resolve(installRoot, 'bun.lockb')))
     command = 'bun install';
   else if (existsSync(resolve(installRoot, 'package-lock.json'))) command = 'npm ci';
-  return `cd ${JSON.stringify(installRoot)} && ${command}`;
+  return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${command}`;
+}
+
+function dependencyInstallCommands(target: string): string[] {
+  const lockfiles = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb']);
+  const dirs = new Set(
+    (listTrackedPaths(target) || [])
+      .filter((path) => lockfiles.has(path.split('/').at(-1) || ''))
+      .map((path) => path.split('/').slice(0, -1).join('/') || '.'),
+  );
+  if (!dirs.size) dirs.add('.');
+  return [...dirs].map((dir) => dependencyInstallCommand(target, dir));
 }
 
 export function registerCreate(worktree: Command): void {
@@ -252,8 +264,11 @@ export function registerCreate(worktree: Command): void {
           );
         }
         if (!carriedDeps) {
+          const remedies = dependencyInstallCommands(target);
           console.error(
-            chalk.yellow(`Dependencies were not carried. Run \`${dependencyInstallCommand(target)}\` before building.`),
+            chalk.yellow(
+              `Dependencies were not carried. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.`,
+            ),
           );
         }
         for (const f of res.failed) {

@@ -6,6 +6,7 @@ import type { Command } from 'commander';
 import {
   carriedChangesLine,
   carryConflictWarning,
+  dependencyInstallCommand,
   registerCreate,
   warmCarryCategories,
   warmCarrySummary,
@@ -509,6 +510,11 @@ test('warmCarryCategories recognizes dependency, CocoaPods, and native output pa
   );
 });
 
+test('dependencyInstallCommand shell-quotes repository paths', () => {
+  expect(dependencyInstallCommand('/tmp/app/$(touch PWNED)')).toBe("cd '/tmp/app/$(touch PWNED)' && npm install");
+  expect(dependencyInstallCommand("/tmp/app/it's-here")).toBe("cd '/tmp/app/it'\\''s-here' && npm install");
+});
+
 test('warmCarryCategories inspects a collapsed ignored directory', () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-cli-test-warm-categories-'));
   try {
@@ -612,6 +618,27 @@ test('create action: a cold --carry-ignored create prints one exact dependency r
   }
 });
 
+test('create action: a cold nested package prints its package manager and directory', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-cold-nested-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    mkdirSync(join(repo, 'apps/mobile'), { recursive: true });
+    writeFileSync(join(repo, 'apps/mobile/yarn.lock'), 'lock\n');
+    git('git add apps/mobile/yarn.lock');
+    git('git commit -q -m nested-lockfile');
+
+    const { errs } = await runCreateInRepo(repo, 'feat-cold-nested', { base: 'head', carryIgnored: true });
+    const target = join(defaultWorktreeDir(repo), 'feat-cold-nested', 'apps/mobile');
+
+    expect(errs.some((line) => line.includes(`cd '${target}' && yarn install`))).toBe(true);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('create action: stale nested dependencies use the nested package manager', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-nested-stale-')));
@@ -633,7 +660,7 @@ test('create action: stale nested dependencies use the nested package manager', 
     const { errs } = await runCreateInRepo(repo, 'feat-nested-stale', { base: oldHead, carryIgnored: true });
     const target = join(defaultWorktreeDir(repo), 'feat-nested-stale', 'apps/mobile');
 
-    expect(errs.some((line) => line.includes(`cd ${JSON.stringify(target)} && yarn install`))).toBe(true);
+    expect(errs.some((line) => line.includes(`cd '${target}' && yarn install`))).toBe(true);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
