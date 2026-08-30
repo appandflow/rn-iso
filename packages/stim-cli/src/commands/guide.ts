@@ -1390,7 +1390,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
   worktree.baseRef      "head" (current HEAD) or "fresh" (origin/HEAD).
                         Unset means "head".
   worktree.include      carry-over patterns, same role as .worktreeinclude
-  worktree.exclude      --carry-ignored skip list, same role as .worktreeexclude
+  worktree.exclude      additional --carry-ignored skip list, same role as
+                        .worktreeexclude. Registered nested Git worktrees are
+                        always skipped.
   caches                extra shared-cache paths for \`gc\` to report. A JSON
                         array; every path is treated as a flat store.
 

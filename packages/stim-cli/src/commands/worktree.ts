@@ -137,7 +137,7 @@ export function registerCreate(worktree: Command): void {
     .option('--label <label>', 'stim-cli shortcut for the worktree (defaults to the worktree name)')
     .option(
       '--carry-ignored',
-      "clone the source's working state: every gitignored path (node_modules, Pods, build output) except those in .worktreeexclude, plus its uncommitted tracked changes (applied when they fit this base)",
+      "clone the source's working state: every safe gitignored path (node_modules, Pods, build output) except nested Git worktrees and paths in .worktreeexclude, plus its uncommitted tracked changes (applied when they fit this base)",
     )
     .action(async (name, opts) => {
       if (!/^[A-Za-z0-9._-]+$/.test(name)) {

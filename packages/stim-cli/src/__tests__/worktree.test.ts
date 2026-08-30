@@ -21,6 +21,7 @@ import {
   isPodInstallChurn,
   listGitignoredEntries,
   listGitignoredFiles,
+  listCarryableIgnoredEntries,
   listTrackedPaths,
   addWorktree,
   removeWorktree,
@@ -326,6 +327,82 @@ test('listGitignoredEntries keeps collapsed directories and does not exclude nod
   expect(listGitignoredEntries('/repo')).toEqual(['node_modules', 'ios/Pods', 'ios/.xcode.env.local']);
   expect(capturedCmd).toMatch(/--directory/);
   expect(capturedCmd).not.toMatch(/exclude,glob/);
+});
+
+test('listCarryableIgnoredEntries skips a collapsed ignored parent that contains a registered worktree', () => {
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd) => {
+      if (cmd.includes('worktree list --porcelain')) {
+        return 'worktree /repo\nbranch refs/heads/main\n\nworktree /repo/.claude/worktrees/task\nbranch refs/heads/task\n';
+      }
+      if (cmd.includes('ls-files --others --ignored')) return '.claude/\nnode_modules/\nios/Pods/';
+      return '';
+    },
+    spawn: () => {},
+  });
+
+  expect(listCarryableIgnoredEntries('/repo', [])).toEqual(['node_modules', 'ios/Pods']);
+});
+
+test('listCarryableIgnoredEntries skips entries inside a registered nested worktree', () => {
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd) => {
+      if (cmd.includes('worktree list --porcelain')) {
+        return 'worktree /repo\nbranch refs/heads/main\n\nworktree /repo/tools/tasks/one\nbranch refs/heads/one\n';
+      }
+      if (cmd.includes('ls-files --others --ignored')) {
+        return 'tools/tasks/one/node_modules/\ntools/shared-cache/\n';
+      }
+      return '';
+    },
+    spawn: () => {},
+  });
+
+  expect(listCarryableIgnoredEntries('/repo', [])).toEqual(['tools/shared-cache']);
+});
+
+test('listCarryableIgnoredEntries fails closed when Git cannot list worktrees', () => {
+  setExecutor({
+    run: () => '',
+    runQuiet: (cmd) => (cmd.includes('worktree list --porcelain') ? null : 'node_modules/'),
+    spawn: () => {},
+  });
+
+  expect(() => listCarryableIgnoredEntries('/repo', [])).toThrow(
+    'Could not list Git worktrees. Refusing to carry ignored files.',
+  );
+});
+
+test('cloneIgnoredEntries does not copy a registered worktree nested under an ignored parent', () => {
+  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-nested-worktree-'));
+  const root = join(base, 'repo');
+  const target = join(base, 'target');
+  try {
+    mkdirSync(root, { recursive: true });
+    mkdirSync(target, { recursive: true });
+    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    writeFileSync(join(root, 'README.md'), 'hello');
+    writeFileSync(join(root, '.gitignore'), '.claude/\nnode_modules/\n');
+    git('git add README.md .gitignore');
+    git('git commit -q -m init');
+    git('git worktree add -q -b nested-task .claude/worktrees/task');
+    mkdirSync(join(root, 'node_modules/pkg'), { recursive: true });
+    writeFileSync(join(root, 'node_modules/pkg/index.js'), 'module.exports = true');
+
+    const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: [] });
+
+    expect(copied).toEqual(['node_modules']);
+    expect(failed).toEqual([]);
+    expect(existsSync(join(target, 'node_modules/pkg/index.js'))).toBe(true);
+    expect(existsSync(join(target, '.claude'))).toBe(false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test('cloneIgnoredEntries skips excluded paths and reports a clone that fell back to a real copy', () => {
