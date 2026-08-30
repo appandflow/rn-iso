@@ -27,7 +27,8 @@ jobs:
         with:
           # Node 24 bundles an npm new enough for OIDC trusted publishing.
           runtime: node@24
-          cache: true
+          # Release installs must not restore a package-manager cache.
+          cache: false
           install: false
       - name: Install (lifecycle scripts stay blocked)
         run: pnpm install --frozen-lockfile
@@ -49,9 +50,7 @@ jobs:
           if npm view "@stim-cli/core@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/core@$version is already published"
           else
-            tag=latest
-            if [[ "$version" == *-* ]]; then tag=next; fi
-            npm publish --provenance --access public --tag "$tag"
+            npm publish --provenance --access public --tag latest
           fi
       - name: Publish @stim-cli/metro
         working-directory: packages/metro
@@ -60,9 +59,7 @@ jobs:
           if npm view "@stim-cli/metro@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/metro@$version is already published"
           else
-            tag=latest
-            if [[ "$version" == *-* ]]; then tag=next; fi
-            npm publish --provenance --access public --tag "$tag"
+            npm publish --provenance --access public --tag latest
           fi
       - name: Publish @stim-cli/expo-build-cache
         working-directory: packages/expo-build-cache
@@ -71,9 +68,7 @@ jobs:
           if npm view "@stim-cli/expo-build-cache@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/expo-build-cache@$version is already published"
           else
-            tag=latest
-            if [[ "$version" == *-* ]]; then tag=next; fi
-            npm publish --provenance --access public --tag "$tag"
+            npm publish --provenance --access public --tag latest
           fi
       - name: Publish stim-cli
         working-directory: packages/stim-cli
@@ -82,9 +77,7 @@ jobs:
           if npm view "stim-cli@$version" version >/dev/null 2>&1; then
             echo "stim-cli@$version is already published"
           else
-            tag=latest
-            if [[ "$version" == *-* ]]; then tag=next; fi
-            npm publish --provenance --access public --tag "$tag"
+            npm publish --provenance --access public --tag latest
           fi
       - name: Smoke-test the registry
         run: |
