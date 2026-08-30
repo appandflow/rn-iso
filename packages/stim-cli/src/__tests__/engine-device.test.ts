@@ -61,6 +61,7 @@ describe('ensureBooted: ios', () => {
       udid: 'U1',
     });
     expect(commands.filter((c) => c.includes('simctl boot')).length).toBe(0);
+    expect(commands.some((c) => c.includes('simctl bootstatus'))).toBe(false);
   });
 
   test('boots a shut-down owned sim and waits for the Booted state', async () => {
@@ -88,6 +89,28 @@ describe('ensureBooted: ios', () => {
     });
     expect(result).toEqual({ ok: true, udid: 'U1' });
     expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
+    expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
+  });
+
+  test('reports boot setup failures instead of treating the Booted state as ready', async () => {
+    setExecutor({
+      run: (cmd) => {
+        if (cmd.includes('list devices')) {
+          return simList([{ udid: 'U1', name: 'stim-cli-app', state: 'Shutdown', isAvailable: true }]);
+        }
+        if (cmd.includes('bootstatus')) throw new Error('CoreLocationMigrator failed');
+        return '';
+      },
+      runQuiet: () => '',
+      runFile: () => '',
+      spawn: () => null,
+    });
+
+    const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true } });
+
+    expect(result.ok).toBeUndefined();
+    expect(result.reason).toMatch(/Could not boot simulator U1/);
+    expect(result.reason).toMatch(/CoreLocationMigrator failed/);
   });
 
   test('refuses to boot a sim that is no longer stim-cli-owned by name', async () => {
