@@ -138,6 +138,8 @@ describe('ios: log stream ndjson', () => {
 describe('ios: demoting device noise', () => {
   const app =
     '/Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/ABC/MyApp.app/MyApp';
+  const focusCacheMessage =
+    'RCTScrollViewComponentView implements focusItemsInRect: - caching for linear focus movement is limited as long as this view is on screen.';
   const event = (over: Record<string, unknown>): Record<string, unknown> => ({
     eventType: 'logEvent',
     messageType: 'Error',
@@ -209,7 +211,7 @@ describe('ios: demoting device noise', () => {
   });
 
   test('the rest of the proven offenders are demoted, each by its own rule', () => {
-    const cases = [
+    const cases: [string, Record<string, unknown>][] = [
       [
         'sectrust',
         event({ subsystem: 'com.apple.securityd', category: 'SecTrust', eventMessage: 'SecTrustEvaluateIfNecessary' }),
@@ -243,10 +245,23 @@ describe('ios: demoting device noise', () => {
         }),
       ],
       ['coreui-default-subsystem', event({ eventMessage: 'CUICatalog: Invalid asset name supplied: (null)' })],
+      [
+        'react-native-focus-cache',
+        event({
+          subsystem: 'com.apple.UIKit',
+          category: 'UIFocus',
+          eventMessage: focusCacheMessage,
+        }),
+      ],
     ];
     for (const [id, e] of cases) {
       expect(noiseRuleId(e)).toBe(id);
-      expect(levelForEvent(e)).toBe('info');
+      const record = parseLogStreamLine(JSON.stringify(e));
+      assert(record);
+      expect(record.level).toBe('info');
+      expect(record.msg).toBe(e.eventMessage);
+      expect(record.src).toBe('device');
+      expect(record.proc).toBe('MyApp');
     }
     const covered = new Set([
       ...cases.map(([id]) => id),
@@ -255,6 +270,18 @@ describe('ios: demoting device noise', () => {
       'uiscene-deprecation',
     ]);
     expect(NOISE_RULES.map((r) => r.id).filter((id) => !covered.has(id))).toEqual([]);
+  });
+
+  test('the focus-cache rule requires the exact UIKit focus event', () => {
+    const nearMisses = [
+      event({ subsystem: 'com.apple.UIKit.child', category: 'UIFocus', eventMessage: focusCacheMessage }),
+      event({ subsystem: 'com.apple.UIKit', category: 'default', eventMessage: focusCacheMessage }),
+      event({ subsystem: 'com.apple.UIKit', category: 'UIFocus', eventMessage: `${focusCacheMessage} Extra` }),
+    ];
+    for (const nearMiss of nearMisses) {
+      expect(noiseRuleId(nearMiss)).toBe(null);
+      expect(levelForEvent(nearMiss)).toBe('error');
+    }
   });
 
   test("the app's own error is untouched, and so is an unlisted system one", () => {
