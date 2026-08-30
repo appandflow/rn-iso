@@ -509,6 +509,16 @@ test('warmCarryCategories recognizes dependency, CocoaPods, and native output pa
   );
 });
 
+test('warmCarryCategories inspects a collapsed ignored directory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-cli-test-warm-categories-'));
+  try {
+    for (const rel of ['ios/Pods', 'ios/build']) mkdirSync(join(root, rel), { recursive: true });
+    expect(warmCarryCategories(['ios'], root)).toEqual({ dependencies: false, pods: true, nativeOutput: true });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('create action: a plain create reports the exact warm-worktree command when warm state exists', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-warm-hint-')));
@@ -596,6 +606,34 @@ test('create action: a cold --carry-ignored create prints one exact dependency r
     const remedies = errs.filter((e) => /Dependencies were not carried/.test(e));
     expect(remedies).toHaveLength(1);
     expect(remedies[0]).toContain('npm ci');
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: stale nested dependencies use the nested package manager', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-nested-stale-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    writeFileSync(join(repo, '.gitignore'), 'apps/mobile/node_modules/\n');
+    mkdirSync(join(repo, 'apps/mobile'), { recursive: true });
+    writeFileSync(join(repo, 'apps/mobile/yarn.lock'), 'version one\n');
+    git('git add .gitignore apps/mobile/yarn.lock');
+    git('git commit -q -m first-lock');
+    const oldHead = git('git rev-parse HEAD').trim();
+    writeFileSync(join(repo, 'apps/mobile/yarn.lock'), 'version two\n');
+    git('git add apps/mobile/yarn.lock');
+    git('git commit -q -m second-lock');
+    mkdirSync(join(repo, 'apps/mobile/node_modules/pkg'), { recursive: true });
+    writeFileSync(join(repo, 'apps/mobile/node_modules/pkg/index.js'), 'warm');
+
+    const { errs } = await runCreateInRepo(repo, 'feat-nested-stale', { base: oldHead, carryIgnored: true });
+    const target = join(defaultWorktreeDir(repo), 'feat-nested-stale', 'apps/mobile');
+
+    expect(errs.some((line) => line.includes(`cd ${JSON.stringify(target)} && yarn install`))).toBe(true);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });

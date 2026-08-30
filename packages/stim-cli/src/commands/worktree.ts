@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from 'fs';
+import { existsSync, readdirSync, realpathSync } from 'fs';
 import { basename, dirname, resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
@@ -53,8 +53,8 @@ export interface WarmCarryCategories {
   nativeOutput: boolean;
 }
 
-export function warmCarryCategories(entries: string[]): WarmCarryCategories {
-  return {
+export function warmCarryCategories(entries: string[], root?: string): WarmCarryCategories {
+  const categories = {
     dependencies: entries.some((rel) => rel === 'node_modules' || rel.endsWith('/node_modules')),
     pods: entries.some((rel) => rel === 'Pods' || rel.endsWith('/Pods')),
     nativeOutput: entries.some(
@@ -62,6 +62,32 @@ export function warmCarryCategories(entries: string[]): WarmCarryCategories {
         /(?:^|\/)ios\/build(?:\/|$)/.test(rel) || /(?:^|\/)android\/(?:.*\/)?(?:build|\.gradle)(?:\/|$)/.test(rel),
     ),
   };
+  if (!root || (categories.dependencies && categories.pods && categories.nativeOutput)) return categories;
+
+  const inspect = (rel: string): void => {
+    if (categories.dependencies && categories.pods && categories.nativeOutput) return;
+    if (rel === 'node_modules' || rel.endsWith('/node_modules')) {
+      categories.dependencies = true;
+      return;
+    }
+    if (rel === 'Pods' || rel.endsWith('/Pods')) {
+      categories.pods = true;
+      return;
+    }
+    if (/(?:^|\/)ios\/build(?:\/|$)/.test(rel) || /(?:^|\/)android\/(?:.*\/)?(?:build|\.gradle)(?:\/|$)/.test(rel)) {
+      categories.nativeOutput = true;
+      return;
+    }
+    try {
+      for (const entry of readdirSync(resolve(root, rel), { withFileTypes: true })) {
+        if (entry.isDirectory()) inspect(rel ? `${rel}/${entry.name}` : entry.name);
+      }
+    } catch {
+      // A copied entry can disappear while the summary is generated.
+    }
+  };
+  for (const rel of entries) inspect(rel);
+  return categories;
 }
 
 function warmCategoryNames(categories: WarmCarryCategories): string[] {
@@ -72,18 +98,20 @@ function warmCategoryNames(categories: WarmCarryCategories): string[] {
   return names;
 }
 
-export function warmCarrySummary(entries: string[]): string {
-  const categories = warmCarryCategories(entries);
+export function warmCarrySummary(entries: string[], root?: string): string {
+  const categories = warmCarryCategories(entries, root);
   return `Carried warm state: dependencies=${categories.dependencies ? 'yes' : 'no'}, CocoaPods=${categories.pods ? 'yes' : 'no'}, native build output=${categories.nativeOutput ? 'yes' : 'no'}.`;
 }
 
-function dependencyInstallCommand(target: string): string {
+function dependencyInstallCommand(target: string, dir = '.'): string {
+  const installRoot = resolve(target, dir);
   let command = 'npm install';
-  if (existsSync(resolve(target, 'pnpm-lock.yaml'))) command = 'pnpm install';
-  else if (existsSync(resolve(target, 'yarn.lock'))) command = 'yarn install';
-  else if (existsSync(resolve(target, 'bun.lock')) || existsSync(resolve(target, 'bun.lockb'))) command = 'bun install';
-  else if (existsSync(resolve(target, 'package-lock.json'))) command = 'npm ci';
-  return `cd ${JSON.stringify(target)} && ${command}`;
+  if (existsSync(resolve(installRoot, 'pnpm-lock.yaml'))) command = 'pnpm install';
+  else if (existsSync(resolve(installRoot, 'yarn.lock'))) command = 'yarn install';
+  else if (existsSync(resolve(installRoot, 'bun.lock')) || existsSync(resolve(installRoot, 'bun.lockb')))
+    command = 'bun install';
+  else if (existsSync(resolve(installRoot, 'package-lock.json'))) command = 'npm ci';
+  return `cd ${JSON.stringify(installRoot)} && ${command}`;
 }
 
 export function registerCreate(worktree: Command): void {
@@ -211,10 +239,10 @@ export function registerCreate(worktree: Command): void {
         const skip = excluded && excluded.length ? excluded : settings?.worktree?.exclude || [];
         const res = cloneIgnoredEntries({ root, target, patterns: skip });
         carriedIgnored = res.copied.length > 0;
-        carriedDeps = res.copied.some((rel) => rel === 'node_modules' || rel.endsWith('/node_modules'));
+        carriedDeps = warmCarryCategories(res.copied, target).dependencies;
         if (res.copied.length) {
           console.error(chalk.dim(`Cloned ${res.copied.length} gitignored path(s).`));
-          console.error(chalk.dim(warmCarrySummary(res.copied)));
+          console.error(chalk.dim(warmCarrySummary(res.copied, target)));
           console.error(
             chalk.dim(
               res.cloned
@@ -234,9 +262,12 @@ export function registerCreate(worktree: Command): void {
         const staleDeps = depsOutOfSync(root, target, res.copied);
         if (staleDeps.length) {
           const manifests = staleDeps.map((d) => (d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`)).join(', ');
+          const remedies = [
+            ...new Set(staleDeps.map((dependency) => dependencyInstallCommand(target, dependency.dir))),
+          ];
           console.error(
             chalk.yellow(
-              `Carried dependencies do not match ${manifests}. Run \`${dependencyInstallCommand(target)}\` before building.`,
+              `Carried dependencies do not match ${manifests}. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.`,
             ),
           );
         }
@@ -259,7 +290,7 @@ export function registerCreate(worktree: Command): void {
       } else {
         const excluded = readWorktreeExclude(root);
         const skip = excluded && excluded.length ? excluded : settings?.worktree?.exclude || [];
-        warmSource = warmCategoryNames(warmCarryCategories(listCarryableIgnoredEntries(root, skip)));
+        warmSource = warmCategoryNames(warmCarryCategories(listCarryableIgnoredEntries(root, skip), root));
       }
 
       const mainRoot = listWorktrees(root).find((candidate) => isMainWorkingTree(candidate.path))?.path || root;
