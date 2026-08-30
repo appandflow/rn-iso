@@ -187,6 +187,8 @@ interface MakeExecutorOptions {
   occupied?: Record<string, boolean>;
   diffs?: Record<string, string>;
   mainTrees?: string[];
+  worktreeRemoveError?: string;
+  branchDeleteError?: string;
 }
 
 function makeExecutor({
@@ -198,6 +200,8 @@ function makeExecutor({
   occupied = {},
   diffs = {},
   mainTrees = [],
+  worktreeRemoveError,
+  branchDeleteError,
 }: MakeExecutorOptions = {}) {
   const runCalls: string[] = [];
   const runQuietCalls: string[] = [];
@@ -212,8 +216,14 @@ function makeExecutor({
     runFile(file: string, args: string[] = []) {
       const cmd = [file, ...args].join(' ');
       runCalls.push(cmd);
-      if (/worktree remove/.test(cmd)) return '';
-      if (/branch -D/.test(cmd)) return '';
+      if (/worktree remove/.test(cmd)) {
+        if (worktreeRemoveError) throw new Error(worktreeRemoveError);
+        return '';
+      }
+      if (/branch -D/.test(cmd)) {
+        if (branchDeleteError) throw new Error(branchDeleteError);
+        return '';
+      }
       throw new Error(`unexpected runFile: ${cmd}`);
     },
     runQuiet(cmd: string) {
@@ -542,7 +552,7 @@ test('action: refuses when git cannot answer the status check, leaving config un
   expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });
 
-test('action: on success, reclaimProject clears stim-cli tracking before removeWorktree runs', async () => {
+test('action: on success, ownership state stays until removeWorktree succeeds', async () => {
   upsertProject(wtDir, { metroPort: 8083 });
   const exec = makeExecutor({
     worktrees: porcelain([
@@ -564,7 +574,7 @@ test('action: on success, reclaimProject clears stim-cli tracking before removeW
   await run(wtDir, {});
 
   expect(process.exitCode).not.toBe(1);
-  expect(trackedWhenRemoved).toBe(false);
+  expect(trackedWhenRemoved).toBe(true);
   expect(getProject(wtDir)).toBe(null);
   expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });
@@ -606,11 +616,19 @@ test('action: keeps a branch that existed before stim-cli attached the worktree'
   });
   setExecutor(exec);
 
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.log = originalLog;
+  }
 
   expect(process.exitCode).not.toBe(1);
   expect(exec.calls.run.some((call) => /branch -D/.test(call))).toBe(false);
+  expect(logs.some((line) => /kept branch worktree-feat-x: Stim did not create it/.test(line))).toBe(true);
 });
 
 test('action: force removal keeps an owned branch that has unique commits', async () => {
@@ -629,12 +647,72 @@ test('action: force removal keeps an owned branch that has unique commits', asyn
   });
   setExecutor(exec);
 
-  const run = captureAction(registerRemove);
-  await run(wtDir, { force: true });
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, { force: true });
+  } finally {
+    console.log = originalLog;
+  }
 
   expect(process.exitCode).not.toBe(1);
   expect(exec.calls.run.some((call) => /worktree remove --force/.test(call))).toBe(true);
   expect(exec.calls.run.some((call) => /branch -D/.test(call))).toBe(false);
+  expect(logs.some((line) => /kept branch worktree-feat-x: it has 1 unique commit/.test(line))).toBe(true);
+});
+
+test('action: a branch deletion failure keeps ownership state and exits unsuccessfully', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+    mainTrees: [mainDir],
+    branchDeleteError: 'branch is locked',
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(wtDir)).toMatchObject({
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+  });
+});
+
+test('action: a worktree deletion failure keeps ownership state', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+    mainTrees: [mainDir],
+    worktreeRemoveError: 'worktree is locked',
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(wtDir)).toMatchObject({
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+  });
 });
 
 test('action: tunnel verification failure retains state and refuses worktree removal even with force', async () => {
@@ -840,7 +918,7 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
   expect(getProject(nestedDir1)).toBe(null);
   expect(getProject(nestedDir2)).toBe(null);
 
-  expect(!logs.some((l) => /kept/i.test(l))).toBeTruthy();
+  expect(!logs.some((l) => /kept .*device|kept .*sim/i.test(l))).toBeTruthy();
 });
 
 test('action: a project-local .stim-cli directory is ordinary dirt and refuses removal', async () => {

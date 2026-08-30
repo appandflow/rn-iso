@@ -3,7 +3,7 @@ import { resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { resolveSettings, unknownSettingKeys } from '../settings.ts';
-import { getProject, isPathPrefix, loadConfig, upsertProject } from '../config.ts';
+import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
@@ -392,6 +392,7 @@ async function withReclaimLocks<T>(rootPath: string, fn: (lockedKeys: readonly s
 async function reclaimAll(
   rootPath: string,
   keys: readonly string[] = reclaimKeys(rootPath),
+  { preserveRootProject = false }: { preserveRootProject?: boolean } = {},
 ): Promise<ReclaimAllResult> {
   const dereferenced: string[] = [];
   const killedPids: number[] = [];
@@ -404,7 +405,10 @@ async function reclaimAll(
   const removedWorkspaceDirs: string[] = [];
   const failedWorkspaceDirs: string[] = [];
   for (const key of keys) {
-    const r = await reclaimProject(key, { deleteOwnedDevices: true });
+    const r = await reclaimProject(key, {
+      deleteOwnedDevices: true,
+      preserveProjectRecord: preserveRootProject && key === rootPath,
+    });
     dereferenced.push(...r.dereferenced);
     if (r.killedPid) killedPids.push(r.killedPid);
     deletedDevices.push(...r.deletedDevices);
@@ -628,17 +632,22 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
 
   const project = getProject(path);
   const branch = entry.branch;
-  const deleteOwnedBranch = Boolean(
-    branch &&
-    project?.worktreeBranchOwned === true &&
-    project.worktreeBranch === branch &&
-    inspection.unpushed?.length === 0,
-  );
+  const ownsBranch = Boolean(branch && project?.worktreeBranchOwned === true && project.worktreeBranch === branch);
+  const deleteOwnedBranch = Boolean(ownsBranch && inspection.unpushed?.length === 0);
+  const retainedBranchReason = !branch
+    ? null
+    : !ownsBranch
+      ? 'Stim did not create it'
+      : inspection.unpushed === null
+        ? 'Stim could not verify whether it has unique commits'
+        : inspection.unpushed.length > 0
+          ? `it has ${inspection.unpushed.length} unique commit(s)`
+          : null;
   const branchDeleteCwd = worktrees.find((candidate) => isMainWorkingTree(candidate.path))?.path;
 
   await withManagedRemoteWorktreeRemovalLock(path, () =>
     withReclaimLocks(path, async (lockedKeys) => {
-      const result = await reclaimAll(path, lockedKeys);
+      const result = await reclaimAll(path, lockedKeys, { preserveRootProject: true });
       if (result.keptEntries.length) {
         reportRetainedResources(path, result);
         return;
@@ -648,22 +657,34 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
         removeWorktree(path, { force: opts.force });
       } catch (error) {
         console.error(chalk.red(`git worktree remove failed: ${String((error as Error)?.message || error)}`));
-        console.error(
-          chalk.dim(`The directory at ${path} was not removed; stim-cli's own tracking for it was already cleared.`),
-        );
+        console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
         printRemovalCleanup(result, true);
         process.exitCode = 1;
         return;
       }
       console.log(chalk.green(`Removed worktree ${path}`));
-      if (deleteOwnedBranch && branch && branchDeleteCwd) {
+      if (deleteOwnedBranch && branch) {
+        if (!branchDeleteCwd) {
+          console.error(chalk.yellow(`  kept branch ${branch}: Stim could not find the main worktree`));
+          console.error(chalk.dim('  Fix the Git worktree state, then run `stim worktree remove` again.'));
+          process.exitCode = 1;
+          printRemovalCleanup(result, false);
+          return;
+        }
         try {
           deleteBranch(branchDeleteCwd, branch);
           console.log(chalk.dim(`  deleted branch ${branch}`));
         } catch (error) {
           console.error(chalk.yellow(`  kept branch ${branch}: ${String((error as Error)?.message || error)}`));
+          console.error(chalk.dim(`  Retry with: git -C ${branchDeleteCwd} branch -D -- ${branch}`));
+          process.exitCode = 1;
+          printRemovalCleanup(result, false);
+          return;
         }
+      } else if (branch && retainedBranchReason) {
+        console.log(chalk.dim(`  kept branch ${branch}: ${retainedBranchReason}`));
       }
+      removeProject(path);
       printRemovalCleanup(result, false);
     }),
   );
