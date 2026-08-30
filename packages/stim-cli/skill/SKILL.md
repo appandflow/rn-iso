@@ -91,7 +91,8 @@ Do not add `--force` as a first response.
 
 Ask the user before these actions:
 
-- `worktree remove`, because it deletes the worktree and its owned device.
+- `worktree remove`, because it deletes the worktree, its Stim-created branch
+  when it has no unique commits, and its owned device.
 - `worktree remove --force`, because it also discards uncommitted and untracked
   files.
 - `gc --delete`, because it deletes orphaned resources. `gc --delete --all`

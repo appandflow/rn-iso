@@ -712,11 +712,10 @@ not on any remote"  (worktree remove)
 "Refusing to create <name>: the branch worktree-<name> already exists at <sha>,
 but --base <ref> resolves to <sha>"  (worktree create)
   \`git worktree add\` attaches to an existing branch and ignores the base, so
-  the worktree would not be based on what you asked for. An earlier
-  \`worktree remove\` left that branch behind -- removing a worktree never
-  deletes its branch. Either pick another name, or \`git branch -D
-  worktree-<name>\` and retry. Without --base, attaching is still the
-  behaviour: nothing was promised about the tip.
+  the worktree would not be based on what you asked for. Stim keeps branches
+  it did not create and branches with unique commits. Either pick another
+  name, or \`git branch -D worktree-<name>\` and retry. Without --base,
+  attaching is still the behaviour: nothing was promised about the tip.
 
 "Carried <dir>/Pods does not match <dir>/Podfile.lock"  (worktree create)
   \`ios/Pods\` is gitignored, so --carry-ignored clones it; \`ios/Podfile.lock\`
@@ -822,7 +821,8 @@ too; commit deliberately."  (worktree create --carry-ignored)
   #    (never deleted), port freed. Coming back costs a boot, not a create.
   stim stop
 
-  # 7. Done with the branch: the environment dies whole.
+  # 7. Done with the branch: the environment dies whole. A branch created by
+  #    Stim is also deleted when it has no unique commits.
   stim worktree remove
 
 Steps 2 and 3 are ordered, not interchangeable: \`ios\` and \`android\` never

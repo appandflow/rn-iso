@@ -455,6 +455,13 @@ export function removeWorktree(path: string, { force = false }: { force?: boolea
   getExecutor().runFile('git', args);
 }
 
+export function deleteBranch(cwd: string, branch: string): void {
+  if (!SAFE_BRANCH_NAME.test(branch) || branch.startsWith('-')) {
+    throw new Error(`Refusing branch ${JSON.stringify(branch)}: it is not a safe local branch name.`);
+  }
+  getExecutor().runFile('git', ['-C', cwd, 'branch', '-D', '--', branch]);
+}
+
 export interface WorktreeEntry {
   path: string;
   branch?: string;

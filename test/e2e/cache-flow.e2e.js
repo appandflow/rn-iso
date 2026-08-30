@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -223,6 +223,10 @@ test('worktree remove refuses a dirty tree, then removes a clean one leaving not
 
   const list = execFileSync('git', ['-C', ctx.repo, 'worktree', 'list'], { encoding: 'utf-8' });
   assert.ok(!list.includes('-worktrees'), `only the main checkout remains:\n${list}`);
+  for (const name of ['e2e-wt1', 'e2e-wt2']) {
+    const branch = spawnSync('git', ['-C', ctx.repo, 'show-ref', '--verify', '--quiet', `refs/heads/worktree-${name}`]);
+    assert.notEqual(branch.status, 0, `worktree-${name} branch is gone`);
+  }
 });
 
 function createWorktree(name) {

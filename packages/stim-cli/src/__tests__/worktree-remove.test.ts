@@ -213,6 +213,7 @@ function makeExecutor({
       const cmd = [file, ...args].join(' ');
       runCalls.push(cmd);
       if (/worktree remove/.test(cmd)) return '';
+      if (/branch -D/.test(cmd)) return '';
       throw new Error(`unexpected runFile: ${cmd}`);
     },
     runQuiet(cmd: string) {
@@ -566,6 +567,74 @@ test('action: on success, reclaimProject clears stim-cli tracking before removeW
   expect(trackedWhenRemoved).toBe(false);
   expect(getProject(wtDir)).toBe(null);
   expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
+});
+
+test('action: removes the branch that stim-cli created when it has no unique commits', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+    mainTrees: [mainDir],
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).not.toBe(1);
+  expect(exec.calls.run.some((call) => /branch -D -- worktree-feat-x/.test(call))).toBe(true);
+});
+
+test('action: keeps a branch that existed before stim-cli attached the worktree', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: false,
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+    mainTrees: [mainDir],
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).not.toBe(1);
+  expect(exec.calls.run.some((call) => /branch -D/.test(call))).toBe(false);
+});
+
+test('action: force removal keeps an owned branch that has unique commits', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+  });
+  const exec = makeExecutor({
+    unpushed: 'abc123 unique work',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+    mainTrees: [mainDir],
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, { force: true });
+
+  expect(process.exitCode).not.toBe(1);
+  expect(exec.calls.run.some((call) => /worktree remove --force/.test(call))).toBe(true);
+  expect(exec.calls.run.some((call) => /branch -D/.test(call))).toBe(false);
 });
 
 test('action: tunnel verification failure retains state and refuses worktree removal even with force', async () => {
@@ -980,6 +1049,12 @@ test('matchWorktreeEntry walks up to the enclosing worktree root', () => {
   expect(matchWorktreeEntry(entries, '/repo-worktrees/feat-xy')).toBe(null);
   expect(matchWorktreeEntry(entries, '/elsewhere')).toBe(null);
   expect(matchWorktreeEntry([], '/repo')).toBe(null);
+});
+
+test('matchWorktreeEntry preserves the matched branch', () => {
+  expect(
+    matchWorktreeEntry([{ path: '/repo-worktrees/feat-x', branch: 'worktree-feat-x' }], '/repo-worktrees/feat-x'),
+  ).toEqual({ index: 0, path: '/repo-worktrees/feat-x', branch: 'worktree-feat-x' });
 });
 
 test('action: run from a monorepo app dir, it removes the enclosing worktree', async () => {

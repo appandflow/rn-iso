@@ -3,7 +3,7 @@ import { resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { resolveSettings, unknownSettingKeys } from '../settings.ts';
-import { isPathPrefix, loadConfig, upsertProject } from '../config.ts';
+import { getProject, isPathPrefix, loadConfig, upsertProject } from '../config.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
@@ -13,6 +13,7 @@ import {
   carryOverFiles,
   carryUncommittedChanges,
   depsOutOfSync,
+  deleteBranch,
   cloneIgnoredEntries,
   defaultWorktreeDir,
   dirtyPaths,
@@ -121,7 +122,7 @@ export function registerCreate(worktree: Command): void {
         console.error(chalk.dim(`    stim worktree create <other-name> --base ${base}`));
         console.error(
           chalk.dim(
-            '  or delete the leftover branch (it is what an earlier `worktree remove` left behind; removing a worktree never deletes its branch) and retry:',
+            '  or delete the existing branch (Stim keeps branches it did not create and branches with unique commits) and retry:',
           ),
         );
         console.error(chalk.dim(`    git -C ${root} branch -D ${branch}`));
@@ -213,7 +214,12 @@ export function registerCreate(worktree: Command): void {
         }
       }
 
-      upsertProject(target, { label: opts.label || name, worktreeRoot: true });
+      upsertProject(target, {
+        label: opts.label || name,
+        worktreeRoot: true,
+        worktreeBranch: branch,
+        worktreeBranchOwned: !reusedBranch,
+      });
 
       console.error(
         chalk.dim(
@@ -274,9 +280,8 @@ export function excludePodChurn(lines: string[] | null | undefined): PodChurnRes
   return { lines: kept, restore };
 }
 
-interface MatchedWorktreeEntry {
+interface MatchedWorktreeEntry extends WorktreeEntry {
   index: number;
-  path: string;
 }
 
 export function matchWorktreeEntry(
@@ -286,7 +291,7 @@ export function matchWorktreeEntry(
   let best: MatchedWorktreeEntry | null = null;
   (entries || []).forEach((entry, index) => {
     if (!entry?.path || !isPathPrefix(entry.path, path)) return;
-    if (!best || entry.path.length > best.path.length) best = { index, path: entry.path };
+    if (!best || entry.path.length > best.path.length) best = { ...entry, index };
   });
   return best;
 }
@@ -587,7 +592,8 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
     return;
   }
 
-  const entry = matchWorktreeEntry(listWorktrees(path), path);
+  const worktrees = listWorktrees(path);
+  const entry = matchWorktreeEntry(worktrees, path);
   if (!entry) {
     if (gitCommonDir(path) === null && hasRegisteredProjectUnder(path)) {
       await reclaimEnvironment(path, 'it is not a git repository');
@@ -620,6 +626,16 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
     return;
   }
 
+  const project = getProject(path);
+  const branch = entry.branch;
+  const deleteOwnedBranch = Boolean(
+    branch &&
+    project?.worktreeBranchOwned === true &&
+    project.worktreeBranch === branch &&
+    inspection.unpushed?.length === 0,
+  );
+  const branchDeleteCwd = worktrees.find((candidate) => isMainWorkingTree(candidate.path))?.path;
+
   await withManagedRemoteWorktreeRemovalLock(path, () =>
     withReclaimLocks(path, async (lockedKeys) => {
       const result = await reclaimAll(path, lockedKeys);
@@ -640,6 +656,14 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
         return;
       }
       console.log(chalk.green(`Removed worktree ${path}`));
+      if (deleteOwnedBranch && branch && branchDeleteCwd) {
+        try {
+          deleteBranch(branchDeleteCwd, branch);
+          console.log(chalk.dim(`  deleted branch ${branch}`));
+        } catch (error) {
+          console.error(chalk.yellow(`  kept branch ${branch}: ${String((error as Error)?.message || error)}`));
+        }
+      }
       printRemovalCleanup(result, false);
     }),
   );
@@ -649,7 +673,7 @@ export function registerRemove(worktree: Command): void {
   worktree
     .command('remove [target]')
     .description(
-      'Remove a worktree and reclaim its build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the main checkout it reclaims the environment only and leaves the tree in place.',
+      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the main checkout it reclaims the environment only and leaves the tree in place.',
     )
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work')
     .action(runRemove);

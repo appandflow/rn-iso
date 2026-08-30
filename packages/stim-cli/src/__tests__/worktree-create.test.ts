@@ -6,7 +6,7 @@ import type { Command } from 'commander';
 import { carriedChangesLine, carryConflictWarning, registerCreate } from '../commands/worktree.ts';
 import { resetExecutor } from '../exec.ts';
 import { defaultWorktreeDir } from '../worktree.ts';
-import { upsertProject, findEnclosingWorktreeRoot } from '../config.ts';
+import { findEnclosingWorktreeRoot, getProject, upsertProject } from '../config.ts';
 
 type ActionFn = (name: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
 
@@ -122,6 +122,10 @@ test('create action: success path writes exactly one stdout line, the worktree p
 
     const expected = join(defaultWorktreeDir(repo), 'feat-x');
     expect(logs).toEqual([expected]);
+    expect(getProject(expected)).toMatchObject({
+      worktreeBranch: 'worktree-feat-x',
+      worktreeBranchOwned: true,
+    });
     expect(process.exitCode).not.toBe(1);
   } finally {
     process.exitCode = 0;
@@ -266,6 +270,10 @@ test('create action: an existing branch is reported as attached, not as branched
     const { logs, errs } = await runCreateInRepo(repo, 'feat-again', { install: false });
 
     expect(logs).toEqual([join(defaultWorktreeDir(repo), 'feat-again')]);
+    expect(getProject(join(defaultWorktreeDir(repo), 'feat-again'))).toMatchObject({
+      worktreeBranch: 'worktree-feat-again',
+      worktreeBranchOwned: false,
+    });
     expect(errs.some((e) => /Attached to the existing branch worktree-feat-again/.test(String(e)))).toBeTruthy();
     expect(!errs.some((e) => String(e).startsWith('Branched '))).toBeTruthy();
   } finally {
