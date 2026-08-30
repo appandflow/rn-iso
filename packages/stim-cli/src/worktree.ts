@@ -407,6 +407,23 @@ export function resolveRef(cwd: string, ref: string): string | null {
   }
 }
 
+export function resolveFullRef(cwd: string, ref: string): string | null {
+  try {
+    const out = getExecutor().runFile('git', [
+      '-C',
+      cwd,
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      '--end-of-options',
+      `${ref}^{commit}`,
+    ]);
+    return out && out.trim() ? out.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 function assertSafeWorktreePath(path: string): void {
   if (typeof path !== 'string' || path.startsWith('-')) {
     throw new Error(
@@ -455,11 +472,11 @@ export function removeWorktree(path: string, { force = false }: { force?: boolea
   getExecutor().runFile('git', args);
 }
 
-export function deleteBranch(cwd: string, branch: string): void {
+export function deleteBranch(cwd: string, branch: string, expectedSha: string): void {
   if (!SAFE_BRANCH_NAME.test(branch) || branch.startsWith('-')) {
     throw new Error(`Refusing branch ${JSON.stringify(branch)}: it is not a safe local branch name.`);
   }
-  getExecutor().runFile('git', ['-C', cwd, 'branch', '-D', '--', branch]);
+  getExecutor().runFile('git', ['-C', cwd, 'update-ref', '-d', `refs/heads/${branch}`, expectedSha]);
 }
 
 export interface WorktreeEntry {

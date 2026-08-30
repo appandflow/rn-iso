@@ -229,7 +229,7 @@ function makeExecutor({
         if (worktreeRemoveError) throw new Error(worktreeRemoveError);
         return '';
       }
-      if (/branch -D/.test(cmd)) {
+      if (/update-ref -d/.test(cmd)) {
         if (branchDeleteError) throw new Error(branchDeleteError);
         return '';
       }
@@ -609,7 +609,7 @@ test('action: removes the branch that stim-cli created when it has no unique com
   await run(wtDir, {});
 
   expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some((call) => /branch -D -- worktree-feat-x/.test(call))).toBe(true);
+  expect(exec.calls.run.some((call) => /update-ref -d refs\/heads\/worktree-feat-x abc123/.test(call))).toBe(true);
 });
 
 test('action: keeps a branch that existed before stim-cli attached the worktree', async () => {
@@ -730,7 +730,7 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
   await run(wtDir, {});
 
   expect(process.exitCode).not.toBe(1);
-  expect(retryExec.calls.run.some((call) => /branch -D -- worktree-feat-x/.test(call))).toBe(true);
+  expect(retryExec.calls.run.some((call) => /update-ref -d refs\/heads\/worktree-feat-x abc123/.test(call))).toBe(true);
   expect(getProject(wtDir)).toBe(null);
 });
 

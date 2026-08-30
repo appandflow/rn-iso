@@ -29,6 +29,7 @@ import {
   removeWorktree,
   repoRoot,
   resolveBaseRef,
+  resolveFullRef,
   resolveRef,
   restoreFile,
   unpushedCommits,
@@ -617,7 +618,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
         console.log(chalk.green(`Branch ${branch} is already absent; cleared its pending cleanup record.`));
         return;
       }
-      const currentSha = resolveRef(mainRoot, branch);
+      const currentSha = resolveFullRef(mainRoot, branch);
       if (currentSha !== pending.worktreePendingBranchSha) {
         console.error(
           chalk.red(
@@ -629,7 +630,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
         return;
       }
       try {
-        deleteBranch(mainRoot, branch);
+        deleteBranch(mainRoot, branch, pending.worktreePendingBranchSha);
         removeProject(path);
         console.log(chalk.green(`Deleted branch ${branch} and cleared its pending cleanup record.`));
       } catch (error) {
@@ -672,17 +673,17 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
     path = entry.path;
   }
 
+  const project = getProject(path);
+  const branch = entry.branch;
+  const ownsBranch = Boolean(branch && project?.worktreeBranchOwned === true && project.worktreeBranch === branch);
+  const approvedBranchSha = ownsBranch ? resolveFullRef(path, 'HEAD') : null;
   const inspection = inspectRemoval(path);
   if (inspection.blockers.length && !opts.force) {
     printRemovalRefusal(path, inspection);
     return;
   }
 
-  const project = getProject(path);
-  const branch = entry.branch;
-  const ownsBranch = Boolean(branch && project?.worktreeBranchOwned === true && project.worktreeBranch === branch);
-  const deleteOwnedBranch = Boolean(ownsBranch && inspection.unpushed?.length === 0);
-  const approvedBranchSha = deleteOwnedBranch ? resolveRef(path, 'HEAD') : null;
+  const deleteOwnedBranch = Boolean(ownsBranch && approvedBranchSha && inspection.unpushed?.length === 0);
   const retainedBranchReason = !branch
     ? null
     : !ownsBranch
@@ -728,7 +729,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
           return;
         }
         try {
-          deleteBranch(branchDeleteCwd, branch);
+          deleteBranch(branchDeleteCwd, branch, approvedBranchSha);
           console.log(chalk.dim(`  deleted branch ${branch}`));
         } catch (error) {
           console.error(chalk.yellow(`  kept branch ${branch}: ${String((error as Error)?.message || error)}`));
