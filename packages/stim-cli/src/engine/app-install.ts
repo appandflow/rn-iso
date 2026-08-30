@@ -743,7 +743,8 @@ export async function verifyLaunch({
           waitedMs,
         };
       }
-      return { verified: true, record: proof, errors, processAlive: alive, mode, waitedMs };
+      const actionableErrors = errors.filter((record) => !isConfirmedHealthyLaunchNoise(record, platform));
+      return { verified: true, record: proof, errors: actionableErrors, processAlive: alive, mode, waitedMs };
     }
 
     if (!proof && now() >= bundleDeadline) {
@@ -774,6 +775,16 @@ function after(record: NdjsonRecord, since: number | string | undefined): boolea
 
 function isLaunchError(record: NdjsonRecord, platform: 'ios' | 'android' | null): boolean {
   return record.level === 'error' || record.level === 'fatal' || isFatalLaunchError(record, platform);
+}
+
+function isConfirmedHealthyLaunchNoise(record: NdjsonRecord, platform: 'ios' | 'android' | null): boolean {
+  return (
+    platform === 'ios' &&
+    record.src === 'device' &&
+    record.level === 'error' &&
+    typeof record.msg === 'string' &&
+    /^TCP Conn 0x[0-9a-f]+ Failed : error 0:61 \[61\]$/i.test(record.msg)
+  );
 }
 
 function isFatalLaunchError(record: NdjsonRecord, platform: 'ios' | 'android' | null): boolean {

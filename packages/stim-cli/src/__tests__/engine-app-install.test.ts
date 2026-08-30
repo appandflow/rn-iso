@@ -1411,6 +1411,59 @@ describe('verifyLaunch: still bundling', () => {
     expect(result.errors?.[0]?.msg).toBe('console.error during launch');
   });
 
+  test('a healthy iOS launch omits the transient TCP refusal but keeps application errors', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const refusal = {
+      ts: since + 20,
+      src: 'device',
+      level: 'error',
+      msg: 'TCP Conn 0x11e8cb020 Failed : error 0:61 [61]',
+    };
+    const applicationError = {
+      ts: since + 30,
+      src: 'client',
+      event: 'client_log',
+      level: 'error',
+      msg: 'console.error during launch',
+    };
+    const result = await verifyLaunch({
+      since,
+      platform: 'ios',
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: since + 10, event: 'bundle_build_done', platform: 'ios' }],
+      readDeviceRecords: () => [refusal],
+      readClientRecords: () => [applicationError],
+      processAlive: () => true,
+    });
+    expect(result).toMatchObject({ verified: true, processAlive: true });
+    expect(result.errors).toEqual([applicationError]);
+    expect(refusal.level).toBe('error');
+  });
+
+  test('the transient TCP refusal stays an error when iOS readiness fails', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const refusal = {
+      ts: since + 20,
+      src: 'device',
+      level: 'error',
+      msg: 'TCP Conn 0x11e8cb020 Failed : error 0:61 [61]',
+    };
+    const result = await verifyLaunch({
+      since,
+      platform: 'ios',
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: since + 10, event: 'bundle_build_done', platform: 'ios' }],
+      readDeviceRecords: () => [refusal],
+      processAlive: () => false,
+    });
+    expect(result).toMatchObject({ verified: false, fatal: true, processAlive: false });
+    expect(result.errors).toEqual([refusal]);
+  });
+
   test('errors before bundle completion are outside the stability window', async () => {
     const clock = fakeClock();
     const since = clock.at();

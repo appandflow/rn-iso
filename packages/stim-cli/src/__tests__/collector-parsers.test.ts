@@ -243,6 +243,13 @@ describe('ios: demoting device noise', () => {
         }),
       ],
       ['coreui-default-subsystem', event({ eventMessage: 'CUICatalog: Invalid asset name supplied: (null)' })],
+      [
+        'react-native-focus-cache',
+        event({
+          eventMessage:
+            'RCTScrollViewComponentView implements focusItemsInRect: - caching for linear focus movement is limited as long as this view is on screen.',
+        }),
+      ],
     ];
     for (const [id, e] of cases) {
       expect(noiseRuleId(e)).toBe(id);

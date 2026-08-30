@@ -47,6 +47,12 @@ export const NOISE_RULES: NoiseRule[] = [
       'migrate to UIScene lifecycle',
     ],
   },
+  {
+    id: 'react-native-focus-cache',
+    messageIncludes: [
+      'RCTScrollViewComponentView implements focusItemsInRect: - caching for linear focus movement is limited as long as this view is on screen.',
+    ],
+  },
 ];
 
 interface NoiseRule {
