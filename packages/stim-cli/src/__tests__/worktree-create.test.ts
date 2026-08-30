@@ -125,6 +125,7 @@ test('create action: success path writes exactly one stdout line, the worktree p
     expect(getProject(expected)).toMatchObject({
       worktreeBranch: 'worktree-feat-x',
       worktreeBranchOwned: true,
+      worktreeMainRoot: repo,
     });
     expect(process.exitCode).not.toBe(1);
   } finally {
@@ -273,6 +274,7 @@ test('create action: an existing branch is reported as attached, not as branched
     expect(getProject(join(defaultWorktreeDir(repo), 'feat-again'))).toMatchObject({
       worktreeBranch: 'worktree-feat-again',
       worktreeBranchOwned: false,
+      worktreeMainRoot: repo,
     });
     expect(errs.some((e) => /Attached to the existing branch worktree-feat-again/.test(String(e)))).toBeTruthy();
     expect(!errs.some((e) => String(e).startsWith('Branched '))).toBeTruthy();

@@ -219,6 +219,7 @@ export function registerCreate(worktree: Command): void {
         worktreeRoot: true,
         worktreeBranch: branch,
         worktreeBranchOwned: !reusedBranch,
+        worktreeMainRoot: root,
       });
 
       console.error(
@@ -591,6 +592,37 @@ function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
 async function runRemove(target: string | undefined, opts: RemoveOptions = {}): Promise<void> {
   let path = removalPath(target);
   if (!existsSync(path)) {
+    const pending = getProject(path);
+    if (
+      pending?.worktreeRemovalComplete === true &&
+      pending.worktreeBranchOwned === true &&
+      pending.worktreeBranch &&
+      pending.worktreeMainRoot
+    ) {
+      const branch = pending.worktreeBranch;
+      const mainRoot = pending.worktreeMainRoot;
+      if (!existsSync(mainRoot)) {
+        console.error(chalk.red(`Cannot finish branch cleanup for ${path}: main worktree ${mainRoot} is missing.`));
+        console.error(chalk.dim(`Delete ${branch} from the repository, then run \`stim gc --delete\`.`));
+        process.exitCode = 1;
+        return;
+      }
+      if (!branchExists(mainRoot, branch)) {
+        removeProject(path);
+        console.log(chalk.green(`Branch ${branch} is already absent; cleared its pending cleanup record.`));
+        return;
+      }
+      try {
+        deleteBranch(mainRoot, branch);
+        removeProject(path);
+        console.log(chalk.green(`Deleted branch ${branch} and cleared its pending cleanup record.`));
+      } catch (error) {
+        console.error(chalk.red(`Could not delete branch ${branch}: ${String((error as Error)?.message || error)}`));
+        console.error(chalk.dim(`Retry with: stim worktree remove ${path}`));
+        process.exitCode = 1;
+      }
+      return;
+    }
     console.error(chalk.red(`No such worktree: ${path}`));
     process.exitCode = 1;
     return;
@@ -664,9 +696,10 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
       }
       console.log(chalk.green(`Removed worktree ${path}`));
       if (deleteOwnedBranch && branch) {
+        upsertProject(path, { worktreeRemovalComplete: true });
         if (!branchDeleteCwd) {
           console.error(chalk.yellow(`  kept branch ${branch}: Stim could not find the main worktree`));
-          console.error(chalk.dim('  Fix the Git worktree state, then run `stim worktree remove` again.'));
+          console.error(chalk.dim(`  Retry with: stim worktree remove ${path}`));
           process.exitCode = 1;
           printRemovalCleanup(result, false);
           return;

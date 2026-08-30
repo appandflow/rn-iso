@@ -584,6 +584,7 @@ test('action: removes the branch that stim-cli created when it has no unique com
     worktreeRoot: true,
     worktreeBranch: 'worktree-feat-x',
     worktreeBranchOwned: true,
+    worktreeMainRoot: mainDir,
   });
   const exec = makeExecutor({
     worktrees: porcelain([
@@ -668,6 +669,7 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
     worktreeRoot: true,
     worktreeBranch: 'worktree-feat-x',
     worktreeBranchOwned: true,
+    worktreeMainRoot: mainDir,
   });
   const exec = makeExecutor({
     worktrees: porcelain([
@@ -686,7 +688,24 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
   expect(getProject(wtDir)).toMatchObject({
     worktreeBranch: 'worktree-feat-x',
     worktreeBranchOwned: true,
+    worktreeRemovalComplete: true,
   });
+
+  rmSync(wtDir, { recursive: true, force: true });
+  process.exitCode = 0;
+  const retryExec = makeExecutor();
+  const originalRunQuiet = retryExec.runQuiet.bind(retryExec);
+  retryExec.runQuiet = (cmd) => {
+    if (/rev-parse --verify --quiet/.test(cmd)) return 'abc123';
+    return originalRunQuiet(cmd);
+  };
+  setExecutor(retryExec);
+
+  await run(wtDir, {});
+
+  expect(process.exitCode).not.toBe(1);
+  expect(retryExec.calls.run.some((call) => /branch -D -- worktree-feat-x/.test(call))).toBe(true);
+  expect(getProject(wtDir)).toBe(null);
 });
 
 test('action: a worktree deletion failure keeps ownership state', async () => {

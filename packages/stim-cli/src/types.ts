@@ -45,6 +45,8 @@ export interface ProjectRecord {
   worktreeRoot?: boolean;
   worktreeBranch?: string;
   worktreeBranchOwned?: boolean;
+  worktreeMainRoot?: string;
+  worktreeRemovalComplete?: boolean;
   label?: string;
   bundleId?: string;
   androidPackage?: string;
