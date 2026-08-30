@@ -12,10 +12,10 @@ const config: Config = {
   },
 
   url: 'https://appandflow.github.io',
-  baseUrl: '/stim-cli/',
+  baseUrl: '/stim/',
 
   organizationName: 'appandflow',
-  projectName: 'stim-cli',
+  projectName: 'stim',
   trailingSlash: false,
 
   onBrokenLinks: 'throw',

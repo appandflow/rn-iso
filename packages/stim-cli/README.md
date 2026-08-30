@@ -165,7 +165,7 @@ For AI coding agents, install the bundled skill so the agent knows how to drive 
 npx skills add appandflow/stim
 ```
 
-[Getting started](https://appandflow.github.io/stim-cli/docs/getting-started) is the whole human-side setup: install the skill, then describe what you want built.
+[Getting started](https://appandflow.github.io/stim/docs/getting-started) is the whole human-side setup: install the skill, then describe what you want built.
 
 ## Owned devices
 

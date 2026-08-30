@@ -56,7 +56,7 @@ read-only.
 
 How it works — the ownership model, the command surface, worktrees, settings,
 cache housekeeping — is documented on the
-**[website](https://appandflow.github.io/stim-cli/)** and in the
+**[website](https://appandflow.github.io/stim/)** and in the
 [`stim-cli` package README](./packages/stim-cli/README.md).
 
 ## Working in this repo
