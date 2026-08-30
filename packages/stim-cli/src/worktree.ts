@@ -185,6 +185,10 @@ export function listGitignoredEntries(root: string): string[] {
     .map((e) => (e.endsWith('/') ? e.slice(0, -1) : e));
 }
 
+export function listCarryableIgnoredEntries(root: string, patterns: string[] | null | undefined): string[] {
+  return listGitignoredEntries(root).filter((rel) => !isCarrySkipped(rel) && !matchesInclude(rel, patterns));
+}
+
 interface CloneResult extends CarryResult {
   cloned: boolean;
 }
@@ -203,9 +207,7 @@ export function cloneIgnoredEntries({
   const failed: FailedEntry[] = [];
   let cloned = true;
   const guard = trackedGuard(target);
-  for (const rel of listGitignoredEntries(root)) {
-    if (isCarrySkipped(rel)) continue;
-    if (matchesInclude(rel, patterns)) continue;
+  for (const rel of listCarryableIgnoredEntries(root, patterns)) {
     const from = join(root, rel);
     const to = join(target, rel);
     let isDir = false;
