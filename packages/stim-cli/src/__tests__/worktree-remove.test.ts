@@ -734,6 +734,35 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
   expect(getProject(wtDir)).toBe(null);
 });
 
+test('action: pending cleanup keeps a branch that another worktree checks out', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+    worktreeMainRoot: mainDir,
+    worktreeRemovalComplete: true,
+    worktreePendingBranchSha: 'abc123',
+  });
+  rmSync(wtDir, { recursive: true, force: true });
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'worktree-feat-x' }]),
+    mainTrees: [mainDir],
+  });
+  const originalRunQuiet = exec.runQuiet.bind(exec);
+  exec.runQuiet = (cmd) => {
+    if (/rev-parse --verify --quiet/.test(cmd)) return 'abc123';
+    return originalRunQuiet(cmd);
+  };
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).toBe(1);
+  expect(exec.calls.run.some((call) => /update-ref -d/.test(call))).toBe(false);
+  expect(getProject(wtDir)).not.toBe(null);
+});
+
 test('action: a worktree deletion failure keeps ownership state', async () => {
   upsertProject(wtDir, {
     worktreeRoot: true,

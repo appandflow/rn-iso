@@ -618,6 +618,15 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
         console.log(chalk.green(`Branch ${branch} is already absent; cleared its pending cleanup record.`));
         return;
       }
+      const checkedOutAt = listWorktrees(mainRoot).find(
+        (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
+      )?.path;
+      if (checkedOutAt) {
+        console.error(chalk.red(`Refusing pending cleanup for ${branch}: it is checked out at ${checkedOutAt}.`));
+        console.error(chalk.dim('Switch that worktree to another branch, then retry this command.'));
+        process.exitCode = 1;
+        return;
+      }
       const currentSha = resolveFullRef(mainRoot, branch);
       if (currentSha !== pending.worktreePendingBranchSha) {
         console.error(
@@ -724,6 +733,18 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
         if (!branchDeleteCwd) {
           console.error(chalk.yellow(`  kept branch ${branch}: Stim could not find the main worktree`));
           console.error(chalk.dim(`  Retry with: stim worktree remove ${path}`));
+          process.exitCode = 1;
+          printRemovalCleanup(result, false);
+          return;
+        }
+        const checkedOutAt = listWorktrees(branchDeleteCwd).find(
+          (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
+        )?.path;
+        if (checkedOutAt) {
+          console.error(chalk.yellow(`  kept branch ${branch}: it is checked out at ${checkedOutAt}`));
+          console.error(
+            chalk.dim(`  Switch that worktree to another branch, then retry: stim worktree remove ${path}`),
+          );
           process.exitCode = 1;
           printRemovalCleanup(result, false);
           return;
