@@ -134,6 +134,19 @@ an interactive approval delay.
 The control agent can inspect the repository and use installed local tools,
 but no skill appears in its prompt.
 
+Before the control arm, move the installed `stim` and `agent-device` command
+links and their global package directories into a coordinator-owned quarantine.
+Also move the `stim-cli` and `agent-device` skill directories, including any
+skill symlinks. Use recoverable same-volume moves and install a cleanup trap
+that restores every path if the coordinator exits early. Do not delete the
+installations.
+
+Verify that `command -v stim` and `command -v agent-device` both fail. Verify
+that the global package paths are absent and that the control prompt input lists
+no skills. Any control transcript access to a quarantined copy invalidates the
+arm. Restore and verify all command, package, and skill paths before preparing
+the Stim arm.
+
 Capture each `codex exec` JSONL event stream in the coordinator result directory.
 The coordinator transcript is the source of truth for commands and tool calls.
 Audit it after each run. A skill file read outside the arm's allowlist invalidates
