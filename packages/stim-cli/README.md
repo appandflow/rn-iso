@@ -427,13 +427,16 @@ Only files that are both gitignored and pattern-matched are copied -- tracked fi
 
 #### `--carry-ignored`
 
-That carry-over is file-by-file, which suits a handful of small config files but not the multi-gigabyte trees a worktree needs in order to build without reinstalling. `worktree create --carry-ignored` instead clones **every** gitignored path -- `node_modules`, `ios/Pods`, `ios/build` (React Native codegen output, without which `xcodebuild` fails on a missing `States.cpp` until `pod install` regenerates it) -- minus:
+That carry-over is file-by-file, which suits a handful of small config files but not the multi-gigabyte trees a worktree needs in order to build without reinstalling. `worktree create --carry-ignored` instead clones **every safe** gitignored path -- `node_modules`, `ios/Pods`, `ios/build` (React Native codegen output, without which `xcodebuild` fails on a missing `States.cpp` until `pod install` regenerates it) -- minus:
 
+- every registered Git worktree nested below the source checkout. If Git reports an ignored parent as one collapsed entry, Stim skips that parent instead of recursively copying the nested worktree;
 - anything matching `.worktreeexclude` at the repo root, same gitignore-style syntax as `.worktreeinclude`, e.g.:
   ```
   bench/results/logs
   ```
 - or the `worktree.exclude` setting, if no `.worktreeexclude` file exists.
+
+The project exclusions add to Stim's safety exclusions. They cannot make Stim copy a registered nested worktree. This rule covers tool-managed locations and custom worktree locations without a hardcoded path list.
 
 It is a skip list rather than a copy list on purpose: forgetting to name something you needed shows up months later as a confusing build error, while forgetting to skip something only costs a needless copy.
 

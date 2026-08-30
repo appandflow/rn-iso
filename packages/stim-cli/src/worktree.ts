@@ -1,6 +1,16 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
-import { basename, dirname, join } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor } from './exec.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData']);
@@ -97,6 +107,36 @@ export function listGitignoredFiles(root: string): string[] {
     .filter((f) => !f.endsWith('/'));
 }
 
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+function nestedWorktreePaths(root: string): string[] {
+  const source = canonicalPath(root);
+  const paths = new Set<string>();
+  const out = getExecutor().runQuiet(`git -C "${root}" worktree list --porcelain`);
+  if (out === null) {
+    throw new Error('Could not list Git worktrees. Refusing to carry ignored files.');
+  }
+  for (const entry of parseWorktrees(out)) {
+    const rel = relative(source, canonicalPath(entry.path));
+    if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
+    paths.add(rel.split(sep).join('/'));
+  }
+  return [...paths];
+}
+
+function overlapsNestedWorktree(rel: string, nestedPaths: string[]): boolean {
+  const path = String(rel).replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
+  return nestedPaths.some(
+    (nested) => path === nested || path.startsWith(`${nested}/`) || nested.startsWith(`${path}/`),
+  );
+}
+
 export function listTrackedPaths(dir: string): string[] | null {
   const out = getExecutor().runQuiet(`git -C "${dir}" ls-files -z`);
   if (out === null) return null;
@@ -153,8 +193,10 @@ export function carryOverFiles({
   const skipped: SkippedEntry[] = [];
   const failed: FailedEntry[] = [];
   const guard = trackedGuard(target);
+  const nested = nestedWorktreePaths(root);
   for (const rel of listGitignoredFiles(root)) {
     if (isCarrySkipped(rel)) continue;
+    if (overlapsNestedWorktree(rel, nested)) continue;
     if (!matchesInclude(rel, patterns)) continue;
     const from = join(root, rel);
     const to = join(target, rel);
@@ -186,7 +228,10 @@ export function listGitignoredEntries(root: string): string[] {
 }
 
 export function listCarryableIgnoredEntries(root: string, patterns: string[] | null | undefined): string[] {
-  return listGitignoredEntries(root).filter((rel) => !isCarrySkipped(rel) && !matchesInclude(rel, patterns));
+  const nested = nestedWorktreePaths(root);
+  return listGitignoredEntries(root).filter(
+    (rel) => !isCarrySkipped(rel) && !overlapsNestedWorktree(rel, nested) && !matchesInclude(rel, patterns),
+  );
 }
 
 interface CloneResult extends CarryResult {
@@ -486,9 +531,7 @@ export interface WorktreeEntry {
   branch?: string;
 }
 
-export function listWorktrees(cwd: string): WorktreeEntry[] {
-  const out = getExecutor().runQuiet(`git -C "${cwd}" worktree list --porcelain`);
-  if (!out) return [];
+function parseWorktrees(out: string): WorktreeEntry[] {
   const entries: WorktreeEntry[] = [];
   let current: Partial<WorktreeEntry> = {};
   for (const line of out.split('\n')) {
@@ -501,6 +544,11 @@ export function listWorktrees(cwd: string): WorktreeEntry[] {
   }
   if (current.path) entries.push(current as WorktreeEntry);
   return entries;
+}
+
+export function listWorktrees(cwd: string): WorktreeEntry[] {
+  const out = getExecutor().runQuiet(`git -C "${cwd}" worktree list --porcelain`);
+  return out ? parseWorktrees(out) : [];
 }
 
 export function resolveBaseRef(cwd: string, baseRef: string): string {
