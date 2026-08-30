@@ -34,16 +34,18 @@ only when a script must parse a stable payload.
 
 ## Normal workflow
 
-Work in the current checkout by default. Create a worktree only when the task
-needs another branch or environment in parallel.
+Work in the current checkout by default. When the agent creates an app worktree
+for isolation or parallel work, carry its installed dependencies and native
+outputs.
 
 ```bash
-# Optional. The command prints the new absolute path.
-stim worktree create app-412 --carry-ignored
+# For an agent-created app worktree. The command prints the new absolute path.
+stim worktree create <name> --carry-ignored
 cd <printed-path>
 
 stim start
 stim ios                    # or: stim android
+agent-device open <app-id> --foreground --metro-port <stim-reported-port>
 stim logs --errors
 
 # Edit JavaScript or TypeScript. Fast Refresh applies the change.
@@ -65,7 +67,7 @@ Follow these rules during the loop:
   again. The second call joins the active build or returns its result.
 - Target only the full UDID, serial, app ID, and Metro port from this
   workspace's current output. Never assume that the device named `booted` is
-  yours. Never hardcode a Metro port.
+  yours. Pass the exact app ID and Metro port printed by Stim to Agent Device.
 - An `OK` summary with no launch qualifier proves the launch. When the summary
   says `bundle requested, still building`, Metro has not completed the bundle;
   wait and query the logs. For `launch UNVERIFIED`, follow the printed remedy
@@ -124,7 +126,11 @@ Run the guide before tasks that involve any of these cases:
 - machine capacity limits;
 - worktree carry-over warnings;
 - fingerprint exclusions;
-- destructive cleanup or an unfamiliar error code.
+- `gc`, `--force`, cleanup failures, or unfamiliar cleanup states and error
+  codes.
+
+Ordinary `stim stop` and an authorized clean `stim worktree remove` do not need
+the cleanup guide.
 
 If this skill and `stim guide` disagree, follow the guide. The guide comes
 from the binary that is running.
