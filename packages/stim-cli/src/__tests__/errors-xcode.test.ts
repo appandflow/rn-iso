@@ -109,6 +109,28 @@ const REAL_SUCCESS_TAIL = [
   '',
 ].join('\n');
 
+describe('a damaged compilation cache', () => {
+  test('the scan failure carries the remedy that empties that one cache', () => {
+    const transcript = [
+      "error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind (in target 'sqlite3' from project 'Pods')",
+      '** BUILD FAILED **',
+    ].join('\n');
+    const found = extractXcodeDiagnostics(transcript);
+    expect(found.length).toBe(1);
+    expect(found[0]?.remedy).toContain('--cache');
+  });
+
+  test('the module failure that follows the scan failure carries the same remedy', () => {
+    const transcript = [
+      "/usr/include/stdio.h:61:10: error: Could not build module '_DarwinFoundation2' (in target 'nanopb' from project 'Pods')",
+      "error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind (in target 'nanopb' from project 'Pods')",
+      '** BUILD FAILED **',
+    ].join('\n');
+    const remedies = extractXcodeDiagnostics(transcript).map((d) => d.remedy);
+    expect(remedies.some((r) => r?.includes('--cache'))).toBeTruthy();
+  });
+});
+
 describe('real transcripts', () => {
   test('a clang compile failure yields file, line, column and message, and nothing else', () => {
     const found = extractXcodeDiagnostics(REAL_COMPILE_FAILURE);

@@ -29,8 +29,35 @@ import gcCommand, {
   findStaleProjectDevices,
   formatGcReport,
   runGc,
+  selectCaches,
 } from '../commands/gc.ts';
 import { makeConfig, makeIosSim, makeCacheDescriptor, makeBuildLock, makeBuildSlot } from './_factories.ts';
+
+describe('selectCaches', () => {
+  const caches = [
+    makeCacheDescriptor({ name: 'Xcode compilation cache', dir: '/home/.stim/compilation-cache' }),
+    makeCacheDescriptor({ name: 'Build cache', dir: '/home/.stim/build-cache' }),
+    makeCacheDescriptor({ name: 'Metro file maps', dir: '/tmp/metro-file-map-1' }),
+  ];
+
+  test('no name keeps every cache', () => {
+    expect(selectCaches(caches, null)).toHaveLength(3);
+    expect(selectCaches(caches, '')).toHaveLength(3);
+  });
+
+  test('a name selects the caches it appears in, whatever its case', () => {
+    expect(selectCaches(caches, 'compilation cache').map((c) => c.name)).toEqual(['Xcode compilation cache']);
+    expect(selectCaches(caches, 'COMPILATION').map((c) => c.name)).toEqual(['Xcode compilation cache']);
+  });
+
+  test('a directory fragment selects a cache the name does not match', () => {
+    expect(selectCaches(caches, 'metro-file-map').map((c) => c.name)).toEqual(['Metro file maps']);
+  });
+
+  test('a name nothing carries selects no cache', () => {
+    expect(selectCaches(caches, 'gradle')).toEqual([]);
+  });
+});
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
