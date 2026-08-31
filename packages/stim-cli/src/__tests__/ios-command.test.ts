@@ -1286,7 +1286,26 @@ describe('pods', () => {
     );
     expect(calls.order.includes('runPodInstall')).toBeTruthy();
     expect(calls.order.indexOf('runPodInstall') < calls.order.indexOf('buildIos')).toBeTruthy();
-    expect(errs.join('\n')).toMatch(/^  pods {8}.*differ -> installed \(18s\)/m);
+    expect(errs.join('\n')).toMatch(/^  pods {8}.*differ -> installed with `pod install` \(18s\)/m);
+  });
+
+  test('the pods phase names the bundler command and prints the engine notes', async () => {
+    reserve();
+    const { errs } = await run(
+      {},
+      {
+        readPodState: () => ({ hasPodfile: true, lockText: 'PODS: A', manifestText: 'PODS: B' }),
+        runPodInstall: async () => ({
+          ok: true,
+          durationMs: 18000,
+          command: 'bundle exec pod install',
+          notes: ['`bundle` is not on PATH'],
+        }),
+      },
+    );
+    const stderr = errs.join('\n');
+    expect(stderr).toMatch(/^  pods {8}.*-> installed with `bundle exec pod install` \(18s\)/m);
+    expect(stderr).toMatch(/^  pods {8}`bundle` is not on PATH/m);
   });
 
   test('a Podfile whose pods have never been installed is installed too', async () => {

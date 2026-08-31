@@ -280,6 +280,205 @@ describe('runPodInstall', () => {
   });
 });
 
+describe('runPodInstall through bundler (#137)', () => {
+  function pinnedProject({ lock = true }: { lock?: boolean } = {}) {
+    mkdirSync(join(root, 'ios'), { recursive: true });
+    writeFileSync(join(root, 'Gemfile'), "source 'https://rubygems.org'\ngem 'cocoapods'\n");
+    if (lock) writeFileSync(join(root, 'Gemfile.lock'), 'DEPENDENCIES\n  cocoapods\n');
+  }
+
+  function router(
+    calls: SpawnCall[],
+    replies: Record<string, () => ReturnType<typeof fakePodChild>>,
+  ): (cmd: string, args: string[], opts: Record<string, unknown>) => ReturnType<typeof fakePodChild> {
+    return (cmd, args, opts) => {
+      calls.push({ cmd, args, opts });
+      const key = [cmd, ...args].join(' ');
+      const reply = replies[key];
+      if (!reply) throw new Error(`unexpected spawn: ${key}`);
+      return reply();
+    };
+  }
+
+  const ok = () => fakePodChild({ lines: ['Pod installation complete!'] });
+
+  test('a Gemfile with a Gemfile.lock checks the bundle, then pods through bundler', async () => {
+    pinnedProject();
+    const calls: SpawnCall[] = [];
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router(calls, {
+        'bundle check --dry-run': () => fakePodChild({ lines: ['The Gemfile dependencies are satisfied'] }),
+        'bundle exec pod install': ok,
+      }),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.command).toBe('bundle exec pod install');
+    expect(calls.map((c) => [c.cmd, ...c.args].join(' '))).toEqual([
+      'bundle check --dry-run',
+      'bundle exec pod install',
+    ]);
+    expect(calls[0]?.opts.cwd).toBe(root);
+    expect(calls[1]?.opts.cwd).toBe(join(root, 'ios'));
+  });
+
+  test('bundler never gets to write the lockfile: --dry-run on check, BUNDLE_FROZEN on every spawn', async () => {
+    pinnedProject();
+    const calls: SpawnCall[] = [];
+    await runPodInstall(root, collectingWriter(), {
+      spawnFn: router(calls, {
+        'bundle check --dry-run': () => fakePodChild({ code: 1, lines: ['The following gems are missing'] }),
+        'bundle install': ok,
+        'bundle exec pod install': ok,
+      }),
+    });
+    expect(calls.map((c) => [c.cmd, ...c.args].join(' '))).toEqual([
+      'bundle check --dry-run',
+      'bundle install',
+      'bundle exec pod install',
+    ]);
+    for (const call of calls) {
+      const env = call.opts.env as NodeJS.ProcessEnv;
+      expect(env.BUNDLE_FROZEN).toBe('true');
+      expect(env.BUNDLE_GEMFILE).toBe(join(root, 'Gemfile'));
+      expect(env.LANG).toBe('en_US.UTF-8');
+      expect(env.FORCE_COLOR).toBe('0');
+    }
+  });
+
+  test('a missing-gems check installs the bundle at the Gemfile, with `gems` heartbeats', async () => {
+    pinnedProject();
+    const beats: string[] = [];
+    const child = makeChildProcess({ pid: 99 });
+    const calls: SpawnCall[] = [];
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router(calls, {
+        'bundle check --dry-run': () => fakePodChild({ code: 1 }),
+        'bundle install': () => {
+          setImmediate(() => child.stdout?.emit('data', 'Fetching cocoapods 1.16.2\n'));
+          setTimeout(() => child.emit('exit', 0, null), 120);
+          return child;
+        },
+        'bundle exec pod install': ok,
+      }),
+      heartbeatMs: 25,
+      onHeartbeat: (l: string) => beats.push(l),
+    });
+    expect(result.ok).toBe(true);
+    expect(calls[1]?.opts.cwd).toBe(root);
+    expect(beats[0]).toMatch(/^gems\s+still running \(/);
+    expect(beats[0]).toMatch(/Fetching cocoapods/);
+  });
+
+  test('a Gemfile with no Gemfile.lock stays on plain `pod install`, so nothing writes a lockfile', async () => {
+    pinnedProject({ lock: false });
+    const calls: SpawnCall[] = [];
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router(calls, { 'pod install': ok }),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.command).toBe('pod install');
+    expect(calls.map((c) => c.cmd)).toEqual(['pod']);
+  });
+
+  test('no `bundle` on PATH falls back to plain `pod install` with a note, not a failure', async () => {
+    pinnedProject();
+    const calls: SpawnCall[] = [];
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: (cmd, args, opts) => {
+        calls.push({ cmd, args, opts });
+        if (cmd === 'bundle') throw makeError('spawn bundle ENOENT', { code: 'ENOENT' });
+        return ok();
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.command).toBe('pod install');
+    expect(result.failed).toBe(undefined);
+    expect(result.notes?.join('\n')).toMatch(/`bundle` is not on PATH/);
+    expect(calls.map((c) => c.cmd)).toEqual(['bundle', 'pod']);
+  });
+
+  test('a failed `bundle install` fails the run with STIM_DEPS_FAILED and never runs pods', async () => {
+    pinnedProject();
+    writeFileSync(join(root, '.ruby-version'), 'ruby-3.4.1\n');
+    const calls: SpawnCall[] = [];
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router(calls, {
+        'bundle check --dry-run': () => fakePodChild({ code: 1 }),
+        'bundle install': () =>
+          fakePodChild({ code: 5, lines: ["Could not find gem 'activesupport (= 7.1.3)' in locally installed gems."] }),
+      }),
+    });
+    expect(result.failed).toBe(true);
+    expect(result.code).toBe(DEPS_ERROR);
+    expect(result.reason).toMatch(/`bundle install` failed \(exit code 5\)/);
+    expect(result.remedy).toMatch(/ruby 3\.4\.1/);
+    expect(result.remedy).toMatch(/bundle install/);
+    assert(result.lastLines);
+    expect(result.lastLines.join('\n')).toMatch(/Could not find gem/);
+    expect(calls.map((c) => c.cmd)).toEqual(['bundle', 'bundle']);
+  });
+
+  test('a lockfile bundler refuses to rewrite is reported as frozen mode, not as a missing gem', async () => {
+    pinnedProject();
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router([], {
+        'bundle check --dry-run': () => fakePodChild({ code: 1 }),
+        'bundle install': () =>
+          fakePodChild({
+            code: 16,
+            lines: [
+              "The dependencies in your gemfile changed, but the lockfile can't be updated because frozen mode is set",
+              'You have added to the Gemfile:',
+              '* json',
+            ],
+          }),
+      }),
+    });
+    expect(result.failed).toBe(true);
+    expect(result.remedy).toMatch(/BUNDLE_FROZEN/);
+    expect(result.remedy).toMatch(new RegExp(`cd ${root} && bundle install`.replace(/[$^*+?.()|[\]{}\\]/g, '\\$&')));
+  });
+
+  test('a frozen-mode refusal from `bundle exec pod install` gets the same remedy', async () => {
+    pinnedProject();
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router([], {
+        'bundle check --dry-run': () => fakePodChild({ lines: ['satisfied'] }),
+        'bundle exec pod install': () =>
+          fakePodChild({
+            code: 1,
+            lines: [
+              "definition.rb:469:in 'ensure_equivalent_gemfile_and_lockfile': the lockfile can't be updated because frozen mode is set (Bundler::ProductionError)",
+            ],
+          }),
+      }),
+    });
+    expect(result.failed).toBe(true);
+    expect(result.command).toBe('bundle exec pod install');
+    expect(result.reason).toMatch(/`bundle exec pod install` failed \(exit code 1\)/);
+    expect(result.remedy).toMatch(/BUNDLE_FROZEN/);
+  });
+
+  test('a Gemfile that does not bundle cocoapods explains why bundler has no pod to exec', async () => {
+    pinnedProject();
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router([], {
+        'bundle check --dry-run': () => fakePodChild({ lines: ['satisfied'] }),
+        'bundle exec pod install': () =>
+          fakePodChild({
+            code: 1,
+            lines: [
+              "can't find executable pod for gem cocoapods. cocoapods is not currently included in the bundle, perhaps you meant to add it to your Gemfile? (Gem::Exception)",
+            ],
+          }),
+      }),
+    });
+    expect(result.failed).toBe(true);
+    expect(result.remedy).toMatch(/does not include cocoapods/);
+    expect(result.remedy).toMatch(/gem 'cocoapods'/);
+  });
+});
+
 describe('extractPodDiagnostics', () => {
   test('a fatal [!] mid-transcript beats the deferred warnings flushed after it (case 1)', () => {
     const warnings = ['expo-sensors', 'expo-splash-screen', 'expo-store-review', 'expo-system-ui', 'expo-video'].map(
