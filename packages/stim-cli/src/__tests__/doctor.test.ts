@@ -87,6 +87,46 @@ test('checkMainCheckout reads warm state from the Git main checkout', () => {
   }
 });
 
+test('checkMainCheckout runs its expensive probes only when their preconditions hold', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-probe-gate-'));
+  const calls: string[][] = [];
+  setExecutor({
+    run: () => '',
+    runQuiet: () => null,
+    runFile: (file: string, args: string[] = []) => {
+      calls.push([file, ...args]);
+      return '';
+    },
+    spawn: () => {},
+  });
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(join(project, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+    mkdirSync(join(project, 'node_modules'));
+    mkdirSync(join(project, 'ios'), { recursive: true });
+    writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
+
+    checkMainCheckout(project, { upstream: null });
+    expect(calls.some(([file]) => file === 'npm')).toBe(false);
+    expect(calls.some(([file]) => file === 'find')).toBe(false);
+
+    rmSync(join(project, 'pnpm-lock.yaml'));
+    writeFileSync(join(project, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
+    mkdirSync(join(project, 'ios', 'Pods'), { recursive: true });
+    writeFileSync(join(project, 'ios', 'Pods', 'Manifest.lock'), 'pods\n');
+    calls.length = 0;
+
+    checkMainCheckout(project, { upstream: null });
+    expect(calls.filter(([file]) => file === 'npm').map((call) => call.slice(1, 4))).toEqual([
+      ['ls', '--all', '--json'],
+    ]);
+    expect(calls.some(([file, ...args]) => file === 'find' && args.includes(join(project, 'ios', 'Pods')))).toBe(true);
+  } finally {
+    resetExecutor();
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('checkMainCheckout reports broken CocoaPods links even when lockfiles match', () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-broken-pods-'));
   try {

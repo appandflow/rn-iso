@@ -744,6 +744,9 @@ export async function detectFingerprintParity(
   const exec = getExecutor();
   const quotedRoot = JSON.stringify(projectRoot);
   if (exec.runQuiet(`git -C ${quotedRoot} rev-parse --git-dir`, { timeoutMs: 10000 }) == null) return null;
+  // A fresh `git worktree add` of HEAD carries no node_modules, and @expo/fingerprint reads
+  // installed packages as sources, so from an installed checkout every comparison reports drift
+  // that is only the missing install. The question has an answer only on a cold checkout.
   if (hasInstalledDependencies(projectRoot)) return null;
 
   const platform = existsSync(join(projectRoot, 'ios'))
