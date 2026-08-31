@@ -354,13 +354,11 @@ test('exactly one compact skill ships', () => {
   expect(skill).toMatch(/stim doctor/);
 });
 
-test('the skill shows the fast worktree and Agent Device path', () => {
+test('the skill shows the fast worktree path and owns app launch', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   expect(skill).toContain('stim worktree create <name> --carry-ignored');
-  expect(skill).toContain('agent-device --udid <stim-reported-udid> open <app-id>');
-  expect(skill).toContain('agent-device --serial <stim-reported-serial> open <app-id>');
-  expect(skill).toMatch(/exact UDID or serial and app ID/i);
-  expect(skill).not.toContain('open <app-id> --foreground');
+  expect(skill).toMatch(/`ios` and `android` install the app, launch it, and check its readiness/);
+  expect(skill).not.toMatch(/agent-device/i);
 });
 
 test('the skill explains a clean human log result', () => {

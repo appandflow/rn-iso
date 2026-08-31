@@ -1,8 +1,9 @@
 # Trailhead agent benchmark
 
 This protocol compares one fresh agent that uses Stim with one fresh control
-agent. It measures the complete path from a clean main checkout to visual proof
-from an agent-created worktree.
+agent. Its primary product metric measures the successful build, install,
+launch, and readiness command. It retains the complete path from a clean main
+checkout to visual proof as a secondary quality metric.
 
 Use this protocol for issue #102. Do not start a timed run until the changes for
 issues #101, #103, and #104 are merged into the Stim candidate.
@@ -13,15 +14,29 @@ Use the `appandflow/trailhead` repository at commit
 `f4a4a3b7b1df2b079959cace34b5caa9c593e76e`. The repository is a single-package
 Expo SDK 57 app with committed `ios/` and `android/` directories.
 
-Change only the Offline maps subtitle in `app/(tabs)/settings.tsx`:
+Run two Stim variants from separate worktrees. The JavaScript-only variant
+changes only the Offline maps subtitle in `app/(tabs)/settings.tsx`:
 
 ```diff
 -subtitle="Keep map tiles for saved trails on device"
 +subtitle="Keep saved trail maps available offline"
 ```
 
-The required proof is one iOS screenshot that shows the Settings screen and the
-complete new subtitle. A recording is optional because the change is static.
+The launch-only profile requires Stim's successful readiness result and a clean
+`stim logs --errors` result. The visual-evidence profile also requires one iOS
+screenshot that shows the Settings screen and the complete new subtitle. A
+recording is optional because the change is static.
+
+The native variant changes only `CFBundleDisplayName` in
+`ios/Trailhead/Info.plist`. Use a unique visible name for the run. The change
+must cause a native fingerprint miss. Record native build and compiler cache
+evidence.
+
+Compare the successful `stim ios` duration for the JavaScript-only and native
+variants. Run each variant with the launch-only profile or the visual-evidence
+profile. Use Agent Device only in the visual-evidence profile and only after
+`stim ios` finishes. Do not include Agent Device time in the Stim product
+metric.
 
 ## Prepare the machine
 
@@ -29,7 +44,8 @@ Preparation is outside the timed runs. Record every preparation command and its
 output in the coordinator report.
 
 1. Build the merged Stim candidate and install that exact candidate locally.
-   Install Agent Device 0.20.10. Record both versions and the candidate commit.
+   Install Agent Device 0.20.10 only for optional visual evidence. Record both
+   versions and the candidate commit.
    Use Codex CLI 0.151.0, model `gpt-5.6-sol`, reasoning effort `high`, and
    service tier `priority` for both timed arms.
 2. Archive the first benchmark artifacts. Do not reuse its worktrees, branches,
@@ -85,14 +101,18 @@ skill catalog and every canonical `SKILL.md` path. In each isolated config:
 - Disable plugins with `features.plugins = false`.
 - Add an `enabled = false` path rule for every discovered `SKILL.md`.
 - For the control arm, set `skills.include_instructions = false`.
-- For the Stim arm, copy the merged candidate's `stim-cli` skill and Agent
-  Device 0.20.10's `agent-device` skill into its isolated home. Add later
-  `enabled = true` path rules for those two copied `SKILL.md` files.
+- For the Stim arm, copy the merged candidate's `stim-cli` skill into its
+  isolated home. Add a later `enabled = true` path rule for that copied
+  `SKILL.md` file. The Stim skill must not reference Agent Device.
+- Enable the `agent-device` skill independently only when the run also measures
+  optional visual evidence. Its use must start after the successful `stim ios`
+  command finishes.
 
 Run `codex login status` against each isolated home before timing. Then run
 `codex debug prompt-input` with that home and retain the JSON. The control
-prompt input must contain no skills block. The Stim prompt input must list
-exactly `stim-cli` and `agent-device`. Any other result blocks the run.
+prompt input must contain no skills block. A launch-only Stim prompt must list
+exactly `stim-cli`. An evidence run can also list `agent-device` as an
+independent skill. Any other result blocks the run.
 
 Launch both agents with the same explicit runtime flags. The approval and
 sandbox flags are global Codex flags, so they must appear before `exec`:
@@ -180,9 +200,11 @@ this arm at [DISPATCHED_AT]. Use that exact UTC timestamp as startedAt. Do not
 replace it with a timestamp that you record later. You are in the clean
 Trailhead main checkout. Do not modify the main checkout.
 
-For this benchmark, only the stim-cli and agent-device skills are enabled. Read
-and use those two skills. Treat every other skill as disabled. Do not read or
-use any Expo skill.
+For the launch-only profile, only the stim-cli skill is enabled. Read and use
+that skill. Treat every other skill as disabled. For the visual-evidence
+profile, the agent-device skill is also enabled independently. Do not read or
+use it until the successful Stim launch finishes. Do not read or use any Expo
+skill.
 
 Create a new isolated worktree yourself from the current HEAD. Use a unique
 branch and worktree name that includes [RUN_ID]-stim. Make all edits, checks,
@@ -193,25 +215,30 @@ tiles for saved trails on device" to "Keep saved trail maps available offline".
 Make no other product change.
 
 Run the repository lint and type-check scripts. Build and run the app locally on
-iOS. Do not use EAS or another cloud service. Open Settings and capture one
-screenshot that clearly shows the complete new subtitle. Check the launch and
-runtime output for errors. Report any error that appears, even when the app
-remains alive.
+iOS. Do not use EAS or another cloud service. For the visual-evidence profile,
+open Settings and capture one screenshot that clearly shows the complete new
+subtitle. Check the launch and runtime output for errors. Report any error that
+appears, even when the app remains alive.
+
+Record the start and completion timestamps of the successful `stim ios`
+command before any Agent Device command runs. Report its elapsed time as
+`stimIosSeconds`. This is the primary product metric. Report the full
+evidence-inclusive duration as `timeToProof`.
 
 Keep a complete evidence record under [RESULTS_ROOT]/[RUN_ID]/stim. It must
-contain commands.log, metrics.json, report.md, and proof.png. Record every shell
-command, its UTC start and end times, elapsed seconds, exit status, and a short
-result. Preserve the full streamed output from each build or launch command.
-Record all reported device, app, Metro, launch, log, and build details. Count a
-failed or replaced attempt as a retry.
+contain commands.log, metrics.json, and report.md. The visual-evidence profile
+must also contain proof.png. Record every shell command, its UTC start and end
+times, elapsed seconds, exit status, and a short result. Preserve the full
+streamed output from each build or launch command. Record all reported device,
+app, Metro, launch, log, and build details. Count a failed or replaced attempt
+as a retry.
 
-After proof, keep the device automation session active and run `stim stop` as
-the first cleanup command. Verify that Stim shuts down its owned simulator.
-Then close the Agent Device session to release its session state. Release the
-remaining processes and devices that you started. Restore your source edit,
-remove your temporary worktree, and verify cleanup. Do not commit, push, or
-change the main checkout. The retained evidence directory must remain after
-cleanup.
+After proof, run `stim stop` as the first cleanup command. Verify that Stim
+shuts down its owned simulator. If an optional Agent Device session is active,
+close it after `stim stop`. Release the remaining processes and devices that
+you started. Restore your source edit, remove your temporary worktree, and
+verify cleanup. Do not commit, push, or change the main checkout. The retained
+evidence directory must remain after cleanup.
 ```
 
 ## Control prompt
@@ -256,10 +283,11 @@ The retained evidence directory must remain after cleanup.
 
 ## Required metrics
 
-Use UTC timestamps. `timeToProof` is the primary speed result. Immediately
-before each `codex exec` dispatch, the coordinator records `[DISPATCHED_AT]` in
-its own log and inserts it into the prompt. The agent must copy that value to
-`startedAt`. This includes agent startup and skill loading in the primary timer.
+Use UTC timestamps. `stimIosSeconds` is the primary product speed result for a
+Stim arm. `timeToProof` is the secondary end-to-end result. Immediately before
+each `codex exec` dispatch, the coordinator records `[DISPATCHED_AT]` in its own
+log and inserts it into the prompt. The agent must copy that value to
+`startedAt`. The secondary timer includes agent startup and skill loading.
 
 The coordinator validates every agent metric against the JSONL transcript and
 command log. If the agent omits `timeToProof`, the coordinator calculates it as
@@ -277,6 +305,8 @@ completion is not present in the retained evidence, the arm is invalid.
   "checksCompletedAt": "ISO-8601",
   "buildStartedAt": "ISO-8601",
   "buildCompletedAt": "ISO-8601",
+  "stimIosStartedAt": "ISO-8601",
+  "stimIosCompletedAt": "ISO-8601",
   "firstAppVisibleAt": "ISO-8601",
   "targetVisibleAt": "ISO-8601",
   "proofCapturedAt": "ISO-8601",
@@ -287,7 +317,9 @@ completion is not present in the retained evidence, the arm is invalid.
     "timeToFirstVisible": 0,
     "timeToTarget": 0,
     "timeToProof": 0,
-    "timeToCleanup": 0
+    "timeToCleanup": 0,
+    "stimIosSeconds": 0,
+    "stimWorkflowSeconds": 0
   },
   "counts": {
     "commands": 0,
@@ -297,6 +329,15 @@ completion is not present in the retained evidence, the arm is invalid.
   }
 }
 ```
+
+`stimIosSeconds` includes only the successful `stim ios` process. It includes
+fingerprinting, artifact restore or native build, simulator boot, install, app
+launch, and readiness checks. It excludes agent startup, worktree creation,
+the edit, repository checks, Agent Device, screenshots, reports, and cleanup.
+
+`stimWorkflowSeconds` includes the successful `stim start`, `stim ios`, and
+final `stim logs --errors` commands. It excludes Agent Device and screenshot
+work. Report this metric only when all three exact command durations exist.
 
 The report must also include these measured phases:
 
@@ -340,9 +381,9 @@ Each arm must prove all applicable checks:
 - The retained result directory contains only the requested evidence.
 - The proof image opens and shows the exact changed text.
 
-For the Stim arm, run `stim stop` while the Agent Device session remains active.
-Record the command output and verify that the owned simulator stops. Then close
-the Agent Device session and record whether it releases its session state. Do
+For the Stim arm, run `stim stop` and record its output. Verify that the owned
+simulator stops. If the run used Agent Device for optional evidence, close that
+session after `stim stop` and record whether it releases its session state. Do
 not kill an unknown `xctrunner` directly.
 
 After both arms, restore the main checkout to the original ref and exact HEAD
@@ -353,7 +394,8 @@ be restored without discarding a change, stop and request user direction.
 
 Compare the two arms only after both evidence sets pass validation. Report:
 
-1. `timeToProof`, `timeToFirstVisible`, total cleanup time, commands, and retries.
+1. `stimIosSeconds`, `stimWorkflowSeconds` when available, `timeToProof`,
+   `timeToFirstVisible`, total cleanup time, commands, and retries.
 2. The exact native build or restore path for each arm.
 3. The build reuse evidence and any uncertainty.
 4. Every failed command and recovery, with time cost.
@@ -365,4 +407,5 @@ Compare the two arms only after both evidence sets pass validation. Report:
 
 A run is invalid if an agent modifies the main checkout, uses a disabled skill,
 starts before preparation finishes, overlaps the other timed arm, omits command
-evidence, leaves owned resources running, or fails to produce readable proof.
+evidence, or leaves owned resources running. A visual-evidence run is also
+invalid when it fails to produce readable proof.

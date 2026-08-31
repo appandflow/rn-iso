@@ -60,8 +60,6 @@ cd <printed-path>
 
 stim start
 stim ios                    # or: stim android
-agent-device --udid <stim-reported-udid> open <app-id>       # iOS
-agent-device --serial <stim-reported-serial> open <app-id>   # Android
 stim logs --errors
 
 # Edit JavaScript or TypeScript. Fast Refresh applies the change.
@@ -81,10 +79,10 @@ Follow these rules during the loop:
   change does not need another native build.
 - A cold native build can outlive a shell timeout. Run the same build command
   again. The second call joins the active build or returns its result.
-- Target only the full UDID, serial, app ID, and Metro port from this
-  workspace's current output. Never assume that the device named `booted` is
-  yours. Agent Device needs the exact UDID or serial and app ID. Stim already
-  connects the launched app to this workspace's Metro port.
+- `ios` and `android` install the app, launch it, and check its readiness. No
+  separate device tool is required. Trust the exact device, app, Metro, and
+  launch facts in Stim's final summary. Use the full reported device ID. Never
+  assume that a simulator named `booted` belongs to this workspace.
 - An `OK` summary with no launch qualifier proves the launch. When the summary
   says `bundle requested, still building`, Metro has not completed the bundle;
   wait and query the logs. For `launch UNVERIFIED`, follow the printed remedy
