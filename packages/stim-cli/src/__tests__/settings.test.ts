@@ -18,6 +18,7 @@ import {
   remoteAndroidSetting,
   remoteDeviceSettingError,
   remoteIosSetting,
+  resolveCacheProviderConfig,
   resolveSettings,
   tunnelModeSetting,
   unknownSettingKeys,
@@ -393,4 +394,84 @@ describe('ngrokUrlSetting', () => {
     expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'not a url' } })).toBeNull();
     expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 42 } })).toBeNull();
   });
+});
+
+test('resolveCacheProviderConfig reports no provider when nothing configures one', () => {
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ worktree: { baseRef: 'fresh' } }));
+  upsertProject('/proj', {});
+
+  expect(
+    resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome }),
+  ).toBeNull();
+});
+
+test('a committed provider resolves from the directory holding .stim.json', () => {
+  writeFileSync(
+    join(tmpHome, '.stim.json'),
+    JSON.stringify({ cache: { provider: './tools/cache-provider.cjs', options: { bucket: 'mobile' } } }),
+  );
+  upsertProject('/proj', {});
+
+  expect(resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome })).toEqual({
+    provider: './tools/cache-provider.cjs',
+    options: { bucket: 'mobile' },
+    baseDir: tmpHome,
+  });
+});
+
+test('machine project settings override repository and committed providers', () => {
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ cache: { provider: './committed.cjs' } }));
+  setRepoSetting('/repo/.git', 'cache', { provider: './repo.cjs' });
+  upsertProject('/proj', {});
+  setProjectSetting('/proj', 'cache', { provider: './project.cjs' });
+
+  expect(resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome })).toEqual({
+    provider: './project.cjs',
+    options: {},
+    baseDir: '/proj',
+  });
+});
+
+test('machine repository settings override committed providers and resolve from the repository root', () => {
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ cache: { provider: './committed.cjs' } }));
+  setRepoSetting('/repo/.git', 'cache', { provider: './repo.cjs' });
+  upsertProject('/proj', {});
+
+  expect(resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome })).toEqual({
+    provider: './repo.cjs',
+    options: {},
+    baseDir: tmpHome,
+  });
+});
+
+test('provider options merge across layers with earlier layers winning', () => {
+  writeFileSync(
+    join(tmpHome, '.stim.json'),
+    JSON.stringify({ cache: { provider: './committed.cjs', options: { bucket: 'team', region: 'us' } } }),
+  );
+  setRepoSetting('/repo/.git', 'cache', { options: { region: 'eu' } });
+  upsertProject('/proj', {});
+  setProjectSetting('/proj', 'cache', { options: { token: 'from-machine' } });
+
+  expect(resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome })).toEqual({
+    provider: './committed.cjs',
+    options: { token: 'from-machine', region: 'eu', bucket: 'team' },
+    baseDir: tmpHome,
+  });
+});
+
+test('an invalid provider reference reports no provider', () => {
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ cache: { provider: 42, options: { a: 1 } } }));
+  upsertProject('/proj', {});
+
+  expect(
+    resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome }),
+  ).toBeNull();
+});
+
+test('cache.provider and cache.options are known settings', () => {
+  expect(
+    unknownSettingKeys({ cache: { provider: './cache.cjs', options: { bucket: 'a', nested: { deep: true } } } }),
+  ).toEqual([]);
+  expect(unknownSettingKeys({ cache: { unknown: true } })).toEqual(['cache.unknown']);
 });

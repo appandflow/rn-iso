@@ -17,6 +17,7 @@ import {
   readWorkspaceState,
   writeWorkspaceState,
 } from '../supervisor/state.ts';
+import { CACHE_PROVIDER_ENV, cacheProviderEnv } from '@stim-cli/cache';
 import { workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import {
@@ -26,6 +27,7 @@ import {
   remoteAndroidSetting,
   remoteDeviceSettingError,
   remoteIosSetting,
+  resolveCacheProviderConfig,
   resolveSettings,
   tunnelModeSetting,
   unknownSettingKeys,
@@ -320,11 +322,13 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
 
       const isExpo = detectIsExpo(root);
       const worktreeRoot = repoRoot(root) ?? root;
-      const settings = resolveSettings({
+      const settingsContext = {
         projectPath: root,
         gitCommonDir: gitCommonDir(root),
         repoRoot: worktreeRoot,
-      });
+      };
+      const settings = resolveSettings(settingsContext);
+      const cacheProvider = resolveCacheProviderConfig(settingsContext);
       for (const key of unknownSettingKeys(settings)) {
         note(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
       }
@@ -387,17 +391,17 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             String(port),
             ...(tunnel ? ['--tunnel'] : []),
           ];
+          const childEnv: NodeJS.ProcessEnv = {
+            ...process.env,
+            ...(origin ? { [PUBLIC_METRO_ENV]: origin, EXPO_PACKAGER_PROXY_URL: origin } : {}),
+          };
+          if (cacheProvider) childEnv[CACHE_PROVIDER_ENV] = cacheProviderEnv(cacheProvider);
+          else delete childEnv[CACHE_PROVIDER_ENV];
           const child = getExecutor().spawn(process.execPath, supervisorArgs, {
             cwd: root,
             detached: true,
             stdio: ['ignore', fd, fd],
-            env: origin
-              ? {
-                  ...process.env,
-                  [PUBLIC_METRO_ENV]: origin,
-                  EXPO_PACKAGER_PROXY_URL: origin,
-                }
-              : process.env,
+            env: childEnv,
           });
           child.unref?.();
           child.on?.('exit', (code, signal) => {

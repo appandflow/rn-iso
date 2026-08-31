@@ -5,6 +5,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import { CACHE_PROVIDER_ENV, cacheProviderConfigFromEnv } from '@stim-cli/cache';
 import { getProject, upsertProject } from '../config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import {
@@ -725,6 +726,84 @@ describe('action: spawning the supervisor', () => {
     expect(facts.alreadyRunning).toBe(false);
     expect(facts.supervisorPid).toBe(process.pid);
     expect(facts.mode).toBe('bare-inproc');
+  });
+
+  test('a configured cache provider reaches the supervisor through the environment', async () => {
+    const port = 8155;
+    writeFileSync(
+      join(root, '.stim.json'),
+      JSON.stringify({ cache: { provider: './tools/cache-provider.cjs', options: { bucket: 'mobile' } } }),
+    );
+    const exec = metroExecutor({ listeners: {} });
+    const held: { server: Server | null } = { server: null };
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+      metroListener(port).then((s) => {
+        held.server = s;
+        exec.listening = true;
+        return s;
+      });
+      return { pid: process.pid, unref() {}, on() {} };
+    };
+    const base = exec.runQuiet.bind(exec);
+    exec.runQuiet = (cmd) => {
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
+      return base(cmd);
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+
+    try {
+      await runAction({ json: true, wait: '10' });
+    } finally {
+      held.server?.close();
+    }
+
+    const spawned = exec.calls.spawn[0];
+    assert(spawned);
+    const env = spawned.opts.env as NodeJS.ProcessEnv;
+    expect(cacheProviderConfigFromEnv(env)).toEqual({
+      provider: './tools/cache-provider.cjs',
+      options: { bucket: 'mobile' },
+      baseDir: root,
+    });
+    expect(process.env[CACHE_PROVIDER_ENV]).toBeUndefined();
+  });
+
+  test('no configured provider leaves the supervisor environment clean', async () => {
+    const port = 8157;
+    process.env[CACHE_PROVIDER_ENV] = 'stale';
+    const exec = metroExecutor({ listeners: {} });
+    const held: { server: Server | null } = { server: null };
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
+      metroListener(port).then((s) => {
+        held.server = s;
+        exec.listening = true;
+        return s;
+      });
+      return { pid: process.pid, unref() {}, on() {} };
+    };
+    const base = exec.runQuiet.bind(exec);
+    exec.runQuiet = (cmd) => {
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? '5150' : '';
+      return base(cmd);
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+
+    try {
+      await runAction({ json: true, wait: '10' });
+    } finally {
+      held.server?.close();
+      delete process.env[CACHE_PROVIDER_ENV];
+    }
+
+    const spawned = exec.calls.spawn[0];
+    assert(spawned);
+    expect((spawned.opts.env as NodeJS.ProcessEnv)[CACHE_PROVIDER_ENV]).toBeUndefined();
   });
 
   test('start --remote passes --tunnel to an Expo supervisor in explicit expo mode', async () => {

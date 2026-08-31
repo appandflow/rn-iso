@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve, sep } from 'path';
+import type { CacheProviderConfig } from '@stim-cli/cache';
 import { getProjectSettings, getRepoSettings } from './config.ts';
 import { TUNNEL_MODES, type TunnelMode } from './engine/metro-reach.ts';
 import type { RemoteDeviceBackend, Settings, SettingsObject } from './types.ts';
@@ -45,10 +46,12 @@ const KNOWN_SETTINGS = new Set([
   'worktree.baseRef',
   'worktree.include',
   'worktree.exclude',
+  'cache.provider',
+  'cache.options',
   'caches',
 ]);
 
-const OPEN_SETTINGS_OBJECTS = new Set(['android.avdConfig']);
+const OPEN_SETTINGS_OBJECTS = new Set(['android.avdConfig', 'cache.options']);
 
 export const MIN_ANDROID_DATA_PARTITION_SIZE_GB: number = 6;
 export const DEFAULT_ANDROID_DATA_PARTITION_SIZE_GB: number = 8;
@@ -371,6 +374,51 @@ export function resolveSettings({
     gitCommonDir ? getRepoSettings(gitCommonDir) : null,
     readCommittedSettings(repoRoot),
   ]);
+}
+
+interface CacheSettingsLayer {
+  settings: SettingsObject;
+  baseDir: string | null;
+}
+
+function cacheBlock(layer: SettingsObject | null | undefined): SettingsObject | null {
+  if (!isPlainObject(layer) || !isPlainObject(layer.cache)) return null;
+  return layer.cache;
+}
+
+export function resolveCacheProviderConfig({
+  projectPath,
+  gitCommonDir,
+  repoRoot,
+}: {
+  projectPath?: string | null;
+  gitCommonDir?: string | null;
+  repoRoot?: string | null;
+}): CacheProviderConfig | null {
+  const layers: CacheSettingsLayer[] = [
+    { settings: projectPath ? getProjectSettings(projectPath) : {}, baseDir: projectPath ?? null },
+    { settings: gitCommonDir ? getRepoSettings(gitCommonDir) : {}, baseDir: repoRoot ?? projectPath ?? null },
+    { settings: readCommittedSettings(repoRoot), baseDir: repoRoot ?? null },
+  ];
+
+  let provider: string | null = null;
+  let baseDir: string | null = null;
+  for (const layer of layers) {
+    const reference = cacheBlock(layer.settings)?.provider;
+    if (typeof reference !== 'string' || reference.trim() === '' || layer.baseDir === null) continue;
+    provider = reference.trim();
+    baseDir = layer.baseDir;
+    break;
+  }
+  if (provider === null || baseDir === null) return null;
+
+  const options = mergeSettingsLayers(
+    layers.map((layer) => {
+      const block = cacheBlock(layer.settings)?.options;
+      return isPlainObject(block) ? block : null;
+    }),
+  );
+  return { provider, options, baseDir };
 }
 
 export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
