@@ -116,8 +116,23 @@ export function createFixture({ framework, platform, workDir, h }) {
   }
 
   if (framework === 'bare' && platform === 'ios') {
-    h.log('installing the bare iOS fixture pods before its initial commit');
-    const r2 = spawnSync('pod', ['install'], {
+    // The template's own run instructions are `bundle install` then `bundle exec
+    // pod install`: the Gemfile pins cocoapods/activesupport, and installing the
+    // fixture's pods outside bundler both dodges those pins and trips RubyGems'
+    // Gemfile-aware activation under rvm (#133).
+    h.log('installing the bare iOS fixture pods (bundler, per the template) before its initial commit');
+    const rb = spawnSync('bundle', ['install'], {
+      cwd: appDir,
+      env: h.env,
+      stdio: 'inherit',
+      timeout: 20 * 60 * 1000,
+    });
+    if (rb.status !== 0) {
+      h.die(
+        'bundle install failed for the bare iOS fixture; its Gemfile pins the pods toolchain, so the fixture cannot be prepared without it',
+      );
+    }
+    const r2 = spawnSync('bundle', ['exec', 'pod', 'install'], {
       cwd: join(appDir, 'ios'),
       env: h.env,
       stdio: 'inherit',
