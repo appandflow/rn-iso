@@ -150,9 +150,11 @@ other line goes to stderr, so it is always safe to pipe.
                   applicationId, not what the project files say
   debugHttpHost   "10.0.2.2:<port>" on an emulator, "localhost:<port>" on a
                   physical device, when the app's SharedPreferences were
-                  pointed at this workspace's Metro; null when they were not
-                  (Contract 6's Android half; the adb reverse still covers
-                  the app's compiled-in 8081)
+                  pointed at this workspace's Metro; null when they were not.
+                  A healthy run reverses only <port> -> <port>, which is what
+                  that host resolves to. Only when the write fails does Stim
+                  also reverse 8081 -> <port>, so the app's compiled-in
+                  default still finds this workspace's Metro
   debugHttpHostNote
                   why the write did not land, when it did not. A launch
                   survives it -- this is the difference between the two

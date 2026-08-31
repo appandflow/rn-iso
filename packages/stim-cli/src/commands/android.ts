@@ -1164,17 +1164,13 @@ async function finishAndroidRun({
   const launchMode = launched.mode === 'deep-link' ? 'expo-dev-client deep link' : launched.mode;
   phase('launch', `${launchMode ? `${androidPackage} (${launchMode})` : androidPackage} ${launchTimer()}`);
 
+  const reversedSummary = (launched.reversed ?? []).join(', ') || `tcp:${metroPort}->tcp:${metroPort}`;
   if (!release && launched.debugHttpHost) {
-    phase(
-      'wired',
-      `debug_http_host ${launched.debugHttpHost} + adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}`,
-    );
+    phase('wired', `debug_http_host ${launched.debugHttpHost} + adb reverse ${reversedSummary}`);
   } else if (!release) {
     phase(
       'wired',
-      chalk.yellow(
-        `adb reverse tcp:${DEFAULT_METRO_PORT} -> tcp:${metroPort}; ${launched.debugHttpHostNote || 'debug_http_host not written'}`,
-      ),
+      chalk.yellow(`adb reverse ${reversedSummary}; ${launched.debugHttpHostNote || 'debug_http_host not written'}`),
     );
     writer.write({
       src: 'build',

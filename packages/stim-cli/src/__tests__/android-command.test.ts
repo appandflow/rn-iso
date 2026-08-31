@@ -336,7 +336,7 @@ function harness(overrides = {}) {
         mode: 'am-start',
         component: 'com.example.app/.MainActivity',
         devClientNote: null,
-        reversed: ['tcp:8081->tcp:8082', 'tcp:8082->tcp:8082'],
+        reversed: ['tcp:8082->tcp:8082'],
         debugHttpHost: '10.0.2.2:8082',
         debugHttpHostNote: null,
       };
@@ -2218,7 +2218,7 @@ describe('the port wiring is reported', () => {
     const h = harness();
     const result = await h.run();
     expect(labelled(h.stderr, 'wired')[0]).toMatch(
-      /debug_http_host 10\.0\.2\.2:8082 \+ adb reverse tcp:8081 -> tcp:8082/,
+      /debug_http_host 10\.0\.2\.2:8082 \+ adb reverse tcp:8082->tcp:8082/,
     );
     assert(result.facts);
     expect(result.facts.debugHttpHost).toBe('10.0.2.2:8082');
@@ -2239,7 +2239,7 @@ describe('the port wiring is reported', () => {
     expect(result.ok).toBe(true);
     const wired = labelled(h.stderr, 'wired')[0];
     expect(wired).toMatch(/not debuggable/);
-    expect(wired).toMatch(/adb reverse tcp:8081 -> tcp:8082/);
+    expect(wired).toMatch(/adb reverse tcp:8081->tcp:8082/);
     assert(result.facts);
     expect(result.facts.debugHttpHost).toBe(null);
     expect(result.facts.debugHttpHostNote).toMatch(/relying on adb reverse/);
@@ -3572,4 +3572,23 @@ test('a signature conflict on install names the conflict instead of blaming the 
   expect(result.ok).toBe(false);
   expect(result.error?.remedy).toMatch(/signer|uninstall/i);
   expect(result.error?.remedy).not.toMatch(/still connected/);
+});
+
+test('the wired line reports the reverses that were actually registered', async () => {
+  const h = harness({
+    launch: (args: LaunchArgs = {}) => ({
+      ok: true,
+      mode: 'am-start',
+      component: 'com.example.app/.MainActivity',
+      devClientNote: null,
+      reversed: ['tcp:8082->tcp:8082'],
+      debugHttpHost: '10.0.2.2:8082',
+      debugHttpHostNote: null,
+      ...args,
+    }),
+  });
+  await h.run();
+  const wired = labelled(h.stderr, 'wired').join(' ');
+  expect(wired).toContain('tcp:8082->tcp:8082');
+  expect(wired).not.toContain('tcp:8081');
 });
