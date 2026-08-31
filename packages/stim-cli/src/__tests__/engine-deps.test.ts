@@ -281,10 +281,35 @@ describe('runPodInstall', () => {
 });
 
 describe('runPodInstall through bundler (#137)', () => {
-  function pinnedProject({ lock = true }: { lock?: boolean } = {}) {
+  const COCOAPODS_LOCK = [
+    'GEM',
+    '  remote: https://rubygems.org/',
+    '  specs:',
+    '    activesupport (7.2.3.2)',
+    '    cocoapods (1.15.2)',
+    '      cocoapods-core (= 1.15.2)',
+    '    cocoapods-core (1.15.2)',
+    '',
+    'DEPENDENCIES',
+    '  cocoapods (~> 1.15)',
+    '',
+  ].join('\n');
+
+  const FASTLANE_LOCK = [
+    'GEM',
+    '  remote: https://rubygems.org/',
+    '  specs:',
+    '    fastlane (2.219.0)',
+    '',
+    'DEPENDENCIES',
+    '  fastlane',
+    '',
+  ].join('\n');
+
+  function pinnedProject({ lock = COCOAPODS_LOCK }: { lock?: string | null } = {}) {
     mkdirSync(join(root, 'ios'), { recursive: true });
     writeFileSync(join(root, 'Gemfile'), "source 'https://rubygems.org'\ngem 'cocoapods'\n");
-    if (lock) writeFileSync(join(root, 'Gemfile.lock'), 'DEPENDENCIES\n  cocoapods\n');
+    if (lock !== null) writeFileSync(join(root, 'Gemfile.lock'), lock);
   }
 
   function router(
@@ -370,7 +395,7 @@ describe('runPodInstall through bundler (#137)', () => {
   });
 
   test('a Gemfile with no Gemfile.lock stays on plain `pod install`, so nothing writes a lockfile', async () => {
-    pinnedProject({ lock: false });
+    pinnedProject({ lock: null });
     const calls: SpawnCall[] = [];
     const result = await runPodInstall(root, collectingWriter(), {
       spawnFn: router(calls, { 'pod install': ok }),
@@ -378,6 +403,54 @@ describe('runPodInstall through bundler (#137)', () => {
     expect(result.ok).toBe(true);
     expect(result.command).toBe('pod install');
     expect(calls.map((c) => c.cmd)).toEqual(['pod']);
+  });
+
+  test('a lockfile that pins fastlane but no pods stays on plain `pod install`, with no note', async () => {
+    pinnedProject({ lock: FASTLANE_LOCK });
+    const calls: SpawnCall[] = [];
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router(calls, { 'pod install': ok }),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.command).toBe('pod install');
+    expect(result.notes).toEqual([]);
+    expect(calls.map((c) => c.cmd)).toEqual(['pod']);
+  });
+
+  test('cocoapods pulled in as a transitive spec still counts as pinned', async () => {
+    pinnedProject({
+      lock: [
+        'GEM',
+        '  specs:',
+        '    cocoapods-bin (0.8.0)',
+        '      cocoapods (>= 1.10)',
+        '    cocoapods (1.15.2)',
+        '',
+      ].join('\n'),
+    });
+    const calls: SpawnCall[] = [];
+    await runPodInstall(root, collectingWriter(), {
+      spawnFn: router(calls, { 'bundle check --dry-run': ok, 'bundle exec pod install': ok }),
+    });
+    expect(calls.map((c) => c.cmd)).toEqual(['bundle', 'bundle']);
+  });
+
+  test('an unreadable or malformed Gemfile.lock falls back to plain `pod install` instead of throwing', async () => {
+    pinnedProject({ lock: '\u0000 not a lockfile' });
+    const calls: SpawnCall[] = [];
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router(calls, { 'pod install': ok }),
+    });
+    expect(result.ok).toBe(true);
+    expect(calls.map((c) => c.cmd)).toEqual(['pod']);
+
+    rmSync(join(root, 'Gemfile.lock'), { force: true });
+    mkdirSync(join(root, 'Gemfile.lock'));
+    const second = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router([], { 'pod install': ok }),
+    });
+    expect(second.ok).toBe(true);
+    expect(second.command).toBe('pod install');
   });
 
   test('no `bundle` on PATH falls back to plain `pod install` with a note, not a failure', async () => {

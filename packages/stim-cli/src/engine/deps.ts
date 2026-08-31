@@ -207,10 +207,19 @@ export type PodInstallResult = {
   durationMs?: number;
 };
 
-function bundlerPin(root: string): { gemfile: string; lockfile: string } | null {
+// Bundler's lockfile indents a resolved spec name with exactly four spaces; six marks
+// that spec's own dependencies and two marks the DEPENDENCIES section. Matching the
+// four-space form finds cocoapods whether the Gemfile names it directly or pulls it in
+// through another gem, which is exactly when `bundle exec pod` can work; DEPENDENCIES
+// would miss the transitive case.
+const COCOAPODS_SPEC = /^ {4}cocoapods \(/m;
+
+export function bundlerPin(root: string): { gemfile: string; lockfile: string } | null {
   const gemfile = join(root, 'Gemfile');
   const lockfile = join(root, 'Gemfile.lock');
-  if (!existsSync(gemfile) || !existsSync(lockfile)) return null;
+  if (!existsSync(gemfile)) return null;
+  const lock = readOrNull(lockfile);
+  if (lock === null || !COCOAPODS_SPEC.test(lock)) return null;
   return { gemfile, lockfile };
 }
 

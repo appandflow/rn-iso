@@ -127,6 +127,30 @@ test('checkMainCheckout runs its expensive probes only when their preconditions 
   }
 });
 
+test('the CocoaPods remedy uses bundler only when the lockfile resolves cocoapods (#137)', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-gemfile-'));
+  try {
+    mkdirSync(join(project, 'ios'), { recursive: true });
+    writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
+    writeFileSync(join(project, 'Gemfile'), "gem 'fastlane'\n");
+    writeFileSync(join(project, 'Gemfile.lock'), 'GEM\n  specs:\n    fastlane (2.219.0)\n');
+
+    const fastlane = checkMainCheckout(project, { brokenPods: [], upstream: null }).find((f) =>
+      /CocoaPods state/.test(f.title),
+    );
+    expect(fastlane?.fix).toMatch(/&& pod install/);
+    expect(fastlane?.fix).not.toMatch(/bundle exec/);
+
+    writeFileSync(join(project, 'Gemfile.lock'), 'GEM\n  specs:\n    cocoapods (1.15.2)\n');
+    const pinned = checkMainCheckout(project, { brokenPods: [], upstream: null }).find((f) =>
+      /CocoaPods state/.test(f.title),
+    );
+    expect(pinned?.fix).toMatch(/bundle exec pod install/);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('checkMainCheckout reports broken CocoaPods links even when lockfiles match', () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-broken-pods-'));
   try {
