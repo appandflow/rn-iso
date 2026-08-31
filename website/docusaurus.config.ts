@@ -4,7 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'Stim',
-  tagline: 'Fast, isolated React Native environments for coding agents',
+  tagline: 'Fast, isolated local React Native environments for coding agents',
   favicon: 'img/favicon.svg',
 
   future: {

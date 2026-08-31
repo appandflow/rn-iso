@@ -1,7 +1,7 @@
 ---
 title: 'Why Stim'
 sidebar_position: 1
-description: 'Fast, isolated React Native environments for coding agents'
+description: 'Fast, isolated local React Native environments for coding agents'
 ---
 
 Stim gives each coding agent a complete React Native environment. Each project
@@ -62,6 +62,16 @@ agent exits early.
 A local Mac already has Xcode, Android tools, simulator runtimes, credentials,
 and access to private development services. Stim lets coding agents use that
 existing setup with worktree isolation.
+
+A cloud machine for each agent also removes the collisions, but it bills for
+every build minute, and macOS runners cost the most. The machine on your desk
+is already paid for, and it keeps most of its cores idle. Use that capacity
+first. Send work to the cloud only when the local machine cannot hold it.
+
+Shared caches raise how much the local machine can hold. The second and later
+workspaces on one commit install a cached artifact instead of compiling again,
+so each added agent costs less than the first. A new cloud runner starts cold
+every time.
 
 Local CPU, memory, and disk are finite. `stim doctor`, `stim status`, and
 `stim gc` make those limits visible. Remote devices remain available when a
