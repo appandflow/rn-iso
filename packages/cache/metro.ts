@@ -32,6 +32,12 @@ export interface TieredMetroStore extends MetroCacheStore {
   get(key: Buffer): Promise<unknown>;
   set(key: Buffer, value: unknown): Promise<void>;
   clear(): unknown;
+  /**
+   * Resolves once queued provider writes have drained. Metro never calls it:
+   * every in-flight write already holds a referenced deadline, so the process
+   * drains on its own. Tests and embedders that own the process use it to wait
+   * without polling.
+   */
   flush(): Promise<void>;
 }
 

@@ -73,7 +73,7 @@ jobs:
         run: pnpm run knip
 
       # The unit suite on vitest (rolldown-vite): stim-cli + the cache packages,
-      # 52 files. Real processes, real ports, real git; fakes for xcrun/adb.
+      # 69 files. Real processes, real ports, real git; fakes for xcrun/adb.
       - name: Unit tests (vitest)
         run: pnpm test
 

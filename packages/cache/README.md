@@ -129,6 +129,11 @@ The variables are `STIM_CACHE_METRO_READ_TIMEOUT_MS`,
 `STIM_CACHE_BUILD_UPLOAD_TIMEOUT_MS`, and `STIM_CACHE_LOAD_TIMEOUT_MS`. Each
 takes whole milliseconds; any other value keeps the default.
 
+The tiered Metro store also exposes `flush()`, which resolves once queued
+provider writes have drained. Metro never calls it; every in-flight write holds
+a referenced deadline, so a Metro process drains on its own within the write
+budget. It exists for tests and embedders that own the process.
+
 Metro reads are also capped: at most six can be in flight, and the tier turns
 itself off for the rest of the run after five consecutive failures, so a broken
 provider costs one round of warnings rather than a timeout per transform.

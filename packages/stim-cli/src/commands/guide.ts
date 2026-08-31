@@ -1033,7 +1033,8 @@ ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   builder that is alive but wedged is the only case a wait can outlive, and
   that ends after ~90 minutes with STIM_BUILD_WAIT_TIMEOUT naming the lock.
 
-  --no-build-cache looks nothing up -- not one level of the three -- and
+  --no-build-cache looks nothing up -- not the local cache, not either
+  provider -- and
   takes no lock and never waits, because it asked for a compile of its own.
   It still STORES the result, over the entry it was told not to trust, and
   still uploads it. Use it when a cached artifact is suspect; the --json
@@ -1479,6 +1480,14 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         written after the local write. Failures and timeouts
                         are cache misses, never build or bundle failures.
                         Stim ships no provider and never configures one.
+                        This module is EXECUTABLE CODE that every worktree on
+                        this repository runs; review a committed value the way
+                        you review a build script.
+                        \`stim ios\` and \`stim android\` always use it. Metro
+                        uses it only when the project's own metro.config.js
+                        calls \`sharedCacheStores()\` from @stim-cli/metro: the
+                        store Stim injects for you (bare in-process, or the
+                        Expo config override) stays local-only.
   cache.options         free-form object handed to that module's factory. It
                         merges key by key across settings layers. Keep secrets
                         out of the committed file: read them from the

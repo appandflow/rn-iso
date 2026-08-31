@@ -489,4 +489,7 @@ test('the guide documents the project cache provider as the tier between local a
   expect(lifecycle).toMatch(/gc[\s\S]*no delete\s+operation/i);
   expect(settings).toMatch(/cache\.provider[\s\S]*@stim-cli\/cache/);
   expect(settings).toMatch(/cache\.options[\s\S]*Keep secrets/);
+  expect(settings).toMatch(/cache\.provider[\s\S]*EXECUTABLE CODE/);
+  expect(settings).toMatch(/sharedCacheStores\(\)[\s\S]*stays local-only/);
+  expect(lifecycle).toMatch(/--no-build-cache looks nothing up -- not the local cache, not either/);
 });
