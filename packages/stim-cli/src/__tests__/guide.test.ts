@@ -78,6 +78,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
     'stop.ts': ['--json', '--force'],
     'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],
     'gc.ts': ['--delete', '--older-than', '--all'],
+    'worktree.ts': ['--carry-ignored', '--base', '--label', '--force'],
   };
   for (const [file, flags] of Object.entries(advertised)) {
     const src = readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8');
@@ -248,7 +249,31 @@ test('the errors topic documents every code the build commands can emit', () => 
   const codes = new Set([...sources.matchAll(/STIM_[A-Z_]+/g)].map((m) => m[0]));
   expect(codes.size >= 8).toBeTruthy();
   for (const code of codes) {
-    if (code === 'STIM_CONFIG_CORRUPT') continue;
+    expect(body.includes(code)).toBeTruthy();
+  }
+});
+
+test('the errors topic documents every code the engine can emit under a command', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  const sources = ['config.ts', 'engine/workspace-process-lock.ts', 'engine/build-slots.ts', 'engine/device-remote.ts']
+    .map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'))
+    .join('\n');
+  const codes = new Set(
+    [...sources.matchAll(/(?:code:\s*|\.code\s*=\s*)'(STIM_[A-Z_]+)'/g)].map((m) => m[1] as string),
+  );
+  for (const expected of [
+    'STIM_CONFIG_CORRUPT',
+    'STIM_LOCK_REFUSED',
+    'STIM_LOCK_TIMEOUT',
+    'STIM_BUILD_SLOT_TIMEOUT',
+    'STIM_REMOTE_PLATFORM_MISMATCH',
+    'STIM_REMOTE_SESSION_STATE',
+    'STIM_REMOTE_SESSION_CLEANUP',
+  ]) {
+    expect(codes.has(expected)).toBeTruthy();
+  }
+  for (const code of codes) {
     expect(body.includes(code)).toBeTruthy();
   }
 });

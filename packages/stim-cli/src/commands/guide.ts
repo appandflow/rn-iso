@@ -429,7 +429,7 @@ WHAT WRITES WHAT
 
   errors: {
     summary: 'Every refusal Stim can print, and what to do about it',
-    body: () => `WHAT STIM-CLI REFUSES, AND WHY
+    body: () => `WHAT STIM REFUSES, AND WHY
 
 Every refusal from \`ios\` / \`android\` carries a stable CODE. Branch on the
 code, never on the message.
@@ -583,6 +583,17 @@ STIM_AT_CAPACITY
   behaves differently: a compile WAITS for a free slot rather than refusing.
   See \`guide lifecycle\`, "opt-in concurrency limits".)
 
+STIM_BUILD_SLOT_TIMEOUT
+  Only when concurrency.maxBuilds is set. The build cap does not refuse, it
+  WAITS -- this code is that wait giving up: ~90 minutes elapsed and every one
+  of the N slots was still held by a process that is still alive. A dead
+  builder's slot is reclaimed within a poll, so this is never a slot leaked by
+  a crash; it is either that many genuinely long compiles, or a slot directory
+  whose owner is not really building. Slots live under ~/.stim/build-slots and
+  the message names the directory: remove the slot of a builder that is not
+  building, or raise concurrency.maxBuilds (\`guide lifecycle\`, "opt-in
+  concurrency limits").
+
 --- REMOTE-DEVICE CODES (\`ios --remote <proxy|eas>\` / \`android --remote <proxy|eas>\`) ---
 
 STIM_NO_REMOTE_SESSION
@@ -598,6 +609,31 @@ STIM_REMOTE_PROXY_CONFIG
 STIM_REMOTE_EAS_UNAVAILABLE
   \`--remote eas\` requires eas-cli. Proxy environment variables do not change
   this selection and are not passed to EAS.
+
+STIM_REMOTE_PLATFORM_MISMATCH
+  This workspace already has a recorded remote session, and it belongs to the
+  OTHER platform ("Session <id> belongs to android, not ios"). A workspace
+  holds one remote session, and Stim will not end the recorded one to make
+  room -- it may be mid-run for whoever started it. Run \`stim stop\` for this
+  workspace, then re-run with the platform you want. Nothing was created here.
+
+STIM_REMOTE_SESSION_STATE
+  The EAS session was created and is healthy, but recording it in this
+  workspace's state failed (an unwritable STIM_HOME, a full disk). A session
+  nothing references is a session nothing will ever stop, so Stim stopped the
+  one it had just created and removed its ownership claim before reporting:
+  this code means nothing is running and nothing is still billing. Repair the
+  state storage the message names, then run the remote command again.
+
+STIM_REMOTE_SESSION_CLEANUP
+  Stim tried to end an EAS session and could not PROVE it ended: \`eas
+  simulator:stop\` failed, or its output did not confirm the stop, or the
+  session stopped but its claim in the machine ledger could not be removed.
+  This is a refusal rather than a note because a session that did not stop
+  BILLS until its duration cap. The remedy names the exact command --
+  \`eas simulator:stop --id <id>\` -- and for a ledger that outlived its
+  session, the ledger path to repair. The same code covers a recorded session
+  that could not be verified before replacement: inspect it, then \`stim stop\`.
 
 STIM_REMOTE_METRO_WRONG
   The gate that proves a tunnel still reaches THIS workspace's Metro failed --
@@ -667,6 +703,27 @@ captured"  (in metro.ndjson, bare RN)
   The dev server is serving; only capture is missing, so \`logs\` would report
   a quiet timeline for a broken build. Install \`@stim-cli/metro\` as a
   devDependency of the project.
+
+--- COORDINATION CODES (any command that shares a resource) ---
+
+STIM_LOCK_REFUSED
+  A directory lock that serialises two commands over the same thing -- this
+  workspace's managed tunnel, its managed remote worktree, the machine's EAS
+  project ledger -- is held by a REMOVAL, and a removal is never waited out:
+  what it protects will not exist when the lock frees. Nothing was created.
+  The message names the lock and the purpose holding it (\`worktree removal\`,
+  \`workspace removal\` -- both are \`stim worktree remove\`). Let it finish,
+  then run the command again. \`start --remote\` reports this same case as
+  STIM_WORKTREE_REMOVAL_IN_PROGRESS instead.
+
+STIM_LOCK_TIMEOUT
+  The same locks, held by an ordinary command that is still running, for
+  longer than the wait -- 60s by default, 4 minutes for the remote-session and
+  EAS project locks. A lock whose owner died is taken over automatically (pid
+  liveness is checked every poll), so this means another Stim command really
+  is working on this workspace: wait for it and retry. If nothing is running,
+  the message names the lock directory and removing it is safe. This is not
+  the config lock, which reports the message at the end of this topic.
 
 --- TEARDOWN AND WORKSPACE REFUSALS ---
 
@@ -790,7 +847,8 @@ too; commit deliberately."  (worktree create --carry-ignored)
   Several commands raced for the same ports and each one lost. Nothing is
   wrong; retry.
 
-"Stim config at <path> is not valid JSON"
+STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON")
+  Any command can raise it: every command reads ~/.stim/config.json first.
   The file holding every owned-device record will not parse, and Stim never
   resets it for you -- a silent reset would orphan every simulator it names.
   Repair the file, or move it aside (\`mv <path> <path>.broken\`) and accept
@@ -1006,7 +1064,7 @@ THE OPTION SURFACE, IN FULL
   stop            --json --force
   status          --json          (already machine-wide; there is no --all)
   gc              --delete --older-than <days> --all
-  worktree create <name> --carry-ignored --base <ref>; remove [path] --force
+  worktree create <name> --carry-ignored --base <ref> --label <label>; remove [path] --force
 
   That is the whole surface today, and it is deliberately small. It can grow
   when a flag is genuinely the best answer -- but project-specific knowledge
@@ -1284,7 +1342,7 @@ belongs there:
     "caches": ["~/.myapp-metro-cache"]
   }
 
-KEYS STIM-CLI READS
+KEYS STIM READS
   ios.deviceType        e.g. "iPhone 17 Pro"
   ios.runtime           e.g. "26.2"
   ios.configuration     e.g. "Release" -- the Xcode configuration to build
@@ -1420,7 +1478,7 @@ or via the environment, which overrides the file:
 Unset, 0, or any non-positive value means NO enforcement -- the default, where
 Stim limits nothing. See \`guide lifecycle\` for what each cap does.
 
-STIM-CLI NEEDS NO PROJECT CHANGES TO RUN
+STIM NEEDS NO PROJECT CHANGES TO RUN
 Nothing above is required to use Stim. The performance caches that used to
 be setup steps are supplied by Stim on the command lines it composes itself:
 
