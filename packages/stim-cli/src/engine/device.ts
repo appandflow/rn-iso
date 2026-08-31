@@ -681,13 +681,12 @@ async function ensureIosBooted({
     return { failed: true, reason: `Could not boot simulator ${udid}: ${(e as Error)?.message || e}` };
   }
 
-  // A boot that consumed the whole budget still gets a couple of verification polls.
   const deadline = Math.max(bootDeadline, Date.now() + 2 * pollMs);
   while (Date.now() < deadline) {
     await sleep(pollMs);
     let state = null;
     try {
-      state = listAllIosSims().find((s) => s.udid === udid)?.state ?? null;
+      state = listAllIosSims({ timeoutMs: 30000 }).find((s) => s.udid === udid)?.state ?? null;
     } catch {}
     if (state === 'Booted') return { ok: true, udid };
   }
