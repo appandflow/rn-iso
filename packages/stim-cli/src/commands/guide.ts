@@ -476,6 +476,18 @@ STIM_DEPS_FAILED
   \`pod install\` (iOS) or the gradle dependency sync (Android) failed. On iOS
   this runs only when Podfile.lock and Pods/Manifest.lock disagree, or Pods is
   absent -- which is exactly what a carried worktree produces.
+  WHICH POD COMMAND: when the project root has BOTH a Gemfile and a
+  Gemfile.lock, pods go through bundler -- \`bundle check --dry-run\`, then
+  \`bundle install\` only when that reports missing gems, then \`bundle exec pod
+  install\` -- so the CocoaPods the lockfile pins is the one that writes
+  Podfile.lock. Everything else (no Gemfile, or a Gemfile with no Gemfile.lock)
+  gets plain \`pod install\`: without a lockfile \`bundle install\` would CREATE
+  Gemfile.lock in your checkout, and Stim does not write into the project. When
+  \`bundle\` is not on PATH the run prints one dim \`pods\` note and uses plain
+  \`pod install\`. The \`pods\` phase line always names the command that ran.
+  Bundler runs with BUNDLE_FROZEN for the same reason, so a Gemfile that no
+  longer matches its Gemfile.lock fails here instead of having the lockfile
+  rewritten under you: run \`bundle install\` yourself and keep the result.
 
 STIM_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),
