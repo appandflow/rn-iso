@@ -273,15 +273,11 @@ export function dirStats(dir) {
   return out;
 }
 
-export function topFileNames(dir) {
+export function topFileNames(dir, { matching } = {}) {
   if (!existsSync(dir)) return [];
-  try {
-    return readdirSync(dir, { withFileTypes: true })
-      .filter((e) => e.isFile())
-      .map((e) => e.name);
-  } catch {
-    return [];
-  }
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && (!matching || matching.test(e.name)))
+    .map((e) => e.name);
 }
 
 export function growth(label, before, after) {

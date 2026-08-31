@@ -148,7 +148,10 @@ async function main() {
   const metroBefore1 = dirStats(storeRoot1 || METRO_CACHE_ROOT);
   const casBefore1 = dirStats(CAS_DIR);
   const gradleBefore1 = dirStats(GRADLE_CACHE_DIR);
-  const gradleNamesBefore1 = new Set(topFileNames(GRADLE_CACHE_DIR));
+  // Gradle cache entries are 32-hex content hashes; the same directory also
+  // holds build-cache-1.lock and gc.properties, which must not count as stores.
+  const GRADLE_ENTRY = /^[0-9a-f]{32}$/;
+  const gradleNamesBefore1 = new Set(topFileNames(GRADLE_CACHE_DIR, { matching: GRADLE_ENTRY }));
 
   const build1 = build(wt1, 'wt1 (cold)');
   assert(
@@ -160,7 +163,8 @@ async function main() {
   const metroAfter1 = await settle(storeRoot1 || METRO_CACHE_ROOT, 'wt1 Metro store');
   const casAfter1 = dirStats(CAS_DIR);
   const gradleAfter1 = dirStats(GRADLE_CACHE_DIR);
-  const gradleNewNames1 = topFileNames(GRADLE_CACHE_DIR).filter((n) => !gradleNamesBefore1.has(n));
+  const gradleNamesAfter1 = new Set(topFileNames(GRADLE_CACHE_DIR, { matching: GRADLE_ENTRY }));
+  const gradleNewNames1 = [...gradleNamesAfter1].filter((n) => !gradleNamesBefore1.has(n));
 
   const wt2 = worktreeCreate('e2e-cache-2', appDir);
   const start2 = startAndAssertMode(wt2);
@@ -300,7 +304,7 @@ async function main() {
 
       const g = growth('Gradle build cache', gradleBefore1, gradleAfter1);
       c.ev(describeGrowth(g));
-      const removed = gradleBefore1.files + gradleNewNames1.length - gradleAfter1.files;
+      const removed = [...gradleNamesBefore1].filter((n) => !gradleNamesAfter1.has(n)).length;
       c.ev(
         `${gradleNewNames1.length} new entry file(s) written by the cold assemble` +
           (removed > 0 ? ` (Gradle's own cleanup removed ${removed} old file(s) in the same window)` : ''),
