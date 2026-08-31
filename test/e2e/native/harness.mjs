@@ -273,6 +273,17 @@ export function dirStats(dir) {
   return out;
 }
 
+export function topFileNames(dir) {
+  if (!existsSync(dir)) return [];
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isFile())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
 export function growth(label, before, after) {
   return {
     label,
