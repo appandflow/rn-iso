@@ -23,6 +23,8 @@ import {
   fingerprintDiffRecord,
   fingerprintDiffSuffix,
   fingerprintProject,
+  prepareProviderDownloadDir,
+  providerDownloadPath,
   providerUploadOutcome,
   refingerprintAfterMutation,
   resolveBuild,
@@ -1716,12 +1718,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const loadTieredProvider = cacheProviderConfig
     ? () => (providerLoad ??= loadCacheProviderModule({ projectRoot: root, config: cacheProviderConfig }))
     : null;
-  const providerDownloadDir = (): string => {
-    const dir = join(workspaceDir(root), 'cache-provider');
-    rmSync(dir, { recursive: true, force: true });
-    mkdirSync(dir, { recursive: true });
-    return dir;
-  };
   let fingerprintSources: FingerprintSource[] = [];
   let cacheKey = '';
   let storeHash = '';
@@ -1762,7 +1758,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       local: filesystemBuildCapability({ resolve: resolveCached, store: storeCached, sources: fingerprintSources }),
       loadProvider: loadTieredProvider,
       target: { projectRoot: root, platform: PLATFORM, key: cacheKey },
-      destinationDir: loadTieredProvider ? providerDownloadDir() : root,
+      destinationDir: providerDownloadPath(workspaceDir(root)),
+      ensureDestination: prepareProviderDownloadDir,
       skipRead: !useBuildCache,
       warn: cacheWarn,
     });

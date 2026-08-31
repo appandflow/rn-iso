@@ -15,6 +15,7 @@ import assert from 'node:assert';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
 import { resolveTieredBuild, runCacheProviderContract, storeTieredBuild } from '@stim-cli/cache';
+import { readManifest } from '../cache-manifest.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
   artifactIn,
@@ -27,6 +28,8 @@ import {
   fingerprintDiffRecord,
   fingerprintDiffSuffix,
   fingerprintProject,
+  prepareProviderDownloadDir,
+  providerDownloadPath,
   refingerprintAfterMutation,
   resolveBuild,
   storeBuild,
@@ -695,4 +698,23 @@ test('the built-in filesystem build cache satisfies the provider contract', asyn
     expect(results.length).toBeGreaterThan(0);
     expect(results.filter((result) => !result.passed)).toEqual([]);
   }
+});
+
+test('the provider download directory is emptied and registered only when it is prepared', () => {
+  const workspace = join(root, 'workspace');
+  const dir = providerDownloadPath(workspace);
+  expect(dir).toBe(join(workspace, 'cache-provider'));
+  expect(existsSync(dir)).toBe(false);
+
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'leftover.apk'), 'from an interrupted run');
+  prepareProviderDownloadDir(dir);
+
+  expect(existsSync(dir)).toBe(true);
+  expect(existsSync(join(dir, 'leftover.apk'))).toBe(false);
+  const registered = readManifest().caches.find((cache) => cache.dir === dir);
+  assert(registered);
+  expect(registered.name).toBe('Cache provider downloads');
+  expect(registered.prune).toBe('entries');
+  expect(registered.entriesDepth).toBe(1);
 });

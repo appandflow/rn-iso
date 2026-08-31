@@ -308,3 +308,42 @@ test('the build budgets accept an environment override', () => {
   expect(buildUploadTimeoutMs({ [BUILD_UPLOAD_TIMEOUT_ENV]: '1500' })).toBe(1500);
   expect(buildUploadTimeoutMs({ [BUILD_UPLOAD_TIMEOUT_ENV]: '-1' })).toBe(BUILD_UPLOAD_TIMEOUT_MS);
 });
+
+test('the destination is only prepared when a provider is about to be asked', async () => {
+  const prepared: string[] = [];
+  const localHit = capability({ resolve: () => '/cache/app.apk' });
+  const localMiss = capability({ resolve: () => null });
+  const downloaded = artifact('downloaded');
+  const loadProvider = () => ({
+    name: './cache.cjs',
+    provider: { builds: capability({ resolve: () => downloaded }).cap },
+  });
+
+  await resolveTieredBuild({
+    local: localHit.cap,
+    loadProvider,
+    target,
+    destinationDir: workDir,
+    ensureDestination: (dir) => prepared.push(dir),
+  });
+  expect(prepared).toEqual([]);
+
+  await resolveTieredBuild({
+    local: localMiss.cap,
+    loadProvider,
+    target,
+    destinationDir: workDir,
+    ensureDestination: (dir) => prepared.push(dir),
+    skipRead: true,
+  });
+  expect(prepared).toEqual([]);
+
+  await resolveTieredBuild({
+    local: localMiss.cap,
+    loadProvider,
+    target,
+    destinationDir: workDir,
+    ensureDestination: (dir) => prepared.push(dir),
+  });
+  expect(prepared).toEqual([workDir]);
+});

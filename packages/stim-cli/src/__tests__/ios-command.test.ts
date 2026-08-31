@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
-import { workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import type { WorkspaceState } from '../supervisor/run.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../supervisor/run.ts';
 import {
@@ -3035,4 +3035,22 @@ test('an invalid cache.provider setting is reported once and the run continues',
   const notices = errs.filter((line) => line.includes('Invalid cache.provider setting'));
   expect(notices.length).toBe(1);
   expect(notices[0]).toMatch(/Using the local cache\./);
+});
+
+test('a local hit leaves no provider download directory behind', async () => {
+  reserve();
+  const { exitCode } = await run(
+    {},
+    {
+      resolveBuild: () => '/cache/Fixture.app',
+      resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+      loadCacheProvider: async () => ({
+        name: './cache.cjs',
+        provider: { builds: { resolve: () => null, store: () => {} } },
+      }),
+    },
+  );
+
+  expect(exitCode).toBe(null);
+  expect(existsSync(join(workspaceDir(root), 'cache-provider'))).toBe(false);
 });

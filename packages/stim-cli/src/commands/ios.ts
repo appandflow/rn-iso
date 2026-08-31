@@ -19,6 +19,8 @@ import {
   fingerprintDiffRecord,
   fingerprintDiffSuffix,
   fingerprintProject,
+  prepareProviderDownloadDir,
+  providerDownloadPath,
   providerUploadOutcome,
   refingerprintAfterMutation,
   resolveBuild,
@@ -1489,12 +1491,6 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const loadProvider = cacheProviderConfig
     ? () => (providerLoad ??= d.loadCacheProvider({ projectRoot: root, config: cacheProviderConfig }))
     : null;
-  const providerDownloadDir = (): string => {
-    const dir = join(workspaceDir(root), 'cache-provider');
-    rmSync(dir, { recursive: true, force: true });
-    mkdirSync(dir, { recursive: true });
-    return dir;
-  };
   let waitedForBuild: WaitedForBuild | null = null;
   let swapDir: string | null = null;
   let buildFailure: BuildFailureFields = {};
@@ -1618,7 +1614,8 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       local: filesystemBuildCapability({ resolve: d.resolveBuild, store: d.storeBuild, sources: fingerprintSources }),
       loadProvider,
       target: { projectRoot: root, platform: PLATFORM, key: cacheKey },
-      destinationDir: loadProvider ? providerDownloadDir() : root,
+      destinationDir: providerDownloadPath(workspaceDir(root)),
+      ensureDestination: prepareProviderDownloadDir,
       skipRead: !useBuildCache,
       warn: cacheWarn,
     });

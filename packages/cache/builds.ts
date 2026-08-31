@@ -37,6 +37,8 @@ export interface ResolveTieredBuildOptions {
   loadProvider?: LoadBuildProvider | null;
   target: BuildCacheTarget;
   destinationDir: string;
+  /** Called right before a provider is asked, so a local hit creates nothing on disk. */
+  ensureDestination?: (destinationDir: string) => void;
   skipRead?: boolean;
   warn?: WarnOnce;
   timeoutMs?: number;
@@ -92,6 +94,7 @@ export async function resolveTieredBuild({
   loadProvider = null,
   target,
   destinationDir,
+  ensureDestination,
   skipRead = false,
   warn = ignore,
   timeoutMs = buildResolveTimeoutMs(),
@@ -105,6 +108,7 @@ export async function resolveTieredBuild({
   if (!tier) return null;
 
   const { capability: provider, name: label } = tier;
+  ensureDestination?.(destinationDir);
   const outcome = await callWithTimeout((signal) => provider.resolve({ ...target, destinationDir, signal }), timeoutMs);
   if (outcome.timedOut) {
     warn('provider-resolve', `${label} did not answer within ${timeoutMs}ms; building instead`);

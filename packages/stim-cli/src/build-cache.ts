@@ -136,6 +136,31 @@ export function storeBuild(
   return artifactIn(dest);
 }
 
+export const PROVIDER_DOWNLOAD_DIR = 'cache-provider';
+
+export function providerDownloadPath(workspacePath: string): string {
+  return join(workspacePath, PROVIDER_DOWNLOAD_DIR);
+}
+
+/**
+ * Empties and registers the scratch directory a provider downloads into. It is
+ * created only when a provider is about to be asked, and registered so `gc`
+ * reports what an interrupted run left behind.
+ */
+export function prepareProviderDownloadDir(dir: string): void {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  try {
+    register({
+      dir,
+      name: 'Cache provider downloads',
+      prune: 'entries',
+      entriesDepth: 1,
+      note: 'artifacts fetched from the project cache provider; anything left here is from an interrupted run',
+    });
+  } catch {}
+}
+
 export interface FilesystemBuildCapabilityOptions {
   root?: string;
   sources?: FingerprintSource[] | null;
