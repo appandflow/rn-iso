@@ -120,14 +120,23 @@ describe('a damaged compilation cache', () => {
     expect(found[0]?.remedy).toContain('--cache');
   });
 
-  test('the module failure that follows the scan failure carries the same remedy', () => {
+  test('a transcript that also carries a module failure still yields the cache remedy', () => {
     const transcript = [
       "/usr/include/stdio.h:61:10: error: Could not build module '_DarwinFoundation2' (in target 'nanopb' from project 'Pods')",
       "error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind (in target 'nanopb' from project 'Pods')",
       '** BUILD FAILED **',
     ].join('\n');
-    const remedies = extractXcodeDiagnostics(transcript).map((d) => d.remedy);
-    expect(remedies.some((r) => r?.includes('--cache'))).toBeTruthy();
+    const found = extractXcodeDiagnostics(transcript);
+    const cas = found.find((d) => d.message.includes('IncludeTreeRoot'));
+    expect(cas?.remedy).toContain('--cache');
+  });
+
+  test('a CAS scan failure with another cause gets no cache remedy', () => {
+    const transcript = [
+      "error: CAS-based dependency scan failed: module map not found (in target 'sqlite3' from project 'Pods')",
+      '** BUILD FAILED **',
+    ].join('\n');
+    expect(extractXcodeDiagnostics(transcript)[0]?.remedy).toBeUndefined();
   });
 });
 

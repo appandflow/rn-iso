@@ -85,6 +85,7 @@ interface GcReport {
   deviceSweepNotices: string[];
   easSessionSweep: EasSessionSweep;
   caches: GcCache[];
+  cacheScope: string | null;
   olderThan: number | null;
   all: boolean;
 }
@@ -606,6 +607,7 @@ export function formatGcReport({
   deviceSweepNotices = [],
   easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
   caches = [],
+  cacheScope = null,
   olderThan = null,
 }: Partial<GcReport>): string[] {
   const lines: string[] = [];
@@ -613,7 +615,9 @@ export function formatGcReport({
   const liveLocks = buildLocks?.live ?? [];
   const staleSlots = buildSlots?.stale ?? [];
 
-  if (
+  if (cacheScope) {
+    lines.push(`Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`);
+  } else if (
     deadProjects.length === 0 &&
     orphanedDevices.length === 0 &&
     staleDevices.length === 0 &&
@@ -801,8 +805,7 @@ function machineGlobalReason(cache: CacheDescriptor): string | null {
 
 export function selectCaches(caches: CacheDescriptor[], name: string | null | undefined): CacheDescriptor[] {
   if (!name) return caches;
-  const wanted = String(name).trim().toLowerCase();
-  if (!wanted) return caches;
+  const wanted = name.trim().toLowerCase();
   return caches.filter((c) => c.name.toLowerCase().includes(wanted) || c.dir.toLowerCase().includes(wanted));
 }
 
@@ -899,6 +902,7 @@ export async function collectGcReport(
       deviceSweepNotices: [],
       easSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
       caches,
+      cacheScope: cache,
       olderThan,
       all,
     };
@@ -1030,12 +1034,19 @@ export async function collectGcReport(
     deviceSweepNotices,
     easSessionSweep,
     caches,
+    cacheScope: null,
     olderThan,
     all,
   };
 }
 
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
+  if (opts.cache) {
+    return runGcCore(opts, {
+      ...deps,
+      precollectedEasSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
+    });
+  }
   let projectRoot: string | null = null;
   try {
     projectRoot = (deps.findProjectRoot ?? findProjectRoot)(process.cwd());
@@ -1489,7 +1500,11 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--cache <name>',
-      'act on the shared caches whose name or directory contains <name>, and leave every other cache, device and project entry untouched. Use it with --delete --all to empty one cache, such as --cache "compilation cache".',
+      'act on the shared caches whose name or directory contains <name>. Only those caches are reported and emptied; devices and project entries are not inspected. Use it with --delete --all, such as --cache "compilation cache".',
+      (v: string) => {
+        if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
+        return v;
+      },
     )
     .action(async (opts: RunGcOptions) => {
       await runGc(opts);

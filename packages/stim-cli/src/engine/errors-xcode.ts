@@ -37,10 +37,10 @@ const SIGNING = [
 
 const NO_SUCH_SCHEME = /does not contain a scheme named/;
 
-// Xcode fails the scan when a compilation cache object has the wrong node
-// kind. A cache write that a full disk or a killed build cut short leaves
-// such an object, and the targets that fail vary with the order they reach it.
-const CAS_CORRUPT = /CAS-based dependency scan failed|not a IncludeTreeRoot node kind/;
+// Xcode fails the dependency scan when a compilation cache object has the
+// wrong node kind. A cache write that a full disk or a killed build cut short
+// leaves such an object. See appandflow/stim#138.
+const CAS_CORRUPT = /not a IncludeTreeRoot node kind/;
 
 function remedyFor(message: string): string | null {
   if (CAS_CORRUPT.test(message)) {

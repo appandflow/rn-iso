@@ -59,6 +59,40 @@ describe('selectCaches', () => {
   });
 });
 
+describe('a cache-scoped report', () => {
+  test('carries the scope and inspects nothing else', async () => {
+    const report = await collectGcReport({ cache: 'compilation cache' });
+    expect(report.cacheScope).toBe('compilation cache');
+    expect(report.deadProjects).toEqual([]);
+    expect(report.orphanedDevices).toEqual([]);
+    expect(report.staleDevices).toEqual([]);
+    expect(report.staleDeviceRecords).toEqual([]);
+    expect(report.buildLocks).toEqual({ stale: [], live: [] });
+    expect(report.buildSlots).toEqual({ stale: [], live: [] });
+    expect(report.skipped).toEqual([]);
+    for (const c of report.caches) {
+      expect(`${c.name} ${c.dir}`.toLowerCase()).toContain('compilation cache');
+    }
+  });
+
+  test('the report says what was not inspected instead of claiming a clean machine', () => {
+    const lines = formatGcReport({ cacheScope: 'compilation cache' });
+    expect(lines.some((l) => l.includes('Cache scope: "compilation cache"'))).toBeTruthy();
+    expect(lines.some((l) => l.includes('Nothing to reclaim'))).toBeFalsy();
+  });
+
+  test('an unscoped report still reports a clean machine', () => {
+    const lines = formatGcReport({});
+    expect(lines.some((l) => l.includes('Nothing to reclaim'))).toBeTruthy();
+  });
+
+  test('a name no cache carries reports the caches the machine holds', async () => {
+    const output = await captureLog(() => runGc({ cache: 'nothing-carries-this-name' }));
+    expect(output).toContain('No shared cache carries "nothing-carries-this-name"');
+    expect(output).not.toContain('Nothing to reclaim');
+  });
+});
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 test('names skipped entries and why they were skipped', () => {
