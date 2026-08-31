@@ -373,10 +373,10 @@ async function ensureOwnedAndroidDevice({
   } else if (record?.serial) {
     note(
       chalk.yellow(
-        `Note: this project is assigned physical device ${record.serial}, and Stim no longer supports physical devices.`,
+        `Note: this project has a stored assignment to physical device ${record.serial}, which Stim no longer keeps.`,
       ),
     );
-    note(chalk.dim('Creating an owned emulator instead. The serial is not touched, connected or not.'));
+    note(chalk.dim('Creating an owned emulator instead. Pass `--device` to build for a connected device.'));
   }
 
   let created: { avdName: string };

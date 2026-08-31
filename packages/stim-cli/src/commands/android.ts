@@ -84,6 +84,7 @@ import {
   unverifiedLaunchLines,
   verifyAndroidReleaseLaunch,
   androidAppProcess,
+  installConflictKind,
   verifyLaunch,
 } from '../engine/app-install.ts';
 import {
@@ -94,6 +95,7 @@ import {
   findBuildTool,
   listAdbDevices,
   physicalDeviceModel,
+  probeEmulatorSerial,
   resolvePhysicalDevice,
 } from '../sim/android.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
@@ -632,6 +634,7 @@ interface RunAndroidOptions {
   device?: string | boolean | null;
   listDevices?: typeof listAdbDevices;
   deviceModel?: typeof physicalDeviceModel;
+  isEmulatorDevice?: typeof probeEmulatorSerial;
   readApkPackage?: (apkPath: string | null) => string | null;
   remoteDevice?: RemoteDeviceBackend | null;
   resolveSettingsFor?: typeof resolveSettings;
@@ -716,6 +719,7 @@ interface VerifyAndroidRunArgs {
   launchedAt: number;
   metroPort: number | null;
   isExpo: boolean;
+  physical: boolean;
   scheme?: string | null;
   phase: (label: unknown, text: string) => void;
 }
@@ -733,6 +737,7 @@ async function verifyAndroidRun({
   launchedAt,
   metroPort,
   isExpo,
+  physical,
   scheme,
   phase,
 }: VerifyAndroidRunArgs): Promise<boolean | string> {
@@ -825,7 +830,7 @@ async function verifyAndroidRun({
     waitedMs: verification?.waitedMs,
     bundleId: androidPackage,
     serial,
-    devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null,
+    devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, physical) : null,
     mode: isExpo ? MODE_EXPO : MODE_BARE,
   }))
     phase('', chalk.yellow(line));
@@ -1090,12 +1095,13 @@ async function finishAndroidRun({
     allowUninstall: release,
   });
   if (installed.failed) {
-    return fail(
-      installed.code || INSTALL_FAILED,
-      installed.reason,
-      `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`,
-      { lastBuildStatus: true },
-    );
+    const conflict = installConflictKind(installed.reason);
+    const installRemedy = conflict
+      ? `${androidPackage} is already installed on ${serial} ` +
+        (conflict === 'signature' ? 'with a different signer' : 'at a higher versionCode') +
+        `. Uninstall it first (\`adb -s ${serial} uninstall ${androidPackage}\`); its data goes with it.`
+      : `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`;
+    return fail(installed.code || INSTALL_FAILED, installed.reason, installRemedy, { lastBuildStatus: true });
   }
   phase('install', `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} ${installTimer()}`);
   if (installed.note) {
@@ -1207,6 +1213,7 @@ async function finishAndroidRun({
     launchedAt,
     metroPort,
     isExpo,
+    physical,
     scheme,
     phase,
   });
@@ -1266,6 +1273,7 @@ function resolveRunAndroidOptions(
     device: deviceFlag = null,
     listDevices = listAdbDevices,
     deviceModel = physicalDeviceModel,
+    isEmulatorDevice = probeEmulatorSerial,
     readApkPackage = (apkPath: string | null) => apkPackage(dumpApkManifest(apkPath)),
     getLimits = getConcurrencyLimits,
     checkCapacity = checkDeviceCapacity,
@@ -1329,6 +1337,7 @@ function resolveRunAndroidOptions(
     deviceFlag,
     listDevices,
     deviceModel,
+    isEmulatorDevice,
     readApkPackage,
     getLimits,
     checkCapacity,
@@ -1394,6 +1403,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     deviceFlag,
     listDevices,
     deviceModel,
+    isEmulatorDevice,
     readApkPackage,
     getLimits,
     checkCapacity,
@@ -1562,16 +1572,23 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const variant = resolveVariant(variantFlag, settings);
   const release = isReleaseVariant(variant);
   const isExpo = detectIsExpo(root);
-  const remoteBackend = commandRemoteBackend ?? remoteAndroidSetting(settings);
-  const physical = Boolean(deviceFlag);
-  const requestedSerial = typeof deviceFlag === 'string' ? deviceFlag : null;
-  if (physical && remoteBackend) {
+  const physical = deviceFlag !== null && deviceFlag !== undefined && deviceFlag !== false;
+  if (physical && deviceFlag === '') {
     return fail(
-      NO_DEVICE,
+      'STIM_BAD_ARG',
+      '--device was given an empty serial.',
+      'Pass `--device` on its own to use the one connected device, or `--device <serial>` to name one.',
+    );
+  }
+  if (physical && commandRemoteBackend) {
+    return fail(
+      'STIM_BAD_ARG',
       '--device installs on a device connected to this machine, and --remote installs on a remote one.',
       'Pass only one of --device and --remote.',
     );
   }
+  const remoteBackend = physical ? null : (commandRemoteBackend ?? remoteAndroidSetting(settings));
+  const requestedSerial = typeof deviceFlag === 'string' ? deviceFlag : null;
   let androidPackage = detectAndroidPackage(root);
   record.bundleId = androidPackage;
   const registerProject = () =>
@@ -1673,7 +1690,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let bootPromise: Promise<AndroidBootLike>;
 
   if (physical) {
-    const resolved = resolvePhysicalDevice(requestedSerial, listDevices());
+    const resolved = resolvePhysicalDevice(requestedSerial, listDevices(), isEmulatorDevice);
     if (!resolved.serial) return fail(NO_DEVICE, resolved.error!, resolved.remedy!);
     device = {
       serial: resolved.serial,

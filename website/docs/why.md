@@ -50,7 +50,9 @@ noise means less waiting and fewer tokens.
 ## Owned resources and cleanup
 
 Stim records the ports, processes, build output, devices, and remote sessions it
-creates. It does not operate on physical devices or user-created simulators.
+creates. It does not create, boot, or delete a user-created simulator or
+emulator. A physical device reached with `android --device` is used but never
+owned, and never recorded.
 
 `stim stop` releases a live environment without deleting its local device.
 `stim worktree remove` reclaims the worktree environment. `stim gc --delete`
