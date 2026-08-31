@@ -3180,3 +3180,194 @@ test('nothing recorded means nothing to wait for: the collector starts immediate
   });
   expect(order).toEqual(['spawn']);
 });
+
+describe('the project cache provider', () => {
+  const providerConfig = () => ({ provider: './cache.cjs', options: { bucket: 'mobile' }, baseDir: root });
+
+  function downloadedApk() {
+    const dir = join(root, 'provider-download');
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, 'app-debug.apk');
+    writeFileSync(path, 'binary');
+    return path;
+  }
+
+  function providerOptions(builds: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+    return {
+      resolveCacheProvider: () => providerConfig(),
+      loadCacheProviderModule: async () => ({ name: './cache.cjs', provider: { builds } }),
+      ...extra,
+    };
+  }
+
+  test('no configured provider never loads one', async () => {
+    let loads = 0;
+    const h = harness({
+      loadCacheProviderModule: async () => {
+        loads += 1;
+        return { none: true };
+      },
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(loads).toBe(0);
+    expect(h.stderr.join('\n')).not.toMatch(/provider/);
+  });
+
+  test('a local hit does not load either second tier', async () => {
+    let loads = 0;
+    const h = harness({
+      resolveCached: () => join(home, 'build-cache', 'android', CACHE_KEY, 'app-debug.apk'),
+      build: never('the build'),
+      storeCached: never('storeBuild'),
+      resolveCacheProvider: () => providerConfig(),
+      loadCacheProviderModule: async () => {
+        loads += 1;
+        return { name: './cache.cjs', provider: { builds: { resolve: () => null, store: () => {} } } };
+      },
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(loads).toBe(0);
+    expect(h.calls.loadProvider.length).toBe(0);
+  });
+
+  test('local, project provider, Expo provider, build lock, build is the order', async () => {
+    const timeline: string[] = [];
+    const h = harness(
+      providerOptions(
+        {
+          resolve: () => {
+            timeline.push('project provider');
+            return null;
+          },
+          store: () => {},
+        },
+        {
+          resolveCached: () => {
+            timeline.push('local');
+            return null;
+          },
+          loadProvider: async () => {
+            timeline.push('expo provider');
+            return { provider: { plugin: {}, options: {} }, name: 'eas' };
+          },
+          acquireLock: () => {
+            timeline.push('build lock');
+            return {
+              acquired: true as const,
+              path: join(home, 'build-locks', 'android-k.lock'),
+              lock: {
+                pid: process.pid,
+                projectRoot: root,
+                startedAt: new Date().toISOString(),
+                logFile: join(home, 'build-locks', 'android-k.log'),
+              },
+            };
+          },
+        },
+      ),
+    );
+
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(timeline).toEqual(['local', 'project provider', 'expo provider', 'build lock']);
+    expect(h.calls.build.length).toBe(1);
+  });
+
+  test('a provider hit installs the locally stored artifact without building', async () => {
+    const artifact = downloadedApk();
+    const h = harness(
+      providerOptions({
+        resolve: (input: { platform: string; key: string }) => {
+          expect(input).toMatchObject({ platform: 'android', key: CACHE_KEY });
+          return artifact;
+        },
+        store: () => {},
+      }),
+    );
+
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(result.facts?.cacheHit).toBe('remote');
+    expect(h.calls.build.length).toBe(0);
+    expect(h.calls.loadProvider.length).toBe(0);
+    expect(h.calls.storeCached[0]?.[2]).toBe(artifact);
+    expect(labelled(h.stderr, 'cache')[0]).toMatch(/provider hit \(\.\/cache\.cjs\) -> stored locally/);
+    expect(h.stdout.join('\n')).toMatch(/cache hit from \.\/cache\.cjs/);
+    expect(h.stdout.join('\n')).not.toMatch(/from the remote cache/);
+  });
+
+  test('a bare React Native project uses the provider without reading Expo config', async () => {
+    const artifact = downloadedApk();
+    const h = harness(providerOptions({ resolve: () => artifact, store: () => {} }));
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.loadProvider.length).toBe(0);
+  });
+
+  test('a fresh build uploads to the provider and reports it', async () => {
+    const uploads: unknown[] = [];
+    const h = harness(
+      providerOptions({
+        resolve: () => null,
+        store: (input: unknown) => {
+          uploads.push(input);
+        },
+      }),
+    );
+
+    expect((await h.run()).ok).toBe(true);
+    expect(uploads.length).toBe(1);
+    expect(uploads[0]).toMatchObject({ platform: 'android', key: CACHE_KEY, overwrite: false });
+    expect(labelled(h.stderr, 'cache').some((line) => line.includes('uploaded (./cache.cjs)'))).toBe(true);
+  });
+
+  test('an unusable provider reports once and the build still succeeds', async () => {
+    const h = harness({
+      resolveCacheProvider: () => providerConfig(),
+      loadCacheProviderModule: async () => ({ name: './cache.cjs', unavailable: 'missing credentials' }),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    const notices = h.stderr.filter((line) => line.includes('provider not usable'));
+    expect(notices.length).toBe(1);
+    expect(notices[0]).toMatch(/provider not usable \(\.\/cache\.cjs\): missing credentials; using local cache/);
+  });
+
+  test('provider read and upload failures keep the build successful', async () => {
+    const h = harness(
+      providerOptions({
+        resolve: () => {
+          throw new Error('unauthorized');
+        },
+        store: () => {
+          throw new Error('upload denied');
+        },
+      }),
+    );
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.stderr.join('\n')).toMatch(/\.\/cache\.cjs could not be used: unauthorized; building instead/);
+    expect(h.stderr.join('\n')).toMatch(/\.\/cache\.cjs upload failed: upload denied/);
+  });
+
+  test('--no-build-cache skips the provider read and still uploads', async () => {
+    const uploads: unknown[] = [];
+    const h = harness(
+      providerOptions(
+        {
+          resolve: never('the provider read'),
+          store: (input: unknown) => {
+            uploads.push(input);
+          },
+        },
+        { useBuildCache: false },
+      ),
+    );
+
+    expect((await h.run()).ok).toBe(true);
+    expect(uploads.length).toBe(1);
+    expect(uploads[0]).toMatchObject({ overwrite: true });
+  });
+});

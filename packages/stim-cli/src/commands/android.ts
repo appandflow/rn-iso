@@ -4,6 +4,14 @@ import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync } fr
 import { basename, join, relative } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
 import { InvalidArgumentError, type Command } from 'commander';
+import {
+  createWarnOnce,
+  loadCacheProvider,
+  resolveTieredBuild,
+  storeTieredBuild,
+  type LoadCacheProviderResult,
+  type ProviderCallResult,
+} from '@stim-cli/cache';
 import type { AndroidFacts, RemoteDeviceBackend, SettingsObject, WaitedForBuild } from '../types.ts';
 import { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
@@ -11,9 +19,13 @@ import { getExecutor } from '../exec.ts';
 import {
   buildCacheKey,
   describeFingerprintMiss,
+  filesystemBuildCapability,
   fingerprintDiffRecord,
   fingerprintDiffSuffix,
   fingerprintProject,
+  prepareProviderDownloadDir,
+  providerDownloadPath,
+  providerUploadOutcome,
   refingerprintAfterMutation,
   resolveBuild,
   storeBuild,
@@ -33,7 +45,7 @@ import {
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
-import { emulatorLogFile, workspaceLogsDir } from '../paths.ts';
+import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../paths.ts';
 import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../project.ts';
 import {
   devClientScheme as configuredDevClientScheme,
@@ -49,9 +61,11 @@ import {
   REMOTE_DEVICE_BACKENDS,
   androidAvdConfigSettingError,
   androidDataPartitionSizeGbSettingError,
+  cacheProviderSettingError,
   publicUrlSetting,
   remoteAndroidSetting,
   remoteDeviceSettingError,
+  resolveCacheProviderConfig,
   resolveSettings,
   tunnelModeSetting,
 } from '../settings.ts';
@@ -639,6 +653,8 @@ interface RunAndroidOptions {
   easAuth?: typeof checkEasAuth;
   resolveRemoteBuild?: typeof resolveRemote;
   uploadRemoteBuild?: typeof uploadRemote;
+  resolveCacheProvider?: typeof resolveCacheProviderConfig;
+  loadCacheProviderModule?: typeof loadCacheProvider;
   needsPrebuildFor?: typeof needsPrebuild;
   prebuild?: typeof runPrebuild;
   build?: typeof buildAndroid;
@@ -844,6 +860,7 @@ interface ReportAndroidResultArgs {
   storeKey: string;
   waitedForBuild: WaitedForBuild | null;
   remote: LoadProjectProviderResult | null;
+  providerName: string | null;
   launchState: boolean | string;
   launched: LaunchResultLike;
   writer: AndroidWriter;
@@ -866,6 +883,7 @@ function reportAndroidResult({
   storeKey,
   waitedForBuild,
   remote,
+  providerName,
   launchState,
   launched,
   writer,
@@ -898,7 +916,7 @@ function reportAndroidResult({
     const summary =
       `OK: ${androidPackage} launched on ${serial}, ` +
       `${release ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
-      `(${cacheOutcome(record.cacheHit, remote?.name)})`;
+      `(${cacheOutcome(record.cacheHit, remote?.name ?? providerName)})`;
     const outcome =
       launchState === LAUNCH_UNVERIFIED
         ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
@@ -906,7 +924,7 @@ function reportAndroidResult({
           ? chalk.green(`${summary} -- bundle requested, still building`)
           : chalk.green(summary);
     const deviceName = record.avdName || record.deviceName || serial;
-    const cacheResult = useBuildCache ? cacheOutcome(record.cacheHit, remote?.name) : 'bypassed; built';
+    const cacheResult = useBuildCache ? cacheOutcome(record.cacheHit, remote?.name ?? providerName) : 'bypassed; built';
     const metroResult = release
       ? `embedded (${variant})`
       : !metroCheck
@@ -951,6 +969,8 @@ interface FinishAndroidRunArgs {
   storeKey: string;
   waitedForBuild: WaitedForBuild | null;
   uploadPending: Promise<RemoteUploadLike> | null;
+  providerUpload: Promise<ProviderCallResult<void>> | null;
+  providerName: string | null;
   remote: LoadProjectProviderResult | null;
   abandonedRemote: boolean;
   started: number;
@@ -1001,6 +1021,8 @@ async function finishAndroidRun({
   storeKey,
   waitedForBuild,
   uploadPending,
+  providerUpload,
+  providerName,
   remote,
   abandonedRemote: remoteWasAbandoned,
   started,
@@ -1139,6 +1161,8 @@ async function finishAndroidRun({
   }
 
   const uploadWasAbandoned = await finishAndroidUpload(uploadPending, remote, phase);
+  const providerOutcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName);
+  if (providerOutcome) phase('cache', providerOutcome.warn ? chalk.yellow(providerOutcome.line) : providerOutcome.line);
 
   persistLastBuild({ writeState, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
 
@@ -1192,6 +1216,7 @@ async function finishAndroidRun({
     storeKey,
     waitedForBuild,
     remote,
+    providerName,
     launchState,
     launched,
     writer,
@@ -1242,6 +1267,8 @@ function resolveRunAndroidOptions(
     easAuth = checkEasAuth,
     resolveRemoteBuild = resolveRemote,
     uploadRemoteBuild = uploadRemote,
+    resolveCacheProvider = resolveCacheProviderConfig,
+    loadCacheProviderModule = loadCacheProvider,
     needsPrebuildFor = needsPrebuild,
     prebuild = runPrebuild,
     build = buildAndroid,
@@ -1300,6 +1327,8 @@ function resolveRunAndroidOptions(
     easAuth,
     resolveRemoteBuild,
     uploadRemoteBuild,
+    resolveCacheProvider,
+    loadCacheProviderModule,
     needsPrebuildFor,
     prebuild,
     build,
@@ -1360,6 +1389,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     easAuth,
     resolveRemoteBuild,
     uploadRemoteBuild,
+    resolveCacheProvider,
+    loadCacheProviderModule,
     needsPrebuildFor,
     prebuild,
     build,
@@ -1464,11 +1495,15 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
   const settingsRepoRoot = repoRoot(root);
   const settingsRoot = settingsRepoRoot ?? root;
-  const settings = resolveSettingsFor({
+  const settingsContext = {
     projectPath: root,
     gitCommonDir: gitCommonDir(root),
     repoRoot: settingsRepoRoot,
-  });
+  };
+  const settings = resolveSettingsFor(settingsContext);
+  const cacheProviderConfig = resolveCacheProvider(settingsContext);
+  const cacheProviderError = cacheProviderSettingError(settings);
+  if (cacheProviderError) out(phaseLine('cache', chalk.yellow(`${cacheProviderError} Using the local cache.`)));
   const dataPartitionSizeError = androidDataPartitionSizeGbSettingError(settings);
   if (dataPartitionSizeError) {
     return fail(
@@ -1676,6 +1711,13 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   record.deviceName = device.deviceName ?? device.avdName ?? null;
 
   let hash = '';
+  let providerUpload: Promise<ProviderCallResult<void>> | null = null;
+  let providerName: string | null = null;
+  let providerLoad: Promise<LoadCacheProviderResult> | null = null;
+  const cacheWarn = createWarnOnce((line) => phase('cache', chalk.yellow(line)));
+  const loadTieredProvider = cacheProviderConfig
+    ? () => (providerLoad ??= loadCacheProviderModule({ projectRoot: root, config: cacheProviderConfig }))
+    : null;
   let fingerprintSources: FingerprintSource[] = [];
   let cacheKey = '';
   let storeHash = '';
@@ -1712,7 +1754,16 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     storeKey = cacheKey;
     storeSources = fingerprintSources;
 
-    const cached = useBuildCache ? resolveCached(PLATFORM, cacheKey) : null;
+    const found = await resolveTieredBuild({
+      local: filesystemBuildCapability({ resolve: resolveCached, store: storeCached, sources: fingerprintSources }),
+      loadProvider: loadTieredProvider,
+      target: { projectRoot: root, platform: PLATFORM, key: cacheKey },
+      destinationDir: providerDownloadPath(workspaceDir(root)),
+      ensureDestination: prepareProviderDownloadDir,
+      skipRead: !useBuildCache,
+      warn: cacheWarn,
+    });
+    const cached = found?.tier === 'local' ? found.path : null;
     record.cacheHit = cached ? 'local' : false;
     record.cacheSkipped = !useBuildCache;
     let missDiff = '';
@@ -1736,7 +1787,12 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       `${shortHash(hash)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}${missDiff}`,
     );
     if (missUntracked) phase('fingerprint', chalk.dim(missUntracked));
-    apkPath = cached || null;
+    if (found?.tier === 'provider') {
+      record.cacheHit = 'remote';
+      providerName = found.providerName ?? null;
+      phase('cache', `provider hit (${providerName})${found.storedLocally ? ' -> stored locally' : ''}`);
+    }
+    apkPath = found?.path ?? null;
     return true;
   }
 
@@ -2013,11 +2069,21 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
           const assetManifest = release ? captureAssets(root, { variant }) : null;
           try {
-            storeCached(PLATFORM, storeKey, apkPath!, {
+            const stored = await storeTieredBuild({
+              local: filesystemBuildCapability({
+                resolve: resolveCached,
+                store: storeCached,
+                sources: storeSources,
+                assetManifest,
+              }),
+              loadProvider: loadTieredProvider,
+              target: { projectRoot: root, platform: PLATFORM, key: storeKey },
+              sourcePath: apkPath!,
               overwrite: !useBuildCache || swapFellBack,
-              sources: storeSources,
-              assetManifest,
+              warn: cacheWarn,
             });
+            providerUpload = stored.providerUpload;
+            providerName = stored.providerName ?? providerName;
           } catch (err) {
             phase('cache', chalk.yellow(`could not store the build: ${(err as Error)?.message || err}`));
           }
@@ -2069,6 +2135,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     storeKey,
     waitedForBuild,
     uploadPending,
+    providerUpload,
+    providerName,
     remote,
     abandonedRemote,
     started,

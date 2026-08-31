@@ -6,7 +6,7 @@ default `~/.stim/workspaces/...`). Stim does not create a project
 `.gitignore` entry for this state.
 
 Stim has three test layers. The unit suite (`pnpm test`, Vitest, more than
-2,000 cases across four packages) is the bulk of the coverage. On top of it sit
+2,000 cases across five packages) is the bulk of the coverage. On top of it sit
 two end-to-end layers that exercise the _published loop_ rather than individual
 functions. The separately built runtime-floor job loads every published ESM
 entry point on Node 20.19.4.

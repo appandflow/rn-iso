@@ -2,6 +2,16 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import {
+  cacheProviderConfigFromEnv,
+  cacheProviderEnvIsSet,
+  createTieredMetroStore,
+  loadCacheProvider,
+  type CacheProviderConfig,
+  type LoadCacheProviderResult,
+  type MetroCacheStore,
+  type WarnOnce,
+} from '@stim-cli/cache';
+import {
   metroCacheRoot,
   METRO_NAMED_CACHE_LAYOUT,
   registerCache,
@@ -10,6 +20,14 @@ import {
 } from '@stim-cli/core';
 
 type FileStoreCtor = new (options: { root: string }) => object;
+
+export interface SharedCacheStoresOptions {
+  FileStore?: FileStoreCtor;
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+  loadProvider?: (input: { projectRoot: string; config: CacheProviderConfig }) => Promise<LoadCacheProviderResult>;
+  warn?: WarnOnce;
+}
 
 const requireFromHere = createRequire(import.meta.url);
 
@@ -68,7 +86,60 @@ function registerOnce(
   });
 }
 
-export function sharedCacheStores(name = 'app', { FileStore }: { FileStore?: FileStoreCtor } = {}): object[] {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function repositoryRoot(startDir: string): string | null {
+  let dir = startDir;
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function committedProviderConfig(startDir: string): CacheProviderConfig | null {
+  const start = path.resolve(startDir);
+  const stop = repositoryRoot(start) ?? start;
+  let dir = start;
+  for (;;) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(fs.readFileSync(path.join(dir, '.stim.json'), 'utf-8'));
+    } catch {
+      parsed = null;
+    }
+    const cache = isPlainObject(parsed) && isPlainObject(parsed.cache) ? parsed.cache : null;
+    const reference = cache?.provider;
+    if (typeof reference === 'string' && reference.trim() !== '') {
+      return {
+        provider: reference.trim(),
+        options: isPlainObject(cache?.options) ? cache.options : {},
+        baseDir: dir,
+      };
+    }
+    const parent = path.dirname(dir);
+    if (dir === stop || parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function warnToStderr(_code: string, message: string): void {
+  process.stderr.write(`warning: ${message}\n`);
+}
+
+export function sharedCacheStores(
+  name = 'app',
+  {
+    FileStore,
+    env = process.env,
+    cwd = process.cwd(),
+    loadProvider = loadCacheProvider,
+    warn = warnToStderr,
+  }: SharedCacheStoresOptions = {},
+): object[] {
   // metro-cache is a peer dependency that resolves at call time.
   const Store: FileStoreCtor = FileStore || (requireFromHere('metro-cache') as { FileStore: FileStoreCtor }).FileStore;
   const parent = cacheRoot();
@@ -87,7 +158,18 @@ export function sharedCacheStores(name = 'app', { FileStore }: { FileStore?: Fil
           },
         ],
   );
-  return [tagSharedStore(new Store({ root }), root)];
+  const local = tagSharedStore(new Store({ root }), root);
+  const config = cacheProviderConfigFromEnv(env) ?? (cacheProviderEnvIsSet(env) ? null : committedProviderConfig(cwd));
+  if (!config) return [local];
+
+  const tiered = createTieredMetroStore({
+    local: local as MetroCacheStore,
+    projectRoot: path.resolve(cwd),
+    cacheName: name,
+    loadProvider: () => loadProvider({ projectRoot: path.resolve(cwd), config }),
+    warn,
+  });
+  return [tagSharedStore(tiered, root)];
 }
 
 const NDJSON_LEVELS = new Set(['debug', 'info', 'warn', 'error', 'fatal']);

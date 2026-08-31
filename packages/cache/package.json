@@ -1,12 +1,12 @@
 {
-  "name": "@stim-cli/metro",
+  "name": "@stim-cli/cache",
   "version": "1.0.0-rc.4",
-  "description": "Metro integration for Stim: shared transforms across worktrees and structured logs.",
+  "description": "Cache provider contract and tier coordination for Stim.",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/appandflow/stim.git",
-    "directory": "packages/metro"
+    "directory": "packages/cache"
   },
   "files": [
     "dist",
@@ -24,15 +24,7 @@
     }
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
     "build": "tsdown"
-  },
-  "dependencies": {
-    "@stim-cli/cache": "^1.0.0-rc.4",
-    "@stim-cli/core": "^1.0.0-rc.4"
-  },
-  "peerDependencies": {
-    "metro-cache": "*"
   },
   "engines": {
     "node": "^20.19.4 || >=22.12.0"

@@ -1,0 +1,303 @@
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+export const CACHE_PROVIDER_API_VERSION = 1 as const;
+
+export const CACHE_PROVIDER_ENV = 'STIM_CACHE_PROVIDER_CONFIG';
+
+export const CACHE_PROVIDER_ENV_NONE = 'none';
+
+export const PROVIDER_LOAD_TIMEOUT_MS = 10_000;
+
+export const PROVIDER_LOAD_TIMEOUT_ENV = 'STIM_CACHE_LOAD_TIMEOUT_MS';
+
+/**
+ * Reads a positive integer millisecond override from the environment. Any other
+ * value falls back to the shipped default.
+ */
+export function timeoutFromEnv(name: string, fallback: number, env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[name];
+  if (typeof raw !== 'string' || !/^[1-9]\d*$/.test(raw.trim())) return fallback;
+  const parsed = Number(raw.trim());
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
+}
+
+/**
+ * One resolved provider selection: the module reference, the options passed to
+ * its factory, and the directory the reference resolves from.
+ */
+export interface CacheProviderConfig {
+  provider: string;
+  options: Record<string, unknown>;
+  baseDir: string;
+}
+
+export interface MetroCacheContext {
+  projectRoot: string;
+  cacheName: string;
+  signal: AbortSignal;
+}
+
+export interface MetroCacheGetInput extends MetroCacheContext {
+  key: Buffer;
+}
+
+export interface MetroCacheSetInput extends MetroCacheContext {
+  key: Buffer;
+  value: unknown;
+}
+
+/**
+ * Metro transform cache. `get` returns `null` or `undefined` for a miss. `set`
+ * stores the value under the key. Both receive an `AbortSignal` the provider
+ * must honor.
+ */
+export interface MetroCacheCapability {
+  get(input: MetroCacheGetInput): unknown;
+  set(input: MetroCacheSetInput): void | Promise<void>;
+}
+
+export interface BuildCacheTarget {
+  projectRoot: string;
+  platform: 'ios' | 'android';
+  key: string;
+}
+
+export interface BuildCacheContext extends BuildCacheTarget {
+  signal: AbortSignal;
+}
+
+export interface BuildResolveInput extends BuildCacheContext {
+  destinationDir: string;
+}
+
+export interface BuildStoreInput extends BuildCacheContext {
+  sourcePath: string;
+  overwrite: boolean;
+}
+
+/**
+ * Native build artifacts.
+ *
+ * `resolve` returns an existing path to the artifact for the key, or `null` for
+ * a miss. `destinationDir` is a scratch directory Stim creates and owns: a
+ * capability that fetches the artifact must materialize it there and return a
+ * path inside it, and a capability that already holds a local copy (the
+ * built-in filesystem tier) returns that copy instead. A miss must leave
+ * `destinationDir` empty.
+ *
+ * `store` publishes the `.app` directory or `.apk` file at `sourcePath`.
+ * `overwrite: false` must keep an entry that already exists for the key;
+ * `overwrite: true` must replace it. A capability that owns a local path
+ * returns it, and any other capability returns nothing.
+ *
+ * Stim owns fingerprints and cache keys; the capability owns transport,
+ * archive format, authentication, and retention.
+ */
+export interface BuildCacheCapability {
+  resolve(input: BuildResolveInput): string | null | Promise<string | null>;
+  store(input: BuildStoreInput): string | null | void | Promise<string | null | void>;
+}
+
+export interface CacheProvider {
+  metro?: MetroCacheCapability;
+  builds?: BuildCacheCapability;
+}
+
+/**
+ * The module shape a provider author exports. The loader rejects any other
+ * `apiVersion`.
+ */
+export interface CacheProviderModule {
+  apiVersion: typeof CACHE_PROVIDER_API_VERSION;
+  createCacheProvider(input: {
+    projectRoot: string;
+    options: Record<string, unknown>;
+  }): CacheProvider | Promise<CacheProvider>;
+}
+
+export interface LoadCacheProviderResult {
+  provider?: CacheProvider;
+  name?: string;
+  none?: true;
+  unavailable?: string;
+}
+
+export interface ProviderCallResult<T> {
+  value?: T;
+  failed?: string;
+  timedOut?: true;
+}
+
+export type WarnOnce = (code: string, message: string) => void;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function reason(error: unknown): string {
+  const message = String((error as Error)?.message || error || 'unknown error');
+  return message.split('\n')[0]!.trim() || 'unknown error';
+}
+
+function moduleCandidate(namespace: unknown): unknown {
+  if (!isRecord(namespace)) return namespace;
+  if ('apiVersion' in namespace) return namespace;
+  return 'default' in namespace ? namespace.default : namespace;
+}
+
+function capabilityError(provider: CacheProvider): string | null {
+  const metro = provider.metro;
+  if (metro !== undefined && (typeof metro?.get !== 'function' || typeof metro?.set !== 'function')) {
+    return 'the metro capability must implement get() and set()';
+  }
+  const builds = provider.builds;
+  if (builds !== undefined && (typeof builds?.resolve !== 'function' || typeof builds?.store !== 'function')) {
+    return 'the builds capability must implement resolve() and store()';
+  }
+  if (metro === undefined && builds === undefined) {
+    return 'the provider advertises neither a metro nor a builds capability';
+  }
+  return null;
+}
+
+export async function loadCacheProvider({
+  projectRoot,
+  config,
+  timeoutMs = timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS),
+}: {
+  projectRoot: string;
+  config?: CacheProviderConfig | null;
+  timeoutMs?: number;
+}): Promise<LoadCacheProviderResult> {
+  const reference = typeof config?.provider === 'string' ? config.provider.trim() : '';
+  if (!config || reference === '') return { none: true };
+
+  const outcome = await callWithTimeout(() => importCacheProvider({ projectRoot, config, reference }), timeoutMs);
+  if (outcome.timedOut) {
+    return { name: reference, unavailable: `the module did not load within ${timeoutMs}ms` };
+  }
+  if (outcome.failed) return { name: reference, unavailable: outcome.failed };
+  return outcome.value ?? { name: reference, unavailable: 'the module produced no provider' };
+}
+
+async function importCacheProvider({
+  projectRoot,
+  config,
+  reference,
+}: {
+  projectRoot: string;
+  config: CacheProviderConfig;
+  reference: string;
+}): Promise<LoadCacheProviderResult> {
+  const options = isRecord(config.options) ? config.options : {};
+  const baseDir = typeof config.baseDir === 'string' && config.baseDir !== '' ? config.baseDir : projectRoot;
+
+  let namespace: unknown;
+  try {
+    const resolved = createRequire(join(baseDir, 'package.json')).resolve(reference);
+    namespace = await import(pathToFileURL(resolved).href);
+  } catch (error) {
+    return { name: reference, unavailable: reason(error) };
+  }
+
+  const candidate = moduleCandidate(namespace);
+  if (!isRecord(candidate) || candidate.apiVersion !== CACHE_PROVIDER_API_VERSION) {
+    return {
+      name: reference,
+      unavailable: `expected apiVersion ${CACHE_PROVIDER_API_VERSION}, found ${JSON.stringify(
+        isRecord(candidate) ? candidate.apiVersion : candidate,
+      )}`,
+    };
+  }
+  if (typeof candidate.createCacheProvider !== 'function') {
+    return { name: reference, unavailable: 'the module does not export createCacheProvider()' };
+  }
+
+  let provider: unknown;
+  try {
+    provider = await (candidate as unknown as CacheProviderModule).createCacheProvider({ projectRoot, options });
+  } catch (error) {
+    return { name: reference, unavailable: `createCacheProvider() failed: ${reason(error)}` };
+  }
+  if (!isRecord(provider)) {
+    return { name: reference, unavailable: 'createCacheProvider() did not return a provider object' };
+  }
+  const invalid = capabilityError(provider as CacheProvider);
+  if (invalid) return { name: reference, unavailable: invalid };
+
+  return { name: reference, provider: provider as CacheProvider };
+}
+
+export async function callWithTimeout<T>(
+  call: (signal: AbortSignal) => T | Promise<T>,
+  timeoutMs: number,
+): Promise<ProviderCallResult<T>> {
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | null = null;
+  // The timer stays referenced on purpose: an unreferenced one lets Node exit
+  // while a provider call is pending, so the deadline never fires and the
+  // caller never gets its result.
+  const expired = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve('timeout');
+    }, timeoutMs);
+  });
+  try {
+    const outcome = await Promise.race([
+      Promise.resolve()
+        .then(() => call(controller.signal))
+        .then(
+          (value) => ({ value }) as ProviderCallResult<T>,
+          (error: unknown) => ({ failed: reason(error) }) as ProviderCallResult<T>,
+        ),
+      expired,
+    ]);
+    return outcome === 'timeout' ? { timedOut: true } : outcome;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export function createWarnOnce(emit: (message: string) => void): WarnOnce {
+  const seen = new Set<string>();
+  return (code, message) => {
+    if (seen.has(code)) return;
+    seen.add(code);
+    emit(message);
+  };
+}
+
+export function cacheProviderEnv(config: CacheProviderConfig | null): string {
+  if (!config) return CACHE_PROVIDER_ENV_NONE;
+  return JSON.stringify({ provider: config.provider, options: config.options ?? {}, baseDir: config.baseDir });
+}
+
+/**
+ * True when a parent process decided the provider selection, including the
+ * `none` sentinel. A child must not run its own search once this is set.
+ */
+export function cacheProviderEnvIsSet(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env[CACHE_PROVIDER_ENV];
+  return typeof raw === 'string' && raw.trim() !== '';
+}
+
+export function cacheProviderConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CacheProviderConfig | null {
+  const raw = env[CACHE_PROVIDER_ENV];
+  if (typeof raw !== 'string' || raw.trim() === '' || raw.trim() === CACHE_PROVIDER_ENV_NONE) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) return null;
+  const provider = parsed.provider;
+  const baseDir = parsed.baseDir;
+  if (typeof provider !== 'string' || provider.trim() === '' || typeof baseDir !== 'string' || baseDir === '') {
+    return null;
+  }
+  return { provider, options: isRecord(parsed.options) ? parsed.options : {}, baseDir };
+}

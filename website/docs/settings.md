@@ -45,10 +45,19 @@ keys produce a warning.
 | `worktree.baseRef`            | Default worktree base: `head`, `fresh`, or a git ref |
 | `worktree.include`            | Explicit ignored paths to carry                      |
 | `worktree.exclude`            | Ignored paths skipped by `--carry-ignored`           |
+| `cache.provider`              | Optional second-tier cache provider module           |
+| `cache.options`               | Options passed to that provider                      |
 | `caches`                      | Additional cache paths reported by `gc`              |
 
 Do not put secrets in a committed `.stim.json`. Keep secrets in ignored files
 and carry those files into a worktree.
+
+`cache.provider` names a module that Stim executes in every worktree on the
+repository. Review a committed value the way you review a build script, and
+keep provider credentials in the environment or in machine settings. Stim reads
+the module for `stim ios` and `stim android`; Metro uses it only when the
+project's own `metro.config.js` calls `sharedCacheStores()` from
+`@stim-cli/metro`.
 
 ### Android AVD overrides
 

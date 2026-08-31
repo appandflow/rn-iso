@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, u
 import { basename, dirname, join } from 'path';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
+import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
 import { buildCacheKey as coreBuildCacheKey } from '@stim-cli/core';
 import { getExecutor } from './exec.ts';
 import { register } from './cache-manifest.ts';
@@ -133,6 +134,75 @@ export function storeBuild(
   rmSync(dest, { recursive: true, force: true });
   renameSync(staging, dest);
   return artifactIn(dest);
+}
+
+export const PROVIDER_DOWNLOAD_DIR = 'cache-provider';
+
+export function providerDownloadPath(workspacePath: string): string {
+  return join(workspacePath, PROVIDER_DOWNLOAD_DIR);
+}
+
+/**
+ * Empties and registers the scratch directory a provider downloads into. It is
+ * created only when a provider is about to be asked, and registered so `gc`
+ * reports what an interrupted run left behind.
+ */
+export function prepareProviderDownloadDir(dir: string): void {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  try {
+    register({
+      dir,
+      name: 'Cache provider downloads',
+      prune: 'entries',
+      entriesDepth: 1,
+      note: 'artifacts fetched from the project cache provider; anything left here is from an interrupted run',
+    });
+  } catch {}
+}
+
+export interface FilesystemBuildCapabilityOptions {
+  root?: string;
+  sources?: FingerprintSource[] | null;
+  assetManifest?: AssetManifest | null;
+  resolve?: typeof resolveBuild;
+  store?: typeof storeBuild;
+}
+
+export function filesystemBuildCapability({
+  root,
+  sources,
+  assetManifest,
+  resolve = resolveBuild,
+  store = storeBuild,
+}: FilesystemBuildCapabilityOptions = {}): BuildCacheCapability {
+  const stored = {
+    ...(root === undefined ? {} : { root }),
+    ...(sources === undefined ? {} : { sources }),
+    ...(assetManifest === undefined ? {} : { assetManifest }),
+  };
+  return {
+    resolve: ({ platform, key }) => (root === undefined ? resolve(platform, key) : resolve(platform, key, root)),
+    store: ({ platform, key, sourcePath, overwrite }) => store(platform, key, sourcePath, { ...stored, overwrite }),
+  };
+}
+
+export interface ProviderUploadOutcome {
+  line: string;
+  warn: boolean;
+}
+
+export function providerUploadOutcome(
+  result: ProviderCallResult<void> | null | undefined,
+  name: string | null,
+): ProviderUploadOutcome | null {
+  if (!result) return null;
+  const label = name || 'the cache provider';
+  if (result.timedOut) {
+    return { line: `${label} upload was cancelled after ${buildUploadTimeoutMs()}ms`, warn: true };
+  }
+  if (result.failed) return { line: `${label} upload failed: ${result.failed}`, warn: true };
+  return { line: `uploaded (${label})`, warn: false };
 }
 
 const SOURCES_FILE = 'fingerprint-sources.json';

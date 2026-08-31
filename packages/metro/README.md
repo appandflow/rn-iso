@@ -19,6 +19,27 @@ config.cacheStores = sharedCacheStores('my-app');
 
 Set `STIM_METRO_CACHE` to override the shared cache location.
 
+## Optional second tier
+
+The filesystem cache above is always the first tier. When the project selects a
+cache provider, the exported store reads it after a local miss, writes provider
+hits back to the filesystem, and queues new transforms for the provider without
+blocking Metro. Provider failures are misses.
+
+```json
+{
+  "cache": {
+    "provider": "./tools/cache-provider.cjs",
+    "options": { "bucket": "mobile-cache" }
+  }
+}
+```
+
+Under `stim start` the supervisor passes the resolved selection to Metro. A
+Metro process outside Stim reads the nearest committed `.stim.json`. See
+[`@stim-cli/cache`](https://www.npmjs.com/package/@stim-cli/cache) for the
+provider contract. `clear()` only clears the local tier.
+
 ## Log reporter
 
 ```js

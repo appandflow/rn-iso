@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
-import { workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import type { WorkspaceState } from '../supervisor/run.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../supervisor/run.ts';
 import {
@@ -2803,4 +2803,254 @@ describe('single-flight takeover says the previous build failed', () => {
     expect(line).toMatch(/pid 999/);
     expect(line).toMatch(/build\.ndjson/);
   });
+});
+
+describe('the project cache provider', () => {
+  function providerConfig() {
+    return { provider: './cache.cjs', options: { bucket: 'mobile' }, baseDir: root };
+  }
+
+  function downloaded(name = 'Fixture.app') {
+    const dir = join(root, 'provider-download');
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, name);
+    writeFileSync(path, 'binary');
+    return path;
+  }
+
+  function providerDeps(
+    builds: Record<string, unknown>,
+    record: (name: string, value: unknown) => void = () => {},
+  ): LooseDeps {
+    return {
+      resolveCacheProviderConfig: () => providerConfig(),
+      loadCacheProvider: async (input) => {
+        record('loadCacheProvider', input);
+        return { name: './cache.cjs', provider: { builds } };
+      },
+    } as LooseDeps;
+  }
+
+  test('no configured provider never loads one and keeps the existing order', async () => {
+    reserve();
+    let loads = 0;
+    const { exitCode, calls, errs } = await run(
+      {},
+      {
+        loadCacheProvider: async () => {
+          loads += 1;
+          return { none: true };
+        },
+      },
+    );
+
+    expect(exitCode).toBe(null);
+    expect(loads).toBe(0);
+    expect(calls.order.filter((c) => ['resolveBuild', 'storeBuild'].includes(c))).toEqual([
+      'resolveBuild',
+      'storeBuild',
+    ]);
+    expect(errs.join('\n')).not.toMatch(/provider/);
+  });
+
+  test('a local hit does not load either second tier', async () => {
+    reserve();
+    let loads = 0;
+    const { calls } = await run(
+      {},
+      {
+        resolveBuild: () => '/cache/Fixture.app',
+        ...providerDeps({
+          resolve: () => {
+            throw new Error('the provider must not be consulted after a local hit');
+          },
+          store: () => {},
+        }),
+        loadCacheProvider: async () => {
+          loads += 1;
+          return { name: './cache.cjs', provider: { builds: { resolve: () => null, store: () => {} } } };
+        },
+      },
+    );
+
+    expect(loads).toBe(0);
+    expect(calls.order.includes('loadProjectProvider')).toBe(false);
+    expect(calls.order.includes('buildIos')).toBe(false);
+  });
+
+  test('a provider hit is stored locally and never reaches the Expo provider', async () => {
+    reserve();
+    const artifact = downloaded();
+    const seen: Array<{ name: string; value: unknown }> = [];
+    const { exitCode, calls, errs, logs } = await run(
+      { json: true },
+      providerDeps(
+        {
+          resolve: (input: { key: string; platform: string; destinationDir: string }) => {
+            seen.push({ name: 'resolve', value: input });
+            return artifact;
+          },
+          store: () => {},
+        },
+        (name, value) => seen.push({ name, value }),
+      ),
+    );
+
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('buildIos')).toBe(false);
+    expect(calls.order.includes('loadProjectProvider')).toBe(false);
+    expect(calls.args.storeBuild.path).toBe(artifact);
+    expect(errs.join('\n')).toMatch(/^ {2}cache {7}provider hit \(\.\/cache\.cjs\) -> stored locally$/m);
+    expect(parseFirst(logs).cacheHit).toBe('remote');
+    expect(seen[0]).toEqual({ name: 'loadCacheProvider', value: { projectRoot: root, config: providerConfig() } });
+    expect(seen[1]?.value).toMatchObject({ platform: 'ios', key: `${FINGERPRINT}-debug-sim` });
+  });
+
+  test('the summary names the provider a hit came from', async () => {
+    reserve();
+    const artifact = downloaded();
+    const { logs } = await run({}, providerDeps({ resolve: () => artifact, store: () => {} }));
+
+    expect(logs.join('\n')).toMatch(/OK: [^\n]*from \.\/cache\.cjs/);
+    expect(logs.join('\n')).toMatch(/^ {2}cache {7}from \.\/cache\.cjs$/m);
+    expect(logs.join('\n')).not.toMatch(/the remote cache/);
+  });
+
+  test('a provider miss falls through to the Expo provider, the build lock, then the build', async () => {
+    reserve();
+    const { exitCode, calls } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        ...providerDeps({ resolve: () => null, store: () => {} }),
+      },
+    );
+
+    expect(exitCode).toBe(null);
+    expect(
+      calls.order.filter((c) =>
+        ['resolveBuild', 'loadProjectProvider', 'acquireBuildLock', 'buildIos', 'storeBuild'].includes(c),
+      ),
+    ).toEqual(['resolveBuild', 'loadProjectProvider', 'acquireBuildLock', 'buildIos', 'storeBuild']);
+  });
+
+  test('a fresh build uploads to the provider and the Expo provider independently', async () => {
+    reserve();
+    const uploads: unknown[] = [];
+    const { exitCode, errs, calls } = await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+        ...providerDeps({
+          resolve: () => null,
+          store: (input: unknown) => {
+            uploads.push(input);
+          },
+        }),
+      },
+    );
+
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('uploadRemote')).toBe(true);
+    expect(uploads.length).toBe(1);
+    expect(uploads[0]).toMatchObject({ platform: 'ios', key: `${FINGERPRINT}-debug-sim`, overwrite: false });
+    expect(errs.join('\n')).toMatch(/^ {2}cache {7}uploaded \(\.\/cache\.cjs\)$/m);
+  });
+
+  test('--no-build-cache skips the provider read and still uploads', async () => {
+    reserve();
+    const uploads: unknown[] = [];
+    const { exitCode, calls } = await run(
+      { buildCache: false },
+      providerDeps({
+        resolve: () => {
+          throw new Error('the provider must not be read with --no-build-cache');
+        },
+        store: (input: unknown) => {
+          uploads.push(input);
+        },
+      }),
+    );
+
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('buildIos')).toBe(true);
+    expect(uploads.length).toBe(1);
+    expect(uploads[0]).toMatchObject({ overwrite: true });
+  });
+
+  test('an unusable provider reports once and the build still succeeds', async () => {
+    reserve();
+    const { exitCode, errs, calls } = await run(
+      {},
+      {
+        resolveCacheProviderConfig: () => providerConfig(),
+        loadCacheProvider: async () => ({ name: './cache.cjs', unavailable: 'missing credentials' }),
+      },
+    );
+
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('buildIos')).toBe(true);
+    const notices = errs.filter((line) => /provider not usable/.test(line));
+    expect(notices.length).toBe(1);
+    expect(notices[0]).toMatch(/provider not usable \(\.\/cache\.cjs\): missing credentials; using local cache/);
+  });
+
+  test('a provider read failure and an upload failure keep the build successful', async () => {
+    reserve();
+    const { exitCode, errs, calls } = await run(
+      {},
+      providerDeps({
+        resolve: () => {
+          throw new Error('unauthorized');
+        },
+        store: () => {
+          throw new Error('upload denied');
+        },
+      }),
+    );
+
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('buildIos')).toBe(true);
+    expect(errs.join('\n')).toMatch(/\.\/cache\.cjs could not be used: unauthorized; building instead/);
+    expect(errs.join('\n')).toMatch(/\.\/cache\.cjs upload failed: upload denied/);
+  });
+});
+
+test('an invalid cache.provider setting is reported once and the run continues', async () => {
+  reserve();
+  writeFileSync(join(root, '.stim.json'), JSON.stringify({ cache: { provider: 42 } }));
+  const { exitCode, errs, calls } = await run(
+    {},
+    {
+      repoRoot: () => root,
+      loadCacheProvider: async () => {
+        throw new Error('an invalid setting must not reach the loader');
+      },
+    },
+  );
+
+  expect(exitCode).toBe(null);
+  expect(calls.order.includes('buildIos')).toBe(true);
+  const notices = errs.filter((line) => line.includes('Invalid cache.provider setting'));
+  expect(notices.length).toBe(1);
+  expect(notices[0]).toMatch(/Using the local cache\./);
+});
+
+test('a local hit leaves no provider download directory behind', async () => {
+  reserve();
+  const { exitCode } = await run(
+    {},
+    {
+      resolveBuild: () => '/cache/Fixture.app',
+      resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+      loadCacheProvider: async () => ({
+        name: './cache.cjs',
+        provider: { builds: { resolve: () => null, store: () => {} } },
+      }),
+    },
+  );
+
+  expect(exitCode).toBe(null);
+  expect(existsSync(join(workspaceDir(root), 'cache-provider'))).toBe(false);
 });
