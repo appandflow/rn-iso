@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,7 +53,41 @@ const ENV = {
   CI: '1',
 };
 process.env.STIM_HOME = HOME_DIR;
-const GRADLE_CACHE_DIR = join(process.env.GRADLE_USER_HOME || join(homedir(), '.gradle'), 'caches', 'build-cache-1');
+// The suite isolates every cache root it measures; GRADLE_USER_HOME is the one
+// gradle owns. A machine cache already holding this fixture's task outputs
+// would force the gradle-cache check into its warm mode (loads, no stores), so
+// android runs get a throwaway home seeded with CLONES of the expensive,
+// unmeasured parts (dependency modules, wrapper dists) while build-cache-1
+// starts empty and storing stays measurable (#136). Clones, not symlinks:
+// gradle resolves real paths when it assembles script classpaths, so a
+// symlinked modules-2 breaks buildscript compilation. The throwaway home is
+// created BESIDE the real one so the clones stay same-volume copy-on-write.
+const GRADLE_USER_HOME =
+  PLATFORM === 'android' && !args.dryRun
+    ? seedGradleUserHome(process.env.GRADLE_USER_HOME || join(homedir(), '.gradle'))
+    : process.env.GRADLE_USER_HOME || join(homedir(), '.gradle');
+if (PLATFORM === 'android' && !args.dryRun) {
+  ENV.GRADLE_USER_HOME = GRADLE_USER_HOME;
+  process.env.GRADLE_USER_HOME = GRADLE_USER_HOME;
+}
+const GRADLE_CACHE_DIR = join(GRADLE_USER_HOME, 'caches', 'build-cache-1');
+const GRADLE_HOME_IS_THROWAWAY = PLATFORM === 'android' && !args.dryRun;
+
+function seedGradleUserHome(source) {
+  const base = existsSync(source) ? dirname(realpathSync(source)) : tmpdir();
+  const target = mkdtempSync(join(base, '.stim-e2e-gradle-'));
+  mkdirSync(join(target, 'caches'), { recursive: true });
+  for (const [rel, dest] of [
+    ['caches/modules-2', join(target, 'caches', 'modules-2')],
+    ['wrapper', join(target, 'wrapper')],
+  ]) {
+    const from = join(source, rel);
+    if (!existsSync(from)) continue;
+    const clone = spawnSync('cp', ['-c', '-R', from, dest], { stdio: 'ignore' });
+    if (clone.status !== 0) spawnSync('cp', ['-R', from, dest], { stdio: 'ignore' });
+  }
+  return target;
+}
 const RACE_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(WORK_DIR, 'race-build-cache');
 
 const h = createHarness({ env: ENV, cliPath: CLI, label: `cache-e2e ${VARIANT}` });
@@ -941,14 +975,16 @@ const startedAt = Date.now();
 main().then(
   () => {
     const summary = emitSummary(Date.now() - startedAt, null);
-    if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR]);
+    if (!args.keep)
+      cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR, GRADLE_HOME_IS_THROWAWAY ? GRADLE_USER_HOME : null]);
     return process.exit(summary.ok ? 0 : 1);
   },
   (err) => {
     log(`FATAL: ${err?.message || err}`);
     dumpDiagnostics(h, created);
     emitSummary(Date.now() - startedAt, String(err?.message || err));
-    if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR]);
+    if (!args.keep)
+      cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR, GRADLE_HOME_IS_THROWAWAY ? GRADLE_USER_HOME : null]);
     return process.exit(1);
   },
 );
