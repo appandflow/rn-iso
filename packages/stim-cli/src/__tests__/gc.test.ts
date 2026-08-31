@@ -54,6 +54,17 @@ describe('selectCaches', () => {
     expect(selectCaches(caches, 'metro-file-map').map((c) => c.name)).toEqual(['Metro file maps']);
   });
 
+  test('all is a reserved name that selects every cache', () => {
+    expect(selectCaches(caches, 'all')).toHaveLength(3);
+    expect(selectCaches(caches, 'ALL')).toHaveLength(3);
+  });
+
+  test('the reserved name wins over a directory that happens to carry it', () => {
+    const withInstall = [...caches, makeCacheDescriptor({ name: 'Vendor cache', dir: '/opt/install/cache' })];
+    expect(selectCaches(withInstall, 'all')).toHaveLength(4);
+    expect(selectCaches(withInstall, 'install').map((c) => c.name)).toEqual(['Vendor cache']);
+  });
+
   test('a name nothing carries selects no cache', () => {
     expect(selectCaches(caches, 'gradle')).toEqual([]);
   });
@@ -782,7 +793,7 @@ describe('EAS orphan session sweep', () => {
 
     try {
       await runGc(
-        { delete: true, all: true },
+        { delete: true },
         {
           ...harness.deps,
           easLedgerRoot: join(fakeHome, 'machine-eas'),
@@ -2035,7 +2046,7 @@ test('gc reports but never deletes the shared Gradle build cache under any delet
   installExecutor();
 
   try {
-    for (const args of [['--delete'], ['--delete', '--older-than', '30'], ['--delete', '--all']]) {
+    for (const args of [['--delete'], ['--delete', '--older-than', '30'], ['--delete', '--cache', 'all']]) {
       const output = await captureLog(() => cli(args));
       expect(output).toMatch(/Gradle build cache/);
       expect(existsSync(entry)).toBeTruthy();
@@ -2163,7 +2174,7 @@ test('--delete --older-than keeps a current Metro store that is also a current o
   expect(existsSync(childTransform)).toBe(true);
 });
 
-test('--delete --all empties an index-backed cache that --older-than cannot trim', async () => {
+test('--delete --cache all empties an index-backed cache that --older-than cannot trim', async () => {
   const casDir = join(tmpHome, 'compilation-cache');
   const leaf = join(casDir, 'v9.data.leaf');
   const index = join(casDir, 'v4.actions');
@@ -2174,18 +2185,18 @@ test('--delete --all empties an index-backed cache that --older-than cannot trim
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  const report = await collectGcReport({ all: true });
+  const report = await collectGcReport({ cache: 'all' });
   expect(report.caches.some((c) => c.prune === 'atomic' && c.willEmpty)).toBeTruthy();
 
   await captureLog(() => cli(['--delete', '--older-than', '30']));
   expect(existsSync(leaf)).toBeTruthy();
 
-  await captureLog(() => cli(['--delete', '--all']));
+  await captureLog(() => cli(['--delete', '--cache', 'all']));
   expect(existsSync(leaf)).toBe(false);
   expect(existsSync(index)).toBe(false);
 });
 
-test('--delete --all empties an entries-style cache including entries used today', async () => {
+test('--delete --cache all empties an entries-style cache including entries used today', async () => {
   const cacheDir = join(tmpHome, 'my-cache');
   const freshEntry = join(cacheDir, 'entry-fresh');
   mkdirSync(freshEntry, { recursive: true });
@@ -2194,13 +2205,13 @@ test('--delete --all empties an entries-style cache including entries used today
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  await captureLog(() => cli(['--delete', '--all']));
+  await captureLog(() => cli(['--delete', '--cache', 'all']));
 
   expect(existsSync(freshEntry)).toBe(false);
   expect(existsSync(cacheDir)).toBeTruthy();
 });
 
-test('--all without --delete reports what would be emptied and writes nothing', async () => {
+test('--cache all without --delete reports what would be emptied and writes nothing', async () => {
   const casDir = join(tmpHome, 'compilation-cache');
   const leaf = join(casDir, 'v9.data.leaf');
   mkdirSync(casDir, { recursive: true });
@@ -2210,7 +2221,7 @@ test('--all without --delete reports what would be emptied and writes nothing', 
   installExecutor();
   const before = loadConfig();
 
-  const output = await captureLog(() => cli(['--all']));
+  const output = await captureLog(() => cli(['--cache', 'all']));
 
   expect(output).toMatch(/Xcode compilation cache/);
   expect(output).toMatch(/empt/i);
@@ -2218,7 +2229,7 @@ test('--all without --delete reports what would be emptied and writes nothing', 
   expect(loadConfig()).toEqual(before);
 });
 
-test('--delete --all under a scoped home refuses machine-global caches', async () => {
+test('--delete --cache all under a scoped home refuses machine-global caches', async () => {
   const globalCas = join(fakeHome, 'Library', 'Developer', 'Xcode', 'DerivedData', 'CompilationCache.noindex');
   const leaf = join(globalCas, 'v9.data.leaf');
   mkdirSync(globalCas, { recursive: true });
@@ -2226,7 +2237,7 @@ test('--delete --all under a scoped home refuses machine-global caches', async (
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  const output = await captureLog(() => cli(['--delete', '--all']));
+  const output = await captureLog(() => cli(['--delete', '--cache', 'all']));
 
   expect(existsSync(leaf)).toBeTruthy();
   expect(output).toMatch(/STIM_HOME/);
@@ -2262,7 +2273,7 @@ test('--all reaches caches only: never a device, never a project entry', async (
   const execCalls: string[] = [];
   installDeviceExecutor({ devices: [{ udid: 'UDID-LIVE', name: 'stim-live' }], execCalls });
 
-  await captureLog(() => sweepingGc({ delete: true, all: true }));
+  await captureLog(() => sweepingGc({ delete: true, cache: 'all' }));
 
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);

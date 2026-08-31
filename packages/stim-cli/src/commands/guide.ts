@@ -793,7 +793,7 @@ but --base <ref> resolves to <sha>"  (worktree create)
     error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind
   A cache write that a full disk or a killed build cut short leaves such an
   object, and upgrading the CLI does not clear it. Empty that one cache with
-  \`gc --delete --all --cache "compilation cache"\`, then build again. The next
+  \`gc --delete --cache "compilation cache"\`, then build again. The next
   build is a cold one.
 
 "Carried <dir>/Pods does not match <dir>/Podfile.lock"  (worktree create)
@@ -1090,7 +1090,7 @@ THE OPTION SURFACE, IN FULL
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide; there is no --all)
-  gc              --delete --older-than <days> --all --cache <name>
+  gc              --delete --older-than <days> --cache <name|all>
   worktree create <name> --carry-ignored --base <ref> --label <label>; remove [path] --force
 
   That is the whole surface today, and it is deliberately small. It can grow
@@ -1179,8 +1179,8 @@ THE OPTION SURFACE, IN FULL
 
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned stim-* devices, tens of GB
-  gc --delete --all       empties the shared build caches every project uses
-  gc --delete --all --cache <name>
+  gc --delete --cache all empties the shared build caches every project uses
+  gc --delete --cache <name>
                           empties only the caches that carry <name>
   worktree remove --force discards uncommitted and untracked work
   stop --force            kills a process Stim could not identify

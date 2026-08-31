@@ -110,7 +110,7 @@ Ask the user before these actions:
   when it has no unique commits, and its owned device.
 - `worktree remove --force`, because it also discards uncommitted and untracked
   files.
-- `gc --delete`, because it deletes orphaned resources. `gc --delete --all`
+- `gc --delete`, because it deletes orphaned resources. `gc --delete --cache all`
   also empties shared build caches.
 - `stop` when the workspace owns an EAS session, because it irreversibly ends
   that remote session. For a local device, `stop` shuts it down but does not
