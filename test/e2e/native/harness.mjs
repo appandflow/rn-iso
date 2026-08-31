@@ -116,9 +116,8 @@ export function createFixture({ framework, platform, workDir, h }) {
   }
 
   if (framework === 'bare' && platform === 'ios') {
-    // The template's own run instructions are `bundle install` then `bundle exec
-    // pod install`: the Gemfile pins cocoapods/activesupport, and installing the
-    // fixture's pods outside bundler both dodges those pins and trips RubyGems'
+    // The Gemfile pins cocoapods/activesupport, and installing the fixture's
+    // pods outside bundler both dodges those pins and trips RubyGems'
     // Gemfile-aware activation under rvm (#133).
     h.log('installing the bare iOS fixture pods (bundler, per the template) before its initial commit');
     const rb = spawnSync('bundle', ['install'], {
@@ -129,7 +128,8 @@ export function createFixture({ framework, platform, workDir, h }) {
     });
     if (rb.status !== 0) {
       h.die(
-        'bundle install failed for the bare iOS fixture; its Gemfile pins the pods toolchain, so the fixture cannot be prepared without it',
+        `bundle install failed for the bare iOS fixture (exit ${rb.status ?? rb.signal}${rb.error ? `: ${rb.error.message}` : ''}); ` +
+          'its Gemfile pins the pods toolchain, so the fixture cannot be prepared without it',
       );
     }
     const r2 = spawnSync('bundle', ['exec', 'pod', 'install'], {
@@ -138,7 +138,11 @@ export function createFixture({ framework, platform, workDir, h }) {
       stdio: 'inherit',
       timeout: 20 * 60 * 1000,
     });
-    if (r2.status !== 0) h.die('installing the bare iOS fixture pods failed');
+    if (r2.status !== 0) {
+      h.die(
+        `installing the bare iOS fixture pods failed (exit ${r2.status ?? r2.signal}${r2.error ? `: ${r2.error.message}` : ''})`,
+      );
+    }
   }
 
   gitInitWithRemote({ appDir, workDir, framework, h });

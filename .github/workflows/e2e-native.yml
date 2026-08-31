@@ -97,6 +97,11 @@ jobs:
           cache: true
           install: false
 
+      - name: Set up Ruby and Bundler for the fixture's Gemfile
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+
       - name: Select a recent stable Xcode
         # REVIEWER: confirm the macos-latest image ships this Xcode. 'latest-stable'
         # tracks whatever the runner image has; pin to a specific version here if a
