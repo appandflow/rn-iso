@@ -5,6 +5,9 @@ import {
   extractXcodeDiagnostics,
 } from '../engine/errors-xcode.ts';
 import type { Diagnostic } from '../engine/errors-xcode.ts';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const REAL_COMPILE_FAILURE = [
   "CompileC /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/stim-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
@@ -203,6 +206,20 @@ describe('real transcripts', () => {
     expect(found[0]?.message).toMatch(/The sandbox is not in sync with the Podfile\.lock/);
     expect(found[0]?.remedy).toMatch(/pod install/);
     expect(found[0]?.file).toBe(undefined);
+  });
+
+  test('the sandbox remedy uses bundler when the project pins its pods, and plain pod when it does not (#137)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-xc-pin-'));
+    try {
+      writeFileSync(join(root, 'Gemfile'), "gem 'cocoapods'\n");
+      writeFileSync(join(root, 'Gemfile.lock'), 'GEM\n  specs:\n    cocoapods (1.15.2)\n');
+      expect(extractXcodeDiagnostics(REAL_PODS_FAILURE, root)[0]?.remedy).toMatch(/Run `bundle exec pod install`/);
+
+      writeFileSync(join(root, 'Gemfile.lock'), 'GEM\n  specs:\n    fastlane (2.219.0)\n');
+      expect(extractXcodeDiagnostics(REAL_PODS_FAILURE, root)[0]?.remedy).toMatch(/Run `pod install`/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test('the run-script warning in that same transcript is not promoted to an error', () => {

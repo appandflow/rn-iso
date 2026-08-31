@@ -1,10 +1,11 @@
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
+import { bundlerPin } from './bundler.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
@@ -23,7 +24,7 @@ const RUBY_FRAME = /^\s*from\s+\S/;
 
 const RUBY_CONTEXT_BEFORE = 4;
 
-const BUNDLER_FROZEN = /frozen mode|deployment mode|lockfile can't be updated/i;
+const BUNDLER_FROZEN = /frozen mode|lockfile can't be updated|in deployment mode after changing/i;
 const BUNDLER_NO_COCOAPODS = /cocoapods is not currently included in the bundle|command not found: pod\b/i;
 
 export interface PodDiagnostics {
@@ -207,28 +208,25 @@ export type PodInstallResult = {
   durationMs?: number;
 };
 
-// Bundler's lockfile indents a resolved spec name with exactly four spaces; six marks
-// that spec's own dependencies and two marks the DEPENDENCIES section. Matching the
-// four-space form finds cocoapods whether the Gemfile names it directly or pulls it in
-// through another gem, which is exactly when `bundle exec pod` can work; DEPENDENCIES
-// would miss the transitive case.
-const COCOAPODS_SPEC = /^ {4}cocoapods \(/m;
-
-export function bundlerPin(root: string): { gemfile: string; lockfile: string } | null {
-  const gemfile = join(root, 'Gemfile');
-  const lockfile = join(root, 'Gemfile.lock');
-  if (!existsSync(gemfile)) return null;
-  const lock = readOrNull(lockfile);
-  if (lock === null || !COCOAPODS_SPEC.test(lock)) return null;
-  return { gemfile, lockfile };
-}
-
 // Bundler writes Gemfile.lock whenever it resolves: `bundle check`, `bundle install`,
 // and even `bundle exec` rewrite the lockfile when it does not match the Gemfile.
-// `--dry-run` and BUNDLE_FROZEN make bundler report instead of write, which is what
-// keeps these spawns out of the project tree (#137).
+// `--dry-run` and BUNDLE_FROZEN make bundler report instead of write, so the tracked
+// lockfile is never edited. Gems still land wherever the project's own bundler config
+// points BUNDLE_PATH (the React Native template ships `.bundle/config` with
+// vendor/bundle), which is the project's dependency state, not Stim's (#137).
 function bundlerEnv(root: string, gemfile: string): NodeJS.ProcessEnv {
   return { ...podEnv(root), BUNDLE_GEMFILE: gemfile, BUNDLE_FROZEN: 'true' };
+}
+
+const BUNDLE_PATH_SETTING = /^BUNDLE_PATH:[ \t]*["']?([^"'\r\n]+?)["']?[ \t]*$/m;
+
+function bundlePathInsideProject(root: string, env: NodeJS.ProcessEnv): string | null {
+  const configured =
+    env.BUNDLE_PATH || BUNDLE_PATH_SETTING.exec(readOrNull(join(root, '.bundle', 'config')) ?? '')?.[1];
+  if (!configured) return null;
+  const resolved = resolve(root, configured);
+  if (resolved !== root && !resolved.startsWith(root + sep)) return null;
+  return relative(root, resolved) || '.';
 }
 
 type RunContext = {
@@ -327,6 +325,7 @@ async function ensureBundledGems(
     cwd,
     env,
     event: 'bundle_check',
+    label: 'gems',
   });
   if (check.error) return bundlerSpawnFailure('bundle check', check, pin);
   if (check.code === 0) return { bundler: true };
@@ -341,7 +340,12 @@ async function ensureBundledGems(
     label: 'gems',
   });
   if (install.error) return bundlerSpawnFailure('bundle install', install, pin);
-  if (install.code === 0) return { bundler: true };
+  const inProject = bundlePathInsideProject(cwd, env);
+  const note = inProject
+    ? `\`bundle install\` put this project's gems in ${inProject}/, where its own .bundle/config points BUNDLE_PATH; ` +
+      'Gemfile.lock itself is never written.'
+    : undefined;
+  if (install.code === 0) return { bundler: true, note };
 
   const how = install.signal ? `signal ${install.signal}` : `exit code ${install.code}`;
   const transcript = install.transcript.join('\n');
@@ -467,7 +471,7 @@ export async function runPodInstall(
   });
 
   if (run.error) {
-    const missing = missingPod(run.error);
+    const missing = bundler ? missingBundle(run.error, pin) : missingPod(run.error);
     return {
       ...(missing || {
         failed: true,
@@ -510,9 +514,9 @@ function podFailureRemedy(
     if (frozen) return frozen;
     if (BUNDLER_NO_COCOAPODS.test(transcript)) {
       return (
-        `${pin.lockfile} does not include cocoapods, so bundler has no \`pod\` to exec. Stim runs pods through ` +
-        `bundler whenever the project root has both a Gemfile and a Gemfile.lock: add \`gem 'cocoapods'\` to ` +
-        `${pin.gemfile} and run \`bundle install\`, or remove ${pin.lockfile} from the project root.`
+        `${pin.lockfile} resolves cocoapods, but bundler found no \`pod\` executable in the bundle it loaded: ` +
+        `the installed gems belong to a different Gemfile than ${pin.gemfile}, or that Gemfile's bundle was never ` +
+        `installed. Run \`cd ${root} && bundle install && bundle exec pod --version\` and make that work, then run again.`
       );
     }
   }
@@ -529,6 +533,19 @@ function isMissingBinary(err: unknown): boolean {
   const nodeErr = err as NodeJS.ErrnoException;
   const message = String(nodeErr?.message || err || '');
   return nodeErr?.code === 'ENOENT' || /ENOENT|not found/i.test(message);
+}
+
+function missingBundle(err: unknown, pin: { gemfile: string; lockfile: string } | null) {
+  if (!isMissingBinary(err)) return null;
+  return {
+    failed: true,
+    code: DEPS_ERROR,
+    reason: 'Bundler is not installed: no `bundle` executable on PATH.',
+    remedy:
+      `${pin?.lockfile ?? 'Gemfile.lock'} pins this project's CocoaPods, so pods run through bundler. ` +
+      'Install bundler (`gem install bundler`) and run again.',
+    lastLines: [] as string[],
+  };
 }
 
 function missingPod(err: unknown) {

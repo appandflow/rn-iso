@@ -481,14 +481,19 @@ STIM_DEPS_FAILED
   then \`bundle install\` only when that reports missing gems, then \`bundle exec
   pod install\` -- so the CocoaPods the lockfile pins is the one that writes
   Podfile.lock. Everything else gets plain \`pod install\`: no Gemfile, a Gemfile
-  with no Gemfile.lock (\`bundle install\` would CREATE the lockfile in your
-  checkout, and Stim does not write into the project), and a Gemfile.lock that
+  with no Gemfile.lock (\`bundle install\` would CREATE that tracked file in
+  your checkout, which Stim will not do), and a Gemfile.lock that
   pins something other than pods, such as a fastlane-only bundle. When
   \`bundle\` is not on PATH the run prints one dim \`pods\` note and uses plain
-  \`pod install\`. The \`pods\` phase line always names the command that ran.
-  Bundler runs with BUNDLE_FROZEN for the same reason, so a Gemfile that no
-  longer matches its Gemfile.lock fails here instead of having the lockfile
-  rewritten under you: run \`bundle install\` yourself and keep the result.
+  \`pod install\`. The \`pods\` phase line always names the command that ran, and
+  the gem steps heartbeat under the \`gems\` label.
+  Bundler runs with BUNDLE_FROZEN, so a Gemfile that no longer matches its
+  Gemfile.lock FAILS the build rather than quietly falling back to unpinned
+  pods -- silently using a different CocoaPods than the lockfile pins is the
+  bug this path exists to kill. Run \`bundle install\` yourself and keep the
+  result. Gems themselves are installed wherever the project's own
+  \`.bundle/config\` points BUNDLE_PATH (vendor/bundle in the React Native
+  template); Stim reports that in a dim note and never edits Gemfile.lock.
 
 STIM_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),

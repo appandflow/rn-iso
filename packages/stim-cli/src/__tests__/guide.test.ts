@@ -290,6 +290,31 @@ test('the errors topic documents every code the engine can emit under a command'
   }
 });
 
+test('the STIM_DEPS_FAILED ladder names the commands and the gate the engine actually uses (#137)', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  const flat = body.slice(body.indexOf('STIM_DEPS_FAILED'), body.indexOf('STIM_BUILD_FAILED')).replace(/\s+/g, ' ');
+  const deps = readFileSync(new URL('../engine/deps.ts', import.meta.url), 'utf-8');
+  const bundler = readFileSync(new URL('../engine/bundler.ts', import.meta.url), 'utf-8');
+
+  for (const [spawned, documented] of [
+    ["args: ['check', '--dry-run']", 'bundle check --dry-run'],
+    ["args: ['install']", 'bundle install'],
+    ["['bundle', 'exec', 'pod', 'install']", 'bundle exec pod install'],
+    ["['pod', 'install']", 'pod install'],
+  ] as Array<[string, string]>) {
+    expect(deps.includes(spawned)).toBeTruthy();
+    expect(flat).toContain(documented);
+  }
+  expect(deps).toContain("BUNDLE_FROZEN: 'true'");
+  expect(flat).toContain('BUNDLE_FROZEN');
+  expect(deps).toContain("label: 'gems'");
+  expect(flat).toContain('`gems` label');
+  expect(bundler).toContain('COCOAPODS_SPEC');
+  expect(flat).toContain('Gemfile.lock that resolves cocoapods');
+  expect(flat).toContain('BUNDLE_PATH');
+});
+
 test('the remote start remedy covers existing bare and Expo servers', () => {
   const body = renderTopic('errors');
   assert(body);

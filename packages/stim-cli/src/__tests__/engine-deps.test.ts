@@ -415,6 +415,10 @@ describe('runPodInstall through bundler (#137)', () => {
     expect(result.command).toBe('pod install');
     expect(result.notes).toEqual([]);
     expect(calls.map((c) => c.cmd)).toEqual(['pod']);
+    const env = calls[0]?.opts.env as NodeJS.ProcessEnv;
+    expect(env.BUNDLE_FROZEN).toBe(undefined);
+    expect(env.BUNDLE_GEMFILE).toBe(undefined);
+    expect(env.FORCE_COLOR).toBe('0');
   });
 
   test('cocoapods pulled in as a transitive spec still counts as pinned', async () => {
@@ -468,6 +472,9 @@ describe('runPodInstall through bundler (#137)', () => {
     expect(result.failed).toBe(undefined);
     expect(result.notes?.join('\n')).toMatch(/`bundle` is not on PATH/);
     expect(calls.map((c) => c.cmd)).toEqual(['bundle', 'pod']);
+    const podEnvOnly = calls[1]?.opts.env as NodeJS.ProcessEnv;
+    expect(podEnvOnly.BUNDLE_FROZEN).toBe(undefined);
+    expect(podEnvOnly.BUNDLE_GEMFILE).toBe(undefined);
   });
 
   test('a failed `bundle install` fails the run with STIM_DEPS_FAILED and never runs pods', async () => {
@@ -532,7 +539,7 @@ describe('runPodInstall through bundler (#137)', () => {
     expect(result.remedy).toMatch(/BUNDLE_FROZEN/);
   });
 
-  test('a Gemfile that does not bundle cocoapods explains why bundler has no pod to exec', async () => {
+  test('a bundle without the pinned pod binary points at the bundle that is actually loaded', async () => {
     pinnedProject();
     const result = await runPodInstall(root, collectingWriter(), {
       spawnFn: router([], {
@@ -547,8 +554,50 @@ describe('runPodInstall through bundler (#137)', () => {
       }),
     });
     expect(result.failed).toBe(true);
-    expect(result.remedy).toMatch(/does not include cocoapods/);
-    expect(result.remedy).toMatch(/gem 'cocoapods'/);
+    expect(result.remedy).toMatch(/resolves cocoapods/);
+    expect(result.remedy).toMatch(/belong to a different Gemfile/);
+    expect(result.remedy).toMatch(/bundle exec pod --version/);
+    expect(result.remedy).not.toMatch(/remove .*Gemfile\.lock/);
+  });
+
+  test('an ENOENT at the pod step in the bundler branch names `bundle`, not CocoaPods', async () => {
+    pinnedProject();
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: (_cmd, args) => {
+        if (args[0] === 'check') return fakePodChild({ lines: ['satisfied'] });
+        throw makeError('spawn bundle ENOENT', { code: 'ENOENT' });
+      },
+    });
+    expect(result.failed).toBe(true);
+    expect(result.code).toBe(DEPS_ERROR);
+    expect(result.reason).toMatch(/Bundler is not installed/);
+    expect(result.reason).not.toMatch(/CocoaPods is not installed/);
+    expect(result.remedy).toMatch(/gem install bundler/);
+  });
+
+  test('`bundle install` reports the project-local BUNDLE_PATH it filled, and only that', async () => {
+    pinnedProject();
+    mkdirSync(join(root, '.bundle'), { recursive: true });
+    writeFileSync(join(root, '.bundle', 'config'), 'BUNDLE_PATH: "vendor/bundle"\nBUNDLE_FORCE_RUBY_PLATFORM: 1\n');
+    const withPath = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router([], {
+        'bundle check --dry-run': () => fakePodChild({ code: 1 }),
+        'bundle install': ok,
+        'bundle exec pod install': ok,
+      }),
+    });
+    expect(withPath.notes?.join('\n')).toMatch(/gems in vendor\/bundle\//);
+    expect(withPath.notes?.join('\n')).toMatch(/Gemfile\.lock itself is never written/);
+
+    writeFileSync(join(root, '.bundle', 'config'), 'BUNDLE_PATH: "/opt/gems"\n');
+    const outside = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router([], {
+        'bundle check --dry-run': () => fakePodChild({ code: 1 }),
+        'bundle install': ok,
+        'bundle exec pod install': ok,
+      }),
+    });
+    expect(outside.notes).toEqual([]);
   });
 });
 
