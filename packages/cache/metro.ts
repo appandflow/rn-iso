@@ -1,10 +1,22 @@
-import { callWithTimeout, type LoadCacheProviderResult, type MetroCacheCapability, type WarnOnce } from './provider.ts';
+import {
+  callWithTimeout,
+  timeoutFromEnv,
+  type LoadCacheProviderResult,
+  type ProviderCallResult,
+  type MetroCacheCapability,
+  type WarnOnce,
+} from './provider.ts';
 
 export const METRO_READ_TIMEOUT_MS = 2_000;
 export const METRO_WRITE_TIMEOUT_MS = 10_000;
+export const METRO_READ_CONCURRENCY = 6;
+export const METRO_READ_FAILURE_LIMIT = 5;
 export const METRO_UPLOAD_CONCURRENCY = 4;
 export const METRO_UPLOAD_MAX_ITEMS = 128;
 export const METRO_UPLOAD_MAX_BYTES: number = 32 * 1024 * 1024;
+
+export const METRO_READ_TIMEOUT_ENV = 'STIM_CACHE_METRO_READ_TIMEOUT_MS';
+export const METRO_WRITE_TIMEOUT_ENV = 'STIM_CACHE_METRO_WRITE_TIMEOUT_MS';
 
 /**
  * Metro's structural cache-store contract: `get` returns the value or `null`,
@@ -27,6 +39,8 @@ export interface MetroTierLimits {
   concurrency?: number;
   maxItems?: number;
   maxBytes?: number;
+  readConcurrency?: number;
+  failureLimit?: number;
 }
 
 export interface MetroTierTimeouts {
@@ -81,7 +95,11 @@ interface UploadQueue {
   idle(): Promise<void>;
 }
 
-function createUploadQueue({ concurrency, maxItems, maxBytes }: Required<MetroTierLimits>): UploadQueue {
+function createUploadQueue({
+  concurrency,
+  maxItems,
+  maxBytes,
+}: Required<Pick<MetroTierLimits, 'concurrency' | 'maxItems' | 'maxBytes'>>): UploadQueue {
   const pending: Array<{ bytes: number; run: () => Promise<void> }> = [];
   const waiters: Array<() => void> = [];
   let active = 0;
@@ -137,8 +155,10 @@ export function createTieredMetroStore({
 }: TieredMetroStoreOptions): TieredMetroStore {
   const warn = onceByCode(emit);
   const localCapability = metroCapabilityFromStore(local);
-  const readMs = timeouts.readMs ?? METRO_READ_TIMEOUT_MS;
-  const writeMs = timeouts.writeMs ?? METRO_WRITE_TIMEOUT_MS;
+  const readMs = timeouts.readMs ?? timeoutFromEnv(METRO_READ_TIMEOUT_ENV, METRO_READ_TIMEOUT_MS);
+  const writeMs = timeouts.writeMs ?? timeoutFromEnv(METRO_WRITE_TIMEOUT_ENV, METRO_WRITE_TIMEOUT_MS);
+  const readConcurrency = limits.readConcurrency ?? METRO_READ_CONCURRENCY;
+  const failureLimit = limits.failureLimit ?? METRO_READ_FAILURE_LIMIT;
   const queue = createUploadQueue({
     concurrency: limits.concurrency ?? METRO_UPLOAD_CONCURRENCY,
     maxItems: limits.maxItems ?? METRO_UPLOAD_MAX_ITEMS,
@@ -146,10 +166,25 @@ export function createTieredMetroStore({
   });
 
   let loading: Promise<MetroCacheCapability | null> | null = null;
+  let disabled = false;
+  let consecutiveFailures = 0;
+  let activeReads = 0;
+
+  function recordFailure(): void {
+    consecutiveFailures += 1;
+    if (consecutiveFailures < failureLimit) return;
+    disabled = true;
+    warn(
+      'provider-disabled',
+      `the cache provider failed ${consecutiveFailures} times in a row; this run keeps its transforms local`,
+    );
+  }
 
   function providerCapability(): Promise<MetroCacheCapability | null> {
+    if (disabled) return Promise.resolve(null);
     loading ??= loadProvider().then((loaded) => {
       if (loaded?.unavailable) {
+        disabled = true;
         warn(
           'provider-load',
           `cache provider ${loaded.name} is not usable: ${loaded.unavailable}; using local transforms`,
@@ -166,14 +201,25 @@ export function createTieredMetroStore({
       const hit = await localCapability.get({ key, projectRoot, cacheName, signal: neverAborted() });
       if (hit !== null && hit !== undefined) return hit;
 
-      const capability = await providerCapability();
-      if (!capability) return null;
+      if (activeReads >= readConcurrency) {
+        warn(
+          'provider-read-busy',
+          `the cache provider already has ${activeReads} reads in flight; further transforms read locally until it catches up`,
+        );
+        return null;
+      }
 
-      const outcome = await callWithTimeout(
-        (signal) => capability.get({ key, projectRoot, cacheName, signal }),
-        readMs,
-      );
+      activeReads += 1;
+      let outcome: ProviderCallResult<unknown>;
+      try {
+        const capability = await providerCapability();
+        if (!capability) return null;
+        outcome = await callWithTimeout((signal) => capability.get({ key, projectRoot, cacheName, signal }), readMs);
+      } finally {
+        activeReads -= 1;
+      }
       if (outcome.timedOut) {
+        recordFailure();
         warn(
           'provider-read',
           `the cache provider did not answer a transform read within ${readMs}ms; using local transforms`,
@@ -181,12 +227,14 @@ export function createTieredMetroStore({
         return null;
       }
       if (outcome.failed) {
+        recordFailure();
         warn(
           'provider-read',
           `the cache provider could not read a transform: ${outcome.failed}; using local transforms`,
         );
         return null;
       }
+      consecutiveFailures = 0;
       const value = outcome.value;
       if (value === null || value === undefined) return null;
 
@@ -217,6 +265,8 @@ export function createTieredMetroStore({
           (signal) => capability.set({ key, value, projectRoot, cacheName, signal }),
           writeMs,
         );
+        if (outcome.timedOut || outcome.failed) recordFailure();
+        else consecutiveFailures = 0;
         if (outcome.timedOut) {
           warn(
             'provider-write',

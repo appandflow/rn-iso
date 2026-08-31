@@ -1,4 +1,8 @@
 import {
+  METRO_READ_CONCURRENCY,
+  METRO_READ_FAILURE_LIMIT,
+  METRO_READ_TIMEOUT_ENV,
+  METRO_WRITE_TIMEOUT_ENV,
   METRO_UPLOAD_CONCURRENCY,
   METRO_UPLOAD_MAX_BYTES,
   METRO_UPLOAD_MAX_ITEMS,
@@ -264,4 +268,110 @@ test('a Metro store adapts to the capability contract', async () => {
   expect(
     await capability.get({ key: KEY, projectRoot: '/repo', cacheName: 'app', signal: new AbortController().signal }),
   ).toEqual(Buffer.from('x'));
+});
+
+test('provider reads are capped so a slow provider cannot fan out per transform', async () => {
+  const local = memoryStore();
+  let release = (): void => {};
+  const blocked = new Promise<void>((resolve) => {
+    release = () => resolve();
+  });
+  const provider = tracked({ get: async () => blocked.then(() => null) });
+  const { tiered, warnings } = store({
+    local,
+    loadProvider: async () => ({ provider: { metro: provider.provider } }),
+    limits: { readConcurrency: 2 },
+    timeouts: { readMs: 5_000 },
+  });
+
+  const reads = [
+    tiered.get(Buffer.from('01', 'hex')),
+    tiered.get(Buffer.from('02', 'hex')),
+    tiered.get(Buffer.from('03', 'hex')),
+    tiered.get(Buffer.from('04', 'hex')),
+  ];
+  expect(await Promise.all(reads.slice(2))).toEqual([null, null]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(provider.calls.get).toBe(2);
+  expect(warnings.map((w) => w.code)).toEqual(['provider-read-busy']);
+
+  release();
+  expect(await Promise.all(reads.slice(0, 2))).toEqual([null, null]);
+});
+
+test('the provider tier switches off after repeated failures', async () => {
+  const local = memoryStore();
+  const provider = tracked({
+    get: () => {
+      throw new Error('unauthorized');
+    },
+    set: () => {
+      throw new Error('unauthorized');
+    },
+  });
+  const { tiered, warnings } = store({
+    local,
+    loadProvider: async () => ({ provider: { metro: provider.provider } }),
+    limits: { failureLimit: 2 },
+  });
+
+  expect(await tiered.get(Buffer.from('01', 'hex'))).toBeNull();
+  expect(await tiered.get(Buffer.from('02', 'hex'))).toBeNull();
+  expect(await tiered.get(Buffer.from('03', 'hex'))).toBeNull();
+  await tiered.set(Buffer.from('04', 'hex'), Buffer.from('fresh'));
+  await tiered.flush();
+
+  expect(provider.calls.get).toBe(2);
+  expect(provider.calls.set).toBe(0);
+  expect(warnings.map((w) => w.code)).toEqual(['provider-read', 'provider-disabled']);
+  expect(warnings[1]?.message).toMatch(/failed 2 times in a row/);
+  expect(local.entries.get('04')).toEqual(Buffer.from('fresh'));
+});
+
+test('a success resets the failure count', async () => {
+  const local = memoryStore();
+  let calls = 0;
+  const provider = tracked({
+    get: () => {
+      calls += 1;
+      if (calls === 2) return Buffer.from('hit');
+      throw new Error('flaky');
+    },
+  });
+  const { tiered, warnings } = store({
+    local,
+    loadProvider: async () => ({ provider: { metro: provider.provider } }),
+    limits: { failureLimit: 2 },
+  });
+
+  expect(await tiered.get(Buffer.from('01', 'hex'))).toBeNull();
+  expect(await tiered.get(Buffer.from('02', 'hex'))).toEqual(Buffer.from('hit'));
+  expect(await tiered.get(Buffer.from('03', 'hex'))).toBeNull();
+  expect(provider.calls.get).toBe(3);
+  expect(warnings.map((w) => w.code)).toEqual(['provider-read']);
+});
+
+test('an unusable provider disables the tier for writes too', async () => {
+  const local = memoryStore();
+  let loads = 0;
+  const { tiered, warnings } = store({
+    local,
+    loadProvider: async () => {
+      loads += 1;
+      return { name: './cache.cjs', unavailable: 'missing credentials' };
+    },
+  });
+
+  expect(await tiered.get(KEY)).toBeNull();
+  await tiered.set(KEY, Buffer.from('fresh'));
+  await tiered.flush();
+  expect(loads).toBe(1);
+  expect(warnings.map((w) => w.code)).toEqual(['provider-load']);
+});
+
+test('the read and write budgets accept an environment override', () => {
+  expect(METRO_READ_TIMEOUT_ENV).toBe('STIM_CACHE_METRO_READ_TIMEOUT_MS');
+  expect(METRO_WRITE_TIMEOUT_ENV).toBe('STIM_CACHE_METRO_WRITE_TIMEOUT_MS');
+  expect(METRO_READ_CONCURRENCY).toBe(6);
+  expect(METRO_READ_FAILURE_LIMIT).toBe(5);
 });
