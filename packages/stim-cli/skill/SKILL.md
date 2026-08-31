@@ -98,8 +98,13 @@ Follow these rules during the loop:
 
 ## Ownership and deletion
 
-Stim operates only on devices it created. Owned devices use the
-`stim-<label>` name. Never use Stim on physical or user-created devices.
+Stim creates, boots, and deletes only devices it created. Owned devices use
+the `stim-<label>` name. Never point Stim at a user-created emulator or
+simulator.
+
+`stim android --device [serial]` installs on a connected physical device. Stim
+never creates, boots, or deletes hardware, and records nothing about it, so
+`stop` and `gc` leave it alone.
 
 Treat a refusal as an ownership or state mismatch. Read its code and remedy.
 Do not add `--force` as a first response.

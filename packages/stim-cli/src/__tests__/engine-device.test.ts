@@ -781,7 +781,7 @@ describe('ensureOwnedDevice: android', () => {
       expect(run.some((c) => c.includes('R5CT10'))).toBe(false);
       expect(result.avdName).toBe('stim-app');
       expect(result.owned).toBe(true);
-      expect(notes.some((n) => /no longer supports physical devices/i.test(n))).toBeTruthy();
+      expect(notes.some((n) => /stored assignment to physical device R5CT10/i.test(n))).toBeTruthy();
       expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-app.avd', 'config.ini'), 'utf8')).toContain(
         'disk.dataPartition.size=8589934592',
       );

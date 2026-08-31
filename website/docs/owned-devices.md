@@ -5,8 +5,13 @@ description: 'Owned local and remote devices with safe teardown'
 ---
 
 Stim creates and records every local simulator or emulator it uses. Local device
-names start with `stim-`. Stim does not operate on physical devices or devices
-created by another tool.
+names start with `stim-`. Stim does not create, boot, or delete a simulator or
+emulator that another tool made.
+
+`stim android --device [serial]` is the one device Stim uses without owning it.
+It installs, launches, and reads logs on a connected physical device, and never
+creates, boots, shuts down, or deletes it. Stim records nothing about the device,
+so `stim stop` and `stim gc` leave it alone.
 
 Each workspace keeps its device assignment. A later run can boot and reuse the
 same device.

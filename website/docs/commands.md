@@ -74,7 +74,7 @@ Simulator targets only.
 ## `android`
 
 ```text
-stim android [--variant <name>] [--remote <proxy|eas>]
+stim android [--variant <name>] [--device [serial]] [--remote <proxy|eas>]
              [--no-metro-check] [--no-build-cache] [--json]
 ```
 

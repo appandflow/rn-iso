@@ -84,6 +84,7 @@ import {
   unverifiedLaunchLines,
   verifyAndroidReleaseLaunch,
   androidAppProcess,
+  installConflictKind,
   verifyLaunch,
 } from '../engine/app-install.ts';
 import {
@@ -92,6 +93,10 @@ import {
   emulatorFailureRemedy,
   extractEmulatorFailure,
   findBuildTool,
+  listAdbDevices,
+  physicalDeviceModel,
+  probeEmulatorSerial,
+  resolvePhysicalDevice,
 } from '../sim/android.ts';
 import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import {
@@ -218,6 +223,7 @@ interface AndroidCommandOptions {
   buildCache?: boolean;
   variant?: string;
   remote?: RemoteDeviceBackend;
+  device?: string | boolean;
 }
 
 interface FailExtra {
@@ -587,6 +593,11 @@ export function registerAndroid(program: Command): void {
       'Gradle variant to assemble and install (e.g. productionDebug on a flavored project); overrides the android.variant setting. A variant ending in Release embeds the JS bundle and skips Metro entirely. Default: debug',
     )
     .option(
+      '--device [serial]',
+      "Install and launch on a connected physical device instead of this workspace's owned emulator. " +
+        'With no serial, the one connected device is used. Stim never creates, boots, or deletes a physical device.',
+    )
+    .option(
       '--remote <backend>',
       'Install and launch on a remote device with proxy or EAS. The build still happens here.',
       (value) => {
@@ -608,6 +619,7 @@ export function registerAndroid(program: Command): void {
         useBuildCache: opts.buildCache !== false,
         variant: opts.variant ?? null,
         remoteDevice: opts.remote ?? null,
+        device: opts.device ?? null,
       });
       if (!result.ok) process.exit(1);
     });
@@ -619,6 +631,10 @@ interface RunAndroidOptions {
   metroCheck?: boolean;
   useBuildCache?: boolean;
   variant?: string | null;
+  device?: string | boolean | null;
+  listDevices?: typeof listAdbDevices;
+  deviceModel?: typeof physicalDeviceModel;
+  isEmulatorDevice?: typeof probeEmulatorSerial;
   readApkPackage?: (apkPath: string | null) => string | null;
   remoteDevice?: RemoteDeviceBackend | null;
   resolveSettingsFor?: typeof resolveSettings;
@@ -703,6 +719,7 @@ interface VerifyAndroidRunArgs {
   launchedAt: number;
   metroPort: number | null;
   isExpo: boolean;
+  physical: boolean;
   scheme?: string | null;
   phase: (label: unknown, text: string) => void;
 }
@@ -720,6 +737,7 @@ async function verifyAndroidRun({
   launchedAt,
   metroPort,
   isExpo,
+  physical,
   scheme,
   phase,
 }: VerifyAndroidRunArgs): Promise<boolean | string> {
@@ -812,7 +830,7 @@ async function verifyAndroidRun({
     waitedMs: verification?.waitedMs,
     bundleId: androidPackage,
     serial,
-    devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null,
+    devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, physical) : null,
     mode: isExpo ? MODE_EXPO : MODE_BARE,
   }))
     phase('', chalk.yellow(line));
@@ -958,6 +976,7 @@ interface FinishAndroidRunArgs {
   logsDir: string;
   emuLog: string;
   device: OwnedDeviceRecord;
+  physical: boolean;
   remoteDevice: ReturnType<typeof remoteAndroidDeps> | null;
   bootPromise: Promise<AndroidBootLike>;
   bootDuration: () => string;
@@ -1010,6 +1029,7 @@ async function finishAndroidRun({
   logsDir,
   emuLog,
   device,
+  physical,
   remoteDevice,
   bootPromise,
   bootDuration,
@@ -1052,6 +1072,7 @@ async function finishAndroidRun({
       reason: booted.reason ?? 'The emulator did not boot.',
       logFile: emuLog,
       remedy: 'Run `stim status` to see what Stim thinks it owns; re-running `stim android` creates a fresh owned AVD.',
+      localEmulator: !physical,
     });
     return fail(NO_DEVICE, diag.message, diag.remedy, {
       lines: diag.lines,
@@ -1059,7 +1080,12 @@ async function finishAndroidRun({
     });
   }
   const serial = booted.serial!;
-  phase('device', `${device.avdName || serial} (${serial}) booted ${bootDuration()}`);
+  phase(
+    'device',
+    physical
+      ? `${device.deviceName || serial} (${serial}) connected, not owned by Stim`
+      : `${device.avdName || serial} (${serial}) booted ${bootDuration()}`,
+  );
 
   const installTimer = stepTimer(now);
   const installed: InstallResultLike = install({
@@ -1069,12 +1095,13 @@ async function finishAndroidRun({
     allowUninstall: release,
   });
   if (installed.failed) {
-    return fail(
-      installed.code || INSTALL_FAILED,
-      installed.reason,
-      `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`,
-      { lastBuildStatus: true },
-    );
+    const conflict = installConflictKind(installed.reason);
+    const installRemedy = conflict
+      ? `${androidPackage} is already installed on ${serial} ` +
+        (conflict === 'signature' ? 'with a different signer' : 'at a higher versionCode') +
+        `. Uninstall it first (\`adb -s ${serial} uninstall ${androidPackage}\`); its data goes with it.`
+      : `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`;
+    return fail(installed.code || INSTALL_FAILED, installed.reason, installRemedy, { lastBuildStatus: true });
   }
   phase('install', `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} ${installTimer()}`);
   if (installed.note) {
@@ -1115,6 +1142,7 @@ async function finishAndroidRun({
         packageName: androidPackage,
         metroPort: metroPort ?? DEFAULT_METRO_PORT,
         devClientScheme: scheme,
+        physical,
       });
   if (launched.failed) {
     return fail(
@@ -1185,6 +1213,7 @@ async function finishAndroidRun({
     launchedAt,
     metroPort,
     isExpo,
+    physical,
     scheme,
     phase,
   });
@@ -1241,6 +1270,10 @@ function resolveRunAndroidOptions(
     metroCheck = true,
     useBuildCache = true,
     variant: variantFlag = null,
+    device: deviceFlag = null,
+    listDevices = listAdbDevices,
+    deviceModel = physicalDeviceModel,
+    isEmulatorDevice = probeEmulatorSerial,
     readApkPackage = (apkPath: string | null) => apkPackage(dumpApkManifest(apkPath)),
     getLimits = getConcurrencyLimits,
     checkCapacity = checkDeviceCapacity,
@@ -1301,6 +1334,10 @@ function resolveRunAndroidOptions(
     metroCheck,
     useBuildCache,
     variantFlag,
+    deviceFlag,
+    listDevices,
+    deviceModel,
+    isEmulatorDevice,
     readApkPackage,
     getLimits,
     checkCapacity,
@@ -1363,6 +1400,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     metroCheck,
     useBuildCache,
     variantFlag,
+    deviceFlag,
+    listDevices,
+    deviceModel,
+    isEmulatorDevice,
     readApkPackage,
     getLimits,
     checkCapacity,
@@ -1531,7 +1572,23 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const variant = resolveVariant(variantFlag, settings);
   const release = isReleaseVariant(variant);
   const isExpo = detectIsExpo(root);
-  const remoteBackend = commandRemoteBackend ?? remoteAndroidSetting(settings);
+  const physical = deviceFlag !== null && deviceFlag !== undefined && deviceFlag !== false;
+  if (physical && deviceFlag === '') {
+    return fail(
+      'STIM_BAD_ARG',
+      '--device was given an empty serial.',
+      'Pass `--device` on its own to use the one connected device, or `--device <serial>` to name one.',
+    );
+  }
+  if (physical && commandRemoteBackend) {
+    return fail(
+      'STIM_BAD_ARG',
+      '--device installs on a device connected to this machine, and --remote installs on a remote one.',
+      'Pass only one of --device and --remote.',
+    );
+  }
+  const remoteBackend = physical ? null : (commandRemoteBackend ?? remoteAndroidSetting(settings));
+  const requestedSerial = typeof deviceFlag === 'string' ? deviceFlag : null;
   let androidPackage = detectAndroidPackage(root);
   record.bundleId = androidPackage;
   const registerProject = () =>
@@ -1626,68 +1683,81 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     launch = remoteDevice.launch;
   }
 
-  const limits = getLimits();
-  const capacity = checkCapacity({
-    platform: PLATFORM,
-    project,
-    max: limits.maxDevices,
-  });
-  if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
-
   const emuLog = emulatorLogFile(root);
+  const limits = getLimits();
   let device: OwnedDeviceRecord;
-  try {
-    device = await ensureDevice({
+  let bootDuration = '';
+  let bootPromise: Promise<AndroidBootLike>;
+
+  if (physical) {
+    const resolved = resolvePhysicalDevice(requestedSerial, listDevices(), isEmulatorDevice);
+    if (!resolved.serial) return fail(NO_DEVICE, resolved.error!, resolved.remedy!);
+    device = {
+      serial: resolved.serial,
+      deviceName: deviceModel(resolved.serial) ?? resolved.serial,
+      owned: false,
+    };
+    bootPromise = Promise.resolve({ ok: true, serial: resolved.serial });
+  } else {
+    const capacity = checkCapacity({
       platform: PLATFORM,
       project,
-      projectPath: root,
-      settingsRoot,
-      label,
-      settings,
-      flags: {},
-      note: out,
-      out,
-      logFile: emuLog,
+      max: limits.maxDevices,
     });
-  } catch (err) {
-    const diag = noDeviceDiagnostic({
-      reason: `Could not ensure an owned Android emulator: ${(err as Error)?.message || err}`,
-      logFile: emuLog,
-      remedy:
-        'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
-    });
-    return fail(NO_DEVICE, diag.message, diag.remedy, {
-      lines: diag.lines,
-      logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
+    if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
+
+    try {
+      device = await ensureDevice({
+        platform: PLATFORM,
+        project,
+        projectPath: root,
+        settingsRoot,
+        label,
+        settings,
+        flags: {},
+        note: out,
+        out,
+        logFile: emuLog,
+      });
+    } catch (err) {
+      const diag = noDeviceDiagnostic({
+        reason: `Could not ensure an owned Android emulator: ${(err as Error)?.message || err}`,
+        logFile: emuLog,
+        remedy:
+          'Check that JAVA_HOME and ANDROID_HOME are set correctly, and that an arm64 system image is installed (`sdkmanager "system-images;android-36;google_apis;arm64-v8a"`).',
+      });
+      return fail(NO_DEVICE, diag.message, diag.remedy, {
+        lines: diag.lines,
+        logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
+      });
+    }
+
+    const bootTimer = stepTimer(now);
+    const boot = (): Promise<AndroidBootLike> =>
+      Promise.resolve(ensureDeviceBooted({ platform: PLATFORM, device, out, logFile: emuLog })).catch((e) => ({
+        failed: true as const,
+        reason: String((e as Error)?.message || e),
+        serial: undefined,
+      }));
+    bootPromise = (
+      remoteDevice?.ctx.backend === 'eas'
+        ? ensureRemoteOwned({
+            root,
+            platform: PLATFORM,
+            sessionName: ownedSessionName(remoteDevice.ctx.label),
+            startedAt,
+            boot,
+            createdSessionId: remoteDevice.createdSessionId,
+            abandonCreatedSession: remoteDevice.abandonCreatedSession,
+            writeState,
+            register: registerProject,
+          })
+        : boot()
+    ).then((result) => {
+      bootDuration = bootTimer();
+      return result;
     });
   }
-
-  const bootTimer = stepTimer(now);
-  let bootDuration = '';
-  const boot = (): Promise<AndroidBootLike> =>
-    Promise.resolve(ensureDeviceBooted({ platform: PLATFORM, device, out, logFile: emuLog })).catch((e) => ({
-      failed: true as const,
-      reason: String((e as Error)?.message || e),
-      serial: undefined,
-    }));
-  const bootPromise: Promise<AndroidBootLike> = (
-    remoteDevice?.ctx.backend === 'eas'
-      ? ensureRemoteOwned({
-          root,
-          platform: PLATFORM,
-          sessionName: ownedSessionName(remoteDevice.ctx.label),
-          startedAt,
-          boot,
-          createdSessionId: remoteDevice.createdSessionId,
-          abandonCreatedSession: remoteDevice.abandonCreatedSession,
-          writeState,
-          register: registerProject,
-        })
-      : boot()
-  ).then((result) => {
-    bootDuration = bootTimer();
-    return result;
-  });
 
   if (remoteDevice) {
     const booted = await bootPromise;
@@ -2124,6 +2194,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     logsDir,
     emuLog,
     device,
+    physical,
     remoteDevice,
     bootPromise,
     bootDuration: () => bootDuration,

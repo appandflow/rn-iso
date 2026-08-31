@@ -33,6 +33,8 @@ import {
   ownedAvdDirectory,
   deleteAvd,
   resolveOwnedAvdSerial,
+  physicalDeviceModel,
+  resolvePhysicalDevice,
   waitForBoot,
   withAvdConfigOverrides,
   withAvdDataPartitionSize,
@@ -774,4 +776,115 @@ test('emulatorFailureRemedy answers the disk case with free-space instructions',
     /Fix what the emulator reported above/,
   );
   expect(emulatorFailureRemedy([])).toMatch(/Fix what the emulator reported above/);
+});
+
+test('resolvePhysicalDevice picks the only connected physical device when none is requested', () => {
+  const adb = parseAdbDevices(`List of devices attached\nRFCR7081Q9L\tdevice\n`);
+  expect(resolvePhysicalDevice(null, adb)).toEqual({ serial: 'RFCR7081Q9L' });
+});
+
+test('resolvePhysicalDevice ignores emulators when picking the only physical device', () => {
+  const adb = parseAdbDevices(`List of devices attached\nemulator-5554\tdevice\nRFCR7081Q9L\tdevice\n`);
+  expect(resolvePhysicalDevice(null, adb)).toEqual({ serial: 'RFCR7081Q9L' });
+});
+
+test('resolvePhysicalDevice refuses when no physical device is connected', () => {
+  const adb = parseAdbDevices(`List of devices attached\nemulator-5554\tdevice\n`);
+  const result = resolvePhysicalDevice(null, adb);
+  expect(result.serial).toBeUndefined();
+  expect(result.error).toMatch(/No physical Android device is connected/);
+  expect(result.remedy).toMatch(/adb devices/);
+});
+
+test('resolvePhysicalDevice refuses an ambiguous choice and names every candidate', () => {
+  const adb = parseAdbDevices(`List of devices attached\nRFCR7081Q9L\tdevice\n0123456789ABCDEF\tdevice\n`);
+  const result = resolvePhysicalDevice(null, adb);
+  expect(result.serial).toBeUndefined();
+  expect(result.error).toContain('RFCR7081Q9L');
+  expect(result.error).toContain('0123456789ABCDEF');
+  expect(result.remedy).toMatch(/--device <serial>/);
+});
+
+test('resolvePhysicalDevice accepts a requested serial that is connected', () => {
+  const adb = parseAdbDevices(`List of devices attached\nRFCR7081Q9L\tdevice\n0123456789ABCDEF\tdevice\n`);
+  expect(resolvePhysicalDevice('0123456789ABCDEF', adb)).toEqual({ serial: '0123456789ABCDEF' });
+});
+
+test('resolvePhysicalDevice refuses a requested serial that is not connected', () => {
+  const adb = parseAdbDevices(`List of devices attached\nRFCR7081Q9L\tdevice\n`);
+  const result = resolvePhysicalDevice('NOPE', adb);
+  expect(result.serial).toBeUndefined();
+  expect(result.error).toMatch(/NOPE is not connected/);
+  expect(result.error).toContain('RFCR7081Q9L');
+});
+
+test('resolvePhysicalDevice refuses an emulator serial', () => {
+  const adb = parseAdbDevices(`List of devices attached\nemulator-5554\tdevice\n`);
+  const result = resolvePhysicalDevice('emulator-5554', adb);
+  expect(result.serial).toBeUndefined();
+  expect(result.error).toMatch(/emulator-5554 is an emulator/);
+  expect(result.remedy).toMatch(/without --device/);
+});
+
+test('resolvePhysicalDevice reports an unauthorized device instead of calling it absent', () => {
+  const adb = parseAdbDevices(`List of devices attached\nRFCR7081Q9L\tunauthorized\n`);
+  const result = resolvePhysicalDevice(null, adb);
+  expect(result.serial).toBeUndefined();
+  expect(result.error).toMatch(/RFCR7081Q9L is connected but unauthorized/);
+  expect(result.remedy).toMatch(/USB debugging/);
+});
+
+test('resolvePhysicalDevice reports an offline requested device instead of calling it absent', () => {
+  const adb = parseAdbDevices(`List of devices attached\nRFCR7081Q9L\toffline\n`);
+  const result = resolvePhysicalDevice('RFCR7081Q9L', adb);
+  expect(result.serial).toBeUndefined();
+  expect(result.error).toMatch(/RFCR7081Q9L is connected but offline/);
+});
+
+test('physicalDeviceModel passes the serial as an argument, never through a shell string', () => {
+  const calls: { file: string; args: string[] }[] = [];
+  setExecutor({
+    runFile: (file: string, args: string[] = []) => {
+      calls.push({ file, args });
+      return 'SM-G996W\n';
+    },
+    run: () => {
+      throw new Error('a shell string must not be built from a device serial');
+    },
+    runQuiet: () => {
+      throw new Error('a shell string must not be built from a device serial');
+    },
+  } as never);
+  expect(physicalDeviceModel('RFCR7081Q9L')).toBe('SM-G996W');
+  expect(calls[0]?.args).toEqual(['-s', 'RFCR7081Q9L', 'shell', 'getprop', 'ro.product.model']);
+  resetExecutor();
+});
+
+test('physicalDeviceModel returns null when adb cannot answer', () => {
+  setExecutor({
+    runFile: () => {
+      throw new Error('device offline');
+    },
+  } as never);
+  expect(physicalDeviceModel('RFCR7081Q9L')).toBeNull();
+  resetExecutor();
+});
+
+test('resolvePhysicalDevice refuses a network-attached emulator that adb reports as physical', () => {
+  const adb = parseAdbDevices(`List of devices attached\n192.168.56.101:5555\tdevice\n`);
+  const result = resolvePhysicalDevice(null, adb, () => true);
+  expect(result.serial).toBeUndefined();
+  expect(result.error).toMatch(/is an emulator/);
+});
+
+test('resolvePhysicalDevice accepts a genuine device over adb-over-TCP', () => {
+  const adb = parseAdbDevices(`List of devices attached\n192.168.1.5:5555\tdevice\n`);
+  expect(resolvePhysicalDevice(null, adb, () => false)).toEqual({ serial: '192.168.1.5:5555' });
+});
+
+test('resolvePhysicalDevice reports the whole adb status, not its first word', () => {
+  const adb = parseAdbDevices(`List of devices attached\n1234567890\tno permissions; see [http://x]\n`);
+  const result = resolvePhysicalDevice(null, adb);
+  expect(result.error).toMatch(/no permissions/);
+  expect(result.error).not.toMatch(/but no,/);
 });

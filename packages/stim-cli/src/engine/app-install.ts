@@ -337,6 +337,11 @@ export function reverseMetroPorts(
 }
 
 const EMULATOR_HOST_LOOPBACK = '10.0.2.2';
+const PHYSICAL_HOST_LOOPBACK = 'localhost';
+
+function androidMetroHost(physical: boolean): string {
+  return physical ? PHYSICAL_HOST_LOOPBACK : EMULATOR_HOST_LOOPBACK;
+}
 
 export function deviceShellArg(text: unknown): string {
   return `'${String(text).replace(/'/g, "'\\''")}'`;
@@ -366,11 +371,16 @@ export function debugHttpHostScript({
 }
 
 export function writeDebugHttpHost(
-  { serial, packageName, metroPort }: { serial: string; packageName: string; metroPort: number | string },
+  {
+    serial,
+    packageName,
+    metroPort,
+    physical = false,
+  }: { serial: string; packageName: string; metroPort: number | string; physical?: boolean },
   { exec = null }: ExecOpt = {},
 ): { ok: boolean; host?: string; reason?: string } {
   const e = exec || getExecutor();
-  const host = `${EMULATOR_HOST_LOOPBACK}:${metroPort}`;
+  const host = `${androidMetroHost(physical)}:${metroPort}`;
   const script = debugHttpHostScript({ packageName, host });
   try {
     e.runFile('adb', ['-s', serial, 'shell', 'run-as', packageName, 'sh', '-c', deviceShellArg(script)]);
@@ -380,8 +390,8 @@ export function writeDebugHttpHost(
   }
 }
 
-export function androidDevClientUrl(scheme: string, metroPort: number | string): string {
-  return devClientUrl(scheme, metroPort, EMULATOR_HOST_LOOPBACK);
+export function androidDevClientUrl(scheme: string, metroPort: number | string, physical = false): string {
+  return devClientUrl(scheme, metroPort, androidMetroHost(physical));
 }
 
 export function amStartError(text: unknown): string | null {
@@ -425,13 +435,20 @@ export function launchAndroidApp(
     packageName,
     metroPort,
     devClientScheme = null,
-  }: { serial: string; packageName: string; metroPort: number | string; devClientScheme?: string | null },
+    physical = false,
+  }: {
+    serial: string;
+    packageName: string;
+    metroPort: number | string;
+    devClientScheme?: string | null;
+    physical?: boolean;
+  },
   { exec = null }: ExecOpt = {},
 ): AndroidLaunchResult {
   const e = exec || getExecutor();
   const reversed = reverseMetroPorts({ serial, metroPort }, { exec: e });
   if (reversed.failed) return reversed;
-  const prefs = writeDebugHttpHost({ serial, packageName, metroPort }, { exec: e });
+  const prefs = writeDebugHttpHost({ serial, packageName, metroPort, physical }, { exec: e });
   const wiring = {
     reversed: reversed.reversed,
     debugHttpHost: prefs.ok ? prefs.host : null,
@@ -440,7 +457,7 @@ export function launchAndroidApp(
 
   let devClientNote = null;
   if (devClientScheme) {
-    const url = androidDevClientUrl(devClientScheme, metroPort);
+    const url = androidDevClientUrl(devClientScheme, metroPort, physical);
     const opened = openAndroidDevClientUrl({ serial, url }, { exec: e });
     if (opened.ok) return { ok: true, mode: 'deep-link', devClientUrl: url, ...wiring };
     devClientNote = `${opened.reason}; fell back to the launcher activity`;

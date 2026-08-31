@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { setProjectSetting, upsertProject } from '../config.ts';
+import { loadConfig, setProjectSetting, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { writeWorkspaceState } from '../supervisor/run.ts';
@@ -128,6 +128,7 @@ interface InstallArgs {
   apkPath?: string | null;
   packageName?: string | null;
   allowUninstall?: boolean;
+  serial?: string;
 }
 interface SwapArgs {
   root?: string;
@@ -140,6 +141,8 @@ interface LaunchArgs {
   metroPort?: string | number;
   devClientScheme?: string | null;
   packageName?: string;
+  serial?: string;
+  physical?: boolean;
 }
 interface RemoteBuildArgs {
   platform?: string | null;
@@ -3370,4 +3373,203 @@ describe('the project cache provider', () => {
     expect(uploads.length).toBe(1);
     expect(uploads[0]).toMatchObject({ overwrite: true });
   });
+});
+
+function parseDeviceOption(args: string[]): unknown {
+  const program = new Command();
+  program.exitOverride();
+  program.configureOutput({ writeErr: () => {} });
+  registerAndroid(program);
+  const command = program.commands[0];
+  assert(command);
+  command.parseOptions(args);
+  return command.opts().device;
+}
+
+describe('--device (a physical Android device)', () => {
+  const CONNECTED = {
+    emulators: [],
+    physical: [{ serial: 'RFCR7081Q9L' }],
+    unhealthy: [],
+  };
+
+  function physicalHarness(overrides: Record<string, unknown> = {}) {
+    return harness({
+      device: true,
+      listDevices: () => CONNECTED,
+      deviceModel: () => 'SM-G996W',
+      isEmulatorDevice: () => false,
+      checkCapacity: never('the device-capacity check'),
+      ensureDevice: never('the owned-device path'),
+      ensureDeviceBooted: never('the emulator boot'),
+      ...overrides,
+    });
+  }
+
+  test('the CLI parser accepts --device bare and with a serial', () => {
+    expect(parseDeviceOption(['--device'])).toBe(true);
+    expect(parseDeviceOption(['--device', 'RFCR7081Q9L'])).toBe('RFCR7081Q9L');
+    expect(parseDeviceOption([])).toBeUndefined();
+  });
+
+  test('a physical run installs and launches on the resolved serial', async () => {
+    const h = physicalHarness();
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.install[0]?.serial).toBe('RFCR7081Q9L');
+    expect(h.calls.launch[0]?.serial).toBe('RFCR7081Q9L');
+  });
+
+  test('a physical run launches against localhost, not the emulator loopback', async () => {
+    const h = physicalHarness();
+    await h.run();
+    expect(h.calls.launch[0]?.physical).toBe(true);
+  });
+
+  test('an emulator run still launches against the emulator loopback', async () => {
+    const h = harness();
+    await h.run();
+    expect(h.calls.launch[0]?.physical).toBeFalsy();
+  });
+
+  test('a physical run honours an explicit serial', async () => {
+    const h = physicalHarness({
+      device: 'RFCR7081Q9L',
+      listDevices: () => ({
+        emulators: [],
+        physical: [{ serial: 'OTHER' }, { serial: 'RFCR7081Q9L' }],
+        unhealthy: [],
+      }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.install[0]?.serial).toBe('RFCR7081Q9L');
+  });
+
+  test('a physical run refuses with the resolver error and remedy when no device is connected', async () => {
+    const h = physicalHarness({
+      listDevices: () => ({ emulators: [], physical: [], unhealthy: [] }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe(NO_DEVICE);
+    expect(result.error?.message).toMatch(/No physical Android device is connected/);
+    expect(result.error?.remedy).toMatch(/USB debugging/);
+  });
+
+  test('a physical run records no device in the global config, so gc and stop cannot reach it', async () => {
+    const h = physicalHarness();
+    await h.run();
+    expect(loadConfig()?.projects?.[root]?.platforms?.android).toBeUndefined();
+  });
+
+  test('--device and --remote together are refused before any build work', async () => {
+    const h = harness({
+      device: true,
+      remoteDevice: 'proxy',
+      listDevices: () => CONNECTED,
+      deviceModel: () => 'SM-G996W',
+      isEmulatorDevice: () => false,
+      fingerprint: never('the fingerprint'),
+      resolveRemoteDeviceContext: never('the remote session'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toMatch(/--device.*--remote|--remote.*--device/);
+  });
+
+  test('the summary names the device model and marks it physical', async () => {
+    const h = physicalHarness();
+    await h.run();
+    expect(labelled(h.stdout.join('\n').split('\n'), 'device').join(' ')).toMatch(/SM-G996W.*RFCR7081Q9L/);
+  });
+});
+
+describe('--device refusals found in review', () => {
+  const CONNECTED2 = { emulators: [], physical: [{ serial: 'RFCR7081Q9L' }], unhealthy: [] };
+
+  test('an empty --device value is refused, never silently run on the emulator', async () => {
+    const h = harness({
+      device: '',
+      listDevices: () => CONNECTED2,
+      deviceModel: () => 'SM-G996W',
+      isEmulatorDevice: () => false,
+      checkCapacity: never('the device-capacity check'),
+      ensureDevice: never('the owned-device path'),
+      ensureDeviceBooted: never('the emulator boot'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
+    expect(result.error?.message).toMatch(/--device/);
+  });
+
+  test('an explicit --device wins over the android.remote setting instead of refusing', async () => {
+    setProjectSetting(root, 'android', { remote: 'proxy' });
+    const h = harness({
+      device: true,
+      listDevices: () => CONNECTED2,
+      deviceModel: () => 'SM-G996W',
+      isEmulatorDevice: () => false,
+      checkCapacity: never('the device-capacity check'),
+      ensureDevice: never('the owned-device path'),
+      ensureDeviceBooted: never('the emulator boot'),
+      resolveRemoteDeviceContext: never('the remote session'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.install[0]?.serial).toBe('RFCR7081Q9L');
+  });
+
+  test('--device with an explicit --remote is a bad-argument refusal', async () => {
+    const h = harness({
+      device: true,
+      remoteDevice: 'proxy',
+      listDevices: () => CONNECTED2,
+      deviceModel: () => 'SM-G996W',
+      isEmulatorDevice: () => false,
+      fingerprint: never('the fingerprint'),
+      resolveRemoteDeviceContext: never('the remote session'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
+  });
+
+  test('a physical run leaves no serial in the workspace state either', async () => {
+    const h = harness({
+      device: true,
+      listDevices: () => CONNECTED2,
+      deviceModel: () => 'SM-G996W',
+      isEmulatorDevice: () => false,
+      checkCapacity: never('the device-capacity check'),
+      ensureDevice: never('the owned-device path'),
+      ensureDeviceBooted: never('the emulator boot'),
+    });
+    await h.run();
+    const state = JSON.stringify(readState());
+    expect(state).not.toContain('RFCR7081Q9L');
+    expect(loadConfig()?.projects?.[root]?.platforms?.android).toBeUndefined();
+  });
+});
+
+test('a signature conflict on install names the conflict instead of blaming the cable', async () => {
+  const h = harness({
+    device: true,
+    listDevices: () => ({ emulators: [], physical: [{ serial: 'RFCR7081Q9L' }], unhealthy: [] }),
+    deviceModel: () => 'SM-G996W',
+    isEmulatorDevice: () => false,
+    checkCapacity: never('the device-capacity check'),
+    ensureDevice: never('the owned-device path'),
+    ensureDeviceBooted: never('the emulator boot'),
+    install: () => ({
+      failed: true,
+      code: 'STIM_INSTALL_FAILED',
+      reason: 'adb install failed for app.apk: INSTALL_FAILED_UPDATE_INCOMPATIBLE',
+    }),
+  });
+  const result = await h.run();
+  expect(result.ok).toBe(false);
+  expect(result.error?.remedy).toMatch(/signer|uninstall/i);
+  expect(result.error?.remedy).not.toMatch(/still connected/);
 });
