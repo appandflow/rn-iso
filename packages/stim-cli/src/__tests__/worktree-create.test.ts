@@ -545,6 +545,20 @@ test('warmCarryCategories ignores native build paths that contain a node_modules
   }
 });
 
+test('warmCarryCategories keeps a confirmed node_modules sticky against a later unconfirmed one', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-warm-sticky-deps-'));
+  try {
+    writeFileSync(join(root, 'package.json'), '{"name":"app"}\n');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    mkdirSync(join(root, 'vendor/node_modules'), { recursive: true });
+
+    expect(warmCarryCategories(['node_modules', 'vendor/node_modules'], root).dependencies).toBe(true);
+    expect(warmCarryCategories(['vendor/node_modules', 'node_modules'], root).dependencies).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('create action: a plain create reports the exact warm-worktree command when warm state exists', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-warm-hint-')));

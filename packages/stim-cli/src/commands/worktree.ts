@@ -68,7 +68,7 @@ export function warmCarryCategories(entries: string[], root?: string): WarmCarry
   const inspect = (rel: string): void => {
     if (categories.dependencies && categories.pods && categories.nativeOutput) return;
     if (rel === 'node_modules' || rel.endsWith('/node_modules')) {
-      categories.dependencies = existsSync(resolve(root, dirname(rel), 'package.json'));
+      if (existsSync(resolve(root, dirname(rel), 'package.json'))) categories.dependencies = true;
       return;
     }
     if (rel === 'Pods' || rel.endsWith('/Pods')) {
