@@ -265,6 +265,68 @@ export function listAdbDevices(): AdbDevices {
   return parseAdbDevices(getExecutor().run(`${androidTool('adb')} devices`));
 }
 
+export function physicalDeviceModel(serial: string): string | null {
+  try {
+    const out = getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} shell getprop ro.product.model`);
+    return String(out ?? '').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export interface ResolvedPhysicalDevice {
+  serial?: string;
+  error?: string;
+  remedy?: string;
+}
+
+function unreachableDeviceRefusal(entry: AdbUnhealthyEntry): ResolvedPhysicalDevice {
+  return {
+    error: `${entry.serial} is connected but ${entry.status}, so adb cannot talk to it.`,
+    remedy:
+      entry.status === 'unauthorized'
+        ? 'Unlock the device, accept the USB debugging prompt, then retry.'
+        : 'Reconnect the device or run `adb reconnect`, then retry.',
+  };
+}
+
+export function resolvePhysicalDevice(requested: string | null, adb: AdbDevices): ResolvedPhysicalDevice {
+  const physical = adb?.physical ?? [];
+  const emulators = adb?.emulators ?? [];
+  const unhealthy = adb?.unhealthy ?? [];
+  if (requested) {
+    if (physical.some((p) => p.serial === requested)) return { serial: requested };
+    if (emulators.some((e) => e.serial === requested) || /^emulator-\d+$/.test(requested)) {
+      return {
+        error: `${requested} is an emulator, not a physical device.`,
+        remedy: "Run `stim android` without --device to use this workspace's owned emulator.",
+      };
+    }
+    const unreachable = unhealthy.find((u) => u.serial === requested);
+    if (unreachable) return unreachableDeviceRefusal(unreachable);
+    const connected = physical.map((p) => p.serial);
+    return {
+      error: connected.length
+        ? `${requested} is not connected. adb reports these physical devices: ${connected.join(', ')}.`
+        : `${requested} is not connected, and adb reports no physical device at all.`,
+      remedy: 'Check the cable and `adb devices`, then retry with a serial adb lists.',
+    };
+  }
+  if (physical.length === 1) return { serial: physical[0]!.serial };
+  if (physical.length > 1) {
+    return {
+      error: `Several physical devices are connected: ${physical.map((p) => p.serial).join(', ')}.`,
+      remedy: 'Name the one to build for with `stim android --device <serial>`.',
+    };
+  }
+  const unreachable = unhealthy.find((u) => u.kind === 'physical');
+  if (unreachable) return unreachableDeviceRefusal(unreachable);
+  return {
+    error: 'No physical Android device is connected.',
+    remedy: 'Plug the device in, accept the USB debugging prompt, then check `adb devices`.',
+  };
+}
+
 export function nextConsolePort(claimedPorts: number[]): number {
   if (claimedPorts.length === 0) return 5554;
   const max = Math.max(...claimedPorts);

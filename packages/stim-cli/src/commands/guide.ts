@@ -148,8 +148,9 @@ other line goes to stderr, so it is always safe to pipe.
                   the remedies all target -- read from the BUILT APK's
                   manifest, which on a flavored project is the flavor's
                   applicationId, not what the project files say
-  debugHttpHost   "10.0.2.2:<port>" when the app's SharedPreferences were
-                  pointed at this workspace's Metro, null when they were not
+  debugHttpHost   "10.0.2.2:<port>" on an emulator, "localhost:<port>" on a
+                  physical device, when the app's SharedPreferences were
+                  pointed at this workspace's Metro; null when they were not
                   (Contract 6's Android half; the adb reverse still covers
                   the app's compiled-in 8081)
   debugHttpHostNote
@@ -175,8 +176,9 @@ RULES
     (agent-device, xcrun simctl, adb -s, idb).
   - Never assume "booted" is your simulator. Other agents have theirs booted
     too.
-  - There is no physical-device support. Every device Stim touches is one
-    Stim created, named stim-<label>.`,
+  - Every device Stim creates or boots is one Stim created, named
+    stim-<label>. The exception is \`android --device\`, which installs on a
+    connected physical device Stim never creates, boots, or deletes.`,
   },
 
   metro: {
@@ -1075,7 +1077,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote
   ios             --json --no-metro-check --no-build-cache --configuration <name> --remote <proxy|eas>
-  android         --json --no-metro-check --no-build-cache --variant <name> --remote <proxy|eas>
+  android         --json --no-metro-check --no-build-cache --variant <name> --device [serial] --remote <proxy|eas>
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide; there is no --all)
@@ -1094,6 +1096,18 @@ THE OPTION SURFACE, IN FULL
   setting (see \`guide settings\`), which is the repo-level default; unset,
   the plain \`assembleDebug\` flow is unchanged. The --json payload's
   \`variant\` field reports what was built (null for the default).
+
+  \`android --device [serial]\` installs and launches on a physical device
+  connected to this machine instead of this workspace's owned emulator. With
+  no serial it uses the one connected device, and refuses with the candidate
+  list when adb reports several. It cannot be combined with --remote.
+
+  The build, the fingerprint, the build cache and the Metro port gate are
+  unchanged. What is skipped is everything that manages an owned device:
+  no capacity check, no AVD creation, no boot wait, and no device record --
+  so \`stop\` and \`gc\` never touch the phone. The app is pointed at
+  localhost:<port>, which the adb reverse serves, instead of the emulator's
+  10.0.2.2. Stim never creates, boots, shuts down, or deletes hardware.
 
   A VARIANT WHOSE NAME ENDS IN "Release" IS A RELEASE BUILD (\`release\`,
   \`productionRelease\`), and that is the whole opt-in -- there is no second
@@ -1145,7 +1159,8 @@ THE OPTION SURFACE, IN FULL
   uninstalls the package once and retries, printing a note -- the app's data
   goes with it, which is why only release runs do this.
 
-  Local emulator installs only. Store signing, physical devices and
+  Local installs only, onto an owned emulator or, with
+  \`android --device\`, a connected physical device. Store signing and
   distribution stay out of scope.
 
   \`ios --configuration <name>\` selects the Xcode configuration --

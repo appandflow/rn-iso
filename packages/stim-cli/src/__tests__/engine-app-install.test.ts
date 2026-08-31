@@ -1625,3 +1625,59 @@ describe('verifyLaunch: still bundling', () => {
     expect(result).toMatchObject({ verified: false, fatal: true, processAlive: false });
   });
 });
+
+describe('the Metro host for a physical device', () => {
+  test('writeDebugHttpHost points a physical device at localhost, which adb reverse serves', () => {
+    const calls: string[][] = [];
+    const exec = {
+      runFile: (cmd: string, args: string[]) => {
+        calls.push([cmd, ...args]);
+        return '';
+      },
+    } as unknown as Executor;
+    const r = writeDebugHttpHost(
+      { serial: 'RFCR7081Q9L', packageName: 'com.x', metroPort: 8082, physical: true },
+      { exec },
+    );
+    expect(r.ok).toBe(true);
+    expect(r.host).toBe('localhost:8082');
+    const argv = calls[0];
+    assert(argv);
+    expect(argv[8]).toMatch(/localhost:8082/);
+    expect(argv[8]).not.toMatch(/10\.0\.2\.2/);
+  });
+
+  test('writeDebugHttpHost still points an emulator at the emulator loopback', () => {
+    const exec = { runFile: () => '' } as unknown as Executor;
+    const r = writeDebugHttpHost(
+      { serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082, physical: false },
+      { exec },
+    );
+    expect(r.host).toBe('10.0.2.2:8082');
+  });
+
+  test('the dev-client url targets localhost on a physical device', () => {
+    expect(androidDevClientUrl('exp+app', 8085, true)).toBe(
+      'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085',
+    );
+    expect(androidDevClientUrl('exp+app', 8085, false)).toBe(
+      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085',
+    );
+  });
+
+  test('launchAndroidApp sends the localhost deep link when the device is physical', () => {
+    const exec = recordingExec();
+    const result: LaunchResult = launchAndroidApp(
+      {
+        serial: 'RFCR7081Q9L',
+        packageName: 'com.example.app',
+        metroPort: 8082,
+        devClientScheme: 'exp+app',
+        physical: true,
+      },
+      { exec },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.devClientUrl).toBe('exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082');
+  });
+});

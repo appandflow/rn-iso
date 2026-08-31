@@ -129,21 +129,29 @@ installed globally. On the website, use synchronized Global and npx tabs with
 Global as the default. Keep the full `npx` form in runnable hooks, release
 checks, and registry remedies, which cannot assume a global install.
 
-### 2. Use only owned devices
+### 2. Create, boot, and delete only owned devices
 
-Stim can use only devices it created, named `stim-<label>` and recorded with
-`owned: true`. Never operate on physical or user-created devices. Keep a device
-record when teardown fails so `gc` can find the device later.
+Stim can create, boot, shut down, or delete only devices it created, named
+`stim-<label>` and recorded with `owned: true`. Never do any of those to a
+user-created emulator or simulator. Keep a device record when teardown fails so
+`gc` can find the device later.
+
+A physical Android device reached through `android --device` is the one device
+Stim uses but does not own. Hardware cannot be created or booted, so that path
+installs, launches, and reads logs, and nothing more. It records no device, so
+`stop`, `gc`, and `teardown.ts` never see it. Keep it that way: a physical
+serial must never enter the project registry.
 
 ### 3. Reimplement; do not reconstruct
 
 Do not infer and rebuild commands from project scripts. Bare React Native hosts
 Metro from the project's dependencies. Expo runs its fixed start command. iOS
-and Android use fixed `xcodebuild` and Gradle arguments. Do not add install or
-physical-device flows.
+and Android use fixed `xcodebuild` and Gradle arguments.
 
 The supported build selectors are `ios --configuration <name>` and
-`android --variant <name>`. Non-Debug iOS configurations and Android variants
+`android --variant <name>`. `android --device [serial]` selects a connected
+physical device; there is no iOS equivalent, because that needs code signing.
+Do not add install flows. Non-Debug iOS configurations and Android variants
 ending in `Release` skip Metro. A release cache hit must inject the current JS
 into a copy of the artifact. A swap failure must run a full build; it must never
 install stale JS. Android swaps require an emitted-asset manifest match, then
